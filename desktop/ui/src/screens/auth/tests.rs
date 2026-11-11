@@ -5,7 +5,7 @@
 use egui::accesskit::Role;
 use egui_kittest::kittest::{NodeT, Queryable};
 
-use crate::app::testkit::{FakeApi, Reply, launcher, wait_for_label, wait_for_text};
+use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label, wait_for_text};
 use crate::platform::paths::testing::TempConfig;
 
 /// A 429 with `Retry-After: 30` for `path`.
@@ -231,4 +231,308 @@ fn login_speaks_english() {
         .click();
     wait_for_text(&mut harness, "Too many attempts. Please wait 30 seconds.");
     harness.get_by_label_contains("Try again in");
+}
+
+// ------------------------------------------------- sign-in with Google
+
+/// `GET /auth/providers` listing Google.
+fn google(method: &str, at: &str) -> Option<Reply> {
+    (method == "GET" && at == "/auth/providers").then(|| {
+        Reply::json(serde_json::json!({"providers": [{"id": "google", "name": "Google"}]}))
+    })
+}
+
+/// A stand-in for the system browser: it notes the provider's page and,
+/// when `follow`, goes to it on a thread of its own (the app's loopback
+/// receiver accepts only once `open` has returned).
+fn browser(
+    harness: &egui_kittest::Harness<'_, crate::Launcher>,
+    follow: bool,
+) -> std::sync::Arc<parking_lot::Mutex<Vec<String>>> {
+    let opened: std::sync::Arc<parking_lot::Mutex<Vec<String>>> = std::sync::Arc::default();
+    let seen = opened.clone();
+    super::oidc::set_opener(
+        &harness.ctx,
+        std::sync::Arc::new(move |url: &str| {
+            seen.lock().push(url.to_owned());
+            if follow {
+                let url = url.to_owned();
+                std::thread::spawn(move || get(&url));
+            }
+            Ok(())
+        }),
+    );
+    opened
+}
+
+/// A plain HTTP GET of `url` (`http://127.0.0.1:port/path?query`).
+fn get(url: &str) {
+    use std::io::{Read, Write};
+    let rest = url.strip_prefix("http://").expect("http");
+    let (host, path) = rest.split_once('/').expect("path");
+    let mut stream = std::net::TcpStream::connect(host).expect("connect");
+    let request = format!("GET /{path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).expect("write");
+    let mut answer = String::new();
+    let _ = stream.read_to_string(&mut answer);
+}
+
+/// `start`'s answer: the "provider" sends the browser straight back to the
+/// app's loopback port with `code`, as the API's callback would.
+fn back_to_the_app(body: &str, code: &str) -> Reply {
+    let start: serde_json::Value = serde_json::from_str(body).expect("start body");
+    let desktop = &start["desktop"];
+    let url = format!(
+        "http://127.0.0.1:{}/callback?state={}&code={code}",
+        desktop["port"],
+        desktop["state"].as_str().expect("state")
+    );
+    Reply::json(serde_json::json!({ "url": url }))
+}
+
+/// The provider button and the divider show only once the server lists a
+/// provider, in both languages.
+#[test]
+fn the_google_button_shows_when_a_provider_is_listed() {
+    let _config = TempConfig::new("auth-oidc-button");
+    let none = FakeApi::start(false, |_, _, _| None);
+    let mut harness = launcher(&none, "/login");
+    wait_for_label(&mut harness, "E-Mail-Adresse");
+    harness.run_steps(10);
+    assert!(harness.query_by_label("Über Google anmelden").is_none());
+    assert!(harness.query_by_label("oder").is_none());
+
+    let api = FakeApi::start(false, |method, at, _| google(method, at));
+    for route in ["/login", "/register"] {
+        let mut harness = launcher(&api, route);
+        wait_for_label(&mut harness, "Über Google anmelden");
+        let button = harness.get_by_label("Über Google anmelden");
+        assert_eq!(button.accesskit_node().role(), Role::Button);
+        assert!(api.saw("GET /auth/providers"));
+    }
+    let _locale = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let mut harness = launcher(&api, "/login");
+    wait_for_label(&mut harness, "Sign in with Google");
+}
+
+/// A click opens the provider's page in the browser; the card waits with
+/// "Weiter im Browser …" and "Abbrechen", which ends the wait.
+#[test]
+fn the_card_waits_for_the_browser_and_can_give_up() {
+    let _config = TempConfig::new("auth-oidc-wait");
+    let api = FakeApi::start(false, |method, at, _| {
+        google(method, at).or_else(|| {
+            (method == "POST" && at == "/auth/oidc/google/start").then(|| {
+                Reply::json(serde_json::json!({"url": "https://accounts.example/o/auth?x=1"}))
+            })
+        })
+    });
+    let mut harness = launcher(&api, "/login?redirect=%2Finvite%2Fabc");
+    let opened = browser(&harness, false);
+    wait_for_label(&mut harness, "Über Google anmelden");
+    harness.get_by_label("Über Google anmelden").click();
+    wait_for_label(&mut harness, "Weiter im Browser …");
+    assert_eq!(
+        opened.lock().as_slice(),
+        ["https://accounts.example/o/auth?x=1"]
+    );
+    assert!(
+        harness
+            .get_by_label("Weiter im Browser …")
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness
+        .get_by_role_and_label(Role::Button, "Abbrechen")
+        .click();
+    wait_for_label(&mut harness, "Über Google anmelden");
+    assert!(harness.query_by_label("Abbrechen").is_none());
+}
+
+/// The browser comes back with a code: the exchange signs in, and the app
+/// goes where the sign-in was headed.
+#[test]
+fn a_provider_sign_in_signs_in() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _config = TempConfig::new("auth-oidc-signed-in");
+    let signed_in = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = signed_in.clone();
+    let api = FakeApi::start(false, move |method, at, body| match (method, at) {
+        ("POST", "/auth/oidc/google/start") => {
+            let start: serde_json::Value = serde_json::from_str(body).expect("body");
+            assert_eq!(start["purpose"], "sign_in");
+            assert_eq!(start["redirect"], "/settings/profil");
+            assert_eq!(
+                start["desktop"]["challenge"].as_str().map(str::len),
+                Some(43)
+            );
+            Some(back_to_the_app(body, &"c".repeat(64)))
+        }
+        ("POST", "/auth/oidc/desktop/exchange") => {
+            let exchange: serde_json::Value = serde_json::from_str(body).expect("body");
+            assert_eq!(exchange["code"], "c".repeat(64));
+            flag.store(true, Ordering::SeqCst);
+            Some(Reply::json(serde_json::json!({
+                "result": "signed_in", "user": crate::app::testkit::lena(), "csrf_token": "c2"
+            })))
+        }
+        ("GET", "/auth/session") if flag.load(Ordering::SeqCst) => Some(Reply::json(
+            serde_json::json!({"user": crate::app::testkit::lena(), "csrf_token": "c2"}),
+        )),
+        ("GET", "/me") if flag.load(Ordering::SeqCst) => {
+            Some(Reply::json(crate::app::testkit::lena()))
+        }
+        _ => google(method, at),
+    });
+    let mut harness = launcher(&api, "/login?redirect=%2Fsettings%2Fprofil");
+    browser(&harness, true);
+    wait_for_label(&mut harness, "Über Google anmelden");
+    harness.get_by_label("Über Google anmelden").click();
+    wait_for(&mut harness, "signed in", |h| {
+        h.query_by_label("E-Mail-Adresse").is_none() && signed_in.load(Ordering::SeqCst)
+    });
+    let path = harness
+        .state_mut()
+        .app()
+        .expect("app")
+        .nav()
+        .location()
+        .path
+        .clone();
+    assert_eq!(path, "/settings/profil");
+}
+
+/// A refusal of the exchange is the form's error, in the web's words; an
+/// `oidc_error` in the address shows in the same place.
+#[test]
+fn a_refused_provider_sign_in_says_why() {
+    let _config = TempConfig::new("auth-oidc-refused");
+    let api = FakeApi::start(false, |method, at, body| match (method, at) {
+        ("POST", "/auth/oidc/google/start") => Some(back_to_the_app(body, &"d".repeat(64))),
+        ("POST", "/auth/oidc/desktop/exchange") => {
+            Some(Reply::error(409, "oidc_account_unverified"))
+        }
+        _ => google(method, at),
+    });
+    let mut harness = launcher(&api, "/login");
+    browser(&harness, true);
+    wait_for_label(&mut harness, "Über Google anmelden");
+    harness.get_by_label("Über Google anmelden").click();
+    wait_for_text(
+        &mut harness,
+        "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde.",
+    );
+    // The button is back for another try.
+    harness.get_by_label("Über Google anmelden");
+
+    let mut harness = launcher(&api, "/login?oidc_error=cancelled");
+    wait_for_text(&mut harness, "Anmeldung abgebrochen.");
+    let mut harness = launcher(&api, "/register?oidc_error=invitation_required");
+    wait_for_text(&mut harness, "Zum Registrieren brauchst du eine Einladung.");
+    // An unknown code is not read.
+    let mut harness = launcher(&api, "/login?oidc_error=registration_closed");
+    wait_for_label(&mut harness, "E-Mail-Adresse");
+    harness.run_steps(5);
+    assert!(harness.query_by_role(Role::Alert).is_none());
+}
+
+/// A new account: the name step with the provider's address and name, then
+/// `complete` with the flow's verifier signs in.
+#[test]
+fn a_first_provider_sign_in_picks_its_name() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _config = TempConfig::new("auth-oidc-name");
+    let code = "e".repeat(64);
+    let created = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = created.clone();
+    let challenge = std::sync::Arc::new(parking_lot::Mutex::new(String::new()));
+    let kept = challenge.clone();
+    let token = code.clone();
+    let api = FakeApi::start(false, move |method, at, body| match (method, at) {
+        ("POST", "/auth/oidc/google/start") => {
+            let start: serde_json::Value = serde_json::from_str(body).expect("body");
+            *kept.lock() = start["desktop"]["challenge"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            Some(back_to_the_app(body, &token))
+        }
+        ("POST", "/auth/oidc/desktop/exchange") => Some(Reply::json(serde_json::json!({
+            "result": "needs_name",
+            "provider": {"id": "google", "name": "Google"},
+            "email": "neu@example.test", "name": "Neu Ling"
+        }))),
+        ("POST", "/auth/oidc/pending") => Some(Reply::json(serde_json::json!({
+            "provider": {"id": "google", "name": "Google"},
+            "email": "neu@example.test", "name": "Neu Ling"
+        }))),
+        ("POST", "/auth/oidc/complete") => {
+            let complete: serde_json::Value = serde_json::from_str(body).expect("body");
+            assert_eq!(complete["token"], token);
+            assert_eq!(complete["name"], "Neu Ling");
+            let verifier = complete["verifier"].as_str().unwrap_or_default();
+            assert_eq!(
+                gelabber_client::oidc::challenge(verifier),
+                *kept.lock(),
+                "the flow's verifier"
+            );
+            flag.store(true, Ordering::SeqCst);
+            Some(Reply::status(
+                201,
+                serde_json::json!({
+                    "user": crate::app::testkit::lena(), "csrf_token": "c3", "redirect": null
+                }),
+            ))
+        }
+        ("GET", "/auth/session") if flag.load(Ordering::SeqCst) => Some(Reply::json(
+            serde_json::json!({"user": crate::app::testkit::lena(), "csrf_token": "c3"}),
+        )),
+        ("GET", "/me") if flag.load(Ordering::SeqCst) => {
+            Some(Reply::json(crate::app::testkit::lena()))
+        }
+        _ => google(method, at),
+    });
+    let mut harness = launcher(&api, "/register");
+    browser(&harness, true);
+    wait_for_label(&mut harness, "Über Google anmelden");
+    harness.get_by_label("Über Google anmelden").click();
+    // The provider's name for the person is the suggestion.
+    wait_for_label(&mut harness, "Anzeigename");
+    assert_eq!(
+        input(&harness, "Anzeigename")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("Neu Ling")
+    );
+    let path = harness
+        .state_mut()
+        .app()
+        .expect("app")
+        .nav()
+        .location()
+        .href();
+    assert_eq!(path, "/sign-in/name");
+    harness
+        .get_by_role_and_label(Role::Button, "Konto anlegen")
+        .click();
+    wait_for(&mut harness, "account created", |h| {
+        created.load(Ordering::SeqCst) && h.query_by_label("Anzeigename").is_none()
+    });
+}
+
+/// The name step's token is gone: the page says the sign-in expired.
+#[test]
+fn a_dead_name_step_says_the_sign_in_expired() {
+    let _config = TempConfig::new("auth-oidc-dead");
+    let api = FakeApi::start(false, |method, at, _| {
+        (method == "POST" && at == "/auth/oidc/pending").then(|| Reply::error(410, "token_invalid"))
+    });
+    let mut harness = launcher(&api, &format!("/sign-in/name{LINK}"));
+    wait_for_label(&mut harness, "Zur Anmeldung");
+    assert!(api.saw("POST /auth/oidc/pending"));
+    let api = FakeApi::start(false, |_, _, _| None);
+    let mut harness = launcher(&api, "/sign-in/name");
+    wait_for_label(&mut harness, "Zur Anmeldung");
+    assert!(!api.saw("POST /auth/oidc/pending"));
 }
