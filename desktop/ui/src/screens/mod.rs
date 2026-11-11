@@ -60,6 +60,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, state: &mut ScreenState) {
         ScreenState::SignInName(s) => auth::sign_in_name::show(ui, app, s),
         ScreenState::None => match app.nav.route() {
             Route::NotFound(_) => auth::not_found::show(ui, app),
+            // Only for an operator: everyone else meets "not found", as on
+            // the web.
+            Route::Operator(_) if !app.session.operator() => auth::not_found::show(ui, app),
             _ => shell::show(ui, app),
         },
     }

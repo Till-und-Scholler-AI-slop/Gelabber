@@ -257,6 +257,8 @@ pub struct Session {
     check: Option<Pending<Result<Value, ApiError>>>,
     failures: usize,
     retry_at: Option<f64>,
+    /// `SessionResponse.operator`: the account may open "Betrieb".
+    operator: bool,
 }
 
 impl Session {
@@ -266,7 +268,13 @@ impl Session {
             check: None,
             failures: 0,
             retry_at: None,
+            operator: false,
         }
+    }
+
+    /// Signed in as an instance operator (the session store's `operator`).
+    pub fn operator(&self) -> bool {
+        self.operator && self.user().is_some()
     }
 
     pub fn user(&self) -> Option<&Value> {
@@ -303,6 +311,13 @@ impl Session {
     /// Adopts a `SessionResponse` (login, register, reset, verify).
     pub fn adopt(&mut self, response: &Value) {
         self.failures = 0;
+        let id = |user: Option<&Value>| user.and_then(|u| u.get("id")).cloned();
+        let same = id(self.user()).is_some() && id(self.user()) == id(response.get("user"));
+        self.operator = match response.get("operator").and_then(Value::as_bool) {
+            Some(operator) => operator,
+            // A changed profile (`{"user": …}` alone) keeps the account's flag.
+            None => same && self.operator,
+        };
         self.status = match response.get("user") {
             Some(user) if !user.is_null() => SessionStatus::Authenticated(user.clone()),
             _ => SessionStatus::Anonymous,
@@ -856,6 +871,7 @@ pub fn is_workspace(route: &Route) -> bool {
             | Route::Dm(_)
             | Route::Profile
             | Route::Discover(_)
+            | Route::Operator(_)
     )
 }
 
@@ -1068,5 +1084,28 @@ mod tests {
             None,
         )));
         assert_eq!(nav.location().query("q"), Some("film"));
+    }
+
+    /// The session keeps `operator` next to the user (auth/session.ts): a
+    /// profile change keeps it, another account or a sign-out drops it.
+    #[test]
+    fn the_session_keeps_the_operator_flag() {
+        let lena = serde_json::json!({"id": "a", "name": "Lena"});
+        let mut session = Session::new();
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena, "csrf_token": "x", "operator": true}));
+        assert!(session.operator());
+        session.adopt(&serde_json::json!({"user": {"id": "a", "name": "Lena B."}}));
+        assert!(session.operator());
+        session.adopt(&serde_json::json!({"user": {"id": "b", "name": "Tom"}}));
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena, "operator": true}));
+        session.adopt(&Value::Null);
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena}));
+        assert!(!session.operator());
+        // An older server leaves it out: no operator.
+        session.adopt(&serde_json::json!({"user": lena, "operator": false}));
+        assert!(!session.operator());
     }
 }

@@ -224,17 +224,38 @@ fn icon_button(
     response
 }
 
+/// What an item of the user menu does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuItem {
+    Profile,
+    Settings,
+    /// Operators only: the operator area, in the system browser.
+    Operator,
+    SwitchServer,
+    SignOut,
+}
+
+/// The menu's items, in the web's order; "Betrieb" follows
+/// "Einstellungen" for operators.
+fn menu_items(operator: bool) -> Vec<(MenuItem, &'static str)> {
+    let mut items = vec![
+        (MenuItem::Profile, shell::user_panel_edit_profile()),
+        (MenuItem::Settings, shell::user_panel_settings()),
+    ];
+    if operator {
+        items.push((MenuItem::Operator, shell::user_panel_operator()));
+    }
+    // "Server wechseln …" is the desktop app's own (isDesktopApp).
+    items.push((MenuItem::SwitchServer, shell::user_panel_switch_server()));
+    items.push((MenuItem::SignOut, shell::user_panel_sign_out()));
+    items
+}
+
 /// The account menu above the chevron: panel colour, 37px items.
 fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    // "Server wechseln …" is the desktop app's own (isDesktopApp).
-    let items = [
-        shell::user_panel_edit_profile(),
-        shell::user_panel_settings(),
-        shell::user_panel_switch_server(),
-        shell::user_panel_sign_out(),
-    ];
+    let items = menu_items(app.session.operator());
     let width = 180.0;
     let height = 2.0 + 16.0 + 37.0 * items.len() as f32 + 3.0 * (items.len() - 1) as f32;
     let frame = Rect::from_min_max(
@@ -262,13 +283,13 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 StrokeKind::Inside,
             );
             let mut y = frame.top() + 9.0;
-            for (i, label) in items.iter().enumerate() {
+            for (i, (action, label)) in items.iter().enumerate() {
                 let item =
                     Rect::from_min_size(pos2(frame.left() + 9.0, y), Vec2::new(width - 18.0, 37.0));
                 let response = common::click(ui, item, Id::unique(("user-menu-item", i)));
                 response
                     .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *label));
-                let response = if i == 2 {
+                let response = if *action == MenuItem::SwitchServer {
                     response.on_hover_text(format!(
                         "{}+{}+S",
                         shell::keys_ctrl(),
@@ -283,7 +304,7 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 let block = Block::single(ui, label, text::BODY, c.text);
                 block.paint(ui.painter(), pos2(item.left() + 10.0, item.top() + 8.0));
                 if response.clicked() {
-                    picked = Some(i);
+                    picked = Some(*action);
                 }
                 y += 37.0 + 3.0;
             }
@@ -302,10 +323,15 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
         state::with(ui.ctx(), |s| s.user_menu = false);
     }
     match picked {
-        Some(0) => app.nav.navigate("/settings/profil"),
-        Some(1) => app.nav.navigate("/settings/darstellung"),
-        Some(2) => crate::setup::switch_server(ui.ctx()),
-        Some(_) => log_out(ui.ctx(), app),
+        Some(MenuItem::Profile) => app.nav.navigate("/settings/profil"),
+        Some(MenuItem::Settings) => app.nav.navigate("/settings/darstellung"),
+        Some(MenuItem::Operator) => super::operator::open_in_browser(
+            ui.ctx(),
+            app,
+            &format!("/betrieb/{}", super::operator::DEFAULT_PAGE),
+        ),
+        Some(MenuItem::SwitchServer) => crate::setup::switch_server(ui.ctx()),
+        Some(MenuItem::SignOut) => log_out(ui.ctx(), app),
         None => {}
     }
 }

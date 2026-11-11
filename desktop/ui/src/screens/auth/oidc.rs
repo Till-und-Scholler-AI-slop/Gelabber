@@ -75,7 +75,7 @@ fn opener_id() -> egui::Id {
 }
 
 /// The app's `open_url`, or what a test put in its place.
-fn opener(ctx: &egui::Context) -> Opener {
+pub(crate) fn opener(ctx: &egui::Context) -> Opener {
     ctx.data(|d| d.get_temp::<Opener>(opener_id()))
         .unwrap_or_else(|| Arc::new(crate::platform::open_url))
 }

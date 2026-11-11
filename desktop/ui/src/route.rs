@@ -27,6 +27,9 @@ pub enum Route {
     /// `/sign-in/name#token=`: a first sign-in through a provider names
     /// its new account, signed in or not.
     SignInName,
+    /// `/betrieb` and `/betrieb/$page`: the operator area, which the app
+    /// hands to the system browser.
+    Operator(Option<String>),
 }
 
 /// The directory's search in the address (`validateDiscoverSearch` in
@@ -118,6 +121,8 @@ impl Route {
             },
             ["discover"] => Self::Discover(DiscoverSearch::parse(query)),
             ["sign-in", "name"] => Self::SignInName,
+            ["betrieb"] => Self::Operator(None),
+            ["betrieb", page] => Self::Operator(Some((*page).to_owned())),
             _ => Self::NotFound(path.to_owned()),
         }
     }
@@ -142,6 +147,8 @@ impl Route {
             Self::NotFound(p) => p.clone(),
             Self::Discover(search) => format!("/discover{}", search.query()),
             Self::SignInName => "/sign-in/name".into(),
+            Self::Operator(None) => "/betrieb".into(),
+            Self::Operator(Some(page)) => format!("/betrieb/{page}"),
         }
     }
 
@@ -256,5 +263,27 @@ mod tests {
         ] {
             assert_eq!(Route::parse(&route.path()), route);
         }
+    }
+
+    /// The operator area's paths, which the hand-off card opens as they are.
+    #[test]
+    fn operator_paths_round_trip() {
+        for route in [
+            Route::Operator(None),
+            Route::Operator(Some("server".into())),
+            Route::Operator(Some("meldungen".into())),
+        ] {
+            assert_eq!(Route::parse(&route.path()), route);
+        }
+        assert_eq!(Route::parse("/betrieb/"), Route::Operator(None));
+        assert_eq!(
+            Route::parse("/betrieb/konten?q=lena"),
+            Route::Operator(Some("konten".into()))
+        );
+        assert_eq!(
+            Route::parse("/betrieb/server/x"),
+            Route::NotFound("/betrieb/server/x".into())
+        );
+        assert!(!Route::Operator(None).is_anonymous());
     }
 }
