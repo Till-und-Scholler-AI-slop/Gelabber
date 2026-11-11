@@ -199,6 +199,11 @@ async fn create_server(
     let name = name.expect("validated");
 
     let mut tx = state.db.begin().await?;
+    // Waits for an account deletion that holds the row and then refuses: a
+    // deleted account must not end up owning a server (`account::delete_me`).
+    if !account_alive(&mut tx, user.id).await? {
+        return Err(ApiError::Unauthenticated);
+    }
     let server = sqlx::query_as::<_, ServerRow>(
         "INSERT INTO servers (name, owner_id, member_permissions) VALUES ($1, $2, $3) \
          RETURNING id, name, owner_id, member_permissions, icon_url, created_at",
@@ -464,7 +469,9 @@ async fn transfer_server(
     .bind(target_id)
     .fetch_one(&mut *tx)
     .await?;
-    if !is_member {
+    // An account under deletion has left every server already; one that is
+    // being deleted right now is waited for.
+    if !is_member || !account_alive(&mut tx, target_id).await? {
         return Err(ApiError::NotFound);
     }
 
@@ -501,4 +508,17 @@ async fn transfer_server(
     }
     info!(server_id = %server_id, from = %user.id, to = %target_id, "server ownership transferred");
     Ok(Json(Membership { server, ..member }.into()))
+}
+
+/// Key-share locks the account's row until commit unless it is under
+/// deletion (`users.deleted_at`). The deletion takes the row `FOR UPDATE`,
+/// so whichever comes second waits and then sees the other's result.
+async fn account_alive(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, ApiError> {
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(found.is_some())
 }

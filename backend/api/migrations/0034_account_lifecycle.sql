@@ -21,6 +21,8 @@ CREATE UNIQUE INDEX sessions_id_unique ON sessions (id);
 -- are gone. While set, nobody can sign in to or address the account.
 ALTER TABLE users ADD COLUMN deleted_at TIMESTAMPTZ;
 CREATE INDEX users_deleted_at_idx ON users (deleted_at) WHERE deleted_at IS NOT NULL;
+-- The purge removes a deleted account's messages in batches by author.
+CREATE INDEX messages_author_id_idx ON messages (author_id);
 
 -- A ban outlives the account of whoever issued it.
 ALTER TABLE server_bans ALTER COLUMN banned_by DROP NOT NULL;

@@ -82,6 +82,9 @@ pub struct AppState {
     pub registration: RegistrationMode,
     /// Sign-in through OpenID Connect; `None` while it is off.
     pub oidc: Option<Arc<crate::auth::oidc::Oidc>>,
+    /// Wakes the purge of deleted accounts (`account::deletion`).
+    pub(crate) account_purge: Arc<tokio::sync::Notify>,
+    pub(crate) purge_worker_started: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -202,6 +205,8 @@ impl AppState {
             operators: Arc::new(config.operators.clone()),
             registration: config.registration,
             oidc,
+            account_purge: Arc::new(tokio::sync::Notify::new()),
+            purge_worker_started: Arc::new(AtomicBool::new(false)),
         })
     }
 

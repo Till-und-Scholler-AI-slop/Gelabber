@@ -102,6 +102,17 @@ pub enum ApiError {
     OidcWrongOrigin,
     /// 409: the signed-in account changed while connecting a provider.
     SessionChanged,
+    /// 409: deleting an account that still owns servers; the body lists
+    /// them (`servers`) so the client can point at each one.
+    OwnsServers(Vec<OwnedServer>),
+}
+
+/// A server that keeps an account from being deleted (`owns_servers`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+pub struct OwnedServer {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub member_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -112,6 +123,8 @@ pub struct ErrorBody {
     pub fields: FieldErrors,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub servers: Option<Vec<OwnedServer>>,
 }
 
 impl ApiError {
@@ -148,6 +161,7 @@ impl ApiError {
             Self::ReauthRequired => "reauth_required",
             Self::OidcWrongOrigin => "oidc_wrong_origin",
             Self::SessionChanged => "session_changed",
+            Self::OwnsServers(_) => "owns_servers",
         }
     }
 
@@ -180,6 +194,7 @@ impl ApiError {
             Self::ReauthRequired => StatusCode::FORBIDDEN,
             Self::OidcWrongOrigin => StatusCode::CONFLICT,
             Self::SessionChanged => StatusCode::CONFLICT,
+            Self::OwnsServers(_) => StatusCode::CONFLICT,
         }
     }
 
@@ -226,6 +241,7 @@ impl ApiError {
             Self::ReauthRequired => "Sign in again to confirm it is you.",
             Self::OidcWrongOrigin => "Open this instance at its public address to sign in.",
             Self::SessionChanged => "You signed in to another account meanwhile. Try again.",
+            Self::OwnsServers(_) => "Transfer or delete your servers first.",
         }
     }
 
@@ -243,11 +259,16 @@ impl ApiError {
             }
             _ => None,
         };
+        let servers = match self {
+            Self::OwnsServers(servers) => Some(servers.clone()),
+            _ => None,
+        };
         ErrorBody {
             error: self.code(),
             message: self.message(),
             fields,
             retry_after,
+            servers,
         }
     }
 }
@@ -403,6 +424,27 @@ mod tests {
         let err = ApiError::OidcUnavailable("token endpoint said invalid_grant".into());
         let json = serde_json::to_value(err.body()).unwrap();
         assert!(!json.to_string().contains("invalid_grant"));
+    }
+
+    #[test]
+    fn owns_servers_body_carries_the_servers() {
+        let id = uuid::Uuid::new_v4();
+        let err = ApiError::OwnsServers(vec![OwnedServer {
+            id,
+            name: "Wohnzimmer".into(),
+            member_count: 5,
+        }]);
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "owns_servers");
+        assert_eq!(json["message"], "Transfer or delete your servers first.");
+        assert_eq!(
+            json["servers"],
+            serde_json::json!([{ "id": id, "name": "Wohnzimmer", "member_count": 5 }])
+        );
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::CONFLICT);
+        let other = serde_json::to_value(ApiError::NotFound.body()).unwrap();
+        assert!(other.get("servers").is_none());
     }
 
     #[test]

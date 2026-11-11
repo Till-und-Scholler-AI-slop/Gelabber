@@ -613,7 +613,7 @@ fn signed_out(state: &AppState) -> Response {
     (StatusCode::OK, cookies, Json(LogoutResponse { csrf_token })).into_response()
 }
 
-fn signed_out_cookies(
+pub(crate) fn signed_out_cookies(
     state: &AppState,
 ) -> (
     AppendHeaders<[(axum::http::HeaderName, axum::http::HeaderValue); 2]>,
