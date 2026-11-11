@@ -325,6 +325,16 @@ crate::strings! {
         | "Choose an application for the sound…";
     members_show = "Mitgliederliste einblenden" | "Show member list";
     members_hide = "Mitgliederliste ausblenden" | "Hide member list";
+    watchers_title_none = "Niemand schaut zu"
+        | "Nobody’s watching";
+    watchers_count_label_none = "Niemand schaut zu – Liste anzeigen"
+        | "Nobody’s watching – show list";
+    watchers_not_watching = "Im Kanal, schaut nicht zu"
+        | "In the channel, not watching";
+    strip_is_live = "Ist live"
+        | "Live now";
+    strip_watching = "Schaut zu"
+        | "Watching";
 }
 
 /// "{percent} %".
@@ -680,5 +690,55 @@ pub fn names_more_dative(a: &str, b: &str, more: &str) -> String {
     match get() {
         Locale::De => format!("{a}, {b} und {more} weiteren"),
         Locale::En => format!("{a}, {b} and {more} more"),
+    }
+}
+
+/// "{count} schaut zu" / "{count} schauen zu": who watches a Live.
+pub fn watchers_title(count: u64) -> String {
+    let n = crate::intl::count(count);
+    match get() {
+        Locale::De => plural(count, format!("{n} schaut zu"), format!("{n} schauen zu")),
+        Locale::En => plural(count, format!("{n} watching"), format!("{n} watching")),
+    }
+}
+
+/// "{count} schauen zu – Liste anzeigen": the count on a Live's caption.
+pub fn watchers_count_label(count: u64) -> String {
+    let n = crate::intl::count(count);
+    match get() {
+        Locale::De => plural(
+            count,
+            format!("{n} schaut zu – Liste anzeigen"),
+            format!("{n} schauen zu – Liste anzeigen"),
+        ),
+        Locale::En => plural(
+            count,
+            format!("{n} watching – show list"),
+            format!("{n} watching – show list"),
+        ),
+    }
+}
+
+/// "Dein Live in {channel}".
+pub fn watchers_own_subtitle(channel: &str) -> String {
+    match get() {
+        Locale::De => format!("Dein Live in {channel}"),
+        Locale::En => format!("Your Live in {channel}"),
+    }
+}
+
+/// "Live von {name} in {channel}".
+pub fn watchers_subtitle(name: &str, channel: &str) -> String {
+    match get() {
+        Locale::De => format!("Live von {name} in {channel}"),
+        Locale::En => format!("{name}’s Live in {channel}"),
+    }
+}
+
+/// "Du bist live · {watchers}": the own Live button's tooltip.
+pub fn live_you_are_live_watchers(watchers: &str) -> String {
+    match get() {
+        Locale::De => format!("Du bist live · {watchers}"),
+        Locale::En => format!("You’re live · {watchers}"),
     }
 }

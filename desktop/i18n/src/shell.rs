@@ -152,6 +152,7 @@ crate::strings! {
     /// The desktop app's own: an older page of history had nothing readable.
     error_unreadable_page = "keine lesbare Nachricht auf der älteren Seite"
         | "no readable message on the older page";
+    user_panel_call_settings = "Anrufeinstellungen" | "Call settings";
 }
 
 /// The desktop app's own: the server turned the upgrade down, with why
