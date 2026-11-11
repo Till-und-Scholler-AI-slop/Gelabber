@@ -85,6 +85,10 @@ pub struct ComposerInput<'a> {
     pub keywords: bool,
     /// Unsent attempts (failed rows).
     pub unsent: usize,
+    /// Who the `@…` suggestions offer (`mentionable`): in a channel limited
+    /// to roles only who can read it; `members` still turns names into
+    /// mentions.
+    pub mentionable: &'a [Member],
 }
 
 /// What the composer asks for.
@@ -102,7 +106,9 @@ pub enum ComposerAction {
 
 fn suggestions_for(state: &ComposerState, input: &ComposerInput) -> Vec<Suggestion> {
     match state.mention() {
-        Some((_, query)) => mentions::suggestions(&query, input.members, input.me, input.keywords),
+        Some((_, query)) => {
+            mentions::suggestions(&query, input.mentionable, input.me, input.keywords)
+        }
         None => Vec::new(),
     }
 }
@@ -892,6 +898,7 @@ mod tests {
                     me: None,
                     keywords: false,
                     unsent: 0,
+                    mentionable: members,
                 };
                 let pane = ui.max_rect();
                 let _ = show(ui, pane, &mut state.borrow_mut(), &input);
@@ -988,6 +995,7 @@ mod tests {
                     me: None,
                     keywords: false,
                     unsent: 0,
+                    mentionable: &members,
                 };
                 let pane = ui.max_rect();
                 for action in show(ui, pane, &mut state.borrow_mut(), &input) {

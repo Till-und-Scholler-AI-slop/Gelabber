@@ -233,6 +233,12 @@ struct Conversation {
     members: Vec<Member>,
     peer: Option<(String, Option<String>, Presence)>,
     muted: bool,
+    /// Who the `@…` suggestions offer: `members`, or in a channel limited
+    /// to roles only who can read it. Names in messages still resolve
+    /// against every member.
+    mentionable: Vec<Member>,
+    /// Limited to roles: the header's lock.
+    limited: bool,
 }
 
 /// A server text channel: header and body, drawn into `ui.max_rect()`.
@@ -270,6 +276,14 @@ pub fn channel_page(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) 
                     .collect(),
                 peer: None,
                 muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
+                mentionable: crate::screens::shell::access::members_who_see(detail, ch)
+                    .into_iter()
+                    .map(|m| Member {
+                        id: m.user_id,
+                        name: m.name.clone(),
+                    })
+                    .collect(),
+                limited: ch.limited,
             }
         }))
     });
@@ -338,9 +352,11 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             can_send_files: true,
             can_moderate: false,
             can_everyone: false,
+            mentionable: members.clone(),
             members,
             peer: Some((dm.peer.name.clone(), dm.peer.avatar_url.clone(), presence)),
             muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
+            limited: false,
         })
     });
     // Each opening fetches the conversation itself (`useDm`), also one the
@@ -459,6 +475,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         None => header::Title::Channel {
             name: &conv.title,
             voice: false,
+            limited: conv.limited,
         },
     };
     let head = header::show(
@@ -536,6 +553,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         me: Some(me),
         keywords: conv.server.is_some() && conv.can_everyone,
         unsent,
+        mentionable: &conv.mentionable,
     };
     let composer_state = chat.composers.entry(channel).or_default();
     let composer_h = composer::height(ui.ctx(), composer_state, &composer_input, page.width());
