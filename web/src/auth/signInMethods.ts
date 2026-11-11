@@ -1,11 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { ApiError } from "../api/client.ts";
 import type { ConfirmRequest } from "../components/confirm.ts";
 import { translate } from "../i18n/catalog.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
 import { isOidcError, type OidcError } from "./rules.ts";
 import { signInMethods } from "./session.ts";
 import type { AuthProvider, SignInMethods } from "./types.ts";
+
+/** Where a provider flow started from Sicherheit comes back to. */
+export const SECURITY_PATH = "/settings/konto";
 
 /** The query key of an account's sign-in methods (`GET /api/auth/methods`). */
 export function signInMethodsKey(userId: string) {
@@ -39,6 +43,14 @@ export function signInFeedback(search: unknown): SignInFeedback {
   return out;
 }
 
+/** The address's search without what `signInFeedback` reads. */
+export function withoutFeedback<T extends object>(search: T): T {
+  const rest: Partial<Record<string, unknown>> = { ...search };
+  delete rest.connected;
+  delete rest.oidc_error;
+  return rest as T;
+}
+
 /**
  * The provider a password-less account signs in with: named in the
  * Passwort row, and the one "Mit … bestätigen" signs in again through.
@@ -59,6 +71,21 @@ export function oidcErrorRows(methods: SignInMethods): string[] {
   if (open.length > 0) return open;
   const first = methods.providers[0];
   return first ? [first.id] : [];
+}
+
+/**
+ * A first password the API refused for an old sign-in: the dialog then
+ * offers to sign in again through the provider.
+ */
+export function needsReauth(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "reauth_required";
+}
+
+/** The methods with a password set, after "Festlegen" succeeded. */
+export function withPassword(
+  methods: SignInMethods | undefined,
+): SignInMethods | undefined {
+  return methods ? { ...methods, password: true } : methods;
 }
 
 /** The question before "Trennen". */

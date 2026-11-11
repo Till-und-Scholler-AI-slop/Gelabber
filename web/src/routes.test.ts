@@ -83,6 +83,37 @@ describe("router", () => {
     }
   });
 
+  it("hands a failed confirmation sign-in back to Sicherheit with its error", async () => {
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Ada", email: "ada@example.org" } as never,
+    });
+    const login = router.routesById["/auth/login"].options.beforeLoad;
+    const target = async (search: Record<string, unknown>) => {
+      try {
+        await login?.({ search: validateAuthSearch(search) } as never);
+      } catch (thrown) {
+        return (thrown as { options: { href?: string } }).options.href;
+      }
+      return undefined;
+    };
+    try {
+      expect(
+        await target({ oidc_error: "cancelled", redirect: "/settings/konto" }),
+      ).toBe("/settings/konto?oidc_error=cancelled");
+      expect(await target({ redirect: "/settings/konto" })).toBe(
+        "/settings/konto",
+      );
+      // Elsewhere a signed-in visitor still just goes on.
+      expect(
+        await target({ oidc_error: "cancelled", redirect: "/invite/x" }),
+      ).toBe("/invite/x");
+      expect(await target({ oidc_error: "expired" })).toBe("/");
+    } finally {
+      useSession.setState({ status: "anonymous", user: null });
+    }
+  });
+
   it("keeps only known auth search values", () => {
     expect(
       validateAuthSearch({

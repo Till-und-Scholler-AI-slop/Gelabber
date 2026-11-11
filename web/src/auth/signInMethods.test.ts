@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ApiError } from "../api/client.ts";
 import { setLocale } from "../i18n/locale.ts";
 import {
   disconnectConfirm,
   oidcErrorRows,
   signInFeedback,
+  needsReauth,
   signInProvider,
+  withPassword,
+  withoutFeedback,
 } from "./signInMethods.ts";
 import type { SignInMethods } from "./types.ts";
 
@@ -33,6 +37,15 @@ describe("what a link flow reports back to Sicherheit", () => {
     expect(signInFeedback({ connected: 3 })).toEqual({});
     expect(signInFeedback(undefined)).toEqual({});
     expect(signInFeedback(null)).toEqual({});
+  });
+});
+
+describe("the address after the feedback was read", () => {
+  it("loses the feedback and keeps everything else", () => {
+    expect(
+      withoutFeedback({ connected: "google", oidc_error: "failed", tab: 2 }),
+    ).toEqual({ tab: 2 });
+    expect(withoutFeedback({})).toEqual({});
   });
 });
 
@@ -89,5 +102,25 @@ describe("the question before Trennen", () => {
     });
     setLocale("en", { persist: false });
     expect(disconnectConfirm("Google").title).toBe("Disconnect Google?");
+  });
+});
+
+describe("setting a first password", () => {
+  it("asks for a fresh sign-in only on reauth_required", () => {
+    expect(needsReauth(new ApiError("reauth_required", 403, ""))).toBe(true);
+    expect(needsReauth(new ApiError("validation_failed", 422, ""))).toBe(false);
+    expect(needsReauth(new Error("reauth_required"))).toBe(false);
+  });
+
+  it("marks the password set and keeps the providers", () => {
+    const methods: SignInMethods = {
+      password: false,
+      providers: [google(true)],
+    };
+    expect(withPassword(methods)).toEqual({
+      password: true,
+      providers: [google(true)],
+    });
+    expect(withPassword(undefined)).toBeUndefined();
   });
 });

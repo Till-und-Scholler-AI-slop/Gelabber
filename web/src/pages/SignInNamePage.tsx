@@ -4,18 +4,14 @@ import { useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "../api/client.ts";
 import { useLinkToken } from "../auth/mail.ts";
-import { safeRedirect } from "../auth/redirect.ts";
-import {
-  isAdmissionError,
-  withoutInvitationField,
-} from "../auth/registration.ts";
+import { completeNameStep, isDeadToken } from "../auth/nameStep.ts";
 import {
   NAME_MAX,
   errorMessage,
   fieldMessage,
   validateName,
 } from "../auth/rules.ts";
-import { completeOidc, oidcPending } from "../auth/session.ts";
+import { oidcPending } from "../auth/session.ts";
 import type { OidcPending } from "../auth/types.ts";
 import { useFocusOnMount } from "../auth/useFocusOnMount.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
@@ -26,9 +22,6 @@ import { SubmitButton } from "../components/SubmitButton.tsx";
 import { SkeletonCard } from "../components/ui/Skeleton.tsx";
 import { T, useT } from "../i18n/catalog.ts";
 import { auth } from "../i18n/catalogs/auth.ts";
-
-const isDeadToken = (error: unknown) =>
-  error instanceof ApiError && error.code === "token_invalid";
 
 /**
  * The last step of a first sign-in through a provider: the new account's
@@ -84,22 +77,12 @@ function NameForm({ token, pending }: { token: string; pending: OidcPending }) {
     useFormErrors(form);
 
   const mutation = useMutation({
-    mutationFn: () => completeOidc(token, name.trim()),
-    onSuccess: (session) => {
-      void navigate({
-        href: safeRedirect(session.redirect) ?? "/",
-        replace: true,
-      });
-    },
-    onError: (error) => {
-      if (isDeadToken(error)) {
-        setDeadLink(true);
-        return;
-      }
-      // No invitation field here: a refusal is the form's message.
-      fromError(
-        isAdmissionError(error) ? withoutInvitationField(error) : error,
-      );
+    mutationFn: () => completeNameStep(token, name),
+    onSuccess: (outcome) => {
+      if (outcome.kind === "signed_in")
+        void navigate({ href: outcome.href, replace: true });
+      else if (outcome.kind === "dead") setDeadLink(true);
+      else fromError(outcome.error);
     },
   });
 

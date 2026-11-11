@@ -7,8 +7,15 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { useSearch } from "@tanstack/react-router";
-import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 
 import { ApiError } from "../api/client.ts";
 import {
@@ -24,12 +31,16 @@ import {
   startOidc,
 } from "../auth/session.ts";
 import {
+  SECURITY_PATH,
   oidcErrorRows,
   signInFeedback,
   signInMethodsKey,
   disconnectConfirm,
   signInProvider,
+  needsReauth,
   useSignInMethods,
+  withPassword,
+  withoutFeedback,
   type SignInFeedback,
 } from "../auth/signInMethods.ts";
 import type { AuthProvider, SignInMethods } from "../auth/types.ts";
@@ -52,14 +63,11 @@ import { auth } from "../i18n/catalogs/auth.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
 
-/** Where a provider sign-in started from this page comes back to. */
-const SECURITY_PATH = "/settings/konto";
-
 /** The section "Anmeldung", with the rows once the methods are known. */
 export function SignInSection({ userId }: { userId: string }) {
   const t = useT(settings);
   const query = useSignInMethods(userId);
-  const feedback = signInFeedback(useSearch({ strict: false }));
+  const feedback = useSignInFeedback();
   return (
     <section
       className="settings-group settings-signin"
@@ -81,6 +89,28 @@ export function SignInSection({ userId }: { userId: string }) {
       )}
     </section>
   );
+}
+
+/**
+ * What a provider flow reported on arrival. It is read once and the
+ * parameters leave the address, so a reload or a later visit from the
+ * history does not show it again.
+ */
+function useSignInFeedback(): SignInFeedback {
+  const search = useSearch({ strict: false });
+  const navigate = useNavigate();
+  const [feedback] = useState(() => signInFeedback(search));
+  const reported = "connected" in search || "oidc_error" in search;
+  useEffect(() => {
+    if (!reported) return;
+    void navigate({
+      to: ".",
+      search: withoutFeedback,
+      replace: true,
+      resetScroll: false,
+    });
+  }, [reported, navigate]);
+  return feedback;
 }
 
 export function SignInRows({
@@ -358,7 +388,7 @@ export function SetPasswordDialog({
       onSet();
     },
     onError: (error) => {
-      if (error instanceof ApiError && error.code === "reauth_required") {
+      if (needsReauth(error)) {
         clear();
         setReauth(true);
         return;
@@ -439,7 +469,7 @@ export function SetPasswordDialog({
 function markPasswordSet(queryClient: QueryClient, userId: string) {
   queryClient.setQueryData<SignInMethods>(
     signInMethodsKey(userId),
-    (methods) => (methods ? { ...methods, password: true } : methods),
+    withPassword,
   );
 }
 

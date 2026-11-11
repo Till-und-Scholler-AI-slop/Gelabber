@@ -439,9 +439,17 @@ export async function setPassword(password: string): Promise<User> {
   return session.user as User;
 }
 
+/** How long `startOidc` stays busy after leaving, should the page stay. */
+export const OIDC_LEAVING_MS = 20_000;
+
 /**
  * Leaves for the provider's sign-in page. The page is left by a plain
  * navigation: the shell's CSP allows no form post to another origin.
+ *
+ * The promise stays open while the page unloads, so the button that started
+ * it stays busy: a second click would start a second flow whose binding
+ * cookie replaces this one's. It settles when the browser brings the page
+ * back from its history, or after `OIDC_LEAVING_MS` if the page never left.
  */
 export async function startOidc(
   provider: string,
@@ -462,6 +470,18 @@ export async function startOidc(
     { method: "POST", body },
   );
   window.location.assign(url);
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      window.removeEventListener("pageshow", back);
+      resolve();
+    };
+    const back = (event: PageTransitionEvent) => {
+      if (event.persisted) done();
+    };
+    const timer = setTimeout(done, OIDC_LEAVING_MS);
+    window.addEventListener("pageshow", back);
+  });
 }
 
 /** The first sign-in a name-step token stands for; does not use it up. */

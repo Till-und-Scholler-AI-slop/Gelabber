@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../api/client.ts";
 import type { OidcPending } from "../auth/types.ts";
 import { setLocale } from "../i18n/locale.ts";
 
@@ -35,9 +36,17 @@ const LENA: OidcPending = {
   name: "Lena Example",
 };
 
-function render(pending?: OidcPending): string {
-  const client = new QueryClient();
+function render(pending?: OidcPending, error?: Error): string {
+  // A failed peek stays failed on mount instead of being fetched again.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retryOnMount: false } },
+  });
   if (pending) client.setQueryData(["oidc", "pending", TOKEN], pending);
+  if (error)
+    client
+      .getQueryCache()
+      .build(client, { queryKey: ["oidc", "pending", TOKEN] })
+      .setState({ status: "error", error, fetchStatus: "idle" });
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <SignInNamePage />
@@ -80,6 +89,22 @@ describe("the name step of a first sign-in", () => {
     expect(html).toContain(
       '<a href="/login" class="auth-link self-start">Zur Anmeldung</a>',
     );
+    expect(html).not.toContain("<form");
+  });
+
+  it("sends a visitor back to sign in when the step is gone", () => {
+    const html = render(undefined, new ApiError("token_invalid", 410, "gone"));
+    expect(html).toContain('<h1 tabindex="-1">Anmeldung abgelaufen</h1>');
+    expect(html).toContain(
+      '<a href="/login" class="auth-link self-start">Zur Anmeldung</a>',
+    );
+    expect(html).not.toContain("<form");
+  });
+
+  it("offers a retry when the step could not be read", () => {
+    const html = render(undefined, new ApiError("network", 0, "offline"));
+    expect(html).toContain("<h1>Anzeigenamen wählen</h1>");
+    expect(html).not.toContain("Anmeldung abgelaufen");
     expect(html).not.toContain("<form");
   });
 

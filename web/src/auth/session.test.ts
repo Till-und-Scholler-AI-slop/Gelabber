@@ -20,6 +20,7 @@ import {
   login,
   logout,
   logoutEverywhere,
+  OIDC_LEAVING_MS,
   oidcPending,
   register,
   requestPasswordReset,
@@ -866,10 +867,34 @@ describe("profile write slot", () => {
 describe("sign-in through a provider", () => {
   /** A page that can be left; its storage holds nothing. */
   function stubPage(assign: (url: string) => void) {
+    const listeners = new Set<(event: { persisted: boolean }) => void>();
     vi.stubGlobal("window", {
       location: { assign },
       localStorage: { getItem: () => null },
+      addEventListener: (
+        _: string,
+        f: (event: { persisted: boolean }) => void,
+      ) => listeners.add(f),
+      removeEventListener: (
+        _: string,
+        f: (event: { persisted: boolean }) => void,
+      ) => listeners.delete(f),
     });
+    return {
+      /** The browser brings the page back from its history. */
+      back: () => listeners.forEach((f) => f({ persisted: true })),
+    };
+  }
+
+  /** Whether `promise` has settled once pending work has run. */
+  async function settled(promise: Promise<unknown>): Promise<boolean> {
+    let done = false;
+    void promise.then(
+      () => (done = true),
+      () => (done = true),
+    );
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    return done;
   }
 
   beforeEach(() => resetSessionForTests());
@@ -891,12 +916,24 @@ describe("sign-in through a provider", () => {
       }),
     );
 
-    await startOidc("google", {
-      purpose: "sign_in",
-      redirect: "/invite/abc123",
-      invitation: "k7m2p9qrs4tx",
-    });
-    await startOidc("google", { purpose: "link", currentPassword: "pw" });
+    vi.useFakeTimers();
+    try {
+      const first = startOidc("google", {
+        purpose: "sign_in",
+        redirect: "/invite/abc123",
+        invitation: "k7m2p9qrs4tx",
+      });
+      await vi.advanceTimersByTimeAsync(OIDC_LEAVING_MS);
+      await first;
+      const second = startOidc("google", {
+        purpose: "link",
+        currentPassword: "pw",
+      });
+      await vi.advanceTimersByTimeAsync(OIDC_LEAVING_MS);
+      await second;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(calls).toEqual([
       "POST /api/auth/oidc/google/start",
@@ -914,6 +951,33 @@ describe("sign-in through a provider", () => {
     expect(assign).toHaveBeenCalledWith(
       "https://accounts.example.test/auth?state=s",
     );
+  });
+
+  it("startOidc stays busy while the page leaves", async () => {
+    const assign = vi.fn();
+    const page = stubPage(assign);
+    fakeApi({
+      "POST /api/auth/oidc/google/start": () =>
+        json(200, { url: "https://accounts.example.test/auth?state=s" }),
+    });
+    vi.useFakeTimers();
+    try {
+      const leaving = startOidc("google", { purpose: "sign_in" });
+      expect(await settled(leaving)).toBe(false);
+      expect(assign).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(OIDC_LEAVING_MS - 1);
+      expect(await settled(leaving)).toBe(false);
+      // Back from the provider through the history: usable again at once.
+      page.back();
+      expect(await settled(leaving)).toBe(true);
+
+      const stuck = startOidc("google", { purpose: "sign_in" });
+      expect(await settled(stuck)).toBe(false);
+      await vi.advanceTimersByTimeAsync(OIDC_LEAVING_MS);
+      expect(await settled(stuck)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("startOidc stays on the page when the API refuses", async () => {

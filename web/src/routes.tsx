@@ -9,6 +9,7 @@ import {
 import { safeRedirect } from "./auth/redirect.ts";
 import { isOidcError, type OidcError } from "./auth/rules.ts";
 import { currentUserId } from "./auth/scope.ts";
+import { SECURITY_PATH } from "./auth/signInMethods.ts";
 import {
   ensureSession,
   useSession,
@@ -134,8 +135,21 @@ function requireUser(signIn: "/login" | "/register" = "/login") {
 async function requireAnonymous({ search }: { search: AuthSearch }) {
   await ensureSession();
   if (useSession.getState().status === "authenticated") {
-    throw redirect({ href: search.redirect ?? "/", replace: true });
+    throw redirect({ href: signedInTarget(search), replace: true });
   }
+}
+
+/**
+ * Where a signed-in visitor of login or register goes. A failed provider
+ * sign-in started from Sicherheit ("Mit Google bestätigen") comes back to
+ * `/login` while the tab is still signed in; its error goes on to Sicherheit,
+ * which shows it.
+ */
+export function signedInTarget(search: AuthSearch): string {
+  const target = search.redirect ?? "/";
+  if (search.oidc_error && target === SECURITY_PATH)
+    return `${target}?${new URLSearchParams({ oidc_error: search.oidc_error })}`;
+  return target;
 }
 
 // The profile became the first settings area; old links and bookmarks land

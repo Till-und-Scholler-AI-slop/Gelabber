@@ -9,6 +9,7 @@ import { setLocale } from "../i18n/locale.ts";
 const fixture = vi.hoisted(() => ({ search: {} as Record<string, unknown> }));
 vi.mock("@tanstack/react-router", () => ({
   useSearch: () => fixture.search,
+  useNavigate: () => () => Promise.resolve(),
 }));
 
 import { signInMethodsKey } from "../auth/signInMethods.ts";
