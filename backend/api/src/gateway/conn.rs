@@ -799,8 +799,14 @@ fn frame_scope(frame: &ServerFrame) -> Option<Scope> {
 }
 
 /// [`frame_scope`] for the dequeue check. Presence on a DM is published on
-/// the DM id, which is no server row: it is checked as the DM it is.
+/// the DM id, which is no server row: it is checked as the DM it is. A DM
+/// discovery notice carries only the channel id and is only ever queued for
+/// that DM's own participants; it passes unchecked, so the notice that a
+/// deleted account's DM is gone (`account::deletion`) reaches the peer.
 fn dequeue_scope(frame: &ServerFrame, dms: &HashSet<Uuid>) -> Option<Scope> {
+    if matches!(frame, ServerFrame::Dm { .. }) {
+        return None;
+    }
     match frame_scope(frame) {
         Some((sid, None))
             if matches!(frame, ServerFrame::Presence { .. }) && dms.contains(&sid) =>
