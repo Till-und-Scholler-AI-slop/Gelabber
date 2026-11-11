@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 gelabber-i18n = { path = "../i18n" }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "cookies", "rustls", "stream", "multipart"] }
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync", "net", "fs"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 # The sockets verify certificates as reqwest does: against the platform's trust store.
 rustls = { version = "0.23.46", default-features = false, features = ["std", "aws_lc_rs"] }

@@ -235,6 +235,17 @@ struct HeldSignOut {
     everywhere: bool,
 }
 
+/// `User-Agent` of every request: the version and the system this build is
+/// for, so the account's device list names it (the server's `auth/device.rs`
+/// reads `Gelabber-Desktop/<version> (<os>)` with `linux`, `windows` or
+/// `macos`).
+#[cfg(target_os = "windows")]
+pub const USER_AGENT: &str = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"), " (windows)");
+#[cfg(target_os = "macos")]
+pub const USER_AGENT: &str = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"), " (macos)");
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const USER_AGENT: &str = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"), " (linux)");
+
 /// `Accept-Language` for the interface's language right now.
 fn accept_language() -> &'static str {
     match gelabber_i18n::get() {
@@ -252,7 +263,7 @@ impl Http {
             header::ACCEPT,
             header::HeaderValue::from_static("application/json"),
         );
-        let user_agent = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"));
+        let user_agent = USER_AGENT;
         let client = reqwest::Client::builder()
             .cookie_provider(jar.clone())
             .default_headers(headers)
@@ -682,6 +693,64 @@ impl Http {
         Ok(bytes)
     }
 
+    /// Streams a resource of the own origin (the data export) into the
+    /// file at `path`, without a cap and without holding it in memory, as
+    /// [`Self::bytes`] would. A redirect to the object store is followed.
+    /// The bytes go to `<path>.part` first and replace `path` only when
+    /// complete, so a failed download leaves no half file and keeps one
+    /// that was there. Returns the number of bytes written.
+    pub async fn download_to(&self, path: &str, target: &std::path::Path) -> Result<u64, ApiError> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut res = self
+            .client
+            .get(self.url(path))
+            // Large archives: no limit on the whole, only on silence.
+            .timeout(DOWNLOAD_TOTAL)
+            .send()
+            .await
+            .map_err(ApiError::from_reqwest)?;
+        self.track_clock(&res);
+        let status = res.status();
+        if !status.is_success() {
+            let wait = retry_after_header(res.headers());
+            let mut body = Vec::new();
+            while let Some(chunk) = next_chunk(&mut res).await? {
+                if body.len() + chunk.len() > ERROR_BODY_MAX {
+                    break;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            let error = envelope(status, &body, wait);
+            if error.is_unauthenticated() {
+                self.report_unauthenticated();
+            }
+            return Err(error);
+        }
+        let mut part = target.as_os_str().to_owned();
+        part.push(".part");
+        let part = std::path::PathBuf::from(part);
+        let io = |e: std::io::Error| ApiError::Transport(e.to_string());
+        let written = async {
+            let mut file = tokio::fs::File::create(&part).await.map_err(io)?;
+            let mut written = 0u64;
+            while let Some(chunk) = next_chunk(&mut res).await? {
+                file.write_all(&chunk).await.map_err(io)?;
+                written += chunk.len() as u64;
+            }
+            file.flush().await.map_err(io)?;
+            file.sync_all().await.map_err(io)?;
+            drop(file);
+            tokio::fs::rename(&part, target).await.map_err(io)?;
+            Ok(written)
+        }
+        .await;
+        if written.is_err() {
+            let _ = tokio::fs::remove_file(&part).await;
+        }
+        written
+    }
+
     /// Any successful body with a `csrf_token` string replaces the token
     /// (web `rememberCsrf`): sign-in and sign-out rotate it.
     fn remember_csrf(&self, bytes: &[u8]) {
@@ -708,6 +777,24 @@ impl Http {
             let offset = server.timestamp_millis() - chrono::Utc::now().timestamp_millis();
             self.clock_offset.store(offset, Ordering::Relaxed);
         }
+    }
+}
+
+/// [`Http::download_to`]: the whole may take long, a pause may not.
+const DOWNLOAD_TOTAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// [`Http::download_to`]: the longest wait for the next bytes.
+const DOWNLOAD_IDLE: Duration = UPLOAD_TIMEOUT;
+/// The most of an error answer read for its envelope.
+const ERROR_BODY_MAX: usize = 64 * 1024;
+
+/// The next piece of a streamed body, or a timeout after
+/// [`DOWNLOAD_IDLE`] without one.
+async fn next_chunk(
+    res: &mut reqwest::Response,
+) -> Result<Option<impl std::ops::Deref<Target = [u8]> + use<>>, ApiError> {
+    match tokio::time::timeout(DOWNLOAD_IDLE, res.chunk()).await {
+        Ok(chunk) => chunk.map_err(ApiError::from_reqwest),
+        Err(elapsed) => Err(ApiError::timeout(elapsed)),
     }
 }
 
@@ -1121,5 +1208,85 @@ mod tests {
         assert_eq!(http.ws_url("/ws"), "ws://127.0.0.1:5180/ws");
         let https = Http::new("https://gelabber.example").unwrap();
         assert_eq!(https.ws_url("/media/ws"), "wss://gelabber.example/media/ws");
+    }
+
+    /// The device list tells the systems apart: the app names its own, in
+    /// the form `auth/device.rs` on the server reads as `desktop`.
+    #[test]
+    fn the_user_agent_names_the_system() {
+        let os = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        };
+        let expected = format!("Gelabber-Desktop/{} ({os})", env!("CARGO_PKG_VERSION"));
+        assert_eq!(USER_AGENT, expected);
+        let rest = USER_AGENT.strip_prefix("Gelabber-Desktop/").unwrap();
+        let (_, tail) = rest.split_once('(').unwrap();
+        assert_eq!(tail.split_once(')').unwrap().0.trim(), os);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = serve(|_| ok_body(1));
+        let http = Http::new(&base).unwrap();
+        runtime.block_on(http.bytes("/x", Download::Image)).unwrap();
+        runtime
+            .block_on(http.bytes(&format!("{base}/y"), Download::Image))
+            .unwrap();
+        for head in seen.lock().iter() {
+            let agent = head
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.eq_ignore_ascii_case("user-agent")
+                        .then(|| v.trim().to_owned())
+                })
+                .unwrap();
+            assert_eq!(agent, expected, "{head}");
+        }
+    }
+
+    /// The export goes to disk as it comes, past what an attachment may
+    /// be; an error answer keeps its code and leaves no file behind.
+    #[test]
+    fn a_download_to_a_file_has_no_cap() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let size = Download::File.max_bytes() + 1;
+        let (base, seen) = serve(move |head| {
+            if head.starts_with("GET /api/me/export/download ") {
+                ok_body(size)
+            } else {
+                let body = r#"{"error":"not_found","message":"Not found"}"#;
+                format!(
+                    "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .into_bytes()
+            }
+        });
+        let dir = std::env::temp_dir().join(format!("gelabber-download-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("gelabber-export-2026-11-11.zip");
+        std::fs::write(&target, b"old").unwrap();
+        let http = Http::new(&base).unwrap();
+        http.restore_session_cookie("tok");
+        let written = runtime
+            .block_on(http.download_to("/api/me/export/download", &target))
+            .unwrap();
+        assert_eq!(written, size as u64);
+        assert_eq!(std::fs::metadata(&target).unwrap().len(), size as u64);
+        assert!(seen.lock()[0].contains("gelabber_session=tok"));
+        let gone = dir.join("gone.zip");
+        let error = runtime
+            .block_on(http.download_to("/api/elsewhere", &gone))
+            .unwrap_err();
+        assert_eq!(error.code(), "not_found");
+        assert!(!gone.exists());
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(leftovers.len(), 1, "{leftovers:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
