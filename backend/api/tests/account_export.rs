@@ -457,6 +457,83 @@ async fn the_retention_setting_decides_how_long_it_stays(pool: PgPool) {
     assert!((hours - 3.0).abs() < 0.01, "{hours}");
 }
 
+/// Ada with a server of her own and one message in it; returns the
+/// message's id and channel.
+async fn wrote_once(state: &AppState) -> (Client, Uuid, Uuid, Uuid) {
+    let mut ada = signed_up(state, "ada@example.com", "Ada").await;
+    let ada_id = uuid(ada.user_id());
+    let res = ada
+        .send(
+            Method::POST,
+            "/api/servers",
+            Some(json!({ "name": "Team" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let channel_id = res.body["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|ch| ch["kind"] == "text")
+        .map(id_of)
+        .unwrap();
+    let message = post(
+        &mut ada,
+        &channel_id,
+        json!({ "content": "x".repeat(2000) }),
+    )
+    .await;
+    (ada, ada_id, uuid(&id_of(&message)), uuid(&channel_id))
+}
+
+async fn attempts(pool: &PgPool) -> i32 {
+    sqlx::query_scalar("SELECT attempts FROM account_exports")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// An archive that would pass `API_EXPORT_MAX_BYTES` fails at once rather
+/// than being tried again: the files' sizes are summed before the build.
+#[sqlx::test]
+async fn files_past_the_size_limit_fail_the_export_at_once(pool: PgPool) {
+    let mut state = common::state(pool.clone());
+    state.export_max_bytes = 100_000;
+    let (mut ada, ada_id, message_id, channel_id) = wrote_once(&state).await;
+    sqlx::query(
+        "INSERT INTO attachments (message_id, channel_id, uploader_id, object_key, filename, \
+             content_type, size_bytes) \
+         VALUES ($1, $2, $3, 'att/big', 'big.bin', 'application/octet-stream', 100001)",
+    )
+    .bind(message_id)
+    .bind(channel_id)
+    .bind(ada_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    request(&mut ada).await;
+    assert_eq!(built(&state, ada_id).await, "failed");
+    assert_eq!(attempts(&pool).await, 1);
+    assert_eq!(status(&mut ada).await["export"]["state"], "failed");
+}
+
+/// The archive file itself refuses to grow past the limit, for messages
+/// as much as for files.
+#[sqlx::test]
+async fn an_archive_growing_past_the_size_limit_fails_at_once(pool: PgPool) {
+    let mut state = common::state(pool.clone());
+    state.export_max_bytes = 2000;
+    let (mut ada, ada_id, _, _) = wrote_once(&state).await;
+    request(&mut ada).await;
+    assert_eq!(built(&state, ada_id).await, "failed");
+    assert_eq!(attempts(&pool).await, 1);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM storage_cleanup")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "nothing was uploaded");
+}
+
 #[sqlx::test]
 async fn the_ready_mail_goes_out_only_with_mail_on(pool: PgPool) {
     // Mail off: nothing to send, and the page polls instead.

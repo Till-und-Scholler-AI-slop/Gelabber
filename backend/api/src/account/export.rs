@@ -12,8 +12,9 @@
 //! 2. **Build** the ZIP into a temporary file in `std::env::temp_dir()`. The
 //!    entries are written in a blocking task that reads the database in
 //!    pages of 500 rows and object bytes through `ObjectStore::read`, never
-//!    holding a connection across an object store request. The file is
-//!    deleted whatever happens.
+//!    holding a connection across an object store request. Messages and
+//!    reactions are written to their entry page by page, so memory does not
+//!    grow with the account. The file is deleted whatever happens.
 //! 3. **Upload** it to `exports/{user}/{uuid}.zip`, streamed from the file.
 //! 4. **Finish:** mark it `ready` until now + `API_EXPORT_RETENTION_HOURS`,
 //!    but only while the claim is still this one; otherwise the object is
@@ -21,7 +22,9 @@
 //!    the account.
 //!
 //! A build that fails is tried again a minute later, and is `failed` after
-//! its third attempt.
+//! its third attempt. An archive that would be larger than
+//! `API_EXPORT_MAX_BYTES` is `failed` at once: the person's files are
+//! summed before the build, and the file refuses to grow past the limit.
 //!
 //! The archive holds only what the person wrote or owns (layout in
 //! `docs/native/protocol-rest-auth.md`): `README.txt`, `account.json`,
@@ -30,16 +33,19 @@
 //! the password hash, session tokens and other people's messages are never
 //! part of it.
 
+use std::collections::HashSet;
 use std::fs::File;
-use std::io::Write;
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::ser::{Error as _, SerializeSeq};
+use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool};
 use tokio::io::AsyncReadExt;
@@ -147,10 +153,22 @@ pub async fn run_once(state: &AppState) -> Result<bool, ApiError> {
         return Ok(true);
     }
 
+    let max = state.export_max_bytes;
     let archive = TempFile::new();
-    let built = build(state, user_id, archive.path().to_owned()).await;
+    let built = match sent_bytes(&state.db, user_id).await {
+        Ok(files) if files > max => Ok(None),
+        Ok(_) => build(state, user_id, archive.path().to_owned(), max).await,
+        Err(err) => Err(err),
+    };
     let result = match built {
-        Ok(size) => publish(state, user_id, claim, &archive, size).await,
+        Ok(Some(size)) => publish(state, user_id, claim, &archive, size).await,
+        Ok(None) => {
+            drop(archive);
+            // Another attempt would end the same way.
+            give_up(&state.db, user_id, claim).await?;
+            warn!(%user_id, max, "data export larger than API_EXPORT_MAX_BYTES, failed");
+            return Ok(true);
+        }
         Err(err) => Err(err),
     };
     drop(archive);
@@ -172,6 +190,20 @@ pub async fn run_once(state: &AppState) -> Result<bool, ApiError> {
         }
     }
     Ok(true)
+}
+
+/// The bytes of the files the person sent, all of which go into the
+/// archive.
+async fn sent_bytes(db: &PgPool, user_id: Uuid) -> Result<u64, ApiError> {
+    let sum: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(a.size_bytes), 0)::bigint \
+         FROM attachments a JOIN messages m ON m.id = a.message_id \
+         WHERE m.author_id = $1 AND a.uploader_id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+    Ok(u64::try_from(sum).unwrap_or(0))
 }
 
 async fn give_up(db: &PgPool, user_id: Uuid, claim: Uuid) -> Result<(), ApiError> {
@@ -284,40 +316,97 @@ impl Drop for TempFile {
     }
 }
 
-/// Writes the archive of `user_id` to `path` and returns its size.
-async fn build(state: &AppState, user_id: Uuid, path: PathBuf) -> Result<u64, ApiError> {
+/// Writes the archive of `user_id` to `path` and returns its size, or
+/// `None` when it would be larger than `max` bytes.
+async fn build(
+    state: &AppState,
+    user_id: Uuid,
+    path: PathBuf,
+    max: u64,
+) -> Result<Option<u64>, ApiError> {
     let db = state.db.clone();
     let store = state.store.clone();
     let handle = Handle::current();
     tokio::task::spawn_blocking(move || {
         let file = File::create(&path).map_err(|err| internal("create archive", err))?;
+        let over = Arc::new(AtomicBool::new(false));
         let mut archive = Archive {
-            zip: zip::ZipWriter::new(file),
+            zip: zip::ZipWriter::new(Capped {
+                file,
+                position: 0,
+                max,
+                over: over.clone(),
+            }),
             db,
             store,
             handle,
             user_id,
         };
-        archive.write_all()?;
-        let file = archive
-            .zip
-            .finish()
-            .map_err(|err| internal("finish archive", err))?;
-        file.sync_all()
+        let written = archive.write_all().and_then(|()| {
+            archive
+                .zip
+                .finish()
+                .map_err(|err| internal("finish archive", err))
+        });
+        if over.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let capped = written?;
+        capped
+            .file
+            .sync_all()
             .map_err(|err| internal("sync archive", err))?;
-        let size = file
+        let size = capped
+            .file
             .metadata()
             .map_err(|err| internal("archive size", err))?
             .len();
-        Ok(size)
+        Ok(Some(size))
     })
     .await?
+}
+
+/// The archive file, which refuses to grow past `max` bytes and then sets
+/// `over`. Once over, it takes later writes without storing them: the
+/// archive is thrown away, and the `ZipWriter` dropped after the error
+/// finalizes quietly instead of reporting another failure.
+struct Capped {
+    file: File,
+    position: u64,
+    max: u64,
+    over: Arc<AtomicBool>,
+}
+
+impl Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.over.load(Ordering::Relaxed) {
+            return Ok(buf.len());
+        }
+        if self.position.saturating_add(buf.len() as u64) > self.max {
+            self.over.store(true, Ordering::Relaxed);
+            return Err(io::Error::other("the archive exceeds API_EXPORT_MAX_BYTES"));
+        }
+        let written = self.file.write(buf)?;
+        self.position += written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl Seek for Capped {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        self.position = self.file.seek(to)?;
+        Ok(self.position)
+    }
 }
 
 /// The archive being written, on a blocking thread: database pages and
 /// object bytes are awaited through `handle`.
 struct Archive {
-    zip: zip::ZipWriter<File>,
+    zip: zip::ZipWriter<Capped>,
     db: PgPool,
     store: ObjectStore,
     handle: Handle,
@@ -406,9 +495,17 @@ struct MessageRow {
 struct AttachmentRow {
     id: Uuid,
     message_id: Uuid,
-    object_key: String,
     filename: String,
     content_type: String,
+    size_bytes: i64,
+}
+
+#[derive(FromRow)]
+struct StoredFile {
+    id: Uuid,
+    created_at: DateTime<Utc>,
+    object_key: String,
+    filename: String,
     size_bytes: i64,
 }
 
@@ -444,6 +541,17 @@ impl Archive {
         let bytes =
             serde_json::to_vec_pretty(value).map_err(|err| internal("encode entry", err))?;
         self.bytes(name, &bytes)
+    }
+
+    /// Writes `value` to the entry `name` as it is serialized, for entries
+    /// that read their content page by page ([`MessagePages`],
+    /// [`ReactionPages`]); their size is not known up front.
+    fn json_stream(&mut self, name: &str, value: &impl Serialize) -> Result<(), ApiError> {
+        self.start(name, u64::MAX)?;
+        let mut out = io::BufWriter::with_capacity(CHUNK, &mut self.zip);
+        serde_json::to_writer_pretty(&mut out, value)
+            .map_err(|err| internal("encode entry", err))?;
+        out.flush().map_err(|err| internal("write entry", err))
     }
 
     /// Copies an object into the entry `name`. `false` when the object is
@@ -606,7 +714,8 @@ impl Archive {
             let Some(channel) = channel else {
                 continue;
             };
-            let messages = self.channel_messages(channel_id)?;
+            // The files first: the ZIP writes one entry at a time.
+            let copied = self.channel_files(channel_id)?;
             let server = channel
                 .server_id
                 .zip(channel.server_name)
@@ -619,39 +728,42 @@ impl Archive {
                 Some(server_id) => format!("messages/servers/{server_id}/{}.json", channel.id),
                 None => format!("messages/dms/{}.json", channel.id),
             };
-            self.json(
-                &name,
-                &json!({
-                    "channel": {
-                        "id": channel.id,
-                        "name": channel.name,
-                        "kind": channel.kind,
-                        "server": server,
-                        "peer": peer,
-                    },
-                    "messages": messages,
+            let file = ChannelFile {
+                channel: json!({
+                    "id": channel.id,
+                    "name": channel.name,
+                    "kind": channel.kind,
+                    "server": server,
+                    "peer": peer,
                 }),
-            )?;
+                messages: MessagePages {
+                    db: self.db.clone(),
+                    handle: self.handle.clone(),
+                    user_id,
+                    channel_id,
+                    copied: &copied,
+                },
+            };
+            self.json_stream(&name, &file)?;
         }
         Ok(())
     }
 
-    /// The person's messages in one channel, in `(created_at, id)` order,
-    /// page by page; their files are written as each page is read.
-    fn channel_messages(&mut self, channel_id: Uuid) -> Result<Vec<Value>, ApiError> {
+    /// Copies the files the person sent in one channel into `files/`, page
+    /// by page; returns the ids of those that were still stored.
+    fn channel_files(&mut self, channel_id: Uuid) -> Result<HashSet<Uuid>, ApiError> {
         let user_id = self.user_id;
         let db = self.db.clone();
-        let mut out = Vec::new();
+        let mut copied = HashSet::new();
         let mut after: Option<(DateTime<Utc>, Uuid)> = None;
         loop {
-            let page: Vec<MessageRow> = self.wait(
+            let page: Vec<StoredFile> = self.wait(
                 sqlx::query_as(
-                    "SELECT id, created_at, edited_at, content, reply_to, gif, system_kind, \
-                            system_params \
-                     FROM messages \
-                     WHERE author_id = $1 AND channel_id = $2 \
-                       AND ($3::timestamptz IS NULL OR (created_at, id) > ($3, $4)) \
-                     ORDER BY created_at, id LIMIT $5",
+                    "SELECT a.id, a.created_at, a.object_key, a.filename, a.size_bytes \
+                     FROM attachments a JOIN messages m ON m.id = a.message_id \
+                     WHERE m.author_id = $1 AND m.channel_id = $2 AND a.uploader_id = $1 \
+                       AND ($3::timestamptz IS NULL OR (a.created_at, a.id) > ($3, $4)) \
+                     ORDER BY a.created_at, a.id LIMIT $5",
                 )
                 .bind(user_id)
                 .bind(channel_id)
@@ -665,40 +777,113 @@ impl Archive {
             };
             after = Some((last.created_at, last.id));
             let full = page.len() as i64 == PAGE;
-            let ids: Vec<Uuid> = page.iter().map(|message| message.id).collect();
-            let files: Vec<AttachmentRow> = self.wait(
-                sqlx::query_as(
-                    "SELECT id, message_id, object_key, filename, content_type, size_bytes \
-                     FROM attachments WHERE message_id = ANY($1) AND uploader_id = $2 \
-                     ORDER BY created_at, id",
-                )
-                .bind(&ids)
-                .bind(user_id)
-                .fetch_all(&db),
-            )?;
-            let mut listed: Vec<(Uuid, Value)> = Vec::with_capacity(files.len());
-            for file in files {
-                let path = format!("files/{}/{}", file.id, safe_file_name(&file.filename));
+            for file in page {
+                let path = file_path(file.id, &file.filename);
                 let size = u64::try_from(file.size_bytes).unwrap_or(0);
-                let stored = self.object(&path, &file.object_key, size)?;
-                listed.push((
-                    file.message_id,
-                    json!({
-                        "id": file.id,
-                        "filename": file.filename,
-                        "content_type": file.content_type,
-                        "size_bytes": file.size_bytes,
-                        "path": stored.then_some(path),
-                    }),
-                ));
+                if self.object(&path, &file.object_key, size)? {
+                    copied.insert(file.id);
+                }
             }
+            if !full {
+                break;
+            }
+        }
+        Ok(copied)
+    }
+
+    /// `reactions.json`: every reaction the person gave.
+    fn reactions(&mut self) -> Result<(), ApiError> {
+        let reactions = ReactionPages {
+            db: self.db.clone(),
+            handle: self.handle.clone(),
+            user_id: self.user_id,
+        };
+        self.json_stream("reactions.json", &reactions)
+    }
+}
+
+/// Where a sent file goes in the archive.
+fn file_path(id: Uuid, filename: &str) -> String {
+    format!("files/{id}/{}", safe_file_name(filename))
+}
+
+/// One `messages/…/{channel}.json`.
+#[derive(Serialize)]
+struct ChannelFile<'a> {
+    channel: Value,
+    messages: MessagePages<'a>,
+}
+
+/// The person's messages in one channel, in `(created_at, id)` order, read
+/// from the database page by page while they are serialized. A file's
+/// `path` is set when it was copied into the archive (`copied`).
+struct MessagePages<'a> {
+    db: PgPool,
+    handle: Handle,
+    user_id: Uuid,
+    channel_id: Uuid,
+    copied: &'a HashSet<Uuid>,
+}
+
+impl Serialize for MessagePages<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(None)?;
+        let mut after: Option<(DateTime<Utc>, Uuid)> = None;
+        loop {
+            let page: Vec<MessageRow> = self
+                .handle
+                .block_on(
+                    sqlx::query_as(
+                        "SELECT id, created_at, edited_at, content, reply_to, gif, system_kind, \
+                                system_params \
+                         FROM messages \
+                         WHERE author_id = $1 AND channel_id = $2 \
+                           AND ($3::timestamptz IS NULL OR (created_at, id) > ($3, $4)) \
+                         ORDER BY created_at, id LIMIT $5",
+                    )
+                    .bind(self.user_id)
+                    .bind(self.channel_id)
+                    .bind(after.map(|(at, _)| at))
+                    .bind(after.map(|(_, id)| id))
+                    .bind(PAGE)
+                    .fetch_all(&self.db),
+                )
+                .map_err(S::Error::custom)?;
+            let Some(last) = page.last() else {
+                break;
+            };
+            after = Some((last.created_at, last.id));
+            let full = page.len() as i64 == PAGE;
+            let ids: Vec<Uuid> = page.iter().map(|message| message.id).collect();
+            let files: Vec<AttachmentRow> = self
+                .handle
+                .block_on(
+                    sqlx::query_as(
+                        "SELECT id, message_id, filename, content_type, size_bytes \
+                         FROM attachments WHERE message_id = ANY($1) AND uploader_id = $2 \
+                         ORDER BY created_at, id",
+                    )
+                    .bind(&ids)
+                    .bind(self.user_id)
+                    .fetch_all(&self.db),
+                )
+                .map_err(S::Error::custom)?;
             for message in page {
-                let attachments: Vec<&Value> = listed
+                let attachments: Vec<Value> = files
                     .iter()
-                    .filter(|(owner, _)| *owner == message.id)
-                    .map(|(_, file)| file)
+                    .filter(|file| file.message_id == message.id)
+                    .map(|file| {
+                        let path = file_path(file.id, &file.filename);
+                        json!({
+                            "id": file.id,
+                            "filename": file.filename,
+                            "content_type": file.content_type,
+                            "size_bytes": file.size_bytes,
+                            "path": self.copied.contains(&file.id).then_some(path),
+                        })
+                    })
                     .collect();
-                out.push(json!({
+                seq.serialize_element(&json!({
                     "id": message.id,
                     "created_at": message.created_at,
                     "edited_at": message.edited_at,
@@ -708,45 +893,56 @@ impl Archive {
                     "system_kind": message.system_kind,
                     "system_params": message.system_params.map(|params| params.0),
                     "attachments": attachments,
-                }));
+                }))?;
             }
             if !full {
                 break;
             }
         }
-        Ok(out)
+        seq.end()
     }
+}
 
-    /// `reactions.json`: every reaction the person gave.
-    fn reactions(&mut self) -> Result<(), ApiError> {
-        let user_id = self.user_id;
-        let db = self.db.clone();
-        let mut out: Vec<ReactionRow> = Vec::new();
+/// Every reaction the person gave, read page by page while serialized.
+struct ReactionPages {
+    db: PgPool,
+    handle: Handle,
+    user_id: Uuid,
+}
+
+impl Serialize for ReactionPages {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(None)?;
         let mut after = (Uuid::nil(), String::new());
         loop {
-            let page: Vec<ReactionRow> = self.wait(
-                sqlx::query_as(
-                    "SELECT r.message_id, m.channel_id, r.emoji \
-                     FROM message_reactions r JOIN messages m ON m.id = r.message_id \
-                     WHERE r.user_id = $1 AND (r.message_id, r.emoji) > ($2, $3) \
-                     ORDER BY r.message_id, r.emoji LIMIT $4",
+            let page: Vec<ReactionRow> = self
+                .handle
+                .block_on(
+                    sqlx::query_as(
+                        "SELECT r.message_id, m.channel_id, r.emoji \
+                         FROM message_reactions r JOIN messages m ON m.id = r.message_id \
+                         WHERE r.user_id = $1 AND (r.message_id, r.emoji) > ($2, $3) \
+                         ORDER BY r.message_id, r.emoji LIMIT $4",
+                    )
+                    .bind(self.user_id)
+                    .bind(after.0)
+                    .bind(&after.1)
+                    .bind(PAGE)
+                    .fetch_all(&self.db),
                 )
-                .bind(user_id)
-                .bind(after.0)
-                .bind(&after.1)
-                .bind(PAGE)
-                .fetch_all(&db),
-            )?;
+                .map_err(S::Error::custom)?;
             let full = page.len() as i64 == PAGE;
             if let Some(last) = page.last() {
                 after = (last.message_id, last.emoji.clone());
             }
-            out.extend(page);
+            for reaction in &page {
+                seq.serialize_element(reaction)?;
+            }
             if !full {
                 break;
             }
         }
-        self.json("reactions.json", &out)
+        seq.end()
     }
 }
 

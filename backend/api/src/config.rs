@@ -89,6 +89,8 @@ pub const OIDC_GOOGLE_CLIENT_SECRET: &str = "OIDC_GOOGLE_CLIENT_SECRET";
 pub const OIDC_GOOGLE_ISSUER: &str = "OIDC_GOOGLE_ISSUER";
 /// Hours a finished data export stays downloadable (`account::export`).
 pub const API_EXPORT_RETENTION_HOURS: &str = "API_EXPORT_RETENTION_HOURS";
+/// Largest data export archive in bytes (`account::export`).
+pub const API_EXPORT_MAX_BYTES: &str = "API_EXPORT_MAX_BYTES";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
@@ -109,6 +111,8 @@ const DEFAULT_MEDIA_TICKET_TTL_SECS: u64 = 30;
 /// A week; at most 30 days.
 const DEFAULT_EXPORT_RETENTION_HOURS: u64 = 168;
 const MAX_EXPORT_RETENTION_HOURS: u64 = 720;
+/// 10 GiB: the archive is built in the temporary directory first.
+const DEFAULT_EXPORT_MAX_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -191,6 +195,9 @@ pub struct Config {
     /// `API_EXPORT_RETENTION_HOURS`: how long a finished data export can be
     /// downloaded before the archive is deleted. 1 to 720 hours.
     pub export_retention: Duration,
+    /// `API_EXPORT_MAX_BYTES`: an export whose archive would be larger
+    /// fails instead of filling the temporary directory.
+    pub export_max_bytes: u64,
 }
 
 /// Who may create an account (`API_REGISTRATION`).
@@ -654,6 +661,10 @@ impl Config {
             }
             None => DEFAULT_EXPORT_RETENTION_HOURS,
         };
+        let export_max_bytes = match get(API_EXPORT_MAX_BYTES) {
+            Some(raw) => parse_positive::<u64>(API_EXPORT_MAX_BYTES, &raw)?,
+            None => DEFAULT_EXPORT_MAX_BYTES,
+        };
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -695,6 +706,7 @@ impl Config {
             registration,
             oidc,
             export_retention: Duration::from_secs(export_retention_hours * 3600),
+            export_max_bytes,
         })
     }
 }
@@ -2292,6 +2304,28 @@ mod tests {
                     hours(raw),
                     Err(ConfigError::Invalid {
                         key: API_EXPORT_RETENTION_HOURS,
+                        ..
+                    })
+                ),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn export_size_is_capped_at_10_gib_unless_set() {
+        let max = |raw: &'static str| {
+            base(&[(API_EXPORT_MAX_BYTES, raw)]).map(|config| config.export_max_bytes)
+        };
+        assert_eq!(base(&[]).unwrap().export_max_bytes, 10 << 30);
+        assert_eq!(max("").unwrap(), 10 << 30);
+        assert_eq!(max(" 1048576 ").unwrap(), 1 << 20);
+        for raw in ["0", "-1", "10G"] {
+            assert!(
+                matches!(
+                    max(raw),
+                    Err(ConfigError::Invalid {
+                        key: API_EXPORT_MAX_BYTES,
                         ..
                     })
                 ),
