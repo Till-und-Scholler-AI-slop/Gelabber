@@ -11,23 +11,25 @@ export type SectionId =
   | "einladungen"
   | "mitglieder"
   | "sperren"
-  | "gefahrenzone";
+  | "gefahrenzone"
+  | "verzeichnis";
 
 /**
  * The sections the caller sees, in page order. `manage_server` edits the
  * server; `moderate_members` kicks, bans and so sees the ban list;
- * everyone sees the members and can leave. `directoryEnabled` is for the
- * Verzeichnis section that discovery adds.
+ * everyone sees the members and can leave. While the directory is on, the
+ * owner (the listing) and `moderate_members` (the join requests) see
+ * Verzeichnis, after Einladungen.
  */
 export function serverSettingsSections(
   server: Pick<Server, "role" | "permissions">,
   directoryEnabled: boolean,
 ): SectionId[] {
-  void directoryEnabled; // Verzeichnis, with discovery
   const manage = can(server, "manage_server");
   const moderate = can(server, "moderate_members");
   return [
     ...(manage ? (["allgemein", "rollen", "einladungen"] as const) : []),
+    ...(directoryEnabled && moderate ? (["verzeichnis"] as const) : []),
     "mitglieder",
     ...(moderate ? (["sperren"] as const) : []),
     "gefahrenzone",

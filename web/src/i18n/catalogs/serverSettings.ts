@@ -1,5 +1,6 @@
 // Server settings (`/s/$serverId/settings`): name and picture, roles,
-// invites, members, bans, leaving and deleting.
+// invites, the directory listing and its join requests, members, bans,
+// leaving and deleting.
 import { defineCatalog } from "../catalog.ts";
 
 export const serverSettings = defineCatalog(
@@ -113,6 +114,44 @@ export const serverSettings = defineCatalog(
     "danger.leaveTitle": "Server „{name}“ verlassen?",
     "danger.leaveConfirm": "Verlassen",
     "danger.leave": "Server verlassen",
+
+    // Verzeichnis (discovery): the owner's listing and the join requests.
+    "section.directory": "Verzeichnis",
+    "directory.hint": "Ob und wie dein Server unter Entdecken erscheint.",
+    "directory.loading": "Lade den Eintrag…",
+    "directory.loadFailed": "Der Eintrag konnte nicht geladen werden.",
+    "directory.delisted":
+      "Der Betreiber hat diesen Server aus dem Verzeichnis genommen.",
+    "directory.listed": "Im Verzeichnis zeigen",
+    "directory.description": "Beschreibung",
+    "directory.descriptionCount": "{length} / {max} Zeichen",
+    "directory.descriptionRequired":
+      "Im Verzeichnis braucht der Server eine Beschreibung.",
+    "directory.descriptionInvalid":
+      "Die Beschreibung enthält Zeichen, die nicht erlaubt sind.",
+    "directory.descriptionTooLong": "Die Beschreibung ist zu lang.",
+    "directory.language": "Sprache",
+    "directory.languagePick": "Sprache wählen",
+    "directory.languageRequired": "Bitte eine Sprache wählen.",
+    "directory.joinMode": "Beitritt",
+    "directory.joinOpen": "Offen",
+    "directory.joinOpenHint": "Jeder kann direkt beitreten.",
+    "directory.joinRequest": "Auf Anfrage",
+    "directory.joinRequestHint":
+      "Du oder wer Mitglieder moderieren darf, nimmt Anfragen an.",
+    "directory.preview": "Vorschau",
+    "directory.saving": "Speichert…",
+    "directory.unchanged": "Keine Änderungen.",
+    "joinRequests.title": "Beitrittsanfragen",
+    "joinRequests.loading": "Lade Anfragen…",
+    "joinRequests.loadFailed": "Die Anfragen konnten nicht geladen werden.",
+    "joinRequests.empty": "Keine offenen Anfragen.",
+    "joinRequests.accept": "Annehmen",
+    "joinRequests.decline": "Ablehnen",
+    "joinRequests.count": {
+      one: "{count} offene Anfrage",
+      other: "{count} offene Anfragen",
+    },
   },
   {
     title: "Server settings",
@@ -218,5 +257,42 @@ export const serverSettings = defineCatalog(
     "danger.leaveTitle": "Leave server “{name}”?",
     "danger.leaveConfirm": "Leave",
     "danger.leave": "Leave server",
+
+    "section.directory": "Directory",
+    "directory.hint": "Whether and how your server appears in Discover.",
+    "directory.loading": "Loading the listing…",
+    "directory.loadFailed": "The listing couldn’t be loaded.",
+    "directory.delisted":
+      "The operator has removed this server from the directory.",
+    "directory.listed": "Show in the directory",
+    "directory.description": "Description",
+    "directory.descriptionCount": "{length} / {max} characters",
+    "directory.descriptionRequired":
+      "A server in the directory needs a description.",
+    "directory.descriptionInvalid":
+      "The description contains characters that aren’t allowed.",
+    "directory.descriptionTooLong": "The description is too long.",
+    "directory.language": "Language",
+    "directory.languagePick": "Choose a language",
+    "directory.languageRequired": "Please choose a language.",
+    "directory.joinMode": "Joining",
+    "directory.joinOpen": "Open",
+    "directory.joinOpenHint": "Anyone can join straight away.",
+    "directory.joinRequest": "On request",
+    "directory.joinRequestHint":
+      "You or anyone who may moderate members accepts requests.",
+    "directory.preview": "Preview",
+    "directory.saving": "Saving…",
+    "directory.unchanged": "No changes.",
+    "joinRequests.title": "Join requests",
+    "joinRequests.loading": "Loading requests…",
+    "joinRequests.loadFailed": "The requests couldn’t be loaded.",
+    "joinRequests.empty": "No open requests.",
+    "joinRequests.accept": "Accept",
+    "joinRequests.decline": "Decline",
+    "joinRequests.count": {
+      one: "{count} open request",
+      other: "{count} open requests",
+    },
   },
 );

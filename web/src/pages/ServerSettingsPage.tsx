@@ -1,5 +1,5 @@
-// `/s/$serverId/settings`: name, roles, invites, members, bans,
-// leave/delete. Open to every member; `serverSettingsSections` says who sees
+// `/s/$serverId/settings`: name, roles, invites, the directory, members,
+// bans, leave/delete. Open to every member; `serverSettingsSections` says who sees
 // which section, deletion needs the owner.
 
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -42,6 +42,10 @@ import { Button } from "../components/ui/Button.tsx";
 import { CopyButton } from "../components/ui/CopyButton.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
+import {
+  useDirectoryStatus,
+  useJoinRequestCount,
+} from "../discover/queries.ts";
 import { inviteUrl } from "../servers/api.ts";
 import { copyText } from "../servers/clipboard.ts";
 import { inviteExpiry, inviteUses } from "../servers/inviteText.ts";
@@ -59,9 +63,11 @@ import {
   useUpdateServer,
 } from "../servers/queries.ts";
 import { validateName } from "../servers/rules.ts";
+import type { DirectoryLanguage } from "../discover/types.ts";
 import type { Invite, ServerDetail } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { sectionInView, type SectionJump } from "./sectionSpy.ts";
+import { JoinRequestQueue, ListingSettingsPanel } from "./ServerDirectory.tsx";
 import {
   MemberRoleChips,
   MemberRolePicker,
@@ -99,6 +105,7 @@ const SECTION_LABEL = {
   mitglieder: "section.members",
   sperren: "section.bans",
   gefahrenzone: "section.danger",
+  verzeichnis: "section.directory",
 } as const satisfies Record<SectionId, string>;
 
 const sectionId = (id: SectionId) => `server-settings-${id}`;
@@ -187,12 +194,14 @@ function useCurrentSection(
 
 function Settings({ server }: { server: ServerDetail }) {
   const t = useT(serverSettings);
-  // The directory switch arrives with discovery.
-  const sections = serverSettingsSections(server, false);
+  const { data: directory } = useDirectoryStatus();
+  const sections = serverSettingsSections(server, directory?.enabled ?? false);
   const shows = (id: SectionId) => sections.includes(id);
   const scroller = useRef<HTMLDivElement>(null);
   const nav = useRef<HTMLElement>(null);
   const [current, jump] = useCurrentSection(sections, scroller, nav);
+  // Only read here: the queue in the section loads it, `jq` keeps it current.
+  const { data: requestCount } = useJoinRequestCount(server.id, false);
   return (
     <div className="settings-screen">
       <header className="lr-channel-header settings-header">
@@ -219,6 +228,14 @@ function Settings({ server }: { server: ServerDetail }) {
               }}
             >
               {t(SECTION_LABEL[id])}
+              {id === "verzeichnis" && requestCount ? (
+                <Badge tone="count">
+                  <span aria-hidden="true">{requestCount}</span>
+                  <span className="sr-only">
+                    {t("joinRequests.count", { count: requestCount })}
+                  </span>
+                </Badge>
+              ) : null}
             </a>
           ))}
         </nav>
@@ -226,6 +243,12 @@ function Settings({ server }: { server: ServerDetail }) {
           {shows("allgemein") ? <NameSection server={server} /> : null}
           {shows("rollen") ? <RolesSection server={server} /> : null}
           {shows("einladungen") ? <InvitesSection server={server} /> : null}
+          {shows("verzeichnis") ? (
+            <DirectorySection
+              server={server}
+              languages={directory?.languages ?? []}
+            />
+          ) : null}
           <MembersSection
             server={server}
             onManageRoles={() => jump("rollen")}
@@ -549,6 +572,26 @@ function InviteRow({
         </Button>
       </div>
     </li>
+  );
+}
+
+/** The owner's listing, then the join requests for everyone who answers. */
+function DirectorySection({
+  server,
+  languages,
+}: {
+  server: ServerDetail;
+  languages: readonly DirectoryLanguage[];
+}) {
+  const t = useT(serverSettings);
+  const owner = server.role === "owner";
+  return (
+    <Section id="verzeichnis" hint={owner ? t("directory.hint") : undefined}>
+      {owner ? (
+        <ListingSettingsPanel server={server} languages={languages} />
+      ) : null}
+      <JoinRequestQueue server={server} />
+    </Section>
   );
 }
 

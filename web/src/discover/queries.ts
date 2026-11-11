@@ -372,15 +372,27 @@ export function useAnswerJoinRequest(serverId: string) {
         ? remote.acceptJoinRequest(serverId, userId)
         : remote.declineJoinRequest(serverId, userId),
     onMutate: () => takeStamp(),
-    onSettled: (_answer, _error, _input, stamp) => {
+    onSettled: (_answer, error, { accept }, stamp) => {
       if (!stampHolds(stamp)) return;
-      void client.invalidateQueries({
-        queryKey: directoryKeys.requests(
-          stamp.userId,
-          stamp.generation,
-          serverId,
-        ),
-      });
+      settleJoinRequest(client, stamp, serverId, accept && !error);
     },
   });
+}
+
+/** After an answer the queue is read again; an accepted request also adds a
+ * member, so the server's member list is read again too. */
+export function settleJoinRequest(
+  client: QueryClient,
+  stamp: { userId: string; generation: number },
+  serverId: string,
+  accepted: boolean,
+): void {
+  const { userId, generation } = stamp;
+  void client.invalidateQueries({
+    queryKey: directoryKeys.requests(userId, generation, serverId),
+  });
+  if (accepted)
+    void client.invalidateQueries({
+      queryKey: serverKeys.detail(userId, generation, serverId),
+    });
 }
