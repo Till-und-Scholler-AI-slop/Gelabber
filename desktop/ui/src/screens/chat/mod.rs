@@ -1894,4 +1894,35 @@ mod page_tests {
             "closed with its page"
         );
     }
+
+    /// In English the conversation and its emoji picker speak English
+    /// (the picker's names: `emoji::tests`).
+    #[test]
+    fn the_conversation_speaks_english() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let _config = TempConfig::new("chat-english");
+        let api = FakeApi::start(true, |method, path, _| {
+            let mut reply = workspace(method, path)?;
+            if let Some(list) = reply
+                .body
+                .get_mut("permissions")
+                .and_then(|p| p.as_array_mut())
+            {
+                list.push(json!("send_messages"));
+            }
+            Some(reply)
+        });
+        let home = crate::app::testkit::HOME;
+        let allgemein = crate::app::testkit::ALLGEMEIN;
+        let mut harness = launcher(&api, &format!("/s/{home}/c/{allgemein}"));
+        wait_for_label(&mut harness, "Message #allgemein");
+        harness.get_by_label("Search");
+        assert!(harness.query_by_label("Nachricht an #allgemein").is_none());
+        harness.run_steps(4);
+        harness.get_by_label("Insert emoji").click();
+        // The picker's title is the button's label.
+        wait_for(&mut harness, "the picker", |h| {
+            h.query_all_by_label("Insert emoji").count() > 1
+        });
+    }
 }
