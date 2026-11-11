@@ -18,7 +18,16 @@ import {
   takeStamp,
   useUserId,
 } from "../auth/scope.ts";
-import { rememberJoinedServer } from "../servers/queries.ts";
+import { useEffect } from "react";
+
+import { notify } from "../components/toasts.ts";
+import { translate } from "../i18n/catalog.ts";
+import { discovery } from "../i18n/catalogs/discovery.ts";
+import { listServers } from "../servers/api.ts";
+import { rememberJoinedServer, serverKeys } from "../servers/queries.ts";
+import type { Server } from "../servers/types.ts";
+import { getGateway } from "../ws/client.ts";
+import type { AccountFrame } from "../ws/protocol.ts";
 import * as remote from "./api.ts";
 import type {
   DirectoryStatus,
@@ -50,6 +59,15 @@ export const directoryKeys = {
     ["user", userId, generation, "directory", "settings", serverId] as const,
   requests: (userId: string, generation: number, serverId: string) =>
     ["user", userId, generation, "directory", "requests", serverId] as const,
+  requestCount: (userId: string, generation: number, serverId: string) =>
+    [
+      "user",
+      userId,
+      generation,
+      "directory",
+      "requestCount",
+      serverId,
+    ] as const,
 };
 
 /** Listings and their counts move slowly; a minute is fresh enough. */
@@ -244,14 +262,105 @@ export function useSaveListingSettings(serverId: string) {
 
 /** The pending requests of a server (owner and `moderate_members`). */
 export function useJoinRequests(serverId: string, enabled: boolean) {
+  const client = useQueryClient();
   const userId = useUserId();
   const generation = scopeGeneration();
   return useQuery({
     queryKey: directoryKeys.requests(userId, generation, serverId),
-    queryFn: ({ signal }) => remote.listJoinRequests(serverId, signal),
+    queryFn: async ({ signal }) => {
+      const requests = await remote.listJoinRequests(serverId, signal);
+      // The queue just read is the newest count, too.
+      client.setQueryData(
+        directoryKeys.requestCount(userId, generation, serverId),
+        requests.length,
+      );
+      return requests;
+    },
     enabled: userId.length > 0 && enabled,
     staleTime: STALE_MS,
   });
+}
+
+/** How many requests wait in a server's queue: read with the queue, then
+ * kept current by the `jq` frame. */
+export function useJoinRequestCount(serverId: string, enabled: boolean) {
+  const userId = useUserId();
+  const generation = scopeGeneration();
+  return useQuery({
+    queryKey: directoryKeys.requestCount(userId, generation, serverId),
+    queryFn: async ({ signal }) =>
+      (await remote.listJoinRequests(serverId, signal)).length,
+    enabled: userId.length > 0 && enabled,
+    staleTime: STALE_MS,
+  });
+}
+
+/**
+ * The directory's account frames: `jn` (a request was accepted) adds the
+ * server to the list and says so, `jq` (a queue changed) sets its count
+ * and reloads the queue. Both are best effort; the next read catches up.
+ */
+export function useDirectoryBridge(): void {
+  const client = useQueryClient();
+  const userId = useUserId();
+  const generation = scopeGeneration();
+  useEffect(() => {
+    if (!userId) return;
+    const stamp = { userId, generation };
+    return getGateway().onAccount(
+      (frame) => void applyDirectoryFrame(client, stamp, frame),
+    );
+  }, [client, userId, generation]);
+}
+
+/** What `jn` and `jq` change in the cache; other frames pass by. */
+export async function applyDirectoryFrame(
+  client: QueryClient,
+  stamp: { userId: string; generation: number },
+  frame: AccountFrame,
+): Promise<void> {
+  if (frame.op === "jn" && typeof frame.s === "string") {
+    await announceJoin(client, stamp, frame.s);
+    return;
+  }
+  if (
+    frame.op === "jq" &&
+    typeof frame.s === "string" &&
+    typeof frame.n === "number"
+  ) {
+    const { userId, generation } = stamp;
+    client.setQueryData(
+      directoryKeys.requestCount(userId, generation, frame.s),
+      frame.n,
+    );
+    await client.invalidateQueries({
+      queryKey: directoryKeys.requests(userId, generation, frame.s),
+    });
+  }
+}
+
+/** `jn`: the server list is read again, then names the new server. */
+async function announceJoin(
+  client: QueryClient,
+  stamp: { userId: string; generation: number },
+  serverId: string,
+): Promise<void> {
+  // The directory row becomes "Öffnen".
+  refreshDirectory(client, stamp);
+  let servers: Server[];
+  try {
+    servers = await client.fetchQuery({
+      queryKey: serverKeys.list(stamp.userId, stamp.generation),
+      queryFn: ({ signal }) => listServers(signal),
+      staleTime: 0,
+    });
+  } catch {
+    return;
+  }
+  if (!stampHolds(stamp)) return;
+  const server = servers.find((entry) => entry.id === serverId);
+  if (server)
+    notify(translate(discovery, "toasts.joined", { name: server.name }));
 }
 
 /** "Annehmen" or "Ablehnen": the row leaves the queue either way. */
