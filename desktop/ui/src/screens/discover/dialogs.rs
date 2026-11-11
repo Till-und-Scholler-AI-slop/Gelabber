@@ -296,7 +296,7 @@ fn report(ctx: &egui::Context, app: &AppCtx, form: &mut ReportForm) -> bool {
                     "discover-report-details",
                     texts::report_details(),
                     &mut form.details,
-                    87.0,
+                    88.0,
                     error.is_some(),
                 );
                 if response.changed() {

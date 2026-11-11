@@ -672,10 +672,10 @@ fn search_field(ui: &mut Ui, s: &mut State, width: f32) {
     let edit = egui::TextEdit::singleline(&mut s.input)
         .id(id)
         .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-            left: 37,
+            left: 38,
             right: 11,
-            top: 8,
-            bottom: 8,
+            top: 9,
+            bottom: 7,
         }))
         .desired_width(inner.width())
         .min_size(inner.size())
@@ -776,7 +776,6 @@ fn row(
     let inner_h = text_h.max(56.0);
     let height = 14.0 + inner_h + 13.0 + 1.0;
     let rect = Rect::from_min_size(pos2(left, top), vec2(width, height));
-    ui.allocate_rect(rect, Sense::hover());
     let mid = top + 14.0 + inner_h / 2.0;
     let painter = ui.painter().clone();
     crate::widgets::rule_h(&painter, c.border, left..=left + width, rect.bottom() - 1.0);
@@ -865,6 +864,8 @@ fn row(
             .detail(Some(&until))
             .on_hover(&response, Side::Above);
     }
+    // Last: the placed button and "…" moved the cursor to their bottom.
+    ui.allocate_rect(rect, Sense::hover());
     if response.clicked() {
         match action {
             Action::Open => app.nav.navigate(&Route::Server(listing.server_id).path()),
