@@ -7,6 +7,7 @@ use gelabber_call::{CallState, CallStatus, VideoKey};
 use gelabber_client::store::collation_key;
 use gelabber_client::{Permission, State, VoiceOccupant};
 use gelabber_i18n::voice as texts;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::stage::{Kind, PicId};
@@ -168,6 +169,9 @@ pub struct Room {
     pub own_live: bool,
     /// A watched Live of someone else plays (the stream sound control).
     pub watching_any: bool,
+    /// Per live occupant: who else here watches the Live, and who does
+    /// not, each sorted by name (web `useLiveWatchers`).
+    pub watchers: HashMap<Uuid, (Vec<Uuid>, Vec<Uuid>)>,
 }
 
 impl Room {
@@ -325,7 +329,38 @@ pub fn build(s: &State, call: &CallState, server: Uuid, channel: Uuid) -> Option
     };
     room.shares.sort_by_key(|t| rank(&t.id.user));
     room.watching_any = room.shares.iter().any(|t| t.watching);
+    room.watchers = watchers(s, call, &room);
     Some(room)
+}
+
+/// Who watches each Live in `room`: the gateway's sets, and the own watch
+/// as the call has it, so it does not wait for the echo (web `watchersOf`).
+fn watchers(s: &State, call: &CallState, room: &Room) -> HashMap<Uuid, (Vec<Uuid>, Vec<Uuid>)> {
+    let mut out = HashMap::new();
+    for owner in room.occupants.iter().filter(|p| p.live).map(|p| p.id) {
+        let (sets, _) = s.watchers_of(room.server, room.channel, owner);
+        let (mut watching, mut not_watching): (Vec<&Person>, Vec<&Person>) = room
+            .occupants
+            .iter()
+            .filter(|p| p.id != owner)
+            .partition(|p| {
+                if p.me {
+                    room.here
+                        && call
+                            .participants
+                            .iter()
+                            .any(|x| x.user == owner && x.watching)
+                } else {
+                    sets.contains(&p.id)
+                }
+            });
+        let by_name = |p: &&Person| (collation_key(&p.name), p.id);
+        watching.sort_by_cached_key(by_name);
+        not_watching.sort_by_cached_key(by_name);
+        let ids = |people: Vec<&Person>| people.iter().map(|p| p.id).collect();
+        out.insert(owner, (ids(watching), ids(not_watching)));
+    }
+    out
 }
 
 #[cfg(test)]
