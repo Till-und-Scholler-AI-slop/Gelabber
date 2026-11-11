@@ -289,9 +289,9 @@ pub fn security_sign_in_reauth(provider: &str) -> String {
 /// `security.signIn.provider.connected`.
 pub fn security_sign_in_provider_connected(email: &str) -> String {
     match get() {
-        Locale::De => format!(
-            "Verbunden mit {email}. Trennen geht nur, solange ein Passwort gesetzt ist."
-        ),
+        Locale::De => {
+            format!("Verbunden mit {email}. Trennen geht nur, solange ein Passwort gesetzt ist.")
+        }
         Locale::En => {
             format!("Connected to {email}. You can only disconnect while a password is set.")
         }

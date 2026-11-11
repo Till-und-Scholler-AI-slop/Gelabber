@@ -429,6 +429,12 @@ fn readable_ink(background: Color32) -> Color32 {
     }
 }
 
+/// `toneOf` (components/pageTone.ts): a page colour is dark where light
+/// ink reads better on it.
+pub fn is_dark_tone(background: Color32) -> bool {
+    readable_ink(background) == Color32::WHITE
+}
+
 fn ensure_contrast(foreground: Color32, backgrounds: &[Color32], ratio: f64) -> Color32 {
     let passes = |c: Color32| backgrounds.iter().all(|bg| contrast(c, *bg) >= ratio);
     if passes(foreground) {

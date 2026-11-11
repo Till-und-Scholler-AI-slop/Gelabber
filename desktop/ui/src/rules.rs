@@ -152,7 +152,53 @@ pub fn error_message(code: &str) -> &'static str {
         "validation_failed" => auth::error_validation_failed(),
         "timeout" => auth::error_timeout(),
         "network" => auth::error_network(),
+        "oidc_unavailable" => auth::error_oidc_unavailable(),
+        "oidc_email_unverified" => auth::error_oidc_email_unverified(),
+        "oidc_account_unverified" => auth::error_oidc_account_unverified(),
+        "identity_taken" => auth::error_identity_taken(),
+        "password_required" => auth::error_password_required(),
+        "reauth_required" => auth::error_reauth_required(),
+        "oidc_wrong_origin" => auth::error_oidc_wrong_origin(),
+        "session_changed" => auth::error_session_changed(),
         _ => auth::error_internal(),
+    }
+}
+
+/// `OIDC_ERRORS`: why a provider sign-in came back without signing in
+/// (the `?oidc_error=` of `/login`, `/register` and `/settings/konto`).
+pub const OIDC_ERRORS: [&str; 11] = [
+    "cancelled",
+    "expired",
+    "failed",
+    "email_unverified",
+    "account_unverified",
+    "identity_taken",
+    "insecure_transport",
+    "session_changed",
+    "invitation_required",
+    "invitation_invalid",
+    "account_disabled",
+];
+
+/// `isOidcError`: the code when it is one of [`OIDC_ERRORS`].
+pub fn oidc_error(value: Option<&str>) -> Option<&'static str> {
+    let value = value?;
+    OIDC_ERRORS.iter().copied().find(|code| *code == value)
+}
+
+/// `oidcErrorMessage`: the copy of an `oidc_error`, in the interface's
+/// language. The operator's codes take the client's copy.
+pub fn oidc_error_message(code: &str) -> &'static str {
+    match code {
+        "cancelled" => auth::oidc_error_cancelled(),
+        "expired" => auth::oidc_error_expired(),
+        "failed" => auth::oidc_error_failed(),
+        "email_unverified" => error_message("oidc_email_unverified"),
+        "account_unverified" => error_message("oidc_account_unverified"),
+        "invitation_required" | "invitation_invalid" | "account_disabled" => {
+            gelabber_client::error_message(code)
+        }
+        _ => error_message(code),
     }
 }
 
@@ -372,5 +418,38 @@ mod tests {
         let token = "ab".repeat(32);
         assert_eq!(link_token(&format!("#token={token}")), Some(token.clone()));
         assert_eq!(link_token("#token=xyz"), None);
+    }
+
+    /// Every sign-in code has its own copy, and only the listed
+    /// `oidc_error` codes are read from an address.
+    #[test]
+    fn sign_in_codes_have_copy() {
+        for code in [
+            "oidc_unavailable",
+            "oidc_email_unverified",
+            "oidc_account_unverified",
+            "identity_taken",
+            "password_required",
+            "reauth_required",
+            "oidc_wrong_origin",
+            "session_changed",
+        ] {
+            assert_ne!(error_message(code), auth::error_internal(), "{code}");
+        }
+        for code in OIDC_ERRORS {
+            assert_eq!(oidc_error(Some(code)), Some(code));
+            assert_ne!(oidc_error_message(code), auth::error_internal(), "{code}");
+        }
+        assert_eq!(oidc_error(Some("registration_closed")), None);
+        assert_eq!(oidc_error(None), None);
+        assert_eq!(
+            oidc_error_message("account_unverified"),
+            auth::error_oidc_account_unverified()
+        );
+        assert_eq!(oidc_error_message("cancelled"), "Anmeldung abgebrochen.");
+        assert_eq!(
+            oidc_error_message("invitation_required"),
+            "Zum Registrieren brauchst du eine Einladung."
+        );
     }
 }
