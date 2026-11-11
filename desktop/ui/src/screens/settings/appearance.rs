@@ -34,7 +34,8 @@ pub struct State {
     pub(super) navigate: Option<&'static str>,
     /// The language section's own status line.
     language_status: Status,
-    /// The language chosen last, until the server answers.
+    /// The language chosen last, until the server answers: for the status
+    /// line only; [`settle_language`] goes back on a failure.
     language_saving: Option<Locale>,
 }
 
@@ -344,29 +345,78 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
 }
 
+/// The language a save is under way for (`changeAccountLocale`'s `next`).
+/// It lives beside the app, not in the page's state, so a failure goes
+/// back even after the page was left.
+fn language_saving_id() -> Id {
+    Id::unique("gelabber-language-saving")
+}
+
+/// Shows `next` at once and saves it with the account.
+fn choose_language(ctx: &egui::Context, client: &gelabber_client::Client, next: Locale) {
+    prefs::show_locale(ctx, next);
+    client.set_locale(next.as_str());
+    ctx.data_mut(|d| d.insert_temp(language_saving_id(), next));
+}
+
+/// Run by the app each frame, whatever it shows: once the newest language
+/// save failed, shows the language the server last confirmed (`confirmed`),
+/// only while nothing else chose a language meanwhile.
+pub fn settle_language(
+    ctx: &egui::Context,
+    client: &gelabber_client::Client,
+    confirmed: impl FnOnce() -> Option<String>,
+) {
+    let op = client.with_state(|st| st.op("locale").cloned());
+    settle_on(ctx, op.as_ref(), confirmed);
+}
+
+/// [`settle_language`] for the save's state `op`, read once by the caller.
+fn settle_on(
+    ctx: &egui::Context,
+    op: Option<&OpState>,
+    confirmed: impl FnOnce() -> Option<String>,
+) {
+    let Some(chosen) = ctx.data(|d| d.get_temp::<Locale>(language_saving_id())) else {
+        return;
+    };
+    let failed = match op {
+        Some(OpState::Pending) => return,
+        Some(OpState::Failed(_)) => true,
+        Some(OpState::Done) | None => false,
+    };
+    ctx.data_mut(|d| d.remove::<Locale>(language_saving_id()));
+    if failed
+        && gelabber_i18n::get() == chosen
+        && let Some(saved) = confirmed().as_deref().and_then(Locale::parse)
+    {
+        prefs::show_locale(ctx, saved);
+    }
+}
+
 /// "Sprache" (`LanguageSettings`): the account's language. Each option is
 /// named in its own language, with its name in the interface's language
 /// below when that differs. A choice shows at once and is saved with the
-/// account; a failed save goes back to the saved language. Hidden against
-/// a server older than v0.10, which keeps no language.
+/// account; a failed save goes back to the saved language
+/// ([`settle_language`]). Hidden against a server older than v0.10, which
+/// keeps no language.
 fn language_section(ui: &mut Ui, app: &mut AppCtx, s: &mut State, card_w: f32) {
-    let Some((_, saved)) = crate::app::account_locale(app.session, app.client) else {
+    let Some((_, confirmed)) = crate::app::account_locale(app.session, app.client) else {
         return;
     };
-    if let Some(chosen) = s.language_saving {
-        match app.client.with_state(|st| st.op("locale").cloned()) {
+    // Again here, on the same reading as the status line: an answer that
+    // came after the app's call this frame goes back before the status line
+    // takes its words.
+    let op = app.client.with_state(|st| st.op("locale").cloned());
+    settle_on(ui.ctx(), op.as_ref(), || Some(confirmed));
+    if s.language_saving.is_some() {
+        match op {
             Some(OpState::Done) => {
                 s.language_saving = None;
                 s.language_status.success(ui, common::saved());
             }
             Some(OpState::Failed(_)) => {
                 s.language_saving = None;
-                // Only while nothing else chose a language meanwhile.
-                if let Some(saved) = Locale::parse(&saved)
-                    && gelabber_i18n::get() == chosen
-                {
-                    prefs::show_locale(ui.ctx(), saved);
-                }
                 s.language_status.error(ui, common::not_saved());
             }
             _ => {}
@@ -478,8 +528,7 @@ fn language_section(ui: &mut Ui, app: &mut AppCtx, s: &mut State, card_w: f32) {
     ui.allocate_exact_size(vec2(ui.available_width(), card_h), Sense::hover());
     // Not held back while a choice saves: the newest choice is the one kept.
     if let Some(next) = chosen {
-        prefs::show_locale(ui.ctx(), next);
-        app.client.set_locale(next.as_str());
+        choose_language(ui.ctx(), app.client, next);
         s.language_saving = Some(next);
         s.language_status.clear();
     }
@@ -559,6 +608,48 @@ mod tab_tests {
         wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
         assert_eq!(gelabber_i18n::get(), Locale::De);
         assert!(harness.query_by_label("Sprache").is_some());
+    }
+
+    /// A save that fails after the page was left still goes back, as the
+    /// web's `changeAccountLocale` does in its own catch.
+    #[test]
+    fn a_language_save_that_fails_elsewhere_goes_back() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _locale = gelabber_i18n::on_this_thread(Locale::De);
+        let _config = TempConfig::new("language-failed-elsewhere");
+        let mut user = lena();
+        user["locale"] = "de".into();
+        let release = Arc::new(AtomicBool::new(false));
+        let held = release.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/auth/session") => {
+                Some(Reply::json(json!({"user": user, "csrf_token": "csrf"})))
+            }
+            ("GET", "/me") => Some(Reply::json(user.clone())),
+            ("PUT", "/me/locale") => {
+                while !held.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Some(Reply::error(500, "internal"))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, "/settings/darstellung");
+        wait_for_label(&mut harness, "Sprache");
+        harness.get_by_label("English").click();
+        wait_for(&mut harness, "the save", |_| api.saw("PUT /me/locale"));
+        assert_eq!(gelabber_i18n::get(), Locale::En);
+        // Another area, in English, while the save is under way.
+        harness.get_by_label("Audio").click();
+        wait_for(&mut harness, "the Audio area", |h| {
+            h.query_by_label("Language").is_none() && h.query_by_label("Audio").is_some()
+        });
+        release.store(true, Ordering::Relaxed);
+        wait_for(&mut harness, "German again", |_| {
+            gelabber_i18n::get() == Locale::De
+        });
+        assert_eq!(super::prefs::get(&harness.ctx).locale, Some(Locale::De));
     }
 
     /// A server older than v0.10 keeps no language: no section.

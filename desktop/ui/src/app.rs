@@ -624,6 +624,9 @@ impl GelabberApp {
 
         self.sync_workspace();
         self.follow_account_locale(&ctx);
+        screens::settings::appearance::settle_language(&ctx, &self.client, || {
+            account_locale(&self.session, &self.client).map(|(_, l)| l)
+        });
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
         screens::voice::sync::sync(&ctx, &self.call, &mut self.toasts, signed_in);
         self.guard();
