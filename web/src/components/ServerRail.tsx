@@ -70,7 +70,7 @@ export function ServerRail({
 
 /** "Entdecken", under "Server hinzufügen": only while the instance runs a
  * directory. */
-function DiscoverTile() {
+export function DiscoverTile() {
   const t = useT(shell);
   const { data: status } = useDirectoryStatus();
   const active = useRouterState({

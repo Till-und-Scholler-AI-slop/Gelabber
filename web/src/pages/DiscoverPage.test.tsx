@@ -1,0 +1,267 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { DirectoryStatus, Listing } from "../discover/types.ts";
+import { setLocale } from "../i18n/locale.ts";
+
+const fixture = vi.hoisted(() => ({
+  status: undefined as DirectoryStatus | undefined,
+  listings: {} as {
+    data?: { pages: { listings: unknown[]; next_offset: number | null }[] };
+    isError?: boolean;
+    hasNextPage?: boolean;
+  },
+  search: {} as { q?: string; lang?: string },
+  queries: [] as [string, string | undefined][],
+}));
+
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  // A plain anchor that says where it leads, without the router.
+  Link: ({
+    to,
+    params,
+    ...props
+  }: {
+    to: string;
+    params?: Record<string, string>;
+  } & Record<string, unknown>) => (
+    <a
+      data-to={to.replace(
+        /\$(\w+)/g,
+        (_, name: string) => params?.[name] ?? "",
+      )}
+      {...props}
+    />
+  ),
+  useNavigate: () => vi.fn(),
+  useSearch: () => fixture.search,
+}));
+vi.mock("../components/UserPanel.tsx", () => ({
+  UserPanel: () => <footer data-user-panel="" />,
+}));
+vi.mock("../discover/queries.ts", () => ({
+  useDirectoryStatus: () => ({ data: fixture.status }),
+  useListings: (q: string, language: string | undefined) => {
+    fixture.queries.push([q, language]);
+    return { refetch: vi.fn(), fetchNextPage: vi.fn(), ...fixture.listings };
+  },
+  useJoinListing: () => ({ mutate: vi.fn(), isPending: false }),
+  useRequestJoin: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+import { RequestJoinDialog } from "../components/DirectoryDialogs.tsx";
+import { DiscoverPage, DiscoverRow, DiscoverSidebar } from "./DiscoverPage.tsx";
+
+const LANGUAGES = [
+  { code: "de", name: "Deutsch", listings: 3 },
+  { code: "en", name: "English", listings: 1 },
+  { code: "es", name: "Español", listings: 0 },
+];
+
+const listing = (overrides: Partial<Listing> = {}): Listing => ({
+  server_id: "filmclub",
+  name: "Filmclub",
+  icon_url: null,
+  description: "Jeden Freitag ein Film im Kino-Kanal, danach wird gestritten.",
+  language: "de",
+  member_count: 48,
+  join_mode: "open",
+  member: false,
+  request: null,
+  ...overrides,
+});
+const pages = (listings: Listing[], next_offset: number | null = null) => ({
+  pages: [{ listings, next_offset }],
+});
+
+beforeEach(() => {
+  fixture.status = { enabled: true, languages: LANGUAGES };
+  fixture.listings = {};
+  fixture.search = {};
+  fixture.queries = [];
+});
+afterEach(() => setLocale("de", { persist: false }));
+
+const text = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+const row = (overrides: Partial<Listing> = {}) =>
+  renderToStaticMarkup(
+    <DiscoverRow
+      listing={listing(overrides)}
+      languages={LANGUAGES}
+      onRequest={vi.fn()}
+    />,
+  );
+
+describe("Entdecken", () => {
+  it("shows the reference's title, line and search", () => {
+    fixture.listings = { data: pages([]) };
+    const html = renderToStaticMarkup(<DiscoverPage />);
+    expect(html).toContain(">Entdecken</h1>");
+    expect(html).toContain(
+      "Server, die ihre Inhaber ins Verzeichnis gestellt haben. Alle anderen bleiben unsichtbar.",
+    );
+    expect(html).toContain('placeholder="Nach Name oder Thema suchen"');
+    expect(html).toContain('maxLength="100"');
+  });
+
+  it("asks for the search and language in the address", () => {
+    fixture.listings = { data: pages([]) };
+    renderToStaticMarkup(<DiscoverPage q="rust" lang="en" />);
+    expect(fixture.queries.at(-1)).toEqual(["rust", "en"]);
+    expect(renderToStaticMarkup(<DiscoverPage q="rust" />)).toContain(
+      'value="rust"',
+    );
+    expect(fixture.queries.at(-1)).toEqual(["rust", undefined]);
+  });
+
+  it("says when nothing was found", () => {
+    fixture.listings = { data: pages([]) };
+    expect(text(renderToStaticMarkup(<DiscoverPage />))).toContain(
+      "Keine Server gefunden.",
+    );
+  });
+
+  it("draws a row per server and offers more when there are", () => {
+    fixture.listings = {
+      data: pages(
+        [
+          listing(),
+          listing({
+            server_id: "rust",
+            name: "Rust Study Hall",
+            language: "en",
+            member_count: 1,
+          }),
+        ],
+        30,
+      ),
+      hasNextPage: true,
+    };
+    const html = renderToStaticMarkup(<DiscoverPage />);
+    expect(html.match(/class="discover-row"/g)).toHaveLength(2);
+    expect(text(html)).toContain("Deutsch · 48 Mitglieder");
+    expect(text(html)).toContain("English · 1 Mitglied");
+    expect(text(html)).toContain("Mehr laden");
+    fixture.listings.hasNextPage = false;
+    expect(text(renderToStaticMarkup(<DiscoverPage />))).not.toContain(
+      "Mehr laden",
+    );
+  });
+
+  it("shows a server's image, else its initials", () => {
+    expect(row()).toContain(">Fi</span>");
+    expect(row({ icon_url: "/api/server-icons/filmclub/a.webp" })).toContain(
+      'src="/api/server-icons/filmclub/a.webp"',
+    );
+  });
+
+  it("offers the button that fits the caller", () => {
+    const button = (overrides: Partial<Listing>) => {
+      const html = row(overrides);
+      const match = html.match(/<(button|a)([^>]*)>([^<]*)<\/\1>\s*<\/li>$/);
+      return {
+        label: match?.[3],
+        primary: match?.[2].includes("ui-button--primary") ?? false,
+        disabled: match?.[2].includes("disabled") ?? false,
+        to: match?.[2].match(/data-to="([^"]+)"/)?.[1],
+      };
+    };
+    expect(button({ member: true })).toEqual({
+      label: "Öffnen",
+      primary: false,
+      disabled: false,
+      to: "/s/filmclub",
+    });
+    expect(button({ join_mode: "open" })).toMatchObject({
+      label: "Beitreten",
+      primary: true,
+      disabled: false,
+    });
+    expect(button({ join_mode: "request" })).toMatchObject({
+      label: "Beitritt anfragen",
+      primary: false,
+      disabled: false,
+    });
+    expect(button({ join_mode: "request", request: "pending" })).toMatchObject({
+      label: "Angefragt",
+      disabled: true,
+    });
+    expect(button({ join_mode: "request", request: "declined" })).toMatchObject(
+      { label: "Nicht angenommen", disabled: true },
+    );
+  });
+
+  it("names the server for the button", () => {
+    const html = row();
+    const id = html.match(/<h2 id="([^"]+)">Filmclub<\/h2>/)?.[1];
+    expect(id).toBeTruthy();
+    expect(html).toContain(`aria-describedby="${id}"`);
+  });
+
+  it("speaks English", () => {
+    setLocale("en", { persist: false });
+    fixture.listings = { data: pages([listing({ join_mode: "request" })]) };
+    const html = text(renderToStaticMarkup(<DiscoverPage />));
+    expect(html).toContain("Discover");
+    expect(html).toContain("Deutsch · 48 members");
+    expect(html).toContain("Request to join");
+  });
+});
+
+describe("the language filter", () => {
+  const buttons = (html: string) =>
+    [
+      ...html.matchAll(
+        /<button[^>]*aria-pressed="(true|false)"[^>]*>([^<]+)</g,
+      ),
+    ].map(([, pressed, label]) => [label, pressed === "true"]);
+
+  it("lists All and every language with listings", () => {
+    const html = renderToStaticMarkup(<DiscoverSidebar />);
+    expect(html).toContain('<div class="sidebar-brand">Entdecken</div>');
+    expect(html).toContain(">Sprache</h2>");
+    expect(buttons(html)).toEqual([
+      ["Alle", true],
+      ["Deutsch", false],
+      ["English", false],
+    ]);
+    expect(html).toContain('lang="en"');
+  });
+
+  it("marks the language in the address", () => {
+    fixture.search = { lang: "en" };
+    expect(buttons(renderToStaticMarkup(<DiscoverSidebar />))).toEqual([
+      ["Alle", false],
+      ["Deutsch", false],
+      ["English", true],
+    ]);
+  });
+});
+
+describe("the request dialog", () => {
+  it("names the server and takes an optional message", () => {
+    const html = renderToStaticMarkup(
+      <RequestJoinDialog
+        listing={listing({ name: "Modellbau-Keller", join_mode: "request" })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(text(html)).toContain("Beitritt anfragen");
+    expect(text(html)).toContain("Anfrage an Modellbau-Keller");
+    expect(text(html)).toContain("Nachricht (optional)");
+    expect(html).toContain('maxLength="300"');
+    expect(text(html)).toContain("Anfrage senden");
+  });
+
+  it("is closed without a server", () => {
+    const html = renderToStaticMarkup(
+      <RequestJoinDialog listing={null} onClose={vi.fn()} />,
+    );
+    expect(html).not.toContain("Anfrage senden");
+  });
+});
