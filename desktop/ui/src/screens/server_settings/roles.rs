@@ -418,15 +418,19 @@ pub(super) fn editor(
                 Choice::Owner => owner_panel(ui),
                 Choice::Base => base_panel(ui, app, r, detail),
             }
+            // The status is always there (empty, no height), after the
+            // panel's 16px gap.
+            ui.add_space(16.0);
             if let Some((m, t)) = r.status.current(ui) {
-                ui.add_space(16.0);
                 ui.add(crate::widgets::InlineStatus::new(Some(&m), t));
             }
             ui.min_rect()
         },
     );
     let bottom = side_used.bottom().max(panel_used.bottom());
-    ui.advance_cursor_after_rect(Rect::from_min_max(top, pos2(top.x + width, bottom)));
+    // Only the height: the sections after it keep the reading measure.
+    let measure = ui.available_width().min(width);
+    ui.advance_cursor_after_rect(Rect::from_min_max(top, pos2(top.x + measure, bottom)));
 }
 
 fn side_list(
