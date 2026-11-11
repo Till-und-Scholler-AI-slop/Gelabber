@@ -168,6 +168,10 @@ pub fn show(
                         .desired_width(r.width() - 2.0)
                         .layouter(&mut layouter)
                         .show(ui)
+                        .response
+                        .response
+                        // The label above names the field (`<label for>`).
+                        .accessible_name(texts::picker_search())
                 });
                 if ui.memory(|m| m.has_focus(input_id)) {
                     crate::widgets::focus_ring(ui.painter(), r, 4.0, &theme);
