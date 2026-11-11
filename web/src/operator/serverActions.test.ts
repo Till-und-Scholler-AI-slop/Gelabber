@@ -100,6 +100,20 @@ describe("server row menu", () => {
     expect(on.unblock).toHaveBeenCalledOnce();
   });
 
+  it("takes a listed server out of the directory", () => {
+    const on = handlers();
+    const entries = serverMenuEntries(
+      { directory: "listed", blocked: false },
+      { ...on, message: undefined },
+    );
+    expect(labels(entries)).toEqual([
+      "Aus dem Verzeichnis nehmen",
+      "Server sperren",
+    ]);
+    pick(entries, "Aus dem Verzeichnis nehmen").onSelect();
+    expect(on.delist).toHaveBeenCalledOnce();
+  });
+
   it("speaks English", () => {
     setLocale("en", { persist: false });
     expect(labels(serverMenuEntries(server, handlers()))).toEqual([

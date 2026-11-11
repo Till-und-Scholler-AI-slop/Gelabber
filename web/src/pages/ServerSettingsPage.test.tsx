@@ -1,8 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type {
+  DirectoryStatus,
+  JoinRequest,
+  ListingSettings,
+} from "../discover/types.ts";
 import { setLocale } from "../i18n/locale.ts";
 
 import type {
@@ -14,6 +19,10 @@ import type {
 
 const fixture = vi.hoisted(() => ({
   server: null as unknown as ServerDetail,
+  directory: undefined as DirectoryStatus | undefined,
+  listing: undefined as ListingSettings | undefined,
+  requests: [] as JoinRequest[],
+  requestCount: undefined as number | undefined,
 }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a href="#">{children}</a>,
@@ -40,6 +49,23 @@ vi.mock("../servers/queries.ts", () => {
     useUnbanMember: mutation,
     useUpdateRole: mutation,
     useUpdateServer: mutation,
+  };
+});
+vi.mock("../discover/queries.ts", () => {
+  const mutation = () => ({ isPending: false, mutate: vi.fn() });
+  return {
+    useDirectoryStatus: () => ({ data: fixture.directory }),
+    useListingSettings: () => ({ data: fixture.listing, error: null }),
+    useJoinRequests: () => ({
+      data: fixture.requests,
+      isPending: false,
+      error: null,
+    }),
+    useJoinRequestCount: () => ({ data: fixture.requestCount }),
+    useSaveListingSettings: mutation,
+    useAnswerJoinRequest: mutation,
+    useJoinListing: mutation,
+    useWithdrawRequest: mutation,
   };
 });
 // Static markup never opens a popover: show the role picker's content.
@@ -453,5 +479,200 @@ describe("server settings page in English", () => {
     expect(html).toContain("Go Live");
     expect(html).toContain("Danger zone");
     expect(html).not.toContain("Servereinstellungen");
+  });
+});
+
+describe("server settings Verzeichnis", () => {
+  const LANGUAGES = [
+    { code: "de", name: "Deutsch", listings: 3 },
+    { code: "en", name: "English", listings: 1 },
+  ];
+  const listing = (overrides: Partial<ListingSettings> = {}) => ({
+    listed: true,
+    description: "Gemütliche Abende mit Freunden.",
+    language: "de",
+    join_mode: "request" as const,
+    delisted: false,
+    listed_at: created_at,
+    ...overrides,
+  });
+  const kai: JoinRequest = {
+    user_id: "kai",
+    name: "Kai",
+    avatar_url: null,
+    message: "Ich bin Jonas’ Bruder.",
+    created_at,
+  };
+  const owner = (overrides: Partial<ServerDetail> = {}) =>
+    page([], { role: "owner", members: MEMBERS, ...overrides });
+  const text = (html: string) =>
+    html
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  beforeEach(() => {
+    fixture.directory = { enabled: true, languages: LANGUAGES };
+    fixture.listing = listing();
+    fixture.requests = [kai];
+    fixture.requestCount = undefined;
+  });
+  afterEach(() => {
+    fixture.directory = undefined;
+    setLocale("de", { persist: false });
+  });
+
+  it("is a section after Einladungen for the owner and moderate_members, while the directory is on", () => {
+    const sections = (permissions: Permission[], owner = false, on = true) =>
+      serverSettingsSections(
+        { role: owner ? "owner" : "member", permissions },
+        on,
+      );
+    expect(sections([], true)).toEqual([
+      "allgemein",
+      "rollen",
+      "einladungen",
+      "verzeichnis",
+      "mitglieder",
+      "sperren",
+      "gefahrenzone",
+    ]);
+    expect(sections(["moderate_members"])).toEqual([
+      "verzeichnis",
+      "mitglieder",
+      "sperren",
+      "gefahrenzone",
+    ]);
+    // manage_server alone does not answer requests.
+    expect(sections(["manage_server"])).not.toContain("verzeichnis");
+    expect(sections(["send_messages"])).not.toContain("verzeichnis");
+    expect(sections([], true, false)).not.toContain("verzeichnis");
+  });
+
+  it("shows in the anchor row only when the directory is on", () => {
+    expect(anchors(owner())).toEqual([
+      "Allgemein",
+      "Rollen",
+      "Einladungen",
+      "Verzeichnis",
+      "Mitglieder",
+      "Sperren",
+      "Gefahrenzone",
+    ]);
+    expect(anchors(page(["send_messages"]))).not.toContain("Verzeichnis");
+    fixture.directory = { enabled: false, languages: [] };
+    expect(anchors(owner())).not.toContain("Verzeichnis");
+  });
+
+  it("gives the owner the listing form, filled from the saved listing", () => {
+    const html = owner();
+    expect(html).toMatch(
+      /Im Verzeichnis zeigen<\/span><input type="checkbox" role="switch"[^>]*checked=""/,
+    );
+    expect(html).toContain(">Gemütliche Abende mit Freunden.</textarea>");
+    expect(html).toContain("31 / 300 Zeichen");
+    expect(html).toMatch(/<option value="de" lang="de" selected="">Deutsch/);
+    expect(html).toContain(">English</option>");
+    const radios = [...html.matchAll(/<input type="radio"[^>]*>/g)].map(
+      ([input]) => [
+        input.match(/value="([^"]+)"/)?.[1],
+        input.includes('checked=""'),
+      ],
+    );
+    expect(radios).toEqual([
+      ["open", false],
+      ["request", true],
+    ]);
+    expect(html).toContain("Jeder kann direkt beitreten.");
+    expect(html).toContain(
+      "Du oder wer Mitglieder moderieren darf, nimmt Anfragen an.",
+    );
+    expect(html).not.toContain(
+      "Der Betreiber hat diesen Server aus dem Verzeichnis genommen.",
+    );
+  });
+
+  it("previews the row as Entdecken shows it, without working buttons", () => {
+    const html = owner();
+    const preview = html.slice(html.indexOf(">Vorschau<"));
+    expect(preview).toMatch(/<ul class="discover-list" inert="">/);
+    expect(text(preview)).toContain(
+      "Wo Wohnzimmer Gemütliche Abende mit Freunden. Deutsch · 5 Mitglieder Beitritt anfragen",
+    );
+    // A preview has no "…" menu.
+    expect(preview).not.toContain("Mehr zu Wohnzimmer");
+  });
+
+  it("starts an unsaved listing off, without a language", () => {
+    fixture.listing = listing({
+      listed: false,
+      description: "",
+      language: null,
+      listed_at: null,
+    });
+    const html = owner();
+    expect(html).toMatch(
+      /<input type="checkbox" role="switch"(?![^>]*checked)/,
+    );
+    expect(html).toMatch(
+      /<option value="" disabled="" selected="">Sprache wählen/,
+    );
+    expect(html).toContain("0 / 300 Zeichen");
+  });
+
+  it("tells the owner when the operator took the server out", () => {
+    fixture.listing = listing({ delisted: true });
+    expect(owner()).toContain(
+      "Der Betreiber hat diesen Server aus dem Verzeichnis genommen.",
+    );
+  });
+
+  it("lists the requests with Annehmen and Ablehnen", () => {
+    const html = owner();
+    expect(html).toContain(">Beitrittsanfragen</h3>");
+    const queue = text(html.slice(html.indexOf(">Beitrittsanfragen<")));
+    expect(queue).toMatch(
+      /^>Beitrittsanfragen K Kai · \S.* Ich bin Jonas’ Bruder\. Annehmen Ablehnen/,
+    );
+    expect(html).toContain(`<time dateTime="${created_at}">`);
+  });
+
+  it("says when no request waits", () => {
+    fixture.requests = [];
+    expect(owner()).toContain("Keine offenen Anfragen.");
+  });
+
+  it("gives moderate_members the requests but not the listing", () => {
+    const html = page(["moderate_members"], { members: MEMBERS });
+    expect(html).toContain(">Beitrittsanfragen</h3>");
+    expect(html).not.toContain("Im Verzeichnis zeigen");
+    expect(html).not.toContain(">Vorschau<");
+  });
+
+  it("counts open requests in the anchor row", () => {
+    fixture.requestCount = 3;
+    const html = owner();
+    expect(html).toMatch(
+      /Verzeichnis<span class="ui-badge ui-badge--count"><span aria-hidden="true">3<\/span><span class="sr-only">3 offene Anfragen<\/span><\/span><\/a>/,
+    );
+    fixture.requestCount = 0;
+    expect(owner()).not.toContain("offene Anfrage");
+  });
+
+  it("speaks English", () => {
+    setLocale("en", { persist: false });
+    fixture.requestCount = 1;
+    fixture.listing = listing({ delisted: true });
+    const body = text(owner());
+    expect(body).toContain("Invites Directory 1 1 open request Members");
+    expect(body).toContain("Show in the directory");
+    expect(body).toContain("31 / 300 characters");
+    expect(body).toContain("Joining Open Anyone can join straight away.");
+    expect(body).toContain(
+      "The operator has removed this server from the directory.",
+    );
+    expect(body).toContain("Deutsch · 5 members Request to join");
+    expect(body).toContain("Join requests");
+    expect(body).toContain("Accept Decline");
   });
 });

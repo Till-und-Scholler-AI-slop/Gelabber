@@ -24,7 +24,11 @@ vi.mock("../auth/scope.ts", async (importOriginal) => ({
 }));
 
 import { serverKeys } from "../servers/queries.ts";
-import { applyDirectoryFrame, directoryKeys } from "./queries.ts";
+import {
+  applyDirectoryFrame,
+  directoryKeys,
+  settleJoinRequest,
+} from "./queries.ts";
 
 const stamp = { userId: "lena", generation: 1 };
 
@@ -131,5 +135,35 @@ describe("jq: a queue changed", () => {
     const queryClient = client();
     await applyDirectoryFrame(queryClient, stamp, { op: "ns" });
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+  });
+});
+
+describe("an answered join request", () => {
+  const keys = (queryClient: QueryClient) => {
+    const queue = directoryKeys.requests(
+      stamp.userId,
+      stamp.generation,
+      "home",
+    );
+    const detail = serverKeys.detail(stamp.userId, stamp.generation, "home");
+    queryClient.setQueryData(queue, []);
+    queryClient.setQueryData(detail, {});
+    return { queue, detail };
+  };
+
+  it("Annehmen reads the queue and the server's members again", () => {
+    const queryClient = client();
+    const { queue, detail } = keys(queryClient);
+    settleJoinRequest(queryClient, stamp, "home", true);
+    expect(queryClient.getQueryState(queue)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(detail)?.isInvalidated).toBe(true);
+  });
+
+  it("Ablehnen reads only the queue again", () => {
+    const queryClient = client();
+    const { queue, detail } = keys(queryClient);
+    settleJoinRequest(queryClient, stamp, "home", false);
+    expect(queryClient.getQueryState(queue)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(detail)?.isInvalidated).toBe(false);
   });
 });

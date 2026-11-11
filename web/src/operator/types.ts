@@ -51,7 +51,8 @@ export type AccountQuery = {
 // ---------------------------------------------------------------------------
 // Server
 
-/** `listed` only once the directory exists (discovery); `off` until then. */
+/** `listed` while the owner shows it in the directory (discovery's
+ * `server_listings`), `delisted` while an operator took it out. */
 export type DirectoryState = "off" | "listed" | "delisted";
 export type ServerFilter = "all" | "listed" | "reported" | "blocked";
 
