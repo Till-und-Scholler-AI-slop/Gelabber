@@ -43,7 +43,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         return;
     }
     let invited = is_invite_redirect(redirect.as_deref());
-    let expired = app.nav.location().query("reason") == Some("expired");
+    let reason = app.nav.location().query("reason");
+    let expired = reason == Some("expired");
+    let deleted = reason == Some("deleted");
     let pending = s.request.is_some();
 
     layout::frame(ui, app, "login", |ui, app| {
@@ -52,6 +54,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         if expired {
             banner(ui, auth::login_session_expired(), false);
+        } else if deleted {
+            banner(ui, auth::login_account_deleted(), false);
         }
         layout::heading(ui, auth::login_title());
         let register = with_query(

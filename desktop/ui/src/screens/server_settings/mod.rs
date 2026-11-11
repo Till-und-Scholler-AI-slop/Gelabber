@@ -125,6 +125,9 @@ struct State {
     jumped: Option<(&'static str, f32)>,
     content_height: f32,
     opened_at: f64,
+    /// The section the address names (`#server-settings-gefahrenzone`),
+    /// jumped to once its heading has a place.
+    from_address: Option<&'static str>,
 }
 
 /// How far below the anchor row a heading may sit and still count as
@@ -221,9 +224,14 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let entered =
         crate::widgets::field::mounted(&ctx, Id::unique("gelabber-server-settings-mount"));
     if s.server != Some(server) || entered {
+        let fragment = app.nav.location().fragment.clone();
         *s = State {
             server: Some(server),
             opened_at: chrono::Utc::now().timestamp_millis() as f64,
+            from_address: SECTIONS
+                .iter()
+                .map(|(id, _)| *id)
+                .find(|id| fragment.strip_prefix("server-settings-") == Some(*id)),
             ..State::default()
         };
     }
@@ -258,6 +266,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     }
 
     let body = Rect::from_min_max(pos2(rect.left(), nav.bottom()), rect.max);
+    if let Some(id) = s.from_address
+        && s.anchors.contains_key(id)
+    {
+        s.scroll_to = s.from_address.take();
+    }
     let jump = s.scroll_to.take();
     let offset = jump
         .and_then(|id| s.anchors.get(id).copied())

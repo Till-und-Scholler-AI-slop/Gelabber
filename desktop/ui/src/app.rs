@@ -506,16 +506,23 @@ impl GelabberApp {
     /// and follows the client when the server ends the session.
     fn sync_workspace(&mut self) {
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
-        let (client_signed_in, expired) = self.client.with_state(|s| {
+        let (client_signed_in, expired, deleted) = self.client.with_state(|s| {
             (
                 matches!(s.session, gelabber_client::Session::Authenticated(_)),
                 s.session_expired,
+                s.account_deleted,
             )
         });
         if signed_in && self.client_signed_in && !client_signed_in {
             self.session.adopt(&Value::Null);
             self.workspace = false;
             self.expired = expired;
+            // Deleted from Sicherheit (`deleteAndLeave`): the call ends and
+            // the sign-in page says why.
+            if deleted {
+                self.call.leave();
+                self.nav.navigate("/login?reason=deleted");
+            }
         } else if signed_in && !self.workspace {
             self.workspace = true;
             self.expired = false;
