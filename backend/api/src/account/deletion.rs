@@ -52,11 +52,14 @@ pub struct Removed {
     pub sessions: Vec<Vec<u8>>,
     /// Servers the person left.
     pub servers: Vec<Uuid>,
+    /// Servers whose queue lost the person's pending join request.
+    pub requests: Vec<Uuid>,
 }
 
 /// Phase one, in one transaction: marks the account deleted and removes its
 /// sessions, sign-in tokens, memberships (with their roles), the invites it
-/// created and its data export (the trigger queues the archive). Refuses
+/// created, its pending join requests (declined ones stay until the purge)
+/// and its data export (the trigger queues the archive). Refuses
 /// with `409 owns_servers` while the account owns a server, and with `401`
 /// when it is gone or under deletion already.
 ///
@@ -103,6 +106,13 @@ pub async fn mark_deleted(db: &PgPool, user_id: Uuid) -> Result<Removed, ApiErro
             .bind(user_id)
             .fetch_all(&mut *tx)
             .await?;
+    let requests: Vec<Uuid> = sqlx::query_scalar(
+        "DELETE FROM server_join_requests WHERE user_id = $1 AND status = 'pending' \
+         RETURNING server_id",
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
     sqlx::query("DELETE FROM invites WHERE created_by = $1")
         .bind(user_id)
         .execute(&mut *tx)
@@ -112,7 +122,11 @@ pub async fn mark_deleted(db: &PgPool, user_id: Uuid) -> Result<Removed, ApiErro
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(Removed { sessions, servers })
+    Ok(Removed {
+        sessions,
+        servers,
+        requests,
+    })
 }
 
 /// Starts the purge worker once per process (see the module comment).

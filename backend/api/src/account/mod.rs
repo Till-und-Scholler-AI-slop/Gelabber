@@ -28,6 +28,7 @@ use tracing::{info, warn};
 
 use crate::auth::session::{self, CurrentSession, CurrentUser};
 use crate::auth::{self, LogoutResponse, Redacted, user, validate};
+use crate::directory;
 use crate::error::{ApiError, FieldErrors};
 use crate::gateway::Recheck;
 use crate::json::Body;
@@ -127,6 +128,10 @@ async fn delete_me(
                 warn!(error = err.code(), %server_id, %user_id, "removal after account deletion failed");
             }
         }
+    }
+    // Whoever answers those queues hears the smaller count (`jq`).
+    for &server_id in &removed.requests {
+        directory::requests::publish_queue(&state, server_id).await;
     }
     state.gateway.announce_recheck(Recheck::User(user_id)).await;
     deletion::wake(&state);
