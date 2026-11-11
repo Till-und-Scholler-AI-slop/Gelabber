@@ -43,6 +43,11 @@ pub mod language;
 pub mod app;
 pub mod auth;
 
+pub mod notifications;
+pub mod server_settings;
+pub mod settings;
+pub mod themes;
+
 pub use system::detect_system;
 
 /// A namespace's static entries: key, German, English.
@@ -55,6 +60,10 @@ pub const NAMESPACES: &[(&str, Entries)] = &[
     ("language", language::ALL),
     ("app", app::ALL),
     ("auth", auth::ALL),
+    ("settings", settings::ALL),
+    ("themes", themes::ALL),
+    ("notifications", notifications::ALL),
+    ("server_settings", server_settings::ALL),
 ];
 
 /// A language of the interface.
