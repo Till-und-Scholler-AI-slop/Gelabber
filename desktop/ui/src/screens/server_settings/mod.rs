@@ -1,15 +1,16 @@
 //! Server settings (web pages/ServerSettingsPage.tsx, settings.css): name
-//! and icon, member permissions, invites, members, bans and the danger
-//! zone for managers; members and leaving for everyone else.
+//! and icon, roles, invites, members, bans and the danger zone, each for
+//! whom [`sections`] shows it.
 
 mod invite;
+mod roles;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::{Color32, Id, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{
-    ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, ServerDetail,
+    ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, Server, ServerDetail,
     ServerPatch,
 };
 use gelabber_i18n::{Text, common, server_settings as texts};
@@ -32,12 +33,17 @@ use crate::widgets::{
     eased,
 };
 
-/// `PERMISSIONS` of servers/permissions.ts.
-const PERMISSIONS: [(Permission, Text, Text); 8] = [
+/// `PERMISSIONS` of servers/permissions.ts, in canonical order.
+const PERMISSIONS: [(Permission, Text, Text); 9] = [
     (
         Permission::ManageServer,
         texts::permission_manage_server_label,
         texts::permission_manage_server_hint,
+    ),
+    (
+        Permission::ModerateMembers,
+        texts::permission_moderate_members_label,
+        texts::permission_moderate_members_hint,
     ),
     (
         Permission::ManageChannels,
@@ -76,14 +82,35 @@ const PERMISSIONS: [(Permission, Text, Text); 8] = [
     ),
 ];
 
+/// Each section's label; the ids stay German, as the web's URL fragments.
 const SECTIONS: [(&str, Text); 6] = [
     ("allgemein", texts::section_general),
-    ("rechte", texts::section_permissions),
+    ("rollen", texts::section_roles),
     ("einladungen", texts::section_invites),
     ("mitglieder", texts::section_members),
     ("sperren", texts::section_bans),
     ("gefahrenzone", texts::section_danger),
 ];
+
+/// The sections the caller sees, in page order: the one place that decides
+/// who sees which (web pages/serverSettingsSections.ts
+/// `serverSettingsSections`; later packages add their line here).
+/// `manage_server` edits the server; `moderate_members` kicks, bans and so
+/// sees the ban list; everyone sees the members and can leave.
+fn sections(server: &Server) -> Vec<&'static str> {
+    let manage = server.can(Permission::ManageServer);
+    let moderate = server.can(Permission::ModerateMembers);
+    let mut out = Vec::new();
+    if manage {
+        out.extend(["allgemein", "rollen", "einladungen"]);
+    }
+    out.push("mitglieder");
+    if moderate {
+        out.push("sperren");
+    }
+    out.push("gefahrenzone");
+    out
+}
 
 type Load<T> = Option<Pending<Result<T, ApiError>>>;
 
@@ -100,10 +127,8 @@ struct State {
     picking: Option<Picked>,
     /// The picked icon, read and cropped off the UI thread.
     preparing: Option<controls::Prepared>,
-    permissions_status: Status,
-    /// The mask the next switch builds on, ahead of the server's answer.
-    permissions: Option<Vec<Permission>>,
-    saving_permissions: bool,
+    /// The Rollen editor, the member rows' chips and pickers.
+    roles: roles::Roles,
     invites: Option<Result<Vec<Invite>, ApiError>>,
     invites_load: Load<Vec<Invite>>,
     invites_status: Status,
@@ -227,8 +252,19 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
             ..State::default()
         };
     }
+    let shown = sections(&detail.server);
+    let shows = |id: &str| shown.contains(&id);
     let manage = detail.server.can(Permission::ManageServer);
-    poll_loads(ui, app, &mut s, &detail, manage);
+    let moderate = detail.server.can(Permission::ModerateMembers);
+    poll_loads(
+        ui,
+        app,
+        &mut s,
+        &detail,
+        shows("einladungen"),
+        shows("sperren"),
+    );
+    roles::poll(ui, app, &mut s.roles, &detail);
 
     // The anchor row: fixed under the header (sticky at the scroll top).
     // Its links take input first, for the Tab order; they are painted after
@@ -241,7 +277,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let ids: Vec<(&'static str, &'static str)> = SECTIONS
         .iter()
         .map(|(id, label)| (*id, label()))
-        .filter(|(id, _)| manage || matches!(*id, "mitglieder" | "gefahrenzone"))
+        .filter(|(id, _)| shows(id))
         .collect();
     let mut links = Vec::with_capacity(ids.len());
     for (id, label) in &ids {
@@ -265,6 +301,8 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let st = &mut *s;
     let (_, scrolled) = controls::scroll(ui, body, ("server", server), offset, |ui| {
         let width = ui.available_width().min(1040.0);
+        // The roles editor is wider than the reading measure.
+        let wide = (width - 80.0).max(0.0);
         let left = ui.cursor().min.x;
         let content_top = ui.cursor().min.y;
         ui.add_space(32.0);
@@ -294,7 +332,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 }
                 col.add_space(14.0);
             };
-        if manage {
+        if shows("allgemein") {
             section(
                 &mut col,
                 "allgemein",
@@ -303,14 +341,18 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 st,
             );
             general(&mut col, app, st, &detail);
+        }
+        if shows("rollen") {
             section(
                 &mut col,
-                "rechte",
-                texts::permissions_title(),
-                Some(texts::permissions_hint()),
+                "rollen",
+                texts::section_roles(),
+                Some(texts::roles_hint()),
                 st,
             );
-            permissions(&mut col, app, st, &detail);
+            roles::editor(&mut col, app, &mut st.roles, &detail, wide);
+        }
+        if shows("einladungen") {
             section(
                 &mut col,
                 "einladungen",
@@ -321,9 +363,10 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
             invites(&mut col, app, st, &detail);
         }
         let title = texts::members_title(detail.members.len());
-        section(&mut col, "mitglieder", &title, None, st);
-        members(&mut col, app, st, &detail, manage);
-        if manage {
+        let hint = manage.then(texts::members_hint);
+        section(&mut col, "mitglieder", &title, hint, st);
+        members(&mut col, app, st, &detail, manage, moderate);
+        if shows("sperren") {
             section(
                 &mut col,
                 "sperren",
@@ -480,12 +523,19 @@ fn reload_bans(app: &AppCtx, s: &mut State, server: Uuid) {
     }));
 }
 
-fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, manage: bool) {
+fn poll_loads(
+    ui: &Ui,
+    app: &mut AppCtx,
+    s: &mut State,
+    detail: &ServerDetail,
+    invites: bool,
+    bans: bool,
+) {
     let id = detail.server.id;
-    if manage && s.invites.is_none() && s.invites_load.is_none() {
+    if invites && s.invites.is_none() && s.invites_load.is_none() {
         reload_invites(app, s, id);
     }
-    if manage && s.bans.is_none() && s.bans_load.is_none() {
+    if bans && s.bans.is_none() && s.bans_load.is_none() {
         reload_bans(app, s, id);
     }
     if let Some(r) = poll(&mut s.invites_load) {
@@ -533,9 +583,9 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
                 s.name = None;
                 s.name_status.success(ui, common::saved());
             }
-            if s.saving_permissions {
-                s.saving_permissions = false;
-                s.permissions_status.success(ui, common::saved());
+            if s.roles.saving_base {
+                s.roles.saving_base = false;
+                s.roles.status.success(ui, common::saved());
             }
         }
         Some(OpState::Failed(e)) => {
@@ -545,10 +595,10 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
                 s.name_errors
                     .from_failure(&Failure::from_api(&e), &["name"]);
             }
-            if s.saving_permissions {
-                s.saving_permissions = false;
-                s.permissions = None;
-                s.permissions_status.error(ui, common::not_saved());
+            if s.roles.saving_base {
+                s.roles.saving_base = false;
+                s.roles.base = None;
+                s.roles.status.error(ui, common::not_saved());
             }
         }
         _ => {}
@@ -835,41 +885,6 @@ fn list_top(ui: &mut Ui) {
     ui.add_space(1.0);
 }
 
-fn permissions(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) {
-    let current = s
-        .permissions
-        .clone()
-        .unwrap_or_else(|| detail.server.member_permissions.clone());
-    list_top(ui);
-    for (i, (perm, label, desc)) in PERMISSIONS.into_iter().enumerate() {
-        let mut on = current.contains(&perm);
-        if controls::switch_row(ui, ("perm", i), label(), Some(desc()), &mut on, false) {
-            let next: Vec<Permission> = Permission::ALL
-                .iter()
-                .copied()
-                .filter(|p| if *p == perm { on } else { current.contains(p) })
-                .collect();
-            s.permissions = Some(next.clone());
-            s.saving_permissions = true;
-            s.permissions_status.clear();
-            app.client.update_server(
-                detail.server.id,
-                ServerPatch {
-                    name: None,
-                    member_permissions: Some(next),
-                },
-            );
-        }
-    }
-    // A finished save hands over to the server's mask again.
-    if !s.saving_permissions && s.permissions.as_ref() == Some(&detail.server.member_permissions) {
-        s.permissions = None;
-    }
-    ui.add_space(14.0);
-    let w = ui.available_width();
-    s.permissions_status.ui(ui, w);
-}
-
 fn row_frame(ui: &mut Ui) -> Rect {
     let theme = Theme::of(ui.ctx());
     let width = ui.available_width();
@@ -1036,7 +1051,14 @@ fn presence(p: PresenceStatus) -> Presence {
     }
 }
 
-fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, manage: bool) {
+fn members(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    s: &mut State,
+    detail: &ServerDetail,
+    manage: bool,
+    moderate: bool,
+) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let me_id = me(app).map(|u| u.id);
@@ -1052,36 +1074,57 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
             .image(m.avatar_url.as_deref(), app.images)
             .presence(Some(presence(status)))
             .paint(ui, av);
-        let allowed = manage && m.role != Role::Owner && Some(m.user_id) != me_id;
-        let menu_w = if allowed { 32.0 + 12.0 } else { 0.0 };
         let owner = m.role == Role::Owner;
-        let label = if owner {
-            texts::members_owner()
+        let allowed = moderate && !owner && Some(m.user_id) != me_id;
+        // Without a "…" (the owner, oneself) its column stays, so the
+        // badge and the chips line up.
+        let menu_w = if moderate { 32.0 + 12.0 } else { 0.0 };
+        let mid = rect.top() + 27.5;
+        let mut right = rect.right() - menu_w;
+        if owner {
+            let label = texts::members_owner();
+            let badge_w =
+                Block::single(ui, &label.to_uppercase(), text::CAPS, c.text).width() + 12.0;
+            let badge = Rect::from_min_size(pos2(right - badge_w, mid - 10.0), vec2(badge_w, 20.0));
+            controls::place(ui, UiBuilder::new().max_rect(badge), |ui| {
+                ui.add(Badge::new(label).tone(BadgeTone::Accent))
+            });
+            right = badge.left() - 12.0;
         } else {
-            texts::members_member()
-        };
-        let badge_w = Block::single(ui, &label.to_uppercase(), text::CAPS, c.text).width() + 12.0;
-        let name_w = rect.width() - 32.0 - 12.0 - 12.0 - badge_w - menu_w;
+            // The chips, then the "+" for managers (`.role-chips`, gap 8).
+            if manage {
+                let pr = Rect::from_min_size(pos2(right - 24.0, mid - 12.0), vec2(24.0, 24.0));
+                if let roles::Picked::Manage = roles::picker(ui, app, &mut s.roles, detail, m, pr) {
+                    s.scroll_to = Some("rollen");
+                }
+                right = pr.left() - 12.0;
+            }
+            let held = roles::held(&s.roles, detail, m);
+            if !held.is_empty() {
+                let widths: Vec<f32> = held
+                    .iter()
+                    .map(|(name, _)| roles::chip_width(ui, name))
+                    .collect();
+                let total = widths.iter().sum::<f32>() + 8.0 * (widths.len() - 1) as f32;
+                let mut x = right - total;
+                for ((name, color), w) in held.iter().zip(&widths) {
+                    let chip = Rect::from_min_size(pos2(x, mid - 12.0), vec2(*w, 24.0));
+                    roles::chip(ui, chip, name, *color);
+                    x += w + 8.0;
+                }
+                right -= total + 12.0;
+            }
+        }
         let nb = Block::single(ui, &m.name, text::UI, c.text);
-        let clip = Rect::from_min_size(
-            pos2(av.right() + 12.0, rect.top()),
-            vec2(name_w, rect.height()),
+        let name_left = av.right() + 12.0;
+        let clip = Rect::from_min_max(
+            pos2(name_left, rect.top()),
+            pos2(right.max(name_left), rect.bottom()),
         );
         nb.paint(
-            &ui.painter().with_clip_rect(clip),
+            &ui.painter().with_clip_rect(clip.intersect(ui.clip_rect())),
             pos2(clip.left(), rect.top() + (55.0 - nb.height()) / 2.0),
         );
-        let badge = Rect::from_min_size(
-            pos2(rect.right() - menu_w - badge_w, rect.top() + 17.5),
-            vec2(badge_w, 20.0),
-        );
-        controls::place(ui, UiBuilder::new().max_rect(badge), |ui| {
-            ui.add(Badge::new(label).tone(if owner {
-                BadgeTone::Accent
-            } else {
-                BadgeTone::Neutral
-            }))
-        });
         if allowed {
             let br = Rect::from_min_size(
                 pos2(rect.right() - 32.0, rect.top() + 11.5),
@@ -1394,9 +1437,11 @@ mod tests {
             harness.run_steps(4);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        // The Rollen panel has a "Name" field too: the dialog adds one.
+        let names = harness.query_all_by_label("Name").count();
         harness.get_by_label("Server erstellen").click();
         harness.run_steps(6);
-        harness.get_by_label("Name");
+        assert_eq!(harness.query_all_by_label("Name").count(), names + 1);
         harness.get_by_label("Servername");
     }
 
@@ -1437,8 +1482,19 @@ mod tests {
                     invites.fetch_add(1, Ordering::SeqCst);
                     Some(Reply::json(json!([])))
                 }
+                // The owner holds every flag, moderate_members too.
+                "GET" if path == "/servers" => {
+                    let mut reply = workspace(method, path)?;
+                    if let Some(perms) = reply.body[0]["permissions"].as_array_mut() {
+                        perms.push(json!("moderate_members"));
+                    }
+                    Some(reply)
+                }
                 "GET" if path == base => {
                     let mut reply = workspace(method, path)?;
+                    if let Some(perms) = reply.body["permissions"].as_array_mut() {
+                        perms.push(json!("moderate_members"));
+                    }
                     if !is_banned {
                         let jonas = json!({
                             "user_id": JONAS, "name": "Jonas", "avatar_url": null,
@@ -1507,5 +1563,178 @@ mod tests {
         wait_for(&mut harness, "the invites again", |_| {
             invites.load(Ordering::SeqCst) == 2
         });
+    }
+
+    /// The role writes the fake server saw: method, path and body.
+    type Log = std::sync::Arc<parking_lot::Mutex<Vec<(String, String, String)>>>;
+
+    /// Wohnzimmer with Jonas, answering the role routes and logging them.
+    fn with_roles(
+        log: Log,
+    ) -> impl Fn(&str, &str, &str) -> Option<crate::app::testkit::Reply> + Send + Sync + 'static
+    {
+        use crate::app::testkit::{HOME, Reply, roles};
+        use serde_json::{Value, json};
+        let inner = with_jonas(std::sync::Arc::default(), std::sync::Arc::default());
+        move |method, path, body| {
+            let member_roles = format!("/servers/{HOME}/members/{JONAS}/roles");
+            if path.starts_with("/roles/") || path == member_roles {
+                log.lock().push((method.into(), path.into(), body.into()));
+                let sent: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+                return Some(match method {
+                    "PUT" => Reply::json(json!({"user_id": JONAS, "role_ids": sent["role_ids"]})),
+                    "PATCH" => {
+                        let id = path.trim_start_matches("/roles/");
+                        let mut role = roles()
+                            .as_array()
+                            .and_then(|r| r.iter().find(|x| x["id"] == id).cloned())
+                            .unwrap_or(Value::Null);
+                        if let (Some(role), Some(patch)) = (role.as_object_mut(), sent.as_object())
+                        {
+                            role.extend(patch.clone());
+                        }
+                        Reply::json(role)
+                    }
+                    _ => Reply::json(Value::Null),
+                });
+            }
+            inner(method, path, body)
+        }
+    }
+
+    fn logged(log: &Log, method: &str, path: &str) -> Vec<String> {
+        log.lock()
+            .iter()
+            .filter(|(m, p, _)| m == method && p == path)
+            .map(|(_, _, b)| b.clone())
+            .collect()
+    }
+
+    /// The Rollen list (Inhaber, the custom roles, Alle Mitglieder), the
+    /// first custom role's panel, a switch that saves, and a delete.
+    #[test]
+    fn the_roles_editor_saves_and_deletes() {
+        use crate::app::testkit::{FakeApi, HOME, MODERATION, launcher, wait_for, wait_for_label};
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("roles-editor");
+        let log = Log::default();
+        let api = FakeApi::start(true, with_roles(log.clone()));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Neue Rolle");
+        harness.get_by_role_and_label(A11y::Link, "Rollen").click();
+        harness.run_steps(4);
+        for name in ["Inhaber", "Moderation", "Stammgäste", "Alle Mitglieder"] {
+            harness.get_by_role_and_label(A11y::Button, name);
+        }
+        // Moderation's panel: its name, the delete, the nine switches.
+        harness.get_by_role_and_label(A11y::Button, "Rolle löschen");
+        harness.get_by_label("Name");
+        harness
+            .query_all_by_label("Server verwalten")
+            .next()
+            .expect("the switch")
+            .click();
+        let path = format!("/roles/{MODERATION}");
+        wait_for(&mut harness, "the switch saved", |_| {
+            !logged(&log, "PATCH", &path).is_empty()
+        });
+        let sent: serde_json::Value =
+            serde_json::from_str(&logged(&log, "PATCH", &path)[0]).unwrap();
+        assert_eq!(
+            sent,
+            serde_json::json!({"permissions": [
+                "manage_server", "moderate_members", "manage_messages", "mention_everyone"
+            ]})
+        );
+        controls::answer_for_test(&harness.ctx, &format!("delete-role:{MODERATION}"), true);
+        wait_for(&mut harness, "the delete", |_| {
+            !logged(&log, "DELETE", &path).is_empty()
+        });
+        // The owner's panel: no delete, every switch on and fixed.
+        harness
+            .get_by_role_and_label(A11y::Button, "Inhaber")
+            .click();
+        wait_for(&mut harness, "the owner's panel", |h| {
+            h.query_by_label("Rolle löschen").is_none()
+        });
+        use egui_kittest::kittest::NodeT;
+        let switch = harness
+            .query_all_by_label("Server verwalten")
+            .next()
+            .expect("the switch");
+        assert!(switch.accesskit_node().is_disabled());
+    }
+
+    /// The "+" on a member row lists the roles; a checkbox saves the
+    /// member's roles at once and the list stays open.
+    #[test]
+    fn the_role_picker_saves_a_members_roles() {
+        use crate::app::testkit::{FakeApi, HOME, STAMMGAESTE, launcher, wait_for, wait_for_label};
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("role-picker");
+        let log = Log::default();
+        let api = FakeApi::start(true, with_roles(log.clone()));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Rollen für Jonas");
+        harness
+            .get_by_role_and_label(A11y::Link, "Mitglieder")
+            .click();
+        harness.run_steps(4);
+        harness.get_by_label("Rollen für Jonas").click();
+        wait_for_label(&mut harness, "Rollen verwalten");
+        harness
+            .get_by_role_and_label(A11y::CheckBox, "Stammgäste")
+            .click();
+        let path = format!("/servers/{HOME}/members/{JONAS}/roles");
+        wait_for(&mut harness, "the roles saved", |_| {
+            !logged(&log, "PUT", &path).is_empty()
+        });
+        let sent: serde_json::Value = serde_json::from_str(&logged(&log, "PUT", &path)[0]).unwrap();
+        assert_eq!(sent, serde_json::json!({"role_ids": [STAMMGAESTE]}));
+        harness.run_steps(4);
+        harness.get_by_label("Rollen verwalten").click();
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Rollen verwalten").is_none());
+    }
+
+    /// `serverSettingsSections`: who sees which section.
+    #[test]
+    fn the_sections_follow_the_rights() {
+        let server = |perms: &[&str]| -> Server {
+            serde_json::from_value(serde_json::json!({
+                "id": Uuid::nil(), "name": "W", "owner_id": Uuid::nil(), "icon_url": null,
+                "created_at": "2026-01-01T00:00:00Z", "role": "member",
+                "permissions": perms, "member_permissions": []
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            sections(&server(&["manage_server", "moderate_members"])),
+            [
+                "allgemein",
+                "rollen",
+                "einladungen",
+                "mitglieder",
+                "sperren",
+                "gefahrenzone"
+            ]
+        );
+        assert_eq!(
+            sections(&server(&["manage_server"])),
+            [
+                "allgemein",
+                "rollen",
+                "einladungen",
+                "mitglieder",
+                "gefahrenzone"
+            ]
+        );
+        assert_eq!(
+            sections(&server(&["moderate_members"])),
+            ["mitglieder", "sperren", "gefahrenzone"]
+        );
+        assert_eq!(sections(&server(&[])), ["mitglieder", "gefahrenzone"]);
     }
 }

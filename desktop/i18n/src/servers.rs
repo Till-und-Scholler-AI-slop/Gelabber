@@ -102,6 +102,10 @@ crate::strings! {
     error_member_not_kicked = "Mitglied nicht entfernt." | "Member not removed.";
     error_member_not_banned = "Mitglied nicht gesperrt." | "Member not banned.";
     error_member_not_unbanned = "Mitglied nicht entsperrt." | "Member not unbanned.";
+    error_role_not_created = "Rolle nicht erstellt." | "Role not created.";
+    error_role_not_saved = "Rolle nicht gespeichert." | "Role not saved.";
+    error_role_not_deleted = "Rolle nicht gelöscht." | "Role not deleted.";
+    error_member_roles_not_saved = "Rollen nicht gespeichert." | "Roles not saved.";
 }
 
 /// [`voice_heading`] in both languages, lower case: a server keeps the

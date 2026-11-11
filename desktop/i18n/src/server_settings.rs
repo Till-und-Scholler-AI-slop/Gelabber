@@ -1,5 +1,5 @@
 //! Server settings (web/src/i18n/catalogs/serverSettings.ts): name and
-//! picture, member permissions, invites, members, bans, leaving and
+//! picture, roles, invites, members, bans, leaving and
 //! deleting. The invite dialog the settings open and the member actions
 //! keep the web's wording from its servers and members catalogs.
 
@@ -13,7 +13,7 @@ crate::strings! {
 
     // The section anchors; the ids stay German.
     section_general = "Allgemein" | "General";
-    section_permissions = "Rechte" | "Permissions";
+    section_roles = "Rollen" | "Roles";
     section_invites = "Einladungen" | "Invites";
     section_members = "Mitglieder" | "Members";
     section_bans = "Sperren" | "Bans";
@@ -29,12 +29,9 @@ crate::strings! {
     icon_removing = "Entfernt…" | "Removing…";
     icon_pick_label = "Serverbild auswählen" | "Choose server picture";
 
-    permissions_title = "Rechte für Mitglieder" | "Member permissions";
-    permissions_hint = "Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort."
-        | "Applies to every member except the owner. Changes take effect at once.";
     permission_manage_server_label = "Server verwalten" | "Manage server";
-    permission_manage_server_hint = "Umbenennen, Rechte ändern, Einladungen, Kick und Ban."
-        | "Rename, change permissions, invites, kick and ban.";
+    permission_manage_server_hint = "Umbenennen, Rollen ändern, Einladungen."
+        | "Rename, change roles, invites.";
     permission_manage_channels_label = "Kanäle verwalten" | "Manage channels";
     permission_manage_channels_hint = "Kategorien und Kanäle anlegen, umbenennen, löschen."
         | "Create, rename and delete categories and channels.";
@@ -54,6 +51,27 @@ crate::strings! {
     permission_go_live_label = "Live gehen" | "Go Live";
     permission_go_live_hint = "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen."
         | "Show a screen or window to everyone in the voice channel.";
+    permission_moderate_members_label = "Mitglieder moderieren" | "Moderate members";
+    permission_moderate_members_hint = "Mitglieder vom Server entfernen und sperren."
+        | "Remove members from the server and ban them.";
+
+    roles_hint = "Eine Rolle bündelt Rechte. Wer mehrere Rollen hat, bekommt die Rechte aller zusammen."
+        | "A role bundles permissions. Whoever has several roles gets all of them together.";
+    roles_new = "Neue Rolle" | "New role";
+    roles_delete = "Rolle löschen" | "Delete role";
+    roles_name_label = "Name" | "Name";
+    roles_color_label = "Farbe" | "Colour";
+    roles_permissions_label = "Rechte" | "Permissions";
+    roles_owner_text = "Der Inhaber hat immer alle Rechte und sieht jeden Kanal."
+        | "The owner always has every permission and sees every channel.";
+    roles_delete_message = "Mitglieder verlieren die Rechte dieser Rolle. Kanäle, die nur für diese Rolle sind, sieht danach nur der Inhaber."
+        | "Members lose this role’s permissions. Channels that are only for this role will then be seen by the owner alone.";
+    roles_color_name_amber = "Bernstein" | "Amber";
+    roles_color_name_blue = "Blau" | "Blue";
+    roles_color_name_green = "Grün" | "Green";
+    roles_color_name_pink = "Rosa" | "Pink";
+    roles_color_name_violet = "Violett" | "Violet";
+    roles_color_name_coral = "Koralle" | "Coral";
 
     invites_hint = "Alle aktiven Links. Jedes Mitglied kann Links erstellen."
         | "All active links. Any member can create links.";
@@ -68,7 +86,10 @@ crate::strings! {
     invites_revoked = "Link widerrufen." | "Link revoked.";
 
     members_owner = "Inhaber" | "Owner";
-    members_member = "Mitglied" | "Member";
+    members_hint = "Hier vergibst du Rollen. Was eine Rolle darf, stellst du unter „Rollen“ ein."
+        | "Assign roles here. What a role may do is set under “Roles”.";
+    members_manage_roles = "Rollen verwalten" | "Manage roles";
+    members_no_roles = "Noch keine Rollen." | "No roles yet.";
 
     bans_title = "Gesperrte Konten" | "Banned accounts";
     bans_hint = "Gesperrte User können auch mit einem Einladungslink nicht wieder beitreten."
@@ -269,5 +290,29 @@ pub fn terms_uses_limited(count: u32) -> String {
     match get() {
         Locale::De => format!("{count}-mal nutzbar"),
         Locale::En => format!("{count} {}", plural(u64::from(count), "use", "uses")),
+    }
+}
+
+/// "über „{role}“": a flag a custom role shows on through another role.
+pub fn roles_inherited(role: &str) -> String {
+    match get() {
+        Locale::De => format!("über „{role}“"),
+        Locale::En => format!("via “{role}”"),
+    }
+}
+
+/// "Rolle „{name}“ löschen?"
+pub fn roles_delete_title(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Rolle „{name}“ löschen?"),
+        Locale::En => format!("Delete role “{name}”?"),
+    }
+}
+
+/// "Rollen für {name}": a member's role picker.
+pub fn members_roles_for(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Rollen für {name}"),
+        Locale::En => format!("Roles for {name}"),
     }
 }
