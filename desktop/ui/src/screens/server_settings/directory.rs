@@ -915,9 +915,11 @@ mod tests {
         harness.set_size(egui::vec2(1280.0, 1400.0));
         open_section(&mut harness);
         wait_for_label(&mut harness, "Im Verzeichnis zeigen");
-        // The preview's button is drawn but takes no click.
+        // The preview's button is drawn but takes no click, and screen
+        // readers skip it (`inert`).
         let preview = harness.get_by_role_and_label(Role::Button, "Beitritt anfragen");
         assert!(preview.accesskit_node().is_disabled());
+        assert!(preview.accesskit_node().is_hidden());
         assert!(save(&harness).accesskit_node().is_disabled());
         harness
             .get_by_role_and_label(Role::Switch, "Im Verzeichnis zeigen")

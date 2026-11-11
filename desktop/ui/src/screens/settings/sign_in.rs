@@ -105,8 +105,9 @@ pub struct SignInState {
 }
 
 impl SignInState {
-    /// For tests and previews: the section with these methods.
-    pub fn with_methods(methods: SignInMethods) -> Self {
+    /// For tests: the section with these methods.
+    #[cfg(test)]
+    pub(super) fn with_methods(methods: SignInMethods) -> Self {
         Self {
             started: true,
             methods: Some(methods),
@@ -171,7 +172,7 @@ pub fn section(ui: &mut Ui, app: &mut AppCtx, s: &mut SignInState) {
                 s.load = load(app);
             }
         } else {
-            skeleton_rows(ui, 2);
+            crate::widgets::skeleton::rows(ui, 2);
         }
         return;
     };
@@ -207,27 +208,6 @@ pub fn section(ui: &mut Ui, app: &mut AppCtx, s: &mut SignInState) {
                 })
         };
         provider_row(ui, app, s, provider, methods.password, feedback);
-    }
-}
-
-/// `SkeletonRows`: lines of 10px, 8px apart, 16px between the rows.
-pub(super) fn skeleton_rows(ui: &mut Ui, count: usize) {
-    let theme = Theme::of(ui.ctx());
-    let width = ui.available_width();
-    let height = count as f32 * (10.0 + 8.0 + 10.0) + (count - 1) as f32 * 16.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    crate::widgets::announce(&response, egui::Role::Status, common::loading());
-    let mut y = rect.top();
-    for _ in 0..count {
-        for share in [0.4, 0.7] {
-            ui.painter().rect_filled(
-                Rect::from_min_size(pos2(rect.left(), y), vec2(width * share, 10.0)),
-                corner(theme.radius.sm),
-                theme.c.surface,
-            );
-            y += 10.0 + 8.0;
-        }
-        y += 16.0 - 8.0;
     }
 }
 

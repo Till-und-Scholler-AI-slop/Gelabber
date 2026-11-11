@@ -252,6 +252,13 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, search: &DiscoverSearch) {
     });
     let fill = Rect::from_min_max(column.min, pos2(column.right() - 1.0, column.bottom()));
     ui.painter().rect_filled(fill, 0.0, c.panel);
+    // The <nav aria-label>; hover-only, so its rows keep their clicks.
+    let region = ui.interact(
+        fill,
+        Id::unique("gelabber-discover-sidebar"),
+        Sense::hover(),
+    );
+    crate::widgets::announce(&region, egui::Role::Navigation, texts::sidebar_label());
     crate::widgets::rule_h(
         ui.painter(),
         c.border,
@@ -276,6 +283,13 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, search: &DiscoverSearch) {
         text::CAPS,
         c.muted,
     );
+    // The <h2> the language list is labelled by.
+    let heading = ui.interact(
+        Rect::from_min_size(pos2(x, y), vec2(width, 34.0)),
+        Id::unique("gelabber-discover-language-heading"),
+        Sense::hover(),
+    );
+    crate::widgets::announce(&heading, egui::Role::Heading, texts::sidebar_language());
     y += 34.0;
     let mut picked: Option<Option<String>> = None;
     let rows = std::iter::once((None, texts::sidebar_all().to_owned())).chain(
@@ -635,7 +649,7 @@ fn content(
                 read(app, s, search, 0);
             }
         }
-        (None, None) => skeleton_rows(ui, 4),
+        (None, None) => crate::widgets::skeleton::rows(ui, 4),
         (Some(rows), _) if rows.is_empty() => {
             let block = Block::wrapped(ui, texts::page_empty(), text::BODY, c.muted, width);
             let (rect, response) = ui.allocate_exact_size(block.size(), Sense::hover());
@@ -655,6 +669,13 @@ fn content(
             for listing in &rows {
                 row(ui, app, s, listing, languages, width);
             }
+            // The <ul aria-label>; hover-only, so its rows keep their clicks.
+            let list = Rect::from_min_max(
+                pos2(ui.cursor().min.x, top),
+                pos2(ui.cursor().min.x + width, ui.cursor().min.y),
+            );
+            let list = ui.interact(list, Id::unique("gelabber-discover-list"), Sense::hover());
+            crate::widgets::announce(&list, egui::Role::List, texts::page_list_label());
             let more = s.list.request.as_ref().is_some_and(|(_, o, _)| *o > 0);
             // A failed read shows under the rows: a further page tries that
             // page again, a refresh the first.
@@ -766,31 +787,6 @@ fn search_field(ui: &mut Ui, s: &mut State, width: f32) {
     ui.advance_cursor_after_rect(rect);
 }
 
-/// `SkeletonRows count={4}`.
-fn skeleton_rows(ui: &mut Ui, count: usize) {
-    let theme = Theme::of(ui.ctx());
-    let width = ui.available_width();
-    let height = count as f32 * (10.0 + 8.0 + 10.0) + (count - 1) as f32 * 16.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    crate::widgets::announce(
-        &response,
-        egui::Role::Status,
-        gelabber_i18n::common::loading(),
-    );
-    let mut y = rect.top();
-    for _ in 0..count {
-        for share in [0.4, 0.7] {
-            ui.painter().rect_filled(
-                Rect::from_min_size(pos2(rect.left(), y), vec2(width * share, 10.0)),
-                corner(theme.radius.sm),
-                theme.c.surface,
-            );
-            y += 10.0 + 8.0;
-        }
-        y += 16.0 - 8.0;
-    }
-}
-
 /// `DiscoverRow`: the tile, name, description and "Deutsch · 48
 /// Mitglieder", the button and the "…".
 fn row(
@@ -832,13 +828,15 @@ fn row(
 }
 
 /// A row as others see it in Entdecken, for the server settings'
-/// "Vorschau": drawn as on the page, but its buttons take no input (`inert`
-/// on the web).
+/// "Vorschau": drawn as on the page, but its buttons take no input and
+/// screen readers skip it (`inert` on the web).
 pub fn preview(ui: &mut Ui, app: &AppCtx, listing: &Listing, languages: &[DirectoryLanguage]) {
     let width = ui.available_width();
     let opacity = ui.opacity();
     ui.scope(|ui| {
         ui.disable();
+        ui.ctx()
+            .accesskit_node_builder(ui.unique_id(), |node| node.set_hidden());
         // Disabled, but painted as it is.
         ui.set_opacity(opacity);
         draw_row(ui, app, listing, languages, width, false, false);

@@ -99,3 +99,29 @@ pub fn main(ui: &Ui, rect: Rect, kind: Kind, key: Id) {
         }
     }
 }
+
+/// `SkeletonRows`: `count` rows of two lines (40% and 70% wide), 10px
+/// tall and 8px apart, 16px between the rows; announced as loading.
+pub fn rows(ui: &mut Ui, count: usize) {
+    let theme = Theme::of(ui.ctx());
+    let width = ui.available_width();
+    let height = count as f32 * (10.0 + 8.0 + 10.0) + count.saturating_sub(1) as f32 * 16.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    crate::widgets::announce(
+        &response,
+        egui::Role::Status,
+        gelabber_i18n::common::loading(),
+    );
+    let mut y = rect.top();
+    for _ in 0..count {
+        for share in [0.4, 0.7] {
+            ui.painter().rect_filled(
+                Rect::from_min_size(pos2(rect.left(), y), Vec2::new(width * share, 10.0)),
+                corner(theme.radius.sm),
+                theme.c.surface,
+            );
+            y += 10.0 + 8.0;
+        }
+        y += 16.0 - 8.0;
+    }
+}

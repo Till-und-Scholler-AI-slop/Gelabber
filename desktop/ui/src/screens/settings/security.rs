@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Datelike, Local, Timelike, Utc};
+use chrono::{DateTime, Local, Utc};
 use egui::{Sense, Ui, Vec2, vec2};
 use gelabber_client::{
     ApiError, AuthProvider, DeleteConfirmation, DeviceClient, DeviceOs, DeviceSession,
@@ -16,7 +16,7 @@ use gelabber_client::{
 use gelabber_i18n::{account as texts, common, intl, settings as settings_texts};
 
 use super::controls::{self, Confirm, RowButton, Status, action_row, action_row_badged};
-use super::sign_in::{self, SECURITY_PATH, SignInState, dialog_error, reauth_note, skeleton_rows};
+use super::sign_in::{self, SECURITY_PATH, SignInState, dialog_error, reauth_note};
 use super::{op_pending, settled};
 use crate::app::AppCtx;
 use crate::rules::{Failure, FormErrors, error_message, field_message};
@@ -113,7 +113,7 @@ fn state_cell(ui: &mut Ui, message: &str, failed: bool, pending: bool, rows: usi
     let retry = if failed {
         crate::widgets::load_error(ui, message, pending) && !pending
     } else {
-        skeleton_rows(ui, rows);
+        crate::widgets::skeleton::rows(ui, rows);
         false
     };
     ui.add_space(8.0);
@@ -302,31 +302,6 @@ pub enum ExportAction {
     Retry,
 }
 
-fn local_fields(at: DateTime<Utc>) -> intl::DateTime {
-    let at = at.with_timezone(&Local);
-    intl::DateTime {
-        year: at.year(),
-        month: at.month(),
-        day: at.day(),
-        weekday: at.weekday().num_days_from_monday(),
-        hour: at.hour(),
-        minute: at.minute(),
-    }
-}
-
-/// `formatSize`: "46,0 MB" (one decimal, no grouping) or "12 KB".
-fn format_size(bytes: u64) -> String {
-    if bytes >= 1024 * 1024 {
-        let mb = format!("{:.1}", bytes as f64 / (1024.0 * 1024.0));
-        match gelabber_i18n::get() {
-            gelabber_i18n::Locale::De => format!("{} MB", mb.replace('.', ",")),
-            gelabber_i18n::Locale::En => format!("{mb} MB"),
-        }
-    } else {
-        format!("{} KB", ((bytes as f64 / 1024.0).round() as u64).max(1))
-    }
-}
-
 /// `exportRow`: the row's hint and button for an export state.
 pub fn export_row_for(status: &ExportStatus) -> (String, ExportAction) {
     let mail = texts::export_hint_mail();
@@ -355,9 +330,9 @@ pub fn export_row_for(status: &ExportStatus) -> (String, ExportAction) {
             ExportState::Ready => {
                 let date = view
                     .expires_at
-                    .map(|at| intl::format_date(&local_fields(at), intl::DateStyle::Long))
+                    .map(crate::rules::format_day)
                     .unwrap_or_default();
-                let size = format_size(view.size_bytes.unwrap_or(0));
+                let size = crate::rules::format_size(view.size_bytes.unwrap_or(0));
                 (
                     texts::export_hint_ready(&date, &size),
                     ExportAction::Download,

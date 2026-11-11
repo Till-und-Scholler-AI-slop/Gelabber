@@ -48,13 +48,9 @@ pub fn is_text(content_type: &str) -> bool {
     content_type.starts_with("text/") || content_type == "application/json"
 }
 
-/// `formatSize`: "1,5 MB" or "12 KB".
+/// `formatSize` ([`crate::rules::format_size`]) of a size the server sent.
 pub fn format_size(bytes: i64) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)).replace('.', ",")
-    } else {
-        format!("{} KB", ((bytes as f64 / 1024.0).round() as i64).max(1))
-    }
+    crate::rules::format_size(bytes.max(0) as u64)
 }
 
 pub fn attachment_url(id: Uuid) -> String {
@@ -1697,6 +1693,12 @@ mod tests {
         assert_eq!(format_size(1536 * 1024), "1,5 MB");
         assert_eq!(format_size(100), "1 KB");
         assert_eq!(format_size(12 * 1024 + 300), "12 KB");
+        assert_eq!(format_size(2000 * 1024 * 1024), "2000,0 MB");
+        {
+            let _en = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+            assert_eq!(format_size(1536 * 1024), "1.5 MB");
+            assert_eq!(format_size(2000 * 1024 * 1024), "2000.0 MB");
+        }
         let b = image_box(Some(vec2(1920.0, 1080.0)), 656.0);
         assert!(
             (b.x - 360.0).abs() < 0.01 && (b.y - 203.37).abs() < 0.05,

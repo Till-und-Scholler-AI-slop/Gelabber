@@ -229,6 +229,22 @@ pub fn failure_message(failure: &Failure, now: chrono::DateTime<chrono::Utc>) ->
     error_message(&failure.code).to_owned()
 }
 
+/// `formatSize`: "2,5 MB" ("2.5 MB" in English, one decimal, no grouping)
+/// or "12 KB".
+pub fn format_size(bytes: u64) -> String {
+    use gelabber_i18n::{Locale, intl};
+    if bytes >= 1024 * 1024 {
+        let group = match gelabber_i18n::get() {
+            Locale::De => '.',
+            Locale::En => ',',
+        };
+        let mb = intl::format_number(bytes as f64 / (1024.0 * 1024.0), 1, 1).replace(group, "");
+        format!("{mb} MB")
+    } else {
+        format!("{} KB", ((bytes as f64 / 1024.0).round() as u64).max(1))
+    }
+}
+
 /// `formatDate(at)`: the local day, "18. November 2026".
 pub fn format_day(at: chrono::DateTime<chrono::Utc>) -> String {
     use chrono::{Datelike, Timelike};

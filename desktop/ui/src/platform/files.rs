@@ -474,6 +474,29 @@ pub fn take_notices(ctx: &egui::Context) -> Vec<(String, bool)> {
 /// Saves `bytes` where the user chooses (the web's download), off the UI
 /// thread; without a dialog into the Downloads folder. A toast says where.
 pub fn save(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
+    let notices = notices(ctx);
+    save_to(ctx, title, name, move |path| {
+        let notice = match write_whole(&path, &bytes) {
+            Ok(()) => (texts::file_saved_to(&path.display().to_string()), false),
+            Err(e) => {
+                tracing::warn!("save {}: {e}", path.display());
+                (texts::file_not_saved(&e.to_string()), true)
+            }
+        };
+        notices.lock().push(notice);
+    });
+}
+
+/// Asks where to save a file suggested as `name`, off the UI thread;
+/// without a dialog it is a free name in the Downloads folder. `then` gets
+/// the path on the asking thread (the data export writes the file itself);
+/// nothing happens when it was cancelled.
+pub fn save_to(
+    ctx: &egui::Context,
+    title: &str,
+    name: &str,
+    then: impl FnOnce(PathBuf) + Send + 'static,
+) {
     let ctx = ctx.clone();
     // Only the last part of `name`: a path in it must not leave the folder.
     let Some(name) = Path::new(name)
@@ -487,58 +510,6 @@ pub fn save(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
         ctx.request_repaint();
         return;
     };
-    let name = name.as_str();
-    let request = Request::new(
-        title,
-        &[],
-        Mode::Save {
-            name: name.to_owned(),
-        },
-    );
-    let choosers = choosers(&ctx);
-    let notices = notices(&ctx);
-    let name = name.to_owned();
-    std::thread::spawn(move || {
-        let target = match choose(&choosers, &request) {
-            Choice::Chosen(paths) => paths.into_iter().next(),
-            Choice::Cancelled => None,
-            Choice::InApp => match downloads_dir(&choosers) {
-                Some(dir) => Some(free_path(&dir, &name)),
-                None => {
-                    let e = texts::file_no_downloads();
-                    notices.lock().push((texts::file_not_saved(e), true));
-                    None
-                }
-            },
-        };
-        if let Some(path) = target {
-            let notice = match write_whole(&path, &bytes) {
-                Ok(()) => (texts::file_saved_to(&path.display().to_string()), false),
-                Err(e) => {
-                    tracing::warn!("save {}: {e}", path.display());
-                    (texts::file_not_saved(&e.to_string()), true)
-                }
-            };
-            notices.lock().push(notice);
-        }
-        ctx.request_repaint();
-    });
-}
-
-/// Asks where to save a file suggested as `name`, as [`save`] does, for a
-/// download that writes the file itself (the data export): `then` gets
-/// the path on the asking thread; nothing happens when it was cancelled.
-pub fn save_to(
-    ctx: &egui::Context,
-    title: &str,
-    name: &str,
-    then: impl FnOnce(PathBuf) + Send + 'static,
-) {
-    let ctx = ctx.clone();
-    let name = Path::new(name)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let request = Request::new(title, &[], Mode::Save { name: name.clone() });
     let choosers = choosers(&ctx);
     let notices = notices(&ctx);
