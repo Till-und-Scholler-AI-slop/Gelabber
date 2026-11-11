@@ -117,6 +117,10 @@ services:
       # Operators of this instance and who may register (deploy/README.md, "Betrieb").
       API_OPERATOR_EMAILS: ${API_OPERATOR_EMAILS:-}
       API_REGISTRATION: ${API_REGISTRATION:-open}
+      # Sign-in with Google (deploy/README.md); both client values empty: off.
+      OIDC_GOOGLE_CLIENT_ID: ${OIDC_GOOGLE_CLIENT_ID:-}
+      OIDC_GOOGLE_CLIENT_SECRET: ${OIDC_GOOGLE_CLIENT_SECRET:-}
+      OIDC_GOOGLE_ISSUER: ${OIDC_GOOGLE_ISSUER:-}
     expose:
       - "8080"
     depends_on:
