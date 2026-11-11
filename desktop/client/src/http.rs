@@ -106,7 +106,7 @@ impl ApiError {
 // A marker `code()` reads, not text of its own.
 const TIMEOUT_PREFIX: &str = "Zeitüberschreitung: "; // i18n-ok
 
-const KNOWN_CODES: [&str; 29] = [
+const KNOWN_CODES: [&str; 33] = [
     "validation_failed",
     "bad_request",
     "unauthenticated",
@@ -136,6 +136,10 @@ const KNOWN_CODES: [&str; 29] = [
     "reauth_required",
     "oidc_wrong_origin",
     "session_changed",
+    "invitation_required",
+    "invitation_invalid",
+    "account_disabled",
+    "server_blocked",
 ];
 
 /// The copy per error code, as web/src/auth/rules.ts (the auth catalog's
@@ -169,6 +173,10 @@ pub fn error_message(code: &str) -> &'static str {
         "reauth_required" => auth::error_reauth_required(),
         "oidc_wrong_origin" => auth::error_oidc_wrong_origin(),
         "session_changed" => auth::error_session_changed(),
+        "invitation_required" => auth::error_invitation_required(),
+        "invitation_invalid" => auth::error_invitation_invalid(),
+        "account_disabled" => auth::error_account_disabled(),
+        "server_blocked" => auth::error_server_blocked(),
         _ => auth::error_internal(),
     }
 }
@@ -1044,6 +1052,59 @@ mod tests {
             api("password_required").text(),
             "Lege zuerst ein Passwort fest, sonst kannst du dich nicht mehr anmelden."
         );
+    }
+
+    #[test]
+    fn operator_codes_are_known_with_their_copy() {
+        let api = |code: &str| ApiError::Api {
+            status: 403,
+            code: code.into(),
+            message: String::new(),
+            fields: serde_json::Value::Null,
+            retry_after: None,
+        };
+        let german = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::De);
+        for (code, text) in [
+            (
+                "invitation_required",
+                "Zum Registrieren brauchst du eine Einladung.",
+            ),
+            (
+                "invitation_invalid",
+                "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+            ),
+            ("account_disabled", "Dieses Konto ist gesperrt."),
+            (
+                "server_blocked",
+                "Dieser Server wurde vom Betreiber gesperrt.",
+            ),
+        ] {
+            assert_eq!(api(code).code(), code);
+            assert_eq!(api(code).text(), text);
+        }
+        drop(german);
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(
+            api("account_disabled").text(),
+            "This account has been disabled."
+        );
+    }
+
+    #[test]
+    fn the_registration_mode_is_read() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = serve(|_| {
+            let body = r#"{"mode":"invitation"}"#;
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_bytes()
+        });
+        let http = Http::new(&base).unwrap();
+        let mode = runtime.block_on(http.registration_mode()).unwrap();
+        assert_eq!(mode, crate::models::RegistrationMode::Invitation);
+        assert!(seen.lock()[0].starts_with("GET /api/auth/registration "));
     }
 
     #[test]

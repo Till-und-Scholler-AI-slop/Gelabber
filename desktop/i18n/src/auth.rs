@@ -234,6 +234,13 @@ crate::strings! {
     // Native only: the system browser's page after the loopback callback.
     oidc_loopback_done = "Du kannst dieses Fenster schließen und zu Gelabber zurückkehren."
         | "You can close this window and return to Gelabber.";
+    error_invitation_required = "Zum Registrieren brauchst du eine Einladung."
+        | "You need an invitation to register.";
+    error_invitation_invalid = "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt."
+        | "This invitation is unknown, expired or already used.";
+    error_account_disabled = "Dieses Konto ist gesperrt." | "This account has been disabled.";
+    error_server_blocked = "Dieser Server wurde vom Betreiber gesperrt."
+        | "This server has been blocked by the operator.";
 }
 
 /// `fieldError.required`: "{label} fehlt.".
