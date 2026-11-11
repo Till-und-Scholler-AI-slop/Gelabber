@@ -2288,6 +2288,89 @@
       "path": "/betrieb/auslastung",
       "user": "lena",
       "webOnly": true
+    },
+    {
+      "name": "discover",
+      "path": "/discover",
+      "user": "lena"
+    },
+    {
+      "name": "discover-language",
+      "path": "/discover",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "English"
+        }
+      ]
+    },
+    {
+      "name": "discover-search",
+      "path": "/discover",
+      "user": "lena",
+      "actions": [
+        {
+          "placeholder": "Nach Name oder Thema suchen"
+        },
+        {
+          "type": "rust"
+        },
+        {
+          "wait": 400
+        }
+      ]
+    },
+    {
+      "name": "discover-request",
+      "path": "/discover",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Beitritt anfragen"
+        }
+      ]
+    },
+    {
+      "name": "discover-report",
+      "path": "/discover",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Mehr zu Filmclub"
+        },
+        {
+          "menuitem": "Melden"
+        }
+      ]
+    },
+    {
+      "name": "rail-discover-hover",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "Entdecken"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-verzeichnis",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "/^Verzeichnis/"
+        },
+        {
+          "wait": 300
+        }
+      ]
+    },
+    {
+      "name": "light-discover",
+      "path": "/discover",
+      "user": "lena",
+      "before": "theme lena light"
     }
   ]
 }

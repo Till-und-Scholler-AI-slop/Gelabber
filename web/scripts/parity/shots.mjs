@@ -326,7 +326,7 @@ for (const scene of scenes) {
       if (action.menuitem)
         await page.getByRole("menuitem", { name: named(action.menuitem), exact: true }).first().click();
       if (action.link)
-        await page.getByRole("link", { name: action.link, exact: true }).first().click();
+        await page.getByRole("link", { name: named(action.link), exact: true }).first().click();
       // The first button or link of that name, with the secondary button.
       if (action.rightclick)
         await page
