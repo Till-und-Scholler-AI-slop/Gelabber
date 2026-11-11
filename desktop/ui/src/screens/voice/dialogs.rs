@@ -16,7 +16,7 @@ use crate::text::{self, Block};
 use crate::theme::{Theme, corner};
 use crate::widgets::{Button, Modal, ModalWidth};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
     Audio,
     Video,
@@ -164,7 +164,8 @@ fn tabs(ui: &mut Ui, current: Tab, width: f32, focus: bool) -> Option<Tab> {
     let top = ui.cursor().min;
     let mut x = top.x;
     let mut chosen = None;
-    let tab_id = |tab: Tab| Id::unique(("gelabber-voice-tab", tab.label()));
+    // By the tab, not its label, so a language switch keeps the focus.
+    let tab_id = |tab: Tab| Id::unique(("gelabber-voice-tab", tab));
     // The keys first, so the tab they choose is the focusable one this frame.
     let mut current = current;
     let mut focus = focus;

@@ -705,6 +705,15 @@ fn the_notice_is_a_row_of_the_bar() {
         h.get_by_label("Verlassen").rect().top(),
         800.0 - 56.0 + 1.0 + 8.0 + 1.5
     );
+    // Put away, it stays away in the other language.
+    let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    h.run_steps(4);
+    h.get_by_label("Leave");
+    assert!(h.query_by_label_contains("Live audio").is_none());
+    assert_eq!(
+        h.get_by_label("Leave").rect().top(),
+        800.0 - 56.0 + 1.0 + 8.0 + 1.5
+    );
 }
 
 #[test]

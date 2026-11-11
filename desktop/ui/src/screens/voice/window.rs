@@ -65,6 +65,19 @@ pub fn toggle(ctx: &egui::Context, key: VideoKey, label: &str) {
     });
 }
 
+/// Keeps an open window's title in the interface's language: its tile
+/// passes its label each time it draws.
+pub fn retitle(ctx: &egui::Context, key: VideoKey, label: &str) {
+    with(ctx, |w| {
+        if let Some(open) = w.open.get_mut(&key) {
+            let now = title(label);
+            if *open != now {
+                *open = now;
+            }
+        }
+    });
+}
+
 pub fn close(ctx: &egui::Context, key: VideoKey) {
     with(ctx, |w| {
         w.open.remove(&key);
@@ -225,6 +238,18 @@ mod tests {
             Some("Jonas — Live – Gelabber")
         );
         assert!(is_open(&harness.ctx, key));
+        // The tile's label in another language retitles the open window.
+        retitle(&harness.ctx, key, "Jonas — Live (English)");
+        harness.step();
+        let title_now = harness
+            .output()
+            .viewport_output
+            .get(&viewport_id(key))
+            .and_then(|o| o.builder.title.clone());
+        assert_eq!(
+            title_now.as_deref(),
+            Some("Jonas — Live (English) – Gelabber")
+        );
         // "Fenster schließen" takes it away again.
         toggle(&harness.ctx, key, "Jonas — Live");
         harness.step();

@@ -691,6 +691,9 @@ pub fn picture(
     // Someone else's Live is watched by choice; until then, "Zuschauen".
     let needs_watch = live && !pic.own && !pic.watching;
     let in_window = pic.key.is_some_and(|k| window::is_open(ui.ctx(), k));
+    if in_window && let Some(key) = pic.key {
+        window::retitle(ui.ctx(), key, &pic.label);
+    }
     // The large view over the stage has the picture to itself: one ask
     // and one GPU copy, not a second at the tile's size under it.
     let in_large_view = super::page::large_view(ui.ctx()) == Some(pic.id);

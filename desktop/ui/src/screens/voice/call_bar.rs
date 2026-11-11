@@ -5,7 +5,7 @@
 //! headset, camera, "Live", the settings and "Verlassen".
 
 use egui::{Color32, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
-use gelabber_call::{CallState, CallStatus, LiveSource, MicStatus};
+use gelabber_call::{CallState, CallStatus, LiveSound, LiveSource, MicStatus};
 use gelabber_i18n::{common as shared, voice as texts};
 use uuid::Uuid;
 
@@ -476,14 +476,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             pos2(left, cy + 18.0 + 6.0),
             pos2(right, cy + 18.0 + notice_h),
         );
-        notice(ui, &text_s, row);
+        notice(ui, &text_s, &state.live_sound, row);
     }
 }
 
 /// `dockNotices` of the desktop app: what the bar says about the own
 /// Live's sound, most important first; `None` without one.
 pub fn dock_notice(state: &CallState, app: &str) -> Option<String> {
-    use gelabber_call::LiveSound;
     if !state.live {
         return None;
     }
@@ -500,17 +499,19 @@ pub fn dock_notice(state: &CallState, app: &str) -> Option<String> {
 }
 
 /// The notice the bar shows, unless "Hinweis schließen" put it away; a
-/// new notice shows again.
+/// new notice shows again. The dismissal holds the sound status the notice
+/// was about, not its words, so a language switch keeps it away.
 fn notice_text(ctx: &egui::Context, state: &CallState) -> Option<String> {
     let p = prefs::get(ctx);
     let text_s = dock_notice(state, &p.source_audio_app);
-    let dismissed: Option<String> = ctx.data(|d| d.get_temp(dismissed_id())).flatten();
+    let subject = text_s.as_ref().map(|_| state.live_sound.clone());
+    let dismissed: Option<LiveSound> = ctx.data(|d| d.get_temp(dismissed_id())).flatten();
     // A put-away notice that went may come back with the next Live.
-    if dismissed.is_some() && dismissed != text_s {
-        ctx.data_mut(|d| d.remove::<Option<String>>(dismissed_id()));
+    if dismissed.is_some() && dismissed != subject {
+        ctx.data_mut(|d| d.remove::<Option<LiveSound>>(dismissed_id()));
         return text_s;
     }
-    text_s.filter(|t| dismissed.as_deref() != Some(t.as_str()))
+    text_s.filter(|_| dismissed.is_none())
 }
 
 fn dismissed_id() -> Id {
@@ -526,8 +527,9 @@ fn notice_block(ui: &Ui, text_s: &str, width: f32) -> Block {
 }
 
 /// `.voice-session-notice`: a row of the bar under its controls, the
-/// warning icon, the words in the muted colour and "Hinweis schließen".
-fn notice(ui: &mut Ui, text_s: &str, row: Rect) {
+/// warning icon, the words in the muted colour and "Hinweis schließen",
+/// which puts away the notice about `subject`.
+fn notice(ui: &mut Ui, text_s: &str, subject: &LiveSound, row: Rect) {
     let ctx = ui.ctx().clone();
     let c = Theme::of(&ctx).c;
     let block = notice_block(ui, text_s, row.width() + 32.0);
@@ -560,7 +562,7 @@ fn notice(ui: &mut Ui, text_s: &str, row: Rect) {
         )
         .clicked()
     {
-        ctx.data_mut(|d| d.insert_temp(dismissed_id(), Some(text_s.to_owned())));
+        ctx.data_mut(|d| d.insert_temp(dismissed_id(), Some(subject.clone())));
     }
 }
 
