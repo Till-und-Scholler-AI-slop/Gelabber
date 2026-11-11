@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use egui::text::LayoutJob;
 use egui::{Color32, CornerRadius, FontFamily, FontId, Pos2, Rect, Sense, Stroke, Ui, pos2};
+use gelabber_i18n::{chat as texts, common};
 use uuid::Uuid;
 
 use super::markdown::{Block as MdBlock, Inline, parse_message};
@@ -263,7 +264,11 @@ impl Builder<'_> {
                     let mentions_me = m.me.is_some_and(|me| m.mentions.contains(&me));
                     let own =
                         m.me.is_some_and(|me| me.to_string() == *id) && (m.everyone || mentions_me);
-                    let name = m.names.get(id).map(String::as_str).unwrap_or("Unbekannt");
+                    let name = m
+                        .names
+                        .get(id)
+                        .map(String::as_str)
+                        .unwrap_or(texts::mention_unknown());
                     let color = if own { c.text } else { c.accent_text };
                     let format = self.style(marks).weight(600.0).format(color);
                     self.push(
@@ -552,7 +557,7 @@ fn layout_as(
 
 fn push_edited(b: &mut Builder, theme: &Theme) {
     let format = TextStyle::new(11.0, 400.0, 1.5).format(theme.c.muted);
-    b.push("(bearbeitet)", format, Span::Edited, Marks::default());
+    b.push(texts::row_edited(), format, Span::Edited, Marks::default());
 }
 
 /// Per-row x extents of the chars `range` in `block`'s galley, relative to
@@ -742,7 +747,7 @@ impl Laid {
                                         egui::WidgetInfo::labeled(
                                             egui::Role::Button,
                                             true,
-                                            "Spoiler anzeigen",
+                                            texts::content_show_spoiler_label(),
                                         )
                                     });
                                 }
@@ -857,9 +862,9 @@ impl Laid {
                     // The copy button: padding 2 6, gap 4, icon 13, 11px label.
                     let state = copied.filter(|(i, _)| *i == code.index).map(|(_, ok)| ok);
                     let (icon, label, icon_color) = match state {
-                        Some(true) => (Some(Icon::Check), "Kopiert", Some(c.online_text)),
-                        Some(false) => (None, "Kopieren nicht möglich", None),
-                        None => (Some(Icon::Copy), "Kopieren", None),
+                        Some(true) => (Some(Icon::Check), common::copied(), Some(c.online_text)),
+                        Some(false) => (None, texts::content_copy_failed(), None),
+                        None => (Some(Icon::Copy), common::copy(), None),
                     };
                     let style = TextStyle::new(11.0, 400.0, 1.5);
                     let label_block = Block::single(ui, label, style, c.muted);

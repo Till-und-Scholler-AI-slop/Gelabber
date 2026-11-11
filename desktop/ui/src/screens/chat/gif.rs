@@ -4,6 +4,7 @@
 
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, TextBuffer, Ui, pos2, vec2};
 use gelabber_client::{ApiError, Client, Gif, GifPage, GifPick};
+use gelabber_i18n::{chat as texts, common};
 
 use crate::images::{Fit, ImageState, Images, cover_uv};
 use crate::task::{Pending, poll};
@@ -31,20 +32,22 @@ pub struct GifState {
 
 fn status(state: &GifState) -> String {
     if state.request.is_some() && !state.more {
-        return "GIFs werden geladen …".into();
+        return texts::gif_loading().into();
     }
     if let Some(error) = &state.error {
         return match error.code() {
-            "rate_limited" | "upstream_quota" | "upstream_unavailable" => error.german().to_owned(),
-            _ if state.gifs.is_empty() => "GIFs konnten nicht geladen werden.".into(),
-            _ => "Weitere GIFs konnten nicht geladen werden.".into(),
+            "rate_limited" | "upstream_quota" | "upstream_unavailable" => {
+                crate::rules::error_message(error.code()).to_owned()
+            }
+            _ if state.gifs.is_empty() => texts::gif_failed().into(),
+            _ => texts::gif_more_failed().into(),
         };
     }
     let query = state.query.clone().unwrap_or_default();
     match (state.gifs.len(), query.is_empty()) {
-        (0, _) => "Keine GIFs gefunden.".into(),
-        (n, true) => format!("{n} angesagte GIFs"),
-        (n, false) => format!("{n} GIFs zu „{query}“"),
+        (0, _) => texts::gif_none().into(),
+        (n, true) => texts::gif_trending(n as u64),
+        (n, false) => texts::gif_found(n as u64, &query),
     }
 }
 
@@ -95,14 +98,14 @@ pub fn show(
         state.more = false;
     }
     let mut picked = None;
-    let output = Modal::new("gif-picker", "GIF senden")
+    let output = Modal::new("gif-picker", texts::composer_send_gif())
         .width(ModalWidth::Wide)
         .show(
             ctx,
             |ui| {
                 let width = ui.available_width();
                 ui.spacing_mut().item_spacing.y = 12.0;
-                crate::text::label(ui, "GIF suchen", LABEL, c.text);
+                crate::text::label(ui, texts::gif_search(), LABEL, c.text);
                 let input_id = egui::Id::unique("gelabber-gif-search");
                 let (r, _) = ui.allocate_exact_size(vec2(width, 39.0), Sense::hover());
                 let border = if theme.is_dark() { c.muted } else { c.border };
@@ -133,7 +136,7 @@ pub fn show(
                         .show(ui)
                 });
                 if state.input.is_empty() {
-                    Block::single(ui, "Search KLIPY", INPUT, c.subtle)
+                    Block::single(ui, "Search KLIPY", INPUT, c.subtle) // i18n-ok
                         .paint(ui.painter(), pos2(r.left() + 9.0, r.top() + 9.0));
                 }
                 if state.input != before {
@@ -146,7 +149,7 @@ pub fn show(
                 crate::text::label(ui, &status(state), SMALL, c.muted);
                 if state.error.is_some()
                     && state.gifs.is_empty()
-                    && retry_button(ui, width, "Erneut versuchen")
+                    && retry_button(ui, width, common::try_again())
                 {
                     let q = state.query.clone().unwrap_or_default();
                     state.error = None;
@@ -235,9 +238,9 @@ pub fn show(
                     });
                 if let Some(page) = state.next {
                     let label = if state.more {
-                        "Lädt …"
+                        texts::gif_loading_more()
                     } else {
-                        "Weitere GIFs anzeigen"
+                        texts::gif_more()
                     };
                     if retry_button(ui, width, label) && !state.more {
                         let q = state.query.clone().unwrap_or_default();
@@ -247,7 +250,7 @@ pub fn show(
                 }
                 let note = Block::single(
                     ui,
-                    "Powered by KLIPY",
+                    "Powered by KLIPY", // i18n-ok: the provider's attribution
                     TextStyle::new(11.0, 400.0, 1.5),
                     c.muted,
                 );

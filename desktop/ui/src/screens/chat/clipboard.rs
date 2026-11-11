@@ -2,6 +2,7 @@
 //! browser's: without a display there is no clipboard to write to.
 
 use egui::Id;
+use gelabber_i18n::chat as texts;
 
 use crate::toasts::Toasts;
 use crate::widgets::StatusTone;
@@ -39,9 +40,9 @@ pub fn set_copier(ctx: &egui::Context, copier: Copier) {
 /// "Text kopieren" of a message (MessageRow.tsx): a toast either way.
 pub fn copy_message(ctx: &egui::Context, text: &str, toasts: &mut Toasts) {
     if copy(ctx, text) {
-        toasts.notify("Text kopiert.");
+        toasts.notify(texts::row_copied());
     } else {
-        toasts.error("Der Text konnte nicht kopiert werden.");
+        toasts.error(texts::row_copy_failed());
     }
 }
 
@@ -49,17 +50,9 @@ pub fn copy_message(ctx: &egui::Context, text: &str, toasts: &mut Toasts) {
 /// line, and whether the link went out.
 pub fn copy_link(ctx: &egui::Context, link: &str, summary: &str) -> (String, StatusTone, bool) {
     if copy(ctx, link) {
-        (
-            format!("Link kopiert · {summary}"),
-            StatusTone::Success,
-            true,
-        )
+        (texts::link_copied(summary), StatusTone::Success, true)
     } else {
-        (
-            "Kopieren fehlgeschlagen. Kopiere den Link manuell.".into(),
-            StatusTone::Error,
-            false,
-        )
+        (texts::link_copy_failed().into(), StatusTone::Error, false)
     }
 }
 

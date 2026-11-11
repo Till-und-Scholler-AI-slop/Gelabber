@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, TextBuffer, Ui, Vec2, pos2, vec2};
 use gelabber_client::OutgoingFile;
+use gelabber_i18n::chat as texts;
 use uuid::Uuid;
 
 use super::attachments::format_size;
@@ -210,7 +211,7 @@ pub fn show(
         crate::toasts::set_anchor(ui.ctx(), r);
         Block::single(
             ui,
-            "Du kannst in diesem Kanal nicht schreiben.",
+            texts::composer_read_only(),
             TextStyle::new(13.0, 400.0, 1.5),
             c.muted,
         )
@@ -236,15 +237,16 @@ pub fn show(
             14.0,
             c.danger,
         );
-        let label = if input.unsent == 1 {
-            "1 Nachricht nicht gesendet".to_owned()
-        } else {
-            format!("{} Nachrichten nicht gesendet", input.unsent)
-        };
+        let label = texts::composer_unsent(input.unsent as u64);
         let style = TextStyle::new(13.0, 500.0, 1.35);
         Block::single(ui, &label, style, c.text)
             .paint(ui.painter(), pos2(r.left() + 32.0, r.top() + 6.0));
-        let show = Block::single(ui, "Anzeigen", style.weight(600.0), c.text);
+        let show = Block::single(
+            ui,
+            texts::composer_show_unsent(),
+            style.weight(600.0),
+            c.text,
+        );
         let sr = Rect::from_min_size(
             pos2(r.right() - 10.0 - show.width(), r.top() + 6.0),
             show.size(),
@@ -316,7 +318,7 @@ pub fn show(
     if drop_target {
         let note = Block::single(
             ui,
-            "Loslassen zum Anhängen",
+            texts::composer_drop_hint(),
             TextStyle::new(13.0, 600.0, 1.5),
             c.accent_text,
         );
@@ -329,7 +331,7 @@ pub fn show(
             Sense::hover(),
         )
         .widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Label, true, "Loslassen zum Anhängen")
+            egui::WidgetInfo::labeled(egui::Role::Label, true, texts::composer_drop_hint())
         });
         fy += 10.0 + 19.5;
     }
@@ -349,10 +351,25 @@ pub fn show(
             c.muted,
         );
         let style = TextStyle::new(13.0, 400.0, 1.5);
-        let text = crate::text::Rich::new(style)
-            .push("Antwort an ", style, c.muted)
-            .push(&name, style.weight(600.0), c.text)
-            .push(" · Esc bricht ab", style, c.muted)
+        // "Antwort an <b>{name}</b>": the name goes into the bold piece,
+        // so a name cannot add tags.
+        let mut rich = crate::text::Rich::new(style);
+        for piece in gelabber_i18n::pieces(texts::composer_reply_to()) {
+            rich = match piece.tag {
+                Some(_) => rich.push(
+                    &piece.text.replace("{name}", &name),
+                    style.weight(600.0),
+                    c.text,
+                ),
+                None => rich.push(piece.text, style, c.muted),
+            };
+        }
+        let text = rich
+            .push(
+                &format!(" {}", texts::composer_reply_hint()),
+                style,
+                c.muted,
+            )
             .layout(ui);
         text.paint(
             ui.painter(),
@@ -373,7 +390,7 @@ pub fn show(
             14.0,
             if resp.hovered() { c.text } else { c.muted },
         );
-        Tooltip::new("Antworten abbrechen").on_hover(&resp, Side::Above);
+        Tooltip::new(texts::composer_cancel_reply_label()).on_hover(&resp, Side::Above);
         if resp.clicked() {
             state.reply = None;
             state.focus = true;
@@ -413,7 +430,7 @@ pub fn show(
             );
             let resp = ui.interact(close, edit_id.with(("remove", i)), Sense::click());
             resp.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, true, "Anhang entfernen")
+                egui::WidgetInfo::labeled(egui::Role::Button, true, texts::composer_remove_file())
             });
             if resp.hovered() {
                 ui.painter().circle_filled(close.center(), 13.0, c.hover);
@@ -425,7 +442,7 @@ pub fn show(
                 14.0,
                 if resp.hovered() { c.text } else { c.muted },
             );
-            Tooltip::new("Anhang entfernen").on_hover(&resp, Side::Above);
+            Tooltip::new(texts::composer_remove_file()).on_hover(&resp, Side::Above);
             if resp.clicked() {
                 remove = Some(i);
             }
@@ -464,8 +481,8 @@ pub fn show(
             let label = Block::single(ui, &format!("@{}", s.word()), style, c.text);
             label.paint(ui.painter(), pos2(r.left() + 10.0, r.top() + 6.0));
             let note = match s {
-                Suggestion::Everyone => Some("Alle Mitglieder"),
-                Suggestion::Here => Some("Alle, die gerade online sind"),
+                Suggestion::Everyone => Some(texts::mention_everyone()),
+                Suggestion::Here => Some(texts::mention_here()),
                 Suggestion::User(_) => None,
             };
             if let Some(note) = note {
@@ -538,13 +555,13 @@ pub fn show(
             ui,
             r,
             Icon::Paperclip,
-            "Datei anhängen",
+            texts::composer_attach_file(),
             edit_id.with("attach"),
         ) && state.chosen.is_none()
         {
             state.chosen = Some(crate::platform::files::pick_many(
                 ui.ctx(),
-                "Datei anhängen",
+                texts::composer_attach_file(),
             ));
         }
         x += 36.0;
@@ -623,7 +640,7 @@ pub fn show(
         .response
         .response
         .clone()
-        .accessible_name(format!("Nachricht an {}", input.placeholder));
+        .accessible_name(texts::composer_message_to(&input.placeholder));
     if let Some(range) = output.cursor_range {
         let caret = (range.primary.index == range.secondary.index).then_some(range.primary.index.0);
         if caret != state.last_caret {
@@ -653,7 +670,7 @@ pub fn show(
     if state.draft.is_empty() {
         let hint = Block::single(
             ui,
-            &format!("Nachricht an {}", input.placeholder),
+            &texts::composer_message_to(&input.placeholder),
             DRAFT,
             c.subtle,
         );
@@ -668,7 +685,7 @@ pub fn show(
         ui,
         emoji_rect,
         Icon::Smile,
-        "Emoji einfügen",
+        texts::composer_insert_emoji(),
         edit_id.with("emoji"),
     ) {
         state.emoji_open = true;
@@ -686,7 +703,7 @@ pub fn show(
             if lit { c.text } else { c.muted },
         );
         label.paint(ui.painter(), r.center() - label.size() / 2.0);
-        Tooltip::new("GIF senden").on_hover(&resp, Side::Above);
+        Tooltip::new(texts::composer_send_gif()).on_hover(&resp, Side::Above);
         if resp.clicked() {
             state.gif_open = true;
         }
@@ -724,7 +741,7 @@ pub fn show(
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
     }
-    Tooltip::new("Senden").on_hover(&resp, Side::Above);
+    Tooltip::new(texts::composer_send()).on_hover(&resp, Side::Above);
     if resp.clicked() {
         submit = true;
     }
@@ -746,9 +763,15 @@ pub fn show(
     if status_h > 0.0 {
         let left_chars = remaining(state, input);
         let (text, color) = if left_chars < 0 {
-            (format!("{} Zeichen zu viel", -left_chars), c.danger)
+            (
+                texts::composer_chars_over(left_chars.unsigned_abs()),
+                c.danger,
+            )
         } else {
-            (format!("{left_chars} Zeichen übrig"), c.muted)
+            (
+                texts::composer_chars_left(left_chars.unsigned_abs()),
+                c.muted,
+            )
         };
         let block = Block::single(ui, &text, TextStyle::new(12.0, 400.0, 1.5), color);
         block.paint(
