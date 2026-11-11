@@ -409,6 +409,7 @@ fn the_own_live_says_what_becomes_of_its_sound() {
                 false,
                 false,
                 1.0,
+                None,
             );
         });
         h.run_steps(6);
@@ -486,6 +487,7 @@ fn camera_stage(embed: bool) -> H {
             false,
             false,
             1.0,
+            None,
         );
         crate::screens::voice::dialogs::show(ui, app);
     })
@@ -575,7 +577,7 @@ fn the_call_bar_speaks_english() {
     h.run_steps(6);
     h.get_by_label("Leave");
     h.get_by_label("Go Live");
-    h.get_by_label("Call settings");
+    assert!(h.query_by_label("Call settings").is_none());
     assert!(h.query_by_label("Verlassen").is_none());
     h.get_by_label("No microphone").click();
     h.run_steps(6);
@@ -957,6 +959,7 @@ fn the_large_view_has_the_video_to_itself() {
             false,
             false,
             1.0,
+            None,
         );
     });
     h.run_steps(2);
@@ -992,6 +995,7 @@ fn only_a_live_offers_to_reload_a_missing_picture() {
                 false,
                 false,
                 1.0,
+                None,
             );
         });
         // Past `FRAME_STALLED` (8 s) at 60 frames a second.
@@ -1069,4 +1073,116 @@ fn the_people_fill_the_stage_without_pictures() {
     // No pictures: no view to switch, no Kino.
     assert!(h.query_by_label("Raster").is_none());
     assert!(h.query_by_label("Kino").is_none());
+}
+
+/// The call bar has no settings gear; the connection's bars and word are
+/// one button, and its "Verbindung" carries the call's volumes.
+#[test]
+fn the_bar_has_no_gear_and_its_status_opens_the_volumes() {
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call, bar);
+    h.run_steps(4);
+    assert!(h.query_by_label("Anrufeinstellungen").is_none());
+    let label = "Verbindung: wird gemessen … – Details anzeigen";
+    // The bars (36) and "Verbunden" after them.
+    let status = h.get_by_label(label).rect();
+    assert!(status.width() > 36.0 + 8.0 + 50.0, "{status:?}");
+    h.get_by_label(label).click();
+    h.run_steps(4);
+    h.get_by_label("Lautstärke");
+    h.get_by_label("Gespräche");
+    h.get_by_label("Live-Ton");
+    h.get_by_label("Live-Ton stummschalten");
+    h.get_by_label("Alle Details");
+}
+
+/// In a call the user panel's gear opens the call's quick settings;
+/// outside one it is the way to the settings.
+#[test]
+fn in_a_call_the_user_panels_gear_opens_the_call_settings() {
+    let (client, call) = offline();
+    let mut h = harness(client, call.clone(), crate::screens::shell::show);
+    h.run_steps(6);
+    h.get_by_label("Einstellungen");
+    assert!(h.query_by_label("Anrufeinstellungen").is_none());
+    call.set_state(in_sofa(MicStatus::Live));
+    h.run_steps(6);
+    assert!(h.query_by_label("Einstellungen").is_none());
+    h.get_by_label("Anrufeinstellungen").click();
+    h.run_steps(6);
+    h.get_by_label("Alle Einstellungen …");
+    h.get_by_label("Gespräche");
+}
+
+/// Mira's Live with Jonas watching, Lena in the call.
+fn mira_live() -> (CallState, crate::screens::voice::session::Room) {
+    let mut state = super::joined();
+    state.participants[2].live = Some(VideoKey(8));
+    state.participants[2].watching = false;
+    let mut s = super::state();
+    s.live.insert(SERVER, [(SOFA, vec![super::MIRA])].into());
+    s.watches
+        .insert(SERVER, [(SOFA, [(JONAS, vec![super::MIRA])].into())].into());
+    let room = crate::screens::voice::session::build(&s, &state, SERVER, SOFA).expect("room");
+    (state, room)
+}
+
+/// A Live's caption counts who watches; the count lists them, and the
+/// others in the channel apart. Fokus's row says who is live and who
+/// watches the Live in front.
+#[test]
+fn a_lives_count_lists_who_watches() {
+    let (state, room) = mira_live();
+    let mut h = page(state, room);
+    // No Live tag of its own: the caption has the badge.
+    h.get_by_label("Schaut zu");
+    h.get_by_label("Ist live");
+    h.get_by_label("1 schaut zu – Liste anzeigen").click();
+    h.run_steps(4);
+    h.get_by_label("1 schaut zu");
+    h.get_by_label("Live von Mira in Sofa");
+    h.get_by_label("Jonas");
+    h.get_by_label("Im Kanal, schaut nicht zu");
+    h.get_by_label("Lena (du)");
+    // Only the own Live's list ends it.
+    assert!(h.query_by_label("Live beenden").is_none());
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    assert!(h.query_by_label("1 schaut zu").is_none());
+}
+
+/// While live the call bar's button counts who watches; its list has the
+/// watchers, the others, "Live beenden" and "Ton mitsenden".
+#[test]
+fn the_own_live_button_lists_who_watches() {
+    use crate::screens::voice::session;
+    let mut state = super::joined();
+    state.live = true;
+    let mut s = super::state();
+    s.live.insert(SERVER, [(SOFA, vec![LENA])].into());
+    s.watches
+        .insert(SERVER, [(SOFA, [(JONAS, vec![LENA])].into())].into());
+    let room = session::build(&s, &state, SERVER, SOFA).expect("room");
+    assert_eq!(room.watchers[&LENA], (vec![JONAS], vec![super::MIRA]));
+    let (client, call) = offline();
+    call.set_state(state);
+    let mut h = harness(client, call, bar);
+    h.ctx
+        .data_mut(|d| d.insert_temp(call_bar::test_room_id(), room));
+    h.run_steps(4);
+    // Still "Live gehen", pressed; wider for the count.
+    let live = h.get_by_label("Live gehen").rect();
+    assert!(live.width() > 100.0, "{live:?}");
+    h.get_by_label("Live gehen").click();
+    h.run_steps(4);
+    h.get_by_label("1 schaut zu");
+    h.get_by_label("Dein Live in Sofa");
+    h.get_by_label("Jonas");
+    h.get_by_label("Im Kanal, schaut nicht zu");
+    h.get_by_label("Mira");
+    h.get_by_label("Ton mitsenden");
+    h.get_by_label("Live beenden").click();
+    h.run_steps(4);
+    assert!(h.query_by_label("Dein Live in Sofa").is_none());
 }

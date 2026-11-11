@@ -149,15 +149,26 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
         draft.focus = draft.open;
     }
 
+    // In a call the gear opens the call's quick settings; the app's
+    // settings stay in the chevron menu.
+    let in_call = app
+        .call
+        .with_state(|c| crate::screens::voice::session::joined(c).is_some());
     let gear_response = icon_button(
         ui,
         gear,
         Icon::Gear,
         21.0,
-        shell::user_panel_settings(),
+        if in_call {
+            shell::user_panel_call_settings()
+        } else {
+            shell::user_panel_settings()
+        },
         false,
     );
-    if gear_response.clicked() {
+    if in_call {
+        crate::screens::voice::quick::panel_button(ui, app, gear_response, gear);
+    } else if gear_response.clicked() {
         app.nav.navigate("/settings/darstellung");
     }
     let menu_open = state::with(ui.ctx(), |s| s.user_menu);

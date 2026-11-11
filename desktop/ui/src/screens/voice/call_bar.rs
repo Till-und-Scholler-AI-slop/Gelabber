@@ -2,7 +2,8 @@
 //! room.css `.voice-session-dock`): one 56px strip with the user panel,
 //! from the sidebar's edge to the window's. Left the connection and where
 //! the call runs, in the middle who is in it, right the microphone,
-//! headset, camera, "Live", the settings and "Verlassen".
+//! headset, camera, "Live", the Live's sound and "Verlassen". The call's
+//! settings open from the user panel's gear.
 
 use egui::{Color32, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use gelabber_call::{CallState, CallStatus, LiveSound, LiveSource, MicStatus};
@@ -232,20 +233,6 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
 
     // Controls, gap 4.
     let muted = state.muted || state.deafened;
-    let gear = control(
-        ui,
-        &mut x,
-        cy,
-        Icon::Gear,
-        None,
-        false,
-        Tone::Plain,
-        gelabber_i18n::voice_settings::quick_call_settings(),
-        gelabber_i18n::voice_settings::quick_call_settings(),
-        None,
-    );
-    let gear_rect = gear.rect;
-    quick::button(ui, app, gear, gear_rect);
     // Stream sound, while someone's Live plays here.
     let watching = state
         .participants
@@ -272,24 +259,26 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         let rect = sound.rect;
         quick::sound_button(ui, sound, rect, state.deafened);
     }
-    let live_title = if state.live {
-        texts::live_you_are_live()
+    if state.live {
+        // While live: who watches, and a press lists them with "Live
+        // beenden" (`LiveControl`).
+        own_live(ui, app, &mut x, cy, narrow, server, channel);
     } else {
-        texts::live_go_live()
-    };
-    let live = control(
-        ui,
-        &mut x,
-        cy,
-        Icon::Live,
-        (!narrow).then_some(texts::live_badge()),
-        true,
-        if state.live { Tone::Live } else { Tone::Plain },
-        texts::live_go_live(),
-        live_title,
-        None,
-    );
-    live_menu(ui, app, &live, &state, can_live);
+        ui.ctx().data_mut(|d| d.insert_temp(own_live_id(), false));
+        let live = control(
+            ui,
+            &mut x,
+            cy,
+            Icon::Live,
+            (!narrow).then_some(texts::live_badge()),
+            true,
+            Tone::Plain,
+            texts::live_go_live(),
+            texts::live_go_live(),
+            None,
+        );
+        live_menu(ui, app, &live, &state, can_live);
+    }
     let camera = control(
         ui,
         &mut x,
@@ -573,8 +562,6 @@ enum Tone {
     Off,
     /// Camera on: accent text on the selected fill.
     On,
-    /// Live: dark ink on the on-air coral (`--lr-live`).
-    Live,
     /// Push-to-talk held: the speaking colour.
     Talking,
     /// Push-to-talk waiting: the icon dimmed.
@@ -838,7 +825,6 @@ fn control(
     let (fill, fg) = match tone {
         Tone::Off => (c.danger_bg.gamma_multiply(0.16), c.danger),
         Tone::On => (c.selected, c.accent_text),
-        Tone::Live => (c.live, c.on_live),
         Tone::Talking => (
             if hovered {
                 c.hover
@@ -895,8 +881,10 @@ fn control(
     response
 }
 
-/// The connection's state in words and where the call runs; the bars
-/// once connected.
+/// The connection's state in words and where the call runs (`CallStatus`):
+/// the bars once connected (else the state's icon) and the word are one
+/// button that opens "Verbindung"; the place under the word is the link
+/// back to the channel.
 #[allow(clippy::too_many_arguments)]
 fn status(
     ui: &mut Ui,
@@ -919,27 +907,49 @@ fn status(
         CallStatus::Failed(_) => (texts::call_lost(), c.danger),
         _ => (texts::call_connecting(), c.muted),
     };
+    let channel_name = channel_name.unwrap_or(texts::call_voice_channel());
+    let where_ = match server_name {
+        Some(s) if !s.is_empty() => format!("{channel_name} · {s}"),
+        _ => channel_name.to_owned(),
+    };
+    let mut link_right = head.right();
+    if matches!(state.status, CallStatus::Failed(_)) {
+        let label = shared::try_again();
+        let width = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 34.0;
+        let r = Rect::from_min_size(pos2(head.right() - width, cy - 18.0), vec2(width, 36.0));
+        if ui.put(r, Button::new(label)).clicked() {
+            app.call.join(server, channel);
+        }
+        link_right = r.left() - 8.0;
+    }
+    // The button spans both lines; the link lies over the second.
+    let button = Rect::from_min_max(pos2(head.left(), cy - 18.0), pos2(link_right, cy + 18.0));
+    // The last sample speaks only for a live connection: otherwise the
+    // button says the state it shows.
+    let label = match &state.status {
+        CallStatus::Connected => state
+            .connection
+            .as_ref()
+            .and_then(super::diagnostics::summary)
+            .unwrap_or_else(|| texts::quality_measuring().into()),
+        _ => word.to_owned(),
+    };
+    let response = common::click(ui, button, Id::unique("gelabber-call-quality"));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::Role::Button,
+            true,
+            texts::quality_show_details(&label),
+        )
+    });
+    if !crate::widgets::popover::open_at(ui.ctx(), button) {
+        Tooltip::new(&label).on_hover_or_focus(&response, Side::Above);
+    }
+    connection_popover(ui, app, &response, state);
     match &state.status {
         CallStatus::Connected => {
             let bars = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
             let level = state.quality.min(4);
-            let label = state
-                .connection
-                .as_ref()
-                .and_then(super::diagnostics::summary)
-                .unwrap_or_else(|| texts::quality_measuring().into());
-            let response = common::click(ui, bars, Id::unique("gelabber-call-quality"));
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::Role::Button,
-                    true,
-                    texts::quality_show_details(&label),
-                )
-            });
-            if !crate::widgets::popover::open_at(ui.ctx(), bars) {
-                Tooltip::new(&label).on_hover_or_focus(&response, Side::Above);
-            }
-            connection_popover(ui, app, &response, state);
             if response.hovered() {
                 painter.rect_filled(bars, corner(theme.radius.md), c.hover);
             }
@@ -1002,31 +1012,17 @@ fn status(
             x += 2.0 + 16.0 + 8.0;
         }
     }
-    let channel_name = channel_name.unwrap_or(texts::call_voice_channel());
-    let where_ = match server_name {
-        Some(s) if !s.is_empty() => format!("{channel_name} · {s}"),
-        _ => channel_name.to_owned(),
-    };
-    let mut link_right = head.right();
-    if matches!(state.status, CallStatus::Failed(_)) {
-        let label = shared::try_again();
-        let width = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 34.0;
-        let r = Rect::from_min_size(pos2(head.right() - width, cy - 18.0), vec2(width, 36.0));
-        if ui.put(r, Button::new(label)).clicked() {
-            app.call.join(server, channel);
-        }
-        link_right = r.left() - 8.0;
-    }
     let style = TextStyle::new(12.0, 600.0, 1.3);
     let small = TextStyle::new(12.0, 400.0, 1.3);
     let max = (link_right - x).max(10.0);
-    let link = Rect::from_min_size(pos2(x, cy - 15.6), vec2(max, 31.2));
+    let strong = line(ui, word, style, color, max);
+    strong.paint(&painter, pos2(x, cy - 15.6));
+    // From just under the middle: the button's centre stays its own.
+    let link = Rect::from_min_size(pos2(x, cy + 1.0), vec2(max, 14.6));
     let response = common::click(ui, link, Id::unique("gelabber-call-link"));
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::Link, true, format!("{word}: {where_}"))
     });
-    let strong = line(ui, word, style, color, max);
-    strong.paint(&painter, pos2(x, cy - 15.6));
     let hover = response.hovered();
     let place = line(
         ui,
@@ -1045,9 +1041,9 @@ fn status(
     }
 }
 
-/// "Verbindung" (`QualityBars`' popover, 340 wide, over the bars): the
-/// compact status, what goes out and comes in, the way to the settings and
-/// to the diagnostics.
+/// "Verbindung" (`ConnectionDetails`, 340 wide, over the status): the
+/// compact status, what goes out and comes in, the call's volumes, the way
+/// to the settings and to the diagnostics.
 fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, state: &CallState) {
     let ctx = ui.ctx().clone();
     let id = Id::unique("gelabber-call-connection-open");
@@ -1110,6 +1106,29 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
                 hairline_h(ui.painter(), &theme, row.x_range(), row.bottom());
                 ui.add_space(1.0);
             }
+            // "Lautstärke": the call's volumes, as the stream sound button
+            // has them (`.connection-volume`).
+            ui.add_space(14.0);
+            let caps = line(
+                ui,
+                &gelabber_i18n::voice_settings::quick_volume().to_uppercase(),
+                text::CAPS,
+                c.subtle,
+                width,
+            );
+            let (r, response) = ui.allocate_exact_size(vec2(width, caps.height()), Sense::hover());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::Role::Heading,
+                    true,
+                    gelabber_i18n::voice_settings::quick_volume(),
+                )
+            });
+            caps.paint(ui.painter(), r.min);
+            ui.add_space(10.0);
+            let area = Rect::from_min_size(ui.cursor().min, vec2(width, 400.0));
+            let used = quick::call_sound(ui, area, state.deafened);
+            ui.allocate_exact_size(vec2(width, used.height()), Sense::hover());
             ui.add_space(14.0);
             let top = ui.cursor().min;
             let w1 = Block::single(
@@ -1250,7 +1269,6 @@ fn live_menu(
         .min_width(320.0)
         .show(&ctx, |ui| {
             let theme = Theme::of(ui.ctx());
-            let c = theme.c;
             ui.set_width(320.0 - 18.0);
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut done = false;
@@ -1276,62 +1294,7 @@ fn live_menu(
             hairline_h(ui.painter(), &theme, top.x..=top.x + 320.0 - 18.0, top.y);
             ui.add_space(1.0 + 4.0);
             // "Ton mitsenden" with its switch track.
-            let hint = if p.source_audio_app.is_empty() {
-                texts::live_sound_all_apps().to_owned()
-            } else {
-                texts::live_sound_from(&p.source_audio_app)
-            };
-            let width = 320.0 - 18.0;
-            let title = Block::single(ui, texts::live_share_sound(), text::UI, c.text);
-            let small = Block::wrapped(
-                ui,
-                &hint,
-                text::META,
-                c.muted,
-                width - 20.0 - 27.0 - 10.0 - 32.0,
-            );
-            let h = (16.0 + title.height() + 2.0 + small.height()).max(36.0);
-            let (rect, response) = ui.allocate_exact_size(vec2(width, h), Sense::click());
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::Role::CheckBox,
-                    true,
-                    sound,
-                    texts::live_share_sound(),
-                )
-            });
-            crate::widgets::popover::focus_first(&response);
-            if response.hovered() {
-                ui.painter()
-                    .rect_filled(rect, corner(theme.radius.sm), c.hover);
-                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            }
-            let tx = rect.left() + 10.0 + 27.0;
-            let ty = rect.center().y - (title.height() + 2.0 + small.height()) / 2.0;
-            title.paint(ui.painter(), pos2(tx, ty));
-            small.paint(ui.painter(), pos2(tx, ty + title.height() + 2.0));
-            let track = Rect::from_min_size(
-                pos2(rect.right() - 10.0 - 32.0, rect.center().y - 9.0),
-                vec2(32.0, 18.0),
-            );
-            let (fill, border, knob) = if sound {
-                (c.accent, c.accent, c.accent_ink)
-            } else {
-                (c.surface, c.border_strong, c.muted)
-            };
-            ui.painter().rect(
-                track,
-                corner(9.0),
-                fill,
-                Stroke::new(1.0, border),
-                StrokeKind::Inside,
-            );
-            let kx = track.left() + 1.0 + 2.0 + if sound { 14.0 } else { 0.0 };
-            ui.painter()
-                .circle_filled(pos2(kx + 6.0, track.top() + 1.0 + 2.0 + 6.0), 6.0, knob);
-            if response.clicked() {
-                p.source_audio_share = if sound { "off" } else { "on" }.into();
-            }
+            sound_switch(ui, &mut p, 320.0 - 18.0, 27.0);
             if menu_entry(
                 ui,
                 Icon::Gear,
@@ -1353,6 +1316,171 @@ fn live_menu(
         _ => {
             ctx.data_mut(|d| d.insert_temp(id, false));
         }
+    }
+}
+
+/// "Ton mitsenden" (`ShareSoundSwitch`): the title and where the sound
+/// comes from, the switch track at the end; `indent` is where the words
+/// start (after the menu's icon column, or 10 without one).
+fn sound_switch(ui: &mut Ui, p: &mut prefs::Prefs, width: f32, indent: f32) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let sound = sound_on(&p.source_audio_share);
+    let hint = if p.source_audio_app.is_empty() {
+        texts::live_sound_all_apps().to_owned()
+    } else {
+        texts::live_sound_from(&p.source_audio_app)
+    };
+    let title = Block::single(ui, texts::live_share_sound(), text::UI, c.text);
+    let small = Block::wrapped(
+        ui,
+        &hint,
+        text::META,
+        c.muted,
+        width - 10.0 - indent - 10.0 - 32.0,
+    );
+    let h = (16.0 + title.height() + 2.0 + small.height()).max(36.0);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, h), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::CheckBox, true, sound, texts::live_share_sound())
+    });
+    crate::widgets::popover::focus_first(&response);
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, corner(theme.radius.sm), c.hover);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let tx = rect.left() + 10.0 + indent;
+    let ty = rect.center().y - (title.height() + 2.0 + small.height()) / 2.0;
+    title.paint(ui.painter(), pos2(tx, ty));
+    small.paint(ui.painter(), pos2(tx, ty + title.height() + 2.0));
+    let track = Rect::from_min_size(
+        pos2(rect.right() - 10.0 - 32.0, rect.center().y - 9.0),
+        vec2(32.0, 18.0),
+    );
+    let (fill, border, knob) = if sound {
+        (c.accent, c.accent, c.accent_ink)
+    } else {
+        (c.surface, c.border_strong, c.muted)
+    };
+    ui.painter().rect(
+        track,
+        corner(9.0),
+        fill,
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
+    let kx = track.left() + 1.0 + 2.0 + if sound { 14.0 } else { 0.0 };
+    ui.painter()
+        .circle_filled(pos2(kx + 6.0, track.top() + 1.0 + 2.0 + 6.0), 6.0, knob);
+    if response.clicked() {
+        p.source_audio_share = if sound { "off" } else { "on" }.into();
+    }
+}
+
+/// Tests hand the bar the room, which the offline client cannot load.
+#[cfg(test)]
+pub(super) fn test_room_id() -> Id {
+    Id::unique("gelabber-call-bar-test-room")
+}
+
+fn own_live_id() -> Id {
+    Id::unique("gelabber-own-live-open")
+}
+
+/// The Live button while live, ending at `*x`: the Live icon, "Live"
+/// (not narrow), after a divider the eye and how many watch, the caret, on
+/// the Live pill. Still named "Live gehen"; a press lists who watches, with
+/// "Live beenden" and "Ton mitsenden" (`top-end`).
+fn own_live(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    x: &mut f32,
+    cy: f32,
+    narrow: bool,
+    server: Uuid,
+    channel: Uuid,
+) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let ctx = ui.ctx().clone();
+    let room = session::room(app, server, channel);
+    #[cfg(test)]
+    let room = room.or_else(|| ctx.data(|d| d.get_temp::<session::Room>(test_room_id())));
+    let me = room.as_ref().and_then(|r| r.me);
+    let count = match (&room, me) {
+        (Some(room), Some(me)) => super::watchers::count(room, me),
+        _ => 0,
+    };
+    let word = (!narrow).then(|| Block::single(ui, texts::live_badge(), text::UI, c.on_live));
+    let number = Block::single(
+        ui,
+        &gelabber_i18n::intl::count(count as u64),
+        text::UI.weight(600.0),
+        c.on_live,
+    );
+    // `.voice-control-watchers`: padding-left 7 after its divider, gap 4.
+    let watchers_w = 1.0 + 7.0 + 15.0 + 4.0 + number.width();
+    let mut w = 1.0 + 8.0 + 17.0 + 4.0 + watchers_w + 4.0 + 12.0 + 8.0 + 1.0;
+    if let Some(b) = &word {
+        w += b.width() + 4.0;
+    }
+    let rect = Rect::from_min_size(pos2(*x - w, cy - 18.0), vec2(w, 36.0));
+    *x -= w + 4.0;
+    let response = common::click(
+        ui,
+        rect,
+        Id::unique(("gelabber-call-control", texts::live_go_live())),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Button, true, true, texts::live_go_live())
+    });
+    let open = ctx
+        .data(|d| d.get_temp::<bool>(own_live_id()))
+        .unwrap_or(false);
+    if !open {
+        let tip = texts::live_you_are_live_watchers(&super::watchers::title(count));
+        Tooltip::new(&tip).on_hover_or_focus(&response, Side::Above);
+    }
+    let painter = ui.painter().clone();
+    painter.rect_filled(rect, corner(theme.radius.md), c.live);
+    let mut cx = rect.left() + 9.0;
+    icons::paint(&painter, Icon::Live, pos2(cx, cy - 8.5), 17.0, c.on_live);
+    cx += 17.0 + 4.0;
+    if let Some(b) = &word {
+        paint_mid(&painter, b, cx, cy);
+        cx += b.width() + 4.0;
+    }
+    let divider = mix(c.live, c.on_live, 0.4);
+    painter.vline(cx + 0.5, (cy - 9.0)..=(cy + 9.0), Stroke::new(1.0, divider));
+    cx += 1.0 + 7.0;
+    icons::paint(&painter, Icon::Eye, pos2(cx, cy - 7.5), 15.0, c.on_live);
+    cx += 15.0 + 4.0;
+    paint_mid(&painter, &number, cx, cy);
+    cx += number.width() + 4.0;
+    icons::paint_rotated(
+        &painter,
+        Icon::Chevron,
+        pos2(cx, cy - 6.0),
+        12.0,
+        c.on_live.gamma_multiply(0.75),
+    );
+    if response.clicked() {
+        ctx.data_mut(|d| d.insert_temp(own_live_id(), !open));
+        return;
+    }
+    let (Some(room), Some(me), true) = (room, me, open) else {
+        return;
+    };
+    let mut p = prefs::get(&ctx);
+    let before = p.clone();
+    let mut extra = |ui: &mut Ui| sound_switch(ui, &mut p, 272.0 - 18.0, 0.0);
+    let shown = super::watchers::list(ui, app, &room, me, rect, true, Some(&mut extra));
+    if p != before {
+        prefs::update(&ctx, |q| *q = p.clone());
+    }
+    if !matches!(shown, Some(false)) {
+        ctx.data_mut(|d| d.insert_temp(own_live_id(), false));
     }
 }
 
