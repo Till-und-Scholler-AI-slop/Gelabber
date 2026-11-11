@@ -418,6 +418,20 @@ Shown only when the mention/DM count > 0 (plain unread shows only the pill, no d
 | Tooltip | title "Server hinzufügen" |
 | Example | 3 servers at 1280×800: list y 52..248, footer y 248..313, button y 253..297 |
 
+### 4.10 Entdecken (v0.10, `ServerRail.tsx` `DiscoverTile`, `index.css` `.server-discover-tile`)
+
+Only while `GET /api/directory` answers `enabled: true` (a failed read hides it, as the web's `retry: false` does). It sits in the footer under "Server hinzufügen", 12px apart (the footer's `gap`), so the footer grows by 56px.
+
+| Property | Value |
+|---|---|
+| Tile | 44×44 square, radius `--lr-radius`, bg transparent |
+| Icon | `CompassIcon` size 22, colour `--lr-muted` |
+| Hover | bg `--lr-hover`, icon `--lr-text` |
+| Active (`/discover`) | bg `--lr-selected`, icon `--lr-accent-text`; `aria-current="page"` |
+| Tooltip and name | title and `aria-label` "Entdecken" ("Discover"); a link to `/discover` without search or language |
+| Example | 2 servers at 1280×800: add button y 193..237, tile y 249..293 |
+| Native | `screens/shell/rail.rs` `discover_tile`; the status lives in `screens/discover` (`enabled`) |
+
 ---------------------------------------------------------------------------------
 
 ## 5. ChannelSidebar (`components/ChannelSidebar.tsx`, CSS `index.css:633-973, 1953-1975, 2124-2171`, `components/shell.css:4-50`)
