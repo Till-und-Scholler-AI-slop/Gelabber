@@ -1768,6 +1768,45 @@ impl Client {
         });
     }
 
+    /// Op key `locale`: saves the account's language, `de` or `en`, which
+    /// the interface shows already. Only the newest change speaks for the
+    /// account: an older answer that arrives late is not taken, and when
+    /// the newest fails the session user keeps what the server confirmed
+    /// last, an older change's or the one before.
+    pub fn set_locale(&self, locale: &str) {
+        let this = self.clone();
+        let locale = locale.to_owned();
+        let change = self.inner.locale_change.fetch_add(1, Ordering::Relaxed) + 1;
+        self.spawn(async move {
+            let epoch = this.epoch();
+            this.write(|s| s.ops.insert("locale".into(), OpState::Pending));
+            let result = this.http().set_locale(&locale).await;
+            let newest = this.inner.locale_change.load(Ordering::Relaxed) == change;
+            match result {
+                Ok(saved) if newest => {
+                    *this.inner.locale_meanwhile.lock() = None;
+                    this.write_in(epoch, |s| {
+                        record_locale(s, saved.locale);
+                        s.ops.insert("locale".into(), OpState::Done)
+                    });
+                }
+                Ok(saved) => *this.inner.locale_meanwhile.lock() = Some((epoch, saved.locale)),
+                Err(error) if newest => {
+                    let meanwhile = this.inner.locale_meanwhile.lock().take();
+                    this.write_in(epoch, |s| {
+                        if let Some((at, locale)) = meanwhile
+                            && at == epoch
+                        {
+                            record_locale(s, locale);
+                        }
+                        s.ops.insert("locale".into(), OpState::Failed(error))
+                    });
+                }
+                Err(_) => {}
+            }
+        });
+    }
+
     // ------------------------------------------------------------- gateway
 
     fn ensure_gateway(&self) {
@@ -1907,6 +1946,7 @@ impl Client {
                 }
             }
             ServerFrame::Dm { .. } => self.schedule_recovery(false),
+            ServerFrame::Locale { l } => self.write(|s| record_locale(s, l)),
             _ => {}
         }
     }
@@ -2113,6 +2153,13 @@ impl Client {
                 client.reload_unread().await;
             }
         });
+    }
+}
+
+/// The signed-in user's language, as the server confirmed or announced it.
+pub(crate) fn record_locale(state: &mut State, locale: String) {
+    if let Session::Authenticated(user) = &mut state.session {
+        user.locale = Some(locale);
     }
 }
 

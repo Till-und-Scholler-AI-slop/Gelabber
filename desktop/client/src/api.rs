@@ -83,7 +83,13 @@ impl Http {
         self.send(
             Method::POST,
             "/auth/register",
-            &json!({"email": email, "password": password, "name": name}),
+            // The language the app shows becomes the account's.
+            &json!({
+                "email": email,
+                "password": password,
+                "name": name,
+                "locale": gelabber_i18n::get().as_str(),
+            }),
         )
         .await
     }
@@ -158,6 +164,14 @@ impl Http {
 
     pub async fn update_me(&self, patch: &ProfilePatch) -> Result<User> {
         self.send(Method::PATCH, "/me", patch).await
+    }
+
+    /// The account's language, `de` or `en` (v0.10 servers).
+    pub async fn set_locale(&self, locale: &str) -> Result<LocaleBody> {
+        let body = LocaleBody {
+            locale: locale.to_owned(),
+        };
+        self.send(Method::PUT, "/me/locale", &body).await
     }
 
     /// Raw PNG/JPEG/WebP, at most 256×256 and 512 KiB.

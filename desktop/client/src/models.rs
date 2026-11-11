@@ -93,6 +93,10 @@ pub struct User {
     pub banner_color: Option<String>,
     pub banner_url: Option<String>,
     pub avatar_decoration: Option<String>,
+    /// The account's language, `de` or `en`; `None` from a server older
+    /// than v0.10, which has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 /// `GET /api/users/{id}`: a user card without the e-mail address.
@@ -136,6 +140,12 @@ pub struct CsrfResponse {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailStatus {
     pub enabled: bool,
+}
+
+/// `PUT /api/me/locale`, both ways: `{"locale":"en"}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocaleBody {
+    pub locale: String,
 }
 
 /// `PATCH /api/me`: absent = unchanged, `""` = clear (not for `name`).
@@ -994,6 +1004,9 @@ pub enum ServerFrame {
         #[serde(deserialize_with = "lenient_list")]
         d: Vec<ReadSync>,
     },
+    /// The account's language changed (on another device, or here).
+    #[serde(rename = "lc")]
+    Locale { l: String },
     #[serde(other)]
     Unknown,
 }

@@ -87,6 +87,11 @@ struct Inner {
     /// already replaced are dropped.
     gateway_generation: AtomicU64,
     event_tap: RwLock<Option<EventTap>>,
+    /// Counts language changes: only the newest speaks for the account.
+    locale_change: AtomicU64,
+    /// What the server confirmed for an older change while a newer one was
+    /// still on its way, with the account's epoch.
+    locale_meanwhile: Mutex<Option<(u64, String)>>,
 }
 
 impl Drop for Inner {
@@ -134,6 +139,8 @@ impl Client {
                 unread_generation: AtomicU64::new(0),
                 gateway_generation: AtomicU64::new(0),
                 event_tap: RwLock::new(None),
+                locale_change: AtomicU64::new(0),
+                locale_meanwhile: Mutex::new(None),
             }),
         };
         let weak = Arc::downgrade(&client.inner);
@@ -256,6 +263,15 @@ impl Client {
                 s.session = Session::Authenticated(Box::new(user));
             });
         }
+        Ok(())
+    }
+
+    /// `PUT /api/me/locale` before the first frame (the parity tool); on
+    /// success the session user carries the language.
+    pub fn set_locale_blocking(&self, locale: &str) -> Result<(), ApiError> {
+        let http = self.inner.http.clone();
+        let saved = self.block_on(async move { http.set_locale(locale).await })?;
+        self.write(|s| commands::record_locale(s, saved.locale));
         Ok(())
     }
 

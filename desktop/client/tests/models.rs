@@ -28,6 +28,15 @@ fn auth_and_account() {
     assert_eq!(session.user.unwrap().name, "Lena");
     let me: User = round_trip("me");
     assert_eq!(me.email, "lena@example.test");
+    // From a server older than v0.10: no language, and none written back.
+    assert_eq!(me.locale, None);
+    let mut english = fixture("me");
+    english["locale"] = "en".into();
+    let user: User = serde_json::from_value(english.clone()).unwrap();
+    assert_eq!(user.locale.as_deref(), Some("en"));
+    assert_eq!(serde_json::to_value(&user).unwrap(), english);
+    let saved: LocaleBody = serde_json::from_value(serde_json::json!({"locale": "en"})).unwrap();
+    assert_eq!(saved.locale, "en");
     let profile: PublicProfile = round_trip("user_profile");
     assert_eq!(profile.name, "Jonas");
     let mail: MailStatus = round_trip("mail");
@@ -139,9 +148,11 @@ fn gateway_frames() {
         }
         ops.insert(frame["op"].as_str().unwrap().to_owned());
     }
-    for op in ["ok", "p", "sig", "y", "e", "rd", "ns"] {
+    for op in ["ok", "p", "sig", "y", "e", "rd", "ns", "lc"] {
         assert!(ops.contains(op), "no {op} frame captured");
     }
+    let locale: ServerFrame = serde_json::from_str(r#"{"op":"lc","l":"en"}"#).unwrap();
+    assert_eq!(locale, ServerFrame::Locale { l: "en".into() });
 }
 
 #[test]
