@@ -190,6 +190,7 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | `report` | user | 10 / hour → `429 rate_limited` | `POST /api/servers/{id}/reports` (v0.10) |
 | `mail_invite` | invited address | 5 / hour (silently not sent; the invitation is still created) | `POST /api/operator/invitations` with `send_mail` (v0.10) |
 | `dir_join` | user | 10 / hour → `429 rate_limited`, shared by both routes | `POST /api/directory/listings/{id}/join` and `/request` (v0.10, §4.7) |
+| `dir_search` | user | 60 / min → `429 rate_limited`, **also on GET** | `GET /api/directory/listings` (v0.10, §4.7) |
 
 A native client must not send `X-Forwarded-For` (the API trusts the last entry).
 
@@ -428,7 +429,7 @@ Reporting a server:
 |---|---|---|---|
 | `POST /api/servers/{id}/reports` | `{"reason": "spam" \| "harassment" \| "sexual" \| "illegal" \| "other", "details"?: string}`; `details` trimmed, ≤ 1000 chars, line breaks and tabs allowed, required for `other` | `201 {"id", "created_at"}`; when the caller already has an open report of this server: `200` with that one | `404` neither a member nor able to see its listing (or unknown/unparseable id); `403 server_blocked` (members); `429 rate_limited` (`report`, 10 per hour per account, counted before validation); `422` fields `reason: invalid`, `details: too_long \| invalid \| required` |
 
-Members can report, and while the directory is on (§4.7) so can anyone who can see the server's listing; that is how "Melden" on a listing reports. When the caller can see the listing, members included, the report stores a snapshot of it (`name`, `icon_url`, `description`, `language`, `join_mode`, `member_count` at that moment), so later edits cannot hide what was reported. Reports are read only by operators; owners never see them.
+Members can report, and while the directory is on (§4.7) so can anyone who can see the server's listing; that is how "Melden" on a listing reports. When the caller can see the listing, members included, the report stores a snapshot of it (`name`, `icon_url`, `description`, `language`, `join_mode` at that moment), so later edits cannot hide what was reported. Reports are read only by operators; owners never see them.
 
 ### 4.6 Operator area "Betrieb" (v0.10, web only)
 
@@ -467,8 +468,8 @@ Shapes:
 | Method & path | Who | Request | Success | Errors |
 |---|---|---|---|---|
 | `GET /api/directory` | any account | — | `200 {"enabled": bool, "languages": Language[]}`; all ten languages, also those with `listings: 0` | — |
-| `GET /api/directory/listings` | any account | `?q=&language=&offset=`: `q` trimmed, ≤ 100 chars, no control characters, blank = no search, matches name or description case-insensitively with `%` and `_` literal; `language` a code from the list, empty = all; `offset` a multiple of 30 from 0 to 990 | `200 {"listings": Listing[], "next_offset": int\|null}`, 30 per page, ordered by `member_count` descending, then first listed, then server id; `next_offset` is `null` on the last page | `422` fields `q: too_long \| invalid`, `language: invalid`, `offset: invalid` |
-| `POST /api/directory/listings/{id}/join` | any account | none | `200 ServerView` (§4.1, as `POST /api/invites/{code}/join`); also when already a member | `404` not visible; `409 join_request_required` (join mode `request`, not a member); `429 rate_limited` (`dir_join`, counted before anything else, also for a member) |
+| `GET /api/directory/listings` | any account | `?q=&language=&offset=`: `q` trimmed, ≤ 100 chars, no control characters, blank = no search, matches name or description case-insensitively with `%` and `_` literal; `language` a code from the list, empty = all; `offset` a multiple of 30 from 0 to 990 | `200 {"listings": Listing[], "next_offset": int\|null}`, 30 per page, ordered by `member_count` descending, then first listed, then server id; `next_offset` is `null` on the last page | `422` fields `q: too_long \| invalid`, `language: invalid`, `offset: invalid`; `429 rate_limited` (`dir_search`, after validation) |
+| `POST /api/directory/listings/{id}/join` | any account | none | `200 ServerView` (§4.1, as `POST /api/invites/{code}/join`); also when already a member | `404` not visible; `409 join_request_required` (join mode `request`, not a member); `429 rate_limited` (`dir_join`, counted first; a member's repeat neither counts nor is refused) |
 | `POST /api/directory/listings/{id}/request` | any account | `{"message"?: string}`: trimmed, one line, ≤ 300 chars; absent = empty | `201 {"request": "pending"}` new; `200 {"request": "pending"}` when one is pending already (its message is kept) | in this order: `422` field `message: too_long \| invalid` (before the limit); `429 rate_limited` (`dir_join`); `404` not visible; `409 already_member`; `409 join_request_declined` with `retry_after` while the cooldown lasts; `409 join_requests_full` when the caller has 10 pending requests or the server 100 |
 | `DELETE /api/directory/listings/{id}/request` | the requester | — | `204` | `404` no pending request. No visibility check, so it works after a delist |
 | `GET /api/servers/{id}/listing` | any member | — | `200 ListingSettings` | `404` not a member; `403 server_blocked` |

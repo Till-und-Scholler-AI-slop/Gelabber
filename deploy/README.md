@@ -388,7 +388,7 @@ API_DIRECTORY=true
 docker compose up -d --no-deps --force-recreate api
 ```
 
-While it is off, `GET /api/directory` answers `enabled: false`, the apps show no compass tile and no "Verzeichnis" section, and the listing routes (`/api/directory/listings*`, `/api/servers/{id}/listing`) answer `404`. Listings, requests and reports already stored stay in the database. Pending requests to join can still be answered in the server settings, and operators can still delist servers. Turning it on again shows the listings as they were.
+While it is off, `GET /api/directory` answers `enabled: false`, the apps show no compass tile and no "Verzeichnis" section, and the listing routes (`/api/directory/listings*`, `/api/servers/{id}/listing`) answer `404`. Listings, requests and reports already stored stay in the database. The queue routes (`/api/servers/{id}/join-requests…`) keep answering, so pending requests can still be accepted or declined through the API, but the apps show the queue only while the directory is on; operators can still delist servers. Turning it on again shows the listings as they were.
 
 **Listing** is opt-in per server. Only the owner lists a server, under server settings → "Verzeichnis", with a description (at most 300 characters), a language from a fixed list (`de`, `en`, `es`, `fr`, `it`, `nl`, `pl`, `pt`, `tr`, `uk`) and a join mode: "Offen" (anyone joins at once) or "Auf Anfrage" (a request queue). A server that nobody listed never appears anywhere. Invite links work as before, whatever the join mode.
 
@@ -399,10 +399,11 @@ While it is off, `GET /api/directory` answers `enabled: false`, the apps show no
 **Limits**, per account:
 
 - 10 joins and requests to join per hour together (`dir_join` in `gelabber_rate_limited_total`), then `429 rate_limited`;
+- 60 searches and result pages per minute (`dir_search`), then `429 rate_limited`;
 - 10 pending requests across all servers, and 100 pending requests per server, then `409 join_requests_full`;
 - 10 reports per hour (`report`), shared with reports made from inside a server.
 
-**Reports:** "Melden" on a listing files a report through the same route as from inside a server, and it lands under Betrieb → "Meldungen" like any other. Anyone who can see the listing may report it, members or not. The report keeps a copy of the listing as it was then (name, icon, description, language, join mode and member count), so a later edit by the owner does not change what was reported; it is stored in `reports.snapshot`. Owners never see reports.
+**Reports:** "Melden" on a listing files a report through the same route as from inside a server, and it lands under Betrieb → "Meldungen" like any other. Anyone who can see the listing may report it, members or not. The report keeps a copy of the listing as it was then (name, icon, description, language and join mode), so a later edit by the owner does not change what was reported; it is stored in `reports.snapshot`. Owners never see reports.
 
 **Delisting** is under Betrieb → "Server": "Aus dem Verzeichnis nehmen" hides the listing at once and closes the server's open reports as actioned. Members notice nothing, and pending requests stay in the queue. The owner can still edit the listing, but it stays hidden and the settings say that the operator took it out; only an operator lets it back in ("Wieder zulassen"). It then shows again if the owner still has it listed. Blocking a server hides its listing too.
 
