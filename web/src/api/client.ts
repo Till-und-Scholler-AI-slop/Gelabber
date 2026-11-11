@@ -379,6 +379,10 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "invitation_invalid",
   "account_disabled",
   "server_blocked",
+  "join_request_required",
+  "join_request_declined",
+  "join_requests_full",
+  "already_member",
 ]);
 
 function toErrorCode(raw: string | undefined): ApiErrorCode {
