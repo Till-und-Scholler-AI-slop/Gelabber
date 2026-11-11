@@ -23,8 +23,10 @@ import type { ChatEvent } from "./protocol.ts";
 import {
   READY_SPREAD_MS,
   applyAccessChange,
+  applyAccountDeleted,
   attachRealtimeRecovery,
   isAccessChange,
+  isOwnerChange,
 } from "./useRealtime.ts";
 
 class Socket implements SocketLike {
@@ -1277,5 +1279,72 @@ describe("server access changes", () => {
     expect(stale(list)).toBe(true);
     expect(stale(other)).toBe(false);
     expect(stale(history)).toBe(false);
+  });
+});
+
+describe("a member's account deleted, and ownership moved (#519)", () => {
+  const event = (overrides: Partial<ChatEvent>): ChatEvent => ({
+    op: "e",
+    t: "e",
+    s: "s1",
+    n: 5,
+    d: { k: "o", owner_id: "user-b" },
+    ...overrides,
+  });
+
+  it('recognises {"k":"o"} on the server topic only', () => {
+    expect(isOwnerChange(event({}))).toBe(true);
+    expect(isOwnerChange(event({ c: "channel" }))).toBe(false);
+    expect(isOwnerChange(event({ d: { k: "a" } }))).toBe(false);
+    expect(isOwnerChange(event({ t: "d", i: "user-b" }))).toBe(false);
+    expect(isOwnerChange(event({ d: null }))).toBe(false);
+    expect(isAccessChange(event({}))).toBe(false);
+  });
+
+  it('removes the member and their cached messages on {"k":"x"}', () => {
+    const queryClient = client();
+    const member = (user_id: string) => ({ user_id, name: user_id });
+    queryClient.setQueryData(serverKeys.detail("user-a", 1, "s1"), {
+      id: "s1",
+      channels: [{ id: "channel" }, { id: "quiet" }],
+      members: [member("user-a"), member("gone"), member("user-c")],
+    });
+    const [first, second, third] = rows(3);
+    const pages = (messages: Message[]) => ({
+      pages: [{ messages, has_more: false }],
+      pageParams: [undefined],
+    });
+    const byGone = (message: Message): Message => ({
+      ...message,
+      author: { id: "gone", name: "Gone", avatar_url: null },
+    });
+    queryClient.setQueryData(
+      messageKeys.channel("user-a", 1, "channel"),
+      pages([byGone(first!), second!, byGone(third!)]),
+    );
+    const elsewhere = { ...byGone(first!), id: "elsewhere" };
+    queryClient.setQueryData(
+      messageKeys.channel("user-a", 1, "other-server-channel"),
+      pages([elsewhere]),
+    );
+
+    applyAccountDeleted(queryClient, "user-a", 1, "s1", "gone");
+
+    const detail = queryClient.getQueryData<{
+      members: { user_id: string }[];
+    }>(serverKeys.detail("user-a", 1, "s1"));
+    expect(detail?.members.map((m) => m.user_id)).toEqual([
+      "user-a",
+      "user-c",
+    ]);
+    const left = (channel: string) =>
+      queryClient
+        .getQueryData<InfiniteData<MessagePage>>(
+          messageKeys.channel("user-a", 1, channel),
+        )!
+        .pages.flatMap((page) => page.messages.map((m) => m.id));
+    expect(left("channel")).toEqual([second!.id]);
+    // Only the server's own channels are touched.
+    expect(left("other-server-channel")).toEqual(["elsewhere"]);
   });
 });

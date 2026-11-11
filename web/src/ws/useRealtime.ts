@@ -16,6 +16,7 @@ import { listServers } from "../servers/api.ts";
 import { serverKeys } from "../servers/queries.ts";
 import {
   applyChannelEvent,
+  dropAuthorMessages,
   messageKeys,
   messageQueryOptions,
 } from "../messages/queries.ts";
@@ -25,7 +26,7 @@ import {
   markServerBlocked,
   refetchOnAccessChange,
 } from "../servers/queries.ts";
-import type { Server } from "../servers/types.ts";
+import type { Server, ServerDetail } from "../servers/types.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
 import type { ChatEvent } from "./protocol.ts";
@@ -89,6 +90,49 @@ export function applyAccessChange(
   serverId: string,
 ): void {
   refetchOnAccessChange(client, userId, generation, serverId);
+}
+
+/** The server-topic event "ownership moved" (`t: "e"`, no `c`,
+ * `d: {"k": "o", "owner_id": …}`, #519). */
+export function isOwnerChange(event: ChatEvent): boolean {
+  return (
+    event.t === "e" &&
+    !event.c &&
+    event.d !== null &&
+    typeof event.d === "object" &&
+    "k" in event.d &&
+    event.d.k === "o"
+  );
+}
+
+/** Why a member left (`t: "d"`, `d: {"k": …}`): "k" kick, "b" ban, "x"
+ * their account was deleted (#519); nothing for leaving on their own. */
+function removalKind(event: ChatEvent): string | null {
+  return event.d !== null &&
+    typeof event.d === "object" &&
+    "k" in event.d &&
+    typeof event.d.k === "string"
+    ? event.d.k
+    : null;
+}
+
+/**
+ * A member's account was deleted (#519): they leave the member list, and
+ * their messages leave the cached histories of the server's channels.
+ */
+export function applyAccountDeleted(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  serverId: string,
+  deletedId: string,
+): void {
+  applyMemberRemoved(client, userId, generation, serverId, deletedId);
+  const detail = client.getQueryData<ServerDetail>(
+    serverKeys.detail(userId, generation, serverId),
+  );
+  const channels = (detail?.channels ?? []).map((channel) => channel.id);
+  dropAuthorMessages(client, userId, generation, channels, deletedId);
 }
 
 /** Upper bound of the random wait before a reconnect refetches. */
@@ -414,7 +458,19 @@ export function useRealtimeBridge(
         applyAccessChange(client, userId, generation, event.s);
         return;
       }
+      // The new owner's rights and the old owner's role changed.
+      if (isOwnerChange(event)) {
+        applyAccessChange(client, userId, generation, event.s);
+        return;
+      }
       if (event.t === "d" && event.i) {
+        const kind = removalKind(event);
+        // This account's own deletion ends its sessions; nothing to leave.
+        if (kind === "x") {
+          if (event.i !== userId)
+            applyAccountDeleted(client, userId, generation, event.s, event.i);
+          return;
+        }
         const result = applyMemberRemoved(
           client,
           userId,
@@ -423,12 +479,7 @@ export function useRealtimeBridge(
           event.i,
         );
         if (result === "self") {
-          const banned =
-            event.d !== null &&
-            typeof event.d === "object" &&
-            "k" in event.d &&
-            event.d.k === "b";
-          leave(banned ? "banned" : "kicked", event.s);
+          leave(kind === "b" ? "banned" : "kicked", event.s);
         }
       }
     });
