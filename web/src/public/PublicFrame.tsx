@@ -96,11 +96,12 @@ export function PublicFrame({ children, ...props }: FrameProps) {
   );
 }
 
-/** The app icon and the name, linking to `/`. */
+/** The app's bubbles and the name, linking to `/`. The bubbles are the app
+ * icon without its square, which would show over the hero's artwork. */
 export function Brand() {
   return (
     <a className="public-brand" href="/">
-      <img src="/icons/icon-192.png" alt="" width={28} height={28} />
+      <img src="/icons/brand-mark.png" alt="" width={28} height={28} />
       {/* i18n-ok */}Gelabber
     </a>
   );
