@@ -12,7 +12,7 @@ Rendered from the design canvas "Gelabber Next" on 2026-11-10. Product decisions
 | `roles-editor.png` | Servereinstellungen → Rollen (replaces the tab "Rechte"). |
 | `roles-members.png` | Servereinstellungen → Mitglieder with role chips and the picker. |
 | `channel-access.png` | "Kanal bearbeiten" with the third field "Zugriff". |
-| `hosted-landing.webp` | Public landing page, English. `landing-preview-en.png` is a drawn preview and must be replaced by a real English screenshot. |
+| `hosted-landing.webp` | Public landing page, English. `landing-preview-en.png` is the drawn preview of its screenshot; the page ships real ones (see below). |
 | `hosted-sign-in.webp` | Sign-in with "Mit Google anmelden" and the legal links. The "G" mark is a stand-in; the real button follows Google's branding rules. |
 | `hosted-security.png` | Einstellungen → Sicherheit: password and Google, signed-in devices, data export, account deletion. |
 | `hosted-operator-console.png` | Operator area "Betrieb", page "Server". Sample data. |
@@ -28,3 +28,17 @@ Rendered from the design canvas "Gelabber Next" on 2026-11-10. Product decisions
 - The server rail stays. Servers without an image keep one shared fallback colour.
 - Roles: several per member, rights add up, "Alle Mitglieder" is the base role, the owner is fixed. Kick and ban move from "Server verwalten" to the new right "Mitglieder moderieren".
 - A channel or voice room limited to roles is invisible to everyone else; the owner sees every channel.
+
+## Screenshots on the landing page and in the README
+
+The landing page shows `web/public/images/landing/app-en.png` and `app-de.png`, real screenshots of the app in the shape of `landing-preview-en.png`: Lena in the text channel while Jonas is live in Sofa. `web/src/public/landingImage.test.mjs` fails if either is the drawn preview. `docs/assets/readme-*.png` (overview, text channel, Sofa with a call) come from the same English server. To take them again, run a local stack as for the parity shots (API, the media service and Vite), then in `web/`:
+
+```sh
+node scripts/landing/seed.mjs en http://127.0.0.1:5180
+node scripts/landing/seed.mjs de http://127.0.0.1:5180
+node scripts/landing/shot.mjs en       # public/images/landing/app-en.png
+node scripts/landing/shot.mjs de       # public/images/landing/app-de.png
+node scripts/landing/shot.mjs readme   # ../docs/assets/readme-{hero,chat,voice}.png
+```
+
+`seed.mjs` makes accounts of its own per language (`lena.en@example.test`, …), so it can run next to the parity seed; it seeds once per database. `shot.mjs` sets Lena's account language, keeps Jonas live in Sofa with `scripts/parity/call.mjs` and writes the pictures at 1280×800 (the README's at device scale 1.5). Look at each picture before committing it.
