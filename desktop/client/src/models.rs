@@ -563,7 +563,9 @@ pub struct Ban {
     pub user_id: Uuid,
     pub name: String,
     pub avatar_url: Option<String>,
-    pub banned_by: Uuid,
+    /// `None` once the account that issued the ban was deleted; the ban
+    /// stays (v0.10).
+    pub banned_by: Option<Uuid>,
     pub banned_at: Timestamp,
 }
 
@@ -1178,6 +1180,145 @@ pub struct ReportBody {
 pub struct ReportFiled {
     pub id: Uuid,
     pub created_at: Timestamp,
+}
+
+// ------------------------------------------------------------------- account
+
+/// The app or browser of a session (`auth/device.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceClient {
+    Desktop,
+    Firefox,
+    Chrome,
+    Edge,
+    Safari,
+    Browser,
+    #[serde(other)]
+    Unknown,
+}
+
+/// The system of a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceOs {
+    Linux,
+    Windows,
+    Macos,
+    Android,
+    Ios,
+    #[serde(other)]
+    Other,
+}
+
+/// One live session of the account (`GET /api/auth/sessions`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeviceSession {
+    pub id: Uuid,
+    pub client: DeviceClient,
+    pub os: DeviceOs,
+    pub created_at: Timestamp,
+    /// Moves with the session's renewal: right to the day, not the minute.
+    pub last_used_at: Timestamp,
+    /// The session of this app.
+    pub current: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DeviceSessions {
+    pub sessions: Lenient<DeviceSession>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportState {
+    Pending,
+    Running,
+    Ready,
+    Failed,
+}
+
+/// The account's one data export (`ExportView`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExportView {
+    pub state: ExportState,
+    pub requested_at: Timestamp,
+    pub finished_at: Option<Timestamp>,
+    pub expires_at: Option<Timestamp>,
+    pub size_bytes: Option<u64>,
+}
+
+impl ExportView {
+    /// The name the server gives the archive (`Content-Disposition`), for
+    /// the save dialog: the UTC day it was finished.
+    pub fn file_name(&self) -> String {
+        let day = self.finished_at.unwrap_or(self.requested_at);
+        format!("gelabber-export-{}.zip", day.format("%Y-%m-%d"))
+    }
+}
+
+/// `GET`/`POST /api/me/export`: the export, if any, and whether a mail
+/// announces it when ready.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExportStatus {
+    pub export: Option<ExportView>,
+    pub mail: bool,
+}
+
+impl ExportStatus {
+    /// Pending or running: the page asks again every 10 s
+    /// ([`EXPORT_POLL`]).
+    pub fn building(&self) -> bool {
+        matches!(
+            self.export.as_ref().map(|e| e.state),
+            Some(ExportState::Pending | ExportState::Running)
+        )
+    }
+}
+
+/// How often the page reads a building export again (web `EXPORT_POLL_MS`).
+pub const EXPORT_POLL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The download of the ready archive, under `/api`.
+pub const EXPORT_DOWNLOAD_PATH: &str = "/api/me/export/download";
+
+/// How the person confirms deleting the account: the password, or the
+/// account's address when it has none (it signs in only through a
+/// provider). Serialises as `{"password": …}` or `{"email": …}`.
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeleteConfirmation {
+    Password(String),
+    Email(String),
+}
+
+impl std::fmt::Debug for DeleteConfirmation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Password(_) => f.write_str("Password(<redacted>)"),
+            Self::Email(email) => f.debug_tuple("Email").field(email).finish(),
+        }
+    }
+}
+
+/// A server the account still owns, as `409 owns_servers` lists it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnedServer {
+    pub id: Uuid,
+    pub name: String,
+    /// Absent in rows taken from the server list, which has no count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_count: Option<i64>,
+}
+
+/// What `DELETE /api/me` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AccountDeletion {
+    /// `202`: the account is gone and this session with it.
+    Deleted,
+    /// `409 owns_servers`: these servers have to be handed over or deleted
+    /// first.
+    OwnsServers(Vec<OwnedServer>),
 }
 
 // ------------------------------------------------------------------ gateway

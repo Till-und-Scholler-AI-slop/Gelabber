@@ -427,6 +427,20 @@ impl Http {
         body: Option<Body>,
         session: Option<&str>,
     ) -> Result<Vec<u8>, ApiError> {
+        self.execute_keeping(method, path, body, session, &mut None)
+            .await
+    }
+
+    /// [`Self::execute_as`]; the body of a refusal also lands in `refusal`,
+    /// for codes that carry more than the envelope (`owns_servers`).
+    async fn execute_keeping(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Body>,
+        session: Option<&str>,
+        refusal: &mut Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, ApiError> {
         let write = method != Method::GET && method != Method::HEAD;
         if write && self.csrf.read().is_none() {
             self.refresh_csrf().await?;
@@ -482,8 +496,32 @@ impl Http {
                     hook();
                 }
             }
+            *refusal = Some(bytes.to_vec());
             return Err(error);
         }
+    }
+
+    /// [`Self::send`], and a refusal comes with its whole body, as the
+    /// web's `ApiError.body` (the servers of `409 owns_servers`).
+    pub async fn send_keeping_refusal<B: Serialize, T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: &B,
+    ) -> Result<T, (ApiError, serde_json::Value)> {
+        let json = serde_json::to_vec(body)
+            .map_err(|e| (ApiError::Decode(e.to_string()), serde_json::Value::Null))?;
+        let mut refusal = None;
+        let answer = self
+            .execute_keeping(method, path, Some(Body::Json(json)), None, &mut refusal)
+            .await;
+        let bytes = answer.map_err(|error| {
+            let body = refusal
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or(serde_json::Value::Null);
+            (error, body)
+        })?;
+        decode(path, &bytes).map_err(|e| (e, serde_json::Value::Null))
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {

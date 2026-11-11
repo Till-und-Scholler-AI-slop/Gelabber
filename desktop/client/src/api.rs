@@ -259,6 +259,24 @@ impl Http {
         self.send(Method::POST, "/auth/register", body).await
     }
 
+    /// `GET /api/auth/sessions`: the account's live sessions, this one
+    /// first, then by last use.
+    pub async fn sessions(&self) -> Result<Vec<DeviceSession>> {
+        self.get::<DeviceSessions>("/auth/sessions")
+            .await
+            .map(|answer| answer.sessions.0)
+    }
+
+    /// Signs one session of the account out. Another one: `204`, its
+    /// sockets close. This app's own: a logout (`200 {"csrf_token"}`, the
+    /// cookie cleared). `404` for one that is gone already.
+    pub async fn revoke_session(&self, id: Uuid) -> Result<()> {
+        let _: serde_json::Value = self
+            .send_empty(Method::DELETE, &format!("/auth/sessions/{id}"))
+            .await?;
+        Ok(())
+    }
+
     // --------------------------------------------------------------- me
 
     pub async fn me(&self) -> Result<User> {
@@ -301,6 +319,43 @@ impl Http {
     /// when another device saved meanwhile.
     pub async fn put_themes(&self, doc: &ThemeDocument) -> Result<ThemeDocument> {
         self.send(Method::PUT, "/me/themes", doc).await
+    }
+
+    /// `GET /api/me/export`.
+    pub async fn export_status(&self) -> Result<ExportStatus> {
+        self.get("/me/export").await
+    }
+
+    /// `POST /api/me/export` (202): a new archive, replacing a failed or
+    /// day-old one. `409 export_pending` while one is being built,
+    /// `429 rate_limited` (with `retry_after`) within a day of the last.
+    pub async fn request_export(&self) -> Result<ExportStatus> {
+        self.send_empty(Method::POST, "/me/export").await
+    }
+
+    /// `DELETE /api/me`. `202` ends the account and this session (the
+    /// server clears the cookie); `409 owns_servers` names the servers in
+    /// the way. Field codes as `password`/`email`: `required`, `wrong`.
+    pub async fn delete_account(
+        &self,
+        confirmation: &DeleteConfirmation,
+    ) -> Result<AccountDeletion> {
+        match self
+            .send_keeping_refusal::<_, serde_json::Value>(Method::DELETE, "/me", confirmation)
+            .await
+        {
+            Ok(_) => Ok(AccountDeletion::Deleted),
+            Err((error, body)) if error.code() == "owns_servers" => {
+                let servers = body
+                    .get("servers")
+                    .cloned()
+                    .and_then(|list| serde_json::from_value::<Lenient<OwnedServer>>(list).ok())
+                    .map(|Lenient(list)| list)
+                    .unwrap_or_default();
+                Ok(AccountDeletion::OwnsServers(servers))
+            }
+            Err((error, _)) => Err(error),
+        }
     }
 
     // ---------------------------------------------------------- servers
@@ -381,6 +436,18 @@ impl Http {
     pub async fn unban(&self, server: Uuid, user: Uuid) -> Result<()> {
         self.send_empty(Method::DELETE, &format!("/servers/{server}/bans/{user}"))
             .await
+    }
+
+    /// `POST /api/servers/{id}/transfer` (owner only): `user` becomes the
+    /// owner; the answer is the list row as the caller now sees it
+    /// (`role: member`).
+    pub async fn transfer_server(&self, server: Uuid, user: Uuid) -> Result<Server> {
+        self.send(
+            Method::POST,
+            &format!("/servers/{server}/transfer"),
+            &json!({"user_id": user}),
+        )
+        .await
     }
 
     // ---------------------------------------------- categories, channels
@@ -1104,5 +1171,121 @@ mod tests {
             crate::http::error_message("already_member"),
             "You are already a member of this server."
         );
+    }
+
+    /// Devices, export, deletion and transfer go to their routes with the
+    /// web's bodies (#519).
+    #[test]
+    fn the_account_calls_go_to_their_routes() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = fake_api(|line| {
+            let export = r#"{"export":{"state":"pending","requested_at":"2026-11-11T10:00:00Z","finished_at":null,"expires_at":null,"size_bytes":null},"mail":true}"#;
+            match line.split(' ').take(2).collect::<Vec<_>>().as_slice() {
+                ["GET", "/api/auth/sessions"] => (
+                    "200 OK",
+                    r#"{"sessions":[{"id":"00000000-0000-0000-0000-000000000001","client":"desktop","os":"windows","created_at":"2026-11-01T18:00:00Z","last_used_at":"2026-11-10T19:02:00Z","current":true},{"id":"x"}]}"#
+                        .to_owned(),
+                ),
+                ["DELETE", path] if path.starts_with("/api/auth/sessions/") => {
+                    ("204 No Content", String::new())
+                }
+                ["GET", "/api/me/export"] => ("200 OK", r#"{"export":null,"mail":false}"#.to_owned()),
+                ["POST", "/api/me/export"] => ("202 Accepted", export.to_owned()),
+                ["DELETE", "/api/me"] => ("202 Accepted", r#"{"csrf_token":"n"}"#.to_owned()),
+                ["POST", path] if path.ends_with("/transfer") => {
+                    ("200 OK", server_row(Uuid::from_u128(1)))
+                }
+                _ => ("500 Internal Server Error", String::new()),
+            }
+        });
+        let http = Http::new(&base).unwrap();
+        let (server, kai) = (Uuid::from_u128(1), Uuid::from_u128(3));
+        runtime.block_on(async {
+            let sessions = http.sessions().await.unwrap();
+            assert_eq!(sessions.len(), 1, "the unreadable row is left out");
+            assert_eq!(sessions[0].os, DeviceOs::Windows);
+            http.revoke_session(Uuid::from_u128(2)).await.unwrap();
+            assert!(http.export_status().await.unwrap().export.is_none());
+            assert!(http.request_export().await.unwrap().building());
+            let deleted = http
+                .delete_account(&DeleteConfirmation::Password("pw".into()))
+                .await
+                .unwrap();
+            assert_eq!(deleted, AccountDeletion::Deleted);
+            assert_eq!(http.csrf_token().as_deref(), Some("n"));
+            let row = http.transfer_server(server, kai).await.unwrap();
+            assert_eq!(row.id, server);
+        });
+        let s = "00000000-0000-0000-0000-000000000001";
+        let expected = [
+            ("GET /api/auth/sessions".to_owned(), String::new()),
+            (
+                "DELETE /api/auth/sessions/00000000-0000-0000-0000-000000000002".to_owned(),
+                String::new(),
+            ),
+            ("GET /api/me/export".to_owned(), String::new()),
+            ("POST /api/me/export".to_owned(), String::new()),
+            (
+                "DELETE /api/me".to_owned(),
+                r#"{"password":"pw"}"#.to_owned(),
+            ),
+            (
+                format!("POST /api/servers/{s}/transfer"),
+                r#"{"user_id":"00000000-0000-0000-0000-000000000003"}"#.to_owned(),
+            ),
+        ];
+        let seen = seen.lock();
+        assert_eq!(seen.len(), expected.len(), "{seen:?}");
+        for ((line, body), (want_line, want_body)) in seen.iter().zip(expected) {
+            assert_eq!(line, &format!("{want_line} HTTP/1.1"));
+            assert_eq!(body, &want_body, "{line}");
+        }
+    }
+
+    /// `409 owns_servers` is an answer, not a failure: it names the servers
+    /// in the way. Other refusals stay errors with their field codes.
+    #[test]
+    fn a_deletion_names_the_servers_in_the_way() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, _) = fake_api(|_| {
+            (
+                "409 Conflict",
+                r#"{"error":"owns_servers","message":"Transfer or delete your servers first.","servers":[{"id":"00000000-0000-0000-0000-000000000007","name":"Wohnzimmer","member_count":5}]}"#
+                    .to_owned(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let answer = runtime
+            .block_on(http.delete_account(&DeleteConfirmation::Email("lena@example.test".into())))
+            .unwrap();
+        assert_eq!(
+            answer,
+            AccountDeletion::OwnsServers(vec![OwnedServer {
+                id: Uuid::from_u128(7),
+                name: "Wohnzimmer".into(),
+                member_count: Some(5),
+            }])
+        );
+        let (base, _) = fake_api(|_| {
+            (
+                "422 Unprocessable Entity",
+                r#"{"error":"validation_failed","message":"x","fields":{"password":"wrong"}}"#
+                    .to_owned(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let error = runtime
+            .block_on(http.delete_account(&DeleteConfirmation::Password("nope".into())))
+            .unwrap_err();
+        assert_eq!(error.field("password"), Some("wrong"));
+        let (base, _) = fake_api(|_| {
+            (
+                "409 Conflict",
+                r#"{"error":"export_pending","message":"x"}"#.to_owned(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let error = runtime.block_on(http.request_export()).unwrap_err();
+        assert_eq!(error.code(), "export_pending");
     }
 }

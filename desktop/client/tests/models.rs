@@ -509,3 +509,72 @@ fn directory_listings_settings_requests_and_reports() {
     .unwrap();
     assert_eq!(filed.id.as_u128(), 4);
 }
+
+/// The account's devices, export and deletion (v0.10, #519).
+#[test]
+fn devices_export_and_deletion() {
+    use serde_json::json;
+    let devices = json!({"sessions": [
+        {"id": "00000000-0000-0000-0000-000000000001", "client": "desktop", "os": "linux",
+         "created_at": "2026-11-01T18:00:00Z", "last_used_at": "2026-11-10T19:02:00Z",
+         "current": true},
+        {"id": "00000000-0000-0000-0000-000000000002", "client": "firefox", "os": "windows",
+         "created_at": "2026-11-01T18:00:00Z", "last_used_at": "2026-11-09T19:02:00Z",
+         "current": false}]});
+    let row: DeviceSession = serde_json::from_value(devices["sessions"][0].clone()).unwrap();
+    assert_eq!(
+        (row.client, row.os, row.current),
+        (DeviceClient::Desktop, DeviceOs::Linux, true)
+    );
+    assert_eq!(serde_json::to_value(&row).unwrap(), devices["sessions"][0]);
+    // A device a newer server knows reads as unknown, not as an error.
+    let newer: DeviceSession = serde_json::from_value(json!({
+        "id": "00000000-0000-0000-0000-000000000003", "client": "opera", "os": "haiku",
+        "created_at": "2026-11-01T18:00:00Z", "last_used_at": "2026-11-01T18:00:00Z",
+        "current": false}))
+    .unwrap();
+    assert_eq!(
+        (newer.client, newer.os),
+        (DeviceClient::Unknown, DeviceOs::Other)
+    );
+
+    let ready = json!({"export": {"state": "ready", "requested_at": "2026-11-10T22:00:00Z",
+        "finished_at": "2026-11-11T00:10:00Z", "expires_at": "2026-11-18T00:10:00Z",
+        "size_bytes": 123456}, "mail": true});
+    let status: ExportStatus = serde_json::from_value(ready.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&status).unwrap(), ready);
+    assert!(!status.building());
+    let view = status.export.unwrap();
+    assert_eq!(view.size_bytes, Some(123_456));
+    assert_eq!(view.file_name(), "gelabber-export-2026-11-11.zip");
+    let pending: ExportStatus = serde_json::from_value(json!({"export": {"state": "pending",
+        "requested_at": "2026-11-10T22:00:00Z", "finished_at": null, "expires_at": null,
+        "size_bytes": null}, "mail": false}))
+    .unwrap();
+    assert!(pending.building());
+    let none: ExportStatus =
+        serde_json::from_value(json!({"export": null, "mail": false})).unwrap();
+    assert!(none.export.is_none() && !none.building());
+
+    let password = DeleteConfirmation::Password("geheim 1".into());
+    assert_eq!(
+        serde_json::to_value(&password).unwrap(),
+        json!({"password": "geheim 1"})
+    );
+    assert!(!format!("{password:?}").contains("geheim"));
+    assert_eq!(
+        serde_json::to_value(DeleteConfirmation::Email("lena@example.test".into())).unwrap(),
+        json!({"email": "lena@example.test"})
+    );
+    let owned: OwnedServer = serde_json::from_value(json!({
+        "id": "00000000-0000-0000-0000-000000000007", "name": "Wohnzimmer", "member_count": 5}))
+    .unwrap();
+    assert_eq!(owned.member_count, Some(5));
+
+    // A ban outlives the account that issued it.
+    let bans: Vec<Ban> = serde_json::from_value(json!([{
+        "user_id": "00000000-0000-0000-0000-000000000003", "name": "Kai", "avatar_url": null,
+        "banned_by": null, "banned_at": "2026-11-10T10:00:00Z"}]))
+    .unwrap();
+    assert_eq!(bans[0].banned_by, None);
+}
