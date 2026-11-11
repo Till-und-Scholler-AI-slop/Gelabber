@@ -57,7 +57,7 @@ h2 {
     pointer-events: none;
   }
   .auth-layout::before {
-    background: url("/images/living-room/community-banner.png") center / cover no-repeat;
+    background: url("/images/living-room/community-banner.webp") center / cover no-repeat;
     opacity: 0.18;
   }
   .auth-layout::after {

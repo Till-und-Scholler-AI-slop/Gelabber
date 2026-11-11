@@ -291,7 +291,7 @@ Full-viewport modal dialog, transparent, padding `56px 16px 16px`, image centred
 | Element | Spec |
 |---|---|
 | page | full window, bg `--lr-bg`, grid centred both axes, min-height 100vh, padding `32px 16px` |
-| artwork (viewport ≥ 800px, i.e. always on desktop) | fixed full-window layer behind content: `public/images/living-room/community-banner.png` `cover` centred at **opacity .18**, then over it a radial gradient `ellipse at center: transparent 30% → --lr-bg 95%` |
+| artwork (viewport ≥ 800px, i.e. always on desktop) | fixed full-window layer behind content: `public/images/living-room/community-banner.webp` (the app bundles the same file) `cover` centred at **opacity .18**, then over it a radial gradient `ellipse at center: transparent 30% → --lr-bg 95%` |
 | column | flex column, **gap 24px**, width `min(100%, 384px)` |
 | brand (top, centred) | inline-flex, centre, gap 10: `public/icons/icon-192.png` drawn **40×40, radius 7** + text **"Gelabber"** 700 20px/1.2, letter-spacing −0.02em, colour text; links to `/` |
 | card `.lr-auth-card` | flex column, padding **32px**, border 1 border, radius **10px**, bg panel, colour text → inner width **318px** |

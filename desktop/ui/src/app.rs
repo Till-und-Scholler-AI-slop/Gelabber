@@ -406,8 +406,6 @@ impl GelabberApp {
             screens::voice::window::wake(&repaint_ctx);
         }));
         let images = Images::new(client.clone());
-        // The artwork of the signed-out pages is large; start early.
-        images.get(ctx, screens::auth::layout::ARTWORK);
         let mut session = Session::new();
         session.check(&client);
         let mail_check = Some(mail_check(&client));

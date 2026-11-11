@@ -12,14 +12,12 @@ use gelabber_client::{Http, LegalPageKind, PublicPages};
 use gelabber_i18n::auth;
 
 use crate::app::AppCtx;
-use crate::images::{self, ImageState};
+use crate::images;
 use crate::text::{self, Block, Rich, TextStyle};
 use crate::theme::{Theme, corner, space};
 use crate::widgets::field::layout_unit;
 use crate::widgets::{Link, link};
 
-/// The approved artwork (public/images/living-room).
-pub const ARTWORK: &str = "/images/living-room/community-banner.png";
 const ICON: &[u8] = include_bytes!("../../../assets/images/icon-192.png");
 
 /// `.lr-auth-card h1`: `--lr-type-page`, letter-spacing −0.03em.
@@ -34,11 +32,8 @@ const LEGAL: TextStyle = text::META.size(13.0);
 /// 318px column (the card's padding is 32px, its border 1px), and under
 /// it the links to the legal pages the instance published.
 pub fn frame(ui: &mut Ui, app: &mut AppCtx, id: &str, card: impl FnOnce(&mut Ui, &mut AppCtx)) {
-    // Loaded only where it shows.
-    let artwork = match wide(ui.ctx()).then(|| app.images.get(ui.ctx(), ARTWORK)) {
-        Some(ImageState::Ready(texture)) => Some(texture),
-        _ => None,
-    };
+    // Decoded only where it shows.
+    let artwork = wide(ui.ctx()).then(|| bundled_artwork(ui.ctx())).flatten();
     let legal = app
         .public_pages
         .as_ref()
@@ -73,9 +68,11 @@ pub fn wide(ctx: &egui::Context) -> bool {
     ctx.content_rect().width() >= 800.0
 }
 
-/// The app's own copy of the artwork (a JPEG of public/images/living-room)
-/// for the setup screen, which has no server yet to load it from.
-const BUNDLED_ARTWORK: &[u8] = include_bytes!("../../../assets/images/community-banner.jpg");
+/// The app's own copy of the approved artwork, the WebP the web's sign-in
+/// pages draw (public/images/living-room/community-banner.webp): the
+/// setup screen has no server to load it from, and a server older than
+/// v0.9.3 has no WebP.
+const BUNDLED_ARTWORK: &[u8] = include_bytes!("../../../assets/images/community-banner.webp");
 
 /// The bundled artwork, decoded once per window.
 pub fn bundled_artwork(ctx: &egui::Context) -> Option<egui::TextureHandle> {
