@@ -578,11 +578,13 @@ async fn while_off_the_listing_routes_are_not_found(pool: PgPool) {
         join(&mut lena, server).await,
         ask(&mut lena, server, "").await,
         withdraw(&mut lena, server).await,
+        report(&mut lena, server, json!({ "reason": "spam" })).await,
     ] {
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
         assert_eq!(res.body["error"], "not_found");
     }
     assert!(!is_member(&pool, server, id_of(&lena)).await);
+    assert!(report_rows(&pool, server).await.is_empty());
 }
 
 #[sqlx::test]
@@ -1467,4 +1469,220 @@ async fn the_queue_handlers_hear_the_count_and_the_accepted_hear_jn(pool: PgPool
     // A plain member hears none of it, nobody else hears jn.
     hears_no(&mut member_ws, "jq").await;
     hears_no(&mut owner_ws, "jn").await;
+}
+
+// ---- Reports of listings and the operator's delist ----
+
+async fn report(client: &mut Client, server: Uuid, body: Value) -> common::Response {
+    client
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/reports"),
+            Some(body),
+        )
+        .await
+}
+
+/// The reports of `server` as (reporter, reason, snapshot, status), oldest
+/// first.
+async fn report_rows(pool: &PgPool, server: Uuid) -> Vec<(Uuid, String, Option<Value>, String)> {
+    sqlx::query_as(
+        "SELECT reporter_id, reason, snapshot, status FROM reports \
+         WHERE server_id = $1 ORDER BY created_at, id",
+    )
+    .bind(server)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test]
+async fn a_listing_is_reported_with_a_snapshot_of_it(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut bob = registered(&state, "bob@example.test", "Bob").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let mut kai = registered(&state, "kai@example.test", "Kai").await;
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    let privat = create_server(&mut ada, "Privat").await;
+    invite_and_join(&mut ada, &mut bob, filmclub).await;
+    list(&mut ada, filmclub, "de", "Jeden Freitag ein Film.").await;
+    let snapshot = json!({
+        "name": "Filmclub", "icon_url": null, "description": "Jeden Freitag ein Film.",
+        "language": "de", "join_mode": "open", "member_count": 2,
+    });
+
+    // A signed-in non-member who sees the listing reports it.
+    let res = report(&mut lena, filmclub, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let id = res.body["id"].clone();
+    assert_eq!(
+        report_rows(&pool, filmclub).await,
+        [(
+            id_of(&lena),
+            "spam".to_owned(),
+            Some(snapshot.clone()),
+            "open".to_owned()
+        )]
+    );
+    assert!(!is_member(&pool, filmclub, id_of(&lena)).await);
+
+    // Later edits do not change what was reported; a repeat while it is open
+    // is the same report.
+    list(&mut ada, filmclub, "de", "Etwas ganz anderes.").await;
+    let res = report(&mut lena, filmclub, json!({ "reason": "illegal" })).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["id"], id);
+    assert_eq!(report_rows(&pool, filmclub).await.len(), 1);
+    assert_eq!(report_rows(&pool, filmclub).await[0].2, Some(snapshot));
+
+    // A member reporting a listed server keeps the listing as it is now.
+    let res = report(&mut bob, filmclub, json!({ "reason": "harassment" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(
+        report_rows(&pool, filmclub).await[1].2,
+        Some(json!({
+            "name": "Filmclub", "icon_url": null, "description": "Etwas ganz anderes.",
+            "language": "de", "join_mode": "open", "member_count": 2,
+        }))
+    );
+    // A member of an unlisted server reports without a snapshot.
+    let res = report(&mut ada, privat, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(report_rows(&pool, privat).await[0].2, None);
+
+    // The operator package's validation holds for non-members too.
+    let res = report(&mut kai, filmclub, json!({ "reason": "other" })).await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["details"], "required");
+    let res = report(&mut kai, filmclub, json!({ "reason": "abuse" })).await;
+    assert_eq!(res.body["fields"]["reason"], "invalid");
+
+    // An unlisted server, a banned caller and a blocked server: 404.
+    let res = report(&mut kai, privat, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    sqlx::query("INSERT INTO server_bans (server_id, user_id, banned_by) VALUES ($1, $2, $3)")
+        .bind(filmclub)
+        .bind(id_of(&kai))
+        .bind(id_of(&ada))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = report(&mut kai, filmclub, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    sqlx::query("DELETE FROM server_bans WHERE user_id = $1")
+        .bind(id_of(&kai))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE servers SET blocked_at = now(), blocked_reason = 'x' WHERE id = $1")
+        .bind(filmclub)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = report(&mut kai, filmclub, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert_eq!(report_rows(&pool, filmclub).await.len(), 2);
+}
+
+#[sqlx::test]
+async fn reports_of_listings_count_against_the_report_limit(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    list(&mut ada, filmclub, "de", "Jeden Freitag ein Film.").await;
+    for _ in 0..10 {
+        let res = report(&mut lena, filmclub, json!({ "reason": "spam" })).await;
+        assert!(res.status.is_success(), "{}", res.body);
+    }
+    let res = report(&mut lena, filmclub, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+    assert_eq!(res.body["error"], "rate_limited");
+    assert_eq!(report_rows(&pool, filmclub).await.len(), 1);
+}
+
+#[sqlx::test]
+async fn a_delist_hides_the_listing_and_keeps_its_requests(pool: PgPool) {
+    let mut state = directory_state(pool.clone());
+    state.operators = std::sync::Arc::new(std::collections::HashSet::from([
+        "op@example.test".to_owned()
+    ]));
+    let mut op = registered(&state, "op@example.test", "Betrieb").await;
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let mut kai = registered(&state, "kai@example.test", "Kai").await;
+    let mut tom = registered(&state, "tom@example.test", "Tom").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list_with(&mut ada, keller, "de", "request").await;
+    for client in [&mut lena, &mut kai] {
+        let res = ask(client, keller, "Hallo").await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    }
+    let res = report(&mut tom, keller, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    // Someone who is not an operator cannot delist.
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/operator/servers/{keller}/delist"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert!(listing_of(&mut tom, keller).await.is_some());
+
+    let res = op
+        .send(
+            Method::POST,
+            &format!("/api/operator/servers/{keller}/delist"),
+            Some(json!({ "reason": "Werbung" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["directory"], "delisted");
+
+    // The listing is gone: no search, no request, no report.
+    assert!(listing_of(&mut tom, keller).await.is_none());
+    assert_eq!(
+        ask(&mut tom, keller, "").await.status,
+        StatusCode::NOT_FOUND
+    );
+    let res = report(&mut tom, keller, json!({ "reason": "illegal" })).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    // Its open report is closed as actioned.
+    let rows = report_rows(&pool, keller).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].3, "actioned");
+    // The owner still sees the form, delisted, and a save keeps it hidden.
+    list_with(&mut ada, keller, "de", "request").await;
+    assert_eq!(get_listing(&mut ada, keller).await.body["delisted"], true);
+    assert!(listing_of(&mut tom, keller).await.is_none());
+
+    // The pending requests stay: one is withdrawn, the other accepted.
+    let res = queue(&mut ada, keller).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body.as_array().unwrap().len(), 2);
+    let res = withdraw(&mut kai, keller).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let res = answer(&mut ada, keller, id_of(&lena), "accept").await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert!(is_member(&pool, keller, id_of(&lena)).await);
+    assert!(request_rows(&pool, keller).await.is_empty());
+
+    // The operator's relist brings the owner's listing back.
+    let res = op
+        .send(
+            Method::POST,
+            &format!("/api/operator/servers/{keller}/relist"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(get_listing(&mut ada, keller).await.body["delisted"], false);
+    let listing = listing_of(&mut tom, keller).await.expect("listed again");
+    assert_eq!(listing["member_count"], 2);
+    let res = report(&mut tom, keller, json!({ "reason": "illegal" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
 }
