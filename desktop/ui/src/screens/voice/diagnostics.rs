@@ -7,6 +7,7 @@
 use egui::{Color32, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use gelabber_call::diagnostics::{self as diag, Diagnostics, FlowGroup};
 use gelabber_call::{CallState, CallStatus, Connection, MicStatus, logic};
+use gelabber_i18n::diagnostics as texts;
 
 use crate::app::AppCtx;
 use crate::text::{self, Block, TextStyle};
@@ -23,10 +24,10 @@ const FIGURE_COMPACT: TextStyle = TextStyle::new(20.0, 600.0, 1.25);
 /// `QUALITY_LABEL`.
 pub fn quality_label(level: u8) -> &'static str {
     match level {
-        4 => "gut",
-        3 => "ordentlich",
-        2 => "schwach",
-        _ => "schlecht",
+        4 => texts::quality_good(),
+        3 => texts::quality_fair(),
+        2 => texts::quality_weak(),
+        _ => texts::quality_poor(),
     }
 }
 
@@ -41,15 +42,12 @@ pub fn summary(connection: &Connection) -> Option<String> {
     if level == 0 {
         return None;
     }
-    let mut parts = vec![format!("Verbindung: {}", quality_label(level))];
+    let mut parts = vec![texts::quality_summary(quality_label(level))];
     if let Some(rtt) = connection.rtt_ms {
         parts.push(format!("{} ms", rtt.round() as i64));
     }
     if let Some(loss) = connection.loss {
-        parts.push(format!(
-            "{} % Verlust",
-            diag::number((loss * 100.0).round(), 0, false)
-        ));
+        parts.push(texts::quality_loss_summary(&percent(loss)));
     }
     Some(parts.join(" · "))
 }
@@ -58,24 +56,24 @@ pub fn summary(connection: &Connection) -> Option<String> {
 pub fn detail(connection: &Connection) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     match connection.relay {
-        Some(false) => parts.push("Direkt verbunden".into()),
-        Some(true) => parts.push("Über einen Relay-Server verbunden".into()),
+        Some(false) => parts.push(texts::quality_direct().into()),
+        Some(true) => parts.push(texts::quality_relay().into()),
         None => {}
     }
     if let Some(loss) = connection.loss {
-        let pct = diag::number((loss * 100.0).round(), 0, false);
+        let pct = percent(loss);
         parts.push(if loss < LOSS_LIMITS[0] {
-            "kaum Verlust".into()
+            texts::quality_low_loss().into()
         } else if loss < LOSS_LIMITS[1] {
-            format!("etwas Verlust ({pct} %)")
+            texts::quality_some_loss(&pct)
         } else {
-            format!("hoher Verlust ({pct} %)")
+            texts::quality_high_loss(&pct)
         });
     }
     if let Some(rtt) = connection.rtt_ms
         && rtt >= RTT_LIMITS[1]
     {
-        parts.push(format!("hohe Verzögerung ({} ms)", rtt.round() as i64));
+        parts.push(texts::quality_high_delay(&(rtt.round() as i64).to_string()));
     }
     if parts.is_empty() {
         return None;
@@ -85,6 +83,11 @@ pub fn detail(connection: &Connection) -> Option<String> {
         first.make_ascii_uppercase();
     }
     Some(out + ".")
+}
+
+/// A loss ratio as whole percent: "6 %" / "6%".
+fn percent(ratio: f64) -> String {
+    texts::percent(&diag::number((ratio * 100.0).round(), 0, false))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -126,7 +129,7 @@ fn tone_color(theme: &Theme, tone: Option<Tone>) -> Color32 {
 /// microphone picked in the settings.
 pub fn processing_message(state: &CallState, mode: &str, chosen: &str) -> String {
     if state.channel.is_none() {
-        return "Mikrofon inaktiv".into();
+        return texts::processing_inactive().into();
     }
     if state.mic != MicStatus::Live {
         return logic::mic_listen_only().into();
@@ -138,12 +141,12 @@ pub fn processing_message(state: &CallState, mode: &str, chosen: &str) -> String
 /// "; Standardmikrofon" where the chosen microphone did not open.
 pub fn processing_text(mode: &str, captured: Option<&str>, chosen: &str) -> String {
     let words = match mode {
-        "browser" => "Desktop-App: WebRTC-Rauschfilter im nativen Kern",
-        "original" => "Desktop-App: Originalton (Stereo, ohne Filter)",
-        _ => "Desktop-App: RNNoise im nativen Kern",
+        "browser" => texts::processing_desktop_browser(),
+        "original" => texts::processing_desktop_original(),
+        _ => texts::processing_desktop_enhanced(),
     };
     if captured.is_some_and(|c| c != chosen) {
-        format!("{words}; Standardmikrofon")
+        texts::processing_default_mic(words)
     } else {
         words.into()
     }
@@ -213,9 +216,9 @@ pub fn status(
 
     // Head: bars, verdict, meta.
     let heading = match quality {
-        Some(q) => format!("Verbindung {}", quality_label(level(q))),
-        None if measuring => "Verbindung wird gemessen …".into(),
-        None => "Keine laufende Messung".into(),
+        Some(q) => texts::status_verdict(quality_label(level(q))),
+        None if measuring => texts::status_measuring().into(),
+        None => texts::status_not_measuring().into(),
     };
     let (bars_w, bars_h) = if compact {
         (4.0 * 4.0 + 3.0 * 2.0, 20.0)
@@ -230,14 +233,14 @@ pub fn status(
     let meta = if compact {
         quality.and_then(|q| q.relay).map(|relay| {
             if relay {
-                "über Relay"
+                texts::status_relay()
             } else {
-                "direkt verbunden"
+                texts::status_direct()
             }
             .to_owned()
         })
     } else {
-        measuring.then(|| format!("misst alle {} s", diag::INTERVAL_MS / 1000))
+        measuring.then(|| texts::status_interval(&(diag::INTERVAL_MS / 1000).to_string()))
     };
     let meta_block = meta.map(|m| Block::single(ui, &m, text::META, c.subtle));
     let meta_w = meta_block
@@ -306,21 +309,31 @@ pub fn status(
     let loss = quality.and_then(|q| q.loss);
     let mut figures: Vec<Figure> = vec![
         (
-            "Ping",
-            rtt.map(|ms| (format!("{}", ms.round() as i64), "ms")),
+            texts::status_ping(),
+            rtt.map(|ms| (format!("{}", ms.round() as i64), " ms")),
             rtt.map(ping_tone),
         ),
         (
-            "Paketverlust",
-            loss.map(|l| (diag::number(l * 100.0, 1, true), "%")),
+            texts::status_packet_loss(),
+            loss.map(|l| {
+                (
+                    diag::number(l * 100.0, 1, true),
+                    texts::status_percent_unit(),
+                )
+            }),
             loss.map(loss_tone),
         ),
     ];
     if !compact {
-        let path = quality
-            .and_then(|q| q.relay)
-            .map(|r| (if r { "Relay" } else { "Direkt" }.to_owned(), ""));
-        figures.push(("Verbunden", path, None));
+        let path = quality.and_then(|q| q.relay).map(|r| {
+            let path = if r {
+                texts::status_path_relay()
+            } else {
+                texts::status_path_direct()
+            };
+            (path.to_owned(), "")
+        });
+        figures.push((texts::status_connected(), path, None));
     }
     let mut fig_h: f32 = 0.0;
     for (i, (label, value, tone)) in figures.iter().enumerate() {
@@ -332,7 +345,7 @@ pub fn status(
         let dd = match value {
             Some((v, unit)) if !unit.is_empty() => text::Rich::new(number)
                 .push(v, number, color)
-                .push(&format!(" {unit}"), text::UI, c.subtle)
+                .push(unit, text::UI, c.subtle)
                 .layout(ui),
             Some((v, _)) => Block::single(ui, v, number, color),
             None => Block::single(ui, "–", number, c.text),
@@ -348,7 +361,7 @@ pub fn status(
     if !compact {
         let caption = Block::single(
             ui,
-            &format!("Ping der letzten {seconds} s"),
+            &texts::trace_caption(&seconds.to_string()),
             text::META,
             c.subtle,
         );
@@ -393,8 +406,13 @@ pub fn status(
     y += bars_area;
     crate::widgets::rule_h(&painter, c.border, inner_left..=inner_left + inner_w, y);
     y += 1.0 + 5.0;
-    let from = Block::single(ui, &format!("vor {seconds} s"), text::META, c.subtle);
-    let now = Block::single(ui, "jetzt", text::META, c.subtle);
+    let from = Block::single(
+        ui,
+        &texts::trace_ago(&seconds.to_string()),
+        text::META,
+        c.subtle,
+    );
+    let now = Block::single(ui, texts::trace_now(), text::META, c.subtle);
     from.paint(&painter, pos2(inner_left, y));
     now.paint(&painter, pos2(inner_left + inner_w - now.width(), y));
     y += from.height();
@@ -494,19 +512,24 @@ fn facts(ui: &mut Ui, rows: &[(&str, String, bool)], width: f32, style: TextStyl
 
 fn on_off(value: Option<bool>) -> String {
     match value {
-        Some(true) => "an".into(),
-        Some(false) => "aus".into(),
+        Some(true) => texts::value_on().into(),
+        Some(false) => texts::value_off().into(),
         None => "–".into(),
     }
 }
 
 fn yes_no(value: bool) -> String {
-    if value { "ja" } else { "nein" }.into()
+    if value {
+        texts::value_yes()
+    } else {
+        texts::value_no()
+    }
+    .into()
 }
 
 /// A figure the core did not report reads as a dash.
 fn known(text: String) -> String {
-    if text == "unbekannt" {
+    if text == texts::value_unknown() {
         "–".into()
     } else {
         text
@@ -566,15 +589,15 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
         .unwrap_or_default();
     block_head(
         ui,
-        "Übertragung",
-        (!groups.is_empty() && !measuring).then_some("letzte Messung"),
+        texts::flows_title(),
+        (!groups.is_empty() && !measuring).then_some(texts::flows_last_measurement()),
         width,
     );
     if groups.is_empty() {
         let text_s = if measuring {
-            "Noch nichts gemessen. Die ersten Werte kommen nach zwei Sekunden."
+            texts::flows_waiting()
         } else {
-            "Keine laufende Messung. Werte gibt es, sobald du in einem Anruf bist."
+            texts::flows_idle()
         };
         let b = Block::wrapped(ui, text_s, text::BODY, c.muted, width - 30.0);
         let top = ui.cursor().min;
@@ -587,75 +610,80 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
     }
     ui.add_space(10.0);
     let limits: Vec<String> = [
-        p.economy_mode.then(|| "Sprache 64 kbit/s".to_owned()),
+        p.economy_mode
+            .then(|| texts::flows_limit_voice(&diag::format_bps(Some(64_000.0)))),
         (p.video_upload_limit > 0.0 || p.economy_mode).then(|| {
             let budget = if p.video_upload_limit > 0.0 {
                 p.video_upload_limit
             } else {
                 logic::VIDEO_SEND_BUDGET as f64
             };
-            format!("Video {}", diag::format_bps(Some(budget)))
+            texts::flows_limit_video(&diag::format_bps(Some(budget)))
         }),
     ]
     .into_iter()
     .flatten()
     .collect();
     let note = if limits.is_empty() {
-        "Gelabber setzt keine Bitratengrenze.".to_owned()
+        texts::flows_no_limit().to_owned()
     } else {
-        format!(
-            "Obergrenze{}: {}.",
-            if limits.len() > 1 { "n" } else { "" },
-            limits.join(", ")
-        )
+        texts::flows_limits(limits.len() as u64, &limits.join(", "))
     };
-    let note = format!("{note} Video höchstens {} FPS.", logic::VIDEO_MAX_FPS);
+    let note = format!(
+        "{note} {}",
+        texts::flows_max_fps(&logic::VIDEO_MAX_FPS.to_string())
+    );
     let b = Block::wrapped(ui, &note, text::META, c.subtle, width);
     let (r, _) = ui.allocate_exact_size(vec2(width, b.height()), Sense::hover());
     b.paint(ui.painter(), r.min);
     ui.add_space(28.0);
 
     // Mikrofon.
-    block_head(ui, "Mikrofon", None, width);
+    block_head(ui, texts::mic_title(), None, width);
     let in_call = state.channel.is_some() && state.mic == MicStatus::Live;
     let mode = p.processing_mode.as_str();
     let format = if in_call {
         format!(
-            "48 kHz, {}",
-            if mode == "original" { "Stereo" } else { "Mono" }
+            "{}, {}",
+            texts::mic_kilo_hertz("48"),
+            if mode == "original" {
+                texts::mic_stereo()
+            } else {
+                texts::mic_mono()
+            }
         )
     } else {
         "–".into()
     };
     let rows: Vec<(&str, String, bool)> = vec![
         (
-            "Verarbeitung",
+            texts::mic_processing(),
             processing_message(&state, mode, &p.audio_input_id),
             true,
         ),
-        ("Format", format, false),
+        (texts::mic_format(), format, false),
         (
-            "Echo-Unterdrückung",
+            texts::mic_echo(),
             on_off(in_call.then_some(p.echo_cancellation)),
             false,
         ),
         (
-            "Rauschfilter (WebRTC)",
+            texts::mic_noise_webrtc(),
             on_off(in_call.then_some(mode == "browser" && p.noise_suppression)),
             false,
         ),
         (
-            "Auto-Gain (WebRTC)",
+            texts::mic_auto_gain_webrtc(),
             on_off(in_call.then_some(mode != "original" && p.auto_gain_control)),
             false,
         ),
         (
-            "Mikrofonverstärkung",
-            format!("{} %", (p.input_gain * 100.0).round() as i64),
+            texts::mic_gain(),
+            texts::percent(&((p.input_gain * 100.0).round() as i64).to_string()),
             false,
         ),
         (
-            "Filter-Puffer",
+            texts::mic_buffer(),
             if in_call {
                 format!("{} ms", if mode == "enhanced" { 10 } else { 0 })
             } else {
@@ -671,13 +699,13 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
     ui.add_space(28.0);
 
     // The export, right.
-    let label = "Diagnose herunterladen";
+    let label = texts::ui_download();
     let bw = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 26.0;
     let top = ui.cursor().min;
     let rect = Rect::from_min_size(pos2(top.x + width - bw, top.y), vec2(bw, 32.0));
     let response = ui
         .put(rect, Button::new(label).ghost().small())
-        .on_hover_text("Speichert die Messwerte als JSON-Datei, etwa für einen Fehlerbericht.");
+        .on_hover_text(texts::ui_download_title());
     if response.clicked() {
         let at = diag::now_iso();
         let processing = serde_json::json!({
@@ -698,7 +726,7 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
         let bytes = serde_json::to_vec_pretty(&payload).unwrap_or_default();
         crate::screens::settings::controls::save_file(
             ui.ctx(),
-            "Diagnose speichern",
+            texts::ui_save_title(),
             &diag::export_name(&at),
             bytes,
         );
@@ -731,7 +759,7 @@ fn upload_tip(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32, ec
     ui.add_space(16.0);
     let b = Block::wrapped(
         ui,
-        "Viel Verlust beim Senden? Der Sparmodus begrenzt deinen Upload.",
+        texts::tip_text(),
         text::BODY,
         c.text,
         width - 26.0 - 140.0,
@@ -747,7 +775,7 @@ fn upload_tip(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32, ec
         ui.painter(),
         pos2(top.x + 14.0, rect.center().y - b.height() / 2.0),
     );
-    let label = "Zum Sparmodus";
+    let label = texts::tip_action();
     let bw = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 26.0;
     let br = Rect::from_min_size(
         pos2(rect.right() - 12.0 - bw, rect.center().y - 16.0),
@@ -772,7 +800,13 @@ fn flows_table(ui: &mut Ui, groups: &[FlowGroup], width: f32) {
         width * 0.14,
         width * 0.14,
     ];
-    let heads = ["Spur", "Codec", "Bitrate", "Verlust", "Jitter"];
+    let heads = [
+        texts::flows_track(),
+        texts::flows_codec(),
+        texts::flows_bitrate(),
+        texts::flows_loss(),
+        texts::flows_jitter(),
+    ];
     let head_h = 7.0 + 16.8 + 7.0;
     painter.rect_filled(
         Rect::from_min_size(top, vec2(width, head_h)),
@@ -804,7 +838,7 @@ fn flows_table(ui: &mut Ui, groups: &[FlowGroup], width: f32) {
         let count = if g.count < 2 {
             None
         } else if g.send && !g.audio {
-            Some(format!("{} Schichten", g.count))
+            Some(texts::flows_layers(g.count as u64))
         } else {
             Some(format!("×{}", g.count))
         };
@@ -825,7 +859,7 @@ fn flows_table(ui: &mut Ui, groups: &[FlowGroup], width: f32) {
             }
         }
         if let Some(l) = &g.limited_by {
-            sub.push(format!("gebremst durch {}", limit_label(l)));
+            sub.push(texts::flows_limited_by(limit_label(l)));
         }
         let sub =
             (!sub.is_empty()).then(|| Block::single(ui, &sub.join(" · "), text::META, c.muted));
@@ -875,11 +909,11 @@ fn flows_table(ui: &mut Ui, groups: &[FlowGroup], width: f32) {
 /// `formatQualityLimit`.
 fn limit_label(reason: &str) -> &'static str {
     match reason {
-        "cpu" => "CPU",
-        "bandwidth" => "Bandbreite",
-        "other" => "sonstige",
-        "none" => "keine",
-        _ => "unbekannt",
+        "cpu" => texts::limit_cpu(),
+        "bandwidth" => texts::limit_bandwidth(),
+        "other" => texts::limit_other(),
+        "none" => texts::limit_none(),
+        _ => texts::value_unknown(),
     }
 }
 
@@ -898,7 +932,7 @@ fn debug(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
         Sense::click(),
     );
     response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Für die Fehlersuche"));
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, texts::debug_title()));
     if response.hovered() {
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -923,15 +957,10 @@ fn debug(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
         )
     };
     painter.line(vec![a, b, d], Stroke::new(2.0, c.text));
-    let title = Block::single(ui, "Für die Fehlersuche", text::UI.weight(600.0), c.text);
+    let title = Block::single(ui, texts::debug_title(), text::UI.weight(600.0), c.text);
     let tx = top.x + 1.0 + 14.0 + 8.0 + 12.0;
     common_paint_mid(&painter, &title, tx, cy);
-    let small = Block::single(
-        ui,
-        "Codecs, Prioritäten, Verlauf, Ereignisse",
-        text::META,
-        c.muted,
-    );
+    let small = Block::single(ui, texts::debug_subtitle(), text::META, c.muted);
     common_paint_mid(&painter, &small, tx + title.width() + 12.0, cy);
     ui.allocate_rect(summary_rect, Sense::hover());
     if open {
@@ -997,7 +1026,7 @@ fn debug_body(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     if let Some(video) = &data.video {
-        h4(ui, "Video auf diesem Gerät", width);
+        h4(ui, texts::debug_video(), width);
         let codecs = video.room_codecs.as_ref().map_or("–".to_owned(), |list| {
             list.iter()
                 .map(|c| c.trim_start_matches("video/").to_owned())
@@ -1005,13 +1034,25 @@ fn debug_body(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
                 .join(", ")
         });
         let rows: Vec<(&str, String, bool)> = vec![
-            ("Raum-Codecs", codecs, true),
-            ("AV1 in Hardware", yes_no(video.encoders.av1), false),
-            ("H.264 in Hardware", yes_no(video.encoders.h264), false),
-            ("VP9 in Schichten", yes_no(video.encoders.vp9_svc), false),
-            ("AV1 empfangen", yes_no(video.decodes_av1), false),
+            (texts::debug_room_codecs(), codecs, true),
             (
-                "Desktop-App",
+                texts::debug_av1_hardware(),
+                yes_no(video.encoders.av1),
+                false,
+            ),
+            (
+                texts::debug_h264_hardware(),
+                yes_no(video.encoders.h264),
+                false,
+            ),
+            (
+                texts::debug_vp9_layers(),
+                yes_no(video.encoders.vp9_svc),
+                false,
+            ),
+            (texts::debug_av1_receive(), yes_no(video.decodes_av1), false),
+            (
+                texts::debug_desktop_app(),
                 format!("v{}", env!("CARGO_PKG_VERSION")),
                 false,
             ),
@@ -1019,79 +1060,99 @@ fn debug_body(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
         facts(ui, &rows, width, text::META, 6.0);
         ui.add_space(20.0);
     }
-    h4(ui, "Verbindungen", width);
+    h4(ui, texts::debug_connections(), width);
     let mut rows: Vec<(&str, String, bool)> = Vec::new();
     if let Some(sample) = data.latest() {
         let t = &sample.transport;
         let path = match t.relay {
-            Some(false) => "direkt",
+            Some(false) => texts::transport_direct(),
             Some(true) => "TURN",
             None => "–",
         };
         rows.push((
-            "Sprache",
-            format!(
-                "{path} · RTT {} · Bandbreite senden {}, empfangen {}{}",
-                known(diag::format_ms(t.rtt_ms)),
-                known(diag::format_bps(t.available_out_bps)),
-                known(diag::format_bps(t.available_in_bps)),
+            texts::source_voice(),
+            {
+                let line = texts::transport_line(
+                    path,
+                    &known(diag::format_ms(t.rtt_ms)),
+                    &known(diag::format_bps(t.available_out_bps)),
+                    &known(diag::format_bps(t.available_in_bps)),
+                );
                 if measuring(state) {
-                    ""
+                    line
                 } else {
-                    " · letzte Messung"
+                    format!("{line} · {}", texts::flows_last_measurement())
                 }
-            ),
+            },
             true,
         ));
     }
-    rows.push(("Audio-Graph", "ohne Graph".into(), true));
+    rows.push((
+        texts::debug_audio_graph(),
+        texts::debug_no_graph().into(),
+        true,
+    ));
     facts(ui, &rows, width, text::META, 6.0);
     ui.add_space(20.0);
 
-    h4(ui, "Spuren einzeln", width);
+    h4(ui, texts::debug_tracks(), width);
     let flows = data.latest().map(|s| s.flows.clone()).unwrap_or_default();
     if flows.is_empty() {
-        paragraph(ui, "Keine RTP-Statistik.", width, c.text);
+        paragraph(ui, texts::debug_no_rtp(), width, c.text);
     } else {
         let items: Vec<String> = flows
             .iter()
             .map(|f| {
                 let name = match f.source {
-                    "voice" => "Sprache",
-                    "camera" => "Kamera",
-                    "screen" => "Live",
-                    "screen-audio" => "Live-Ton",
-                    _ => "Video",
+                    "voice" => texts::source_voice(),
+                    "camera" => texts::source_camera(),
+                    "screen" => texts::source_screen(),
+                    "screen-audio" => texts::source_screen_audio(),
+                    _ => texts::source_video(),
+                };
+                let name = if f.audio {
+                    name.to_owned()
+                } else {
+                    texts::line_video(name)
+                };
+                let direction = if f.send {
+                    texts::line_send()
+                } else {
+                    texts::line_receive()
+                };
+                let mut sent = vec![
+                    texts::line_codec(f.codec.as_deref().unwrap_or(texts::value_unknown())),
+                    texts::line_bitrate(&diag::format_bps(f.bitrate_bps)),
+                ];
+                if f.send {
+                    sent.push(texts::line_no_cap().to_owned());
+                }
+                let loss = diag::format_ratio(f.loss);
+                let loss = match f.packets_lost {
+                    Some(n) => texts::line_loss_packets(&loss, &n.to_string()),
+                    None => texts::line_loss(&loss),
                 };
                 let mut line = format!(
-                    "{name}{} · {}\nCodec: {} · Bitrate: {}{}\nPaketverlust: {}{} · Jitter: {} · RTT: {}",
-                    if f.audio { "" } else { " (Video)" },
-                    if f.send { "Senden" } else { "Empfangen" },
-                    f.codec.as_deref().unwrap_or("unbekannt"),
-                    diag::format_bps(f.bitrate_bps),
-                    if f.send {
-                        " · keine Gelabber-Bitratengrenze"
-                    } else {
-                        ""
-                    },
-                    diag::format_ratio(f.loss),
-                    f.packets_lost
-                        .map(|n| format!(" ({n} Pakete)"))
-                        .unwrap_or_default(),
-                    diag::format_ms(f.jitter_ms),
-                    diag::format_ms(f.rtt_ms),
+                    "{name} · {direction}\n{}\n{loss} · {} · {}",
+                    sent.join(" · "),
+                    texts::line_jitter(&diag::format_ms(f.jitter_ms)),
+                    texts::line_rtt(&diag::format_ms(f.rtt_ms)),
                 );
                 if !f.audio {
                     line.push_str(&format!(
-                        "\n{} · {} · Qualitätslimit: {}",
+                        "\n{} · {} · {}",
                         match (f.width, f.height) {
                             (Some(w), Some(h)) => format!("{w}×{h}"),
-                            _ => "Auflösung unbekannt".into(),
+                            _ => texts::line_resolution_unknown().into(),
                         },
-                        f.fps.map_or("FPS unbekannt".into(), |v| {
+                        f.fps.map_or(texts::line_fps_unknown().into(), |v| {
                             format!("{} FPS", diag::number(v, 1, false))
                         }),
-                        f.limited_by.as_deref().map_or("keine", limit_label),
+                        texts::line_quality_limit(
+                            f.limited_by
+                                .as_deref()
+                                .map_or(texts::limit_none(), limit_label)
+                        ),
                     ));
                 }
                 line
@@ -1100,27 +1161,22 @@ fn debug_body(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
         lines(ui, &items, width);
     }
     ui.add_space(6.0);
-    paragraph(
-        ui,
-        "Obergrenze meint die eingestellte Grenze, nicht die gemessene Bitrate. Prioritätswunsch: Audio hoch, Video normal. Browser und Netzwerk können diese Hinweise ignorieren; das garantiert keine Priorisierung auf dem SFU oder im Internet.",
-        width,
-        c.muted,
-    );
+    paragraph(ui, texts::debug_hint(), width, c.muted);
     ui.add_space(20.0);
 
-    h4(ui, "Verlauf", width);
+    h4(ui, texts::debug_history(), width);
     if data.phases.is_empty() {
-        paragraph(ui, "noch kein Verlauf", width, c.text);
+        paragraph(ui, texts::debug_no_history(), width, c.text);
     } else {
         let items: Vec<String> = data
             .phases
             .iter()
             .map(|(at, phase)| {
                 let label = match *phase {
-                    "voice-only" => "nur Sprache",
-                    "stream-on" => "Stream an",
-                    "stream-off" => "Stream aus",
-                    _ => "Watch",
+                    "voice-only" => texts::phase_voice_only(),
+                    "stream-on" => texts::phase_stream_on(),
+                    "stream-off" => texts::phase_stream_off(),
+                    _ => texts::phase_watch(),
                 };
                 format!("{}   {label}", clock(at))
             })
@@ -1128,9 +1184,9 @@ fn debug_body(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
         lines(ui, &items, width);
     }
     ui.add_space(20.0);
-    h4(ui, "Ereignisse", width);
+    h4(ui, texts::debug_events(), width);
     if data.events.is_empty() {
-        paragraph(ui, "noch keine Ereignisse", width, c.text);
+        paragraph(ui, texts::debug_no_events(), width, c.text);
     } else {
         let items: Vec<String> = data
             .events
@@ -1140,13 +1196,18 @@ fn debug_body(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
             .rev()
             .map(|e| {
                 let kind = match e.kind {
-                    "stream-start" => "Streamstart",
-                    "stream-stop" => "Streamstopp",
-                    "device-change" => "Gerätewechsel",
-                    "recovery" => "Recovery",
+                    "stream-start" => texts::event_stream_start(),
+                    "stream-stop" => texts::event_stream_stop(),
+                    "device-change" => texts::event_device_change(),
+                    "recovery" => texts::event_recovery(),
                     other => other,
                 };
-                format!("{}   {kind} · Sprache · {}", clock(&e.at), e.detail)
+                format!(
+                    "{}   {kind} · {} · {}",
+                    clock(&e.at),
+                    texts::source_voice(),
+                    e.detail
+                )
             })
             .collect();
         lines(ui, &items, width);

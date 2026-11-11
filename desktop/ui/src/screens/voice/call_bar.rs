@@ -6,6 +6,7 @@
 
 use egui::{Color32, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use gelabber_call::{CallState, CallStatus, LiveSource, MicStatus};
+use gelabber_i18n::{common as shared, voice as texts};
 use uuid::Uuid;
 
 use super::look;
@@ -65,12 +66,12 @@ fn lost(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, channel: Uuid) 
     let right = rect.right() - 16.0;
     let close = Rect::from_min_size(pos2(right - 36.0, cy - 18.0), Vec2::splat(36.0));
     if ui
-        .add(IconButton::new(Icon::Close, "Schließen").at(close))
+        .add(IconButton::new(Icon::Close, shared::close()).at(close))
         .clicked()
     {
         app.call.dismiss_lost_call();
     }
-    let label = "Erneut versuchen";
+    let label = shared::try_again();
     let width = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 34.0;
     let retry = Rect::from_min_size(
         pos2(close.left() - 6.0 - width, cy - 18.0),
@@ -89,7 +90,7 @@ fn lost(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, channel: Uuid) 
         .unwrap_or_default();
     let strong = line(
         ui,
-        "Verbindung verloren",
+        texts::call_lost(),
         TextStyle::new(12.0, 600.0, 1.3),
         c.danger,
         max,
@@ -100,7 +101,7 @@ fn lost(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, channel: Uuid) 
         Id::unique("gelabber-call-lost-text"),
         Sense::hover(),
     )
-    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, "Verbindung verloren"));
+    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, texts::call_lost()));
     let place = line(ui, &name, TextStyle::new(12.0, 400.0, 1.3), c.muted, max);
     place.paint(&painter, pos2(x, cy));
 }
@@ -127,7 +128,7 @@ fn people(app: &AppCtx, call: &CallState, server: Uuid, channel: Uuid) -> Vec<In
                 let member = members.iter().find(|m| m.user_id == id);
                 InCall {
                     id,
-                    name: member.map_or("Jemand".into(), |m| m.name.clone()),
+                    name: member.map_or(texts::people_someone().into(), |m| m.name.clone()),
                     url: member.and_then(|m| m.avatar_url.clone()),
                     speaking: session::speaking(call, id, o.muted, o.deafened),
                     me: Some(id) == me,
@@ -192,7 +193,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     });
 
     // Right side, from the end.
-    let leave_label = (!narrow).then(|| Block::single(ui, "Verlassen", text::UI, c.on_danger));
+    let leave_label =
+        (!narrow).then(|| Block::single(ui, texts::call_leave(), text::UI, c.on_danger));
     // Every `.voice-control` keeps a 1px (transparent) border; narrow, the
     // padding is 8 and the word goes.
     let leave_w = match &leave_label {
@@ -201,8 +203,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     };
     let leave = Rect::from_min_size(pos2(right - leave_w, cy - 18.0), vec2(leave_w, 36.0));
     let response = common::click(ui, leave, Id::unique("gelabber-call-leave"));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Verlassen"));
-    Tooltip::new("Verlassen").on_hover_or_focus(&response, Side::Above);
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, texts::call_leave()));
+    Tooltip::new(texts::call_leave()).on_hover_or_focus(&response, Side::Above);
     let fill = eased(
         ui.ctx(),
         response.id.with("hover"),
@@ -237,8 +240,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         None,
         false,
         Tone::Plain,
-        "Anrufeinstellungen",
-        "Anrufeinstellungen",
+        gelabber_i18n::voice_settings::quick_call_settings(),
+        gelabber_i18n::voice_settings::quick_call_settings(),
         None,
     );
     let gear_rect = gear.rect;
@@ -262,27 +265,27 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             None,
             false,
             if stream_muted { Tone::Off } else { Tone::Plain },
-            "Lautstärke",
-            "Lautstärke",
+            gelabber_i18n::voice_settings::quick_volume(),
+            gelabber_i18n::voice_settings::quick_volume(),
             None,
         );
         let rect = sound.rect;
         quick::sound_button(ui, sound, rect, state.deafened);
     }
     let live_title = if state.live {
-        "Du bist live"
+        texts::live_you_are_live()
     } else {
-        "Live gehen"
+        texts::live_go_live()
     };
     let live = control(
         ui,
         &mut x,
         cy,
         Icon::Live,
-        (!narrow).then_some("Live"),
+        (!narrow).then_some(texts::live_badge()),
         true,
         if state.live { Tone::Live } else { Tone::Plain },
-        "Live gehen",
+        texts::live_go_live(),
         live_title,
         None,
     );
@@ -299,11 +302,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         None,
         false,
         if state.camera { Tone::On } else { Tone::Plain },
-        "Kamera",
+        texts::controls_camera(),
         if state.camera {
-            "Kamera ausschalten"
+            texts::controls_camera_off()
         } else {
-            "Kamera einschalten"
+            texts::controls_camera_on()
         },
         None,
     );
@@ -323,14 +326,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         } else {
             Icon::Headset
         },
-        (state.deafened && !narrow).then_some("Taub"),
+        (state.deafened && !narrow).then_some(texts::controls_deafened()),
         false,
         if state.deafened {
             Tone::Off
         } else {
             Tone::Plain
         },
-        "Taubschalten",
+        texts::controls_deafen(),
         deafen_tip.0,
         Some(&deafen_tip.1),
     );
@@ -344,11 +347,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             &mut x,
             cy,
             Icon::MicOff,
-            (!narrow).then_some("Kein Mikrofon"),
+            (!narrow).then_some(texts::mic_none()),
             false,
             Tone::Problem,
-            "Kein Mikrofon",
-            "Kein Mikrofon",
+            texts::mic_none(),
+            texts::mic_none(),
             None,
         );
         // The warning dot over the icon's corner, ringed in the panel.
@@ -366,9 +369,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         let held = app.call.with_state(|s| s.push_to_talk_open);
         let (title, detail) = call_tip(ui.ctx(), CallKey::Mute, muted);
         let word = if state.muted && !state.deafened && !narrow {
-            Some("Stumm")
+            Some(texts::controls_muted())
         } else {
-            (ptt && !muted).then_some("PTT")
+            (ptt && !muted).then_some(texts::controls_ptt_badge())
         };
         let mic = control(
             ui,
@@ -386,7 +389,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             } else {
                 Tone::Plain
             },
-            "Stummschalten",
+            texts::controls_mute(),
             title,
             Some(&detail),
         );
@@ -433,7 +436,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         let names = names.join(", ");
         let response = common::click(ui, button, Id::unique("gelabber-call-people"));
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Im Anruf: {names}"))
+            egui::WidgetInfo::labeled(egui::Role::Button, true, texts::people_label(&names))
         });
         if !crate::widgets::popover::open_at(ui.ctx(), button) {
             Tooltip::new(&names).on_hover_or_focus(&response, Side::Above);
@@ -485,17 +488,11 @@ pub fn dock_notice(state: &CallState, app: &str) -> Option<String> {
         return None;
     }
     match &state.live_sound {
-        LiveSound::Unavailable(Some(reason)) => Some(format!(
-            "Der Live-Ton konnte nicht aufgenommen werden ({reason}). Das Video läuft weiter."
-        )),
-        LiveSound::Unavailable(None) => {
-            Some("Der Live-Ton konnte nicht aufgenommen werden. Das Video läuft weiter.".into())
-        }
-        LiveSound::Ended => Some("Der Live-Ton wurde beendet. Das Video läuft weiter.".into()),
-        LiveSound::Silent(name) => Some(format!("Kein Ton von „{name}“.")),
-        LiveSound::Sharing if app.is_empty() => {
-            Some("Dein Stream sendet den Ton aller Anwendungen außer Gelabber.".into())
-        }
+        LiveSound::Unavailable(Some(reason)) => Some(texts::notice_sound_failed_because(reason)),
+        LiveSound::Unavailable(None) => Some(texts::notice_sound_failed().into()),
+        LiveSound::Ended => Some(texts::notice_sound_ended().into()),
+        LiveSound::Silent(name) => Some(texts::notice_sound_silent(name)),
+        LiveSound::Sharing if app.is_empty() => Some(texts::notice_sound_all_apps().into()),
         // Switched on during a Live, the sound joins it at once: nothing
         // waits for the next one, unlike in a browser.
         LiveSound::Sharing | LiveSound::Off => None,
@@ -556,7 +553,7 @@ fn notice(ui: &mut Ui, text_s: &str, row: Rect) {
     );
     if ui
         .add(
-            IconButton::new(Icon::Close, "Hinweis schließen")
+            IconButton::new(Icon::Close, texts::dock_dismiss_notice())
                 .size(NOTICE_ROW)
                 .icon_size(14.0)
                 .at(close),
@@ -771,22 +768,24 @@ pub(super) fn call_tip(ctx: &egui::Context, which: CallKey, off: bool) -> (&'sta
     match which {
         CallKey::Mute => (
             if off {
-                "Stummschaltung aufheben"
+                texts::controls_unmute()
             } else {
-                "Stummschalten"
+                texts::controls_mute()
             },
             match crate::screens::settings::media::push_to_talk_key_name(ctx) {
-                Some(key) if !off => format!("Strg+Umschalt+M · Push-to-Talk: {key}"),
-                _ => "Strg+Umschalt+M".to_owned(),
+                Some(key) if !off => {
+                    texts::controls_push_to_talk_detail(texts::controls_mute_shortcut(), &key)
+                }
+                _ => texts::controls_mute_shortcut().to_owned(),
             },
         ),
         CallKey::Deafen => (
             if off {
-                "Taubschaltung aufheben"
+                texts::controls_undeafen()
             } else {
-                "Taubschalten"
+                texts::controls_deafen()
             },
-            "Strg+Umschalt+D".to_owned(),
+            texts::controls_deafen_shortcut().to_owned(),
         ),
     }
 }
@@ -810,7 +809,7 @@ fn control(
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     // "PTT" is a caps badge; "Live" a word.
-    let style = if label == Some("PTT") {
+    let style = if label == Some(texts::controls_ptt_badge()) {
         text::CAPS.tracking(0.04)
     } else {
         text::UI
@@ -913,13 +912,10 @@ fn status(
     let cy = head.center().y;
     let mut x = head.left();
     let (word, color) = match &state.status {
-        CallStatus::Connected => ("Verbunden", c.online_text),
-        CallStatus::Reconnecting => (
-            "Verbindung wird wiederhergestellt …",
-            mix(c.warning, c.text, 0.3),
-        ),
-        CallStatus::Failed(_) => ("Verbindung verloren", c.danger),
-        _ => ("Verbinde …", c.muted),
+        CallStatus::Connected => (texts::call_connected(), c.online_text),
+        CallStatus::Reconnecting => (texts::call_reconnecting(), mix(c.warning, c.text, 0.3)),
+        CallStatus::Failed(_) => (texts::call_lost(), c.danger),
+        _ => (texts::call_connecting(), c.muted),
     };
     match &state.status {
         CallStatus::Connected => {
@@ -929,13 +925,13 @@ fn status(
                 .connection
                 .as_ref()
                 .and_then(super::diagnostics::summary)
-                .unwrap_or_else(|| "Verbindung: wird gemessen …".into());
+                .unwrap_or_else(|| texts::quality_measuring().into());
             let response = common::click(ui, bars, Id::unique("gelabber-call-quality"));
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(
                     egui::Role::Button,
                     true,
-                    format!("{label} – Details anzeigen"),
+                    texts::quality_show_details(&label),
                 )
             });
             if !crate::widgets::popover::open_at(ui.ctx(), bars) {
@@ -1004,14 +1000,14 @@ fn status(
             x += 2.0 + 16.0 + 8.0;
         }
     }
-    let channel_name = channel_name.unwrap_or("Sprachkanal");
+    let channel_name = channel_name.unwrap_or(texts::call_voice_channel());
     let where_ = match server_name {
         Some(s) if !s.is_empty() => format!("{channel_name} · {s}"),
         _ => channel_name.to_owned(),
     };
     let mut link_right = head.right();
     if matches!(state.status, CallStatus::Failed(_)) {
-        let label = "Erneut versuchen";
+        let label = shared::try_again();
         let width = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 34.0;
         let r = Rect::from_min_size(pos2(head.right() - width, cy - 18.0), vec2(width, 36.0));
         if ui.put(r, Button::new(label)).clicked() {
@@ -1091,8 +1087,8 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
             };
             let conn = state.connection.clone().unwrap_or_default();
             for (arrow, label, value) in [
-                ("↑", "Du sendest", rate(conn.sent_bps)),
-                ("↓", "Du empfängst", rate(conn.received_bps)),
+                ("↑", texts::quality_sending(), rate(conn.sent_bps)),
+                ("↓", texts::quality_receiving(), rate(conn.received_bps)),
             ] {
                 // The popover's own 16px text, not the body's.
                 let style = TextStyle::new(16.0, 400.0, 1.5);
@@ -1114,19 +1110,31 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
             }
             ui.add_space(14.0);
             let top = ui.cursor().min;
-            let w1 =
-                Block::single(ui, "Einstellungen", text::UI.weight(600.0), c.text).width() + 26.0;
+            let w1 = Block::single(
+                ui,
+                texts::quality_settings(),
+                text::UI.weight(600.0),
+                c.text,
+            )
+            .width()
+                + 26.0;
             let a = Rect::from_min_size(top, vec2(w1, 32.0));
             if ui
-                .put(a, Button::new("Einstellungen").small().ghost())
+                .put(a, Button::new(texts::quality_settings()).small().ghost())
                 .clicked()
             {
                 show = Some(super::dialogs::Tab::Audio);
             }
-            let w2 =
-                Block::single(ui, "Alle Details", text::UI.weight(600.0), c.text).width() + 26.0;
+            let w2 = Block::single(
+                ui,
+                texts::quality_all_details(),
+                text::UI.weight(600.0),
+                c.text,
+            )
+            .width()
+                + 26.0;
             let b = Rect::from_min_size(pos2(top.x + width - w2, top.y), vec2(w2, 32.0));
-            let details = ui.put(b, Button::new("Alle Details").small());
+            let details = ui.put(b, Button::new(texts::quality_all_details()).small());
             // Focus starts on the way to the details.
             crate::widgets::popover::autofocus(&details);
             if details.clicked() {
@@ -1175,16 +1183,19 @@ fn mic_problem(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, denied: b
         ui.add_space(12.0);
         let top = ui.cursor().min;
         let w1 =
-            Block::single(ui, "Erneut versuchen", text::UI.weight(600.0), c.text).width() + 26.0;
+            Block::single(ui, shared::try_again(), text::UI.weight(600.0), c.text).width() + 26.0;
         let a = Rect::from_min_size(top, vec2(w1, 32.0));
-        if ui.put(a, Button::new("Erneut versuchen").small()).clicked() {
+        if ui
+            .put(a, Button::new(shared::try_again()).small())
+            .clicked()
+        {
             retry = true;
         }
         let w2 =
-            Block::single(ui, "Mikrofon wählen …", text::UI.weight(600.0), c.text).width() + 26.0;
+            Block::single(ui, texts::mic_choose(), text::UI.weight(600.0), c.text).width() + 26.0;
         let b = Rect::from_min_size(pos2(a.right() + 8.0, top.y), vec2(w2, 32.0));
         if ui
-            .put(b, Button::new("Mikrofon wählen …").small().ghost())
+            .put(b, Button::new(texts::mic_choose()).small().ghost())
             .clicked()
         {
             choose = true;
@@ -1204,9 +1215,9 @@ fn mic_problem(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, denied: b
 /// Why there is no microphone, as the desktop app says it.
 pub fn mic_problem_text(denied: bool) -> &'static str {
     if denied {
-        "Kein Zugriff auf das Mikrofon. Erlaube ihn in den Systemeinstellungen."
+        texts::mic_blocked_system()
     } else {
-        "Mikrofon nicht gefunden oder belegt."
+        texts::mic_not_found()
     }
 }
 
@@ -1231,7 +1242,7 @@ fn live_menu(
     }
     let mut p = prefs::get(&ctx);
     let sound = sound_on(&p.source_audio_share);
-    let reason = (!can_live).then_some("In diesem Server darfst du nicht live gehen.");
+    let reason = (!can_live).then_some(texts::live_not_allowed());
     let shown = Popover::new("live-menu", button.rect)
         .align_end()
         .min_width(320.0)
@@ -1242,15 +1253,15 @@ fn live_menu(
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut done = false;
             if state.live {
-                if menu_entry(ui, Icon::Live, "Live beenden", None, false, true) {
+                if menu_entry(ui, Icon::Live, texts::live_end(), None, false, true) {
                     app.call.stop_live();
                     done = true;
                 }
             } else if menu_entry(
                 ui,
                 Icon::Live,
-                "Live gehen",
-                Some(reason.unwrap_or("Sehen alle im Sprachkanal")),
+                texts::live_go_live(),
+                Some(reason.unwrap_or(texts::live_hint())),
                 reason.is_some(),
                 false,
             ) {
@@ -1264,12 +1275,12 @@ fn live_menu(
             ui.add_space(1.0 + 4.0);
             // "Ton mitsenden" with its switch track.
             let hint = if p.source_audio_app.is_empty() {
-                "Ton aller Anwendungen außer Gelabber".to_owned()
+                texts::live_sound_all_apps().to_owned()
             } else {
-                format!("Ton von „{}“", p.source_audio_app)
+                texts::live_sound_from(&p.source_audio_app)
             };
             let width = 320.0 - 18.0;
-            let title = Block::single(ui, "Ton mitsenden", text::UI, c.text);
+            let title = Block::single(ui, texts::live_share_sound(), text::UI, c.text);
             let small = Block::wrapped(
                 ui,
                 &hint,
@@ -1280,7 +1291,12 @@ fn live_menu(
             let h = (16.0 + title.height() + 2.0 + small.height()).max(36.0);
             let (rect, response) = ui.allocate_exact_size(vec2(width, h), Sense::click());
             response.widget_info(|| {
-                egui::WidgetInfo::selected(egui::Role::CheckBox, true, sound, "Ton mitsenden")
+                egui::WidgetInfo::selected(
+                    egui::Role::CheckBox,
+                    true,
+                    sound,
+                    texts::live_share_sound(),
+                )
             });
             crate::widgets::popover::focus_first(&response);
             if response.hovered() {
@@ -1317,7 +1333,7 @@ fn live_menu(
             if menu_entry(
                 ui,
                 Icon::Gear,
-                "Anwendung für den Ton wählen …",
+                texts::live_sound_choose_app(),
                 None,
                 false,
                 false,
@@ -1446,7 +1462,7 @@ fn people_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, list: 
                     p.speaking,
                 );
                 let name = if p.me {
-                    format!("{} (du)", p.name)
+                    texts::people_you(&p.name)
                 } else {
                     p.name.clone()
                 };
@@ -1459,7 +1475,7 @@ fn people_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, list: 
                 );
                 paint_mid(ui.painter(), &n, avatar.right() + 8.0, row.center().y);
                 if p.speaking {
-                    let s = Block::single(ui, "spricht", text::META, c.online_text);
+                    let s = Block::single(ui, texts::people_speaking(), text::META, c.online_text);
                     paint_mid(
                         ui.painter(),
                         &s,
