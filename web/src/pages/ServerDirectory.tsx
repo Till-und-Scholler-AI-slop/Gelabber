@@ -314,7 +314,8 @@ export function JoinRequestQueue({ server }: { server: ServerDetail }) {
   const tc = useT(common);
   const answer = useAnswerJoinRequest(server.id);
   const status = useInlineStatus();
-  // When the section opened: "vor 2 Stunden" needs no live clock.
+  // When the section opened: "vor 2 Stunden" needs no live clock. A request
+  // that came in since is clamped to it, never "in 5 Minuten".
   const [now] = useState(Date.now);
   const respond = (request: JoinRequest, accept: boolean) => {
     status.clear();
@@ -366,7 +367,10 @@ export function JoinRequestQueue({ server }: { server: ServerDetail }) {
                   <span className="server-directory-requests__when">
                     {" · "}
                     <time dateTime={request.created_at}>
-                      {formatWhen(request.created_at, now)}
+                      {formatWhen(
+                        Math.min(Date.parse(request.created_at), now),
+                        now,
+                      )}
                     </time>
                   </span>
                 </span>

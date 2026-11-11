@@ -31,6 +31,7 @@ import type { AccountFrame } from "../ws/protocol.ts";
 import * as remote from "./api.ts";
 import type {
   DirectoryStatus,
+  JoinRequest,
   Listing,
   ListingPage,
   ListingQuery,
@@ -101,7 +102,11 @@ export function ensureDirectoryStatus(
 }
 
 /** The directory, 30 rows a page, for one search and language. */
-export function useListings(q: string, language: string | undefined) {
+export function useListings(
+  q: string,
+  language: string | undefined,
+  enabled = true,
+) {
   const userId = useUserId();
   const generation = scopeGeneration();
   const query: ListingQuery = { q: q || undefined, language };
@@ -111,7 +116,7 @@ export function useListings(q: string, language: string | undefined) {
       remote.listListings(query, pageParam, signal),
     initialPageParam: 0,
     getNextPageParam: (page: ListingPage) => page.next_offset ?? undefined,
-    enabled: userId.length > 0,
+    enabled: userId.length > 0 && enabled,
     staleTime: STALE_MS,
     // A new search keeps the old rows until its own arrive.
     placeholderData: keepPreviousData,
@@ -375,6 +380,14 @@ export function useAnswerJoinRequest(serverId: string) {
         ? remote.acceptJoinRequest(serverId, userId)
         : remote.declineJoinRequest(serverId, userId),
     onMutate: () => takeStamp(),
+    onSuccess: (_answer, { userId }, stamp) => {
+      if (!stampHolds(stamp)) return;
+      // Off the list before the buttons come back, so it is not answered twice.
+      client.setQueryData<JoinRequest[]>(
+        directoryKeys.requests(stamp.userId, stamp.generation, serverId),
+        (requests) => requests?.filter((request) => request.user_id !== userId),
+      );
+    },
     onSettled: (_answer, error, { accept }, stamp) => {
       if (!stampHolds(stamp)) return;
       settleJoinRequest(client, stamp, serverId, accept && !error);

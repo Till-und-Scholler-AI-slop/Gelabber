@@ -40,6 +40,7 @@ import type { DirectoryLanguage, Listing } from "../discover/types.ts";
 import { useT } from "../i18n/catalog.ts";
 import { discovery } from "../i18n/catalogs/discovery.ts";
 import { formatDate } from "../i18n/format.ts";
+import { NotFoundCard } from "./NotFoundPage.tsx";
 import "./settings.css";
 import "./discover.css";
 
@@ -128,8 +129,16 @@ export function DiscoverPage({ q, lang }: DiscoverSearch) {
   const navigate = useNavigate();
   const [input, setInput] = useState(q ?? "");
   const typed = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
+  // A search the page did not write (the rail's tile, back) replaces the
+  // field, so the effect below does not write the old one back.
+  const [seen, setSeen] = useState(q ?? "");
+  if ((q ?? "") !== seen) {
+    setSeen(q ?? "");
+    if ((q ?? "") !== typed && (q ?? "") !== input.trim()) setInput(q ?? "");
+  }
   // The search reaches the address once typing pauses; the list follows it.
   useEffect(() => {
+    if (typed !== input.trim()) return;
     if (typed === (q ?? "") || validateQuery(typed)) return;
     void navigate({
       to: "/discover",
@@ -139,12 +148,21 @@ export function DiscoverPage({ q, lang }: DiscoverSearch) {
       }),
       replace: true,
     });
-  }, [typed, q, navigate]);
+  }, [typed, input, q, navigate]);
   const { data: status } = useDirectoryStatus();
-  const listings = useListings(q ?? "", lang);
+  // Switched off while open: the page is gone, as on a fresh visit.
+  const off = status?.enabled === false;
+  const listings = useListings(q ?? "", lang, !off);
   const [requesting, setRequesting] = useState<Listing | null>(null);
   const [reporting, setReporting] = useState<Listing | null>(null);
   const rows = listings.data?.pages.flatMap((page) => page.listings);
+
+  if (off)
+    return (
+      <div className="px-6 py-10">
+        <NotFoundCard />
+      </div>
+    );
 
   return (
     <div className="discover-screen">
@@ -190,7 +208,19 @@ export function DiscoverPage({ q, lang }: DiscoverSearch) {
                   />
                 ))}
               </ul>
-              {listings.hasNextPage ? (
+              {listings.isError ? (
+                <div className="discover-more">
+                  <LoadError
+                    message={t("page.loadFailed")}
+                    pending={listings.isFetching}
+                    onRetry={() =>
+                      void (listings.isFetchNextPageError
+                        ? listings.fetchNextPage()
+                        : listings.refetch())
+                    }
+                  />
+                </div>
+              ) : listings.hasNextPage ? (
                 <div className="discover-more">
                   <Button
                     pending={listings.isFetchingNextPage}
@@ -290,6 +320,8 @@ function ListingMenu({
       : {
           kind: "item",
           label: t("actions.withdraw"),
+          // One withdrawal at a time; a second would find nothing to take.
+          disabled: withdraw.isPending,
           onSelect: () =>
             withdraw.mutate(listing.server_id, {
               onError: (error) => notifyError(error),

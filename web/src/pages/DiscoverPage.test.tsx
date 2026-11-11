@@ -13,6 +13,7 @@ const fixture = vi.hoisted(() => ({
   },
   search: {} as { q?: string; lang?: string },
   queries: [] as [string, string | undefined][],
+  enabled: [] as boolean[],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -42,8 +43,9 @@ vi.mock("../components/UserPanel.tsx", () => ({
 }));
 vi.mock("../discover/queries.ts", () => ({
   useDirectoryStatus: () => ({ data: fixture.status }),
-  useListings: (q: string, language: string | undefined) => {
+  useListings: (q: string, language: string | undefined, enabled = true) => {
     fixture.queries.push([q, language]);
+    fixture.enabled.push(enabled);
     return { refetch: vi.fn(), fetchNextPage: vi.fn(), ...fixture.listings };
   },
   useJoinListing: () => ({ mutate: vi.fn(), isPending: false }),
@@ -86,6 +88,7 @@ beforeEach(() => {
   fixture.listings = {};
   fixture.search = {};
   fixture.queries = [];
+  fixture.enabled = [];
 });
 afterEach(() => setLocale("de", { persist: false }));
 
@@ -217,6 +220,36 @@ describe("Entdecken", () => {
     expect(html).toContain(
       `<span id="${id}-until" class="sr-only">Du kannst ab dem 18. November 2026 wieder anfragen.</span>`,
     );
+  });
+
+  it("shows a skeleton while loading and an error with a retry", () => {
+    expect(renderToStaticMarkup(<DiscoverPage />)).toContain(
+      "discover-skeleton",
+    );
+    fixture.listings = { isError: true };
+    const failed = text(renderToStaticMarkup(<DiscoverPage />));
+    expect(failed).toContain("Das Verzeichnis konnte nicht geladen werden.");
+    expect(failed).toContain("Erneut versuchen");
+  });
+
+  it("keeps the rows and says so when more could not be loaded", () => {
+    fixture.listings = {
+      data: pages([listing()], 30),
+      hasNextPage: true,
+      isError: true,
+    };
+    const html = text(renderToStaticMarkup(<DiscoverPage />));
+    expect(html).toContain("Filmclub");
+    expect(html).toContain("Das Verzeichnis konnte nicht geladen werden.");
+  });
+
+  it("is not found once the directory was switched off", () => {
+    fixture.status = { enabled: false, languages: [] };
+    fixture.listings = { data: pages([listing()]) };
+    const html = renderToStaticMarkup(<DiscoverPage />);
+    expect(html).not.toContain("Filmclub");
+    expect(html).not.toContain(">Entdecken</h1>");
+    expect(fixture.enabled.at(-1)).toBe(false);
   });
 
   it("names the server for the button", () => {
