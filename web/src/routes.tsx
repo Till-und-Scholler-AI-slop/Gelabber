@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-router";
 
 import { safeRedirect } from "./auth/redirect.ts";
+import { isOidcError, type OidcError } from "./auth/rules.ts";
 import { currentUserId } from "./auth/scope.ts";
 import {
   ensureSession,
@@ -85,9 +86,6 @@ export type AuthSearch = {
   oidc_error?: OidcError;
 };
 
-/** The admission refusals a sign-in redirects to `/register` with. */
-export type OidcError = "invitation_required" | "invitation_invalid";
-
 export const validateAuthSearch = (
   search: Record<string, unknown>,
 ): AuthSearch => {
@@ -109,11 +107,7 @@ export const validateAuthSearch = (
       : search.invitation;
   if (typeof invitation === "string" && /^[A-Za-z0-9]{1,64}$/.test(invitation))
     out.invitation = invitation;
-  if (
-    search.oidc_error === "invitation_required" ||
-    search.oidc_error === "invitation_invalid"
-  )
-    out.oidc_error = search.oidc_error;
+  if (isOidcError(search.oidc_error)) out.oidc_error = search.oidc_error;
   return out;
 };
 

@@ -129,6 +129,25 @@ describe("router", () => {
     expect(validateAuthSearch({ invitation: "" })).toEqual({});
   });
 
+  it("keeps every known oidc_error and drops the rest", () => {
+    for (const code of [
+      "cancelled",
+      "expired",
+      "failed",
+      "email_unverified",
+      "account_unverified",
+      "identity_taken",
+      "insecure_transport",
+      "session_changed",
+      "account_disabled",
+    ])
+      expect(validateAuthSearch({ oidc_error: code })).toEqual({
+        oidc_error: code,
+      });
+    for (const code of ["registration_closed", "oidc_unavailable", "", 1])
+      expect(validateAuthSearch({ oidc_error: code })).toEqual({});
+  });
+
   it("draws the front door without the app header", () => {
     for (const id of [
       "/auth/login",

@@ -47,7 +47,15 @@ export type ApiErrorCode =
   | "invitation_required"
   | "invitation_invalid"
   | "account_disabled"
-  | "server_blocked";
+  | "server_blocked"
+  | "oidc_unavailable"
+  | "oidc_email_unverified"
+  | "oidc_account_unverified"
+  | "identity_taken"
+  | "password_required"
+  | "reauth_required"
+  | "oidc_wrong_origin"
+  | "session_changed";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
@@ -280,7 +288,8 @@ function isSignInPath(path: string): boolean {
     path === "/auth/login" ||
     path === "/auth/register" ||
     path === "/auth/verify-email" ||
-    path === "/auth/password-reset/confirm"
+    path === "/auth/password-reset/confirm" ||
+    path === "/auth/oidc/complete"
   );
 }
 
@@ -375,6 +384,14 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "invitation_invalid",
   "account_disabled",
   "server_blocked",
+  "oidc_unavailable",
+  "oidc_email_unverified",
+  "oidc_account_unverified",
+  "identity_taken",
+  "password_required",
+  "reauth_required",
+  "oidc_wrong_origin",
+  "session_changed",
 ]);
 
 function toErrorCode(raw: string | undefined): ApiErrorCode {

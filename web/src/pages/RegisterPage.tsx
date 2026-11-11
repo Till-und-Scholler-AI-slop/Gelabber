@@ -12,6 +12,7 @@ import {
   PASSWORD_MIN,
   errorMessage,
   fieldMessage,
+  oidcErrorMessage,
   validateName,
   validateNewEmail,
   validatePassword,
@@ -55,7 +56,9 @@ export function RegisterPage() {
   const mode = useRegistrationMode();
   // A refusal for want of a code brings the field up even before (or
   // without) the mode check.
-  const [asked, setAsked] = useState(oidcError !== undefined);
+  const [asked, setAsked] = useState(
+    oidcError === "invitation_required" || oidcError === "invitation_invalid",
+  );
   const codeState = { mode, invitation: invitationParam, redirect, asked };
   const askCode = showsInvitationField(codeState);
   const form = useRef<HTMLFormElement>(null);
@@ -139,7 +142,7 @@ export function RegisterPage() {
       {invited ? <InviteContextBanner /> : null}
       {oidcError ? (
         <p role="alert" className="auth-banner">
-          {errorMessage(oidcError)}
+          {oidcErrorMessage(oidcError)}
         </p>
       ) : showsInvitationOnly(codeState) ? (
         <p role="status" className="auth-banner">

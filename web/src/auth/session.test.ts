@@ -14,16 +14,22 @@ import {
   changePassword,
   checkSession,
   claimProfileWrite,
+  completeOidc,
+  disconnectProvider,
   ensureSession,
   login,
   logout,
   logoutEverywhere,
+  oidcPending,
   register,
   requestPasswordReset,
   resetPassword,
   resetSessionForTests,
   retrySession,
   sessionRetryDelay,
+  setPassword,
+  signInMethods,
+  startOidc,
   updateProfile,
   uploadAvatar,
   useProfileWrites,
@@ -854,5 +860,149 @@ describe("profile write slot", () => {
     expect(claimProfileWrite()).toBeNull();
     next?.();
     expect(useProfileWrites.getState().pending).toBe(0);
+  });
+});
+
+describe("sign-in through a provider", () => {
+  /** A page that can be left; its storage holds nothing. */
+  function stubPage(assign: (url: string) => void) {
+    vi.stubGlobal("window", {
+      location: { assign },
+      localStorage: { getItem: () => null },
+    });
+  }
+
+  beforeEach(() => resetSessionForTests());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("startOidc asks for the provider's address and goes there", async () => {
+    const assign = vi.fn();
+    stubPage(assign);
+    const bodies: unknown[] = [];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push(`${init?.method} ${String(input)}`);
+        bodies.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(
+          json(200, { url: "https://accounts.example.test/auth?state=s" }),
+        );
+      }),
+    );
+
+    await startOidc("google", {
+      purpose: "sign_in",
+      redirect: "/invite/abc123",
+      invitation: "k7m2p9qrs4tx",
+    });
+    await startOidc("google", { purpose: "link", currentPassword: "pw" });
+
+    expect(calls).toEqual([
+      "POST /api/auth/oidc/google/start",
+      "POST /api/auth/oidc/google/start",
+    ]);
+    expect(bodies).toEqual([
+      {
+        purpose: "sign_in",
+        redirect: "/invite/abc123",
+        invitation: "k7m2p9qrs4tx",
+      },
+      { purpose: "link", current_password: "pw" },
+    ]);
+    expect(assign).toHaveBeenCalledTimes(2);
+    expect(assign).toHaveBeenCalledWith(
+      "https://accounts.example.test/auth?state=s",
+    );
+  });
+
+  it("startOidc stays on the page when the API refuses", async () => {
+    const assign = vi.fn();
+    stubPage(assign);
+    fakeApi({
+      "POST /api/auth/oidc/google/start": () =>
+        json(409, { error: "oidc_wrong_origin", message: "wrong origin" }),
+    });
+    await expect(
+      startOidc("google", { purpose: "sign_in" }),
+    ).rejects.toMatchObject({ code: "oidc_wrong_origin", status: 409 });
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("oidcPending peeks at the name step", async () => {
+    const pending = {
+      provider: { id: "google", name: "Google" },
+      email: "lena@example.test",
+      name: null,
+    };
+    const calls = fakeApi({
+      "POST /api/auth/oidc/pending": () => json(200, pending),
+    });
+    await expect(oidcPending("ab".repeat(32))).resolves.toEqual(pending);
+    expect(calls).toEqual(["POST /api/auth/oidc/pending"]);
+    expect(useSession.getState().status).toBe("unknown");
+  });
+
+  it("completeOidc signs in like login and keeps the redirect", async () => {
+    let body: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        expect(`${init?.method} ${String(input)}`).toBe(
+          "POST /api/auth/oidc/complete",
+        );
+        body = JSON.parse(String(init?.body));
+        return Promise.resolve(
+          json(201, {
+            user: ada,
+            csrf_token: "c9",
+            redirect: "/invite/abc123",
+          }),
+        );
+      }),
+    );
+
+    const answer = await completeOidc("ab".repeat(32), "Ada");
+
+    expect(answer.redirect).toBe("/invite/abc123");
+    expect(body).toEqual({ token: "ab".repeat(32), name: "Ada", locale: "de" });
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+      operator: false,
+    });
+    expect(getCsrfToken()).toBe("c9");
+  });
+
+  it("lists, disconnects and sets a first password", async () => {
+    const methods = {
+      password: true,
+      providers: [
+        {
+          id: "google",
+          name: "Google",
+          configured: true,
+          connected: null,
+        },
+      ],
+    };
+    const calls = fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/auth/methods": () => json(200, methods),
+      "DELETE /api/auth/oidc/google": () => json(200, methods),
+      "POST /api/auth/password": () =>
+        json(200, { user: ada, csrf_token: "c7" }),
+    });
+    await login("ada@example.com", "password123");
+    await expect(signInMethods()).resolves.toEqual(methods);
+    await expect(disconnectProvider("google")).resolves.toEqual(methods);
+    await expect(setPassword("battery staple")).resolves.toEqual(ada);
+    expect(calls).toEqual([
+      "POST /api/auth/login",
+      "GET /api/auth/methods",
+      "DELETE /api/auth/oidc/google",
+      "POST /api/auth/password",
+    ]);
+    expect(getCsrfToken()).toBe("c7");
   });
 });
