@@ -19,7 +19,8 @@ const publicPages = defineCatalog(
     "landing.nav.signIn": "Anmelden",
     "landing.cta.invite": "Einladung anfragen",
     "landing.invite.subject": "Einladung für Gelabber",
-    "landing.hero.title": "Voice, Chat und Live-Bildschirme für deine Gruppe.",
+    // A non-breaking hyphen (U+2011): the heading does not break after "Live-".
+    "landing.hero.title": "Voice, Chat und Live‑Bildschirme für deine Gruppe.",
     "landing.hero.lead":
       "Wer live geht, zeigt allen im Sprachkanal einen Bildschirm oder ein Fenster. Mehrere können gleichzeitig live sein, und du wählst, wessen Bild du schaust.",
     "landing.hero.note":
