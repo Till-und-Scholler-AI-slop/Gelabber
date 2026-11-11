@@ -1,8 +1,6 @@
 # N5 voice: files whose interface text is not in the catalogs yet,
 # relative to desktop/. The batch deletes this list when it is done
 # (docs/i18n.md); i18n/tests/literals.rs skips the files listed here.
-call/src/diagnostics.rs
-call/src/logic.rs
 ui/src/screens/voice/call_bar.rs
 ui/src/screens/voice/chips.rs
 ui/src/screens/voice/diagnostics.rs

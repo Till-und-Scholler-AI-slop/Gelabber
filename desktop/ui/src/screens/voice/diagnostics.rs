@@ -48,7 +48,7 @@ pub fn summary(connection: &Connection) -> Option<String> {
     if let Some(loss) = connection.loss {
         parts.push(format!(
             "{} % Verlust",
-            diag::german((loss * 100.0).round(), 0, false)
+            diag::number((loss * 100.0).round(), 0, false)
         ));
     }
     Some(parts.join(" · "))
@@ -63,7 +63,7 @@ pub fn detail(connection: &Connection) -> Option<String> {
         None => {}
     }
     if let Some(loss) = connection.loss {
-        let pct = diag::german((loss * 100.0).round(), 0, false);
+        let pct = diag::number((loss * 100.0).round(), 0, false);
         parts.push(if loss < LOSS_LIMITS[0] {
             "kaum Verlust".into()
         } else if loss < LOSS_LIMITS[1] {
@@ -129,7 +129,7 @@ pub fn processing_message(state: &CallState, mode: &str, chosen: &str) -> String
         return "Mikrofon inaktiv".into();
     }
     if state.mic != MicStatus::Live {
-        return logic::MIC_LISTEN_ONLY.into();
+        return logic::mic_listen_only().into();
     }
     processing_text(mode, state.mic_input.as_deref(), chosen)
 }
@@ -312,7 +312,7 @@ pub fn status(
         ),
         (
             "Paketverlust",
-            loss.map(|l| (diag::german(l * 100.0, 1, true), "%")),
+            loss.map(|l| (diag::number(l * 100.0, 1, true), "%")),
             loss.map(loss_tone),
         ),
     ];
@@ -821,7 +821,7 @@ fn flows_table(ui: &mut Ui, groups: &[FlowGroup], width: f32) {
                 sub.push(format!("{w}×{h}"));
             }
             if let Some(fps) = g.fps {
-                sub.push(format!("{} FPS", diag::german(fps, 1, false)));
+                sub.push(format!("{} FPS", diag::number(fps, 1, false)));
             }
         }
         if let Some(l) = &g.limited_by {
@@ -1089,7 +1089,7 @@ fn debug_body(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
                             _ => "Auflösung unbekannt".into(),
                         },
                         f.fps.map_or("FPS unbekannt".into(), |v| {
-                            format!("{} FPS", diag::german(v, 1, false))
+                            format!("{} FPS", diag::number(v, 1, false))
                         }),
                         f.limited_by.as_deref().map_or("keine", limit_label),
                     ));

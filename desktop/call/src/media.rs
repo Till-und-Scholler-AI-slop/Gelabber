@@ -476,7 +476,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
         .flatten();
         let (engine, device) = match started {
             Some(Ok(started)) => started,
-            _ => return fail(&inner, logic::MIC_TEST_FAILED),
+            _ => return fail(&inner, logic::mic_test_failed()),
         };
         if inner.mic_test_turn() != turn {
             let _ = blocking(move || engine.monitor_audio(None)).await;
@@ -498,7 +498,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
             let reader = engine.clone();
             let levels = blocking(move || reader.audio_levels()).await;
             let Some(Ok(levels)) = levels else {
-                fail(&inner, logic::MIC_TEST_NO_LEVELS);
+                fail(&inner, logic::mic_test_no_levels());
                 let engine = engine.clone();
                 let _ = blocking(move || engine.monitor_audio(None)).await;
                 return;
@@ -514,7 +514,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
                     t.clipping = levels["clipping"].as_bool().unwrap_or(false);
                 });
             } else if now.duration_since(moved) >= MIC_TEST_STALL {
-                fail(&inner, logic::MIC_TEST_STALLED);
+                fail(&inner, logic::mic_test_stalled());
                 let engine = engine.clone();
                 let _ = blocking(move || engine.monitor_audio(None)).await;
                 return;
@@ -1182,7 +1182,7 @@ impl Session {
         self.stop_video(kind).await;
         inner.notify(if kind == Kind::S && error.code() == "forbidden" {
             // The seat's ticket predates a go-live grant: only a new one has it.
-            logic::LIVE_NEEDS_REJOIN
+            logic::live_needs_rejoin()
         } else {
             logic::media_error_message(error.code())
         });
@@ -1218,9 +1218,9 @@ impl Session {
                         };
                     });
                     inner.notify(if denied {
-                        logic::MIC_DENIED
+                        logic::mic_denied()
                     } else {
-                        logic::MIC_NOT_FOUND
+                        logic::mic_not_found()
                     });
                 }
                 return None;
@@ -1298,7 +1298,7 @@ impl Session {
                     && self.live()
                 {
                     if self.st.lock().mic.is_some() {
-                        inner.notify(logic::MIC_SWITCH_FAILED);
+                        inner.notify(logic::mic_switch_failed());
                     } else {
                         let denied = logic::mic_refused(&e);
                         inner.write(|s| {
@@ -1432,7 +1432,7 @@ impl Session {
                     }
                     inner.drop_frame(VideoKey::camera(self.me));
                     self.publish_participants();
-                    inner.notify(logic::CAMERA_UNAVAILABLE);
+                    inner.notify(logic::camera_unavailable());
                 }
                 return;
             }
@@ -2192,7 +2192,7 @@ impl Session {
             inner
                 .runtime()
                 .spawn(async move { session.stop_video(Kind::S).await });
-            inner.notify(logic::LIVE_FORBIDDEN_MESSAGE);
+            inner.notify(logic::live_forbidden_message());
         }
     }
 
@@ -2450,7 +2450,7 @@ impl Session {
         let (message, lost) = match why {
             Leave::Refused(message) => (message, None),
             Leave::Lost => (
-                logic::LOST_CALL_MESSAGE.to_owned(),
+                logic::lost_call_message().to_owned(),
                 Some((self.server, self.channel)),
             ),
             Leave::LostWith(message) => (message, Some((self.server, self.channel))),

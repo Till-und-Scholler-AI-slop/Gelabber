@@ -6,6 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use gelabber_i18n::{diagnostics as texts, intl};
 use serde_json::{Value, json};
 
 use crate::logic::{self, Kind};
@@ -351,11 +352,11 @@ pub struct FlowGroup {
 /// `SOURCE_LABEL`, with received video as the others' cameras.
 fn flow_name(flow: &Flow) -> &'static str {
     match flow.source {
-        "voice" => "Sprache",
-        "camera" => "Kamera",
-        "screen" => "Live",
-        "screen-audio" => "Live-Ton",
-        _ => "Video",
+        "voice" => texts::source_voice(),
+        "camera" => texts::source_camera(),
+        "screen" => texts::source_screen(),
+        "screen-audio" => texts::source_screen_audio(),
+        _ => texts::source_video(),
     }
 }
 
@@ -409,7 +410,7 @@ pub fn flow_groups(flows: &[Flow]) -> Vec<FlowGroup> {
 /// `formatBps`: "38 kbit/s", "1,2 Mbit/s"; "unbekannt" without a value.
 pub fn format_bps(bps: Option<f64>) -> String {
     let Some(bps) = bps.filter(|b| b.is_finite()) else {
-        return "unbekannt".into();
+        return texts::value_unknown().into();
     };
     let abs = bps.abs();
     let (scaled, unit) = if abs >= 1_000_000.0 {
@@ -422,58 +423,29 @@ pub fn format_bps(bps: Option<f64>) -> String {
     } else {
         1
     };
-    format!("{} {unit}", german(scaled, digits, false))
+    format!("{} {unit}", number(scaled, digits, false))
 }
 
 /// `formatRatio`: "0,0 %".
 pub fn format_ratio(ratio: Option<f64>) -> String {
     match ratio.filter(|r| r.is_finite()) {
-        Some(r) => format!("{} %", german(r * 100.0, 1, true)),
-        None => "unbekannt".into(),
+        Some(r) => texts::percent(&number(r * 100.0, 1, true)),
+        None => texts::value_unknown().into(),
     }
 }
 
 /// `formatMs`: up to one decimal.
 pub fn format_ms(ms: Option<f64>) -> String {
     match ms.filter(|m| m.is_finite()) {
-        Some(m) => format!("{} ms", german(m, 1, false)),
-        None => "unbekannt".into(),
+        Some(m) => format!("{} ms", number(m, 1, false)),
+        None => texts::value_unknown().into(),
     }
 }
 
-/// `toLocaleString("de-DE")` with up to (or, `fixed`, exactly) `digits`
-/// decimals.
-pub fn german(value: f64, digits: usize, fixed: bool) -> String {
-    // Halves away from zero, as `toLocaleString` rounds (format! would
-    // round them to even).
-    let factor = 10f64.powi(digits as i32);
-    let value = (value * factor).round() / factor;
-    let text = format!("{value:.digits$}");
-    let (int, frac) = text.split_once('.').unwrap_or((&text, ""));
-    let frac = if fixed {
-        frac
-    } else {
-        frac.trim_end_matches('0')
-    };
-    let negative = int.starts_with('-');
-    let digits_only = int.trim_start_matches('-');
-    let mut grouped = String::new();
-    for (i, ch) in digits_only.chars().enumerate() {
-        if i > 0 && (digits_only.len() - i).is_multiple_of(3) {
-            grouped.push('.');
-        }
-        grouped.push(ch);
-    }
-    let mut out = String::new();
-    if negative {
-        out.push('-');
-    }
-    out.push_str(&grouped);
-    if !frac.is_empty() {
-        out.push(',');
-        out.push_str(frac);
-    }
-    out
+/// `formatNumber` in the current language with up to (or, `fixed`,
+/// exactly) `digits` decimals: "1.234,5" / "1,234.5".
+pub fn number(value: f64, digits: usize, fixed: bool) -> String {
+    intl::format_number(value, if fixed { digits } else { 0 }, digits)
 }
 
 /// Now as ISO 8601 in UTC with milliseconds, like `Date.toISOString`.
@@ -554,13 +526,13 @@ pub fn export(
         "exportedAt": exported_at,
         "appVersion": app_version,
         "browser": {
-            "userAgent": format!("Gelabber Desktop {app_version}"),
+            "userAgent": format!("Gelabber Desktop {app_version}"), // i18n-ok: a user agent
             "platform": std::env::consts::OS,
-            "language": "de-DE",
+            "language": gelabber_i18n::get().intl_tag(),
         },
         "settings": relevant_settings(settings, processing),
         "video": video,
-        "note": "Messwerte sind Anhaltspunkte und keine bewiesene Fehlerursache.",
+        "note": texts::export_note(),
         "phases": diagnostics.phases.iter().map(|(at, phase)| json!({ "at": at, "phase": phase })).collect::<Vec<_>>(),
         "events": diagnostics.events.iter().map(|e| json!({
             "at": e.at, "kind": e.kind, "connection": "voice", "detail": e.detail,
@@ -600,7 +572,7 @@ mod tests {
         assert_eq!(format_bps(None), "unbekannt");
         assert_eq!(format_ratio(Some(0.06)), "6,0 %");
         assert_eq!(format_ms(Some(14.0)), "14 ms");
-        assert_eq!(german(1234.5, 1, false), "1.234,5");
+        assert_eq!(number(1234.5, 1, false), "1.234,5");
     }
 
     fn flow(send: bool, loss: f64) -> Flow {

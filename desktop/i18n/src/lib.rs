@@ -56,6 +56,11 @@ pub mod members;
 pub mod servers;
 pub mod shell;
 
+pub mod call;
+pub mod diagnostics;
+pub mod voice;
+pub mod voice_settings;
+
 pub use system::detect_system;
 
 /// A static catalog entry as a value, for tables of labels: called when
@@ -82,6 +87,10 @@ pub const NAMESPACES: &[(&str, Entries)] = &[
     ("dms", dms::ALL),
     ("servers", servers::ALL),
     ("members", members::ALL),
+    ("voice", voice::ALL),
+    ("voice_settings", voice_settings::ALL),
+    ("diagnostics", diagnostics::ALL),
+    ("call", call::ALL),
 ];
 
 /// A language of the interface.
