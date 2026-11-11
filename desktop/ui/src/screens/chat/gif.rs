@@ -134,6 +134,10 @@ pub fn show(
                         .char_limit(100)
                         .layouter(&mut layouter)
                         .show(ui)
+                        .response
+                        .response
+                        // The label above names the field (`<label for>`).
+                        .accessible_name(texts::gif_search())
                 });
                 if state.input.is_empty() {
                     Block::single(ui, "Search KLIPY", INPUT, c.subtle) // i18n-ok
