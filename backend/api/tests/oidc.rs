@@ -1428,7 +1428,14 @@ mod flows {
 
         let res = exchange(&mut app, &code, &verifier).await;
         assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-        assert_eq!(res.body, json!({ "result": "linked" }));
+        // The answer carries the methods body, as `GET /api/auth/methods`.
+        assert_eq!(res.body["result"], "linked");
+        assert_eq!(res.body["password"], true);
+        assert_eq!(res.body["providers"][0]["connected"]["email"], ADA);
+        let methods = app.send(Method::GET, "/api/auth/methods", None).await;
+        let mut expected = res.body.clone();
+        expected.as_object_mut().unwrap().remove("result");
+        assert_eq!(methods.body, expected);
         let owner: String = sqlx::query_scalar(
             "SELECT u.email FROM user_identities i JOIN users u ON u.id = i.user_id",
         )
@@ -1454,5 +1461,238 @@ mod flows {
         }
         assert_eq!(statuses[0], StatusCode::SEE_OTHER);
         assert_eq!(statuses[24], StatusCode::TOO_MANY_REQUESTS, "{statuses:?}");
+    }
+
+    /// The account's identity rows, as `(provider, email)`.
+    async fn identities(pool: &PgPool) -> Vec<(String, String)> {
+        sqlx::query_as("SELECT provider, email FROM user_identities ORDER BY provider")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn methods_list_the_password_and_every_provider(pool: PgPool) {
+        // Signed out: nothing to show.
+        let mut anonymous = Client::new(pool.clone());
+        anonymous.bootstrap().await;
+        let res = anonymous.send(Method::GET, "/api/auth/methods", None).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+
+        // Sign-in through a provider is off: only the password.
+        let off = common::state(pool.clone());
+        let mut ada_off = registered(&off, false).await;
+        let res = ada_off.send(Method::GET, "/api/auth/methods", None).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        assert_eq!(res.body, json!({ "password": true, "providers": [] }));
+
+        let (issuer, state) = setup(pool.clone()).await;
+        let mut ada_client = Client::from_state(state.clone());
+        ada_client.jar = std::mem::take(&mut ada_off.jar);
+        ada_client.csrf = ada_off.csrf.take();
+        let res = ada_client
+            .send(Method::GET, "/api/auth/methods", None)
+            .await;
+        assert_eq!(
+            res.body,
+            json!({
+                "password": true,
+                "providers": [
+                    { "id": "google", "name": "Google", "configured": true, "connected": null },
+                ],
+            })
+        );
+
+        let link = json!({ "purpose": "link", "current_password": PASSWORD });
+        let res = web_sign_in(&issuer, &mut ada_client, link, ada()).await;
+        assert_eq!(location(&res), "/settings/konto?connected=google");
+        let since: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT created_at FROM user_identities")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let res = ada_client
+            .send(Method::GET, "/api/auth/methods", None)
+            .await;
+        assert_eq!(res.body["password"], true);
+        let google = &res.body["providers"][0];
+        assert_eq!(google["configured"], true);
+        assert_eq!(google["connected"]["email"], ADA);
+        let reported: chrono::DateTime<chrono::Utc> = google["connected"]["since"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(reported, since);
+
+        // The operator turned it off: still listed, so it can be disconnected.
+        let mut ada_off = Client::from_state(off);
+        ada_off.jar = std::mem::take(&mut ada_client.jar);
+        ada_off.csrf = ada_client.csrf.take();
+        let res = ada_off.send(Method::GET, "/api/auth/methods", None).await;
+        assert_eq!(res.body["providers"].as_array().unwrap().len(), 1);
+        let google = &res.body["providers"][0];
+        assert_eq!(google["id"], "google");
+        assert_eq!(google["name"], "Google");
+        assert_eq!(google["configured"], false);
+        assert_eq!(google["connected"]["email"], ADA);
+
+        // Another account's identity is not listed as connected here.
+        let mut bob = browser(&state).await;
+        let res = bob.register("bob@example.com", PASSWORD, "Bob").await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+        let res = bob.send(Method::GET, "/api/auth/methods", None).await;
+        assert!(
+            res.body["providers"][0]["connected"].is_null(),
+            "{}",
+            res.body
+        );
+
+        // A provider-created account has no password.
+        let mut lena = browser(&state).await;
+        let lena_user = MockUser::verified("sub-lena", "lena@example.com", "Lena");
+        let res = web_sign_in(&issuer, &mut lena, sign_in(), lena_user).await;
+        let token = token_of(&location(&res));
+        let res = lena
+            .send(
+                Method::POST,
+                "/api/auth/oidc/complete",
+                Some(json!({ "token": token, "name": "Lena" })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+        let res = lena.send(Method::GET, "/api/auth/methods", None).await;
+        assert_eq!(res.body["password"], false);
+        assert_eq!(
+            res.body["providers"][0]["connected"]["email"],
+            "lena@example.com"
+        );
+    }
+
+    #[sqlx::test]
+    async fn disconnecting_needs_a_password_and_keeps_the_sessions(pool: PgPool) {
+        let (issuer, state) = setup(pool.clone()).await;
+        let mut ada_client = registered(&state, false).await;
+        let disconnect = "/api/auth/oidc/google";
+
+        // Not connected.
+        let res = ada_client.send(Method::DELETE, disconnect, None).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+        let res = ada_client
+            .send(Method::DELETE, "/api/auth/oidc/github", None)
+            .await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+        let link = json!({ "purpose": "link", "current_password": PASSWORD });
+        web_sign_in(&issuer, &mut ada_client, link, ada()).await;
+        assert_eq!(identities(&pool).await.len(), 1);
+
+        // Without a password the account could not sign in any more.
+        sqlx::query("UPDATE users SET password_hash = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let res = ada_client.send(Method::DELETE, disconnect, None).await;
+        assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+        assert_eq!(res.body["error"], "password_required");
+        assert_eq!(identities(&pool).await.len(), 1);
+
+        // Signed out, or without the CSRF token: refused.
+        let mut anonymous = browser(&state).await;
+        let res = anonymous.send(Method::DELETE, disconnect, None).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+        let csrf = ada_client.csrf.take();
+        let res = ada_client.send(Method::DELETE, disconnect, None).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+        ada_client.csrf = csrf;
+
+        // With a password set again (a first password, say), it goes.
+        let mut setter = browser(&state).await;
+        setter.jar = ada_client.jar.clone();
+        setter.csrf = ada_client.csrf.clone();
+        let res = setter
+            .send(
+                Method::POST,
+                "/api/auth/password",
+                Some(json!({ "password": "a brand new one" })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        let mut ada_client = setter;
+        let mut other = browser(&state).await;
+        assert_eq!(
+            other.login(ADA, "a brand new one").await.status,
+            StatusCode::OK
+        );
+
+        let res = ada_client.send(Method::DELETE, disconnect, None).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        assert_eq!(
+            res.body,
+            json!({
+                "password": true,
+                "providers": [
+                    { "id": "google", "name": "Google", "configured": true, "connected": null },
+                ],
+            })
+        );
+        assert!(identities(&pool).await.is_empty());
+        // Sessions stay, including the other device's.
+        assert_eq!(ada_client.bootstrap().await.body["user"]["email"], ADA);
+        assert_eq!(other.bootstrap().await.body["user"]["email"], ADA);
+        let res = ada_client.send(Method::DELETE, disconnect, None).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    }
+
+    #[sqlx::test]
+    async fn the_notice_mail_follows_the_account_language(pool: PgPool) {
+        let (issuer, mut state) = setup(pool.clone()).await;
+        registered(&state, true).await;
+        let mailer = with_mail(&mut state);
+        sqlx::query("UPDATE users SET locale = 'en' WHERE email = $1")
+            .bind(ADA)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // An automatic join tells the owner, in English.
+        let mut client = browser(&state).await;
+        web_sign_in(&issuer, &mut client, sign_in(), ada()).await;
+        let sent = outbox(&mailer, 1).await;
+        assert_eq!(sent[0].to, ADA);
+        assert_eq!(
+            sent[0].subject,
+            "Google is now connected to your Gelabber account"
+        );
+        assert!(sent[0].body.contains("/settings/konto"), "{}", sent[0].body);
+
+        // A manual link, in German.
+        let mut bob = browser(&state).await;
+        let res = bob.register("bob@example.com", PASSWORD, "Bob").await;
+        assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+        sqlx::query(
+            "UPDATE users SET email_verified_at = now(), registration_pending = false \
+             WHERE email = 'bob@example.com'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            bob.login("bob@example.com", PASSWORD).await.status,
+            StatusCode::OK
+        );
+        let link = json!({ "purpose": "link", "current_password": PASSWORD });
+        let bob_user = MockUser::verified("sub-bob", "bob@example.com", "Bob");
+        let res = web_sign_in(&issuer, &mut bob, link, bob_user).await;
+        assert_eq!(location(&res), "/settings/konto?connected=google");
+        let sent = outbox(&mailer, 3).await;
+        let notice = sent
+            .iter()
+            .find(|mail| mail.to == "bob@example.com" && mail.subject.contains("Google"))
+            .unwrap_or_else(|| panic!("{sent:?}"));
+        assert_eq!(
+            notice.subject,
+            "Google ist mit deinem Gelabber-Konto verbunden"
+        );
     }
 }
