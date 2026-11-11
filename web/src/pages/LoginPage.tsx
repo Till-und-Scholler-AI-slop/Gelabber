@@ -84,6 +84,10 @@ export function LoginPage() {
         <p role="status" className="auth-banner">
           {t("login.sessionExpired")}
         </p>
+      ) : reason === "deleted" ? (
+        <p role="status" className="auth-banner">
+          {t("login.accountDeleted")}
+        </p>
       ) : null}
       <h1>{t("login.title")}</h1>
       {invited ? (

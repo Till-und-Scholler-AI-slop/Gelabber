@@ -136,6 +136,12 @@ describe("router", () => {
     expect(validateAuthSearch({ email: "x".repeat(255) })).toEqual({});
   });
 
+  it("keeps the notice after an account deletion", () => {
+    expect(validateAuthSearch({ reason: "deleted" })).toEqual({
+      reason: "deleted",
+    });
+  });
+
   it("keeps an invitation code and a sign-in's admission refusal", () => {
     expect(
       validateAuthSearch({

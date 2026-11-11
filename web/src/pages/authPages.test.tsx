@@ -94,6 +94,15 @@ describe("login page", () => {
     expect(html).not.toContain(INVITE_BANNER);
   });
 
+  it("says the account was deleted, in the same place", () => {
+    fixture.search = { reason: "deleted" };
+    const html = render(<LoginPage />);
+    expect(html).toContain(
+      '<p role="status" class="auth-banner">Dein Konto wurde gelöscht.</p>',
+    );
+    expect(html).not.toContain("Sitzung abgelaufen");
+  });
+
   it("offers a way back into a forgotten password, mail or not", () => {
     expect(render(<LoginPage />)).toContain('<p class="auth-recovery"></p>');
     fixture.mail = false;

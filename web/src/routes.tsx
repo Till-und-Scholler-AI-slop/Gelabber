@@ -77,8 +77,9 @@ const rootRoute = createRootRoute({
 
 export type AuthSearch = {
   redirect?: string;
-  /** "expired": the session ended while the app was open. */
-  reason?: "expired";
+  /** "expired": the session ended while the app was open. "deleted": the
+   * account was just deleted (#519). */
+  reason?: "expired" | "deleted";
   /** Carried from sign-in to "Passwort vergessen", so it is not retyped. */
   email?: string;
   /** A beta invitation's code (`/register?invitation=…`), which pre-fills
@@ -94,7 +95,8 @@ export const validateAuthSearch = (
   const out: AuthSearch = {};
   const target = safeRedirect(search.redirect);
   if (target) out.redirect = target;
-  if (search.reason === "expired") out.reason = "expired";
+  if (search.reason === "expired" || search.reason === "deleted")
+    out.reason = search.reason;
   if (
     typeof search.email === "string" &&
     search.email.length > 0 &&

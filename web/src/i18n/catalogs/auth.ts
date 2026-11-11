@@ -162,6 +162,7 @@ export const auth = defineCatalog(
 
     // /login
     "login.sessionExpired": "Sitzung abgelaufen. Melde dich erneut an.",
+    "login.accountDeleted": "Dein Konto wurde gelöscht.",
     "login.title": "Anmelden",
     "login.newHere": "Neu bei Gelabber?",
     "login.createAccount": "Konto anlegen",
@@ -401,6 +402,7 @@ export const auth = defineCatalog(
     "page.linkUsed": "This link has expired or has already been used.",
 
     "login.sessionExpired": "Session expired. Please sign in again.",
+    "login.accountDeleted": "Your account has been deleted.",
     "login.title": "Sign in",
     "login.newHere": "New to Gelabber?",
     "login.createAccount": "Create account",
