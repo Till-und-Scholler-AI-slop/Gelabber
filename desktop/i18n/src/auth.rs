@@ -134,6 +134,7 @@ crate::strings! {
     // /login
     login_session_expired = "Sitzung abgelaufen. Melde dich erneut an."
         | "Session expired. Please sign in again.";
+    login_account_deleted = "Dein Konto wurde gelöscht." | "Your account has been deleted.";
     login_title = "Anmelden" | "Sign in";
     login_new_here = "Neu bei Gelabber?" | "New to Gelabber?";
     login_create_account = "Konto anlegen" | "Create account";

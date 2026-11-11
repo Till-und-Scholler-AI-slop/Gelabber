@@ -18,8 +18,8 @@ crate::strings! {
     area_profilkarte_label = "Profilkarte" | "Profile card";
     area_profilkarte_description = "So sehen dich andere." | "How others see you.";
     area_konto_label = "Sicherheit" | "Security";
-    area_konto_description = "Passwort ändern und überall abmelden."
-        | "Change your password and sign out everywhere.";
+    area_konto_description = "Anmeldung, Geräte und Kontodaten."
+        | "Sign-in, devices and account data.";
     area_darstellung_label = "Darstellung" | "Appearance";
     area_darstellung_description = "Sprache, Farbschema, Textgröße und Bewegung."
         | "Language, colour scheme, text size and motion.";
