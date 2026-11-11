@@ -10,6 +10,7 @@ pub mod media;
 pub mod notifications;
 pub mod prefs;
 pub mod profile;
+pub mod sign_in;
 #[cfg(test)]
 mod tests_drawn;
 pub mod themes;

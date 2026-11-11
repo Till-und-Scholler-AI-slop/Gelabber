@@ -8,7 +8,7 @@ use gelabber_i18n::{common, settings as texts};
 use super::controls::{self, Confirm, Picked};
 use super::{adopt_user, op_pending, settled};
 use crate::app::AppCtx;
-use crate::rules::{Failure, FormErrors, field_message, validate_name, validate_password};
+use crate::rules::{Failure, FormErrors, field_message, validate_name};
 use crate::screens::auth::form_error;
 use crate::text;
 use crate::theme::Theme;
@@ -326,37 +326,14 @@ fn prepare(ctx: &egui::Context, s: &mut ProfileState, file: controls::ImageFile)
 
 #[derive(Default)]
 pub struct SecurityState {
-    current: String,
-    password: String,
-    changed: bool,
-    running: bool,
-    errors: FormErrors,
+    /// "Anmeldung": the password and the providers (#518).
+    pub sign_in: super::sign_in::SignInState,
 }
-
-const SECURITY_ORDER: [&str; 2] = ["current_password", "password"];
 
 /// Settings area "Sicherheit".
 pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityState) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
-    if s.running
-        && let Some(result) = settled(app, "password")
-    {
-        s.running = false;
-        match result {
-            Ok(()) => {
-                s.current.clear();
-                s.password.clear();
-                s.changed = true;
-                if let Some(updated) = app.client.with_state(|st| st.me().cloned()) {
-                    adopt_user(app, &updated);
-                }
-            }
-            Err(e) => s
-                .errors
-                .from_failure(&Failure::from_api(&e), &SECURITY_ORDER),
-        }
-    }
     if let Some(true) = controls::answer(ui.ctx(), "logout-all") {
         app.client.voice_leave();
         app.client.logout_all();
@@ -364,81 +341,21 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
         app.nav.navigate("/login");
         return;
     }
-    controls::column(ui, 560.0, |ui| {
-        // "Angemeldet als <b>{email}</b>": split first, then the address
-        // goes in, so it cannot add tags.
-        let mut block = text::Rich::new(controls::HINT);
-        for piece in gelabber_i18n::pieces(texts::security_signed_in_as()) {
-            let shown = piece.text.replace("{email}", &user.email);
-            block = match piece.tag {
-                Some(_) => block.push(&shown, controls::HINT.weight(600.0), c.text),
-                None => block.push(&shown, controls::HINT, c.muted),
-            };
-        }
-        let block = block.layout(ui);
-        crate::text::show(ui, &block);
-        ui.add_space(20.0);
-        let current = TextField::new("current_password", &mut s.current)
-            .label(texts::security_current_password())
-            .password()
-            .error(s.errors.field("current_password"))
-            .show(ui);
-        if current.response.changed() {
-            s.changed = false;
-            s.errors.clear_field("current_password");
-        }
-        ui.add_space(20.0);
-        let new = TextField::new("new_password", &mut s.password)
-            .label(texts::security_new_password())
-            .password()
-            .error(s.errors.field("password"))
-            .hint(Some(texts::security_new_password_hint()))
-            .show(ui);
-        if new.response.changed() {
-            s.changed = false;
-            s.errors.clear_field("password");
-        }
-        ui.add_space(20.0);
-        form_error(ui, &s.errors);
-        let mut submit = current.submitted || new.submitted;
-        controls::row(ui, 12.0, 36.0, |ui| {
-            submit |= ui
-                .add(
-                    Button::new(texts::security_change())
-                        .primary()
-                        .pending(s.running.then_some(texts::security_changing())),
-                )
-                .clicked();
-            if s.changed {
-                ui.add(crate::widgets::InlineStatus::new(
-                    Some(texts::security_changed()),
-                    crate::widgets::StatusTone::Success,
-                ));
-            }
-        });
-        if submit && !s.running {
-            s.changed = false;
-            let mut fields = Vec::new();
-            if s.current.is_empty() {
-                fields.push((
-                    "current_password",
-                    field_message("current_password", "required"),
-                ));
-            }
-            if let Some(code) = validate_password(&s.password) {
-                fields.push(("password", field_message("password", code)));
-            }
-            if fields.is_empty() {
-                s.errors = FormErrors::default();
-                s.running = true;
-                app.client.change_password(&s.current, &s.password);
-            } else {
-                s.errors.set_fields(fields);
-            }
-        }
-        // ProfilePage's forms call useFormErrors() without a form ref: focus stays put.
-        s.errors.focus = None;
+    // "Angemeldet als <b>{email}</b>": split first, then the address
+    // goes in, so it cannot add tags.
+    let mut block = text::Rich::new(controls::HINT);
+    for piece in gelabber_i18n::pieces(texts::security_signed_in_as()) {
+        let shown = piece.text.replace("{email}", &user.email);
+        block = match piece.tag {
+            Some(_) => block.push(&shown, controls::HINT.weight(600.0), c.text),
+            None => block.push(&shown, controls::HINT, c.muted),
+        };
+    }
+    let block = block.layout(ui);
+    crate::text::show(ui, &block);
+    super::sign_in::section(ui, app, &mut s.sign_in);
 
+    controls::column(ui, 560.0, |ui| {
         // `.settings-danger`: margin-top 40, border-top, padding-top 24.
         ui.add_space(32.0);
         let top = ui.cursor().min.y;
