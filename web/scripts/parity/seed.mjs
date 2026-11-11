@@ -2,7 +2,9 @@
 // (desktop/parity): people, two servers, channels, messages, a DM, and
 // roles with a channel limited to them, and, when the API runs with
 // API_OPERATOR_EMAILS=lena@example.test (desktop/README.md "Parity"), beta
-// invitations and a report for the "Betrieb" scenes.
+// invitations and a report for the "Betrieb" scenes. The directory
+// "Entdecken" needs API_DIRECTORY=true: listings by Ada, Mira, Tom, Jonas and
+// Lena, and Kai's request to join Lena's Wohnzimmer.
 // Run in web/: node scripts/parity/seed.mjs [base-url] [out.json]
 // The base URL is the web origin (Vite proxies /api), default 127.0.0.1:5180.
 /* global process, console, fetch */
@@ -18,6 +20,7 @@ const PEOPLE = [
   ["mira", "Mira"],
   ["tom", "Tom"],
   ["ada", "Ada"],
+  ["kai", "Kai"],
 ];
 
 class Client {
@@ -78,7 +81,18 @@ const say = (client, channel, content, extra = {}) =>
 const people = {};
 for (const [handle, name] of PEOPLE)
   people[handle] = await new Client(name).signIn(handle, name);
-const { lena, jonas, mira, tom, ada } = people;
+const { lena, jonas, mira, tom, ada, kai } = people;
+
+// The discover scenes need the directory (v0.10); without it the seed would
+// stop halfway, so it stops here.
+const directory = await lena.call("GET", "/directory");
+if (!directory.enabled) {
+  console.error(
+    "error: the directory is off; run the parity stack's API with " +
+      "API_DIRECTORY=true (desktop/README.md \"Parity\") and recreate the database",
+  );
+  process.exit(1);
+}
 
 const existing = await lena.call("GET", "/servers");
 if (existing.some((s) => s.name === "Wohnzimmer")) {
@@ -197,6 +211,28 @@ if (operator) {
     details: "Im Kanal allgemein werden ständig Links zu einem Gewinnspiel gepostet.",
   });
 }
+
+// Entdecken (v0.10), as in directory.png: Ada's, Mira's and Tom's servers
+// that Lena is not in, Jonas' Spieleabend that she is in ("Öffnen"), and her
+// Wohnzimmer on request, with Kai's request waiting. Kai joins no server, so
+// the member lists and "Neue Nachricht" stay as they were.
+const listed = (client, server, description, language, joinMode) =>
+  client.call("PUT", `/servers/${server}/listing`, {
+    listed: true, description, language, join_mode: joinMode,
+  });
+for (const [owner, name, description, language, joinMode] of [
+  [ada, "Filmclub", "Jeden Freitag ein Film im Kino-Kanal, danach wird gestritten.", "de", "open"],
+  [mira, "Rust Study Hall", "Pair programming and code review in voice, beginners welcome.", "en", "open"],
+  [tom, "Modellbau-Keller", "Bastelstreams und Fragen zu Farben, Kleber und Werkzeug.", "de", "request"],
+]) {
+  const server = await owner.call("POST", "/servers", { name });
+  await listed(owner, server.id, description, language, joinMode);
+}
+await listed(jonas, evening.id, "Koop-Spiele und Brettspiel-Simulatoren, meist abends.", "de", "request");
+await listed(lena, home.id, "Gemütliche Abende mit Freunden.", "de", "request");
+await kai.call("POST", `/directory/listings/${home.id}/request`, {
+  message: "Hallo, ich würde gern mitmachen.",
+});
 
 const fixture = {
   base: BASE,
