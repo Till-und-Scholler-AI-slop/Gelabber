@@ -327,3 +327,51 @@ fn sign_in_through_a_provider() {
         json!({"purpose": "sign_in"})
     );
 }
+
+/// The operator package's shapes (#517), as backend/api/src/auth/mod.rs
+/// and servers/mod.rs write them; older servers send none of the new keys.
+#[test]
+fn operator_flags_registration_and_admission_codes() {
+    use serde_json::json;
+    let old: SessionResponse = round_trip("session");
+    assert!(!old.operator);
+    let mut session = fixture("session");
+    session["operator"] = true.into();
+    let read: SessionResponse = serde_json::from_value(session.clone()).unwrap();
+    assert!(read.operator);
+    assert_eq!(serde_json::to_value(&read).unwrap(), session);
+    let registered: RegisterResponse = serde_json::from_value(session).unwrap();
+    assert!(registered.operator && !registered.verification_sent);
+
+    let servers: Vec<Server> = round_trip("servers");
+    assert!(servers.iter().all(|s| !s.blocked));
+    let mut blocked = fixture("join");
+    blocked["blocked"] = true.into();
+    let read: Server = serde_json::from_value(blocked.clone()).unwrap();
+    assert!(read.blocked);
+    assert_eq!(serde_json::to_value(&read).unwrap(), blocked);
+
+    for (mode, expected) in [
+        ("open", RegistrationMode::Open),
+        ("invitation", RegistrationMode::Invitation),
+    ] {
+        let read: RegistrationStatus = serde_json::from_value(json!({"mode": mode})).unwrap();
+        assert_eq!(read.mode, expected);
+    }
+
+    // Only the codes that are there go out, and the log shows none.
+    let mut body = RegisterBody::new("neu@example.test", "geheim123", "Neu");
+    assert_eq!(
+        serde_json::to_value(&body).unwrap(),
+        json!({"email": "neu@example.test", "password": "geheim123", "name": "Neu", "locale": "de"})
+    );
+    body.invitation = Some("k7m2p9qrs4tx".into());
+    body.server_invite = Some("abcdefghjkmn".into());
+    let sent = serde_json::to_value(&body).unwrap();
+    assert_eq!(sent["invitation"], "k7m2p9qrs4tx");
+    assert_eq!(sent["server_invite"], "abcdefghjkmn");
+    let logged = format!("{body:?}");
+    for secret in ["geheim123", "k7m2p9qrs4tx", "abcdefghjkmn"] {
+        assert!(!logged.contains(secret), "{logged}");
+    }
+}

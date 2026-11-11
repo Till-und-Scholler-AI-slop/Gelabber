@@ -77,21 +77,8 @@ impl Http {
         password: &str,
         name: &str,
     ) -> Result<RegisterResponse> {
-        if self.csrf_token().is_none() {
-            self.session().await?;
-        }
-        self.send(
-            Method::POST,
-            "/auth/register",
-            // The language the app shows becomes the account's.
-            &json!({
-                "email": email,
-                "password": password,
-                "name": name,
-                "locale": gelabber_i18n::get().as_str(),
-            }),
-        )
-        .await
+        self.register_with(&RegisterBody::new(email, password, name))
+            .await
     }
 
     pub async fn logout(&self) -> Result<CsrfResponse> {
@@ -254,6 +241,22 @@ impl Http {
             &json!({"password": password}),
         )
         .await
+    }
+
+    /// `GET /api/auth/registration`: whether registering needs a code.
+    pub async fn registration_mode(&self) -> Result<RegistrationMode> {
+        self.get::<RegistrationStatus>("/auth/registration")
+            .await
+            .map(|status| status.mode)
+    }
+
+    /// [`Self::register`] with the whole body, e.g. with the codes that
+    /// admit a new account on an invitation-only instance.
+    pub async fn register_with(&self, body: &RegisterBody) -> Result<RegisterResponse> {
+        if self.csrf_token().is_none() {
+            self.session().await?;
+        }
+        self.send(Method::POST, "/auth/register", body).await
     }
 
     // --------------------------------------------------------------- me

@@ -119,6 +119,10 @@ pub struct PublicProfile {
 pub struct SessionResponse {
     pub user: Option<User>,
     pub csrf_token: String,
+    /// The account is an instance operator, who may open "Betrieb";
+    /// `false` from a server older than v0.10.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operator: bool,
 }
 
 /// `POST /api/auth/register`: `201` signs in, `202` with
@@ -129,6 +133,9 @@ pub struct RegisterResponse {
     pub csrf_token: String,
     #[serde(default)]
     pub verification_sent: bool,
+    /// As [`SessionResponse::operator`]; a signed-in answer only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operator: bool,
 }
 
 /// Logout and logout-all answer only the rotated token.
@@ -299,6 +306,9 @@ pub struct OidcCompleteResponse {
     pub csrf_token: String,
     /// Where the sign-in was headed, e.g. an invite.
     pub redirect: Option<String>,
+    /// As [`SessionResponse::operator`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operator: bool,
 }
 
 /// `POST /api/auth/oidc/desktop/exchange`, by its `result`.
@@ -311,6 +321,73 @@ pub enum OidcExchange {
     NeedsName(OidcPending),
     /// The provider is now connected to the signed-in account.
     Linked(SignInMethods),
+}
+
+/// Who may create an account (`GET /api/auth/registration`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegistrationMode {
+    /// Anyone; invitation codes are ignored.
+    Open,
+    /// Only with a beta invitation or the invite of a server that is not
+    /// blocked.
+    Invitation,
+}
+
+/// `GET /api/auth/registration`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistrationStatus {
+    pub mode: RegistrationMode,
+}
+
+/// `POST /api/auth/register`. The codes admit a new account on an
+/// invitation-only instance (`AdmissionCodes` in web/src/auth/session.ts).
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub struct RegisterBody {
+    pub email: String,
+    pub password: String,
+    pub name: String,
+    /// `de` or `en`: the language the app shows becomes the account's.
+    pub locale: String,
+    /// A beta invitation's code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invitation: Option<String>,
+    /// The code of the server invite being followed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_invite: Option<String>,
+}
+
+impl RegisterBody {
+    /// Without codes, in the language the app shows.
+    pub fn new(email: &str, password: &str, name: &str) -> Self {
+        Self {
+            email: email.to_owned(),
+            password: password.to_owned(),
+            name: name.to_owned(),
+            locale: gelabber_i18n::get().as_str().to_owned(),
+            invitation: None,
+            server_invite: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for RegisterBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegisterBody")
+            .field("email", &self.email)
+            .field("password", &"<redacted>")
+            .field("name", &self.name)
+            .field("locale", &self.locale)
+            .field(
+                "invitation",
+                &self.invitation.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "server_invite",
+                &self.server_invite.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 // ------------------------------------------------------------------- themes
@@ -417,6 +494,10 @@ pub struct Server {
     pub permissions: Vec<Permission>,
     /// What every non-owner holds.
     pub member_permissions: Vec<Permission>,
+    /// An operator blocked the server: it stays in the list, everything
+    /// else answers `403 server_blocked`. `false` from older servers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
 }
 
 impl Server {
