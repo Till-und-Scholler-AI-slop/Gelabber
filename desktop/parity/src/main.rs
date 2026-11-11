@@ -20,7 +20,11 @@
 //! setup page (kept in desktop/parity/reference/setup) instead of a route:
 //! the Launcher here. A scene with `update` shows the update notice over the
 //! page: the Tauri app's BANNER (reference/update-banner.js) there,
-//! `platform::update::Notice` here.
+//! `platform::update::Notice` here. A scene with `locale: "en"` shows the
+//! English interface: a signed-in scene sets the account's language
+//! (`PUT /api/me/locale`) before the page loads and puts German back
+//! afterwards, also when the scene fails; a signed-out one starts the app in
+//! English (`gelabber_i18n::set`), as the web shot uses an English browser.
 
 mod pixels;
 mod ssim;
@@ -74,6 +78,8 @@ struct Scene {
     /// The setup page's update section, as the Tauri app's `update_state`
     /// answers that page where the app updates itself.
     updates: Option<SetupState>,
+    /// `"en"`: the scene in English (see the module's comment).
+    locale: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -224,6 +230,17 @@ struct Restore;
 impl Drop for Restore {
     fn drop(&mut self) {
         reset();
+    }
+}
+
+/// Puts the scene user's language back to German when dropped.
+struct GermanAgain(gelabber_client::Client);
+
+impl Drop for GermanAgain {
+    fn drop(&mut self) {
+        if let Err(e) = self.0.set_locale_blocking("de") {
+            eprintln!("putting the language back to German: {e}");
+        }
     }
 }
 
@@ -418,11 +435,26 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             });
             let _call = scene.call.as_deref().map(Call::start);
             let client = gelabber_client::Client::new(&fixture.base).expect("client");
+            // German unless the scene asks; the app follows a signed-in
+            // account's language by itself.
+            let locale = scene
+                .locale
+                .as_deref()
+                .map(|l| gelabber_i18n::Locale::parse(l).expect("locale is de or en"))
+                .unwrap_or_default();
+            gelabber_i18n::set(locale);
+            let mut _german_again = None;
             if let Some(user) = &scene.user {
                 let email = &fixture.users[user].email;
                 client
                     .login_blocking(email, &fixture.password)
                     .unwrap_or_else(|e| panic!("login {user}: {e}"));
+                if let Some(locale) = &scene.locale {
+                    client
+                        .set_locale_blocking(locale)
+                        .unwrap_or_else(|e| panic!("locale {user}: {e}"));
+                    _german_again = Some(GermanAgain(client.clone()));
+                }
             }
             let route = fill(&scene.path, &fixture);
             let size = egui::vec2(scenes.size[0] as f32, scenes.size[1] as f32);
