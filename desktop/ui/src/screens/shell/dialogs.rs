@@ -81,6 +81,9 @@ pub fn open_channel(
             name: editing.map(|c| c.name.clone()).unwrap_or_default(),
             category: editing.map_or(category, |c| c.category_id),
             error: None,
+            access: editing.and_then(super::access::of),
+            initial_name: editing.map(|c| c.name.clone()).unwrap_or_default(),
+            initial_access: editing.and_then(super::access::of),
         });
     });
 }
@@ -161,7 +164,24 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             name,
             category,
             error,
-        } => channel_dialog(ui, app, *server, *editing, voice, name, category, error),
+            access,
+            initial_name,
+            initial_access,
+        } => channel_dialog(
+            ui,
+            app,
+            *server,
+            *editing,
+            voice,
+            name,
+            category,
+            error,
+            ChannelAccess {
+                value: access,
+                initial_name,
+                initial: initial_access,
+            },
+        ),
         Dialog::Category {
             server,
             editing,
@@ -754,6 +774,13 @@ fn slug(name: &str) -> String {
     out.trim_matches('-').to_owned()
 }
 
+/// The channel dialog's "Zugriff" and what it opened with.
+struct ChannelAccess<'a> {
+    value: &'a mut Option<Vec<Uuid>>,
+    initial_name: &'a str,
+    initial: &'a Option<Vec<Uuid>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn channel_dialog(
     ui: &mut Ui,
@@ -764,6 +791,7 @@ fn channel_dialog(
     name: &mut String,
     category: &mut Option<Uuid>,
     error: &mut Option<String>,
+    access: ChannelAccess,
 ) -> bool {
     let ctx = ui.ctx().clone();
     let theme = Theme::of(&ctx);
@@ -773,20 +801,27 @@ fn channel_dialog(
     } else {
         servers::channel_create_title()
     };
-    let categories = app.client.with_state(|s| {
+    let (categories, roles) = app.client.with_state(|s| {
         s.detail(server)
-            .map(|d| d.categories.clone())
+            .map(|d| (d.categories.clone(), d.roles.clone()))
             .unwrap_or_default()
     });
     let mut done = false;
-    // An open category list takes Esc first, like the web's native select.
+    // An open category list takes Esc first, like the web's native select;
+    // the access list's popover closes on its own Esc too.
     let select_id = Id::unique(("channel-category", server));
-    if ctx.data(|d| d.get_temp::<bool>(select_id)).unwrap_or(false)
-        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
-        ctx.data_mut(|d| d.insert_temp(select_id, false));
+    let access_id = Id::unique(("channel-access", server));
+    for list in [select_id, access_id] {
+        if ctx.data(|d| d.get_temp::<bool>(list)).unwrap_or(false)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            ctx.data_mut(|d| d.insert_temp(list, false));
+        }
     }
-    let output = Modal::new(("channel-dialog", server), title).show(
+    let dirty =
+        name.as_str() != access.initial_name || !super::access::same(access.value, access.initial);
+    let modal = Modal::new(("channel-dialog", server), title).dirty(dirty);
+    let output = modal.show(
         &ctx,
         |ui| {
             ui.spacing_mut().item_spacing.y = 20.0;
@@ -885,6 +920,7 @@ fn channel_dialog(
                 options.extend(categories.iter().map(|x| (Some(x.id), x.name.clone())));
                 select(ui, select_id, &options, category);
             });
+            super::access::field(ui, access_id, &roles, access.value);
             let mut submit = field.submitted;
             buttons(ui, |ui| {
                 submit |= ui
@@ -909,6 +945,8 @@ fn channel_dialog(
                     Some(code) => *error = Some(rules::field_message("name", code)),
                     None => {
                         let name = name.trim();
+                        let role_ids =
+                            super::access::role_ids(access.initial, access.value, &roles);
                         match editing {
                             Some(channel) => app.client.update_channel(
                                 server,
@@ -918,7 +956,7 @@ fn channel_dialog(
                                     category_id: Some(
                                         category.map(|c| c.to_string()).unwrap_or_default(),
                                     ),
-                                    role_ids: None,
+                                    role_ids,
                                 },
                             ),
                             None => app.client.create_channel(
@@ -930,7 +968,7 @@ fn channel_dialog(
                                     ChannelKind::Text
                                 },
                                 *category,
-                                None,
+                                role_ids,
                             ),
                         }
                         done = true;
@@ -1449,5 +1487,141 @@ mod tests {
             summary(Terms { expiry: 3, uses: 0 }),
             "unbegrenzt gültig · 1-mal nutzbar"
         );
+    }
+
+    /// "Zugriff" (ChannelAccessField, channelRequest): the field reads the
+    /// roles, its checklist follows `toggleAccess`, Esc closes only the
+    /// list, and the submit sends `role_ids` only when the access changed.
+    #[test]
+    fn the_channel_dialog_sends_the_access() {
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::{NodeT, Queryable};
+        use parking_lot::Mutex;
+        use std::sync::Arc;
+
+        use crate::app::testkit::{
+            FakeApi, HOME, MODERATION, SPIELE, STAMMGAESTE, launcher, wait_for, wait_for_label,
+            workspace,
+        };
+        use crate::platform::paths::testing::TempConfig;
+
+        let _config = TempConfig::new("channel-access");
+        let sent: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let log = sent.clone();
+        let api = FakeApi::start(true, move |method, path, body| {
+            if method == "PATCH" || method == "POST" {
+                log.lock()
+                    .push((format!("{method} {path}"), body.to_owned()));
+            }
+            workspace(method, path)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{SPIELE}"));
+        wait_for_label(&mut harness, "musik");
+        let spiele: Channel = serde_json::from_value(serde_json::json!({
+            "id": SPIELE, "server_id": HOME, "category_id": null, "name": "spiele",
+            "kind": "text", "created_at": "2026-01-01T00:00:00Z",
+            "limited": true, "role_ids": [MODERATION, STAMMGAESTE],
+        }))
+        .expect("channel");
+        let home: Uuid = HOME.parse().expect("id");
+        open_channel(&harness.ctx.clone(), home, Some(&spiele), None);
+        wait_for_label(&mut harness, "Zugriff");
+        let trigger = harness.get_by_role_and_label(Role::Button, "Zugriff");
+        assert!(
+            trigger
+                .accesskit_node()
+                .description()
+                .is_some_and(|d| d.starts_with("Moderation, Stammgäste "))
+        );
+        trigger.click();
+        harness.run_steps(4);
+        let checked = |h: &egui_kittest::Harness<'_, crate::Launcher>, name: &str| {
+            h.get_by_role_and_label(Role::CheckBox, name)
+                .accesskit_node()
+                .toggled()
+                .is_some_and(|t| t == egui::accesskit::Toggled::True)
+        };
+        assert!(!checked(&harness, "Alle Mitglieder"));
+        assert!(checked(&harness, "Moderation"));
+        assert!(checked(&harness, "Stammgäste"));
+        harness
+            .get_by_role_and_label(Role::CheckBox, "Stammgäste")
+            .click();
+        harness.run_steps(4);
+        assert!(checked(&harness, "Moderation"));
+        assert!(!checked(&harness, "Stammgäste"));
+        // Esc closes the list, not the dialog.
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Stammgäste").is_none());
+        let trigger = harness.get_by_role_and_label(Role::Button, "Zugriff");
+        assert!(
+            trigger
+                .accesskit_node()
+                .description()
+                .is_some_and(|d| d.starts_with("Moderation "))
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Speichern")
+            .click();
+        let patch = format!("PATCH /channels/{SPIELE}");
+        wait_for(&mut harness, "the patch", |_| {
+            sent.lock().iter().any(|(r, _)| *r == patch)
+        });
+        let body: serde_json::Value = {
+            let sent = sent.lock();
+            let (_, body) = sent.iter().find(|(r, _)| *r == patch).expect("patch");
+            serde_json::from_str(body).expect("json")
+        };
+        assert_eq!(body["role_ids"], serde_json::json!([MODERATION]));
+
+        // A new channel: "Alle Mitglieder" sends no `role_ids`; choosing
+        // a role clears "Alle Mitglieder" and limits it.
+        for limit in [false, true] {
+            open_channel(&harness.ctx.clone(), home, None, None);
+            wait_for_label(&mut harness, "Zugriff");
+            harness.run_steps(4);
+            harness
+                .get_by_role_and_label(Role::TextInput, "Name")
+                .focus();
+            harness.step();
+            harness
+                .get_by_role_and_label(Role::TextInput, "Name")
+                .type_text(if limit { "geheim" } else { "offen" });
+            harness.run_steps(2);
+            if limit {
+                harness
+                    .get_by_role_and_label(Role::Button, "Zugriff")
+                    .click();
+                harness.run_steps(4);
+                assert!(checked(&harness, "Alle Mitglieder"));
+                harness
+                    .get_by_role_and_label(Role::CheckBox, "Moderation")
+                    .click();
+                harness.run_steps(4);
+                assert!(!checked(&harness, "Alle Mitglieder"));
+                harness.key_press(egui::Key::Escape);
+                harness.run_steps(4);
+            }
+            harness
+                .get_by_role_and_label(Role::Button, "Erstellen")
+                .click();
+            let post = format!("POST /servers/{HOME}/channels");
+            let count = if limit { 2 } else { 1 };
+            wait_for(&mut harness, "the create", |_| {
+                sent.lock().iter().filter(|(r, _)| *r == post).count() == count
+            });
+            let body: serde_json::Value = {
+                let sent = sent.lock();
+                let (_, body) = sent.iter().rfind(|(r, _)| *r == post).expect("post");
+                serde_json::from_str(body).expect("json")
+            };
+            if limit {
+                assert_eq!(body["role_ids"], serde_json::json!([MODERATION]));
+            } else {
+                assert!(body.get("role_ids").is_none(), "{body}");
+            }
+            harness.run_steps(4);
+        }
     }
 }

@@ -3,7 +3,7 @@
 //! whom [`sections`] shows it.
 
 mod invite;
-mod roles;
+pub(crate) mod roles;
 
 use std::collections::HashMap;
 use std::sync::Arc;

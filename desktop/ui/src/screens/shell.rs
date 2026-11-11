@@ -4,6 +4,7 @@
 //! route, remembers where the user was, sends "/" there, and runs the
 //! workspace shortcuts; the pages draw into the rects it hands them.
 
+pub(crate) mod access;
 mod channel_sidebar;
 pub(crate) mod common;
 pub mod connection;
