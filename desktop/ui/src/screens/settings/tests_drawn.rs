@@ -187,3 +187,32 @@ fn the_media_dialog_over_its_own_page_keeps_its_controls_apart() {
         });
     }
 }
+
+/// Darstellung in English: the language section names itself and its
+/// options in the interface's language, each option in its own.
+#[test]
+fn the_language_section_follows_the_interface_language() {
+    within(30, || {
+        use gelabber_i18n::Locale;
+        let _config = crate::platform::paths::testing::TempConfig::new("language-english");
+        let _locale = gelabber_i18n::on_this_thread(Locale::De);
+        let (mut h, world, _client, _call) =
+            harness("/settings/darstellung", settings_page("darstellung"));
+        {
+            let mut world = world.borrow_mut();
+            let mut user = world.session.user().cloned().unwrap();
+            user["locale"] = "de".into();
+            world.session.adopt(&serde_json::json!({ "user": user }));
+        }
+        h.run_steps(4);
+        assert!(h.query_by_label("Sprache").is_some());
+        assert!(h.query_by_label("Language").is_none());
+        gelabber_i18n::set(Locale::En);
+        h.run_steps(4);
+        assert!(h.query_by_label("Language").is_some());
+        assert!(h.query_by_label("Sprache").is_none());
+        // Each language is named in its own language on its option.
+        assert!(h.query_by_label("Deutsch").is_some());
+        assert!(h.query_by_label("English").is_some());
+    });
+}

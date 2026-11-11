@@ -63,7 +63,7 @@ pub const AREAS: [Area; 9] = [
         id: "darstellung",
         group: "app",
         label: "Darstellung",
-        description: "Farbschema, Textgröße und Bewegung.",
+        description: "Sprache, Farbschema, Textgröße und Bewegung.",
         scope: None,
     },
     Area {
