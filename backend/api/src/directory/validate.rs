@@ -15,6 +15,10 @@ pub const DESCRIPTION_MAX: usize = 300;
 pub const MESSAGE_MAX: usize = 300;
 /// Longest search text.
 pub const QUERY_MAX: usize = 100;
+/// Listings per page of the search.
+pub const PAGE: i64 = 30;
+/// Highest `offset` of the search: 34 pages.
+pub const OFFSET_MAX: i64 = 990;
 
 /// How a person gets in through the directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -111,6 +115,30 @@ pub fn message(raw: Option<&str>, errors: &mut FieldErrors) -> Option<String> {
 /// control characters. Absent or blank is no search (`None`, no error).
 pub fn query(raw: Option<&str>, errors: &mut FieldErrors) -> Option<String> {
     line("q", raw.unwrap_or_default(), QUERY_MAX, errors).filter(|q| !q.is_empty())
+}
+
+/// The search's language filter: absent or empty is every language,
+/// anything else must be a code from [`languages::LANGUAGES`].
+pub fn language_filter(raw: Option<&str>, errors: &mut FieldErrors) -> Option<&'static str> {
+    let raw = raw.filter(|raw| !raw.is_empty())?;
+    let found = languages::find(raw);
+    if found.is_none() {
+        errors.insert("language", "invalid");
+    }
+    found
+}
+
+/// The search's `offset`: absent is 0, otherwise a multiple of [`PAGE`]
+/// from 0 to [`OFFSET_MAX`].
+pub fn offset(raw: Option<&str>, errors: &mut FieldErrors) -> i64 {
+    match raw.map(str::parse::<i64>) {
+        None => 0,
+        Some(Ok(value)) if (0..=OFFSET_MAX).contains(&value) && value % PAGE == 0 => value,
+        Some(_) => {
+            errors.insert("offset", "invalid");
+            0
+        }
+    }
 }
 
 /// `text` as a literal inside an `ILIKE … ESCAPE '\'` pattern: `\`, `%` and
@@ -249,5 +277,41 @@ mod tests {
         let long = "q".repeat(QUERY_MAX + 1);
         assert_eq!(code("q", |e| query(Some(&long), e)), Some("too_long"));
         assert_eq!(code("q", |e| query(Some("a\0"), e)), Some("invalid"));
+    }
+
+    #[test]
+    fn the_language_filter_is_optional() {
+        assert_eq!(
+            run(|e| language_filter(None, e)),
+            (None, FieldErrors::new())
+        );
+        assert_eq!(
+            run(|e| language_filter(Some(""), e)),
+            (None, FieldErrors::new())
+        );
+        assert_eq!(run(|e| language_filter(Some("en"), e)).0, Some("en"));
+        assert_eq!(
+            code("language", |e| language_filter(Some("xx"), e)),
+            Some("invalid")
+        );
+    }
+
+    #[test]
+    fn offsets_are_whole_pages_up_to_the_last() {
+        let ok = |raw: Option<&str>| {
+            let mut errors = FieldErrors::new();
+            let value = offset(raw, &mut errors);
+            assert!(errors.is_empty(), "{raw:?}");
+            value
+        };
+        assert_eq!(ok(None), 0);
+        assert_eq!(ok(Some("0")), 0);
+        assert_eq!(ok(Some("30")), 30);
+        assert_eq!(ok(Some("990")), OFFSET_MAX);
+        for bad in ["-30", "15", "1020", "x", "", "3.0"] {
+            let mut errors = FieldErrors::new();
+            offset(Some(bad), &mut errors);
+            assert_eq!(errors.get("offset"), Some(&"invalid"), "{bad}");
+        }
     }
 }
