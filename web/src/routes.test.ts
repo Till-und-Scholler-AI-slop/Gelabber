@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { useSession } from "./auth/session.ts";
 import { OPERATOR_PAGES } from "./operator/areas.ts";
 import { SETTINGS_AREAS } from "./pages/settingsAreas.ts";
-import { router, validateAuthSearch } from "./routes.tsx";
+import { router, signedInTarget, validateAuthSearch } from "./routes.tsx";
 
 /** Runs a route's guard and returns what it threw, if anything. */
 function guard(routeId: string, params: Record<string, string> = {}) {
@@ -199,6 +199,23 @@ describe("router", () => {
         bare: true,
       });
     }
+  });
+});
+
+describe("where a signed-in visitor of the login page goes", () => {
+  it("takes a failed provider sign-in on to Sicherheit, with its error", () => {
+    expect(signedInTarget({})).toBe("/");
+    expect(signedInTarget({ redirect: "/d" })).toBe("/d");
+    expect(
+      signedInTarget({ redirect: "/settings/konto", oidc_error: "failed" }),
+    ).toBe("/settings/konto?oidc_error=failed");
+    expect(
+      signedInTarget({
+        redirect: "/settings/konto?delete=1",
+        oidc_error: "failed",
+      }),
+    ).toBe("/settings/konto?delete=1&oidc_error=failed");
+    expect(signedInTarget({ redirect: "/d", oidc_error: "failed" })).toBe("/d");
   });
 });
 

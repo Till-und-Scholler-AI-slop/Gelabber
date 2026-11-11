@@ -392,6 +392,20 @@ describe("Sicherheit → Kontodaten", () => {
     expect(button(remove)).toEqual({ label: "Konto löschen", disabled: false });
   });
 
+  it("opens Konto löschen again after Mit Google bestätigen", () => {
+    expect(data({ export: null, mail: true })).not.toContain(
+      "Konto endgültig löschen?",
+    );
+    fixture.search = { delete: 1 };
+    expect(data({ export: null, mail: true })).toContain(
+      "Konto endgültig löschen?",
+    );
+    fixture.search = { delete: 1, oidc_error: "failed" };
+    expect(data({ export: null, mail: true })).not.toContain(
+      "Konto endgültig löschen?",
+    );
+  });
+
   it("offers a first export", () => {
     const html = exportRowOf(data({ export: null, mail: true }));
     expect(html).toContain(

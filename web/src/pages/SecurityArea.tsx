@@ -51,6 +51,8 @@ import {
   useSession,
 } from "../auth/session.ts";
 import {
+  DELETE_ACCOUNT_RETURN,
+  reopensDeletion,
   SECURITY_PATH,
   oidcErrorRows,
   signInFeedback,
@@ -156,7 +158,8 @@ function useSignInFeedback(): SignInFeedback {
   const search = useSearch({ strict: false });
   const navigate = useNavigate();
   const [feedback] = useState(() => signInFeedback(search));
-  const reported = "connected" in search || "oidc_error" in search;
+  const reported =
+    "connected" in search || "oidc_error" in search || "delete" in search;
   useEffect(() => {
     if (!reported) return;
     void navigate({
@@ -943,7 +946,10 @@ function ExportRow({ userId }: { userId: string }) {
 
 function DeleteAccountRow({ userId }: { userId: string }) {
   const t = useT(account);
-  const [open, setOpen] = useState(false);
+  const search = useSearch({ strict: false });
+  // Back from "Mit … bestätigen": the dialog is open again. The sign-in
+  // section's feedback hook takes `delete` out of the address.
+  const [open, setOpen] = useState(() => reopensDeletion(search));
   return (
     <ActionRow
       title={t("delete.title")}
@@ -1073,6 +1079,8 @@ function OwnedServerRow({ server }: { server: OwnedServer }) {
           to="/s/$serverId/settings"
           params={{ serverId: server.id }}
           hash="server-settings-gefahrenzone"
+          // The settings page goes to the section itself, inside its scroller.
+          hashScrollIntoView={false}
           className={buttonClass({ size: "sm" })}
           aria-describedby={describedBy}
         >
@@ -1138,7 +1146,7 @@ function ConfirmDeleteDialog({
 
   const confirm = useMutation({
     mutationFn: (id: string) =>
-      startOidc(id, { purpose: "sign_in", redirect: SECURITY_PATH }),
+      startOidc(id, { purpose: "sign_in", redirect: DELETE_ACCOUNT_RETURN }),
     onError: fromError,
   });
 

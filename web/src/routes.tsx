@@ -149,9 +149,13 @@ async function requireAnonymous({ search }: { search: AuthSearch }) {
  */
 export function signedInTarget(search: AuthSearch): string {
   const target = search.redirect ?? "/";
-  if (search.oidc_error && target === SECURITY_PATH)
-    return `${target}?${new URLSearchParams({ oidc_error: search.oidc_error })}`;
-  return target;
+  if (!search.oidc_error) return target;
+  // Also from the Konto löschen dialog, which comes back with `?delete=1`.
+  const [path, query] = target.split("?", 2);
+  if (path !== SECURITY_PATH) return target;
+  const params = new URLSearchParams(query);
+  params.set("oidc_error", search.oidc_error);
+  return `${path}?${params}`;
 }
 
 // The profile became the first settings area; old links and bookmarks land

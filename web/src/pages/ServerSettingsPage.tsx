@@ -110,6 +110,34 @@ const SECTION_LABEL = {
 
 const sectionId = (id: SectionId) => `server-settings-${id}`;
 
+/** The section the address names (`#server-settings-…`), if any. */
+function openedSection(sections: readonly SectionId[]): SectionId | null {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash.slice(1);
+  return sections.find((id) => sectionId(id) === hash) ?? null;
+}
+
+/**
+ * Brings a section's heading up under the anchor row. Only this scroller
+ * moves: scrollIntoView would also shift the shell around it (it scrolls
+ * clipped ancestors too).
+ */
+function scrollToSection(
+  element: HTMLElement,
+  id: SectionId,
+): HTMLElement | null {
+  const heading = document.getElementById(sectionId(id));
+  if (!heading) return null;
+  const margin = parseFloat(getComputedStyle(heading).scrollMarginTop) || 0;
+  element.scrollBy({
+    top:
+      heading.getBoundingClientRect().top -
+      element.getBoundingClientRect().top -
+      margin,
+  });
+  return heading;
+}
+
 /**
  * The section in view, for the anchor row. A jump marks its section even
  * where the page cannot scroll that heading up to the row (the short last
@@ -122,12 +150,25 @@ function useCurrentSection(
 ) {
   const [current, setCurrent] = useState(sections[0]);
   const jumped = useRef<SectionJump<SectionId> | null>(null);
+  // Opened at a section (`#server-settings-gefahrenzone` from Konto
+  // löschen): go there and mark it, again while content loading above moves
+  // it, until the reader scrolls or clicks by themselves.
+  const opened = useRef(openedSection(sections));
   const key = sections.join(" ");
 
   useEffect(() => {
     const element = scroller.current;
     if (!element) return;
     const ids = key.split(" ") as SectionId[];
+    const follow = () => {
+      const id = opened.current;
+      if (!id || !ids.includes(id) || !scrollToSection(element, id)) return;
+      jumped.current = { id, scrollTop: element.scrollTop };
+      setCurrent(id);
+    };
+    const release = () => {
+      opened.current = null;
+    };
     const update = () => {
       const line = nav.current?.getBoundingClientRect().bottom ?? 0;
       const headings = ids.flatMap((id) => {
@@ -146,15 +187,25 @@ function useCurrentSection(
       jumped.current = view.jump;
       setCurrent((before) => view.current ?? before);
     };
-    update();
+    const relayout = () => {
+      follow();
+      update();
+    };
+    relayout();
     element.addEventListener("scroll", update, { passive: true });
+    const own = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+    for (const type of own)
+      element.addEventListener(type, release, { passive: true });
     // Invites and bans load later and move the sections below them.
     const resized =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(relayout);
     resized?.observe(element);
     if (element.lastElementChild) resized?.observe(element.lastElementChild);
     return () => {
       element.removeEventListener("scroll", update);
+      for (const type of own) element.removeEventListener(type, release);
       resized?.disconnect();
     };
   }, [key, scroller, nav]);
@@ -174,17 +225,8 @@ function useCurrentSection(
 
   const jump = (id: SectionId) => {
     const element = scroller.current;
-    const heading = document.getElementById(sectionId(id));
+    const heading = element && scrollToSection(element, id);
     if (!element || !heading) return;
-    // Only this scroller moves: scrollIntoView would also shift the shell
-    // around it (it scrolls clipped ancestors too).
-    const margin = parseFloat(getComputedStyle(heading).scrollMarginTop) || 0;
-    element.scrollBy({
-      top:
-        heading.getBoundingClientRect().top -
-        element.getBoundingClientRect().top -
-        margin,
-    });
     heading.focus({ preventScroll: true });
     jumped.current = { id, scrollTop: element.scrollTop };
     setCurrent(id);
@@ -682,43 +724,62 @@ function DangerSection({ server }: { server: ServerDetail }) {
     void navigate({ to: "/", replace: true });
   };
 
+  const act = async () => {
+    if (owner) {
+      if (
+        !(await confirmAction({
+          title: t("danger.deleteTitle", { name: server.name }),
+          message: t("danger.deleteMessage"),
+          confirmLabel: t("danger.delete"),
+        }))
+      )
+        return;
+      remove.mutate(server.id);
+    } else {
+      if (
+        !(await confirmAction({
+          title: t("danger.leaveTitle", { name: server.name }),
+          confirmLabel: t("danger.leaveConfirm"),
+        }))
+      )
+        return;
+      leave.mutate(server.id);
+    }
+    // Optimistic: the server is already gone from the rail.
+    go();
+  };
+
+  // The owner's rows each say what they do; the deletion sentence is the
+  // hint of Server löschen, not of the section above Server übergeben.
+  if (dangerRows(server).includes("transfer"))
+    return (
+      <Section id="gefahrenzone">
+        <ul className="settings-action-list">
+          <TransferRow server={server} />
+          <ActionRow
+            title={t("danger.delete")}
+            hint={t("danger.ownerHint")}
+            status={null}
+            action={(describedBy) => (
+              <Button
+                size="sm"
+                variant="danger-outline"
+                aria-describedby={describedBy}
+                onClick={() => void act()}
+              >
+                {t("danger.delete")}
+              </Button>
+            )}
+          />
+        </ul>
+      </Section>
+    );
+
   return (
-    <Section
-      id="gefahrenzone"
-      hint={owner ? t("danger.ownerHint") : t("danger.memberHint")}
-    >
-      {dangerRows(server).includes("transfer") ? (
-        <TransferRow server={server} />
-      ) : null}
+    <Section id="gefahrenzone" hint={t("danger.memberHint")}>
       <div className="settings-actions">
-        <Button
-          variant="danger-outline"
-          onClick={async () => {
-            if (owner) {
-              if (
-                !(await confirmAction({
-                  title: t("danger.deleteTitle", { name: server.name }),
-                  message: t("danger.deleteMessage"),
-                  confirmLabel: t("danger.delete"),
-                }))
-              )
-                return;
-              remove.mutate(server.id);
-            } else {
-              if (
-                !(await confirmAction({
-                  title: t("danger.leaveTitle", { name: server.name }),
-                  confirmLabel: t("danger.leaveConfirm"),
-                }))
-              )
-                return;
-              leave.mutate(server.id);
-            }
-            // Optimistic: the server is already gone from the rail.
-            go();
-          }}
-        >
-          {owner ? t("danger.delete") : t("danger.leave")}
+        <Button variant="danger-outline" onClick={() => void act()}>
+          {t("danger.leave")}
         </Button>
       </div>
     </Section>
@@ -731,29 +792,27 @@ function TransferRow({ server }: { server: ServerDetail }) {
   const [open, setOpen] = useState(false);
   const none = transferCandidates(server).length === 0;
   return (
-    <ul className="settings-action-list">
-      <ActionRow
-        title={t("transfer.title")}
-        hint={none ? t("transfer.noMember") : t("transfer.hint")}
-        status={null}
-        action={(describedBy) => (
-          <Button
-            size="sm"
-            aria-describedby={describedBy}
-            disabled={none}
-            onClick={() => setOpen(true)}
-          >
-            {t("transfer.open")}
-          </Button>
-        )}
-      >
-        <TransferDialog
-          server={server}
-          open={open}
-          onClose={() => setOpen(false)}
-        />
-      </ActionRow>
-    </ul>
+    <ActionRow
+      title={t("transfer.title")}
+      hint={none ? t("transfer.noMember") : t("transfer.hint")}
+      status={null}
+      action={(describedBy) => (
+        <Button
+          size="sm"
+          aria-describedby={describedBy}
+          disabled={none}
+          onClick={() => setOpen(true)}
+        >
+          {t("transfer.open")}
+        </Button>
+      )}
+    >
+      <TransferDialog
+        server={server}
+        open={open}
+        onClose={() => setOpen(false)}
+      />
+    </ActionRow>
   );
 }
 

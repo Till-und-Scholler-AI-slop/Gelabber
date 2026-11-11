@@ -510,6 +510,16 @@ describe("Gefahrenzone: Server übergeben", () => {
     );
   });
 
+  it("makes Server löschen a row of its own, with the deletion as its hint", () => {
+    const html = danger(owner());
+    const heading = html.slice(0, html.indexOf("</header>"));
+    expect(heading).not.toContain("Löscht Kanäle");
+    expect(html).toMatch(
+      /<span[^>]*class="settings-action-row__title">Server löschen<\/span><span[^>]*class="settings-hint">Löscht Kanäle, Kategorien, Nachrichten, Einladungen und Mitgliedschaften endgültig.<\/span>/,
+    );
+    expect(html).toMatch(/<button[^>]*danger-outline[^>]*>Server löschen</);
+  });
+
   it("is not there for members, even with every right", () => {
     const html = danger(
       page(["manage_server", "moderate_members"], { members: MEMBERS }),

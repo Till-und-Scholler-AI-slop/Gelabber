@@ -43,11 +43,28 @@ export function signInFeedback(search: unknown): SignInFeedback {
   return out;
 }
 
-/** The address's search without what `signInFeedback` reads. */
+/**
+ * Where "Mit … bestätigen" in the Konto löschen dialog comes back to, so
+ * the dialog opens again once the person has signed in afresh (#519).
+ */
+export const DELETE_ACCOUNT_RETURN = `${SECURITY_PATH}?delete=1`;
+
+/** Back from that sign-in, and it worked: open Konto löschen again. */
+export function reopensDeletion(search: unknown): boolean {
+  if (typeof search !== "object" || search === null) return false;
+  const { delete: reopen, oidc_error } = search as Record<string, unknown>;
+  return (reopen === 1 || reopen === "1") && oidc_error === undefined;
+}
+
+/**
+ * The address's search without what `signInFeedback` and
+ * `reopensDeletion` read.
+ */
 export function withoutFeedback<T extends object>(search: T): T {
   const rest: Partial<Record<string, unknown>> = { ...search };
   delete rest.connected;
   delete rest.oidc_error;
+  delete rest.delete;
   return rest as T;
 }
 
