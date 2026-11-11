@@ -526,6 +526,14 @@ pub enum ServerFrame {
     /// socket of the account switches. Only to that account's own sockets.
     #[serde(rename = "lc")]
     Locale { l: Locale },
+    /// The account is now a member of server `s`: its request to join was
+    /// accepted (issue #520). Only to that account's own sockets.
+    #[serde(rename = "jn")]
+    Joined { s: Uuid },
+    /// Server `s` has `n` pending requests to join now (issue #520). Only to
+    /// the accounts that answer them.
+    #[serde(rename = "jq")]
+    JoinRequests { s: Uuid, n: i64 },
 }
 
 /// A conversation's new read position and what is still unread after it.
@@ -681,6 +689,10 @@ pub enum UserFrame {
     Read { d: Vec<ReadSync> },
     #[serde(rename = "lc")]
     Locale { l: Locale },
+    #[serde(rename = "jn")]
+    Joined { s: Uuid },
+    #[serde(rename = "jq")]
+    JoinRequests { s: Uuid, n: i64 },
 }
 
 impl From<UserFrame> for ServerFrame {
@@ -689,6 +701,8 @@ impl From<UserFrame> for ServerFrame {
             UserFrame::NotificationSettings => Self::NotificationSettings,
             UserFrame::Read { d } => Self::Read { d },
             UserFrame::Locale { l } => Self::Locale { l },
+            UserFrame::Joined { s } => Self::Joined { s },
+            UserFrame::JoinRequests { s, n } => Self::JoinRequests { s, n },
         }
     }
 }
@@ -1022,5 +1036,30 @@ mod tests {
             super::ServerFrame::from(frame).to_json().unwrap(),
             r#"{"op":"lc","l":"en"}"#
         );
+    }
+
+    /// The directory's frames survive Redis and reach the socket as `jn`
+    /// and `jq`.
+    #[test]
+    fn join_frames_wire_format() {
+        let s = Uuid::from_u128(1);
+        for (frame, wire) in [
+            (
+                super::UserFrame::Joined { s },
+                r#"{"op":"jn","s":"00000000-0000-0000-0000-000000000001"}"#,
+            ),
+            (
+                super::UserFrame::JoinRequests { s, n: 3 },
+                r#"{"op":"jq","s":"00000000-0000-0000-0000-000000000001","n":3}"#,
+            ),
+        ] {
+            let raw = serde_json::to_string(&frame).unwrap();
+            assert_eq!(raw, wire);
+            assert_eq!(
+                serde_json::from_str::<super::UserFrame>(&raw).unwrap(),
+                frame
+            );
+            assert_eq!(super::ServerFrame::from(frame).to_json().unwrap(), wire);
+        }
     }
 }
