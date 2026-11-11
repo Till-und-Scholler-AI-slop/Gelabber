@@ -429,6 +429,10 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "session_changed",
   "owns_servers",
   "export_pending",
+  "join_request_required",
+  "join_request_declined",
+  "join_requests_full",
+  "already_member",
 ]);
 
 function toErrorCode(raw: string | undefined): ApiErrorCode {
