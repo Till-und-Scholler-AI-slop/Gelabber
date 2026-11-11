@@ -436,7 +436,11 @@ fn language_section(ui: &mut Ui, app: &mut AppCtx, s: &mut State, card_w: f32) {
     .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, language::section_title()));
     ui.add_space(4.0);
     let top = ui.cursor().min;
-    let (gap, card_h) = (12.0, 58.0);
+    // RadioCard: 1px border and 12px padding around the taller option, a
+    // label with its name below (`gap: 2px`); the grid row gives both cards
+    // that height.
+    let gap = 12.0;
+    let card_h = 2.0 * 13.0 + text::UI.line_px() + 2.0 + text::META.line_px();
     let current = gelabber_i18n::get();
     let mut chosen = None;
     let mut arrowed = None;
@@ -505,7 +509,8 @@ fn language_section(ui: &mut Ui, app: &mut AppCtx, s: &mut State, card_w: f32) {
             pos2(rect.left() + 13.0, rect.center().y - 10.0),
             checked,
         );
-        let x = rect.left() + 43.0;
+        // Border, padding, the 20px radio and the 12px gap.
+        let x = rect.left() + 45.0;
         let y = rect.center().y - text_h / 2.0;
         Block::single(ui, label, text::UI, c.text).paint(ui.painter(), pos2(x, y));
         if let Some(description) = description {
