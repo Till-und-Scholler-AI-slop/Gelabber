@@ -1960,6 +1960,11 @@ impl Client {
             }
             ServerFrame::Dm { .. } => self.schedule_recovery(false),
             ServerFrame::Locale { l } => self.write(|s| record_locale(s, l)),
+            ServerFrame::Joined { s } => {
+                let this = self.clone();
+                self.spawn(async move { this.joined(s).await });
+            }
+            ServerFrame::JoinRequests { s, n } => self.write(|st| st.set_join_requests(s, n)),
             _ => {}
         }
     }
@@ -2003,6 +2008,25 @@ impl Client {
             server,
             text: gelabber_i18n::auth::error_server_blocked().into(),
         });
+    }
+
+    /// `jn` (`applyDirectoryFrame`): the server list is read again, then a
+    /// toast names the new server. Nothing when the list does not hold it
+    /// or the account changed meanwhile.
+    async fn joined(&self, server: Uuid) {
+        let epoch = self.epoch();
+        self.reload_servers().await;
+        let name = self.with_state(|s| {
+            (s.epoch() == epoch)
+                .then(|| s.server(server).map(|v| v.name.clone()))
+                .flatten()
+        });
+        if let Some(name) = name {
+            self.notify(Notice::Joined {
+                server,
+                text: gelabber_i18n::discovery::toasts_joined(&name),
+            });
+        }
     }
 
     /// Coalesces gap/ready/resync/dm into REST rounds (`useRealtime.ts`):
@@ -2388,5 +2412,124 @@ mod tests {
             .filter(|l| l.starts_with("GET /api/servers "))
             .count();
         assert!(rounds >= 2, "{rounds} rounds");
+    }
+    /// Answers `GET /api/servers` with `list`, everything else with 500.
+    fn server_list(list: serde_json::Value) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = list.to_string();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let body = body.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    let answer = if head.starts_with("GET /api/servers ") {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    } else {
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                    };
+                    let _ = stream.write_all(answer.as_bytes());
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn listed(id: Uuid, name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "name": name, "owner_id": Uuid::from_u128(9),
+            "icon_url": null, "created_at": "2026-10-01T00:00:00Z", "role": "member",
+            "permissions": [], "member_permissions": [],
+        })
+    }
+
+    /// `jn` (`applyDirectoryFrame`): the list is read again and a toast
+    /// names the new server.
+    #[test]
+    fn an_accepted_request_reads_the_list_and_names_the_server() {
+        let keller = Uuid::from_u128(7);
+        let url = server_list(serde_json::json!([
+            listed(Uuid::from_u128(6), "Wohnzimmer"),
+            listed(keller, "Modellbau-Keller"),
+        ]));
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.on_gateway(GatewayEvent::Frame(ServerFrame::Joined { s: keller }));
+        let start = std::time::Instant::now();
+        let notices = loop {
+            let notices = client.take_notices();
+            if !notices.is_empty() {
+                break notices;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5), "no notice");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            notices,
+            [Notice::Joined {
+                server: keller,
+                text: "Du bist jetzt Mitglied von Modellbau-Keller.".into(),
+            }]
+        );
+        assert!(client.with_state(|s| s.server(keller).is_some()));
+    }
+
+    /// A list without the server (or a failed read) says nothing.
+    #[test]
+    fn a_join_the_list_does_not_hold_says_nothing() {
+        let url = server_list(serde_json::json!([listed(
+            Uuid::from_u128(6),
+            "Wohnzimmer"
+        )]));
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.on_gateway(GatewayEvent::Frame(ServerFrame::Joined {
+            s: Uuid::from_u128(7),
+        }));
+        let start = std::time::Instant::now();
+        while !client.with_state(|s| s.servers_loaded) {
+            assert!(start.elapsed() < Duration::from_secs(5), "list not read");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(client.take_notices().is_empty());
+    }
+
+    /// `jq`: the count is set and every frame counts as a change; no toast.
+    #[test]
+    fn a_queue_frame_sets_the_count() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let (home, other) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let queue = |n| {
+            client.on_gateway(GatewayEvent::Frame(ServerFrame::JoinRequests {
+                s: home,
+                n,
+            }));
+        };
+        queue(3);
+        queue(3);
+        let count = client.with_state(|s| s.join_requests.get(&home).copied());
+        assert_eq!(
+            count,
+            Some(crate::store::JoinRequestCount {
+                pending: 3,
+                changes: 2
+            })
+        );
+        assert!(client.with_state(|s| !s.join_requests.contains_key(&other)));
+        assert!(client.take_notices().is_empty());
+        assert!(seen.lock().is_empty(), "{:?}", seen.lock());
+        // A server that goes takes its count along.
+        client.write(|s| s.forget_server(home));
+        assert!(client.with_state(|s| s.join_requests.is_empty()));
     }
 }

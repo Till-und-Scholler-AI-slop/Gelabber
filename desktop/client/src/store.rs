@@ -470,6 +470,21 @@ pub enum Notice {
         server: Uuid,
         text: String,
     },
+    /// A request to join was accepted (`jn`): the server is in the list
+    /// now, and `text` names it.
+    Joined {
+        server: Uuid,
+        text: String,
+    },
+}
+
+/// A server's pending requests to join, as the last `jq` said.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct JoinRequestCount {
+    pub pending: i64,
+    /// Bumped by every `jq`, so a queue on screen reads itself again even
+    /// when the number stayed (one answered, one new).
+    pub changes: u64,
 }
 
 #[derive(Debug, Default)]
@@ -524,6 +539,9 @@ pub struct State {
     /// The newest Lives worth a notice, oldest first; each consumer keeps
     /// the last `seq` it handled.
     pub live_started: Vec<LiveStart>,
+    /// server → its pending requests to join, from `jq` (owner and
+    /// `moderate_members` only); absent until the first frame.
+    pub join_requests: HashMap<Uuid, JoinRequestCount>,
     /// When the server list and each server's detail were last fetched
     /// (or a background refetch began), for the stale refetch.
     pub(crate) servers_fetched: Option<Instant>,
@@ -764,6 +782,7 @@ impl State {
         if self.voice_self.server == Some(server) {
             self.voice_self = VoiceSelf::default();
         }
+        self.join_requests.remove(&server);
     }
 
     /// An operator blocked the server (`markServerBlocked`): everything of
@@ -785,6 +804,13 @@ impl State {
             self.servers.insert(i, entry);
         }
         true
+    }
+
+    /// `jq`: the number of a server's pending requests to join changed.
+    pub fn set_join_requests(&mut self, server: Uuid, pending: i64) {
+        let count = self.join_requests.entry(server).or_default();
+        count.pending = pending;
+        count.changes += 1;
     }
 
     // ----------------------------------------------------------- presence

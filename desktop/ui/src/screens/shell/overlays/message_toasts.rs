@@ -228,6 +228,7 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
                     toasts.push(incoming, now);
                 }
             }
+            Notice::Joined { text, .. } => app.toasts.notify(text),
         }
     }
     for incoming in live_toasts(ctx, app, &mut toasts.live_seen, viewing) {
