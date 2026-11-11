@@ -11,6 +11,8 @@
 //!   account.
 //! - `POST /api/auth/oidc/desktop/exchange`: the desktop app trades its
 //!   result code.
+//! - `GET /api/auth/methods` and `DELETE /api/auth/oidc/{provider}`: how the
+//!   signed-in account can sign in, and disconnecting a provider.
 //!
 //! Every session is issued by `auth::signed_in`. Logs name the provider,
 //! the account and the outcome, never a state, code, verifier, nonce, token
@@ -25,16 +27,18 @@ use axum::http::header::{CACHE_CONTROL, HOST, LOCATION, REFERRER_POLICY};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{AppendHeaders, IntoResponse, Json, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tracing::{info, warn};
 use url::Url;
+use uuid::Uuid;
 
 use super::flow::{self, Desktop, Flow, NewFlow, NewResult, Purpose, Stored};
 use super::link::{self, Identity, SignIn};
 use super::{Claims, pkce};
-use crate::auth::session::{self, CurrentSession};
+use crate::auth::session::{self, CurrentSession, CurrentUser};
 use crate::auth::{
     Outgoing, Redacted, SessionResponse, send_mail, signed_in_parts, transport_allowed, user,
     validate,
@@ -68,6 +72,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/oidc/pending", post(pending))
         .route("/api/auth/oidc/complete", post(complete))
         .route("/api/auth/oidc/desktop/exchange", post(desktop_exchange))
+        .route("/api/auth/methods", get(methods))
+        .route("/api/auth/oidc/{provider}", delete(disconnect))
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -776,7 +782,10 @@ enum ExchangeResponse {
         email: String,
         name: Option<String>,
     },
-    Linked,
+    Linked {
+        #[serde(flatten)]
+        methods: Box<MethodsResponse>,
+    },
 }
 
 /// The desktop app trades the code its loopback receiver got, proving with
@@ -831,7 +840,8 @@ async fn desktop_exchange(
             notify_connected(&state, &current.user, provider);
         }
         info!(provider = provider.id, user_id = %current.user.id, outcome = "linked", "oidc exchange");
-        return Ok(Json(ExchangeResponse::Linked).into_response());
+        let methods = Box::new(methods_of(&state, current.user.id).await?);
+        return Ok(Json(ExchangeResponse::Linked { methods }).into_response());
     }
     if stored.signup {
         // Asked again before the name step finished.
@@ -883,6 +893,135 @@ async fn desktop_exchange(
             );
             Ok(Json(needs_name(stored)).into_response())
         }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct MethodsResponse {
+    password: bool,
+    providers: Vec<MethodsProvider>,
+}
+
+#[derive(Debug, Serialize)]
+struct MethodsProvider {
+    id: String,
+    name: String,
+    /// `false`: the operator turned it off; it can still be disconnected.
+    configured: bool,
+    connected: Option<Connected>,
+}
+
+#[derive(Debug, Serialize)]
+struct Connected {
+    /// The provider's address at the last sign-in.
+    email: String,
+    since: DateTime<Utc>,
+}
+
+/// How the signed-in account can sign in: with a password or not, and
+/// every configured provider, connected or not.
+async fn methods(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<MethodsResponse>, ApiError> {
+    Ok(Json(methods_of(&state, user.id).await?))
+}
+
+/// Disconnects a provider. Refused while the account has no password
+/// (`409 password_required`): it could not sign in any more. Sessions stay.
+async fn disconnect(
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<MethodsResponse>, ApiError> {
+    let mut tx = state.db.begin().await?;
+    // The row lock orders this after a concurrent first password.
+    let has_password: bool =
+        sqlx::query_scalar("SELECT password_hash IS NOT NULL FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user.id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(ApiError::Unauthenticated)?;
+    let connected: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM user_identities WHERE user_id = $1 AND provider = $2)",
+    )
+    .bind(user.id)
+    .bind(&provider_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !connected {
+        return Err(ApiError::NotFound);
+    }
+    if !has_password {
+        return Err(ApiError::PasswordRequired);
+    }
+    sqlx::query("DELETE FROM user_identities WHERE user_id = $1 AND provider = $2")
+        .bind(user.id)
+        .bind(&provider_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    info!(provider = %provider_id, user_id = %user.id, outcome = "disconnected", "oidc identity");
+    Ok(Json(methods_of(&state, user.id).await?))
+}
+
+/// The methods body: the configured providers in their order, then any
+/// provider the account is still connected to after it was turned off.
+async fn methods_of(state: &AppState, user_id: Uuid) -> Result<MethodsResponse, ApiError> {
+    let password = user::password_hash_by_id(&state.db, user_id)
+        .await?
+        .is_some();
+    let mut identities: Vec<(String, String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT provider, email, created_at FROM user_identities \
+         WHERE user_id = $1 ORDER BY provider",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await?;
+    let mut take = |id: &str| {
+        identities
+            .iter()
+            .position(|(provider, _, _)| provider == id)
+            .map(|index| {
+                let (_, email, since) = identities.remove(index);
+                Connected { email, since }
+            })
+    };
+    let configured = state
+        .oidc
+        .as_ref()
+        .map(|oidc| oidc.config.providers.as_slice());
+    let mut providers: Vec<MethodsProvider> = configured
+        .unwrap_or_default()
+        .iter()
+        .map(|provider| MethodsProvider {
+            id: provider.id.to_owned(),
+            name: provider.name.to_owned(),
+            configured: true,
+            connected: take(provider.id),
+        })
+        .collect();
+    providers.extend(
+        identities
+            .into_iter()
+            .map(|(id, email, since)| MethodsProvider {
+                name: known_name(&id).map_or_else(|| id.clone(), str::to_owned),
+                id,
+                configured: false,
+                connected: Some(Connected { email, since }),
+            }),
+    );
+    Ok(MethodsResponse {
+        password,
+        providers,
+    })
+}
+
+/// The display name of a provider that is no longer configured.
+fn known_name(id: &str) -> Option<&'static str> {
+    match id {
+        "google" => Some("Google"),
+        _ => None,
     }
 }
 
