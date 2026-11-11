@@ -1,7 +1,11 @@
 // The data export of an account (#519): `GET`/`POST /api/me/export` and
 // the download, and how the row in Sicherheit → Kontodaten words its state.
 
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import {
+  queryOptions,
+  useQuery,
+  type QueryClient,
+} from "@tanstack/react-query";
 
 import { API_BASE, ApiError, api } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
@@ -120,6 +124,24 @@ export function exportRequestError(error: unknown): string | null {
       when: waitWords(error.retryAfter),
     });
   return errorMessage(error.code);
+}
+
+/**
+ * A refused request means the row is out of date: another tab or device
+ * asked already (409), or its archive is ready and younger than a day
+ * (429). The row is read again, and the message is the row's error line.
+ */
+export function exportRequestFailed(
+  error: unknown,
+  queryClient: QueryClient,
+  userId: string,
+): string | null {
+  if (
+    error instanceof ApiError &&
+    (error.code === "export_pending" || error.code === "rate_limited")
+  )
+    void queryClient.invalidateQueries({ queryKey: exportKey(userId) });
+  return exportRequestError(error);
 }
 
 /** "in 5 Stunden", "in 12 Minuten", "in 30 Sekunden". */

@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ApiError } from "../api/client.ts";
@@ -7,6 +8,7 @@ import {
   exportKey,
   exportQueryOptions,
   exportRequestError,
+  exportRequestFailed,
   exportRow,
   isBuilding,
   type ExportStatus,
@@ -93,6 +95,33 @@ describe("the export row", () => {
     ).toBeNull();
     setLocale("en", { persist: false });
     expect(tooSoon(3600)).toBe("You can request a new export in 1 hour.");
+  });
+
+  it("reads the row again when the refusal says it is out of date", () => {
+    const refused = (error: unknown) => {
+      const client = new QueryClient();
+      client.setQueryData(exportKey("u1"), { export: null, mail: true });
+      const message = exportRequestFailed(error, client, "u1");
+      return {
+        message,
+        refetched: client.getQueryState(exportKey("u1"))?.isInvalidated,
+      };
+    };
+    // Another tab or device asked already: its export is being built.
+    expect(refused(new ApiError("export_pending", 409, "Pending."))).toEqual({
+      message: "Dein Export wird schon erstellt.",
+      refetched: true,
+    });
+    // A ready archive younger than a day: the row offers its download.
+    expect(
+      refused(new ApiError("rate_limited", 429, "Too many.", {}, 7200)),
+    ).toEqual({
+      message: "Einen neuen Export kannst du in 2 Stunden anfordern.",
+      refetched: true,
+    });
+    expect(refused(new ApiError("internal", 500, "Oops."))).toMatchObject({
+      refetched: false,
+    });
   });
 });
 

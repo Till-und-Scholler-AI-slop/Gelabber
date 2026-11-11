@@ -72,3 +72,53 @@ export function deletionRefusal(error: unknown): DeletionRefusal {
   if (email && email !== "required") return { kind: "emailWrong" };
   return { kind: "other" };
 }
+
+/** What the dialog does for each refusal. */
+export type DeletionSteps = {
+  owned: (servers: OwnedServer[]) => void;
+  reauth: () => void;
+  emailWrong: () => void;
+  other: (error: unknown) => void;
+};
+
+/** Hands a refused deletion to the dialog's step for it. */
+export function onDeletionRefused(error: unknown, steps: DeletionSteps): void {
+  const refusal = deletionRefusal(error);
+  switch (refusal.kind) {
+    case "owned":
+      return steps.owned(refusal.servers);
+    case "reauth":
+      return steps.reauth();
+    case "emailWrong":
+      return steps.emailWrong();
+    case "other":
+      return steps.other(error);
+  }
+}
+
+/**
+ * Submitting the dialog: an empty field is required and sends nothing, and
+ * a deletion already on its way is not sent twice. A password is sent as
+ * typed, since spaces may be part of it; an address without its spaces.
+ */
+export function submitDeletion(
+  value: string,
+  hasPassword: boolean,
+  {
+    pending,
+    required,
+    send,
+  }: {
+    pending: boolean;
+    required: () => void;
+    send: (confirmation: DeleteConfirmation) => void;
+  },
+): void {
+  if (pending) return;
+  const email = value.trim();
+  if (hasPassword ? value.length === 0 : email.length === 0) {
+    required();
+    return;
+  }
+  send(hasPassword ? { password: value } : { email });
+}

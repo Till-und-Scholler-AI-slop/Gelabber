@@ -9,25 +9,20 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import {
   deleteAndLeave,
-  deletionRefusal,
+  onDeletionRefused,
   ownedServers,
+  submitDeletion,
   type DeleteConfirmation,
   type OwnedServer,
 } from "../account/deletion.ts";
 import {
   EXPORT_DOWNLOAD_URL,
   exportKey,
-  exportRequestError,
+  exportRequestFailed,
   exportRow,
   requestExport,
   useExport,
@@ -75,6 +70,7 @@ import { confirmAction } from "../components/confirm.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { LoadError } from "../components/LoadError.tsx";
+import { focusRowAfterRemoval } from "../components/rowFocus.ts";
 import { GhostButton, Modal } from "../components/Modal.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
@@ -707,6 +703,16 @@ export function ConnectProviderDialog({
 export function DevicesSection({ userId }: { userId: string }) {
   const t = useT(account);
   const query = useSessions(userId);
+  const list = useRef<HTMLUListElement>(null);
+  // The row being signed out, whose button focus leaves with it.
+  const leaving = useRef<{ id: string; index: number } | null>(null);
+  useEffect(() => {
+    const gone = leaving.current;
+    if (!gone || !query.data || !list.current) return;
+    if (query.data.some((session) => session.id === gone.id)) return;
+    leaving.current = null;
+    focusRowAfterRemoval(list.current, gone.index);
+  }, [query.data]);
   return (
     <section
       className="settings-group settings-action-section"
@@ -715,10 +721,17 @@ export function DevicesSection({ userId }: { userId: string }) {
       <h3 id="devices-heading" className="settings-group-title">
         {t("devices.title")}
       </h3>
-      <ul className="settings-action-list">
+      <ul ref={list} className="settings-action-list">
         {query.data ? (
-          query.data.map((session) => (
-            <DeviceRow key={session.id} userId={userId} session={session} />
+          query.data.map((session, index) => (
+            <DeviceRow
+              key={session.id}
+              userId={userId}
+              session={session}
+              onSignOut={() => {
+                leaving.current = { id: session.id, index };
+              }}
+            />
           ))
         ) : (
           <li className="settings-action-list__state">
@@ -742,9 +755,11 @@ export function DevicesSection({ userId }: { userId: string }) {
 function DeviceRow({
   userId,
   session,
+  onSignOut,
 }: {
   userId: string;
   session: DeviceSession;
+  onSignOut: () => void;
 }) {
   const t = useT(account);
   const queryClient = useQueryClient();
@@ -780,6 +795,7 @@ function DeviceRow({
           pendingLabel={t("devices.signingOut")}
           onClick={() => {
             show(null);
+            onSignOut();
             signOut.mutate();
           }}
         >
@@ -865,10 +881,7 @@ function ExportRow({ userId }: { userId: string }) {
     mutationFn: requestExport,
     onSuccess: (next) => queryClient.setQueryData(exportKey(userId), next),
     onError: (error) => {
-      // Another tab asked already: show that one being built.
-      if (error instanceof ApiError && error.code === "export_pending")
-        void queryClient.invalidateQueries({ queryKey: exportKey(userId) });
-      const message = exportRequestError(error);
+      const message = exportRequestFailed(error, queryClient, userId);
       if (message) show({ tone: "error", message });
     },
   });
@@ -905,7 +918,8 @@ function ExportRow({ userId }: { userId: string }) {
             {t("export.download")}
           </a>
         ) : row.action === "building" ? (
-          <Button size="sm" disabled aria-describedby={describedBy}>
+          // Not `disabled`: the button that asked keeps focus once it is this.
+          <Button size="sm" aria-disabled="true" aria-describedby={describedBy}>
             {t("export.building")}
           </Button>
         ) : (
@@ -1107,24 +1121,19 @@ function ConfirmDeleteDialog({
   const remove = useMutation({
     mutationFn: (confirmation: DeleteConfirmation) =>
       deleteAndLeave(confirmation, navigate),
-    onError: (error) => {
-      const refusal = deletionRefusal(error);
-      switch (refusal.kind) {
-        case "owned":
+    onError: (error) =>
+      onDeletionRefused(error, {
+        owned: (servers) => {
           clear();
-          onOwned(refusal.servers);
-          return;
-        case "reauth":
+          onOwned(servers);
+        },
+        reauth: () => {
           clear();
           setReauth(true);
-          return;
-        case "emailWrong":
-          setFields({ email: t("delete.emailWrong") });
-          return;
-        case "other":
-          fromError(error);
-      }
-    },
+        },
+        emailWrong: () => setFields({ email: t("delete.emailWrong") }),
+        other: fromError,
+      }),
   });
 
   const confirm = useMutation({
@@ -1135,11 +1144,11 @@ function ConfirmDeleteDialog({
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (value.trim().length === 0) {
-      setFields({ [field]: fieldMessage(field, "required") });
-      return;
-    }
-    remove.mutate(hasPassword ? { password: value } : { email: value.trim() });
+    submitDeletion(value, hasPassword, {
+      pending: remove.isPending,
+      required: () => setFields({ [field]: fieldMessage(field, "required") }),
+      send: (confirmation) => remove.mutate(confirmation),
+    });
   };
 
   const onChange = (next: string) => {

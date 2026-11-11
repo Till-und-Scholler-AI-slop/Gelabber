@@ -82,11 +82,15 @@ function row(html: string, title: string): string {
   return found.slice(0, found.indexOf("</li>"));
 }
 
-/** The text of the row's button, and whether it is disabled. */
+/** The text of the row's button, and whether it is disabled, natively or
+ * as `aria-disabled` (which keeps it focusable). */
 function button(rowHtml: string): { label: string; disabled: boolean } {
   const match = /<button([^>]*)>(?:<[^>]+>)*([^<]+)/.exec(rowHtml);
   if (!match) throw new Error("no button");
-  return { label: match[2]!, disabled: / disabled=""/.test(match[1]!) };
+  return {
+    label: match[2]!,
+    disabled: / (disabled=""|aria-disabled="true")/.test(match[1]!),
+  };
 }
 
 beforeEach(() => {
@@ -414,6 +418,8 @@ describe("Sicherheit → Kontodaten", () => {
     );
     expect(html).toContain("Wird erstellt. Das kann eine Weile dauern.");
     expect(button(html)).toEqual({ label: "Wird erstellt…", disabled: true });
+    // Focusable, so the button that asked keeps focus once it reads this.
+    expect(html).not.toMatch(/<button[^>]* disabled=""/);
   });
 
   it("links the ready archive as the primary action", () => {

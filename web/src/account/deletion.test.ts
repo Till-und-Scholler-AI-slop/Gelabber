@@ -7,8 +7,10 @@ import { leaveVoice } from "../voice/session.ts";
 import {
   deleteAndLeave,
   deletionRefusal,
+  onDeletionRefused,
   ownedServers,
   ownedServersOf,
+  submitDeletion,
 } from "./deletion.ts";
 
 vi.mock("../auth/session.ts", () => ({ deleteAccount: vi.fn() }));
@@ -135,5 +137,86 @@ describe("deleting the account", () => {
         }),
       ),
     ).toEqual({ kind: "other" });
+  });
+});
+
+describe("the dialog Konto löschen", () => {
+  /** Records which step of the dialog a refusal took. */
+  function steps() {
+    const taken: unknown[] = [];
+    return {
+      taken,
+      steps: {
+        owned: (servers: unknown) => void taken.push(["owned", servers]),
+        reauth: () => void taken.push("reauth"),
+        emailWrong: () => void taken.push("emailWrong"),
+        other: (error: unknown) => void taken.push(["other", error]),
+      },
+    };
+  }
+
+  it("switches to the servers of a 409 owns_servers", () => {
+    const { taken, steps: dialog } = steps();
+    onDeletionRefused(
+      new ApiError("owns_servers", 409, "Servers.", {}, null, {
+        servers: [{ id: "s9", name: "Werkstatt", member_count: 2 }],
+      }),
+      dialog,
+    );
+    expect(taken).toEqual([
+      ["owned", [{ id: "s9", name: "Werkstatt", member_count: 2 }]],
+    ]);
+  });
+
+  it("asks for a fresh sign-in after reauth_required", () => {
+    const { taken, steps: dialog } = steps();
+    onDeletionRefused(
+      new ApiError("reauth_required", 403, "Sign in again."),
+      dialog,
+    );
+    expect(taken).toEqual(["reauth"]);
+  });
+
+  it("marks a wrong address, and shows anything else as it is", () => {
+    const { taken, steps: dialog } = steps();
+    onDeletionRefused(
+      new ApiError("validation_failed", 422, "Invalid.", { email: "wrong" }),
+      dialog,
+    );
+    const wrong = new ApiError("validation_failed", 422, "Invalid.", {
+      password: "wrong",
+    });
+    onDeletionRefused(wrong, dialog);
+    expect(taken).toEqual(["emailWrong", ["other", wrong]]);
+  });
+
+  /** Submits `value` and records what happened. */
+  function submit(value: string, hasPassword: boolean, pending = false) {
+    const happened: unknown[] = [];
+    submitDeletion(value, hasPassword, {
+      pending,
+      required: () => void happened.push("required"),
+      send: (confirmation) => void happened.push(confirmation),
+    });
+    return happened;
+  }
+
+  it("requires the field and sends nothing while it is empty", () => {
+    expect(submit("", true)).toEqual(["required"]);
+    expect(submit("", false)).toEqual(["required"]);
+    expect(submit("   ", false)).toEqual(["required"]);
+  });
+
+  it("sends a password as typed, spaces included, and an address trimmed", () => {
+    expect(submit("  ", true)).toEqual([{ password: "  " }]);
+    expect(submit(" secret ", true)).toEqual([{ password: " secret " }]);
+    expect(submit(" ada@example.com ", false)).toEqual([
+      { email: "ada@example.com" },
+    ]);
+  });
+
+  it("sends nothing while a deletion is on its way", () => {
+    expect(submit("secret", true, true)).toEqual([]);
+    expect(submit("", true, true)).toEqual([]);
   });
 });
