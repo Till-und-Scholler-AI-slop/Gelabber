@@ -169,13 +169,21 @@ fn header(
         }
         end = frame.left();
     }
-    let max = end - 10.0 - x - 28.0;
+    // A room limited to roles: the lock after its name (14, gap 10).
+    let limited = crate::screens::shell::access::is_limited(app, server, channel);
+    let lock_room = if limited { 14.0 + 10.0 } else { 0.0 };
+    let max = end - 10.0 - x - 28.0 - lock_room;
     let mut job = text::job(name, TITLE, c.text, Some(max.max(40.0)));
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     let title = Block::new(ui, job, TITLE);
     title.paint(ui.painter(), pos2(x + 28.0, mid - TITLE.line_px() / 2.0));
-    let after = x + 28.0 + title.width() + 10.0;
+    let mut after = x + 28.0 + title.width() + 10.0;
+    if limited {
+        let id = Id::unique(("gelabber-voice-title", channel));
+        let lock = crate::screens::shell::access::lock(ui, ui.painter(), id, after, mid);
+        after = lock.right() + 10.0;
+    }
     if let Some(facts) = facts(room) {
         // `.voice-header-facts`: 13/500 muted, one line with an ellipsis.
         let room_for = end - 10.0 - after;

@@ -21,6 +21,8 @@ pub enum Title<'a> {
     Channel {
         name: &'a str,
         voice: bool,
+        /// Limited to roles: a lock after the name.
+        limited: bool,
     },
     Dm {
         name: &'a str,
@@ -90,7 +92,11 @@ pub fn show(
         Title::Dm { name, .. } => texts::header_bell_label(name, muted),
     };
     match title {
-        Title::Channel { name, voice } => {
+        Title::Channel {
+            name,
+            voice,
+            limited,
+        } => {
             let x = rect.left() + 20.0;
             icons::paint(
                 ui.painter(),
@@ -99,12 +105,26 @@ pub fn show(
                 18.0,
                 c.muted,
             );
-            let mut job = crate::text::job(name, TITLE, c.text, Some(max_title.max(40.0)));
+            // `.lr-channel-title-lock` keeps its 14 and the 10 gap.
+            let lock_room = if limited { 10.0 + 14.0 } else { 0.0 };
+            let mut job =
+                crate::text::job(name, TITLE, c.text, Some((max_title - lock_room).max(40.0)));
             job.wrap.max_rows = 1;
             job.wrap.break_anywhere = true;
             let block = Block::new(ui, job, TITLE);
             block.paint(ui.painter(), pos2(x + 28.0, mid - TITLE.line_px() / 2.0));
             out.title_right = x + 28.0 + block.width();
+            if limited {
+                let id = egui::Id::unique(("gelabber-header-title", channel));
+                let lock = crate::screens::shell::access::lock(
+                    ui,
+                    ui.painter(),
+                    id,
+                    out.title_right + 10.0,
+                    mid,
+                );
+                out.title_right = lock.right();
+            }
         }
         Title::Dm {
             name,

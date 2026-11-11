@@ -660,6 +660,12 @@ fn channel_row(
     } else {
         color
     };
+    if ch.limited {
+        // `.channel-row-lock`: after the draft, before the badge; the hover
+        // actions lie over it while they show.
+        let lock = super::access::lock(ui, &painter, link_id, name_right - 14.0, row.center().y);
+        name_right = lock.left() - 10.0;
+    }
     if draft {
         // `.channel-row-draft`: the pencil titled "Entwurf" before the badge.
         let pencil = Rect::from_min_size(
@@ -1335,5 +1341,32 @@ mod tests {
         name(&harness);
         harness.run_steps(4);
         assert!(harness.query_by_label("Servereinstellungen").is_none());
+    }
+
+    /// A channel limited to roles shows a lock in its row and in the
+    /// header, named "Nur für bestimmte Rollen"; others none.
+    #[test]
+    fn a_limited_channel_shows_a_lock() {
+        use crate::app::testkit::{
+            ALLGEMEIN, FakeApi, HOME, SPIELE, launcher, wait_for_label, workspace,
+        };
+        use crate::platform::paths::testing::TempConfig;
+        use egui_kittest::kittest::Queryable;
+
+        let _config = TempConfig::new("sidebar-lock");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let locks = |h: &egui_kittest::Harness<'_, crate::Launcher>| {
+            h.query_all_by_label("Nur für bestimmte Rollen").count()
+        };
+        // allgemein open: only spiele's row.
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "musik");
+        harness.run_steps(4);
+        assert_eq!(locks(&harness), 1);
+        // spiele open: its row and its header.
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{SPIELE}"));
+        wait_for_label(&mut harness, "musik");
+        harness.run_steps(4);
+        assert_eq!(locks(&harness), 2);
     }
 }
