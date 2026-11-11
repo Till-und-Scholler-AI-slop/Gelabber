@@ -333,6 +333,48 @@ Accounts that existed before migration 0021 count as confirmed. Accounts registe
 
 Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As with every migration, an older API binary does not start against the migrated database; roll back with the backed-up snapshot pair as described below.
 
+## Sign-in with Google
+
+People can sign in with their Google account next to email and password ("Mit Google anmelden" on the sign-in and register pages, and in the desktop app). It is off until both Google values are set; email and password stay available to everyone either way. Gelabber talks to Google through OpenID Connect directly, with no SDK, script or tracking from Google in the pages.
+
+**In the Google Cloud console** (a project of your own):
+
+1. Under "Google Auth Platform" (formerly "OAuth consent screen"), set the app name, a support address and your domain ("Branding"), and publish the app under "Audience" ("In production"). While it is in testing, only the test users listed there can sign in. Gelabber asks only for `openid`, `email` and `profile`, which need no entry under "Data Access".
+2. Under "Clients" (or "Credentials" → "Create credentials" → "OAuth client ID"), create a client of type **Web application**. Its one **authorised redirect URI** is exactly `APP_PUBLIC_URL` followed by `/api/auth/oidc/google/callback`, for example `https://chat.example.org/api/auth/oidc/google/callback`. No JavaScript origin is needed. Google accepts `http://` redirect URIs only for `localhost`, so a public instance needs TLS (see "Behind TLS").
+3. Copy the client ID and the client secret into `.env`:
+
+```sh
+APP_PUBLIC_URL=https://chat.example.org
+OIDC_GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+OIDC_GOOGLE_CLIENT_SECRET=…
+```
+
+Then `docker compose up -d --no-deps --force-recreate api`. Only one of the two values, or either without `APP_PUBLIC_URL`, stops the API at start with the missing variable's name. The API does not contact Google at start; it fetches Google's discovery document and keys on the first sign-in (cached 24 hours and 1 hour). If Google cannot be reached, the sign-in page shows that sign-in with Google failed, and the reason is logged (`oidc callback failed`). `OIDC_GOOGLE_ISSUER` stays empty; it exists for test setups.
+
+- **Web sign-in works only at `APP_PUBLIC_URL`.** Google sends the browser back there, and the flow is tied to the browser that started it by a cookie only that address sees (`gelabber_oidc`, `Path=/api/auth/oidc`, 30 minutes, `HttpOnly`, `SameSite=Lax`). Opened at another address (the LAN IP, a second domain), the button answers `oidc_wrong_origin` and the page asks to open the instance's address. A proxy of your own must pass the original `Host` header through. The desktop app works with any address of the instance: it gets the result on a temporary port on `127.0.0.1` and proves with its own secret that it started the flow.
+- **Transport:** as with password sign-in, the API signs in only over TLS with `API_COOKIE_SECURE=true`, on `localhost`, or with `API_ALLOW_PLAIN_HTTP=true`.
+- **Registration:** a first sign-in that would create an account passes the same gate as registration with a password (`API_REGISTRATION`, see "Betrieb"). With `invitation`, the register page sends the beta invitation along, and a server invite link (`/invite/…`) admits the person as it does for registration; without a valid one, the person is sent back to the register page with "invitation required" or "invitation invalid", before the name step. Signing in to an existing account is never gated.
+- **Rate limits:** every request of the flow, the return from Google included, counts against the per-address `auth` bucket (`API_RATE_AUTH_PER_MIN`).
+
+**Which account a Google sign-in opens.** Google's account ID, not the address, identifies a connected Google account; the address only decides the first sign-in:
+
+- A Google account connected before signs in to its Gelabber account, even if its Google address changed since.
+- Google must report the address as verified. Otherwise nothing is created or connected (`email_unverified`), so no Google account (or another provider later) can claim someone else's address.
+- A Gelabber account with that address whose address is **confirmed** (by account mail, or because it existed before account mail) gets the Google account connected and is signed in. With account mail on, its owner gets a mail that Google was connected.
+- A registration with that address that nobody confirmed yet (account mail on) counts as no account: the Google sign-in takes it over after the name step, and the password whoever registered it chose no longer works, nor does its confirmation link. Otherwise a stranger who registered someone's address first would share the account its owner opens with Google.
+- An account with that address that was **never confirmed** (registered while account mail was off) is refused (`account_unverified`): nothing proves that the person who chose its password owns the address. Its owner signs in with the password and connects Google under Einstellungen → Sicherheit, which also marks the address confirmed when it is the Google address.
+- A disabled account is refused (`account_disabled`), also through a connected Google account, and is never taken over.
+- Otherwise a new account is created: the person picks a display name once (Google's name is suggested) and has no password.
+- The return from Google is used once and only in the browser that started it, so a link to a captured callback cannot sign anyone in to the sender's account (login CSRF), and an old callback answers `expired`.
+
+**Connecting while signed in** (Einstellungen → Sicherheit, "Verbinden") needs the account's current password, counted like a failed sign-in when wrong, so a stolen session alone cannot add a permanent way in. With account mail on, the owner gets a mail that Google was connected. A Google account already connected to another Gelabber account is refused (`identity_taken`). If the browser signed in to another account meanwhile, the link is refused (`session_changed`).
+
+**Accounts without a password.** An account created through Google has none; password sign-in answers "wrong email or password" for it. Its owner sets one under Sicherheit ("Festlegen"), which needs a sign-in less than 10 minutes old (the page offers to confirm with Google again), or with a password reset mail when account mail is on. Disconnecting Google ("Trennen") works only while the account has a password, so nobody locks themselves out; sessions stay signed in. Registering with a password for the address of a Google-only account behaves as for any existing address.
+
+**Turning it off:** empty both values and recreate the API. The buttons disappear and nobody can sign in with Google any more, so accounts without a password need a reset mail (account mail on) to get back in. Connected Google accounts stay recorded and still show under Sicherheit, where they can be disconnected; setting the values again reconnects them as they were.
+
+Logs name the provider, the account ID and the outcome, never an address, code or token. Migration 0033 makes `users.password_hash` optional and adds `user_identities` (connected Google accounts) and `oidc_flows` / `oidc_results` (sign-ins in progress, kept at most 30 minutes; their state and result codes are stored only as hashes). As with every migration, an older API binary does not start against the migrated database.
+
 ## Database connections
 
 The API keeps up to `API_DB_MAX_CONNECTIONS` (default 20) Postgres connections; every open WebSocket checks its session once a second. The stack runs one API process, so keep the value well below Postgres' `max_connections` (100 in the bundled Postgres). After changing it, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
