@@ -171,11 +171,7 @@ pub fn overview_members(count: u64) -> String {
             format!("{count} Mitglied"),
             format!("{count} Mitglieder"),
         ),
-        Locale::En => plural(
-            count,
-            format!("{count} member"),
-            format!("{count} members"),
-        ),
+        Locale::En => plural(count, format!("{count} member"), format!("{count} members")),
     }
 }
 

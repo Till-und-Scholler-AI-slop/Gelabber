@@ -1,10 +1,6 @@
 # N4 shell: files whose interface text is not in the catalogs yet,
 # relative to desktop/. The batch deletes this list when it is done
 # (docs/i18n.md); i18n/tests/literals.rs skips the files listed here.
-client/src/commands.rs
-client/src/gateway.rs
-client/src/http.rs
-client/src/store.rs
 ui/src/screens/shell.rs
 ui/src/screens/shell/channel_sidebar.rs
 ui/src/screens/shell/common.rs

@@ -12,6 +12,8 @@ use reqwest::{Method, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use gelabber_i18n::{auth, shell as texts};
+
 use crate::models::CsrfResponse;
 
 /// Per REST request, as the web (`REQUEST_TIMEOUT_MS`).
@@ -21,7 +23,7 @@ pub const UPLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum ApiError {
-    #[error("Keine Verbindung zum Server ({0})")]
+    #[error("{}", texts::error_transport(.0))]
     Transport(String),
     /// The API's error envelope `{error, message, fields}`.
     #[error("{message}")]
@@ -34,7 +36,7 @@ pub enum ApiError {
         /// else its `Retry-After` header).
         retry_after: Option<f64>,
     },
-    #[error("Unerwartete Antwort ({0})")]
+    #[error("{}", texts::error_decode(.0))]
     Decode(String),
 }
 
@@ -73,9 +75,9 @@ impl ApiError {
         }
     }
 
-    /// The German text the web shows for the code (`auth/rules.ts`
-    /// `errorMessage`).
-    pub fn german(&self) -> &'static str {
+    /// The text the web shows for the code (`auth/rules.ts`
+    /// `errorMessage`), in the interface's language.
+    pub fn text(&self) -> &'static str {
         error_message(self.code())
     }
 
@@ -101,7 +103,8 @@ impl ApiError {
     }
 }
 
-const TIMEOUT_PREFIX: &str = "Zeitüberschreitung: ";
+// A marker `code()` reads, not text of its own.
+const TIMEOUT_PREFIX: &str = "Zeitüberschreitung: "; // i18n-ok
 
 const KNOWN_CODES: [&str; 21] = [
     "validation_failed",
@@ -127,37 +130,30 @@ const KNOWN_CODES: [&str; 21] = [
     "timeout",
 ];
 
-/// German copy per error code, verbatim from web/src/auth/rules.ts.
+/// The copy per error code, as web/src/auth/rules.ts (the auth catalog's
+/// `error_<code>`).
 pub fn error_message(code: &str) -> &'static str {
     match code {
-        "validation_failed" => "Bitte die markierten Felder prüfen.",
-        "unauthenticated" => "Bitte melde dich erneut an.",
-        "invalid_credentials" => "E-Mail oder Passwort ist falsch.",
-        "csrf_invalid" => "Sicherheits-Token abgelaufen. Bitte noch einmal versuchen.",
-        "insecure_transport" => {
-            "Anmelden geht nur über eine verschlüsselte Verbindung. Öffne Gelabber mit https:// (oder auf diesem Rechner über http://localhost)."
-        }
-        "forbidden" => "Dafür fehlt dir die Berechtigung.",
-        "not_found" => "Das gibt es nicht (mehr).",
-        "email_taken" => "Diese E-Mail-Adresse ist schon registriert.",
-        "email_unverified" => {
-            "Bitte bestätige zuerst deine E-Mail-Adresse. Wir haben dir gerade einen neuen Link geschickt."
-        }
-        "token_invalid" => "Dieser Link ist abgelaufen oder wurde schon benutzt.",
-        "theme_conflict" => "Auf einem anderen Gerät geändert. Bitte erneut versuchen.",
-        "invite_invalid" => "Diese Einladung ist abgelaufen oder aufgebraucht.",
-        "banned" => "Du bist auf diesem Server gesperrt.",
-        "rate_limited" => "Zu viele Anfragen. Bitte kurz warten und noch einmal versuchen.",
-        "quota_exceeded" => "Tageslimit für Uploads erreicht.",
-        "upstream_unavailable" => {
-            "Der GIF-Dienst antwortet gerade nicht. Bitte gleich noch einmal versuchen."
-        }
-        "upstream_quota" => {
-            "Dieser Server hat sein GIF-Kontingent gerade aufgebraucht. Bitte später noch einmal versuchen."
-        }
-        "network" => "Keine Verbindung zum Server.",
-        "timeout" => "Der Server antwortet nicht. Bitte noch einmal versuchen.",
-        _ => "Da ist etwas schiefgelaufen. Bitte noch einmal versuchen.",
+        "validation_failed" => auth::error_validation_failed(),
+        "unauthenticated" => auth::error_unauthenticated(),
+        "invalid_credentials" => auth::error_invalid_credentials(),
+        "csrf_invalid" => auth::error_csrf_invalid(),
+        "insecure_transport" => auth::error_insecure_transport(),
+        "forbidden" => auth::error_forbidden(),
+        "not_found" => auth::error_not_found(),
+        "email_taken" => auth::error_email_taken(),
+        "email_unverified" => auth::error_email_unverified(),
+        "token_invalid" => auth::error_token_invalid(),
+        "theme_conflict" => auth::error_theme_conflict(),
+        "invite_invalid" => auth::error_invite_invalid(),
+        "banned" => auth::error_banned(),
+        "rate_limited" => auth::error_rate_limited(),
+        "quota_exceeded" => auth::error_quota_exceeded(),
+        "upstream_unavailable" => auth::error_upstream_unavailable(),
+        "upstream_quota" => auth::error_upstream_quota(),
+        "network" => auth::error_network(),
+        "timeout" => auth::error_timeout(),
+        _ => auth::error_internal(),
     }
 }
 
@@ -311,7 +307,7 @@ impl Http {
             ""
         };
         self.jar.add_cookie_str(
-            &format!("gelabber_session={value}; Path=/; HttpOnly{secure}"),
+            &format!("gelabber_session={value}; Path=/; HttpOnly{secure}"), // i18n-ok
             &self.base,
         );
     }
@@ -510,7 +506,7 @@ impl Http {
             Err(ApiError::Api {
                 status: res.status().as_u16(),
                 code: "upload_failed".into(),
-                message: "Der Upload ist fehlgeschlagen.".into(),
+                message: texts::error_upload_failed().into(),
                 fields: serde_json::Value::Null,
                 retry_after: None,
             })
@@ -550,7 +546,7 @@ impl Http {
             match self.session_cookie() {
                 Some(cookie) => {
                     self.jar
-                        .add_cookie_str("gelabber_session=; Path=/; Max-Age=0", &self.base);
+                        .add_cookie_str("gelabber_session=; Path=/; Max-Age=0", &self.base); // i18n-ok
                     *held = Some(HeldSignOut { cookie, everywhere });
                 }
                 None => {
@@ -631,7 +627,7 @@ impl Http {
             .map_err(ApiError::from_reqwest)?;
         let status = res.status();
         let max = kind.max_bytes();
-        let too_large = || ApiError::Decode(format!("mehr als {max} Bytes"));
+        let too_large = || ApiError::Decode(texts::error_too_large(max));
         if res.content_length().is_some_and(|n| n > max as u64) {
             return Err(too_large());
         }
@@ -721,7 +717,7 @@ fn envelope(status: StatusCode, bytes: &[u8], header_wait: Option<f64>) -> ApiEr
             .get("message")
             .and_then(|v| v.as_str())
             .map(str::to_owned)
-            .unwrap_or_else(|| format!("Fehler {}", status.as_u16())),
+            .unwrap_or_else(|| texts::error_status(status.as_u16())),
         fields: value
             .get("fields")
             .cloned()
@@ -825,10 +821,7 @@ mod tests {
         assert_eq!(api("x").field("email"), Some("invalid"));
         assert_eq!(ApiError::Transport("x".into()).code(), "network");
         assert_eq!(ApiError::timeout("x").code(), "timeout");
-        assert_eq!(
-            api("banned").german(),
-            "Du bist auf diesem Server gesperrt."
-        );
+        assert_eq!(api("banned").text(), "Du bist auf diesem Server gesperrt.");
     }
 
     #[test]

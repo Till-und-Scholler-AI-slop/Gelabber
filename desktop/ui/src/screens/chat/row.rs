@@ -79,7 +79,7 @@ impl SendState {
 /// `attempt.error`: "{stage} fehlgeschlagen." and the uploads the server
 /// turned down, by file name.
 pub fn failure_line(pending: &gelabber_client::PendingMessage) -> String {
-    let mut line = format!("{} fehlgeschlagen.", pending.stage.label());
+    let mut line = pending.stage.failed().to_owned();
     if let Some(error) = &pending.failed
         && let Some(rejected) = gelabber_client::store::rejected_uploads(error)
     {

@@ -176,7 +176,7 @@ pub fn show(
             }
             Err(e) => {
                 state.pages.clear();
-                state.result = Some(Err(e.german().to_owned()));
+                state.result = Some(Err(e.text().to_owned()));
             }
         }
     }

@@ -881,7 +881,7 @@ impl Session {
                 if transient {
                     self.schedule_rebuild(generation);
                 } else {
-                    self.give_up(Leave::Refused(error.german().into()));
+                    self.give_up(Leave::Refused(error.text().into()));
                 }
                 return;
             }

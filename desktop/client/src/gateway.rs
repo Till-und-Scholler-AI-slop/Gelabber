@@ -754,14 +754,14 @@ impl Failure {
                 if status == 401 {
                     Self::Unauthenticated
                 } else if status.is_client_error() && status != 408 && status != 429 {
-                    Self::Refused(format!("HTTP {}", status.as_u16()))
+                    Self::Refused(format!("HTTP {}", status.as_u16())) // i18n-ok
                 } else {
                     Self::Network
                 }
             }
-            Error::Tls(error) => Self::Refused(format!("TLS: {error}")),
+            Error::Tls(error) => Self::Refused(format!("TLS: {error}")), // i18n-ok
             Error::Io(io) => match io.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()) {
-                Some(error) => Self::Refused(format!("TLS: {error}")),
+                Some(error) => Self::Refused(format!("TLS: {error}")), // i18n-ok
                 None => Self::Network,
             },
             _ => Self::Network,
@@ -788,7 +788,7 @@ async fn connect(http: Http) -> Result<Socket, Failure> {
         request.headers_mut().insert("Cookie", value);
     }
     let connector =
-        crate::http::ws_connector().map_err(|e| Failure::Refused(format!("TLS: {e}")))?;
+        crate::http::ws_connector().map_err(|e| Failure::Refused(format!("TLS: {e}")))?; // i18n-ok
     let connect =
         tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
     match tokio::time::timeout(Duration::from_secs(10), connect).await {

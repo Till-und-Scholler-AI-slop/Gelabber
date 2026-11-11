@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use gelabber_i18n::{chat, dms, servers, shell};
 use uuid::Uuid;
 
 use crate::gateway::GatewayStatus;
@@ -116,12 +117,12 @@ pub enum SendStage {
 }
 
 impl SendStage {
-    /// The start of the row's failure line: "{label} fehlgeschlagen.".
-    pub fn label(self) -> &'static str {
+    /// The start of the row's failure line: "{stage} fehlgeschlagen.".
+    pub fn failed(self) -> &'static str {
         match self {
-            Self::Presign => "Dateifreigabe",
-            Self::Upload => "Dateiübertragung",
-            Self::Bind => "Nachricht speichern",
+            Self::Presign => chat::send_presign_failed(),
+            Self::Upload => chat::send_upload_failed(),
+            Self::Bind => chat::send_bind_failed(),
         }
     }
 }
@@ -182,26 +183,26 @@ pub fn rejected_uploads(error: &ApiError) -> Option<Vec<(Option<usize>, String, 
 pub fn failure_text(op: &str) -> Option<&'static str> {
     let kind = op.split_once(':').map_or(op, |(kind, _)| kind);
     Some(match kind {
-        "server_update" => "Server nicht gespeichert.",
-        "delete_server" => "Server nicht gelöscht.",
-        "leave" => "Server nicht verlassen.",
-        "create_category" => "Kategorie nicht erstellt.",
-        "category" => "Kategorie nicht gespeichert.",
-        "delete_category" => "Kategorie nicht gelöscht.",
-        "create_channel" => "Kanal nicht erstellt.",
-        "channel" => "Kanal nicht gespeichert.",
-        "delete_channel" => "Kanal nicht gelöscht.",
-        "revoke" => "Einladung nicht widerrufen.",
-        "kick" => "Mitglied nicht entfernt.",
-        "ban" => "Mitglied nicht gesperrt.",
-        "unban" => "Mitglied nicht entsperrt.",
-        "edit" => "Änderung nicht gespeichert.",
-        "delete" => "Nachricht nicht gelöscht.",
-        "react" => "Reaktion nicht gespeichert.",
-        "dm" => "Unterhaltung nicht geöffnet.",
+        "server_update" => servers::error_server_not_saved(),
+        "delete_server" => servers::error_server_not_deleted(),
+        "leave" => servers::error_server_not_left(),
+        "create_category" => servers::error_category_not_created(),
+        "category" => servers::error_category_not_saved(),
+        "delete_category" => servers::error_category_not_deleted(),
+        "create_channel" => servers::error_channel_not_created(),
+        "channel" => servers::error_channel_not_saved(),
+        "delete_channel" => servers::error_channel_not_deleted(),
+        "revoke" => servers::error_invite_not_revoked(),
+        "kick" => servers::error_member_not_kicked(),
+        "ban" => servers::error_member_not_banned(),
+        "unban" => servers::error_member_not_unbanned(),
+        "edit" => chat::row_edit_failed(),
+        "delete" => chat::delete_failed(),
+        "react" => chat::reactions_not_saved(),
+        "dm" => dms::open_failed(),
         // A row menu's choices; the dialog shows its own failure.
-        "notify_menu" => "Nicht gespeichert.",
-        "read" | "read_all" => "Nicht als gelesen markiert.",
+        "notify_menu" => shell::row_menu_not_saved(),
+        "read" | "read_all" => shell::row_menu_not_marked_read(),
         _ => return None,
     })
 }
@@ -212,7 +213,7 @@ pub fn failure_text(op: &str) -> Option<&'static str> {
 pub fn gone_text(op: &str) -> Option<&'static str> {
     let kind = op.split_once(':').map_or(op, |(kind, _)| kind);
     // The message, its conversation or your access to it is gone.
-    (kind == "react").then_some("Die Nachricht gibt es nicht mehr.")
+    (kind == "react").then(chat::reactions_gone)
 }
 
 /// A file to attach; kept with the pending row so a retry can send it again.
@@ -349,9 +350,7 @@ impl ChannelMessages {
         // Nothing in it could be read: the cursor would not move and the
         // pane would ask for the same page again. The error row stops it.
         if page.messages.is_empty() && page.has_more {
-            self.error = Some(ApiError::Decode(
-                "keine lesbare Nachricht auf der älteren Seite".into(),
-            ));
+            self.error = Some(ApiError::Decode(shell::error_unreadable_page().into()));
             return;
         }
         self.has_more = page.has_more;
@@ -884,7 +883,10 @@ impl State {
         let names: Vec<String> = self
             .typers(channel, now)
             .into_iter()
-            .map(|u| self.name_of(channel, u).unwrap_or_else(|| "Jemand".into()))
+            .map(|u| {
+                self.name_of(channel, u)
+                    .unwrap_or_else(|| shell::someone().into())
+            })
             .collect();
         typing_text(&names)
     }
@@ -1207,13 +1209,13 @@ impl State {
     }
 }
 
-/// `"{name} tippt…"` and friends, verbatim from web/src/ws/live.ts.
+/// `"{name} tippt…"` and friends, as web/src/ws/live.ts.
 pub fn typing_text(names: &[String]) -> String {
     match names {
         [] => String::new(),
-        [one] => format!("{one} tippt…"),
-        [a, b] => format!("{a} und {b} tippen…"),
-        [a, b, rest @ ..] => format!("{a}, {b} und {} weitere tippen…", rest.len()),
+        [one] => shell::typing_one(one),
+        [a, b] => shell::typing_two(a, b),
+        [a, b, rest @ ..] => shell::typing_more(a, b, rest.len() as u64),
     }
 }
 
@@ -1489,7 +1491,10 @@ mod tests {
         // Before the bind nothing can be saved yet.
         assert!(!send_uncertain(SendStage::Upload, &lost));
         assert!(!send_uncertain(SendStage::Presign, &lost));
-        assert_eq!(SendStage::Bind.label(), "Nachricht speichern");
+        assert_eq!(
+            SendStage::Bind.failed(),
+            "Nachricht speichern fehlgeschlagen."
+        );
 
         let mut p = PendingMessage::new(id(100), "x".into(), chrono::Utc::now());
         p.files = vec![
@@ -1729,6 +1734,24 @@ mod tests {
         assert_eq!(s.typing_text(id(5), now), "Jemand tippt…");
         assert!(s.prune_typing(now + TYPING_TTL));
         assert_eq!(s.typing_text(id(5), now), "");
+    }
+
+    #[test]
+    fn typing_text_in_english() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(typing_text(&n(&["Lena"])), "Lena is typing…");
+        assert_eq!(typing_text(&n(&["A", "B"])), "A and B are typing…");
+        assert_eq!(
+            typing_text(&n(&["A", "B", "C"])),
+            "A, B and 1 other are typing…"
+        );
+        assert_eq!(
+            typing_text(&n(&["A", "B", "C", "D"])),
+            "A, B and 2 others are typing…"
+        );
+        assert_eq!(failure_text("kick:1"), Some("Member not removed."));
+        assert_eq!(SendStage::Upload.failed(), "File upload failed.");
     }
 
     #[test]

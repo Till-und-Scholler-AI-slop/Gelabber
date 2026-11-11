@@ -1722,7 +1722,7 @@ impl Client {
                     return Err(ApiError::Api {
                         status: 0,
                         code: "unknown_level".into(),
-                        message: "Diese Stufe kennt diese Version von Gelabber nicht. Bitte wähle zuerst eine Stufe.".into(),
+                        message: gelabber_i18n::shell::notify_unknown_level().into(),
                         fields: serde_json::Value::Null,
                         retry_after: None,
                     });
@@ -1964,12 +1964,12 @@ impl Client {
         self.notify(if banned {
             Notice::Banned {
                 server,
-                text: "Du wurdest vom Server gesperrt.".into(),
+                text: gelabber_i18n::shell::removed_banned().into(),
             }
         } else {
             Notice::Kicked {
                 server,
-                text: "Du wurdest vom Server entfernt.".into(),
+                text: gelabber_i18n::shell::removed_kicked().into(),
             }
         });
     }
