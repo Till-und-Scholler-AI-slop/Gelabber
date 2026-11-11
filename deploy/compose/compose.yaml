@@ -121,6 +121,8 @@ services:
       OIDC_GOOGLE_CLIENT_ID: ${OIDC_GOOGLE_CLIENT_ID:-}
       OIDC_GOOGLE_CLIENT_SECRET: ${OIDC_GOOGLE_CLIENT_SECRET:-}
       OIDC_GOOGLE_ISSUER: ${OIDC_GOOGLE_ISSUER:-}
+      # Hours a finished data export stays downloadable; empty: 168 (7 days).
+      API_EXPORT_RETENTION_HOURS: ${API_EXPORT_RETENTION_HOURS:-}
     expose:
       - "8080"
     depends_on:
