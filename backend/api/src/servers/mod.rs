@@ -470,8 +470,9 @@ async fn transfer_server(
     .fetch_one(&mut *tx)
     .await?;
     // An account under deletion has left every server already; one that is
-    // being deleted right now is waited for.
-    if !is_member || !account_alive(&mut tx, target_id).await? {
+    // being deleted right now is waited for. A disabled account cannot sign
+    // in to manage the server, so it is refused like a non-member.
+    if !is_member || !account_usable(&mut tx, target_id).await? {
         return Err(ApiError::NotFound);
     }
 
@@ -516,6 +517,19 @@ async fn transfer_server(
 async fn account_alive(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, ApiError> {
     let found: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(found.is_some())
+}
+
+/// [`account_alive`] for an account that must also be able to sign in:
+/// not disabled by an operator (`users.disabled_at`).
+async fn account_usable(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, ApiError> {
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND disabled_at IS NULL \
+         FOR KEY SHARE",
     )
     .bind(user_id)
     .fetch_optional(&mut *tx)

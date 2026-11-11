@@ -1075,6 +1075,38 @@ async fn a_blocked_server_cannot_be_transferred(pool: PgPool) {
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
 }
 
+/// A member an operator disabled cannot sign in to manage the server, so
+/// it cannot be handed to them; they are answered like a non-member.
+#[sqlx::test]
+async fn a_disabled_member_cannot_take_over_the_server(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let id = id_of(&server);
+    let ada = owner.user_id().to_owned();
+    let bob = member.user_id().to_owned();
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1::uuid")
+        .bind(&bob)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = owner
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let still: String =
+        sqlx::query_scalar("SELECT owner_id::text FROM servers WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(still, ada);
+}
+
 type Ws =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
