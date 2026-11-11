@@ -1155,9 +1155,13 @@ pub fn action_row_badged(
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let width = ui.available_width();
+    // A primary or danger label is set at 600, so its button is wider.
     let button_w = button.as_ref().map_or(0.0, |b| {
-        let label = b.pending.unwrap_or(b.label);
-        Block::single(ui, label, text::UI, c.text).width() + 2.0 * 12.0 + 2.0
+        crate::widgets::Button::new(b.label)
+            .small()
+            .variant(b.variant)
+            .pending(b.pending)
+            .natural_width(ui)
     });
     let gap = if button.is_some() { 16.0 } else { 0.0 };
     let text_w = (width - button_w - gap).max(1.0);
