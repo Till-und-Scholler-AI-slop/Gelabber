@@ -47,7 +47,14 @@ impl Widget for Switch<'_> {
             let alpha = if self.disabled { 0.5 } else { 1.0 };
             let track = lerp(c.surface, c.accent, t).gamma_multiply(alpha);
             let border = lerp(c.border_strong, c.accent, t).gamma_multiply(alpha);
-            let knob = lerp(c.muted, c.accent_ink, t).gamma_multiply(alpha);
+            // `opacity` dims the switch as one picture: the knob shows the
+            // page under it, not the dimmed track.
+            let knob = lerp(c.muted, c.accent_ink, t);
+            let knob = if self.disabled {
+                crate::theme::mix(c.bg, knob, f64::from(alpha))
+            } else {
+                knob
+            };
             let painter = ui.painter();
             if response.has_focus() && keyboard_focus(ui.ctx()) {
                 focus_ring(painter, rect, 11.0, &theme);
