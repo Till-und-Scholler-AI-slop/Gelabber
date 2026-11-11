@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::Client;
 use crate::api::HistoryQuery;
-use crate::gateway::{Gateway, GatewayEvent};
+use crate::gateway::{Gateway, GatewayEvent, GatewayStatus};
 use crate::http::ApiError;
 use crate::models::*;
 use crate::store::{
@@ -1512,6 +1512,11 @@ impl Client {
     /// the gateway tells the room who watches (`sig t:"w"`).
     pub fn voice_watch(&self, owner: Uuid, on: bool) {
         self.voice_queue(move |this| {
+            // Held while sending, so a new socket's `J` goes first.
+            let unseated = this.inner.voice_unseated.lock();
+            if *unseated {
+                return;
+            }
             let me = this.with_state(|s| s.voice_self);
             let (Some(s), Some(c)) = (me.server, me.channel) else {
                 return;
@@ -2179,7 +2184,12 @@ impl Client {
 
     pub(crate) fn on_gateway(&self, event: GatewayEvent) {
         match event {
-            GatewayEvent::Status(status) => self.write(|s| s.gateway = status),
+            GatewayEvent::Status(status) => {
+                if status != GatewayStatus::Open {
+                    *self.inner.voice_unseated.lock() = true;
+                }
+                self.write(|s| s.gateway = status);
+            }
             GatewayEvent::Ready => {
                 // The server marks a new socket online; say so if we idle.
                 if self.inner.local.lock().idle {
@@ -2189,7 +2199,11 @@ impl Client {
                 }
                 if self.with_state(|s| s.voice_self.channel.is_some()) {
                     self.voice_hook(&GatewayEvent::Ready);
+                    let mut unseated = self.inner.voice_unseated.lock();
                     self.send_join_frames();
+                    *unseated = false;
+                } else {
+                    *self.inner.voice_unseated.lock() = false;
                 }
                 self.schedule_recovery(true);
             }
@@ -3137,6 +3151,54 @@ mod tests {
             seen.lock()
                 .iter()
                 .any(|l| l == &format!("POST /api/directory/listings/{filmclub}/join HTTP/1.1"))
+        );
+    }
+
+    /// A watch between a dropped socket and the next one's join is not sent:
+    /// the gateway would refuse it as a failed join. The call resends its
+    /// watches once the join is confirmed.
+    #[test]
+    fn a_watch_waits_for_the_new_sockets_join() {
+        let client = Client::new("http://127.0.0.1:1").unwrap();
+        let sent = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let tap = sent.clone();
+        client.set_frame_tap(Some(Arc::new(move |frame: &ClientFrame| {
+            if let ClientFrame::Sig { t, o, .. } = frame {
+                tap.lock().push((*t, *o));
+            }
+        })));
+        let wait_for = |count: usize| {
+            let start = std::time::Instant::now();
+            while sent.lock().len() < count {
+                assert!(
+                    start.elapsed() < Duration::from_secs(5),
+                    "{:?}",
+                    sent.lock()
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let (server, channel) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let (early, late) = (Uuid::from_u128(3), Uuid::from_u128(4));
+        client.voice_join(server, channel);
+        wait_for(1);
+        client.on_gateway(GatewayEvent::Status(GatewayStatus::Reconnecting));
+        client.voice_watch(early, true);
+        client.on_gateway(GatewayEvent::Status(GatewayStatus::Open));
+        client.voice_watch(early, false);
+        // The queue has run both before the new socket's join.
+        std::thread::sleep(Duration::from_millis(100));
+        client.on_gateway(GatewayEvent::Ready);
+        client.voice_watch(late, true);
+        wait_for(3);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            *sent.lock(),
+            [
+                (SigKind::J, None),
+                (SigKind::J, None),
+                (SigKind::W, Some(late))
+            ]
         );
     }
 }

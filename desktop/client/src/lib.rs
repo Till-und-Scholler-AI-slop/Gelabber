@@ -78,6 +78,10 @@ struct Inner {
     repaint: RwLock<Option<Repaint>>,
     voice_hook: RwLock<Option<VoiceHook>>,
     voice_jobs: Mutex<Option<tokio::sync::mpsc::UnboundedSender<VoiceJob>>>,
+    /// The socket dropped and the next one's `Ready` has not sent the join
+    /// yet: a `w` before the `J` would be refused as a failed join. The
+    /// call resends its watches when the join is confirmed.
+    voice_unseated: Mutex<bool>,
     state: RwLock<State>,
     gateway: Mutex<Option<Gateway>>,
     gateway_config: Mutex<GatewayConfig>,
@@ -135,6 +139,7 @@ impl Client {
                 repaint: RwLock::new(None),
                 voice_hook: RwLock::new(None),
                 voice_jobs: Mutex::new(None),
+                voice_unseated: Mutex::new(false),
                 state: RwLock::new(State::default()),
                 gateway: Mutex::new(None),
                 gateway_config: Mutex::new(GatewayConfig::default()),
