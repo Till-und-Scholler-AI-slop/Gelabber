@@ -567,6 +567,10 @@ enum Action {
 /// default one on the first start, the account's when switching servers).
 fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> {
     let ctx = ui.ctx().clone();
+    // The page under the artwork's 18 %, as the app paints it: a renderer
+    // that does not clear to `clear_color` would show black through.
+    ui.painter()
+        .rect_filled(ctx.content_rect(), 0.0, Theme::of(&ctx).c.bg);
     let artwork = layout::wide(&ctx)
         .then(|| layout::bundled_artwork(&ctx))
         .flatten();
