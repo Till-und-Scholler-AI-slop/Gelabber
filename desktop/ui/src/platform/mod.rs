@@ -21,6 +21,8 @@ pub mod tray;
 pub mod update;
 pub mod webview;
 
+#[cfg(test)]
+pub(crate) use open::testing as open_testing;
 pub use open::{open_url, open_url_logged};
 
 use std::sync::Arc;

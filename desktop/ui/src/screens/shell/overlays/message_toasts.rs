@@ -727,6 +727,7 @@ mod tests {
                             session: &mut session,
                             account_mail: None,
                             toasts: &mut app_toasts,
+                            public_pages: None,
                         };
                         show(ui, &mut app, &mut toasts);
                     }))

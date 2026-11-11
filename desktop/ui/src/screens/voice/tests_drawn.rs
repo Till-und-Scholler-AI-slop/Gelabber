@@ -65,6 +65,7 @@ fn harness_at(
                     session: &mut session,
                     account_mail: None,
                     toasts: &mut toasts,
+                    public_pages: None,
                 };
                 draw(ui, &mut app);
             }))
@@ -841,6 +842,7 @@ fn watching_from_outside_joins_watches_or_only_opens() {
         session: &mut signed_in,
         account_mail: None,
         toasts: &mut toasts,
+        public_pages: None,
     };
     let label = |channel| hint::watch_label(call.with_state(session::joined), SERVER, channel);
     let sofa_page = format!("/s/{SERVER}/c/{SOFA}");

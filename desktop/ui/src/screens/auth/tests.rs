@@ -232,3 +232,187 @@ fn login_speaks_english() {
     wait_for_text(&mut harness, "Too many attempts. Please wait 30 seconds.");
     harness.get_by_label_contains("Try again in");
 }
+
+/// An instance that published all three legal pages (issue #522).
+fn published(method: &str, at: &str, _: &str) -> Option<Reply> {
+    (method == "GET" && at == "/public-pages.json").then(|| {
+        Reply::json(serde_json::json!({
+            "version": 1,
+            "landing": true,
+            "legal": {
+                "imprint": {"de": "/de/impressum", "en": "/en/imprint"},
+                "privacy": {"de": "/de/datenschutz", "en": "/en/privacy"},
+                "terms": {"de": "/de/nutzungsbedingungen", "en": "/en/terms"}
+            }
+        }))
+    })
+}
+
+/// The links under the card, by their names, in the order they show.
+fn legal_links(harness: &egui_kittest::Harness<'_, crate::Launcher>) -> Vec<String> {
+    let mut links: Vec<_> = harness
+        .query_all_by_role(Role::Link)
+        .filter_map(|n| {
+            let label = n.accesskit_node().label()?;
+            let rect = n.accesskit_node().bounding_box()?;
+            Some((rect.y0, rect.x0, label))
+        })
+        .filter(|(_, _, label)| {
+            [
+                "Impressum",
+                "Datenschutz",
+                "Nutzungsbedingungen",
+                "Imprint",
+                "Privacy",
+                "Terms",
+            ]
+            .contains(&label.as_str())
+        })
+        .collect();
+    links.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+    links.into_iter().map(|(_, _, label)| label).collect()
+}
+
+/// AuthLayout `LegalLinks`: the published pages under the card, named,
+/// in the reference's order, in a navigation called "Rechtliches"; a
+/// click opens the page in the browser.
+#[test]
+fn login_links_the_published_legal_pages() {
+    let _config = TempConfig::new("auth-legal");
+    let opened = crate::platform::open_testing::Recording::start();
+    let api = FakeApi::start(false, published);
+    let mut harness = launcher(&api, "/login");
+    wait_for_label(&mut harness, "Nutzungsbedingungen");
+    assert_eq!(
+        legal_links(&harness),
+        ["Impressum", "Datenschutz", "Nutzungsbedingungen"]
+    );
+    let nav = harness.get_by_label("Rechtliches");
+    assert_eq!(nav.accesskit_node().role(), Role::Navigation);
+    // Under the card: below the sign-in button.
+    let below = |label: &str| {
+        harness
+            .get_by_role_and_label(Role::Link, label)
+            .accesskit_node()
+            .bounding_box()
+            .expect("placed")
+            .y0
+    };
+    let submit = harness
+        .get_by_role_and_label(Role::Button, "Anmelden")
+        .accesskit_node()
+        .bounding_box()
+        .expect("placed")
+        .y1;
+    assert!(below("Impressum") > submit);
+    harness
+        .get_by_role_and_label(Role::Link, "Datenschutz")
+        .click();
+    harness.run_steps(2);
+    assert_eq!(opened.opened(), [format!("{}/de/datenschutz", api.origin)]);
+    // The app stays where it was.
+    assert!(harness.query_by_label("Passwort").is_some());
+}
+
+/// In English the English names and pages.
+#[test]
+fn legal_links_follow_the_language() {
+    let _locale = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let _config = TempConfig::new("auth-legal-english");
+    let opened = crate::platform::open_testing::Recording::start();
+    let api = FakeApi::start(false, published);
+    let mut harness = launcher(&api, "/register");
+    wait_for_label(&mut harness, "Terms");
+    assert_eq!(legal_links(&harness), ["Imprint", "Privacy", "Terms"]);
+    assert!(harness.query_by_label("Legal").is_some());
+    harness.get_by_role_and_label(Role::Link, "Terms").click();
+    harness.run_steps(2);
+    assert_eq!(opened.opened(), [format!("{}/en/terms", api.origin)]);
+}
+
+/// A page published in one language only is linked there in both.
+#[test]
+fn a_page_in_one_language_is_linked_in_the_other() {
+    let _locale = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let _config = TempConfig::new("auth-legal-one-language");
+    let opened = crate::platform::open_testing::Recording::start();
+    let api = FakeApi::start(false, |method, at, _| {
+        (method == "GET" && at == "/public-pages.json").then(|| {
+            Reply::json(serde_json::json!({
+                "version": 1, "landing": false,
+                "legal": {"privacy": {"de": "/de/datenschutz"}}
+            }))
+        })
+    });
+    let mut harness = launcher(&api, "/forgot-password");
+    wait_for_label(&mut harness, "Privacy");
+    assert_eq!(legal_links(&harness), ["Privacy"]);
+    harness.get_by_role_and_label(Role::Link, "Privacy").click();
+    harness.run_steps(2);
+    assert_eq!(opened.opened(), [format!("{}/de/datenschutz", api.origin)]);
+}
+
+/// No file (404): no row, as on a self-hosted instance by default.
+#[test]
+fn no_published_pages_show_no_row() {
+    let _config = TempConfig::new("auth-legal-none");
+    let api = FakeApi::start(false, |_, _, _| None);
+    let mut harness = launcher(&api, "/login");
+    wait_for_label(&mut harness, "E-Mail-Adresse");
+    crate::app::testkit::wait_for(&mut harness, "the public pages", |_| {
+        api.saw("GET /public-pages.json")
+    });
+    harness.run_steps(10);
+    assert!(legal_links(&harness).is_empty());
+    assert!(harness.query_by_label("Rechtliches").is_none());
+}
+
+/// The setup screen has no instance yet: never a row, even for an address
+/// whose instance publishes pages.
+#[test]
+fn the_setup_screen_shows_no_legal_links() {
+    let _config = TempConfig::new("auth-legal-setup");
+    let api = FakeApi::start(false, published);
+    let origin = api.origin.clone();
+    let mut harness = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_max_steps(10_000)
+        .build_eframe(move |cc| {
+            crate::Launcher::setup(cc, Some(origin.clone()), None, Box::new(|_| {}))
+        });
+    harness.run();
+    assert!(harness.query_by_label("Verbinden").is_some());
+    assert!(legal_links(&harness).is_empty());
+    assert!(harness.query_by_label("Rechtliches").is_none());
+}
+
+/// The column centres itself with the link row counted in: as much room
+/// above the brand as below the links, and it stays put.
+#[test]
+fn the_column_is_centred_with_the_legal_links() {
+    let _config = TempConfig::new("auth-legal-centred");
+    let api = FakeApi::start(false, published);
+    let mut harness = launcher(&api, "/login");
+    wait_for_label(&mut harness, "Nutzungsbedingungen");
+    harness.run_steps(4);
+    let place = |harness: &egui_kittest::Harness<'_, crate::Launcher>| {
+        let brand = harness
+            .get_by_role_and_label(Role::Link, "Gelabber")
+            .accesskit_node()
+            .bounding_box()
+            .expect("placed");
+        let links = harness
+            .get_by_role_and_label(Role::Link, "Impressum")
+            .accesskit_node()
+            .bounding_box()
+            .expect("placed");
+        (brand.y0, links.y1)
+    };
+    let (top, bottom) = place(&harness);
+    assert!(
+        (top - (800.0 - bottom)).abs() <= 1.0,
+        "brand at {top}, links end at {bottom}"
+    );
+    harness.run_steps(4);
+    assert_eq!(place(&harness), (top, bottom));
+}

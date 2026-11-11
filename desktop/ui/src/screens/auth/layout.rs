@@ -8,6 +8,7 @@ use egui::{
     pos2,
 };
 
+use gelabber_client::{Http, LegalPageKind, PublicPages};
 use gelabber_i18n::auth;
 
 use crate::app::AppCtx;
@@ -26,17 +27,44 @@ pub const HEADING: TextStyle = text::PAGE.tracking(-0.03);
 /// `.auth-brand`: 700 20px/1.2, −0.02em.
 const BRAND: TextStyle = TextStyle::new(20.0, 700.0, 1.2).tracking(-0.02);
 
+/// `.auth-legal`: `--lr-type-meta` at 13px.
+const LEGAL: TextStyle = text::META.size(13.0);
+
 /// The page: artwork, brand and a card whose content `card` lays out in a
-/// 318px column (the card's padding is 32px, its border 1px).
+/// 318px column (the card's padding is 32px, its border 1px), and under
+/// it the links to the legal pages the instance published.
 pub fn frame(ui: &mut Ui, app: &mut AppCtx, id: &str, card: impl FnOnce(&mut Ui, &mut AppCtx)) {
     // Loaded only where it shows.
     let artwork = match wide(ui.ctx()).then(|| app.images.get(ui.ctx(), ARTWORK)) {
         Some(ImageState::Ready(texture)) => Some(texture),
         _ => None,
     };
-    if page(ui, id, artwork.as_ref(), true, |ui| card(ui, app)) {
+    let legal = app
+        .public_pages
+        .as_ref()
+        .map(|pages| legal_links(pages, app.client.http()))
+        .unwrap_or_default();
+    if page(ui, id, artwork.as_ref(), true, &legal, |ui| card(ui, app)) {
         app.nav.navigate("/");
     }
+}
+
+/// The published legal pages as (label, absolute URL), in the interface's
+/// language where the page has one (AuthLayout.tsx `LegalLinks`).
+pub fn legal_links(pages: &PublicPages, http: &Http) -> Vec<(&'static str, String)> {
+    let locale = gelabber_i18n::get();
+    pages
+        .legal
+        .iter()
+        .filter_map(|(kind, page)| {
+            let label = match kind {
+                LegalPageKind::Imprint => auth::legal_imprint(),
+                LegalPageKind::Privacy => auth::legal_privacy(),
+                LegalPageKind::Terms => auth::legal_terms(),
+            };
+            Some((label, http.url(page.path(locale)?)))
+        })
+        .collect()
 }
 
 /// Whether the window is wide enough for the artwork (auth.css `@media
@@ -55,12 +83,14 @@ pub fn bundled_artwork(ctx: &egui::Context) -> Option<egui::TextureHandle> {
 }
 
 /// [`frame`] without an app: `artwork` behind it on wide screens, the
-/// brand a link only with `brand_link`. True when the brand was clicked.
+/// brand a link only with `brand_link`, and `legal` (label, absolute URL)
+/// under the card, opened in the browser. True when the brand was clicked.
 pub fn page(
     ui: &mut Ui,
     id: &str,
     artwork: Option<&egui::TextureHandle>,
     brand_link: bool,
+    legal: &[(&str, String)],
     card: impl FnOnce(&mut Ui),
 ) -> bool {
     let ctx = ui.ctx().clone();
@@ -116,7 +146,12 @@ pub fn page(
             }
 
             let card_rect = card_box(ui, pos2(left, brand.bottom() + space::S6), width, card);
-            let measured = 40.0 + space::S6 + card_rect.height();
+            let mut measured = 40.0 + space::S6 + card_rect.height();
+            // `.auth-column`'s gap above the links; no row without one.
+            if !legal.is_empty() {
+                let top = card_rect.bottom() + space::S6;
+                measured += space::S6 + legal_row(ui, legal, left, top, width);
+            }
             // Half a pixel, as the modal's: the 1/64 px layout units round
             // by where the column starts, so a column centred by its own
             // height can measure 1/32 px apart every other frame.
@@ -126,6 +161,66 @@ pub fn page(
             }
         });
     brand_clicked
+}
+
+/// `.auth-legal` from `top`: centred lines that wrap within `width`, 4px
+/// between lines and 18px between links, muted and underlined, the text
+/// colour on hover. Its height.
+fn legal_row(ui: &mut Ui, legal: &[(&str, String)], left: f32, top: f32, width: f32) -> f32 {
+    const GAP_X: f32 = 18.0;
+    const GAP_Y: f32 = space::S1;
+    let theme = Theme::of(ui.ctx());
+    let blocks: Vec<Block> = legal
+        .iter()
+        .map(|(label, _)| Block::single(ui, label, LEGAL, theme.c.muted))
+        .collect();
+    // Flex wrap: as many links per line as fit.
+    let mut lines: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut line_w = 0.0;
+    for (i, block) in blocks.iter().enumerate() {
+        let line = lines.last_mut().expect("one line");
+        let w = if line.is_empty() {
+            block.width()
+        } else {
+            line_w + GAP_X + block.width()
+        };
+        if !line.is_empty() && w > width {
+            lines.push(vec![i]);
+            line_w = block.width();
+        } else {
+            line.push(i);
+            line_w = w;
+        }
+    }
+    let line_h = LEGAL.line_px();
+    let height = lines.len() as f32 * line_h + (lines.len() - 1) as f32 * GAP_Y;
+    // `<nav aria-label="Rechtliches">` around the links.
+    let row = Rect::from_min_size(pos2(left, top), Vec2::new(width, height));
+    let nav = ui.interact(row, Id::unique("gelabber-auth-legal"), Sense::hover());
+    crate::widgets::announce(&nav, egui::Role::Navigation, auth::legal_label());
+    for (n, line) in lines.iter().enumerate() {
+        let w =
+            line.iter().map(|&i| blocks[i].width()).sum::<f32>() + (line.len() - 1) as f32 * GAP_X;
+        let mut x = left + (width - w) / 2.0;
+        let y = top + n as f32 * (line_h + GAP_Y);
+        for &i in line {
+            let (label, url) = &legal[i];
+            let rect = Rect::from_min_size(pos2(x, y), Vec2::new(blocks[i].width(), line_h));
+            let response = Link::interact(ui, rect, Id::unique(("gelabber-auth-legal", i)), label);
+            let color = if response.hovered() {
+                theme.c.text
+            } else {
+                theme.c.muted
+            };
+            Block::single(ui, label, LEGAL, color).paint(ui.painter(), rect.min);
+            link::underline(ui.painter(), LEGAL, y, rect.left(), rect.right(), color);
+            if response.clicked() {
+                crate::platform::open_url_logged(url);
+            }
+            x += blocks[i].width() + GAP_X;
+        }
+    }
+    height
 }
 
 /// `.lr-auth-card` with its top-left at `min`: the panel box (painted

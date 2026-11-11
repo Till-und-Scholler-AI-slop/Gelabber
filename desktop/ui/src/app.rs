@@ -354,6 +354,9 @@ pub struct AppCtx<'a> {
     /// until known.
     pub account_mail: Option<bool>,
     pub toasts: &'a mut Toasts,
+    /// `/public-pages.json`: the legal pages under the sign-in card; `None`
+    /// until known, which shows none.
+    pub public_pages: Option<gelabber_client::PublicPages>,
 }
 
 pub struct GelabberApp {
@@ -408,6 +411,8 @@ impl GelabberApp {
         let mut session = Session::new();
         session.check(&client);
         let mail_check = Some(mail_check(&client));
+        // The legal links under the sign-in card.
+        client.load_public_pages();
         Self {
             nav: Nav::new(route.as_deref().unwrap_or("/")),
             call: gelabber_call::Call::new(client.clone()),
@@ -613,6 +618,7 @@ impl GelabberApp {
                 session: &mut self.session,
                 account_mail: self.account_mail,
                 toasts: &mut self.toasts,
+                public_pages: self.client.with_state(|s| s.public_pages.clone()),
             };
             if app.session.failed() {
                 screens::auth::recovery::show(ui, &mut app);
@@ -642,6 +648,7 @@ impl GelabberApp {
             session: &mut self.session,
             account_mail: self.account_mail,
             toasts: &mut self.toasts,
+            public_pages: self.client.with_state(|s| s.public_pages.clone()),
         };
         if !is_workspace(app.nav.route()) {
             content_anchor(ui, screen.min);

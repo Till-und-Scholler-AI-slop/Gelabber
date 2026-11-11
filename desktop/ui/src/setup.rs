@@ -571,7 +571,7 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
         .then(|| layout::bundled_artwork(&ctx))
         .flatten();
     let mut action = None;
-    layout::page(ui, "setup", artwork.as_ref(), false, |ui| {
+    layout::page(ui, "setup", artwork.as_ref(), false, &[], |ui| {
         let theme = Theme::of(ui.ctx());
         let switching = setup.current.is_some() && !setup.retry;
         layout::heading(

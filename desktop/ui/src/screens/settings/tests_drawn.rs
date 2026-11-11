@@ -84,6 +84,7 @@ pub fn harness(
                     session,
                     account_mail: None,
                     toasts,
+                    public_pages: None,
                 };
                 draw(ui, &mut app);
             }))

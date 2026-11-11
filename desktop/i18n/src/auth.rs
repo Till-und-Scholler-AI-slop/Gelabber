@@ -215,6 +215,12 @@ crate::strings! {
     not_found_body = "Diese Adresse gibt es in Gelabber nicht."
         | "This address doesn’t exist in Gelabber.";
     not_found_home = "Zur Startseite" | "Go to the start page";
+
+    // The legal pages' links under the card (public-pages.json).
+    legal_label = "Rechtliches" | "Legal";
+    legal_imprint = "Impressum" | "Imprint";
+    legal_privacy = "Datenschutz" | "Privacy";
+    legal_terms = "Nutzungsbedingungen" | "Terms";
 }
 
 /// `fieldError.required`: "{label} fehlt.".

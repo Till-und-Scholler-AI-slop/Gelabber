@@ -17,7 +17,52 @@ fn checked(url: &str) -> Result<String, String> {
 /// Opens `url` in the default browser (mail program for `mailto:`).
 pub fn open_url(url: &str) -> Result<(), String> {
     let url = checked(url)?;
+    #[cfg(test)]
+    if testing::record(&url) {
+        return Ok(());
+    }
     launch(&url)
+}
+
+/// Tests: the URLs this thread opened instead of handing them to the OS.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static OPENED: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+
+    /// Until the guard drops, this thread's opened URLs are kept, not opened.
+    pub struct Recording(());
+
+    impl Recording {
+        pub fn start() -> Self {
+            OPENED.with(|o| *o.borrow_mut() = Some(Vec::new()));
+            Self(())
+        }
+
+        pub fn opened(&self) -> Vec<String> {
+            OPENED.with(|o| o.borrow().clone().unwrap_or_default())
+        }
+    }
+
+    impl Drop for Recording {
+        fn drop(&mut self) {
+            OPENED.with(|o| *o.borrow_mut() = None);
+        }
+    }
+
+    /// True when the URL was kept for a test.
+    pub(super) fn record(url: &str) -> bool {
+        OPENED.with(|o| match o.borrow_mut().as_mut() {
+            Some(list) => {
+                list.push(url.to_owned());
+                true
+            }
+            None => false,
+        })
+    }
 }
 
 /// Logs what [`open_url`] refused or could not do; for clicks with no place to show it.
