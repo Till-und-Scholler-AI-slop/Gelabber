@@ -68,7 +68,14 @@ fn rows() -> Vec<Value> {
 type Sent = Arc<Mutex<Vec<(String, String)>>>;
 
 fn api(enabled: bool, sent: Sent) -> FakeApi {
-    FakeApi::start(true, move |method, path, body| match (method, path) {
+    FakeApi::start(true, move |method, path, body| {
+        answer(enabled, &sent, method, path, body)
+    })
+}
+
+/// What [`api`] answers.
+fn answer(enabled: bool, sent: &Sent, method: &str, path: &str, body: &str) -> Option<Reply> {
+    match (method, path) {
         ("GET", "/directory") if enabled => Some(Reply::json(json!({
             "enabled": true,
             "languages": [
@@ -110,7 +117,7 @@ fn api(enabled: bool, sent: Sent) -> FakeApi {
             ))
         }
         _ => workspace(method, path),
-    })
+    }
 }
 
 fn route(harness: &mut Harness) -> Route {
@@ -189,6 +196,38 @@ fn off_there_is_no_tile_and_no_page() {
     let mut harness = launcher(&api, "/discover");
     wait_for_label(&mut harness, "Zur Startseite");
     assert!(!api.saw("GET /directory/listings"));
+}
+
+/// A failed status read hides the tile, but not for good: on the way to
+/// /discover it is read again (`ensureQueryData`), and with the answer the
+/// page and the tile are there.
+#[test]
+fn a_failed_status_is_read_again() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let _config = TempConfig::new("discover-status-failed");
+    let reads = Arc::new(AtomicUsize::new(0));
+    let count = reads.clone();
+    let sent: Sent = Arc::default();
+    let api = FakeApi::start(true, move |method, path, body| {
+        if (method, path) == ("GET", "/directory") && count.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Some(Reply::error(500, "internal"));
+        }
+        answer(true, &sent, method, path, body)
+    });
+    let mut harness = launcher(&api, &format!("/s/{HOME}"));
+    wait_for_label(&mut harness, "Server hinzufügen");
+    wait_for(&mut harness, "the status", |_| api.saw("GET /directory"));
+    steps(&mut harness, 20);
+    assert!(harness.query_by_label("Entdecken").is_none());
+    harness
+        .state_mut()
+        .app()
+        .expect("app")
+        .navigate("/discover");
+    wait_for_label(&mut harness, "Filmclub");
+    // The rail's tile is back.
+    harness.get_by_role_and_label(Role::Link, "Entdecken");
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
 }
 
 /// A language writes `?lang=` and a typed search `?q=` once typing

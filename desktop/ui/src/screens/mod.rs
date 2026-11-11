@@ -69,7 +69,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, state: &mut ScreenState) {
                 auth::not_found::show(ui, app)
             }
             // Off, the directory has no page (the web's `notFound()`).
-            Route::Discover(_) if discover::enabled(ui.ctx(), app) == Some(false) => {
+            Route::Discover(_) if discover::guard(ui.ctx(), app) == Some(false) => {
                 auth::not_found::show(ui, app)
             }
             _ => shell::show(ui, app),

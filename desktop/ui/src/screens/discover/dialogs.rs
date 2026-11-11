@@ -111,6 +111,20 @@ pub(super) fn open_report(s: &mut State, server: Uuid, name: &str) {
 
 /// The answers of a sent request or report.
 pub(super) fn take_answers(_ctx: &egui::Context, app: &mut AppCtx, s: &mut State) {
+    let closed = s
+        .request_sent
+        .as_mut()
+        .and_then(|(server, pending)| pending.take().map(|r| (*server, r)));
+    if let Some((server, result)) = closed {
+        s.request_sent = None;
+        match result {
+            Ok(answer) => patch(s, server, |l| {
+                l.request = Some(answer.request);
+                l.retry_at = None;
+            }),
+            Err(_) => s.list.stale = true,
+        }
+    }
     let answer = s.request.as_mut().and_then(|f| poll(&mut f.pending));
     if let Some(result) = answer {
         match result {
@@ -152,7 +166,13 @@ pub(super) fn show(ctx: &egui::Context, app: &AppCtx, s: &mut State) {
     if let Some(form) = s.request.as_mut()
         && !request(ctx, app, form)
     {
-        s.request = None;
+        // Closed while sending: the answer still reaches the row, as the
+        // web's hook-level `onSuccess`/`onError` outlive the dialog.
+        if let Some(form) = s.request.take()
+            && let Some(pending) = form.pending
+        {
+            s.request_sent = Some((form.server, pending));
+        }
     }
     if let Some(form) = s.report.as_mut()
         && !report(ctx, app, form)
@@ -171,21 +191,30 @@ fn lead(ui: &mut Ui, s: &str) {
     crate::widgets::announce(&response, egui::Role::Label, s);
 }
 
-/// The form's end: "Abbrechen" and the submit button, right-aligned.
-/// Returns (cancel, submit).
-fn buttons(ui: &mut Ui, submit: &str, sending: &str, pending: bool) -> (bool, bool) {
+/// The form's end: "Abbrechen" and the submit button, right-aligned; after
+/// a 429 the button waits out `cooldown` seconds, saying so
+/// (`SubmitButton`'s `cooldown`). Returns (cancel, submit).
+fn buttons(ui: &mut Ui, submit: &str, sending: &str, pending: bool, cooldown: u64) -> (bool, bool) {
     ui.allocate_ui_with_layout(
         vec2(ui.available_width(), 36.0),
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = space::S2;
-            let sent = ui
-                .add(
+            let sent = if cooldown > 0 {
+                // Each second drops one, as useCooldown's timer does.
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(250));
+                let waiting = gelabber_i18n::app::submit_cooldown(cooldown);
+                ui.add(Button::new(&waiting).primary().disabled(true));
+                false
+            } else {
+                ui.add(
                     Button::new(submit)
                         .primary()
                         .pending(pending.then_some(sending)),
                 )
-                .clicked();
+                .clicked()
+            };
             let cancel = ui.add(Button::new(common::cancel()).ghost()).clicked();
             (cancel, sent)
         },
@@ -220,14 +249,16 @@ fn request(ctx: &egui::Context, app: &AppCtx, form: &mut RequestForm) -> bool {
                 form.errors.clear_field("message");
             }
             form_error(ui, &form.errors);
+            let cooldown = form.errors.cooldown();
             let (cancel, sent) = buttons(
                 ui,
                 texts::request_submit(),
                 texts::request_sending(),
                 pending,
+                cooldown,
             );
             done = cancel;
-            if (sent || field.submitted) && !pending {
+            if (sent || field.submitted) && !pending && cooldown == 0 {
                 match validate_message(&form.message) {
                     Some(code) => form
                         .errors
@@ -316,8 +347,14 @@ fn report(ctx: &egui::Context, app: &AppCtx, form: &mut ReportForm) -> bool {
                 block.paint(ui.painter(), rect.min);
             });
             form_error(ui, &form.errors);
-            let (cancel, sent) =
-                buttons(ui, texts::report_submit(), texts::report_sending(), pending);
+            let cooldown = form.errors.cooldown();
+            let (cancel, sent) = buttons(
+                ui,
+                texts::report_submit(),
+                texts::report_sending(),
+                pending,
+                cooldown,
+            );
             done = cancel;
             if sent && !pending {
                 submit_report(app, form);

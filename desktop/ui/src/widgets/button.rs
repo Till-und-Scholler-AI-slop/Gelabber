@@ -57,6 +57,8 @@ pub struct Button<'a> {
     width: Option<f32>,
     height: Option<f32>,
     disabled: bool,
+    /// Disabled, yet in the focus order (`aria-disabled`).
+    focusable: bool,
     pending: Option<&'a str>,
     text_color: Option<Color32>,
 }
@@ -72,6 +74,7 @@ impl<'a> Button<'a> {
             width: None,
             height: None,
             disabled: false,
+            focusable: false,
             pending: None,
             text_color: None,
         }
@@ -132,6 +135,15 @@ impl<'a> Button<'a> {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Unavailable but focusable (`aria-disabled="true"`): it looks and
+    /// acts disabled, yet keyboard focus reaches it, so a tooltip can say
+    /// why on focus too.
+    pub fn unavailable_focusable(mut self) -> Self {
+        self.disabled = true;
+        self.focusable = true;
         self
     }
 
@@ -237,6 +249,8 @@ impl Widget for Button<'_> {
         let enabled = !self.disabled && !busy;
         let sense = if enabled {
             Sense::click()
+        } else if self.focusable && !busy {
+            Sense::focusable_noninteractive()
         } else {
             Sense::hover()
         };

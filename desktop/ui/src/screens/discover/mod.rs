@@ -50,8 +50,9 @@ type Answer<T> = Pending<Result<T, ApiError>>;
 #[derive(Default)]
 struct StatusCache {
     value: Option<DirectoryStatus>,
-    /// The last read failed: the tile stays away, as the web's `retry:
-    /// false` leaves it.
+    /// The last read failed: without an earlier answer the tile stays
+    /// away (`retry: false`) until a read after a minute, the window's
+    /// focus or a visit of /discover succeeds.
     failed: bool,
     read_at: Option<Instant>,
     request: Option<Answer<DirectoryStatus>>,
@@ -60,8 +61,11 @@ struct StatusCache {
 /// The rows of one search, 30 at a time.
 #[derive(Default)]
 struct List {
-    /// The search the rows belong to (`q`, `lang`).
+    /// The search being shown (`q`, `lang`).
     key: Option<DiscoverSearch>,
+    /// The search `rows` and `next` came from: until a new search has its
+    /// own, the previous one's rows stay (`keepPreviousData`).
+    rows_key: Option<DiscoverSearch>,
     rows: Option<Vec<Listing>>,
     next: Option<u32>,
     read_at: Option<Instant>,
@@ -86,10 +90,14 @@ struct State {
     seen: Option<String>,
     /// The pass the page was last drawn in: a new visit reads again.
     drawn: u64,
+    /// The pass the route last checked the status in (`requireDirectory`).
+    guarded: u64,
     /// "Beitreten" in flight (`join_listing:<id>` ops).
     joining: HashSet<Uuid>,
     withdrawing: Option<(Uuid, Answer<()>)>,
     request: Option<dialogs::RequestForm>,
+    /// A request whose dialog closed while it was being sent.
+    request_sent: Option<(Uuid, Answer<gelabber_client::RequestAnswer>)>,
     report: Option<dialogs::ReportForm>,
 }
 
@@ -152,19 +160,54 @@ fn poll_status(ctx: &egui::Context, app: &AppCtx, s: &mut State, fresh: bool) {
     }
 }
 
+/// The last answer's `enabled`, kept through a failed refresh as the
+/// web's query keeps its data; with no answer a failed read counts as off.
+fn shown(status: &StatusCache) -> Option<bool> {
+    match (&status.value, status.failed) {
+        (Some(value), _) => Some(value.enabled),
+        (None, true) => Some(false),
+        (None, false) => None,
+    }
+}
+
 /// Whether the instance runs a directory for the signed-in account:
-/// `None` until the first answer (`useDirectoryStatus().data?.enabled`). A
-/// failed read counts as off.
+/// `None` until the first answer (`useDirectoryStatus().data?.enabled`).
+/// Once a minute old the status is read again when the window gets the
+/// focus back (`refetchOnWindowFocus`), and after a failed read on any
+/// frame, so
+/// a blip or a directory turned on later does not hide the tile for good.
 pub fn enabled(ctx: &egui::Context, app: &AppCtx) -> Option<bool> {
     let account = account(app)?;
+    let focused = ctx.input(|i| {
+        i.events
+            .iter()
+            .any(|e| matches!(e, egui::Event::WindowFocused(true)))
+    });
     with(ctx, |s| {
         follow_account(s, Some(account));
-        poll_status(ctx, app, s, false);
-        if s.status.failed {
-            return Some(false);
-        }
-        s.status.value.as_ref().map(|v| v.enabled)
+        // No timer of its own: an idle app stays idle, and the next frame
+        // after the minute reads again.
+        poll_status(ctx, app, s, focused || s.status.failed);
+        shown(&s.status)
     })
+}
+
+/// The /discover route's check (`requireDirectory`): as [`enabled`], but
+/// on the way in a failed read with no answer is read again first, as
+/// `ensureQueryData` fetches what it does not have.
+pub fn guard(ctx: &egui::Context, app: &AppCtx) -> Option<bool> {
+    account(app)?;
+    with(ctx, |s| {
+        let frame = ctx.cumulative_frame_nr();
+        let visit = s.guarded + 1 < frame;
+        s.guarded = frame;
+        let status = &mut s.status;
+        if visit && status.failed && status.value.is_none() && status.request.is_none() {
+            status.failed = false;
+            status.read_at = None;
+        }
+    });
+    enabled(ctx, app)
 }
 
 /// `jn`: a request was accepted, so the rows read again.
@@ -435,7 +478,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, search: &DiscoverSearch) {
     take_answers(&ctx, app, s, search);
     // The rows wait for the status, as the route's `beforeLoad` does: off,
     // the page is not found and reads nothing.
-    let on = !s.status.failed && s.status.value.as_ref().is_some_and(|v| v.enabled);
+    let on = s.status.value.as_ref().is_some_and(|v| v.enabled);
     let new_search = s.list.key.as_ref() != Some(search);
     if on && (new_search || (s.list.stale && s.list.request.is_none())) {
         if new_search {
@@ -496,13 +539,17 @@ fn take_answers(ctx: &egui::Context, app: &mut AppCtx, s: &mut State, search: &D
                         (Some(rows), o) if o > 0 => rows.extend(page.listings),
                         (rows, _) => *rows = Some(page.listings),
                     }
+                    s.list.rows_key = Some(key);
                 }
                 Err(error) => {
                     tracing::warn!("directory listings: {error}");
                     s.list.failed = Some(offset > 0);
-                    // Another search's rows are not this one's.
-                    if offset == 0 && s.list.key.as_ref() != Some(&key) {
+                    // Another search's rows are not this one's: the error
+                    // takes their place.
+                    if s.list.rows_key.as_ref() != Some(&key) {
                         s.list.rows = None;
+                        s.list.next = None;
+                        s.list.rows_key = None;
                     }
                 }
             }
@@ -609,15 +656,23 @@ fn content(
                 row(ui, app, s, listing, languages, width);
             }
             let more = s.list.request.as_ref().is_some_and(|(_, o, _)| *o > 0);
-            if s.list.failed == Some(true) {
+            // A failed read shows under the rows: a further page tries that
+            // page again, a refresh the first.
+            if let Some(further) = s.list.failed {
                 ui.add_space(20.0);
-                if crate::widgets::load_error(ui, texts::page_load_failed(), more)
-                    && !more
-                    && let Some(next) = s.list.next
-                {
-                    read(app, s, search, next);
+                let busy = more || loading;
+                if crate::widgets::load_error(ui, texts::page_load_failed(), busy) && !busy {
+                    match (further, s.list.next) {
+                        (true, Some(next)) => read(app, s, search, next),
+                        _ => read(app, s, search, 0),
+                    }
                 }
-            } else if let Some(next) = s.list.next {
+            } else if let Some(next) = s.list.next
+                // The previous search's offset is not this one's, nor one
+                // from before a refresh still on its way.
+                && !loading
+                && s.list.rows_key.as_ref() == Some(search)
+            {
                 ui.add_space(20.0);
                 let clicked = ui
                     .allocate_ui_with_layout(
@@ -831,7 +886,9 @@ fn draw_row(
         Action::Join => widget
             .primary()
             .pending(joining.then_some(texts::actions_joining())),
-        Action::Requested | Action::Declined => widget.disabled(true),
+        Action::Requested => widget.disabled(true),
+        // Focusable, so its tooltip shows on keyboard focus too.
+        Action::Declined => widget.unavailable_focusable(),
         _ => widget,
     };
     let button_w = widget.natural_width(ui);
@@ -931,7 +988,7 @@ fn draw_row(
             .accesskit_node_builder(response.id, |node| node.set_description(until.clone()));
         Tooltip::new(texts::actions_declined())
             .detail(Some(&until))
-            .on_hover(&response, Side::Above);
+            .on_hover_or_focus(&response, Side::Above);
     }
     // Last: the placed button and "…" moved the cursor to their bottom.
     ui.allocate_rect(rect, Sense::hover());
