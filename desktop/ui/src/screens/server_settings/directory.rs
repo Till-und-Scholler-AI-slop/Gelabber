@@ -415,12 +415,14 @@ fn listing(
         if i > 0 {
             ui.add_space(space::S2);
         }
-        if controls::radio_card(
+        // The notification dialog's card: the same look, with its radio role.
+        let checked = form.join_mode == mode;
+        if crate::screens::shell::overlays::notify::radio_card(
             ui,
-            ("directory-join", i),
             title,
-            hint,
-            form.join_mode == mode,
+            Some(hint),
+            checked,
+            false,
         ) {
             form.join_mode = mode;
             edited = true;
@@ -744,5 +746,294 @@ mod tests {
         assert!(!draft.differs(&saved));
         draft.join_mode = JoinMode::Open;
         assert!(draft.differs(&saved));
+    }
+
+    // ------------------------------------------------- drawn, kittest
+
+    use std::sync::Arc;
+
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use parking_lot::Mutex;
+    use serde_json::{Value, json};
+
+    use crate::app::testkit::{
+        FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace,
+    };
+    use crate::platform::paths::testing::TempConfig;
+
+    type Harness = egui_kittest::Harness<'static, crate::Launcher>;
+    /// Writes with their bodies.
+    type Sent = Arc<Mutex<Vec<(String, String)>>>;
+
+    const KAI: &str = "00000000-0000-4000-8000-000000000044";
+
+    struct Stand {
+        /// Lena's role on Wohnzimmer and her permissions there.
+        role: &'static str,
+        permissions: Value,
+        directory: bool,
+        settings: Value,
+    }
+
+    fn settings(listed: bool, description: &str, language: Value, delisted: bool) -> Value {
+        json!({
+            "listed": listed, "description": description, "language": language,
+            "join_mode": "request", "delisted": delisted, "listed_at": null
+        })
+    }
+
+    fn owner(settings: Value) -> Stand {
+        Stand {
+            role: "owner",
+            permissions: json!(["manage_server", "moderate_members", "manage_channels"]),
+            directory: true,
+            settings,
+        }
+    }
+
+    /// Wohnzimmer as `stand` says, with Kai's request in the queue until it
+    /// is answered.
+    fn api(stand: Stand, sent: Sent) -> FakeApi {
+        let answered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        FakeApi::start(true, move |method, path, body| {
+            use std::sync::atomic::Ordering;
+            let base = format!("/servers/{HOME}");
+            let write = || {
+                sent.lock()
+                    .push((format!("{method} {path}"), body.to_owned()));
+            };
+            match (method, path) {
+                ("GET", "/directory") if stand.directory => Some(Reply::json(json!({
+                    "enabled": true,
+                    "languages": [
+                        {"code": "de", "name": "Deutsch", "listings": 1},
+                        {"code": "en", "name": "English", "listings": 0}
+                    ]
+                }))),
+                ("GET", "/directory") => {
+                    Some(Reply::json(json!({"enabled": false, "languages": []})))
+                }
+                ("GET", "/servers") => {
+                    let mut list = workspace(method, path)?.body;
+                    list[0]["role"] = json!(stand.role);
+                    list[0]["permissions"] = stand.permissions.clone();
+                    Some(Reply::json(list))
+                }
+                ("GET", p) if p == base => {
+                    let mut server = workspace(method, path)?.body;
+                    server["role"] = json!(stand.role);
+                    server["permissions"] = stand.permissions.clone();
+                    Some(Reply::json(server))
+                }
+                ("GET", p) if p == format!("{base}/listing") => {
+                    Some(Reply::json(stand.settings.clone()))
+                }
+                ("PUT", p) if p == format!("{base}/listing") => {
+                    write();
+                    let mut saved: Value = serde_json::from_str(body).ok()?;
+                    saved["delisted"] = json!(false);
+                    saved["listed_at"] = json!("2026-11-11T10:00:00Z");
+                    Some(Reply::json(saved))
+                }
+                ("GET", p) if p == format!("{base}/join-requests") => {
+                    if answered.load(Ordering::SeqCst) {
+                        return Some(Reply::json(json!([])));
+                    }
+                    Some(Reply::json(json!([{
+                        "user_id": KAI, "name": "Kai", "avatar_url": null,
+                        "message": "Darf ich mitmachen?",
+                        "created_at": "2026-11-11T08:00:00Z"
+                    }])))
+                }
+                ("POST", p) if p.starts_with(&format!("{base}/join-requests/")) => {
+                    write();
+                    answered.store(true, Ordering::SeqCst);
+                    Some(Reply::status(204, Value::Null))
+                }
+                _ => workspace(method, path),
+            }
+        })
+    }
+
+    fn route() -> String {
+        format!("/s/{HOME}/settings")
+    }
+
+    fn steps(harness: &mut Harness, n: usize) {
+        for _ in 0..n {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// To the section, as the scene does: a row out of view takes no click.
+    fn open_section(harness: &mut Harness) {
+        wait_for(harness, "the Verzeichnis link", |h| {
+            h.query_by_role_and_label(Role::Link, "Verzeichnis")
+                .is_some()
+        });
+        harness
+            .get_by_role_and_label(Role::Link, "Verzeichnis")
+            .click();
+        steps(harness, 30);
+    }
+
+    /// Verzeichnis' Speichern: the last one, after Allgemein's.
+    fn save<'a>(harness: &'a egui_kittest::Harness<'_, crate::Launcher>) -> egui_kittest::Node<'a> {
+        harness
+            .query_all_by_role_and_label(Role::Button, "Speichern")
+            .last()
+            .expect("Speichern")
+    }
+
+    fn sent_to(sent: &Sent, line: &str) -> Option<String> {
+        sent.lock()
+            .iter()
+            .find(|(l, _)| l == line)
+            .map(|(_, b)| b.clone())
+    }
+
+    /// The owner lists the server: the switch, then Speichern sends all
+    /// four fields; the preview shows the row others see.
+    #[test]
+    fn the_owner_lists_the_server() {
+        let _config = TempConfig::new("directory-owner");
+        let sent = Sent::default();
+        let stand = owner(settings(false, "Gemütliche Abende.", json!("de"), false));
+        let api = api(stand, Arc::clone(&sent));
+        let mut harness = launcher(&api, &route());
+        harness.set_size(egui::vec2(1280.0, 1400.0));
+        open_section(&mut harness);
+        wait_for_label(&mut harness, "Im Verzeichnis zeigen");
+        // The preview's button is drawn but takes no click.
+        let preview = harness.get_by_role_and_label(Role::Button, "Beitritt anfragen");
+        assert!(preview.accesskit_node().is_disabled());
+        assert!(save(&harness).accesskit_node().is_disabled());
+        harness
+            .get_by_role_and_label(Role::Switch, "Im Verzeichnis zeigen")
+            .click();
+        steps(&mut harness, 4);
+        harness
+            .get_by_role_and_label(Role::RadioButton, "Offen")
+            .click();
+        steps(&mut harness, 4);
+        // An open server offers Beitreten in the preview.
+        harness.get_by_role_and_label(Role::Button, "Beitreten");
+        save(&harness).click();
+        let put = format!("PUT /servers/{HOME}/listing");
+        wait_for(&mut harness, "the save", |_| api.saw(&put));
+        let body: Value = serde_json::from_str(&sent_to(&sent, &put).unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"listed": true, "description": "Gemütliche Abende.",
+                   "language": "de", "join_mode": "open"})
+        );
+        // Saved: the form follows the answer, Speichern waits again.
+        wait_for(&mut harness, "the saved form", |h| {
+            save(h).accesskit_node().is_disabled()
+        });
+    }
+
+    /// Listed without a description or a language, nothing is sent.
+    #[test]
+    fn a_listing_needs_a_description_and_a_language() {
+        let _config = TempConfig::new("directory-required");
+        let sent = Sent::default();
+        let api = api(owner(settings(false, "", Value::Null, true)), sent);
+        let mut harness = launcher(&api, &route());
+        harness.set_size(egui::vec2(1280.0, 1400.0));
+        open_section(&mut harness);
+        wait_for_label(&mut harness, "Im Verzeichnis zeigen");
+        // The operator took it out: the note says so.
+        harness.get_by_label("Der Betreiber hat diesen Server aus dem Verzeichnis genommen.");
+        harness
+            .get_by_role_and_label(Role::Switch, "Im Verzeichnis zeigen")
+            .click();
+        steps(&mut harness, 4);
+        save(&harness).click();
+        steps(&mut harness, 10);
+        assert!(!api.saw(&format!("PUT /servers/{HOME}/listing")));
+        let described = |label: &str, text: &str| {
+            harness.query_all_by_label(label).any(|n| {
+                n.accesskit_node()
+                    .description()
+                    .is_some_and(|d| d.contains(text))
+            })
+        };
+        assert!(described(
+            "Beschreibung",
+            "Im Verzeichnis braucht der Server eine Beschreibung."
+        ));
+        assert!(described("Sprache", "Bitte eine Sprache wählen."));
+    }
+
+    /// Someone who may moderate members answers the requests but has no
+    /// listing form; the anchor counts the open requests.
+    #[test]
+    fn a_moderator_accepts_a_request() {
+        let _config = TempConfig::new("directory-moderator");
+        let sent = Sent::default();
+        let stand = Stand {
+            role: "member",
+            permissions: json!(["moderate_members"]),
+            directory: true,
+            settings: settings(true, "Gemütlich.", json!("de"), false),
+        };
+        let api = api(stand, Arc::clone(&sent));
+        let mut harness = launcher(&api, &route());
+        open_section(&mut harness);
+        wait_for_label(&mut harness, "Annehmen");
+        let link = harness.get_by_role_and_label(Role::Link, "Verzeichnis");
+        assert_eq!(
+            link.accesskit_node().description().as_deref(),
+            Some("1 offene Anfrage")
+        );
+        assert!(harness.query_by_label("Im Verzeichnis zeigen").is_none());
+        assert!(!api.saw(&format!("GET /servers/{HOME}/listing")));
+        harness
+            .get_by_role_and_label(Role::Button, "Annehmen")
+            .click();
+        let accept = format!("POST /servers/{HOME}/join-requests/{KAI}/accept");
+        wait_for(&mut harness, "the answer", |_| api.saw(&accept));
+        wait_for(&mut harness, "the row to go", |h| {
+            h.query_by_label("Annehmen").is_none()
+        });
+        assert!(sent_to(&sent, &accept).is_some());
+    }
+
+    /// Without the right, or with the directory off, there is no section.
+    #[test]
+    fn the_section_is_for_the_owner_and_moderators_while_on() {
+        let _config = TempConfig::new("directory-gated");
+        for stand in [
+            Stand {
+                role: "member",
+                permissions: json!([]),
+                directory: true,
+                settings: settings(false, "", Value::Null, false),
+            },
+            Stand {
+                directory: false,
+                ..owner(settings(false, "", Value::Null, false))
+            },
+        ] {
+            let directory = stand.directory;
+            let api = api(stand, Sent::default());
+            let mut harness = launcher(&api, &route());
+            wait_for(&mut harness, "the members", |h| {
+                h.query_by_role_and_label(Role::Link, "Mitglieder")
+                    .is_some()
+            });
+            wait_for(&mut harness, "the status", |_| api.saw("GET /directory"));
+            steps(&mut harness, 10);
+            assert!(
+                harness
+                    .query_by_role_and_label(Role::Link, "Verzeichnis")
+                    .is_none(),
+                "directory {directory}"
+            );
+            assert!(!api.saw(&format!("GET /servers/{HOME}/join-requests")));
+        }
     }
 }
