@@ -6,8 +6,9 @@ community artwork, not an image of a member or a live screen-share preview.
 
 The sign-in pages use `community-banner.webp`, the same picture at the same size
 (`cwebp -q 80 -m 6 -metadata none`): it is drawn at 18 % opacity, and the PNG
-weighs 2 MB. The PNG stays for the native desktop app, which loads it from the
-server (`desktop/ui/src/screens/auth/layout.rs`).
+weighs 2 MB. The PNG stays for native desktop apps up to 0.9, which load it
+from the server; from 0.10 the app bundles the WebP
+(`desktop/ui/src/screens/auth/layout.rs`).
 
 The original local generation is
 `exec-854e6f09-b467-47e4-a051-63700a874fca.png` from session
