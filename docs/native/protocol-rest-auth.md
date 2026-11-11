@@ -71,8 +71,9 @@ Response handling (`client.ts:591-604, 646-671`):
 
 | Cookie | Value | Attributes | Set by | Cleared by |
 |---|---|---|---|---|
-| `gelabber_session` | 64 lower-case hex chars (32 random bytes, `token.rs:9-13`). Server stores only SHA-256. | `Path=/; Max-Age=<session_ttl secs>; HttpOnly; SameSite=Lax` + `; Secure` when `API_COOKIE_SECURE=true` | login, register (no mail), change-password, verify-email, password-reset confirm | logout, logout-all, register-with-mail (`Max-Age=0`, empty value) |
+| `gelabber_session` | 64 lower-case hex chars (32 random bytes, `token.rs:9-13`). Server stores only SHA-256. | `Path=/; Max-Age=<session_ttl secs>; HttpOnly; SameSite=Lax` + `; Secure` when `API_COOKIE_SECURE=true` | login, register (no mail), change-password, verify-email, password-reset confirm; v0.10: the web callback, `oidc/complete` and `oidc/desktop/exchange` (§2.3) | logout, logout-all, register-with-mail (`Max-Age=0`, empty value) |
 | `gelabber_csrf` | 64 hex chars | `Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax` (+`Secure`) | `GET /api/auth/session` when the browser has none or an invalid one; **rotated** by every sign-in/sign-out response above | never cleared, only replaced |
+| `gelabber_oidc` (v0.10) | 64 hex chars; the server stores only its SHA-256 in the flow | `Path=/api/auth/oidc; Max-Age=1800; HttpOnly; SameSite=Lax` (+`Secure`) | `POST /api/auth/oidc/{provider}/start` without `desktop` (§2.3) | every web callback answer except the redirect to the name step, and `oidc/complete` of a web result (`Max-Age=0`, same path) |
 
 Exact header text: `gelabber_session=<tok>; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax[; Secure]` (`cookies.rs:71-80`); a clear is `gelabber_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax[; Secure]` (`cookies.rs:62-64`, test `cookies.rs:149-155`). The CSRF cookie `Max-Age` is `365*24*3600 = 31536000` (`auth/mod.rs:51`). The "valid" check for an existing CSRF cookie is `len == 64 && all ASCII hex digits` (upper-case accepted; `token.rs:16-20`). Cookie parsing on the server: first occurrence of the name in any `Cookie` header wins; exact name match (`cookies.rs:13-24`).
 
@@ -139,6 +140,14 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `invitation_required` | 403 | Registration needs an invitation. (also `fields.invitation = "required"`) | v0.10: `auth` `error.invitationRequired` |
 | `invitation_invalid` | 410 | This invitation is unknown, expired or already used. (also `fields.invitation = "invalid"`) | v0.10: `auth` `error.invitationInvalid` |
 | `server_blocked` | 403 | This server has been blocked by the operator. | v0.10: `auth` `error.serverBlocked` |
+| `oidc_unavailable` | 502 | The sign-in provider did not answer. Try again in a moment. | v0.10: `auth` `error.oidcUnavailable` |
+| `oidc_email_unverified` | 403 | The provider has not verified this e-mail address. | v0.10: `auth` `error.oidcEmailUnverified` |
+| `oidc_account_unverified` | 409 | An account with this address exists but was never confirmed. Sign in with its password and connect the provider there. | v0.10: `auth` `error.oidcAccountUnverified` |
+| `identity_taken` | 409 | This provider account is already connected to an account. | v0.10: `auth` `error.identityTaken` |
+| `password_required` | 409 | Set a password before disconnecting the last sign-in method. | v0.10: `auth` `error.passwordRequired` |
+| `reauth_required` | 403 | Sign in again to confirm it is you. | v0.10: `auth` `error.reauthRequired` |
+| `oidc_wrong_origin` | 409 | Open this instance at its public address to sign in. | v0.10: `auth` `error.oidcWrongOrigin` |
+| `session_changed` | 409 | You signed in to another account meanwhile. Try again. | v0.10: `auth` `error.sessionChanged` |
 | client-only `network` | 0 | Network error. | Keine Verbindung zum Server. |
 | client-only `timeout` | 0 | Request timed out. | Der Server antwortet nicht. Bitte noch einmal versuchen. |
 
@@ -173,7 +182,7 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 
 | Bucket | Key | Limit | Routes |
 |---|---|---|---|
-| `auth` | client IP (IPv6 /64; last `X-Forwarded-For` entry, else peer) | 20 / min | POST `/api/auth/login`, `/register`, `/verify-email`, `/password-reset`, `/password-reset/confirm` (`limits.rs:422-431`) |
+| `auth` | client IP (IPv6 /64; last `X-Forwarded-For` entry, else peer) | 20 / min | POST `/api/auth/login`, `/register`, `/verify-email`, `/password-reset`, `/password-reset/confirm` (`limits.rs:422-431`); v0.10: every non-GET under `/api/auth/oidc/` (start, pending, complete, desktop exchange, and `DELETE /api/auth/oidc/{provider}`), and the GET callback, which counts itself (`limits::anonymous_hit`) |
 | `login` (failures) | account e-mail | 10 failures / 15 min → 429 | login, change-password, verify-email wrong password |
 | `api` | `u:{user_id}` if cookie is a live session, else IP | 180 / min | every other mutation |
 | `msg` | same | 60 / min (plus `api`) | `POST …/messages` |
@@ -227,7 +236,7 @@ Browser-only machinery that a native client does **not** need: the `localStorage
 | `POST /api/auth/login` | `session.ts:268` | `{email, password}` | `200 SessionResponse` + cookies | `422` email codes / `password: required`; `401 invalid_credentials` (also for unknown e-mail and for password > 128 chars); `403 account_disabled` (v0.10: an operator disabled the account; only after the correct password, before `email_unverified`, no mail is sent); `403 email_unverified` (mail on, after correct password; a new link is mailed); `429` (`login_blocked` or `auth` bucket); `403 insecure_transport` |
 | `POST /api/auth/logout` | `session.ts:335` | none | `200 {"csrf_token": string}`; clears session cookie, rotates CSRF. Works without a session. | `403 csrf_invalid` |
 | `POST /api/auth/logout-all` | `session.ts:323` | none | `200 {"csrf_token"}`; every session of the account deleted, sockets closed | `401` without session |
-| `POST /api/auth/password` | `session.ts:362` | `{current_password, password}` | `200 SessionResponse` + new cookies | `422 current_password: required\|wrong`, `password` register rules; `401`; `429`; `403 insecure_transport` |
+| `POST /api/auth/password` | `session.ts:362` | `{current_password, password}`; v0.10: an account without a password (§2.3) sets its first one with `{password}` alone, and any `current_password` is ignored | `200 SessionResponse` + new cookies | `422 current_password: required\|wrong` (only for an account that has a password), `password` register rules; `401`; `429`; `403 insecure_transport`; `403 reauth_required` (v0.10: no password yet and the session was signed in 10 minutes ago or more, `REAUTH_WINDOW`) |
 | `POST /api/auth/verify-email` | `session.ts:291` (route `/verify-email#token=<64hex>`, token parsed by `/(?:^#\|&)token=([0-9a-f]{64})(?:&\|$)/i` and lower-cased, `auth/mail.ts:27-33`) | `{token, password}` | `200 SessionResponse` + cookies | checked in this order (`auth/mod.rs:447-480`): `403 insecure_transport`; `410 token_invalid` (unknown/used/expired token — checked **before** the password); `422 password: required`; `429` (login lockout of the account); `422 password: wrong` (> 128 chars also `wrong`); `410` again if the token was replaced meanwhile; `403 account_disabled` (v0.10: the address is confirmed and the token used, but nobody is signed in) |
 | `POST /api/auth/password-reset` | `session.ts:310` | `{email}` | `202 {}` always (unknown address too); a link is mailed only for an existing account and within 5 mails/h | `404 not_found` when instance has no mail (checked first); `422 email …`; `429` auth bucket. **No** transport check. |
 | `POST /api/auth/password-reset/confirm` | `session.ts:302` (route `/reset-password#token=<64hex>`, `mail.rs:193`) | `{token, password}` | `200 SessionResponse` + cookies; all other sessions revoked, address counts as confirmed | `403 insecure_transport`; `422 token: required` and/or `password required\|too_short\|too_long`; `410 token_invalid`; `403 account_disabled` (v0.10: after the token check, before anything is written; the password stays unchanged); `429` auth bucket |
@@ -243,6 +252,42 @@ Validation constants (`auth/validate.rs`; web mirror `web/src/auth/rules.ts:8-16
 `transport_allowed` (`auth/mod.rs:543-552`): routes register, login, password, verify-email, password-reset/confirm answer `403 insecure_transport` when **both** `API_COOKIE_SECURE` and `API_ALLOW_PLAIN_HTTP` are false **and** the request has a `Host` header that is not loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`, any port, case-insensitive; `cookies.rs:26-41`). No `Host` header → allowed. The check runs **before** body validation (an empty login on a LAN IP answers 403, not 422). `logout`, `logout-all`, `session`, `mail` and `password-reset` (request) have no transport check.
 
 Check order in `login` (`auth/mod.rs:273-320`): transport → `422` (email rules, `password: required`) → `429` login lockout for the address → password > 128 chars = `401 invalid_credentials` (counts as a failure) → Argon2 verify (unknown address runs against a dummy hash; failure counts) → `403 account_disabled` (v0.10) → `403 email_unverified` (mail on only; mails a new link if within 5/h) → `200`. In `register`: transport → `422` → `403 invitation_required` / `410 invitation_invalid` (v0.10, invitation mode only) → (no mail) insert → `409 email_taken` or `201`. Every sign-in ends in `signed_in`, which refuses a disabled account with `403 account_disabled`; a disabled account's sessions are deleted, so its old cookie answers like no session (`user: null`, `401`). A previous session cookie the request carried is revoked on every sign-in (`signed_in`, `auth/mod.rs:325-351`).
+
+### 2.3 Sign-in through a provider (v0.10, `backend/api/src/auth/oidc/`)
+
+OpenID Connect with Google as the only provider (`id` `google`, `name` `Google`). Off unless the operator sets `OIDC_GOOGLE_CLIENT_ID` and `OIDC_GOOGLE_CLIENT_SECRET` (deploy/README.md, "Sign-in with Google"). The provider's redirect URI is `{APP_PUBLIC_URL}/api/auth/oidc/{provider}/callback`. Every session issued here goes through `signed_in` (§2.2), so `403 account_disabled` and the revocation of the previous session cookie apply. Servers older than v0.10 answer `404` (or `405`) on all of these routes; treat that as "no providers".
+
+An account may have no password (created through a provider). Its password login answers `401 invalid_credentials` with the usual timing, `verify-email` answers `422 password: wrong`, a password reset mail sets a first password, and `POST /api/auth/password` sets one without `current_password` from a session younger than 10 minutes (§2.2).
+
+| Method & path | Auth | Request | Success | Errors |
+|---|---|---|---|---|
+| `GET /api/auth/providers` | none | — | `200 {"providers":[{"id":"google","name":"Google"}]}`; `[]` while off | — |
+| `POST /api/auth/oidc/{provider}/start` | CSRF; `link` needs a session | `{"purpose":"sign_in"\|"link", "redirect"?: string, "current_password"?: string, "invitation"?: string, "desktop"?: {"port": int, "state": string, "challenge": string}}` | `200 {"url": "<authorization URL>"}`; open it in the system browser (web: `window.location.assign`). Without `desktop` also sets `gelabber_oidc` (§1.3) | `404 not_found` (unknown provider or off); `403 insecure_transport`; `422` `purpose` required\|invalid, `invitation` invalid, `desktop.port` invalid (1024..=65535), `desktop.state` invalid (43..=128 of `[A-Za-z0-9._~-]`), `desktop.challenge` invalid (43 base64url chars); `401 unauthenticated` (`link` without session); `409 identity_taken` (`link`: this account already has this provider); `422 current_password: required\|wrong` (`link`, account has a password; counted like a failed login, `429` lockout); `409 oidc_wrong_origin` (no `desktop` and `Host` is not `APP_PUBLIC_URL`'s host and port); `502 oidc_unavailable` (discovery failed); `429` |
+| `GET /api/auth/oidc/{provider}/callback` | none (the provider redirects the browser here) | `?code=&state=` or `?error=&state=` | always `303` with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, see below | — |
+| `POST /api/auth/oidc/pending` | CSRF | `{"token": "<64 hex>"}` | `200 {"provider":{"id","name"},"email": string,"name": string\|null}`; does not use the token up | `410 token_invalid` (unknown, expired, not a name-step result, provider off) |
+| `POST /api/auth/oidc/complete` | CSRF; web: `gelabber_oidc`; desktop: `verifier` | `{"token", "name", "verifier"?: string, "locale"?: "de"\|"en"}` | `201` (new or taken-over account) or `200` (an existing account was joined or signed in meanwhile): `SessionResponse` plus `"redirect": string\|null`, cookies | `403 insecure_transport`; `410 token_invalid` (also a missing or wrong binding); `422` `name` rules, `locale` invalid; `403 invitation_required` / `410 invitation_invalid` (the result stays usable until it expires); `403 oidc_email_unverified`; `409 oidc_account_unverified`; `403 account_disabled`; `429` |
+| `POST /api/auth/oidc/desktop/exchange` | CSRF; `link` needs the session that started it | `{"code": "<64 hex>", "verifier": "<43 chars>"}` | `200`, by `result`: `{"result":"signed_in", …SessionResponse}` + cookies; `{"result":"needs_name","provider":{…},"email","name"}` (call `complete` with the same code as `token` and the verifier, within 30 min); `{"result":"linked", …methods body}` | `403 insecure_transport`; `410 token_invalid` (unknown or expired code, wrong verifier: a wrong verifier does not use the code up); `409 session_changed` (link); `403 oidc_email_unverified`; `409 oidc_account_unverified`; `409 identity_taken`; `403 invitation_required` / `410 invitation_invalid`; `403 account_disabled`; `429` |
+| `GET /api/auth/methods` | session | — | `200 {"password": bool, "providers":[{"id","name","configured": bool,"connected": {"email": string,"since": ts}\|null}]}`: configured providers in config order, then providers still connected after the operator turned them off (`configured: false`). `since` is when it was connected | `401` |
+| `DELETE /api/auth/oidc/{provider}` | session, CSRF | — | `200` methods body; the identity is gone, every session stays | `401`; `404 not_found` (not connected); `409 password_required` (no password); `429` |
+
+`redirect` follows the web `safeRedirect` rule (a path starting with `/`, not `//` or `/\`, no control characters, at most 2048 chars); anything else is dropped. A `redirect` of the form `/invite/{code}` also carries a server invite for the admission gate, like `server_invite` at registration.
+
+**Callback destinations (web flow).** The flow is single use, and its `gelabber_oidc` cookie must match:
+
+- Signed in: session and CSRF cookies set, `gelabber_oidc` cleared, `Location: {redirect or /}`.
+- New account: `Location: /sign-in/name#token=<64 hex>` (a result valid 30 min; `pending`, then `complete`).
+- Link done: `Location: /settings/konto?connected={provider}`.
+- Sign-in error: `/login?oidc_error={code}`; refused by the admission gate: `/register?oidc_error=invitation_required|invitation_invalid` with `invitation` and `redirect` kept; link error: `/settings/konto?oidc_error={code}`.
+- Codes: `cancelled` (the person declined at the provider), `expired` (unknown, used or expired state, or a missing or foreign `gelabber_oidc`), `failed` (provider error, token exchange or `id_token` check failed, provider turned off meanwhile), `email_unverified`, `account_unverified`, `identity_taken`, `invitation_required`, `invitation_invalid`, `account_disabled`, `insecure_transport`, `session_changed`.
+
+**Desktop flow** (no cookie; the app proves with PKCE that it started the flow):
+
+1. Bind a listener on `127.0.0.1:0` (never `localhost` or `0.0.0.0`). Make a verifier (32 random bytes, base64url without padding, 43 chars), its `S256` challenge, and a `state` of 43..=128 URL-safe chars.
+2. `POST …/start` with `desktop: {port, state, challenge}`, then open `url` in the system browser.
+3. The callback redirects the browser to `http://127.0.0.1:{port}/callback?state={state}&code={64 hex}` (a result valid 5 min), or `…&error={code}` with the codes above. A flow lost before that (unknown state) has no port to go to; the app times out. Accept only `GET /callback` with the matching `state`.
+4. `POST …/desktop/exchange {code, verifier}`. A link needs the session that started it, else `409 session_changed`.
+
+**Which account a sign-in opens** (`auth/oidc/link.rs`), in this order: a known provider identity signs its account in; without an address the provider marks verified → `oidc_email_unverified`, nothing created; a confirmed account with the address gets the identity (with account mail on, a `provider_connected` mail); an unconfirmed pending registration is taken over at `complete` (its password, tokens and sessions dropped); an account never confirmed (registered while mail was off) → `oidc_account_unverified`; otherwise a new account after the admission gate (`API_REGISTRATION`). A disabled account is refused with `account_disabled` and never taken over. A link attaches the identity to the signed-in account (no-op when already there) and confirms its address when the provider's verified address is the account's own.
 
 ---
 
@@ -781,6 +826,11 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 | GET | /api/push/key; POST, DELETE /api/push/subscriptions | browser | 13 |
 | POST | /api/servers/{id}/reports | yes (v0.10) | 4.5 |
 | GET, POST, DELETE | /api/operator, /api/operator/* | operator pages only (v0.10) | 4.6 |
+| GET | /api/auth/providers, /api/auth/methods | yes (v0.10) | 2.3 |
+| POST | /api/auth/oidc/{provider}/start, /api/auth/oidc/pending, /api/auth/oidc/complete | yes (v0.10) | 2.3 |
+| GET | /api/auth/oidc/{provider}/callback | browser redirect (v0.10) | 2.3 |
+| POST | /api/auth/oidc/desktop/exchange | native only (v0.10) | 2.3 |
+| DELETE | /api/auth/oidc/{provider} | yes (v0.10) | 2.3 |
 | GET | /health, /ready, /metrics | no | — |
 | GET | /ws (upgrade) | yes | gateway spec |
 
