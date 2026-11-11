@@ -19,6 +19,7 @@
 //! registration signs in at once and `409 email_taken` names a known
 //! address, as before.
 
+pub mod device;
 pub mod oidc;
 pub mod session;
 pub mod tokens;
@@ -577,7 +578,10 @@ async fn signed_in_parts(
     session::revoke(&state.db, None).await?;
     // The row starts with the idle window and slides from there
     // (`session::touch`); the cookie carries the absolute lifetime.
-    let session_token = session::create(&state.db, user.id, state.session_idle).await?;
+    // The device is the client this answer reaches: the browser of a
+    // provider's callback, the app of a desktop exchange.
+    let device = device::Device::from_headers(headers);
+    let session_token = session::create(&state.db, user.id, state.session_idle, device).await?;
     let csrf_token = token::generate();
 
     let cookies = [
