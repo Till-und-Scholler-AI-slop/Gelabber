@@ -9,6 +9,7 @@ pub mod not_found;
 pub mod oidc;
 pub mod recovery;
 pub mod register;
+pub mod registration;
 pub mod reset_password;
 pub mod sign_in_name;
 pub mod verify_email;
