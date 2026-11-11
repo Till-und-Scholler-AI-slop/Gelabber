@@ -291,7 +291,7 @@ impl Toasts {
                         Vec2::splat(32.0),
                     );
                     let button = ui.add(
-                        IconButton::new(Icon::Close, "Schließen")
+                        IconButton::new(Icon::Close, gelabber_i18n::common::close())
                             .size(32.0)
                             .at(close),
                     );

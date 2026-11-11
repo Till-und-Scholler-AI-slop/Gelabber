@@ -60,10 +60,9 @@ impl Unread {
     /// The tray's tooltip (shell.rs `shell_unread`).
     pub fn tooltip(self) -> String {
         match self.count {
-            0 if self.any => "Gelabber: ungelesene Nachrichten".to_owned(),
+            0 if self.any => gelabber_i18n::app::tray_unread().to_owned(),
             0 => "Gelabber".to_owned(),
-            1 => "Gelabber: 1 neue Nachricht".to_owned(),
-            n => format!("Gelabber: {n} neue Nachrichten"),
+            n => gelabber_i18n::app::tray_new_messages(n as u64),
         }
     }
 }
@@ -126,7 +125,10 @@ pub type Events = Arc<Mutex<Vec<Event>>>;
 /// The menu's entries, [`Event::Show`] and [`Event::Quit`], in the
 /// interface's language.
 pub(crate) fn menu_labels() -> [&'static str; 2] {
-    ["Gelabber öffnen", "Beenden"]
+    [
+        gelabber_i18n::app::tray_open(),
+        gelabber_i18n::app::tray_quit(),
+    ]
 }
 
 /// A running tray icon.

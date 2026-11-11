@@ -118,16 +118,16 @@ pub fn preview_text(content: &str, has_attachment: bool, gif: bool) -> String {
         // UTF-16 units, as `String.length` counts them.
         let units: Vec<u16> = trimmed.encode_utf16().collect();
         if units.len() > 140 {
-            return format!("{}…", String::from_utf16_lossy(&units[..137]));
+            return format!("{}…", String::from_utf16_lossy(&units[..137])); // i18n-ok
         }
         return trimmed;
     }
     if gif {
         "GIF".into()
     } else if has_attachment {
-        "Datei".into()
+        gelabber_i18n::app::notify_file().into()
     } else {
-        "Neue Nachricht".into()
+        gelabber_i18n::app::notify_new_message().into()
     }
 }
 
@@ -141,7 +141,11 @@ pub fn readable_mentions(text: &str, names: &HashMap<String, String>) -> String 
         if tail.len() > 36 && tail.as_bytes()[36] == b'>' && Uuid::parse_str(&tail[..36]).is_ok() {
             let id = tail[..36].to_ascii_lowercase();
             out.push('@');
-            out.push_str(names.get(&id).map_or("Unbekannt", String::as_str));
+            out.push_str(
+                names
+                    .get(&id)
+                    .map_or(gelabber_i18n::app::notify_mention_unknown(), String::as_str),
+            );
             rest = &tail[37..];
         } else {
             out.push_str("<@");
@@ -162,10 +166,17 @@ pub fn notification_text(
     preview: &str,
 ) -> (String, String) {
     if hide {
-        return (format!("Neue Nachricht von {author}"), String::new());
+        return (
+            gelabber_i18n::app::notify_new_message_from(author),
+            String::new(),
+        );
     }
-    let mention = if mentioned { " hat dich erwähnt" } else { "" };
-    (format!("{author}{mention} · {label}"), preview.to_owned())
+    let title = if mentioned {
+        gelabber_i18n::app::notify_mentioned_title(author, label)
+    } else {
+        format!("{author} · {label}")
+    };
+    (title, preview.to_owned())
 }
 
 /// `createNotificationDedupe`: each message once per account.

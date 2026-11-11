@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use gelabber_i18n::app as texts;
 use parking_lot::Mutex;
 
 /// What is asked for.
@@ -148,16 +149,16 @@ fn programs(choosers: &Choosers, request: &Request) -> Vec<(String, Vec<String>)
             return Vec::new();
         }
         let choose = if many {
-            "set f to choose file with multiple selections allowed"
+            "set f to choose file with multiple selections allowed" // i18n-ok
         } else {
-            "set f to {choose file}"
+            "set f to {choose file}" // i18n-ok
         };
         let script = [
             choose,
-            "set out to \"\"",
-            "repeat with x in f",
-            "set out to out & POSIX path of x & linefeed",
-            "end repeat",
+            "set out to \"\"",                             // i18n-ok
+            "repeat with x in f",                          // i18n-ok
+            "set out to out & POSIX path of x & linefeed", // i18n-ok
+            "end repeat",                                  // i18n-ok
             "out",
         ];
         let args = script
@@ -482,7 +483,7 @@ pub fn save(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
         tracing::warn!("save: {name:?} is no file name");
         notices(&ctx)
             .lock()
-            .push(("Datei nicht gespeichert. Der Dateiname fehlt.".into(), true));
+            .push((texts::file_save_no_name().into(), true));
         ctx.request_repaint();
         return;
     };
@@ -504,20 +505,18 @@ pub fn save(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
             Choice::InApp => match downloads_dir(&choosers) {
                 Some(dir) => Some(free_path(&dir, &name)),
                 None => {
-                    let e = "Kein Ordner für Downloads gefunden.";
-                    notices
-                        .lock()
-                        .push((format!("Datei nicht gespeichert. {e}"), true));
+                    let e = texts::file_no_downloads();
+                    notices.lock().push((texts::file_not_saved(e), true));
                     None
                 }
             },
         };
         if let Some(path) = target {
             let notice = match write_whole(&path, &bytes) {
-                Ok(()) => (format!("Gespeichert unter {}.", path.display()), false),
+                Ok(()) => (texts::file_saved_to(&path.display().to_string()), false),
                 Err(e) => {
                     tracing::warn!("save {}: {e}", path.display());
-                    (format!("Datei nicht gespeichert. {e}"), true)
+                    (texts::file_not_saved(&e.to_string()), true)
                 }
             };
             notices.lock().push(notice);
@@ -620,15 +619,15 @@ pub fn show_in_app(ctx: &egui::Context) {
     let error = field.error.clone();
     let path = &mut field.path;
     let placeholder = if cfg!(windows) {
-        "C:\\Users\\…\\bild.png"
+        texts::file_path_placeholder_windows()
     } else {
-        "/home/…/bild.png"
+        texts::file_path_placeholder()
     };
     let output = crate::widgets::Modal::new("file-path", &title).show(
         ctx,
         |ui| {
             let input = crate::widgets::TextField::new("file-path", path)
-                .label("Dateipfad")
+                .label(texts::file_path_label())
                 .placeholder(placeholder)
                 .autofocus(true)
                 .error(error.as_deref())
@@ -641,13 +640,13 @@ pub fn show_in_app(ctx: &egui::Context) {
         Some(&mut |ui: &mut egui::Ui| {
             crate::screens::shell::overlays::row(ui, 36.0, 8.0, |ui| {
                 if ui
-                    .add(crate::widgets::Button::new("Abbrechen").ghost())
+                    .add(crate::widgets::Button::new(gelabber_i18n::common::cancel()).ghost())
                     .clicked()
                 {
                     cancel.set(true);
                 }
                 if ui
-                    .add(crate::widgets::Button::new("Öffnen").primary())
+                    .add(crate::widgets::Button::new(texts::file_open()).primary())
                     .clicked()
                 {
                     submit.set(true);
@@ -682,7 +681,7 @@ fn typed(field: &mut InApp) -> Option<PathBuf> {
     if path.is_file() && std::fs::File::open(&path).is_ok() {
         Some(path)
     } else {
-        field.error = Some("Diese Datei lässt sich nicht öffnen.".into());
+        field.error = Some(texts::file_cannot_open().into());
         None
     }
 }

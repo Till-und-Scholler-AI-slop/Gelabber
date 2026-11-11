@@ -310,7 +310,7 @@ pub fn notify_system_unknown(author: &str) -> String {
 }
 
 /// The portal refused a request.
-pub fn ptt_portal_refuses(method: &str, code: u32) -> String {
+pub fn ptt_portal_refuses(method: &str, code: impl std::fmt::Display) -> String {
     match get() {
         Locale::De => format!("Das Portal lehnt ab ({method}, {code})."),
         Locale::En => format!("The portal refuses ({method}, {code})."),

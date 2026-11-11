@@ -50,7 +50,7 @@ impl Definition {
     pub fn dark() -> Self {
         Self {
             id: "dark".into(),
-            name: "Gelabber Dunkel".into(),
+            name: "Gelabber Dunkel".into(), // i18n-ok
             mode: Mode::Dark,
             style: Style::Clear,
             colors: BaseColors {
@@ -70,7 +70,7 @@ impl Definition {
     pub fn light() -> Self {
         Self {
             id: "light".into(),
-            name: "Gelabber Hell".into(),
+            name: "Gelabber Hell".into(), // i18n-ok
             mode: Mode::Light,
             style: Style::Clear,
             colors: BaseColors {
@@ -545,25 +545,25 @@ pub fn contrast_issues(definition: &Definition) -> Vec<&'static str> {
     let backgrounds = [c.background, c.panel, c.surface, c.rail];
     let mut issues = Vec::new();
     if backgrounds.iter().any(|bg| contrast(c.text, *bg) < 4.5) {
-        issues.push("Text ist auf mindestens einer Fläche schwer lesbar.");
+        issues.push(gelabber_i18n::app::theme_issue_text());
     }
     if backgrounds.iter().any(|bg| contrast(c.muted, *bg) < 4.5) {
-        issues.push("Sekundärtext braucht mehr Kontrast.");
+        issues.push(gelabber_i18n::app::theme_issue_muted());
     }
     if contrast(readable_ink(c.accent), c.accent) < 4.5 {
-        issues.push("Schrift auf der Akzentfarbe ist schwer lesbar.");
+        issues.push(gelabber_i18n::app::theme_issue_accent_ink());
     }
     if [c.background, c.panel, c.surface, selected]
         .iter()
         .any(|bg| contrast(accent_text, *bg) < 4.5)
     {
-        issues.push("Links in der Akzentfarbe heben sich zu wenig ab.");
+        issues.push(gelabber_i18n::app::theme_issue_accent_text());
     }
     if [c.background, c.panel, c.surface, elevated]
         .iter()
         .any(|bg| contrast(border_strong, *bg) < 3.0)
     {
-        issues.push("Rahmen von Eingabefeldern heben sich zu wenig ab.");
+        issues.push(gelabber_i18n::app::theme_issue_border());
     }
     issues
 }
