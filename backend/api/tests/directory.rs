@@ -1054,30 +1054,79 @@ async fn joins_and_requests_share_ten_per_hour(pool: PgPool) {
     let mut ada = registered(&state, "ada@example.test", "Ada").await;
     let mut lena = registered(&state, "lena@example.test", "Lena").await;
     let mut tom = registered(&state, "tom@example.test", "Tom").await;
-    let filmclub = create_server(&mut ada, "Filmclub").await;
+    let mut open = Vec::new();
+    for n in 0..6 {
+        let server = create_server(&mut ada, &format!("Filmclub {n}")).await;
+        list(&mut ada, server, "de", "Kino").await;
+        open.push(server);
+    }
+    let filmclub = open[0];
     let keller = create_server(&mut ada, "Modellbau-Keller").await;
-    list(&mut ada, filmclub, "de", "Kino").await;
     list_with(&mut ada, keller, "de", "request").await;
 
-    for _ in 0..5 {
-        let res = join(&mut lena, filmclub).await;
+    for &server in &open[..5] {
+        let res = join(&mut lena, server).await;
         assert_eq!(res.status, StatusCode::OK, "{}", res.body);
         let res = ask(&mut lena, keller, "").await;
         assert!(res.status.is_success(), "{}", res.body);
     }
     for res in [
-        join(&mut lena, filmclub).await,
+        join(&mut lena, open[5]).await,
         ask(&mut lena, keller, "").await,
     ] {
         assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
         assert_eq!(res.body["error"], "rate_limited");
         assert!(res.body["retry_after"].as_u64().unwrap() > 0);
     }
+    assert!(!is_member(&pool, open[5], id_of(&lena)).await);
+    // A member's repeat is idempotent and not refused by the limit.
+    let res = join(&mut lena, filmclub).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["id"], filmclub.to_string());
     // Per person: Tom still gets in, and withdrawing is not limited.
     let res = join(&mut tom, filmclub).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     let res = withdraw(&mut lena, keller).await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn a_members_repeated_join_spends_nothing_of_the_limit(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list(&mut ada, filmclub, "de", "Kino").await;
+    list_with(&mut ada, keller, "de", "request").await;
+
+    for _ in 0..12 {
+        let res = join(&mut lena, filmclub).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+    // Only the first join counted: nine requests still go through.
+    for _ in 0..9 {
+        let res = ask(&mut lena, keller, "").await;
+        assert!(res.status.is_success(), "{}", res.body);
+    }
+    let res = ask(&mut lena, keller, "").await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn the_search_is_limited_per_account(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let mut tom = registered(&state, "tom@example.test", "Tom").await;
+    for _ in 0..60 {
+        let res = search(&mut lena, "?q=kino").await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+    let res = search(&mut lena, "?q=kino").await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+    assert_eq!(res.body["error"], "rate_limited");
+    let res = search(&mut tom, "?q=kino").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 }
 
 #[sqlx::test]
@@ -1509,7 +1558,7 @@ async fn a_listing_is_reported_with_a_snapshot_of_it(pool: PgPool) {
     list(&mut ada, filmclub, "de", "Jeden Freitag ein Film.").await;
     let snapshot = json!({
         "name": "Filmclub", "icon_url": null, "description": "Jeden Freitag ein Film.",
-        "language": "de", "join_mode": "open", "member_count": 2,
+        "language": "de", "join_mode": "open",
     });
 
     // A signed-in non-member who sees the listing reports it.
@@ -1543,7 +1592,7 @@ async fn a_listing_is_reported_with_a_snapshot_of_it(pool: PgPool) {
         report_rows(&pool, filmclub).await[1].2,
         Some(json!({
             "name": "Filmclub", "icon_url": null, "description": "Etwas ganz anderes.",
-            "language": "de", "join_mode": "open", "member_count": 2,
+            "language": "de", "join_mode": "open",
         }))
     );
     // A member of an unlisted server reports without a snapshot.
@@ -1622,6 +1671,31 @@ async fn a_delist_hides_the_listing_and_keeps_its_requests(pool: PgPool) {
     let res = report(&mut tom, keller, json!({ "reason": "spam" })).await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
 
+    // The console shows the listed server under `listed`.
+    let unlisted = create_server(&mut ada, "Privat").await;
+    let res = op
+        .send(Method::GET, "/api/operator/servers?filter=listed", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["total"], 1);
+    assert_eq!(res.body["servers"][0]["id"], keller.to_string());
+    assert_eq!(res.body["servers"][0]["directory"], "listed");
+    let res = op.send(Method::GET, "/api/operator/servers", None).await;
+    let state_of = |id: Uuid| {
+        res.body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == id.to_string())
+            .unwrap()["directory"]
+            .clone()
+    };
+    assert_eq!(state_of(keller), "listed");
+    assert_eq!(state_of(unlisted), "off");
+    let res = op.send(Method::GET, "/api/operator/reports", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["reports"][0]["server"]["directory"], "listed");
+
     // Someone who is not an operator cannot delist.
     let res = ada
         .send(
@@ -1642,6 +1716,10 @@ async fn a_delist_hides_the_listing_and_keeps_its_requests(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(res.body["directory"], "delisted");
+    let res = op
+        .send(Method::GET, "/api/operator/servers?filter=listed", None)
+        .await;
+    assert_eq!(res.body["total"], 0, "{}", res.body);
 
     // The listing is gone: no search, no request, no report.
     assert!(listing_of(&mut tom, keller).await.is_none());
@@ -1680,6 +1758,7 @@ async fn a_delist_hides_the_listing_and_keeps_its_requests(pool: PgPool) {
         )
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["directory"], "listed");
     assert_eq!(get_listing(&mut ada, keller).await.body["delisted"], false);
     let listing = listing_of(&mut tom, keller).await.expect("listed again");
     assert_eq!(listing["member_count"], 2);

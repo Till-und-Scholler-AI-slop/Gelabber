@@ -34,7 +34,7 @@ use crate::auth::session::CurrentUser;
 use crate::auth::validate::finish;
 use crate::error::{ApiError, FieldErrors};
 use crate::json::Body;
-use crate::limits::{DIRECTORY_JOIN_PER_HOUR, HOUR};
+use crate::limits::{DIRECTORY_JOIN_PER_HOUR, DIRECTORY_SEARCH_PER_MIN, HOUR, MINUTE};
 use crate::path::Id;
 use crate::servers::ServerView;
 use crate::servers::membership;
@@ -71,6 +71,21 @@ macro_rules! visible_listing_where {
          AND NOT EXISTS (SELECT 1 FROM server_bans b \
                           WHERE b.server_id = s.id AND b.user_id = $1)"
     };
+}
+
+/// A server's place in the directory as the operator console shows it
+/// (`ServerAdmin.directory`, a report's server): `delisted` while an
+/// operator took it out, `listed` while the owner has it listed, otherwise
+/// `off`. A blocked server keeps its state; the console shows the block on
+/// its own.
+pub fn state_of(delisted: bool, listed: bool) -> &'static str {
+    if delisted {
+        "delisted"
+    } else if listed {
+        "listed"
+    } else {
+        "off"
+    }
 }
 
 /// `404` while the directory is off.
@@ -190,6 +205,20 @@ async fn list_listings(
     let language = validate::language_filter(params.language.as_deref(), &mut errors);
     let offset = validate::offset(params.offset.as_deref(), &mut errors);
     finish(errors)?;
+    // Each search counts members per matching listing; the gate skips GETs.
+    const BUCKET: &str = "dir_search";
+    state
+        .limiter
+        .hit(
+            BUCKET,
+            &user.id.to_string(),
+            DIRECTORY_SEARCH_PER_MIN,
+            MINUTE,
+        )
+        .map_err(|retry_after| {
+            state.metrics.rate_limited(BUCKET);
+            ApiError::RateLimited { retry_after }
+        })?;
     let pattern = query.map(|q| format!("%{}%", validate::like_pattern(&q)));
 
     // One row past the page tells whether another page follows.
@@ -266,8 +295,8 @@ pub async fn visible_listing<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres
 }
 
 /// What a report of server `server_id` keeps of its listing, when
-/// `user_id` can see one: name, icon, description, language, join mode and
-/// member count as they are now, so later edits cannot hide what was
+/// `user_id` can see one: name, icon, description, language and join mode
+/// as they are now, so later edits cannot hide what was
 /// reported. `None` while the directory is off or the listing is not
 /// visible to the caller.
 pub async fn report_snapshot(
@@ -278,30 +307,16 @@ pub async fn report_snapshot(
     if !state.directory {
         return Ok(None);
     }
-    let row: Option<(String, Option<String>, String, String, String, i64)> =
-        sqlx::query_as(concat!(
-            "SELECT s.name, s.icon_url, l.description, l.language, l.join_mode, \
-                    (SELECT count(*) FROM server_members m WHERE m.server_id = s.id) \
-             FROM server_listings l JOIN servers s ON s.id = l.server_id \
-             WHERE l.server_id = $2 AND ",
-            visible_listing_where!()
-        ))
-        .bind(user_id)
-        .bind(server_id)
-        .fetch_optional(&state.db)
-        .await?;
-    Ok(row.map(
-        |(name, icon_url, description, language, join_mode, member_count)| {
-            serde_json::json!({
-                "name": name,
-                "icon_url": icon_url,
-                "description": description,
-                "language": language,
-                "join_mode": join_mode,
-                "member_count": member_count,
-            })
-        },
-    ))
+    let listing = visible_listing(&state.db, server_id, user_id).await?;
+    Ok(listing.map(|listing| {
+        serde_json::json!({
+            "name": listing.name,
+            "icon_url": listing.icon_url,
+            "description": listing.description,
+            "language": listing.language,
+            "join_mode": listing.join_mode,
+        })
+    }))
 }
 
 /// The `dir_join` bucket: joins and requests to join per account and hour.
@@ -331,7 +346,8 @@ async fn is_member(
 }
 
 /// `POST /api/directory/listings/{id}/join`: joins an open listed server.
-/// Idempotent for a member; a server in request mode answers
+/// Idempotent for a member, whose repeat neither counts against nor is
+/// refused by the `dir_join` limit; a server in request mode answers
 /// `409 join_request_required`.
 async fn join(
     State(state): State<AppState>,
@@ -339,7 +355,12 @@ async fn join(
     Id(server_id): Id,
 ) -> Result<Json<ServerView>, ApiError> {
     require_enabled(&state)?;
-    hit_join_limit(&state, user.id)?;
+    // A member's repeat is idempotent and spends nothing of the limit.
+    let mut conn = state.db.acquire().await?;
+    if !is_member(&mut conn, server_id, user.id).await? {
+        hit_join_limit(&state, user.id)?;
+    }
+    drop(conn);
     let mut tx = membership::lock_server(&state.db, server_id, true).await?;
     let listing = visible_listing(&mut *tx, server_id, user.id)
         .await?

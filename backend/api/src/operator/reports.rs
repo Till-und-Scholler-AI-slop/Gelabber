@@ -22,9 +22,9 @@ use uuid::Uuid;
 use super::access::Operator;
 use super::accounts::{PAGE, offset};
 use super::audit::{self, Action, Targets};
-use super::servers::directory;
 use crate::auth::session::CurrentUser;
 use crate::auth::validate;
+use crate::directory::state_of;
 use crate::error::{ApiError, FieldErrors};
 use crate::json::Body;
 use crate::path::Id;
@@ -226,7 +226,7 @@ pub struct ReportedServer {
     pub name: String,
     pub icon_url: Option<String>,
     pub blocked: bool,
-    /// See [`directory`].
+    /// See [`state_of`].
     pub directory: &'static str,
 }
 
@@ -255,6 +255,7 @@ struct ReportRow {
     server_icon_url: Option<String>,
     server_blocked: bool,
     server_delisted: bool,
+    server_listed: bool,
     reporter_id: Option<Uuid>,
     reporter_name: Option<String>,
     reason: String,
@@ -283,7 +284,7 @@ impl From<ReportRow> for Report {
                 name: row.server_name,
                 icon_url: row.server_icon_url,
                 blocked: row.server_blocked,
-                directory: directory(row.server_delisted),
+                directory: state_of(row.server_delisted, row.server_listed),
             },
             reporter: person(row.reporter_id, row.reporter_name),
             reason: row.reason,
@@ -304,6 +305,8 @@ macro_rules! report_select {
         "SELECT r.id, r.server_id, s.name AS server_name, s.icon_url AS server_icon_url, \
              s.blocked_at IS NOT NULL AS server_blocked, \
              s.delisted_at IS NOT NULL AS server_delisted, \
+             EXISTS (SELECT 1 FROM server_listings l \
+                      WHERE l.server_id = s.id AND l.listed) AS server_listed, \
              r.reporter_id, rep.name AS reporter_name, r.reason, r.details, r.status, \
              r.created_at, r.resolved_at, r.resolved_by, res.name AS resolved_by_name, \
              r.resolution_note \
