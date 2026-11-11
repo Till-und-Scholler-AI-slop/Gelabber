@@ -3,6 +3,7 @@
 //! zone for managers; members and leaving for everyone else.
 
 mod invite;
+mod transfer;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -128,6 +129,8 @@ struct State {
     /// The section the address names (`#server-settings-gefahrenzone`),
     /// jumped to once its heading has a place.
     from_address: Option<&'static str>,
+    /// "Server übergeben", while its dialog is open.
+    transfer: Option<transfer::Dialog>,
 }
 
 /// How far below the anchor row a heading may sit and still count as
@@ -346,20 +349,12 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
             );
             bans(&mut col, app, st);
         }
+        // The owner's rows each say what they do (#519); members keep the
+        // section's sentence.
         let owner = detail.server.role == Role::Owner;
-        let hint = if owner {
-            texts::danger_owner_hint()
-        } else {
-            texts::danger_member_hint()
-        };
-        section(
-            &mut col,
-            "gefahrenzone",
-            texts::section_danger(),
-            Some(hint),
-            st,
-        );
-        danger(&mut col, app, &detail);
+        let hint = (!owner).then(texts::danger_member_hint);
+        section(&mut col, "gefahrenzone", texts::section_danger(), hint, st);
+        danger(&mut col, app, st, &detail);
         let used = col.min_rect();
         st.content_height = used.bottom() + 48.0 - content_top;
         ui.advance_cursor_after_rect(Rect::from_min_max(
@@ -430,6 +425,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     {
         st.inviting = None;
         reload_invites(app, st, server);
+    }
+    if let Some(dialog) = &mut st.transfer
+        && !dialog.show(&ctx, app, &detail)
+    {
+        st.transfer = None;
     }
     drop(s);
     controls::show_confirm(&ctx);
@@ -1216,34 +1216,74 @@ fn bans(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
 }
 
-fn danger(ui: &mut Ui, _app: &mut AppCtx, detail: &ServerDetail) {
-    let owner = detail.server.role == Role::Owner;
-    let label = if owner {
-        texts::danger_delete()
-    } else {
-        texts::danger_leave()
-    };
+/// Gefahrenzone (web `DangerSection`): for the owner one list of two rows,
+/// "Server übergeben" then "Server löschen"; for everyone else the
+/// "Server verlassen" button under the section's sentence.
+fn danger(ui: &mut Ui, _app: &mut AppCtx, s: &mut State, detail: &ServerDetail) {
+    let name = &detail.server.name;
+    let key = format!("drop-server:{}", detail.server.id);
+    if detail.server.role == Role::Owner {
+        let theme = Theme::of(ui.ctx());
+        // `.settings-action-list`: a hairline over the first row.
+        let width = ui.available_width();
+        crate::widgets::rule_h(
+            ui.painter(),
+            theme.c.border,
+            ui.cursor().min.x..=ui.cursor().min.x + width,
+            ui.cursor().min.y,
+        );
+        ui.add_space(1.0);
+        let none = transfer::candidates(detail).is_empty();
+        let hint = if none {
+            texts::transfer_no_member()
+        } else {
+            texts::transfer_hint()
+        };
+        if controls::action_row(
+            ui,
+            texts::transfer_title(),
+            hint,
+            None,
+            Some(controls::RowButton::new(texts::transfer_open()).disabled(none)),
+        ) && !none
+        {
+            s.transfer = Some(transfer::Dialog::default());
+        }
+        if controls::action_row(
+            ui,
+            texts::danger_delete(),
+            texts::danger_owner_hint(),
+            None,
+            Some(
+                controls::RowButton::new(texts::danger_delete())
+                    .variant(ButtonVariant::DangerOutline),
+            ),
+        ) {
+            controls::ask(
+                ui.ctx(),
+                Confirm::danger(
+                    &key,
+                    texts::danger_delete_title(name),
+                    Some(texts::danger_delete_message()),
+                    texts::danger_delete(),
+                ),
+            );
+        }
+        return;
+    }
     if ui
-        .add(Button::new(label).variant(ButtonVariant::DangerOutline))
+        .add(Button::new(texts::danger_leave()).variant(ButtonVariant::DangerOutline))
         .clicked()
     {
-        let name = &detail.server.name;
-        let confirm = if owner {
+        controls::ask(
+            ui.ctx(),
             Confirm::danger(
-                &format!("drop-server:{}", detail.server.id),
-                texts::danger_delete_title(name),
-                Some(texts::danger_delete_message()),
-                texts::danger_delete(),
-            )
-        } else {
-            Confirm::danger(
-                &format!("drop-server:{}", detail.server.id),
+                &key,
                 texts::danger_leave_title(name),
                 None,
                 texts::danger_leave_confirm(),
-            )
-        };
-        controls::ask(ui.ctx(), confirm);
+            ),
+        );
     }
 }
 
