@@ -666,3 +666,19 @@ pub fn live_sound_from(app: &str) -> String {
         Locale::En => format!("Sound from “{app}”"),
     }
 }
+
+/// "{count} Live": the header's facts while a Live runs.
+pub fn facts_live(count: &str) -> String {
+    match get() {
+        Locale::De => format!("{count} Live"),
+        Locale::En => format!("{count} live"),
+    }
+}
+
+/// "{a}, {b} und {more} weiteren": the names after "mit" (dative).
+pub fn names_more_dative(a: &str, b: &str, more: &str) -> String {
+    match get() {
+        Locale::De => format!("{a}, {b} und {more} weiteren"),
+        Locale::En => format!("{a}, {b} and {more} more"),
+    }
+}

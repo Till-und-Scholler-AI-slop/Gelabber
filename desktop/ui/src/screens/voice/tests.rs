@@ -163,10 +163,9 @@ fn pictures_of_the_call() {
         super::summary::stage_facts(
             room.occupants.len(),
             room.cameras.len(),
-            &room.others_live,
-            room.own_live
+            room.occupants.iter().filter(|p| p.live).count(),
         ),
-        "3 im Kanal · Mira ist live"
+        "3 im Kanal · 1 Live"
     );
     // Outside the call no pictures run: a Live is watched in the room.
     let outside = session::build(&s, &CallState::default(), SERVER, SOFA).expect("room");

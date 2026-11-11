@@ -4,11 +4,21 @@ use gelabber_i18n::voice as texts;
 
 /// "Mia", "Mia und Lena", "Mia, Lena und Kim", "Mia, Lena und 2 weitere".
 pub fn name_list(names: &[String]) -> String {
+    names_in(names, false)
+}
+
+/// [`name_list`] after "mit", in the dative: "Mia, Lena und 2 weiteren".
+pub fn name_list_dative(names: &[String]) -> String {
+    names_in(names, true)
+}
+
+fn names_in(names: &[String], dative: bool) -> String {
     match names {
         [] => String::new(),
         [a] => a.clone(),
         [a, b] => texts::names_two(a, b),
         [a, b, c] => texts::names_three(a, b, c),
+        [a, b, ..] if dative => texts::names_more_dative(a, b, &(names.len() - 2).to_string()),
         [a, b, ..] => texts::names_more(a, b, &(names.len() - 2).to_string()),
     }
 }
@@ -37,7 +47,7 @@ pub fn room_summary(others: &[String], here: bool, live: &[String]) -> String {
         return if others.is_empty() {
             texts::summary_only_you().into()
         } else {
-            texts::summary_you_with(&name_list(others))
+            texts::summary_you_with(&name_list_dative(others))
         };
     }
     if others.is_empty() {
@@ -54,18 +64,13 @@ pub fn room_summary(others: &[String], here: bool, live: &[String]) -> String {
     texts::summary_there_and_live(&there, &live_sentence(live, false))
 }
 
-/// `stageFacts`: "3 im Kanal · 2 Kameras", "3 im Kanal · Jonas ist live".
-pub fn stage_facts(people: usize, cameras: usize, live: &[String], own_live: bool) -> String {
+/// `stageFacts`, the header's facts while pictures run: how many are in
+/// the channel and how many Lives run, the own included, or else how many
+/// cameras are on. "3 im Kanal · 1 Live", "3 im Kanal · 2 Kameras".
+pub fn stage_facts(people: usize, cameras: usize, lives: usize) -> String {
     let count = texts::facts_people(&people.to_string());
-    if !live.is_empty() || own_live {
-        let names: Vec<String> = if own_live {
-            std::iter::once(you_name())
-                .chain(live.iter().cloned())
-                .collect()
-        } else {
-            live.to_vec()
-        };
-        return format!("{count} · {}", live_sentence(&names, own_live));
+    if lives > 0 {
+        return format!("{count} · {}", texts::facts_live(&lives.to_string()));
     }
     match cameras {
         0 => count,
@@ -101,16 +106,35 @@ mod tests {
             room_summary(&s(&["Jonas", "Mira"]), true, &[]),
             "Du bist hier mit Jonas und Mira."
         );
-        assert_eq!(stage_facts(3, 2, &[], false), "3 im Kanal · 2 Kameras");
+        assert_eq!(stage_facts(3, 2, 0), "3 im Kanal · 2 Kameras");
+        assert_eq!(stage_facts(3, 1, 0), "3 im Kanal · 1 Kamera");
+        assert_eq!(stage_facts(3, 0, 0), "3 im Kanal");
+        // A Live counts, the own too, before the cameras.
+        assert_eq!(stage_facts(4, 2, 1), "4 im Kanal · 1 Live");
+        assert_eq!(stage_facts(2, 0, 2), "2 im Kanal · 2 Live");
+    }
+
+    /// "Du bist hier mit …" puts the rest in the dative; the other lists
+    /// keep "weitere".
+    #[test]
+    fn the_names_after_mit_are_dative() {
+        let many: Vec<String> = std::iter::once("Jonas".to_owned())
+            .chain(std::iter::once("Mira".to_owned()))
+            .chain((0..22).map(|i| format!("P{i}")))
+            .collect();
         assert_eq!(
-            stage_facts(3, 0, &s(&["Jonas"]), false),
-            "3 im Kanal · Jonas ist live"
+            room_summary(&many, true, &[]),
+            "Du bist hier mit Jonas, Mira und 22 weiteren."
         );
         assert_eq!(
-            stage_facts(2, 0, &s(&["Mia"]), true),
-            "2 im Kanal · Du und Mia seid live"
+            room_summary(&many, false, &[]),
+            "Jonas, Mira und 22 weitere sind da."
         );
-        assert_eq!(stage_facts(1, 0, &[], true), "1 im Kanal · Du bist live");
+        assert_eq!(name_list(&many), "Jonas, Mira und 22 weitere");
+        assert_eq!(
+            room_summary(&s(&["Jonas", "Mira", "Tom"]), true, &[]),
+            "Du bist hier mit Jonas, Mira und Tom."
+        );
     }
 
     #[test]
@@ -128,13 +152,11 @@ mod tests {
             room_summary(&[], true, &[]),
             "It’s just you in the channel."
         );
+        assert_eq!(stage_facts(3, 2, 0), "3 in the channel · 2 cameras");
+        assert_eq!(stage_facts(4, 0, 1), "4 in the channel · 1 live");
         assert_eq!(
-            stage_facts(3, 2, &[], false),
-            "3 in the channel · 2 cameras"
-        );
-        assert_eq!(
-            stage_facts(2, 0, &s(&["Mia"]), true),
-            "2 in the channel · You and Mia are live"
+            room_summary(&s(&["Mia", "Lena", "Kim", "Tom"]), true, &[]),
+            "You’re here with Mia, Lena and 2 more."
         );
     }
 }
