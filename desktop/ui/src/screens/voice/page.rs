@@ -839,18 +839,8 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
                     0.0,
                 );
             }
-            // The Live badge stays in the large view (`.voice-video-live`).
-            if pic.id.kind == Kind::Live {
-                let theme = Theme::of(ui.ctx());
-                let style = TextStyle::new(11.0, 600.0, 1.3);
-                let label = Block::single(ui, texts::live_badge(), style, theme.c.on_live);
-                let badge = Rect::from_min_size(
-                    screen.min + vec2(8.0, 8.0),
-                    vec2(label.width() + 12.0, label.height() + 4.0),
-                );
-                painter.rect_filled(badge, corner(theme.radius.xs), theme.c.live);
-                label.paint(&painter, badge.min + vec2(6.0, 2.0));
-            }
+            // No Live tag: on the stage a Live's caption carries the badge,
+            // and the large view hides the caption (`immersive`).
             leave |= watch_strip(ui, app, room, &pic, screen, &state);
         });
     if leave {

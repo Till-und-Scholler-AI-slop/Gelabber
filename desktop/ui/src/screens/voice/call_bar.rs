@@ -1016,9 +1016,18 @@ fn status(
     let small = TextStyle::new(12.0, 400.0, 1.3);
     let max = (link_right - x).max(10.0);
     let strong = line(ui, word, style, color, max);
-    strong.paint(&painter, pos2(x, cy - 15.6));
+    // The grid's two rows share the bars' 36px once connected (18 each),
+    // else they are the lines' own 15.6.
+    let half = if state.status == CallStatus::Connected {
+        18.0
+    } else {
+        15.6
+    };
+    let top = cy - half / 2.0 - 15.6 / 2.0;
+    let under = cy + half / 2.0 - 15.6 / 2.0;
+    strong.paint(&painter, pos2(x, top));
     // From just under the middle: the button's centre stays its own.
-    let link = Rect::from_min_size(pos2(x, cy + 1.0), vec2(max, 14.6));
+    let link = Rect::from_min_size(pos2(x, (cy + 1.0).max(under)), vec2(max, 14.6));
     let response = common::click(ui, link, Id::unique("gelabber-call-link"));
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::Link, true, format!("{word}: {where_}"))
@@ -1031,9 +1040,9 @@ fn status(
         if hover { c.text } else { c.muted },
         max,
     );
-    place.paint(&painter, pos2(x, cy));
+    place.paint(&painter, pos2(x, under));
     if hover {
-        let y = cy + small.baseline() + 1.5;
+        let y = under + small.baseline() + 1.5;
         painter.hline(x..=x + place.width(), y, Stroke::new(1.0, c.text));
     }
     if response.clicked() {
