@@ -536,6 +536,156 @@ pub fn strip_person(
     }
 }
 
+/// A person on the people stage (`Participant fill`, a call of two or more
+/// without pictures): radius 10, the avatar a third of the tile's height
+/// with a 3px ring 2px out while speaking, the name 16/600 and the state
+/// 13px under it, the voice mark in the top left corner (10px in, 16px;
+/// speaking the green speaker), "…" top right on hover. Under 180px high
+/// the name is 12px, the state line goes and the mark is 13px at 7px.
+pub fn person_tile(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let shown = snap(ui.ctx(), rect);
+    let painter = ui.painter().clone();
+    let id = Id::unique(("voice-person-tile", p.id));
+    let hover = ui.rect_contains_pointer(shown);
+    let body = ui.interact(shown, id, Sense::click());
+    painter.rect(
+        shown,
+        corner(10.0),
+        c.surface,
+        Stroke::new(1.0, c.border),
+        StrokeKind::Inside,
+    );
+    let (diameter, small) = stage::person_tile(shown.height());
+    // The text column: 90 % of the padding box (padding 12, border 1).
+    let inner_w = shown.width() - 2.0 - 24.0;
+    let text_w = inner_w * 0.9;
+    let name_text = if p.me {
+        texts::people_you(&p.name)
+    } else {
+        p.name.clone()
+    };
+    let name_style = TextStyle::new(if small { 12.0 } else { 16.0 }, 600.0, 1.3);
+    let name = line(ui, &name_text, name_style, c.text, text_w);
+    let status = (!small).then(|| {
+        let color = if p.speaking { c.online_text } else { c.muted };
+        line(
+            ui,
+            &p.status(),
+            TextStyle::new(13.0, 400.0, 1.3),
+            color,
+            text_w,
+        )
+    });
+    // `gap: 4px` (0 small) and the text's `margin-top: 10px` (8 small).
+    let gap = if small { 8.0 } else { 4.0 + 10.0 };
+    let content = diameter + gap + name.height() + status.as_ref().map_or(0.0, |s| s.height());
+    let inner_top = shown.top() + 1.0 + 12.0;
+    let inner_h = shown.height() - 2.0 - 24.0;
+    let top = (inner_top + (inner_h - content) / 2.0).round();
+    let cx = shown.center().x;
+    let avatar = Rect::from_min_size(pos2(cx - diameter / 2.0, top), Vec2::splat(diameter));
+    let clip = ui.painter().clone().with_clip_rect(shown.shrink(1.0));
+    if p.speaking {
+        // `outline: 3px solid var(--lr-speaking); outline-offset: 2px`.
+        clip.circle_stroke(
+            avatar.center(),
+            diameter / 2.0 + 2.0 + 1.5,
+            Stroke::new(3.0, c.speaking),
+        );
+    }
+    common::avatar(
+        ui,
+        app.images,
+        avatar,
+        &p.name,
+        p.avatar.as_deref(),
+        (diameter * 0.38).round(),
+        1.0,
+        c.surface,
+    );
+    let ty = avatar.bottom() + gap;
+    let name_at = pos2(cx - name.width() / 2.0, ty);
+    name.paint(&clip, name_at);
+    if let Some(status) = &status {
+        status.paint(&clip, pos2(cx - status.width() / 2.0, ty + name.height()));
+    }
+    // The marks: a changed volume, the local mute, then the voice state.
+    let (inset, icon) = if small { (7.0, 13.0) } else { (10.0, 16.0) };
+    let cy = shown.top() + 1.0 + inset + icon / 2.0;
+    let mut x = shown.left() + 1.0 + inset;
+    if !p.me {
+        let lv = volume::level(ui.ctx(), p.id);
+        if let Some(w) = volume::chip(ui, &painter, x, cy, lv) {
+            x += w + 4.0;
+        }
+        if lv.muted {
+            x += volume::muted_mark(&painter, x, cy, c.muted) + 4.0;
+        }
+    }
+    if p.muted || p.deafened {
+        icons::paint(
+            &painter,
+            Icon::MicOff,
+            pos2(x, cy - icon / 2.0),
+            icon,
+            c.muted,
+        );
+        if p.deafened {
+            icons::paint(
+                &painter,
+                Icon::HeadsetOff,
+                pos2(x + icon + 2.0, cy - icon / 2.0),
+                icon,
+                c.muted,
+            );
+        }
+    } else if p.speaking {
+        icons::paint(
+            &painter,
+            Icon::Speaker,
+            pos2(x, cy - icon / 2.0),
+            icon,
+            c.online_text,
+        );
+    }
+    avatar_button(ui, avatar, id.with("avatar"), server, p);
+    // The name is the profile's button too (`.voice-room-profile-name`).
+    if p.member {
+        let hit = ui.interact(
+            Rect::from_min_size(name_at, name.size()),
+            id.with("name"),
+            Sense::click(),
+        );
+        hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name_text));
+        if hit.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if hit.clicked() {
+            open_profile(ui.ctx(), server, p);
+        }
+    }
+    if p.member && !p.me {
+        let open = menu_open(ui.ctx(), p.id);
+        let more = Rect::from_min_size(
+            pos2(shown.right() - 1.0 - 6.0 - 28.0, shown.top() + 1.0 + 6.0),
+            Vec2::splat(28.0),
+        );
+        let t = ui.ctx().animate_bool_with_time(
+            id.with("more"),
+            hover || open,
+            crate::theme::motion::FAST,
+        );
+        if more_button(ui, more, id.with("more-button"), &p.name, t, false).clicked() {
+            open_menu(ui.ctx(), p.id, more);
+        }
+        if body.secondary_clicked() {
+            open_menu(ui.ctx(), p.id, more);
+        }
+    }
+}
+
 /// What the own Live's tile says about its sound (`sourceProps` of the
 /// desktop app); nothing while none is asked for.
 pub fn live_sound_notice(sound: &gelabber_call::LiveSound) -> Option<String> {
