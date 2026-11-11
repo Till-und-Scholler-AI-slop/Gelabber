@@ -54,10 +54,12 @@ pub enum Icon {
     Share,
     Eye,
     EyeOff,
+    Lock,
+    Compass,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 50] = [
+    pub const ALL: [Icon; 52] = [
         Icon::Hash,
         Icon::Speaker,
         Icon::Plus,
@@ -108,6 +110,8 @@ impl Icon {
         Icon::Share,
         Icon::Eye,
         Icon::EyeOff,
+        Icon::Lock,
+        Icon::Compass,
     ];
 
     /// The SVG source, drawn in white so a tint gives it its colour.
@@ -163,6 +167,8 @@ impl Icon {
             Icon::Share => include_bytes!("../assets/icons/share.svg"),
             Icon::Eye => include_bytes!("../assets/icons/eye.svg"),
             Icon::EyeOff => include_bytes!("../assets/icons/eye-off.svg"),
+            Icon::Lock => include_bytes!("../assets/icons/lock.svg"),
+            Icon::Compass => include_bytes!("../assets/icons/compass.svg"),
         }
     }
 }
