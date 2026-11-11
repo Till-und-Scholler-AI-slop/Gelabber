@@ -75,6 +75,9 @@ fn german(mail: &Mail, base: &str, instance: &str) -> (String, String) {
             ),
         ),
         Mail::AccountDeleted => super::account::account_deleted(Locale::De, instance),
+        Mail::ExportReady { expires_at } => {
+            super::account::export_ready(Locale::De, base, instance, *expires_at)
+        }
     }
 }
 
@@ -140,6 +143,9 @@ fn english(mail: &Mail, base: &str, instance: &str) -> (String, String) {
             ),
         ),
         Mail::AccountDeleted => super::account::account_deleted(Locale::En, instance),
+        Mail::ExportReady { expires_at } => {
+            super::account::export_ready(Locale::En, base, instance, *expires_at)
+        }
     }
 }
 

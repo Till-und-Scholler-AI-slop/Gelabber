@@ -1,6 +1,7 @@
 //! Outgoing account mail (#195): address confirmation, password reset, the
 //! notice for a registration with a known address, beta invitations
-//! (#517) and the notice after an account was deleted (#519).
+//! (#517), the notice after an account was deleted and the one when a data
+//! export is ready (#519).
 //!
 //! Mail goes to the operator's SMTP relay (`SMTP_*`), plain text, in the
 //! account's language (`crate::i18n::mail` holds the texts). Sending runs in
@@ -72,6 +73,12 @@ pub enum Mail {
     /// The account was deleted and its data is gone (#519); sent to the
     /// address it had, in the language it had.
     AccountDeleted,
+    /// The account's data export is ready to download until `expires_at`
+    /// (#519). It links to the settings page and carries no token: the
+    /// download needs the account's session.
+    ExportReady {
+        expires_at: chrono::DateTime<chrono::Utc>,
+    },
 }
 
 impl Mailer {
@@ -188,6 +195,7 @@ impl Mail {
             Self::BetaInvitation { .. } => "beta_invitation",
             Self::ProviderConnected { .. } => "provider_connected",
             Self::AccountDeleted => "account_deleted",
+            Self::ExportReady { .. } => "export_ready",
         }
     }
 }

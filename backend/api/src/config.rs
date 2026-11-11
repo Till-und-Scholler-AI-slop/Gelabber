@@ -87,6 +87,8 @@ pub const OIDC_GOOGLE_CLIENT_ID: &str = "OIDC_GOOGLE_CLIENT_ID";
 pub const OIDC_GOOGLE_CLIENT_SECRET: &str = "OIDC_GOOGLE_CLIENT_SECRET";
 /// Optional; default [`GOOGLE_ISSUER`]. Tests point it at a mock issuer.
 pub const OIDC_GOOGLE_ISSUER: &str = "OIDC_GOOGLE_ISSUER";
+/// Hours a finished data export stays downloadable (`account::export`).
+pub const API_EXPORT_RETENTION_HOURS: &str = "API_EXPORT_RETENTION_HOURS";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
@@ -104,6 +106,9 @@ const DEFAULT_WS_PRESENCE_TTL_MS: u64 = 45_000;
 const DEFAULT_WS_TYPING_TTL_MS: u64 = 6_000;
 const DEFAULT_TURN_CRED_TTL_SECS: u64 = 21_600;
 const DEFAULT_MEDIA_TICKET_TTL_SECS: u64 = 30;
+/// A week; at most 30 days.
+const DEFAULT_EXPORT_RETENTION_HOURS: u64 = 168;
+const MAX_EXPORT_RETENTION_HOURS: u64 = 720;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -183,6 +188,9 @@ pub struct Config {
     /// Sign-in through OpenID Connect. `None` (off) unless a provider's
     /// client ID and secret are both set.
     pub oidc: Option<OidcConfig>,
+    /// `API_EXPORT_RETENTION_HOURS`: how long a finished data export can be
+    /// downloaded before the archive is deleted. 1 to 720 hours.
+    pub export_retention: Duration,
 }
 
 /// Who may create an account (`API_REGISTRATION`).
@@ -632,6 +640,20 @@ impl Config {
             None => RegistrationMode::Open,
         };
         let oidc = parse_oidc(&get, public_url.as_ref())?;
+        let export_retention_hours = match get(API_EXPORT_RETENTION_HOURS) {
+            Some(raw) => {
+                let hours = parse_positive::<u64>(API_EXPORT_RETENTION_HOURS, &raw)?;
+                if hours > MAX_EXPORT_RETENTION_HOURS {
+                    return Err(invalid(
+                        API_EXPORT_RETENTION_HOURS,
+                        &raw,
+                        "must be at most 720 (30 days)",
+                    ));
+                }
+                hours
+            }
+            None => DEFAULT_EXPORT_RETENTION_HOURS,
+        };
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -672,6 +694,7 @@ impl Config {
             operators,
             registration,
             oidc,
+            export_retention: Duration::from_secs(export_retention_hours * 3600),
         })
     }
 }
@@ -2249,5 +2272,31 @@ mod tests {
             printed.contains("id.apps.googleusercontent.com"),
             "{printed}"
         );
+    }
+
+    #[test]
+    fn export_retention_is_a_week_unless_set_within_a_month() {
+        let hours = |raw: &'static str| {
+            base(&[(API_EXPORT_RETENTION_HOURS, raw)]).map(|config| config.export_retention)
+        };
+        assert_eq!(
+            base(&[]).unwrap().export_retention,
+            Duration::from_secs(168 * 3600)
+        );
+        assert_eq!(hours("").unwrap(), Duration::from_secs(168 * 3600));
+        assert_eq!(hours("1").unwrap(), Duration::from_secs(3600));
+        assert_eq!(hours(" 720 ").unwrap(), Duration::from_secs(720 * 3600));
+        for raw in ["0", "721", "-1", "a week"] {
+            assert!(
+                matches!(
+                    hours(raw),
+                    Err(ConfigError::Invalid {
+                        key: API_EXPORT_RETENTION_HOURS,
+                        ..
+                    })
+                ),
+                "{raw}"
+            );
+        }
     }
 }
