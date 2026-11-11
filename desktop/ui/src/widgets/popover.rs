@@ -179,7 +179,7 @@ impl Popover {
                 );
                 if (measured - size).length() > 0.5 {
                     ctx.data_mut(|d| d.insert_temp(size_id, measured));
-                    ctx.request_discard("popover size");
+                    ctx.request_discard("popover size"); // i18n-ok
                 }
                 ui.allocate_rect(frame_rect, Sense::hover());
             });

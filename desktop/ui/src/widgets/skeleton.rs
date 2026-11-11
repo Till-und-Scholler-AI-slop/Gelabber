@@ -30,7 +30,11 @@ pub fn main(ui: &Ui, rect: Rect, kind: Kind, key: Id) {
         .unwrap_or((now, frame));
     ctx.data_mut(|d| d.insert_temp(id, (since, frame)));
     let response = ui.interact(rect, id.with("region"), Sense::hover());
-    super::announce(&response, egui::Role::Status, "Wird geladen…");
+    super::announce(
+        &response,
+        egui::Role::Status,
+        gelabber_i18n::common::loading(),
+    );
     let shown = now - since - DELAY;
     ctx.request_repaint();
     if shown <= 0.0 {
