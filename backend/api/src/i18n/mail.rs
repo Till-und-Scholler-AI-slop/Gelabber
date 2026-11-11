@@ -63,6 +63,17 @@ fn german(mail: &Mail, base: &str, instance: &str) -> (String, String) {
                  Hast du keine Einladung erwartet? Dann ignoriere diese Mail.\n"
             ),
         ),
+        Mail::ProviderConnected { provider_name } => (
+            format!("{provider_name} ist mit deinem Gelabber-Konto verbunden"),
+            format!(
+                "Hallo,\n\n\
+                 du kannst dich auf {instance} jetzt auch über {provider_name} bei \
+                 deinem Gelabber-Konto anmelden.\n\n\
+                 Anmeldung verwalten: {base}/settings/konto\n\n\
+                 Warst du das nicht? Dann melde dich an, trenne {provider_name} unter \
+                 Einstellungen → Sicherheit und ändere dein Passwort.\n"
+            ),
+        ),
     }
 }
 
@@ -116,6 +127,17 @@ fn english(mail: &Mail, base: &str, instance: &str) -> (String, String) {
                  Weren't expecting an invitation? Then ignore this email.\n"
             ),
         ),
+        Mail::ProviderConnected { provider_name } => (
+            format!("{provider_name} is now connected to your Gelabber account"),
+            format!(
+                "Hi,\n\n\
+                 You can now also sign in to your Gelabber account on {instance} \
+                 with {provider_name}.\n\n\
+                 Manage sign-in: {base}/settings/konto\n\n\
+                 Wasn't you? Then sign in, disconnect {provider_name} under \
+                 Settings → Security and change your password.\n"
+            ),
+        ),
     }
 }
 
@@ -126,7 +148,7 @@ mod tests {
     const BASE: &str = "https://chat.example.org";
     const INSTANCE: &str = "chat.example.org";
 
-    fn mails() -> [Mail; 4] {
+    fn mails() -> [Mail; 5] {
         [
             Mail::ConfirmEmail {
                 token: "abc".into(),
@@ -137,6 +159,9 @@ mod tests {
             Mail::AlreadyRegistered,
             Mail::BetaInvitation {
                 link: format!("{BASE}/register?invitation=abc"),
+            },
+            Mail::ProviderConnected {
+                provider_name: "Google".into(),
             },
         ]
     }
@@ -171,7 +196,7 @@ mod tests {
 
     #[test]
     fn english_texts() {
-        let [confirm, reset, already, invitation] = mails();
+        let [confirm, reset, already, invitation, connected] = mails();
         assert_eq!(
             render(Locale::En, &confirm, BASE, INSTANCE),
             (
@@ -219,6 +244,18 @@ mod tests {
                  https://chat.example.org/register?invitation=abc\n\n\
                  The invitation is good for one account.\n\n\
                  Weren't expecting an invitation? Then ignore this email.\n"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            render(Locale::En, &connected, BASE, INSTANCE),
+            (
+                "Google is now connected to your Gelabber account".to_owned(),
+                "Hi,\n\nYou can now also sign in to your Gelabber account on chat.example.org \
+                 with Google.\n\n\
+                 Manage sign-in: https://chat.example.org/settings/konto\n\n\
+                 Wasn't you? Then sign in, disconnect Google under Settings → Security and \
+                 change your password.\n"
                     .to_owned()
             )
         );

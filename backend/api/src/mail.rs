@@ -64,6 +64,11 @@ pub enum Mail {
     BetaInvitation {
         link: String,
     },
+    /// A provider account was connected to this account (#518), by the
+    /// owner or by a sign-in that joined it; `provider_name` is "Google".
+    ProviderConnected {
+        provider_name: String,
+    },
 }
 
 impl Mailer {
@@ -178,6 +183,7 @@ impl Mail {
             Self::ResetPassword { .. } => "reset_password",
             Self::AlreadyRegistered => "already_registered",
             Self::BetaInvitation { .. } => "beta_invitation",
+            Self::ProviderConnected { .. } => "provider_connected",
         }
     }
 }
