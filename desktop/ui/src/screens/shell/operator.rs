@@ -6,7 +6,7 @@ use egui::{Rect, Ui, pos2};
 use gelabber_i18n::operator as texts;
 
 use crate::app::AppCtx;
-use crate::screens::auth::{layout, oidc};
+use crate::screens::auth::layout;
 use crate::theme::space;
 use crate::widgets::Button;
 
@@ -25,11 +25,8 @@ pub fn is_page(page: Option<&str>) -> bool {
 
 /// Opens `path` of the server's web client (e.g. `/betrieb/server`) in the
 /// system browser; a failure is only logged, as for a chat link.
-pub fn open_in_browser(ctx: &egui::Context, app: &AppCtx, path: &str) {
-    let url = app.client.http().url(path);
-    if let Err(e) = oidc::opener(ctx)(&url) {
-        tracing::warn!("open url: {e}");
-    }
+pub fn open_in_browser(app: &AppCtx, path: &str) {
+    crate::platform::open_url_logged(&app.client.http().url(path));
 }
 
 /// The hand-off card in the page column: `.lr-auth-card mx-auto my-10
@@ -45,7 +42,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, page: Rect, path: &str) {
             .add(Button::new(texts::handoff_open()).primary().fill())
             .clicked()
         {
-            open_in_browser(ui.ctx(), app, path);
+            open_in_browser(app, path);
         }
     });
 }

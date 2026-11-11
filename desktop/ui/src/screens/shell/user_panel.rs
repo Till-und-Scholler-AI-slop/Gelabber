@@ -337,7 +337,6 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
         Some(MenuItem::Profile) => app.nav.navigate("/settings/profil"),
         Some(MenuItem::Settings) => app.nav.navigate("/settings/darstellung"),
         Some(MenuItem::Operator) => super::operator::open_in_browser(
-            ui.ctx(),
             app,
             &format!("/betrieb/{}", super::operator::DEFAULT_PAGE),
         ),
@@ -787,22 +786,6 @@ mod tests {
         })
     }
 
-    /// A stand-in for the system browser that notes what it was handed.
-    fn browser(
-        harness: &egui_kittest::Harness<'_, crate::Launcher>,
-    ) -> std::sync::Arc<parking_lot::Mutex<Vec<String>>> {
-        let opened: std::sync::Arc<parking_lot::Mutex<Vec<String>>> = Default::default();
-        let seen = opened.clone();
-        crate::screens::auth::oidc::set_opener(
-            &harness.ctx,
-            std::sync::Arc::new(move |url: &str| {
-                seen.lock().push(url.to_owned());
-                Ok(())
-            }),
-        );
-        opened
-    }
-
     /// "Betrieb" is in the menu for operators only, after "Einstellungen",
     /// and opens /betrieb/server in the browser; the app stays where it was.
     #[test]
@@ -817,7 +800,7 @@ mod tests {
 
         let api = operator_api(true);
         let mut harness = launcher(&api, &format!("/s/{HOME}"));
-        let opened = browser(&harness);
+        let opened = crate::platform::open_testing::Recording::start();
         open_menu(&mut harness);
         let labels: Vec<String> = harness
             .query_all_by_role(Role::Button)
@@ -838,11 +821,8 @@ mod tests {
         harness
             .get_by_role_and_label(Role::Button, "Betrieb")
             .click();
-        wait_for(&mut harness, "the browser", |_| !opened.lock().is_empty());
-        assert_eq!(
-            opened.lock().as_slice(),
-            [format!("{}/betrieb/server", api.origin)]
-        );
+        wait_for(&mut harness, "the browser", |_| !opened.opened().is_empty());
+        assert_eq!(opened.opened(), [format!("{}/betrieb/server", api.origin)]);
         harness.run_steps(3);
         assert!(harness.query_by_label("Abmelden").is_none());
         let route = harness.state_mut().app().unwrap().nav().route().clone();
@@ -856,14 +836,14 @@ mod tests {
         let _config = TempConfig::new("route-operator");
         let api = operator_api(true);
         let mut harness = launcher(&api, "/betrieb/meldungen");
-        let opened = browser(&harness);
+        let opened = crate::platform::open_testing::Recording::start();
         wait_for_label(&mut harness, "Im Browser öffnen");
         harness
             .get_by_role_and_label(Role::Button, "Im Browser öffnen")
             .click();
-        wait_for(&mut harness, "the browser", |_| !opened.lock().is_empty());
+        wait_for(&mut harness, "the browser", |_| !opened.opened().is_empty());
         assert_eq!(
-            opened.lock().as_slice(),
+            opened.opened(),
             [format!("{}/betrieb/meldungen", api.origin)]
         );
 
