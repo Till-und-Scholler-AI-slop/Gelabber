@@ -1257,3 +1257,86 @@ impl Topic {
         }
     }
 }
+
+/// One of the legal pages an instance can publish, in the order the web
+/// lists them (web/src/public/urls.ts `LEGAL_PAGES`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LegalPageKind {
+    Imprint,
+    Privacy,
+    Terms,
+}
+
+impl LegalPageKind {
+    pub const ALL: [LegalPageKind; 3] = [Self::Imprint, Self::Privacy, Self::Terms];
+
+    /// The key in `/public-pages.json`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Imprint => "imprint",
+            Self::Privacy => "privacy",
+            Self::Terms => "terms",
+        }
+    }
+}
+
+/// A published legal page's path per language (`/de/impressum`,
+/// `/en/imprint`); at least one is set.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LegalPage {
+    pub de: Option<String>,
+    pub en: Option<String>,
+}
+
+impl LegalPage {
+    /// The page's path in `locale`, else in the other language
+    /// (web `legalPageUrl`).
+    pub fn path(&self, locale: gelabber_i18n::Locale) -> Option<&str> {
+        let (first, other) = match locale {
+            gelabber_i18n::Locale::De => (&self.de, &self.en),
+            gelabber_i18n::Locale::En => (&self.en, &self.de),
+        };
+        first.as_deref().or(other.as_deref())
+    }
+}
+
+/// `/public-pages.json` (issue #522): what the instance published. A
+/// missing, broken or unknown file publishes nothing, the default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PublicPages {
+    pub landing: bool,
+    /// The published legal pages, in [`LegalPageKind::ALL`]'s order.
+    pub legal: Vec<(LegalPageKind, LegalPage)>,
+}
+
+impl PublicPages {
+    /// The file's contents read as version 1, as the web's
+    /// `parsePublicPages`; anything else publishes nothing.
+    pub fn parse(json: &serde_json::Value) -> Self {
+        if json.get("version").and_then(serde_json::Value::as_f64) != Some(1.0) {
+            return Self::default();
+        }
+        // Only a path on the instance's own origin.
+        let local = |value: Option<&serde_json::Value>| -> Option<String> {
+            let path = value?.as_str()?;
+            (path.starts_with('/') && !path.starts_with("//") && !path.contains('\\'))
+                .then(|| path.to_owned())
+        };
+        let legal = LegalPageKind::ALL
+            .into_iter()
+            .filter_map(|kind| {
+                let entry = json.get("legal")?.as_object()?.get(kind.key())?;
+                entry.as_object()?;
+                let page = LegalPage {
+                    de: local(entry.get("de")),
+                    en: local(entry.get("en")),
+                };
+                (page.de.is_some() || page.en.is_some()).then_some((kind, page))
+            })
+            .collect();
+        Self {
+            landing: json.get("landing") == Some(&serde_json::Value::Bool(true)),
+            legal,
+        }
+    }
+}

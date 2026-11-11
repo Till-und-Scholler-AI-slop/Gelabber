@@ -687,4 +687,101 @@ impl Http {
         )
         .await
     }
+
+    // ------------------------------------------------------ public pages
+
+    /// `GET /public-pages.json`: not under `/api` (the web container serves
+    /// it next to the pages) and a read, so no CSRF header. A 404, an
+    /// unreachable server, invalid JSON or another version all mean that
+    /// nothing is published (web `fetchPublicPages`); this never fails.
+    pub async fn public_pages(&self) -> Result<PublicPages> {
+        let Ok(res) = self
+            .reqwest()
+            .get(self.url("/public-pages.json"))
+            .send()
+            .await
+        else {
+            return Ok(PublicPages::default());
+        };
+        if !res.status().is_success() {
+            return Ok(PublicPages::default());
+        }
+        let Ok(bytes) = res.bytes().await else {
+            return Ok(PublicPages::default());
+        };
+        Ok(serde_json::from_slice::<serde_json::Value>(&bytes)
+            .map(|json| PublicPages::parse(&json))
+            .unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Answers every connection with `reply` and keeps the request heads.
+    fn serve(reply: &'static str) -> (String, std::sync::Arc<parking_lot::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                log.lock()
+                    .push(String::from_utf8_lossy(&buf[..n]).into_owned());
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn fetch(base: &str) -> PublicPages {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let http = Http::new(base).unwrap();
+        runtime.block_on(http.public_pages()).unwrap()
+    }
+
+    #[test]
+    fn public_pages_come_from_the_instance_root() {
+        let body = r#"{"version":1,"landing":true,"legal":{"privacy":{"de":"/de/datenschutz","en":"/en/privacy"}}}"#;
+        let reply: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_boxed_str(),
+        );
+        let (base, seen) = serve(reply);
+        let pages = fetch(&base);
+        assert!(pages.landing);
+        assert_eq!(pages.legal.len(), 1);
+        assert_eq!(pages.legal[0].0, LegalPageKind::Privacy);
+        let head = seen.lock()[0].clone();
+        assert!(head.starts_with("GET /public-pages.json "), "{head}");
+        assert!(
+            !head.to_ascii_lowercase().contains("x-csrf-token"),
+            "{head}"
+        );
+    }
+
+    #[test]
+    fn public_pages_fall_back_to_nothing() {
+        let (missing, _) =
+            serve("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        assert_eq!(fetch(&missing), PublicPages::default());
+        let (broken, _) = serve(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 9\r\nConnection: close\r\n\r\n<!doctype",
+        );
+        assert_eq!(fetch(&broken), PublicPages::default());
+        // Nobody listens there.
+        let closed = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://{}", listener.local_addr().unwrap())
+        };
+        assert_eq!(fetch(&closed), PublicPages::default());
+    }
 }

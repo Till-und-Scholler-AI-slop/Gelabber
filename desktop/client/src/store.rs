@@ -528,6 +528,10 @@ pub struct State {
     pub(crate) server_fetched: HashMap<Uuid, Instant>,
     /// Bumped by every account reset; answers started before are dropped.
     pub(crate) epoch: u64,
+    /// `/public-pages.json`: what the instance published (the legal links
+    /// under the sign-in card); `None` until it answered. Fixed per
+    /// instance, so it outlives a change of account.
+    pub public_pages: Option<PublicPages>,
 }
 
 impl State {
@@ -584,9 +588,11 @@ impl State {
     /// Clears all account data (sign-out, other account).
     pub fn reset_account(&mut self) {
         let mail = self.mail;
+        let public_pages = self.public_pages.take();
         let epoch = self.epoch + 1;
         *self = State {
             mail,
+            public_pages,
             epoch,
             ..State::default()
         };

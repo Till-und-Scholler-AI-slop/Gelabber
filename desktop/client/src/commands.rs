@@ -2264,6 +2264,23 @@ impl Client {
             }
         });
     }
+
+    /// `GET /public-pages.json` for the sign-in pages' legal links into
+    /// `State::public_pages`. Op key `public-pages`. Asked once, as the web
+    /// does (`staleTime: Infinity`, no retry): a failure publishes nothing.
+    /// Not tied to the account: an answer that comes after a sign-in or
+    /// sign-out still counts.
+    pub fn load_public_pages(&self) {
+        let this = self.clone();
+        self.write(|s| s.ops.insert("public-pages".into(), OpState::Pending));
+        self.spawn(async move {
+            let pages = this.http().public_pages().await.unwrap_or_default();
+            this.write(|s| {
+                s.ops.insert("public-pages".into(), OpState::Done);
+                s.public_pages = Some(pages);
+            });
+        });
+    }
 }
 
 /// The signed-in user's language, as the server confirmed or announced it.

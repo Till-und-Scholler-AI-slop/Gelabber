@@ -440,3 +440,68 @@ fn access_change_events() {
     );
     assert!(!event(serde_json::json!({"t": "e", "s": s, "n": 4})).is_access_change());
 }
+
+/// `/public-pages.json` (issue #522), read like the web's
+/// `parsePublicPages`: anything but version 1 publishes nothing.
+#[test]
+fn public_pages_parse_like_the_web() {
+    use serde_json::json;
+    let all = PublicPages::parse(&json!({
+        "version": 1,
+        "landing": true,
+        "legal": {
+            "terms": {"de": "/de/nutzungsbedingungen", "en": "/en/terms"},
+            "imprint": {"de": "/de/impressum", "en": "/en/imprint"},
+            "privacy": {"de": "/de/datenschutz", "en": "/en/privacy"}
+        }
+    }));
+    assert!(all.landing);
+    let kinds: Vec<_> = all.legal.iter().map(|(k, _)| *k).collect();
+    assert_eq!(
+        kinds,
+        [
+            LegalPageKind::Imprint,
+            LegalPageKind::Privacy,
+            LegalPageKind::Terms
+        ]
+    );
+    let imprint = &all.legal[0].1;
+    assert_eq!(
+        imprint.path(gelabber_i18n::Locale::De),
+        Some("/de/impressum")
+    );
+    assert_eq!(imprint.path(gelabber_i18n::Locale::En), Some("/en/imprint"));
+
+    // A partial `legal`, one language only, a foreign and a broken entry.
+    let partial = PublicPages::parse(&json!({
+        "version": 1,
+        "legal": {
+            "privacy": {"de": "/de/datenschutz"},
+            "terms": {"de": "//evil.example/x", "en": "https://evil.example/"},
+            "imprint": "/de/impressum"
+        }
+    }));
+    assert!(!partial.landing);
+    assert_eq!(partial.legal.len(), 1);
+    let (kind, privacy) = &partial.legal[0];
+    assert_eq!(*kind, LegalPageKind::Privacy);
+    // The other language's page where this one has none.
+    assert_eq!(
+        privacy.path(gelabber_i18n::Locale::En),
+        Some("/de/datenschutz")
+    );
+
+    for nothing in [
+        json!({"version": 2, "landing": true, "legal": {"terms": {"en": "/en/terms"}}}),
+        json!({"landing": true}),
+        json!([1]),
+        json!(null),
+        json!({"version": "1", "legal": {"terms": {"en": "/en/terms"}}}),
+    ] {
+        assert_eq!(
+            PublicPages::parse(&nothing),
+            PublicPages::default(),
+            "{nothing}"
+        );
+    }
+}
