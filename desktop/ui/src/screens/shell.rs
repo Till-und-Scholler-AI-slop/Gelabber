@@ -217,7 +217,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
                 let theme = Theme::of(ui.ctx());
                 let block = crate::text::Block::wrapped(
                     ui,
-                    "Keine Server. Erstelle einen über + in der Serverleiste oder öffne einen Einladungslink.",
+                    gelabber_i18n::shell::no_servers(),
                     crate::text::BODY.line_height(1.6),
                     theme.c.muted,
                     sidebar.width() - 1.0 - 44.0,
@@ -383,8 +383,7 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
                 _ => false,
             });
         if gone {
-            app.toasts
-                .notify("Server nicht gefunden oder kein Zugriff.");
+            app.toasts.notify(gelabber_i18n::shell::server_gone());
             app.client.clear_op(format!("server:{s}"));
             state::remember(ui.ctx(), user, |m| {
                 m.channels.remove(&s);

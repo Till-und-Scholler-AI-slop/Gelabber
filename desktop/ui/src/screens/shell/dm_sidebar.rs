@@ -3,6 +3,7 @@
 //! one 44px row per conversation in a 48px slot.
 
 use egui::{Color32, Id, Rect, Ui, Vec2, pos2};
+use gelabber_i18n::{dms as dm_texts, shell};
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
@@ -30,13 +31,18 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
             ui,
             app,
             rect,
-            failed.then_some("Die Unterhaltungen konnten nicht geladen werden."),
+            failed.then_some(shell::dms_load_failed()),
             &mut || app.client.bootstrap(),
         );
         return;
     }
 
-    let title = Block::single(ui, "Nachrichten", text::TITLE_SM.size(15.0), c.text);
+    let title = Block::single(
+        ui,
+        dm_texts::sidebar_title(),
+        text::TITLE_SM.size(15.0),
+        c.text,
+    );
     paint_mid(&painter, &title, rect.left() + 16.0, rect.top() + 25.5);
     let plus = Rect::from_min_size(
         pos2(rect.right() - 1.0 - 8.0 - 32.0, rect.top() + 25.5 - 16.0),
@@ -45,7 +51,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
     if ui
         .put(
             plus,
-            IconButton::new(Icon::Plus, "Neue Nachricht")
+            IconButton::new(Icon::Plus, dm_texts::new_message())
                 .size(32.0)
                 .icon_size(18.0),
         )
@@ -68,7 +74,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
     if dms.is_empty() {
         let block = Block::wrapped(
             ui,
-            "Noch keine Unterhaltungen.",
+            dm_texts::sidebar_empty(),
             text::BODY.line_height(1.6),
             c.muted,
             list.width() - 44.0,
@@ -82,7 +88,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
             Vec2::new(list.width() - 44.0, 32.0),
         )));
         if child
-            .add(Button::new("Neue Nachricht").small().icon(Icon::Plus))
+            .add(
+                Button::new(dm_texts::new_message())
+                    .small()
+                    .icon(Icon::Plus),
+            )
             .clicked()
         {
             super::dialogs::open_new_message(ui.ctx());
@@ -114,7 +124,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                 .collect();
             let preferred = dms.iter().position(|dm| active == Some(dm.id));
             let roved = common::rove(ui, Id::unique("dm-list"), &nav, preferred);
-            common::list_hint(ui, area, Id::unique("dm-list"), common::LIST_HINT);
+            common::list_hint(ui, area, Id::unique("dm-list"), common::list_hint_text());
             let drafts = crate::screens::chat::with_drafts(ui.ctx());
             for (i, dm) in dms.iter().enumerate() {
                 let row = Rect::from_min_size(
@@ -221,8 +231,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                         c.muted,
                     );
                     let mark = ui.interact(pencil, item.with("draft"), egui::Sense::hover());
-                    crate::widgets::announce(&mark, egui::Role::Label, "Entwurf");
-                    mark.on_hover_text("Entwurf");
+                    crate::widgets::announce(&mark, egui::Role::Label, shell::channel_draft());
+                    mark.on_hover_text(shell::channel_draft());
                     right = pencil.left() - 10.0;
                 }
                 let color = if lit || is_active || unread {
@@ -260,7 +270,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     );
                     let more_stop =
                         roved.is_stop(i, 1) && within || ui.memory(|m| m.has_focus(more_id));
-                    let label = format!("Aktionen für {}", dm.peer.name);
+                    let label = shell::channel_actions_label(&dm.peer.name);
                     let pressed = super::channel_sidebar::shell_icon_button_stop(
                         ui,
                         more,

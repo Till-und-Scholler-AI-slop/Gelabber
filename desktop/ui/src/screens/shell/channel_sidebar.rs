@@ -5,6 +5,7 @@
 
 use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::{Category, Channel, ChannelKind, Permission, VoiceOccupant};
+use gelabber_i18n::{servers, shell};
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
@@ -68,7 +69,7 @@ pub fn show(
             ui,
             app,
             rect,
-            failed.then_some("Die Kanäle konnten nicht geladen werden."),
+            failed.then_some(shell::channels_load_failed()),
             &mut || app_refresh(app, server),
         );
         return;
@@ -146,7 +147,7 @@ pub fn show(
         invite,
         Icon::Link,
         16.0,
-        "Einladen",
+        shell::server_menu_invite(),
         Id::unique("invite-button"),
     )
     .clicked()
@@ -179,7 +180,7 @@ pub fn show(
         Vec2::new(rect.width() - 1.0 - 16.0, 34.0),
     );
     let response = common::click(ui, link, Id::unique(("overview-link", server)));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Übersicht"));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, shell::overview()));
     let (fill, color, icon_color) = if overview {
         (c.selected, c.text, c.accent_text)
     } else if response.hovered() {
@@ -201,7 +202,7 @@ pub fn show(
     } else {
         text::BODY
     };
-    let label = Block::single(ui, "Übersicht", style, color);
+    let label = Block::single(ui, shell::overview(), style, color);
     paint_mid(&painter, &label, link.left() + 40.0, link.center().y);
     if response.clicked() {
         app.nav.navigate(&format!("/s/{server}"));
@@ -216,7 +217,7 @@ pub fn show(
     if rows.is_empty() {
         let block = Block::wrapped(
             ui,
-            "Noch keine Kanäle.",
+            shell::channels_empty(),
             text::BODY.line_height(1.6),
             c.muted,
             list.width() - 44.0,
@@ -262,9 +263,9 @@ pub fn show(
         .iter()
         .any(|row| matches!(row, Row::Channel(ch) if ch.kind == ChannelKind::Text));
     let hint = if can_manage || any_text {
-        common::ROW_HINT
+        common::row_hint_text()
     } else {
-        common::LIST_HINT
+        common::list_hint_text()
     };
     common::list_hint(ui, list, Id::unique(("channel-list", server)), hint);
     // The open conversation shows its draft in the composer already.
@@ -308,13 +309,18 @@ pub fn show(
                 let keys = RowKeys { stop, within };
                 match row {
                     Row::Section => {
-                        caps(ui, slot, VOICE_HEADING, slot.width() - 11.0);
+                        caps(ui, slot, servers::voice_heading(), slot.width() - 11.0);
                     }
                     Row::Category(category) => {
                         category_row(ui, app, &theme, slot, server, category, can_manage, keys);
                     }
                     Row::Empty => {
-                        let block = Block::single(ui, "Leer", text::META.line_height(1.5), c.muted);
+                        let block = Block::single(
+                            ui,
+                            shell::channels_empty_category(),
+                            text::META.line_height(1.5),
+                            c.muted,
+                        );
                         paint_mid(ui.painter(), &block, slot.left() + 8.0, slot.center().y);
                     }
                     Row::Channel(ch) => {
@@ -378,9 +384,6 @@ fn build_rows(app: &AppCtx, detail: &gelabber_client::ServerDetail) -> Vec<Row> 
     rows
 }
 
-/// The heading over the uncategorised voice rooms (`VOICE_HEADING`).
-const VOICE_HEADING: &str = "Sprachkanäle";
-
 /// What the sidebar lists, in order, without the people in the rooms.
 enum Listed<'a> {
     Section,
@@ -391,8 +394,9 @@ enum Listed<'a> {
 
 /// `sidebarRows`: uncategorised text channels, the uncategorised voice
 /// rooms under their own heading, then the categories. A category named
-/// like the heading takes the rooms at its top instead, so the heading
-/// does not show twice. Only the list merges: the rooms stay uncategorised,
+/// like the heading in either language ("Sprachkanäle" or "Voice
+/// channels") takes the rooms at its top instead, so the heading does not
+/// show twice. Only the list merges: the rooms stay uncategorised,
 /// so a channel created from one of them is uncategorised too, and deleting
 /// that category leaves them under their own heading again.
 fn listed(detail: &gelabber_client::ServerDetail) -> Vec<Listed<'_>> {
@@ -403,11 +407,11 @@ fn listed(detail: &gelabber_client::ServerDetail) -> Vec<Listed<'_>> {
             .filter(move |c| c.category_id.is_none() && c.kind == kind)
     };
     let voice: Vec<&Channel> = loose(ChannelKind::Voice).collect();
-    let heading = VOICE_HEADING.to_lowercase();
+    let headings = servers::voice_headings();
     let home = detail
         .categories
         .iter()
-        .find(|c| c.name.trim().to_lowercase() == heading)
+        .find(|c| headings.contains(&c.name.trim().to_lowercase()))
         .filter(|_| !voice.is_empty())
         .map(|c| c.id);
     let mut out: Vec<Listed<'_>> = loose(ChannelKind::Text).map(Listed::Channel).collect();
@@ -502,8 +506,8 @@ fn category_row(
     }
     let top = slot.top() + 3.0;
     let x0 = slot.right() - 3.0 - 52.0;
-    let add = format!("Kanal in „{}“ erstellen", category.name);
-    let more = format!("Aktionen für Kategorie „{}“", category.name);
+    let add = shell::category_create_channel_label(&category.name);
+    let more = shell::category_actions_label(&category.name);
     let actions = [(Icon::Plus, add.as_str()), (Icon::More, more.as_str())];
     // The row's only way in from the keyboard: these stay focusable (only
     // faded) while out of sight. Renaming and deleting are in the menu.
@@ -664,8 +668,8 @@ fn channel_row(
         );
         icons::paint(&painter, Icon::Pencil, pencil.min, 13.0, c.muted);
         let mark = ui.interact(pencil, link_id.with("draft"), egui::Sense::hover());
-        crate::widgets::announce(&mark, egui::Role::Label, "Entwurf");
-        mark.on_hover_text("Entwurf");
+        crate::widgets::announce(&mark, egui::Role::Label, shell::channel_draft());
+        mark.on_hover_text(shell::channel_draft());
         name_right = pencil.left() - 10.0;
     }
     let name = line(ui, &ch.name, style, name_color, name_right - name_left);
@@ -674,7 +678,7 @@ fn channel_row(
     if in_voice {
         response
             .clone()
-            .on_hover_text(format!("{} · verbunden", ch.name));
+            .on_hover_text(shell::channel_connected(&ch.name));
     }
 
     // Hover (or focus) actions cover the name's end with the row's own fill:
@@ -712,7 +716,7 @@ fn channel_row(
                 edit,
                 Icon::Pencil,
                 14.0,
-                &format!("{label} bearbeiten"),
+                &shell::channel_edit_label(&label),
                 edit_id,
                 stop_at(1, edit_id),
             );
@@ -736,7 +740,7 @@ fn channel_row(
             more,
             Icon::More,
             14.0,
-            &format!("Aktionen für {label}"),
+            &shell::channel_actions_label(&label),
             more_id,
             stop_at(index, more_id),
         );
@@ -769,11 +773,11 @@ fn person_row(
     let c = theme.c;
     let me = app.client.with_state(|s| s.me().map(|m| m.id));
     let member = detail.members.iter().find(|m| m.user_id == user);
-    let name = member.map_or("Jemand", |m| m.name.as_str());
+    let name = member.map_or(shell::someone(), |m| m.name.as_str());
     let title = if me == Some(user) {
-        "Dein Profil"
+        shell::participant_own_profile()
     } else {
-        "Profil und Lautstärke"
+        shell::participant_profile()
     };
     let response = common::click(
         ui,
@@ -861,15 +865,15 @@ fn participant_label(
     deafened: bool,
 ) -> String {
     let state = if deafened {
-        Some("taub")
+        Some(shell::participant_deafened())
     } else if muted {
-        Some("stumm")
+        Some(shell::participant_muted())
     } else {
         None
     };
     [
         Some(name),
-        speaking.then_some("spricht"),
+        speaking.then_some(shell::participant_speaking()),
         live.then_some("Live"),
         state,
     ]
@@ -965,21 +969,21 @@ fn server_menu(
     can_settings: bool,
 ) {
     let mut items: Vec<(Icon, &str, u8)> = vec![
-        (Icon::Link, "Einladen", 0),
+        (Icon::Link, shell::server_menu_invite(), 0),
         (
             if muted { Icon::BellOff } else { Icon::Bell },
-            "Benachrichtigungen…",
+            shell::server_menu_notifications(),
             1,
         ),
     ];
     if can_manage {
-        items.push((Icon::Plus, "Kanal erstellen", 2));
-        items.push((Icon::Plus, "Kategorie erstellen", 3));
+        items.push((Icon::Plus, shell::server_menu_create_channel(), 2));
+        items.push((Icon::Plus, shell::server_menu_create_category(), 3));
     }
     if can_settings {
-        items.push((Icon::Gear, "Servereinstellungen", 4));
+        items.push((Icon::Gear, shell::server_menu_settings(), 4));
     } else {
-        items.push((Icon::Users, "Mitglieder", 4));
+        items.push((Icon::Users, shell::server_menu_members(), 4));
     }
     let width = anchor.width().max(208.0);
     let picked = Popover::new(("server-menu", server), anchor)
@@ -1068,9 +1072,9 @@ pub fn placeholder(
         &region,
         egui::Role::Navigation,
         if failure.is_some() {
-            "Navigation"
+            shell::sidebar_label()
         } else {
-            "Navigation wird geladen"
+            shell::sidebar_loading_label()
         },
     );
     match failure {
@@ -1108,9 +1112,9 @@ pub fn placeholder(
             crate::widgets::announce(&status, egui::Role::Status, message);
             let busy = app.client.busy();
             let label = if busy {
-                "Wird geladen…"
+                gelabber_i18n::common::loading()
             } else {
-                "Erneut versuchen"
+                gelabber_i18n::common::try_again()
             };
             let lb = Block::single(ui, label, text::BODY.weight(600.0), c.text);
             let button = Rect::from_min_size(
@@ -1195,7 +1199,7 @@ mod tests {
         listed(detail)
             .into_iter()
             .map(|item| match item {
-                Listed::Section => format!("section:{VOICE_HEADING}"),
+                Listed::Section => format!("section:{}", servers::voice_heading()),
                 Listed::Category(c) => format!("category:{}", c.name),
                 Listed::Empty => "empty".to_owned(),
                 Listed::Channel(c) => c.name.clone(),
@@ -1262,6 +1266,19 @@ mod tests {
 
         let empty = detail(&[(1, "Sprachkanäle")], &[(1, 0, "Zocken", "voice")]);
         assert_eq!(names(&empty), ["category:Sprachkanäle", "Zocken"]);
+    }
+
+    /// A server created in English merges for a German viewer, and the
+    /// other way round (servers/rows.test.ts "either language").
+    #[test]
+    fn the_voice_heading_merges_in_either_language() {
+        let english = detail(&[(1, "Voice channels")], &[(1, 0, "Living room", "voice")]);
+        assert_eq!(names(&english), ["category:Voice channels", "Living room"]);
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let german = detail(&[(1, "Sprachkanäle")], &[(1, 0, "Wohnzimmer", "voice")]);
+        assert_eq!(names(&german), ["category:Sprachkanäle", "Wohnzimmer"]);
+        let loose = detail(&[], &[(1, 0, "Wohnzimmer", "voice")]);
+        assert_eq!(names(&loose), ["section:Voice channels", "Wohnzimmer"]);
     }
 
     // The web row's hidden texts (ParticipantRowView): screen readers hear

@@ -143,7 +143,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     } else {
         common::Roved::default()
     };
-    common::list_hint(ui, list, Id::unique("rail-list"), common::LIST_HINT);
+    common::list_hint(ui, list, Id::unique("rail-list"), common::list_hint_text());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list));
     child.set_clip_rect(list);
     egui::ScrollArea::vertical()
