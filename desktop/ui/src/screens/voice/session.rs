@@ -126,6 +126,16 @@ impl Person {
 }
 
 impl Person {
+    /// The name in the watchers list (`useLiveWatchers`): "Jemand" without
+    /// a member record.
+    pub fn list_name(&self) -> String {
+        if self.member {
+            self.name.clone()
+        } else {
+            texts::people_someone().to_owned()
+        }
+    }
+
     /// `Taub` / `Stumm` / `Spricht` / `Im Raum`.
     pub fn state(&self) -> &'static str {
         if self.deafened {
@@ -361,7 +371,7 @@ fn watchers(s: &State, call: &CallState, room: &Room) -> HashMap<Uuid, (Vec<Uuid
                     sets.contains(&p.id)
                 }
             });
-        let by_name = |p: &&Person| (collation_key(&p.name), p.id);
+        let by_name = |p: &&Person| (collation_key(&p.list_name()), p.id);
         watching.sort_by_cached_key(by_name);
         not_watching.sort_by_cached_key(by_name);
         let ids = |people: Vec<&Person>| people.iter().map(|p| p.id).collect();

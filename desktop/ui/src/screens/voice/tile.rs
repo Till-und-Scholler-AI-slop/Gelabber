@@ -695,6 +695,15 @@ pub fn person_tile(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &
     if let Some(status) = &status {
         status.paint(&clip, pos2(cx - status.width() / 2.0, ty + name.height()));
     }
+    // The state is said to a screen reader, on a small tile too, where it
+    // is not drawn (`.is-small .voice-room-participant-status`).
+    let status_rect = match &status {
+        Some(s) => Rect::from_min_size(pos2(cx - s.width() / 2.0, ty + name.height()), s.size()),
+        None => Rect::from_min_size(pos2(name_at.x, ty + name.height()), vec2(name.width(), 1.0)),
+    };
+    let status_text = p.status();
+    ui.interact(status_rect, id.with("status"), Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &status_text));
     // The marks: a changed volume, the local mute, then the voice state.
     let (inset, icon) = if small { (7.0, 13.0) } else { (10.0, 16.0) };
     let cy = shown.top() + 1.0 + inset + icon / 2.0;
@@ -1600,5 +1609,7 @@ fn live_caption(
     common::paint_mid(painter, &number, eye_x + eye + 5.0, cy);
     if response.clicked() {
         super::watchers::toggle(ui.ctx(), owner, button);
+    } else {
+        super::watchers::caption_drawn(ui.ctx(), owner, button);
     }
 }

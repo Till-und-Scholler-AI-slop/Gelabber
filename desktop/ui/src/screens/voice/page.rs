@@ -45,6 +45,22 @@ pub fn kino(ctx: &egui::Context, app: &AppCtx, server: Uuid, channel: Uuid) -> b
         && session::room(app, server, channel).is_some_and(|r| r.staged() && r.here)
 }
 
+/// `narrow` (640px): a phone's column of pictures, always Raster.
+fn narrow(ctx: &egui::Context) -> bool {
+    ctx.content_rect().width() <= 640.0
+}
+
+/// The stage's view: Raster when `narrow`, else `stageViewFor`.
+fn view_of(ctx: &egui::Context, room: &Room, picked: Option<View>) -> View {
+    if narrow(ctx) {
+        return View::Raster;
+    }
+    stage::view_for(
+        picked,
+        room.shares.iter().any(|t| Some(t.id.user) != room.me),
+    )
+}
+
 /// Draws the page into `ui.max_rect()`.
 pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
     let theme = Theme::of(ui.ctx());
@@ -158,11 +174,8 @@ fn header(
         end = r.left();
     }
     // A phone keeps its column of pictures (`narrow`, 640px).
-    if room.staged() && ctx.content_rect().width() > 640.0 {
-        let view = stage::view_for(
-            choices.view,
-            room.shares.iter().any(|t| Some(t.id.user) != room.me),
-        );
+    if room.staged() && !narrow(&ctx) {
+        let view = view_of(&ctx, room, choices.view);
         let (frame, chosen) = chips::view_switch(ui, end - 10.0, mid, view);
         if let Some(v) = chosen {
             stage::choose_view(&ctx, (server, channel), v);
@@ -472,10 +485,7 @@ fn stage_room(
     let now = ui.input(|i| i.time);
     let pinned = choices.pinned;
     let id_of = |p: &Picture| p.id;
-    let view = stage::view_for(
-        choices.view,
-        room.shares.iter().any(|t| Some(t.id.user) != room.me),
-    );
+    let view = view_of(&ctx, room, choices.view);
     let focus = (view == View::Fokus || kino)
         .then(|| stage::focus_of(&room.shares, &room.cameras, pinned, room.me, id_of))
         .flatten();

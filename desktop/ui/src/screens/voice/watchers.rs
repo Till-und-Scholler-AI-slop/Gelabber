@@ -42,38 +42,84 @@ pub fn count(room: &Room, owner: Uuid) -> usize {
     room.watchers.get(&owner).map_or(0, |(w, _)| w.len())
 }
 
-/// The list a caption's count opened: whose Live, under which rect.
+/// The list a caption's count opened: whose Live, under which rect, the
+/// pass its caption last drew that rect and the pass the list last showed.
+#[derive(Clone, Copy)]
+struct Open {
+    owner: Uuid,
+    anchor: Rect,
+    drawn: u64,
+    shown: u64,
+}
+
 fn open_id() -> Id {
     Id::unique("gelabber-voice-watchers-open")
+}
+
+fn open(ctx: &egui::Context) -> Option<Open> {
+    ctx.data(|d| d.get_temp::<Option<Open>>(open_id()))
+        .flatten()
+}
+
+fn set_open(ctx: &egui::Context, open: Option<Open>) {
+    ctx.data_mut(|d| d.insert_temp(open_id(), open));
 }
 
 /// A press on the count of `owner`'s Live at `anchor`: opens its list, or
 /// closes it when it is open.
 pub fn toggle(ctx: &egui::Context, owner: Uuid, anchor: Rect) {
-    let next = (!is_open(ctx, owner)).then_some((owner, anchor));
-    ctx.data_mut(|d| d.insert_temp(open_id(), next));
+    let pass = ctx.cumulative_pass_nr();
+    let next = (!is_open(ctx, owner)).then_some(Open {
+        owner,
+        anchor,
+        drawn: pass,
+        shown: pass,
+    });
+    set_open(ctx, next);
 }
 
 /// Whether the list of `owner`'s Live is open from its caption.
 pub fn is_open(ctx: &egui::Context, owner: Uuid) -> bool {
-    ctx.data(|d| d.get_temp::<Option<(Uuid, Rect)>>(open_id()))
-        .flatten()
-        .is_some_and(|(o, _)| o == owner)
+    open(ctx).is_some_and(|o| o.owner == owner)
 }
 
-/// The list a caption's count opened (`top-start`), while its Live runs.
-pub fn show(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
-    let ctx = ui.ctx().clone();
-    let Some((owner, anchor)) = ctx
-        .data(|d| d.get_temp::<Option<(Uuid, Rect)>>(open_id()))
-        .flatten()
-    else {
+/// The caption of `owner`'s Live drew its count at `anchor` this pass: an
+/// open list follows it, as the web's popover follows its anchor. A list
+/// that did not show last pass (the page was left) closes instead.
+pub fn caption_drawn(ctx: &egui::Context, owner: Uuid, anchor: Rect) {
+    let Some(mut o) = open(ctx).filter(|o| o.owner == owner) else {
         return;
     };
-    let keep = room.watchers.contains_key(&owner)
-        && matches!(list(ui, app, room, owner, anchor, false, None), Some(false));
-    if !keep {
-        ctx.data_mut(|d| d.insert_temp(open_id(), None::<(Uuid, Rect)>));
+    let pass = ctx.cumulative_pass_nr();
+    if o.shown + 1 < pass {
+        set_open(ctx, None);
+        return;
+    }
+    o.anchor = anchor;
+    o.drawn = pass;
+    set_open(ctx, Some(o));
+}
+
+/// The list a caption's count opened (`top-start`), while its Live runs,
+/// the room is joined and the caption is on the page (it unmounts with it).
+pub fn show(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
+    let ctx = ui.ctx().clone();
+    let Some(mut o) = open(&ctx) else {
+        return;
+    };
+    let pass = ctx.cumulative_pass_nr();
+    let keep = room.here
+        && o.drawn == pass
+        && room.watchers.contains_key(&o.owner)
+        && matches!(
+            list(ui, app, room, o.owner, o.anchor, false, None),
+            Some(false)
+        );
+    if keep {
+        o.shown = pass;
+        set_open(&ctx, Some(o));
+    } else {
+        set_open(&ctx, None);
     }
 }
 
@@ -176,7 +222,12 @@ fn person_row(ui: &mut Ui, app: &AppCtx, room: &Room, id: Uuid, muted: bool, wid
     let Some(p) = room.person(id) else {
         return;
     };
-    let label = room.name_of(id);
+    let name = p.list_name();
+    let label = if p.me {
+        texts::people_you(&name)
+    } else {
+        name.clone()
+    };
     let (row, response) = ui.allocate_exact_size(vec2(width, 8.0 + 24.0 + 8.0), Sense::hover());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ListItem, true, &label));
     let avatar = Rect::from_min_size(pos2(row.left() + 8.0, row.top() + 8.0), Vec2::splat(24.0));
@@ -184,7 +235,7 @@ fn person_row(ui: &mut Ui, app: &AppCtx, room: &Room, id: Uuid, muted: bool, wid
         ui,
         app.images,
         avatar,
-        &p.name,
+        &name,
         p.avatar.as_deref(),
         10.0,
         1.0,
