@@ -14,9 +14,20 @@ export function useAuthProviders(): AuthProvider[] {
     queryFn: ({ signal }) =>
       api<{ providers: AuthProvider[] }>("/auth/providers", { signal }),
     staleTime: Infinity,
-    retry: false,
+    retry: retryProviders,
   });
   return data?.providers ?? NONE;
 }
 
 const NONE: AuthProvider[] = [];
+
+/**
+ * Asked again only when the session changed under the request: right after
+ * a sign-out the login page asks while the logout still settles, and the
+ * client drops that answer (#519).
+ */
+export function retryProviders(failures: number, error: unknown): boolean {
+  return (
+    failures < 3 && error instanceof DOMException && error.name === "AbortError"
+  );
+}
