@@ -281,7 +281,10 @@ impl Client {
     pub(crate) fn signed_out_by_server(&self) {
         let this = self.clone();
         self.runtime().spawn(async move {
-            if this.with_state(|s| matches!(s.session, Session::Authenticated(_))) {
+            // A deletion on its way ends the session itself, and says so.
+            let deleting =
+                this.with_state(|s| matches!(s.op("delete_account"), Some(OpState::Pending)));
+            if !deleting && this.with_state(|s| matches!(s.session, Session::Authenticated(_))) {
                 this.stop_gateway();
                 this.write(|s| {
                     s.reset_account();
@@ -1819,6 +1822,129 @@ impl Client {
         });
     }
 
+    /// The account's signed-in devices into `State::devices`. Op key
+    /// `devices`.
+    pub fn load_devices(&self) {
+        let http = self.http().clone();
+        self.run(
+            "devices",
+            async move { http.sessions().await },
+            |s, list| s.devices = Some(list),
+        );
+    }
+
+    /// "Abmelden" on another device's row (`signOutDevice`): ended through
+    /// the API without asking, then the list is read again; one that is
+    /// gone already only refreshes the list. This device's row signs out
+    /// as the user panel does ([`Self::logout`]). Op key
+    /// `revoke_device:<id>`, done once the list is read again.
+    pub fn revoke_device(&self, id: Uuid) {
+        let http = self.http().clone();
+        self.run(
+            format!("revoke_device:{id}"),
+            async move {
+                match http.revoke_session(id).await {
+                    Err(e) if e.code() != "not_found" => return Err(e),
+                    _ => {}
+                }
+                http.sessions().await
+            },
+            |s, list| s.devices = Some(list),
+        );
+    }
+
+    /// The data export into `State::export`. While it is being built the
+    /// page calls this every [`EXPORT_POLL`] while it is shown. Op key
+    /// `export`.
+    pub fn load_export(&self) {
+        let http = self.http().clone();
+        self.run(
+            "export",
+            async move { http.export_status().await },
+            |s, e| s.export = Some(e),
+        );
+    }
+
+    /// "Export anfordern" / "Erneut anfordern". `export_pending` (409) and
+    /// `rate_limited` (429, with `retry_after`) fail the op. Op key
+    /// `request_export`.
+    pub fn request_export(&self) {
+        let http = self.http().clone();
+        self.run(
+            "request_export",
+            async move { http.request_export().await },
+            |s, e| s.export = Some(e),
+        );
+    }
+
+    /// "Herunterladen": streams the ready archive into `target`
+    /// ([`Http::download_to`](crate::Http::download_to)). Op key
+    /// `export_download`.
+    pub fn download_export(&self, target: std::path::PathBuf) {
+        let http = self.http().clone();
+        self.run(
+            "export_download",
+            async move { http.download_to(EXPORT_DOWNLOAD_PATH, &target).await },
+            |_, _| {},
+        );
+    }
+
+    /// Deletes the account (`deleteAndLeave`). On `202` this client signs
+    /// out as [`Self::logout`] does, without a request of its own, and
+    /// `State::account_deleted` asks the login page for its notice; the
+    /// interface leaves the call. `409 owns_servers` puts the servers in
+    /// the way into `State::owned_servers` and fails the op with that code.
+    /// Op key `delete_account`.
+    pub fn delete_account(&self, confirmation: DeleteConfirmation) {
+        // Pending at once: a 401 from the closing socket meanwhile is this
+        // deletion, not an expired session.
+        self.write(|s| {
+            s.owned_servers = None;
+            s.ops.insert("delete_account".into(), OpState::Pending)
+        });
+        let this = self.clone();
+        self.spawn(async move {
+            let epoch = this.epoch();
+            let http = this.http().clone();
+            match http.delete_account(&confirmation).await {
+                Ok(AccountDeletion::Deleted) => {
+                    this.stop_typing();
+                    this.stop_gateway();
+                    this.write(|s| {
+                        s.reset_account();
+                        s.session = Session::Anonymous;
+                        s.account_deleted = true;
+                        s.ops.insert("delete_account".into(), OpState::Done);
+                    });
+                }
+                Ok(AccountDeletion::OwnsServers(servers)) => {
+                    this.write_in(epoch, |s| s.owned_servers = Some(servers));
+                    if this.epoch() == epoch {
+                        this.fail_op("delete_account", owns_servers());
+                    }
+                }
+                Err(error) => {
+                    let ended = error.is_unauthenticated();
+                    if this.epoch() == epoch {
+                        this.fail_op("delete_account", error);
+                    }
+                    if ended {
+                        this.signed_out_by_server();
+                    }
+                }
+            }
+        });
+    }
+
+    /// "Übergeben": `user` becomes the server's owner; its detail is read
+    /// again for the caller's new role. Op key `transfer:<server>`.
+    pub fn transfer_server(&self, server: Uuid, user: Uuid) {
+        let http = self.http().clone();
+        self.server_change(format!("transfer:{server}"), server, async move {
+            http.transfer_server(server, user).await
+        });
+    }
+
     // ------------------------------------------------------------- gateway
 
     fn ensure_gateway(&self) {
@@ -1887,6 +2013,16 @@ impl Client {
                 });
                 if let Some((server, banned)) = removed {
                     self.removed_from(server, banned);
+                }
+                // Ownership moved (`k: "o"`): the caller's role and rights
+                // may have too.
+                if event.c.is_none() && event.t == EventKind::E && event.kind() == Some("o") {
+                    let this = self.clone();
+                    let server = event.s;
+                    self.spawn(async move {
+                        this.reload_servers().await;
+                        let _ = this.reload_server(server).await;
+                    });
                 }
                 if let Some(message) = created {
                     self.notify(Notice::Message {
@@ -2220,6 +2356,17 @@ pub(crate) fn record_locale(state: &mut State, locale: String) {
     }
 }
 
+/// The op failure of a deletion that `409 owns_servers` refused.
+fn owns_servers() -> ApiError {
+    ApiError::Api {
+        status: 409,
+        code: "owns_servers".into(),
+        message: crate::http::error_message("owns_servers").into(),
+        fields: serde_json::Value::Null,
+        retry_after: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2531,5 +2678,192 @@ mod tests {
         // A server that goes takes its count along.
         client.write(|s| s.forget_server(home));
         assert!(client.with_state(|s| s.join_requests.is_empty()));
+    }
+
+    /// A fake API: the session route hands out a CSRF token, `answer`
+    /// gives status and body for the rest by request line, which is kept.
+    fn routes(
+        answer: fn(&str) -> (&'static str, String),
+    ) -> (String, Arc<parking_lot::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 8192];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    let line = head.lines().next().unwrap_or("").to_owned();
+                    let (status, body) = if line.starts_with("GET /api/auth/session ") {
+                        ("200 OK", r#"{"user":null,"csrf_token":"t"}"#.to_owned())
+                    } else {
+                        log.lock().push(line.clone());
+                        answer(&line)
+                    };
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn wait(what: &str, done: impl Fn() -> bool) {
+        let start = std::time::Instant::now();
+        while !done() {
+            assert!(start.elapsed() < Duration::from_secs(5), "{what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// `k: "o"` (`isOwnerChange`): the list and that server's detail are
+    /// read again, since the caller's role may have moved too.
+    #[test]
+    fn an_ownership_move_reads_the_server_again() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let home = Uuid::from_u128(7);
+        let event = |k: &str| EventFrame {
+            t: EventKind::E,
+            s: home,
+            c: None,
+            n: 1,
+            ep: None,
+            i: None,
+            d: Some(serde_json::json!({"k": k, "owner_id": Uuid::from_u128(1)})),
+            r: None,
+        };
+        client.on_gateway(GatewayEvent::Event(event("o")));
+        let detail = format!("GET /api/servers/{home} HTTP/1.1");
+        wait("no refetch", || {
+            let seen = seen.lock();
+            seen.iter().any(|l| l == "GET /api/servers HTTP/1.1") && seen.contains(&detail)
+        });
+        // Another server-level edit reads nothing here.
+        seen.lock().clear();
+        client.on_gateway(GatewayEvent::Event(EventFrame { n: 2, ..event("z") }));
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !seen
+                .lock()
+                .iter()
+                .any(|l| l.starts_with("GET /api/servers")),
+            "{:?}",
+            seen.lock()
+        );
+    }
+
+    /// A deletion that went through signs this client out and asks the
+    /// login page for its notice; a 401 meanwhile is no expired session.
+    #[test]
+    fn a_deleted_account_signs_out_with_its_notice() {
+        let (url, seen) = routes(|line| {
+            if line.starts_with("DELETE /api/me ") {
+                ("202 Accepted", r#"{"csrf_token":"n"}"#.to_owned())
+            } else {
+                ("500 Internal Server Error", String::new())
+            }
+        });
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.write(|s| s.ops.insert("delete_account".into(), OpState::Pending));
+        client.signed_out_by_server();
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(client.with_state(|s| s.me().is_some() && !s.session_expired));
+        client.delete_account(DeleteConfirmation::Password("pw".into()));
+        wait("not deleted", || client.with_state(|s| s.account_deleted));
+        client.with_state(|s| {
+            assert!(matches!(s.session, Session::Anonymous));
+            assert!(!s.session_expired);
+            assert!(matches!(s.op("delete_account"), Some(OpState::Done)));
+        });
+        assert!(seen.lock().contains(&"DELETE /api/me HTTP/1.1".to_owned()));
+    }
+
+    /// `409 owns_servers` keeps the session and names the servers.
+    #[test]
+    fn a_deletion_refused_for_owned_servers_names_them() {
+        let (url, _) = routes(|_| {
+            (
+                "409 Conflict",
+                r#"{"error":"owns_servers","message":"x","servers":[{"id":"00000000-0000-0000-0000-000000000007","name":"Wohnzimmer","member_count":5}]}"#
+                    .to_owned(),
+            )
+        });
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.delete_account(DeleteConfirmation::Password("pw".into()));
+        wait("not refused", || {
+            client.with_state(|s| matches!(s.op("delete_account"), Some(OpState::Failed(_))))
+        });
+        client.with_state(|s| {
+            let Some(OpState::Failed(error)) = s.op("delete_account") else {
+                unreachable!()
+            };
+            assert_eq!(error.code(), "owns_servers");
+            let owned = s.owned_servers.as_ref().unwrap();
+            assert_eq!(owned[0].name, "Wohnzimmer");
+            assert_eq!(owned[0].member_count, Some(5));
+            assert!(s.me().is_some() && !s.account_deleted);
+        });
+    }
+
+    /// "Abmelden" on another device: a row that is gone already only
+    /// refreshes the list. The export lands in the state.
+    #[test]
+    fn devices_and_the_export_land_in_the_state() {
+        let (url, seen) = routes(|line| {
+            if line.starts_with("DELETE /api/auth/sessions/") {
+                (
+                    "404 Not Found",
+                    r#"{"error":"not_found","message":"x"}"#.to_owned(),
+                )
+            } else if line.starts_with("GET /api/auth/sessions ") {
+                (
+                    "200 OK",
+                    r#"{"sessions":[{"id":"00000000-0000-0000-0000-000000000001","client":"desktop","os":"linux","created_at":"2026-11-01T18:00:00Z","last_used_at":"2026-11-10T19:02:00Z","current":true}]}"#
+                        .to_owned(),
+                )
+            } else if line.starts_with("POST /api/me/export ") {
+                (
+                    "202 Accepted",
+                    r#"{"export":{"state":"pending","requested_at":"2026-11-11T10:00:00Z","finished_at":null,"expires_at":null,"size_bytes":null},"mail":false}"#
+                        .to_owned(),
+                )
+            } else {
+                ("500 Internal Server Error", String::new())
+            }
+        });
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let other = Uuid::from_u128(2);
+        client.revoke_device(other);
+        let key = format!("revoke_device:{other}");
+        wait("not revoked", || {
+            client.with_state(|s| matches!(s.op(&key), Some(OpState::Done)))
+        });
+        client.with_state(|s| assert_eq!(s.devices.as_ref().unwrap().len(), 1));
+        client.request_export();
+        wait("no export", || client.with_state(|s| s.export.is_some()));
+        assert!(client.with_state(|s| s.export.as_ref().unwrap().building()));
+        assert_eq!(
+            seen.lock().clone(),
+            [
+                format!("DELETE /api/auth/sessions/{other} HTTP/1.1"),
+                "GET /api/auth/sessions HTTP/1.1".to_owned(),
+                "POST /api/me/export HTTP/1.1".to_owned(),
+            ]
+        );
     }
 }

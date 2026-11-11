@@ -508,9 +508,9 @@ impl Http {
         method: Method,
         path: &str,
         body: &B,
-    ) -> Result<T, (ApiError, serde_json::Value)> {
+    ) -> Result<T, Box<(ApiError, serde_json::Value)>> {
         let json = serde_json::to_vec(body)
-            .map_err(|e| (ApiError::Decode(e.to_string()), serde_json::Value::Null))?;
+            .map_err(|e| Box::new((ApiError::Decode(e.to_string()), serde_json::Value::Null)))?;
         let mut refusal = None;
         let answer = self
             .execute_keeping(method, path, Some(Body::Json(json)), None, &mut refusal)
@@ -519,9 +519,9 @@ impl Http {
             let body = refusal
                 .and_then(|b| serde_json::from_slice(&b).ok())
                 .unwrap_or(serde_json::Value::Null);
-            (error, body)
+            Box::new((error, body))
         })?;
-        decode(path, &bytes).map_err(|e| (e, serde_json::Value::Null))
+        decode(path, &bytes).map_err(|e| Box::new((e, serde_json::Value::Null)))
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {

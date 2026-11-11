@@ -340,22 +340,24 @@ impl Http {
         &self,
         confirmation: &DeleteConfirmation,
     ) -> Result<AccountDeletion> {
-        match self
+        let refusal = match self
             .send_keeping_refusal::<_, serde_json::Value>(Method::DELETE, "/me", confirmation)
             .await
         {
-            Ok(_) => Ok(AccountDeletion::Deleted),
-            Err((error, body)) if error.code() == "owns_servers" => {
-                let servers = body
-                    .get("servers")
-                    .cloned()
-                    .and_then(|list| serde_json::from_value::<Lenient<OwnedServer>>(list).ok())
-                    .map(|Lenient(list)| list)
-                    .unwrap_or_default();
-                Ok(AccountDeletion::OwnsServers(servers))
-            }
-            Err((error, _)) => Err(error),
+            Ok(_) => return Ok(AccountDeletion::Deleted),
+            Err(refusal) => refusal,
+        };
+        let (error, body) = *refusal;
+        if error.code() != "owns_servers" {
+            return Err(error);
         }
+        let servers = body
+            .get("servers")
+            .cloned()
+            .and_then(|list| serde_json::from_value::<Lenient<OwnedServer>>(list).ok())
+            .map(|Lenient(list)| list)
+            .unwrap_or_default();
+        Ok(AccountDeletion::OwnsServers(servers))
     }
 
     // ---------------------------------------------------------- servers
