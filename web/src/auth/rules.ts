@@ -491,6 +491,10 @@ export function errorMessage(code: ApiErrorCode): string {
       return translate(auth, "error.oidcWrongOrigin");
     case "session_changed":
       return translate(auth, "error.sessionChanged");
+    case "owns_servers":
+      return translate(auth, "error.ownsServers");
+    case "export_pending":
+      return translate(auth, "error.exportPending");
   }
 }
 

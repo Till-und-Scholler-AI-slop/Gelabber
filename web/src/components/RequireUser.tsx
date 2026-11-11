@@ -2,6 +2,7 @@ import { useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 
 import {
+  accountDeletedHere,
   loggedOutOnPurpose,
   useSession,
   useSessionProblems,
@@ -47,7 +48,9 @@ export function RequireUser({ children }: { children: ReactNode }) {
         ...(target === "/" ? {} : { redirect: target }),
         ...(wasSignedIn && !loggedOutOnPurpose()
           ? { reason: "expired" as const }
-          : {}),
+          : accountDeletedHere()
+            ? { reason: "deleted" as const }
+            : {}),
       }}
     />
   );

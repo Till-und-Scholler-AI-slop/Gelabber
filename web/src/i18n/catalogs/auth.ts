@@ -57,6 +57,9 @@ export const auth = defineCatalog(
       "Die Anmeldung über einen Anbieter geht nur unter der eingerichteten Adresse dieses Gelabber-Servers. Öffne Gelabber dort und versuche es noch einmal.",
     "error.sessionChanged":
       "Inzwischen ist hier ein anderes Konto angemeldet. Bitte noch einmal versuchen.",
+    "error.ownsServers":
+      "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst.",
+    "error.exportPending": "Dein Export wird schon erstellt.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -307,6 +310,9 @@ export const auth = defineCatalog(
       "Signing in through a provider only works at this Gelabber server’s configured address. Open Gelabber there and try again.",
     "error.sessionChanged":
       "Another account has signed in here in the meantime. Please try again.",
+    "error.ownsServers":
+      "You still own servers. Hand them over to another member or delete them first.",
+    "error.exportPending": "Your export is already being prepared.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",
