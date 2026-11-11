@@ -3,11 +3,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setLocale } from "../i18n/locale.ts";
 
 import {
+  OIDC_ERRORS,
   PASSWORD_MAX,
   avatarFieldAfterRemoval,
   errorMessage,
   fieldMessage,
   fieldMessages,
+  isOidcError,
+  oidcErrorMessage,
   profileFormPatch,
   removesAvatarAtOnce,
   validateAvatarUrl,
@@ -210,5 +213,97 @@ describe("copy in English", () => {
       "Wrong email or password.",
     );
     expect(errorMessage("bad_request")).toBe(errorMessage("internal"));
+  });
+});
+
+describe("admission and operator codes (#517)", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("has German and English text for the new form-level codes", () => {
+    expect(errorMessage("invitation_required")).toBe(
+      "Zum Registrieren brauchst du eine Einladung.",
+    );
+    expect(errorMessage("invitation_invalid")).toBe(
+      "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+    );
+    expect(errorMessage("account_disabled")).toBe("Dieses Konto ist gesperrt.");
+    expect(errorMessage("server_blocked")).toBe(
+      "Dieser Server wurde vom Betreiber gesperrt.",
+    );
+    setLocale("en", { persist: false });
+    expect(errorMessage("invitation_required")).toBe(
+      "You need an invitation to register.",
+    );
+    expect(errorMessage("invitation_invalid")).toBe(
+      "This invitation is unknown, expired or already used.",
+    );
+    expect(errorMessage("account_disabled")).toBe(
+      "This account has been disabled.",
+    );
+    expect(errorMessage("server_blocked")).toBe(
+      "This server has been blocked by the operator.",
+    );
+  });
+
+  it("puts the API's invitation field codes at the invitation field", () => {
+    expect(fieldMessages({ invitation: "required", email: "invalid" })).toEqual(
+      {
+        invitation: "Zum Registrieren brauchst du eine Einladung.",
+        email: fieldMessage("email", "invalid"),
+      },
+    );
+    expect(fieldMessage("invitation", "invalid")).toBe(
+      "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+    );
+    expect(fieldMessage("invitation", "too_long")).toBe(
+      "Einladungscode ist zu lang.",
+    );
+  });
+});
+
+describe("sign-in through a provider (#518)", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  const CODES = [
+    "oidc_unavailable",
+    "oidc_email_unverified",
+    "oidc_account_unverified",
+    "identity_taken",
+    "password_required",
+    "reauth_required",
+    "oidc_wrong_origin",
+    "session_changed",
+  ] as const;
+
+  it("has its own copy for every new error code, in both languages", () => {
+    for (const locale of ["de", "en"] as const) {
+      setLocale(locale, { persist: false });
+      const texts = CODES.map((code) => errorMessage(code));
+      expect(new Set(texts).size).toBe(CODES.length);
+      for (const text of texts) expect(text).not.toBe(errorMessage("internal"));
+    }
+  });
+
+  it("says why a provider sign-in came back", () => {
+    for (const locale of ["de", "en"] as const) {
+      setLocale(locale, { persist: false });
+      for (const code of OIDC_ERRORS) {
+        expect(oidcErrorMessage(code), code).not.toBe(errorMessage("internal"));
+      }
+    }
+    setLocale("de", { persist: false });
+    expect(oidcErrorMessage("cancelled")).toBe("Anmeldung abgebrochen.");
+    expect(oidcErrorMessage("account_unverified")).toBe(
+      errorMessage("oidc_account_unverified"),
+    );
+    expect(oidcErrorMessage("invitation_required")).toBe(
+      errorMessage("invitation_required"),
+    );
+  });
+
+  it("knows only the listed oidc_error codes", () => {
+    expect(isOidcError("expired")).toBe(true);
+    expect(isOidcError("registration_closed")).toBe(false);
+    expect(isOidcError(42)).toBe(false);
   });
 });

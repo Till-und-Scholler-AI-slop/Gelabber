@@ -105,7 +105,9 @@ export function useServer(id: string | undefined) {
       !(
         error instanceof Error &&
         "code" in error &&
-        (error.code === "not_found" || error.code === "forbidden")
+        (error.code === "not_found" ||
+          error.code === "forbidden" ||
+          error.code === "server_blocked")
       ),
   });
 }
@@ -248,11 +250,13 @@ function removeServer(
   userId: string,
   generation: number,
   serverId: string,
-  options: { keepDetail?: boolean } = {},
+  options: { keepDetail?: boolean; keepList?: boolean } = {},
 ): void {
-  patchList(client, userId, generation, (servers) =>
-    servers.filter((s) => s.id !== serverId),
-  );
+  if (!options.keepList) {
+    patchList(client, userId, generation, (servers) =>
+      servers.filter((s) => s.id !== serverId),
+    );
+  }
   if (!options.keepDetail) {
     client.removeQueries({
       queryKey: serverKeys.detail(userId, generation, serverId),
@@ -480,6 +484,22 @@ export function useLeaveServer() {
       notifyError(error, translate(servers, "error.serverNotLeft"));
     },
   });
+}
+
+/**
+ * An operator blocked the server: it stays in the list, marked, and its
+ * cached details go, so the next read meets `server_blocked`.
+ */
+export function markServerBlocked(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  serverId: string,
+): void {
+  patchList(client, userId, generation, (servers) =>
+    servers.map((s) => (s.id === serverId ? { ...s, blocked: true } : s)),
+  );
+  removeServer(client, userId, generation, serverId, { keepList: true });
 }
 
 /**

@@ -31,10 +31,12 @@ import { ownPresence, panelSubtitle } from "./userPresence.ts";
 import { useT } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
 import { common } from "../i18n/catalogs/common.ts";
+import { DEFAULT_OPERATOR_PAGE } from "../operator/areas.ts";
 
 export function UserPanel({ contextId }: { contextId?: string }) {
   const t = useT(shell);
   const user = useSession((state) => state.user);
+  const operator = useSession((state) => state.operator);
   const presence = usePresenceStore((state) =>
     user ? ownPresence(state.byServer, user.id, contextId) : "o",
   );
@@ -110,6 +112,14 @@ export function UserPanel({ contextId }: { contextId?: string }) {
             <Link to="/settings/$area" params={{ area: "darstellung" }}>
               {t("userPanel.settings")}
             </Link>
+            {operator ? (
+              <Link
+                to="/betrieb/$page"
+                params={{ page: DEFAULT_OPERATOR_PAGE }}
+              >
+                {t("userPanel.operator")}
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={async () => {

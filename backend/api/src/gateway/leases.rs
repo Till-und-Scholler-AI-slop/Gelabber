@@ -608,6 +608,46 @@ impl VoiceRoster {
         }
         Ok(())
     }
+    /// The servers of every `gb:voice:server:*` index (`SCAN`, so Redis is
+    /// never blocked). An index may hold only expired seats; its
+    /// [`Self::voice_snapshot`] is then empty.
+    pub async fn voice_servers(&self) -> Result<Vec<Uuid>, ApiError> {
+        // `server_key` without the id.
+        let prefix = "gb:voice:server:";
+        let pattern = format!("{prefix}*");
+        let mut servers = HashSet::new();
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, keys): (u64, Vec<String>) = self
+                .connections
+                .with_conn(|mut conn| {
+                    let pattern = pattern.clone();
+                    async move {
+                        redis::cmd("SCAN")
+                            .arg(cursor)
+                            .arg("MATCH")
+                            .arg(pattern)
+                            .arg("COUNT")
+                            .arg(500)
+                            .query_async(&mut conn)
+                            .await
+                    }
+                })
+                .await
+                .map_err(redis_err)?;
+            servers.extend(
+                keys.iter()
+                    .filter_map(|key| key.strip_prefix(prefix)?.parse::<Uuid>().ok()),
+            );
+            if next == 0 {
+                break;
+            }
+            cursor = next;
+        }
+        let mut servers: Vec<Uuid> = servers.into_iter().collect();
+        servers.sort();
+        Ok(servers)
+    }
 }
 impl VoiceRoster {
     /// One roster pass a second for the whole process, not one per socket.

@@ -84,6 +84,38 @@ export const settings = defineCatalog(
     "security.everywhere.confirmMessage":
       "Auch dieses Gerät. Danach musst du dich überall neu anmelden.",
     "security.everywhere.confirmLabel": "Überall abmelden",
+    "security.signIn.title": "Anmeldung",
+    "security.signIn.loadFailed":
+      "Deine Anmeldemethoden konnten nicht geladen werden.",
+    "security.signIn.password": "Passwort",
+    "security.signIn.password.hint": "Zum Anmelden mit deiner E-Mail-Adresse.",
+    "security.signIn.password.none":
+      "Noch keins gesetzt. Du meldest dich mit {provider} an.",
+    "security.signIn.password.unset": "Noch keins gesetzt.",
+    "security.signIn.password.change": "Ändern",
+    "security.signIn.password.set": "Festlegen",
+    "security.signIn.password.setTitle": "Passwort festlegen",
+    "security.signIn.password.setSubmit": "Passwort festlegen",
+    "security.signIn.password.setting": "Festlegen…",
+    "security.signIn.password.setDone":
+      "Festgelegt. Andere Geräte sind abgemeldet.",
+    "security.signIn.reauth": "Mit {provider} bestätigen",
+    "security.signIn.provider.connected":
+      "Verbunden mit {email}. Trennen geht nur, solange ein Passwort gesetzt ist.",
+    "security.signIn.provider.notConnected": "Nicht verbunden.",
+    "security.signIn.provider.connect": "Verbinden",
+    "security.signIn.provider.disconnect": "Trennen",
+    "security.signIn.provider.disconnecting": "Trennen…",
+    "security.signIn.provider.justConnected": "{provider} ist jetzt verbunden.",
+    "security.signIn.provider.disconnected": "Getrennt.",
+    "security.signIn.connect.title": "{provider} verbinden",
+    "security.signIn.connect.lead":
+      "Bestätige mit deinem Passwort. Danach geht es weiter zu {provider}.",
+    "security.signIn.connect.submit": "Weiter zu {provider}",
+    "security.signIn.disconnect.confirmTitle": "{provider} trennen?",
+    "security.signIn.disconnect.confirmMessage":
+      "Du meldest dich dann nicht mehr mit {provider} an. Verbinden kannst du es jederzeit wieder.",
+    "security.signIn.disconnect.confirmLabel": "Trennen",
 
     "card.discardTitle": "Ungespeicherte Änderungen verwerfen?",
     "card.discardMessage":
@@ -190,6 +222,37 @@ export const settings = defineCatalog(
     "security.everywhere.confirmMessage":
       "This device too. Afterwards you need to sign in again everywhere.",
     "security.everywhere.confirmLabel": "Sign out everywhere",
+    "security.signIn.title": "Sign-in",
+    "security.signIn.loadFailed": "Your sign-in methods could not be loaded.",
+    "security.signIn.password": "Password",
+    "security.signIn.password.hint": "For signing in with your email address.",
+    "security.signIn.password.none":
+      "None set yet. You sign in with {provider}.",
+    "security.signIn.password.unset": "None set yet.",
+    "security.signIn.password.change": "Change",
+    "security.signIn.password.set": "Set",
+    "security.signIn.password.setTitle": "Set a password",
+    "security.signIn.password.setSubmit": "Set password",
+    "security.signIn.password.setting": "Setting…",
+    "security.signIn.password.setDone":
+      "Set. Your other devices are signed out.",
+    "security.signIn.reauth": "Confirm with {provider}",
+    "security.signIn.provider.connected":
+      "Connected to {email}. You can only disconnect while a password is set.",
+    "security.signIn.provider.notConnected": "Not connected.",
+    "security.signIn.provider.connect": "Connect",
+    "security.signIn.provider.disconnect": "Disconnect",
+    "security.signIn.provider.disconnecting": "Disconnecting…",
+    "security.signIn.provider.justConnected": "{provider} is now connected.",
+    "security.signIn.provider.disconnected": "Disconnected.",
+    "security.signIn.connect.title": "Connect {provider}",
+    "security.signIn.connect.lead":
+      "Confirm with your password. Then you continue to {provider}.",
+    "security.signIn.connect.submit": "Continue to {provider}",
+    "security.signIn.disconnect.confirmTitle": "Disconnect {provider}?",
+    "security.signIn.disconnect.confirmMessage":
+      "You will no longer sign in with {provider}. You can connect it again at any time.",
+    "security.signIn.disconnect.confirmLabel": "Disconnect",
 
     "card.discardTitle": "Discard unsaved changes?",
     "card.discardMessage": "Your changes to the profile card will be lost.",

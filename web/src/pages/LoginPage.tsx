@@ -5,11 +5,16 @@ import { useRef, useState, type FormEvent } from "react";
 import { ApiError } from "../api/client.ts";
 import { useAccountMailStatus } from "../auth/mail.ts";
 import { isInviteRedirect, savePendingRedirect } from "../auth/redirect.ts";
-import { fieldMessage, validateEmail } from "../auth/rules.ts";
+import {
+  fieldMessage,
+  oidcErrorMessage,
+  validateEmail,
+} from "../auth/rules.ts";
 import { login } from "../auth/session.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
+import { ProviderSignIn } from "../components/ProviderButton.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { buttonClass } from "../components/ui/buttonClass.ts";
 import { PasswordField } from "../components/ui/PasswordField.tsx";
@@ -22,7 +27,11 @@ import { InviteContextBanner } from "./AuthLayout.tsx";
 export function LoginPage() {
   const t = useT(auth);
   const navigate = useNavigate();
-  const { redirect, reason } = useSearch({ from: "/auth/login" });
+  const {
+    redirect,
+    reason,
+    oidc_error: oidcError,
+  } = useSearch({ from: "/auth/login" });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const form = useRef<HTMLFormElement>(null);
@@ -100,6 +109,7 @@ export function LoginPage() {
           </Link>
         </p>
       )}
+      <ProviderSignIn redirect={redirect} onError={fromError} />
 
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <Field
@@ -127,7 +137,15 @@ export function LoginPage() {
           }}
           error={errors.fields.password}
         />
-        <FormError message={errors.form} />
+        {errors.form === null && oidcError ? (
+          // Why the provider sign-in came back here; nothing failed on
+          // this page, so no alert.
+          <p role="status" className="ui-form-error">
+            {oidcErrorMessage(oidcError)}
+          </p>
+        ) : (
+          <FormError message={errors.form} />
+        )}
         <SubmitButton
           size="lg"
           pending={mutation.isPending}

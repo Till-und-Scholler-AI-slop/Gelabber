@@ -365,6 +365,11 @@ impl ConnTable {
             }
         }
     }
+
+    /// Sockets open on this API process (`GET /api/operator/usage`).
+    pub async fn socket_count(&self) -> usize {
+        self.inner.sockets.read().await.len()
+    }
 }
 
 impl VoiceRoster {
@@ -854,7 +859,19 @@ impl Gateway {
                         cids.push(*cid);
                     }
                 }
-                self.clear_server_access(id, sid, &cids, "not_found").await;
+                // A block reaches sockets of another API process only here.
+                let blocked: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM servers WHERE id = $1 AND blocked_at IS NOT NULL)",
+                )
+                .bind(sid)
+                .fetch_one(&mut *db)
+                .await?;
+                let reason = if blocked {
+                    "server_blocked"
+                } else {
+                    "not_found"
+                };
+                self.clear_server_access(id, sid, &cids, reason).await;
             } else {
                 let current = current.expect("checked");
                 if revision.1
@@ -890,7 +907,7 @@ impl Gateway {
             let member = crate::servers::membership::load(&mut *db, sid, user_id).await;
             let allowed = match member {
                 Ok(member) => member.can(crate::servers::permissions::Permission::JoinVoice),
-                Err(ApiError::NotFound) => false,
+                Err(ApiError::NotFound | ApiError::ServerBlocked) => false,
                 Err(err) => return Err(err),
             };
             if !allowed || !existing.contains(&cid) {
@@ -1204,6 +1221,11 @@ impl Gateway {
         self.voice
             .set_voice_watch(id, user_id, server_id, channel_id, owner, on)
             .await
+    }
+
+    /// Every server with a voice index in Redis, from any API process.
+    pub async fn voice_servers(&self) -> Result<Vec<Uuid>, ApiError> {
+        self.voice.voice_servers().await
     }
 }
 

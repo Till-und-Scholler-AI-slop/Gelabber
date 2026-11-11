@@ -46,6 +46,7 @@ export const shell = defineCatalog(
     "userPanel.status": "Status",
     "userPanel.saving": "Speichert…",
     "userPanel.callSettings": "Anrufeinstellungen",
+    "userPanel.operator": "Betrieb",
     "rowMenu.notSaved": "Nicht gespeichert.",
     "rowMenu.markRead": "Als gelesen markieren",
     "rowMenu.markAllDmsRead": "Alle Direktnachrichten als gelesen markieren",
@@ -164,6 +165,7 @@ export const shell = defineCatalog(
     "welcome.setAvatar": "Profilbild festlegen ›",
     "place.settings": "Einstellungen",
     "place.dms": "Nachrichten",
+    "place.operator": "Betrieb",
     noServers:
       "Keine Server. Erstelle einen über + in der Serverleiste oder öffne einen Einladungslink.",
     "drawer.openLabel": "Navigation öffnen",
@@ -218,6 +220,7 @@ export const shell = defineCatalog(
     "userPanel.status": "Status",
     "userPanel.saving": "Saving…",
     "userPanel.callSettings": "Call settings",
+    "userPanel.operator": "Operations",
     "rowMenu.notSaved": "Not saved.",
     "rowMenu.markRead": "Mark as read",
     "rowMenu.markAllDmsRead": "Mark all direct messages as read",
@@ -335,6 +338,7 @@ export const shell = defineCatalog(
     "welcome.setAvatar": "Set a profile picture ›",
     "place.settings": "Settings",
     "place.dms": "Messages",
+    "place.operator": "Operations",
     noServers:
       "No servers. Create one with + in the server bar or open an invite link.",
     "drawer.openLabel": "Open navigation",

@@ -431,7 +431,8 @@ fn session_buckets(
 }
 
 /// Routes an anonymous caller uses to sign in or to make the API send mail;
-/// they share the per-IP auth window.
+/// they share the per-IP auth window. Every mutation of sign-in through a
+/// provider (`/api/auth/oidc/…`, #518) counts there too.
 fn is_auth_path(path: &str) -> bool {
     matches!(
         path,
@@ -440,7 +441,28 @@ fn is_auth_path(path: &str) -> bool {
             | "/api/auth/verify-email"
             | "/api/auth/password-reset"
             | "/api/auth/password-reset/confirm"
+    ) || path.starts_with("/api/auth/oidc/")
+}
+
+/// Counts one anonymous request that [`gate`] does not see (a GET, such as
+/// a provider's callback) against the per-IP `auth` window.
+pub fn anonymous_hit(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: Option<IpAddr>,
+) -> Result<(), ApiError> {
+    let ip = client_ip(headers, peer);
+    check(
+        &state.limiter,
+        "auth",
+        &ip,
+        state.limits.auth_per_min,
+        MINUTE,
     )
+    .map_err(|(bucket, retry_after)| {
+        state.metrics.rate_limited(bucket);
+        ApiError::RateLimited { retry_after }
+    })
 }
 
 fn is_safe(method: &Method) -> bool {
@@ -490,6 +512,9 @@ pub enum MailBudget {
     Registration,
     /// Password reset links.
     Reset,
+    /// Beta invitations an operator mails (`operator::invitations`), kept
+    /// apart so they never use up the invitee's confirmation mails.
+    Invitation,
 }
 
 impl MailBudget {
@@ -497,6 +522,7 @@ impl MailBudget {
         match self {
             Self::Registration => "mail",
             Self::Reset => "mail_reset",
+            Self::Invitation => "mail_invite",
         }
     }
 }
@@ -529,7 +555,10 @@ fn account_key(email: &str) -> String {
 
 /// Limiter keys of the per-account counts above, which eviction spares.
 fn is_per_account(key: &str) -> bool {
-    key.starts_with("login:") || key.starts_with("mail:") || key.starts_with("mail_reset:")
+    key.starts_with("login:")
+        || key.starts_with("mail:")
+        || key.starts_with("mail_reset:")
+        || key.starts_with("mail_invite:")
 }
 
 /// The client address the rate limits are keyed by, with IPv6 grouped per
@@ -682,6 +711,22 @@ mod tests {
         let peer = Some(IpAddr::from([192, 0, 2, 7]));
         assert_eq!(client_ip(&headers, peer), "192.0.2.7");
         assert_eq!(client_ip(&headers, None), "unknown");
+    }
+
+    #[test]
+    fn sign_in_through_a_provider_counts_as_auth() {
+        for path in [
+            "/api/auth/login",
+            "/api/auth/oidc/google/start",
+            "/api/auth/oidc/pending",
+            "/api/auth/oidc/complete",
+            "/api/auth/oidc/desktop/exchange",
+        ] {
+            assert!(is_auth_path(path), "{path}");
+        }
+        for path in ["/api/auth/logout", "/api/auth/oidcx", "/api/servers"] {
+            assert!(!is_auth_path(path), "{path}");
+        }
     }
 
     #[test]

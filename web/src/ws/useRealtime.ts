@@ -22,14 +22,17 @@ import {
 import {
   applyMemberRemoved,
   forgetServer,
+  markServerBlocked,
   refetchOnAccessChange,
 } from "../servers/queries.ts";
+import type { Server } from "../servers/types.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
 import type { ChatEvent } from "./protocol.ts";
 import { shouldLeaveView } from "./leaveView.ts";
 import { translate } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 
 /** Kick/ban closes both planes before the sidebar that hosts voice unmounts. */
 function dropVoice(serverId: string): void {
@@ -37,6 +40,29 @@ function dropVoice(serverId: string): void {
   if (voice.status === "joined" && voice.serverId === serverId) {
     leaveVoice();
   }
+}
+
+/**
+ * `{"op":"err","e":"server_blocked","s":…}`: an operator blocked the server.
+ * Like a kick it ends voice and leaves the server's view, but the server
+ * stays in the list, marked, so its tile opens the blocked notice. Every
+ * later subscribe to it meets the same error; once the list says blocked,
+ * only voice is dropped again, without another toast or navigation.
+ * Returns whether the block is news.
+ */
+export function applyServerBlocked(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  serverId: string,
+): boolean {
+  dropVoice(serverId);
+  const listed = client
+    .getQueryData<Server[]>(serverKeys.list(userId, generation))
+    ?.find((server) => server.id === serverId);
+  if (listed?.blocked) return false;
+  markServerBlocked(client, userId, generation, serverId);
+  return true;
 }
 
 /** The server-topic event "access changed" (`t: "e"`, no `c`,
@@ -178,8 +204,9 @@ export function attachRealtimeRecovery(
           ),
         ]);
         if (!alive() || attempt !== version) return;
-        // Removed channels/DMs are authoritative absence, not an outage that
-        // should prevent every remaining topic from recovering forever.
+        // Removed channels/DMs and blocked servers are authoritative absence,
+        // not an outage that should prevent every remaining topic from
+        // recovering forever.
         for (const query of client.getQueryCache().findAll(filters)) {
           if (skipped(query)) continue;
           // Not read in this round: an old error is not this round's outcome.
@@ -190,7 +217,7 @@ export function attachRealtimeRecovery(
           const error = query.state.error;
           if (
             !(error instanceof ApiError) ||
-            !["not_found", "forbidden"].includes(error.code)
+            !["not_found", "forbidden", "server_blocked"].includes(error.code)
           )
             throw error;
           const key = query.queryKey;
@@ -408,6 +435,14 @@ export function useRealtimeBridge(
     const offErr = gateway.onErr((err) => {
       if ((err.e === "kicked" || err.e === "banned") && err.s) {
         leave(err.e, err.s);
+      }
+      if (err.e === "server_blocked" && err.s && userId && alive()) {
+        const serverId = err.s;
+        if (!applyServerBlocked(client, userId, generation, serverId)) return;
+        onSelfRemoved?.(serverId);
+        notify(translate(auth, "error.serverBlocked"));
+        if (shouldLeaveView(viewingServerId, serverId))
+          void navigate({ to: "/", replace: true });
       }
     });
     return () => {

@@ -217,8 +217,10 @@ pub(crate) async fn resolve(
             // Only members who see the channel: a limited one mentions nobody
             // outside its roles.
             let users: Vec<Uuid> = sqlx::query_scalar(
-                "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id=ANY($2) \
-                 AND user_id<>$3 AND channel_visible_to($4, user_id) ORDER BY user_id",
+                "SELECT m.user_id FROM server_members m \
+                 JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL \
+                 WHERE m.server_id=$1 AND m.user_id=ANY($2) \
+                 AND m.user_id<>$3 AND channel_visible_to($4, m.user_id) ORDER BY m.user_id",
             )
             .bind(member.server.id)
             .bind(&wanted)

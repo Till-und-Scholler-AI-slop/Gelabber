@@ -40,6 +40,8 @@ export type PublicProfile = ProfileCard & {
 export type SessionResponse = {
   user: User | null;
   csrf_token: string;
+  /** An instance operator, who may open "Betrieb" (v0.10). */
+  operator?: boolean;
 };
 
 /**
@@ -69,4 +71,49 @@ export type ProfilePatch = {
   /** Only `""` (remove) or the current upload. */
   banner_url?: string;
   avatar_decoration?: AvatarDecoration | "";
+};
+
+/** A sign-in provider the instance offers (`GET /api/auth/providers`). */
+export type AuthProvider = {
+  /** Its route segment, e.g. `"google"`. */
+  id: string;
+  /** Shown on buttons and in "Sicherheit", e.g. `"Google"`. */
+  name: string;
+};
+
+/** `GET /api/auth/methods`: how the signed-in account can sign in. */
+export type SignInMethods = {
+  /** Whether the account has a password. */
+  password: boolean;
+  providers: (AuthProvider & {
+    /** `false`: the operator turned it off; it can still be disconnected. */
+    configured: boolean;
+    connected: { email: string; since: string } | null;
+  })[];
+};
+
+/** `POST /api/auth/oidc/{provider}/start`, web variant. */
+export type OidcStartBody = {
+  purpose: "sign_in" | "link";
+  /** Where to continue after signing in; the API drops unsafe targets. */
+  redirect?: string;
+  /** `link` only, required when the account has a password. */
+  current_password?: string;
+  /** A beta invitation's code, which admits a new account. */
+  invitation?: string;
+};
+
+/** `POST /api/auth/oidc/pending`: a first sign-in waiting for its name. */
+export type OidcPending = {
+  provider: AuthProvider;
+  email: string;
+  /** The provider's name for the person, a suggestion. */
+  name: string | null;
+};
+
+/** `POST /api/auth/oidc/complete`: the new account, signed in. */
+export type OidcCompleteResponse = SessionResponse & {
+  user: User;
+  /** Where the sign-in was headed, e.g. an invite. */
+  redirect: string | null;
 };

@@ -318,8 +318,10 @@ async fn deliver(
         }
         Some(server) if message.mention_everyone && everyone_may_push(state, server) => {
             let members: Vec<Uuid> = sqlx::query_scalar(
-                "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id<>$2
-                 AND channel_visible_to($4, user_id) LIMIT $3",
+                "SELECT m.user_id FROM server_members m
+                 JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
+                 WHERE m.server_id=$1 AND m.user_id<>$2
+                 AND channel_visible_to($4, m.user_id) LIMIT $3",
             )
             .bind(server)
             .bind(author)
@@ -645,8 +647,10 @@ async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<
         return Ok(Vec::new());
     }
     Ok(sqlx::query_scalar(
-        "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id=ANY($2)
-         AND user_id<>$3 AND channel_visible_to($4, user_id)",
+        "SELECT m.user_id FROM server_members m
+         JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
+         WHERE m.server_id=$1 AND m.user_id=ANY($2)
+         AND m.user_id<>$3 AND channel_visible_to($4, m.user_id)",
     )
     .bind(server)
     .bind(&message.mentions)

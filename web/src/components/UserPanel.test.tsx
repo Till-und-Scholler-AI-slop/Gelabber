@@ -6,6 +6,10 @@ const fixture = vi.hoisted(() => ({
   voice: { status: "idle" },
   leaveVoice: vi.fn(),
   logout: vi.fn(async () => undefined),
+  session: {
+    user: null as Record<string, unknown> | null,
+    operator: false,
+  },
 }));
 vi.mock("../voice/session.ts", () => ({
   useVoice: Object.assign(
@@ -14,32 +18,37 @@ vi.mock("../voice/session.ts", () => ({
   ),
   leaveVoice: fixture.leaveVoice,
 }));
+// A server render reads a store's initial state: the session comes from here.
 vi.mock("../auth/session.ts", () => ({
   logout: fixture.logout,
-  useSession: (select: (state: unknown) => unknown) =>
-    select({ user: { id: "self", name: "Lena", avatar_url: null } }),
-  useProfileWrites: (select: (state: unknown) => unknown) =>
+  useSession: (select: (state: typeof fixture.session) => unknown) =>
+    select(fixture.session),
+  useProfileWrites: (select: (state: { pending: number }) => unknown) =>
     select({ pending: 0 }),
-  claimProfileWrite: vi.fn(),
+  claimProfileWrite: () => null,
   updateProfile: vi.fn(),
 }));
-vi.mock("@tanstack/react-router", () => ({
-  // The link as the page gets it: where it goes and its own attributes.
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  // A plain anchor that says where it leads, without the router: where it
+  // goes and its own attributes.
   Link: ({
-    children,
+    to,
     params,
+    children,
     className,
     title,
     "aria-label": label,
   }: {
-    children: ReactNode;
-    params?: { area?: string };
+    to: string;
+    params?: Record<string, string>;
+    children?: ReactNode;
     className?: string;
     title?: string;
     "aria-label"?: string;
   }) => (
     <a
-      href={`/settings/${params?.area ?? ""}`}
+      href={to.replace(/\$(\w+)/g, (_, name: string) => params?.[name] ?? "")}
       className={className}
       aria-label={label}
       title={title}
@@ -47,13 +56,20 @@ vi.mock("@tanstack/react-router", () => ({
       {children}
     </a>
   ),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => () => Promise.resolve(),
 }));
 
 import { useConfirm } from "./confirm.ts";
 import { logOut, logoutEndsCall } from "./logout.ts";
-import { ownPresence, panelSubtitle } from "./userPresence.ts";
 import { UserPanel } from "./UserPanel.tsx";
+import { ownPresence, panelSubtitle } from "./userPresence.ts";
+
+const lena = {
+  id: "u1",
+  name: "Lena",
+  email: "lena@example.test",
+  avatar_url: null,
+};
 
 describe("logging out", () => {
   beforeEach(() => {
@@ -111,9 +127,44 @@ describe("user panel subtitle", () => {
   });
 });
 
+describe("user menu", () => {
+  afterEach(() => {
+    fixture.session = { user: null, operator: false };
+  });
+
+  const menu = () => {
+    const html = renderToStaticMarkup(<UserPanel />);
+    const nav = html.match(/<nav aria-label="Benutzerkonto">(.*?)<\/nav>/)?.[1];
+    return [...(nav ?? "").matchAll(/<(?:a|button)[^>]*>([^<]+)</g)].map(
+      ([, label]) => label,
+    );
+  };
+  it("offers Betrieb to an operator, between Einstellungen and Abmelden", () => {
+    fixture.session = { user: lena, operator: true };
+    expect(menu()).toEqual([
+      "Profil bearbeiten",
+      "Einstellungen",
+      "Betrieb",
+      "Abmelden",
+    ]);
+    expect(renderToStaticMarkup(<UserPanel />)).toContain(
+      'href="/betrieb/server"',
+    );
+  });
+
+  it("has no Betrieb for anyone else", () => {
+    fixture.session = { user: lena, operator: false };
+    expect(menu()).toEqual(["Profil bearbeiten", "Einstellungen", "Abmelden"]);
+  });
+});
+
 describe("user panel gear", () => {
+  beforeEach(() => {
+    fixture.session = { user: lena, operator: false };
+  });
   afterEach(() => {
     fixture.voice = { status: "idle" };
+    fixture.session = { user: null, operator: false };
   });
   /** The panel's controls before the chevron menu: the gear and its kind. */
   const gear = () => {

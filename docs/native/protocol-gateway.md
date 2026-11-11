@@ -141,7 +141,8 @@ everything needed is re-sent on open.
 
 ### 1.5 Server-side close reasons (no close frame payload, no error frame unless noted)
 
-`backend/api/src/gateway/conn.rs:87-222`: session revoked/expired; session lock or
+`backend/api/src/gateway/conn.rs:87-222`: session revoked/expired (v0.10: also when
+an operator disables the account, after which the reconnect gets 401); session lock or
 ACL recheck failed; 30 s silence; outbound queue overflow; client Close; send
 timeout (1 s per write). The server sends `Message::Close(None)`. The client
 treats every close identically → reconnect (§1.4). A 401 on reconnect (logged
@@ -191,6 +192,7 @@ the same way (so a presence snapshot keyed by the DM id arrives; ignore or store
 | # | Frame | Condition |
 |---|---|---|
 | 0 | `{"op":"err","e":"not_found","s":S,"c":C}` and **stop** | server gone / not a member / channel not in server / channel limited to roles the user does not hold / not a DM participant (unknown, foreign and hidden are indistinguishable) |
+| 0' | `{"op":"err","e":"server_blocked","s":S,"c":C}` and **stop** | v0.10: the caller is a member, but an operator blocked S (REST answers `403 server_blocked`) |
 | 1 | zero or more `{"op":"e",…}` | resume replay: contiguous events `n+1 ..= head` |
 | 1' | `{"op":"gap","s":S,"c":C,"ep":E}` | resume impossible (see §2.3) — instead of 1 |
 | 2 | `{"op":"ok","s":S,"c":C,"n":HEAD,"ep":E}` | always (`c` omitted for server topic) |
@@ -285,6 +287,9 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `forbidden` | s, c | sig join without `join_voice` permission; sig `p` with `k:"s"`/`"sa"` without `go_live` | join abort, or Live refused (§7.3) | `signal.rs:198-232` |
 | `kicked` | s | this account was kicked from server `s` | leave server (§6.3) | `hub.rs:475-515`, `moderation.rs:83` |
 | `banned` | s | banned from server `s` | leave server (§6.3) | `moderation.rs:120` |
+| `server_blocked` | s, c? | v0.10: an operator blocked server `s`. Sent to every member's sockets when the block happens (with `s` only; voice seats in `s` are ended), and in reply to a subscribe, typing or sig on `s` while it stays blocked (with `c` when the frame named one) | leave voice on `s`, toast, leave the view like `kicked`, but keep the server in the list as blocked (§6.3) | `operator/servers.rs` (`block`), `conn.rs` (`subscribe`, typing), `signal.rs` (`reject`), `hub.rs` (`reconcile_access`) |
+
+A block that another API process made reaches this one's sockets through the access recheck, which then sends `server_blocked` instead of `not_found`. Unblocking sends nothing; the server's `blocked` flag is `false` again on the next `GET /api/servers`, and subscribing works again.
 
 Leaving a server voluntarily also sends `err` `not_found` with `s` (`servers/mod.rs:407`); deleting a server sends `err` `not_found` with `s` to every member's sockets (`servers/mod.rs:368`). The reason reaches the socket via `revoke_server` → `hub.rs:515` (`{"op":"err","e":<reason>,"s":S}`, never with `c`).
 
@@ -538,6 +543,10 @@ Typing bar visual (`web/src/components/TypingBar.tsx:31-46`, `web/src/components
 1. If in voice on that server: `leaveVoice()` (sends sig `l`).
 2. Toast: banned → `"Du wurdest vom Server gesperrt."`; kicked → `"Du wurdest vom Server entfernt."`
 3. If currently viewing that server: navigate to `/` (home) and forget the server's cached data; otherwise just forget it.
+
+`err` `server_blocked` with `s` (v0.10) takes the same steps, except that the
+server stays in the server list, marked `blocked: true` (REST `ServerView`),
+and opens to the blocked notice instead of its channels.
 
 ### 6.4 Recovery after ready / gap / resync / dm
 

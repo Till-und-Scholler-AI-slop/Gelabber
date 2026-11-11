@@ -18,6 +18,7 @@ pub mod media;
 pub mod messages;
 pub mod metrics;
 pub mod notifications;
+pub mod operator;
 pub mod password;
 pub mod path;
 pub mod previews;
@@ -65,6 +66,7 @@ pub fn app(state: AppState) -> Router {
         .merge(notifications::router())
         .merge(push::router())
         .merge(previews::router())
+        .merge(operator::router())
         // CSRF runs first: a refused cross-site post must not use up the
         // visitor's address window (the outer layer runs first).
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate))

@@ -2351,6 +2351,76 @@
           "click": "Anrufeinstellungen"
         }
       ]
+    },
+    {
+      "name": "register-invitation",
+      "path": "/register?invitation=k7m2p9qrs4tx",
+      "user": null
+    },
+    {
+      "name": "user-menu-operator",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benutzermenü"
+        }
+      ]
+    },
+    {
+      "name": "operator-server",
+      "path": "/betrieb/server",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-meldungen",
+      "path": "/betrieb/meldungen",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-konten",
+      "path": "/betrieb/konten",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-einladungen",
+      "path": "/betrieb/einladungen",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-auslastung",
+      "path": "/betrieb/auslastung",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "sign-in-name",
+      "path": "/sign-in/name#token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "user": null,
+      "before": "oidc-pending"
+    },
+    {
+      "name": "settings-konto-google",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "before": "oidc-link lena"
+    },
+    {
+      "name": "settings-konto-google-only",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "before": "oidc-link lena nopassword"
+    },
+    {
+      "name": "login-oidc-error",
+      "path": "/login?oidc_error=account_unverified",
+      "user": null
     }
   ]
 }

@@ -1,5 +1,6 @@
-//! Outgoing account mail (#195): address confirmation, password reset and
-//! the notice for a registration with a known address.
+//! Outgoing account mail (#195): address confirmation, password reset, the
+//! notice for a registration with a known address, and beta invitations
+//! (#517).
 //!
 //! Mail goes to the operator's SMTP relay (`SMTP_*`), plain text, in the
 //! account's language (`crate::i18n::mail` holds the texts). Sending runs in
@@ -58,6 +59,16 @@ pub enum Mail {
     },
     /// Someone registered with an address that already has an account.
     AlreadyRegistered,
+    /// An operator invited this address to register (#517); `link` is the
+    /// invitation's registration link.
+    BetaInvitation {
+        link: String,
+    },
+    /// A provider account was connected to this account (#518), by the
+    /// owner or by a sign-in that joined it; `provider_name` is "Google".
+    ProviderConnected {
+        provider_name: String,
+    },
 }
 
 impl Mailer {
@@ -171,6 +182,8 @@ impl Mail {
             Self::ConfirmEmail { .. } => "confirm_email",
             Self::ResetPassword { .. } => "reset_password",
             Self::AlreadyRegistered => "already_registered",
+            Self::BetaInvitation { .. } => "beta_invitation",
+            Self::ProviderConnected { .. } => "provider_connected",
         }
     }
 }

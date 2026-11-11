@@ -318,7 +318,7 @@ APP_PUBLIC_URL=https://chat.example.org
 
 - `SMTP_SECURITY`: `starttls` (default, port 587, the upgrade must succeed), `tls` (port 465) or `none` (port 25, only for a relay on a private network; refused together with `SMTP_PASSWORD`). `SMTP_PORT` overrides the port.
 - `MAIL_FROM`: the sender. Most providers only accept addresses they host; set SPF/DKIM for its domain or the mails land in spam.
-- `APP_PUBLIC_URL`: the address people open Gelabber at. The links in the mails point there, never at the host a request named. It must be `https://` while `API_COOKIE_SECURE=true`.
+- `APP_PUBLIC_URL`: the address people open Gelabber at. The links in the mails point there, never at the host a request named, and so do beta invitation links (see Betrieb). It must be `https://` while `API_COOKIE_SECURE=true`. Since v0.10 the API checks it also without `SMTP_HOST`: a value that is not an http(s) URL, or `http://` while `API_COOKIE_SECURE=true`, now stops the API at start where it used to be ignored.
 
 Then `docker compose up -d --no-deps --force-recreate api`. A wrong value stops the API at start with the variable's name; an unreachable relay does not, failed mails are logged (`account mail failed`, with the user id, never the address).
 
@@ -326,12 +326,54 @@ What changes with mail on:
 
 - Registration answers the same whether or not the address already has an account ("check your inbox"), so it no longer tells strangers who is registered. A new address gets a confirmation link (valid 24 hours); a confirmed one gets a note that the account exists, with links to sign in and to reset the password, and the account does not change. A registration that nobody confirmed yet is replaced by the newer one (name, password, a fresh link), so a stranger who registers someone's address first never holds the password of the account its owner later confirms.
 - An unconfirmed account cannot sign in. The right password answers "confirm your address first" and sends a new link. The link page asks for the account's password; with it the address is confirmed and that browser signed in. The link alone is not enough, so someone who registered a stranger's address cannot share the account the stranger confirms, and mail scanners that open links do not use it up. A wrong password counts like a failed sign-in and leaves the link usable.
-- "Passwort vergessen?" on the sign-in page mails a reset link (valid one hour, once) if the address has an account; the answer is the same either way. Setting the new password confirms the address, ends every session of the account on every device and signs this browser in. Changing the password in the settings makes open reset links invalid.
+- "Passwort vergessen?" on the sign-in page mails a reset link (valid one hour, once) if the address has an account; the answer is the same either way. Setting the new password confirms the address, ends every session of the account on every device and signs this browser in. It also disconnects a Google account connected under another address, and any connected while the address was unconfirmed, since whoever knew or chose the old password may have connected it; the owner connects their own again under Sicherheit. Changing the password in the settings makes open reset links invalid.
 - At most 5 mails per address and hour; further requests are answered as usual and nothing is sent (`gelabber_rate_limited_total{bucket="mail"}`). The links carry their token after `#`, so it does not reach proxy logs, and only its SHA-256 is stored.
 
 Accounts that existed before migration 0021 count as confirmed. Accounts registered later while mail was off are unconfirmed: once mail is turned on, their owners confirm once at their next sign-in. Without mail, registration signs in at once and answers `409` for a known address, as before.
 
 Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As with every migration, an older API binary does not start against the migrated database; roll back with the backed-up snapshot pair as described below.
+
+## Sign-in with Google
+
+People can sign in with their Google account next to email and password ("Über Google anmelden" on the sign-in and register pages, and in the desktop app). It is off until both Google values are set; email and password stay available to everyone either way. Gelabber talks to Google through OpenID Connect directly, with no SDK, script or tracking from Google in the pages.
+
+**In the Google Cloud console** (a project of your own):
+
+1. Under "Google Auth Platform" (formerly "OAuth consent screen"), set the app name, a support address and your domain ("Branding"), and publish the app under "Audience" ("In production"). While it is in testing, only the test users listed there can sign in. Gelabber asks only for `openid`, `email` and `profile`, which need no entry under "Data Access".
+2. Under "Clients" (or "Credentials" → "Create credentials" → "OAuth client ID"), create a client of type **Web application**. Its one **authorised redirect URI** is exactly `APP_PUBLIC_URL` followed by `/api/auth/oidc/google/callback`, for example `https://chat.example.org/api/auth/oidc/google/callback`. No JavaScript origin is needed. Google accepts `http://` redirect URIs only for `localhost`, so a public instance needs TLS (see "Behind TLS").
+3. Copy the client ID and the client secret into `.env`:
+
+```sh
+APP_PUBLIC_URL=https://chat.example.org
+OIDC_GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+OIDC_GOOGLE_CLIENT_SECRET=…
+```
+
+Then `docker compose up -d --no-deps --force-recreate api`. Only one of the two values, or either without `APP_PUBLIC_URL`, stops the API at start with the missing variable's name. The API does not contact Google at start; it fetches Google's discovery document and keys on the first sign-in (cached 24 hours and 1 hour). If Google cannot be reached, the sign-in page shows that sign-in with Google failed, and the reason is logged (`oidc callback failed`). `OIDC_GOOGLE_ISSUER` stays empty; it exists for test setups.
+
+- **Web sign-in works only at `APP_PUBLIC_URL`.** Google sends the browser back there, and the flow is tied to the browser that started it by a cookie only that address sees (`gelabber_oidc`, `Path=/api/auth/oidc`, 30 minutes, `HttpOnly`, `SameSite=Lax`). Opened at another address (the LAN IP, a second domain), the button answers `oidc_wrong_origin` and the page asks to open the instance's address. A proxy of your own must pass the original `Host` header through. The desktop app works with any address of the instance: it gets the result on a temporary port on `127.0.0.1` and proves with its own secret that it started the flow.
+- **Transport:** as with password sign-in, the API signs in only over TLS with `API_COOKIE_SECURE=true`, on `localhost`, or with `API_ALLOW_PLAIN_HTTP=true`.
+- **Registration:** a first sign-in that would create an account passes the same gate as registration with a password (`API_REGISTRATION`, see "Betrieb"). With `invitation`, the register page sends the beta invitation along, and a server invite link (`/invite/…`) admits the person as it does for registration; without a valid one, the person is sent back to the register page with "invitation required" or "invitation invalid", before the name step. Signing in to an existing account is never gated.
+- **Rate limits:** every request of the flow, the return from Google included, counts against the per-address `auth` bucket (`API_RATE_AUTH_PER_MIN`).
+
+**Which account a Google sign-in opens.** Google's account ID, not the address, identifies a connected Google account; the address only decides the first sign-in:
+
+- A Google account connected before signs in to its Gelabber account, even if its Google address changed since.
+- Google must report the address as verified. Otherwise nothing is created or connected (`email_unverified`), so no Google account (or another provider later) can claim someone else's address.
+- A Gelabber account with that address whose address is **confirmed** (by account mail, or because it existed before account mail) gets the Google account connected and is signed in. With account mail on, its owner gets a mail that Google was connected.
+- A registration with that address that nobody confirmed yet (account mail on) counts as no account: the Google sign-in takes it over after the name step, and the password whoever registered it chose no longer works, nor does its confirmation link. Otherwise a stranger who registered someone's address first would share the account its owner opens with Google.
+- An account with that address that was **never confirmed** (registered while account mail was off) is refused (`account_unverified`): nothing proves that the person who chose its password owns the address. Its owner signs in with the password and connects Google under Einstellungen → Sicherheit, which also marks the address confirmed when it is the Google address.
+- A disabled account is refused (`account_disabled`), also through a connected Google account, and is never taken over.
+- Otherwise a new account is created: the person picks a display name once (Google's name is suggested) and has no password.
+- The return from Google is used once and only in the browser that started it, so a link to a captured callback cannot sign anyone in to the sender's account (login CSRF), and an old callback answers `expired`.
+
+**Connecting while signed in** (Einstellungen → Sicherheit, "Verbinden") needs the account's current password, counted like a failed sign-in when wrong, so a stolen session alone cannot add a permanent way in. With account mail on, the owner gets a mail that Google was connected. A Google account already connected to another Gelabber account is refused (`identity_taken`). If the browser signed in to another account meanwhile, the link is refused (`session_changed`).
+
+**Accounts without a password.** An account created through Google has none; password sign-in answers "wrong email or password" for it. Its owner sets one under Sicherheit ("Festlegen"), which needs a sign-in less than 10 minutes old (the page offers to confirm with Google again), or with a password reset mail when account mail is on. Disconnecting Google ("Trennen") works only while the account has a password, so nobody locks themselves out; sessions stay signed in. Registering with a password for the address of a Google-only account behaves as for any existing address.
+
+**Turning it off:** empty both values and recreate the API. The buttons disappear and nobody can sign in with Google any more, so accounts without a password need a reset mail (account mail on) to get back in. Connected Google accounts stay recorded and still show under Sicherheit, where they can be disconnected; setting the values again reconnects them as they were.
+
+Logs name the provider, the account ID and the outcome, never an address, code or token. Migration 0033 makes `users.password_hash` optional and adds `user_identities` (connected Google accounts) and `oidc_flows` / `oidc_results` (sign-ins in progress, kept at most 30 minutes; their state and result codes are stored only as hashes). As with every migration, an older API binary does not start against the migrated database.
 
 ## Database connections
 
@@ -381,6 +423,48 @@ What is left out when something is missing: a page that is not published has no 
 - **Proxies:** the bundled Caddy and `Caddyfile.homelab` already hand these paths to `web`; a proxy of your own needs no change either, as long as it sends everything that is not `/api`, `/ws` or `/media` to `web`.
 
 Apply a changed value with `docker compose up -d web`. The pages are built only at start, so after editing a text file run `docker compose restart web`. Check the result with `docker compose logs web | grep public-pages`: every page that is left out has one line naming the reason (the missing values or files), and the last line lists the published legal pages.
+
+## Betrieb
+
+"Betrieb" is the operator area of the web app (`/betrieb`): beta invitations, accounts, servers, reports and usage of this instance. Only operators see it; other accounts get `404` from `/api/operator/*`, as if it did not exist. The native app has no operator pages; its user menu opens them in the browser.
+
+**Operators** are named in `.env`, never in the app:
+
+```sh
+API_OPERATOR_EMAILS=lena@example.org,tom@example.org
+```
+
+- Register the accounts first, then list their addresses and recreate the API (`docker compose up -d --no-deps --force-recreate api`). Addresses are compared without regard to case. An entry that is not a valid address stops the API at start.
+- With account mail on, an address counts only once its account has confirmed it. With mail off, nothing proves who owns an address: whoever registers a listed address first holds operator rights. Register operator accounts before you list them, and keep mail on for a public instance.
+- Removing an address from the list and recreating the API takes the rights away. Nobody can grant them in the app, and operators cannot disable each other.
+
+**Registration** is set with `API_REGISTRATION`:
+
+- `open` (default): anyone may register; invitation codes are ignored.
+- `invitation`: a new account needs one of two codes, and registration without one answers `403 invitation_required`. The first is a beta invitation an operator creates under "Beta-Einladungen": once, optionally for one address, valid for 1, 7 or 30 days or without end, and sent by mail when account mail is on and an address is given. Its link is `APP_PUBLIC_URL/register?invitation=<code>` (without `APP_PUBLIC_URL`, the address the operator's browser used). The second is the invite link of a server that is not blocked, so the people a group founder invites can register too; registering does not use up the invite. An unknown, used, revoked, expired or wrong-address code answers `410 invitation_invalid`. Existing accounts sign in as before.
+
+The page shows the mode but cannot change it; change `.env` and recreate the API.
+
+**Disabling an account** (Konten) ends all of its sessions at once: open sockets close, voice seats and media tickets end, and its cookies stop working. Sign-in with the right password then answers `403 account_disabled`, and password reset and address confirmation do not sign it in either. Its messages and its servers stay as they are; a server it owns keeps working for its members. Enabling it restores sign-in.
+
+**Blocking a server** (Server, or Meldungen) closes it for everyone, its owner included: every request answers `403 server_blocked`, members in voice are removed, open sockets get `{"op":"err","e":"server_blocked"}`, and its invite links answer as invalid. It stays in its members' server list with a notice; members can still leave it and the owner can still delete it. Its open reports are closed as actioned. Unblocking restores access; nothing was deleted. **Delisting** only removes a server from the directory and closes its open reports; its members notice nothing, and only an operator can let it be listed again.
+
+**Reports** come from members of a server (`POST /api/servers/{id}/reports`, at most 10 per account and hour). Owners never see them; operators close them under "Meldungen".
+
+**Audit:** every operator request that succeeds writes a row to `operator_audit`, reads included (`*.list` with the search in `detail`). Opening the area writes none, and neither does disabling an account that is disabled already. Any other request that changes nothing, such as blocking a server twice, writes a row with `"changed": false` in `detail`. Rows are never purged, and there is no page for them. Read them with SQL (with your `POSTGRES_USER` and `POSTGRES_DB`):
+
+```sh
+docker compose exec postgres psql -U gelabber gelabber -c "
+  SELECT created_at, operator_email, action, target_user, target_server,
+         target_report, target_invitation, detail
+  FROM operator_audit ORDER BY created_at DESC LIMIT 50"
+```
+
+The actions are `invitations.list|create|revoke`, `accounts.list|disable|enable`, `servers.list|delist|relist|block|unblock`, `reports.list|resolve` and `usage.read`. The targets carry no foreign keys, so a row outlives the account, server or report it names. Each row is also logged by the API.
+
+**Usage** (Auslastung) shows numbers from the database, from Redis (who is in voice and live) and from this one API process (open sockets). Media-server numbers (rooms, peers, forwarded bytes) are not there: they stay in Grafana, on the dashboard under "Metrics" (SFU rooms, SFU peers, Forwarded RTP).
+
+Migration 0032 adds the columns and tables for this. As with every migration, an older API binary does not start against the migrated database.
 
 ## Backup
 

@@ -14,11 +14,12 @@ use super::permissions::{Permission, Permissions};
 
 /// The select list that builds a [`Membership`], over `servers s` joined
 /// with the caller's `server_members m`: the server row, the caller, their
-/// custom role ids by position and the bit-or of those roles' flags.
+/// custom role ids by position, the bit-or of those roles' flags and
+/// whether an operator blocked the server.
 macro_rules! membership_columns {
     () => {
         "s.id, s.name, s.owner_id, s.member_permissions, s.icon_url, s.created_at, \
-         m.user_id, \
+         m.user_id, s.blocked_at IS NOT NULL AS blocked, \
          ARRAY(SELECT mr.role_id FROM server_member_roles mr \
                  JOIN server_roles r ON r.id = mr.role_id \
                 WHERE mr.server_id = m.server_id AND mr.user_id = m.user_id \
@@ -46,6 +47,9 @@ pub struct Membership {
     #[sqlx(flatten)]
     pub server: ServerRow,
     pub user_id: Uuid,
+    /// An operator blocked the server (`servers.blocked_at`). Only
+    /// [`load_even_blocked`] and the server list hand out such a membership.
+    pub blocked: bool,
     /// The caller's custom roles, by position. "Alle Mitglieder" is implicit.
     pub role_ids: Vec<Uuid>,
     /// The union of those roles' flags.
@@ -68,6 +72,7 @@ impl Membership {
         Self {
             server,
             user_id,
+            blocked: false,
             role_ids: Vec::new(),
             role_permissions: Permissions::NONE,
         }
@@ -130,8 +135,24 @@ fn denied_message(permission: Permission) -> &'static str {
 }
 
 /// Loads the server *through* the caller's membership. A server the caller
-/// is not part of — or that does not exist — is a `404 not_found`.
+/// is not part of — or that does not exist — is a `404 not_found`; a server
+/// an operator blocked is a `403 server_blocked`.
 pub async fn load<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    db: E,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> Result<Membership, ApiError> {
+    let member = load_even_blocked(db, server_id, user_id).await?;
+    if member.blocked {
+        return Err(ApiError::ServerBlocked);
+    }
+    Ok(member)
+}
+
+/// [`load`] that also hands out a blocked server's membership. Only for
+/// what a blocked server still allows: its owner deletes it, a member
+/// leaves it.
+pub async fn load_even_blocked<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     server_id: Uuid,
     user_id: Uuid,
@@ -212,23 +233,24 @@ pub async fn lock_server_conn(
 }
 
 /// A rejoin is a new authorization, even if it happened between two heartbeats.
+/// A blocked server has none, like one the user left.
 pub async fn revision<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     server_id: Uuid,
     user_id: Uuid,
 ) -> Result<Option<(chrono::DateTime<chrono::Utc>, i32)>, ApiError> {
-    Ok(sqlx::query_as("SELECT m.joined_at, CASE WHEN s.owner_id = m.user_id THEN $3 ELSE server_member_bits(m.server_id, m.user_id) END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.server_id = $1 AND m.user_id = $2")
+    Ok(sqlx::query_as("SELECT m.joined_at, CASE WHEN s.owner_id = m.user_id THEN $3 ELSE server_member_bits(m.server_id, m.user_id) END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.server_id = $1 AND m.user_id = $2 AND s.blocked_at IS NULL")
         .bind(server_id).bind(user_id).bind(crate::servers::permissions::Permissions::ALL.bits()).fetch_optional(db).await?)
 }
 
 /// [`revision`] for several servers in one query. A server the user is no
-/// longer a member of (or that is gone) has no entry.
+/// longer a member of (or that is gone or blocked) has no entry.
 pub async fn revisions<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     user_id: Uuid,
     server_ids: &[Uuid],
 ) -> Result<HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>, ApiError> {
-    let rows: Vec<(Uuid, chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as("SELECT m.server_id, m.joined_at, CASE WHEN s.owner_id = m.user_id THEN $3 ELSE server_member_bits(m.server_id, m.user_id) END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.user_id = $1 AND m.server_id = ANY($2)")
+    let rows: Vec<(Uuid, chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as("SELECT m.server_id, m.joined_at, CASE WHEN s.owner_id = m.user_id THEN $3 ELSE server_member_bits(m.server_id, m.user_id) END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.user_id = $1 AND m.server_id = ANY($2) AND s.blocked_at IS NULL")
         .bind(user_id).bind(server_ids).bind(crate::servers::permissions::Permissions::ALL.bits()).fetch_all(db).await?;
     Ok(rows
         .into_iter()

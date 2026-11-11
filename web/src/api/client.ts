@@ -43,7 +43,19 @@ export type ApiErrorCode =
   | "upstream_quota"
   | "internal"
   | "network"
-  | "timeout";
+  | "timeout"
+  | "invitation_required"
+  | "invitation_invalid"
+  | "account_disabled"
+  | "server_blocked"
+  | "oidc_unavailable"
+  | "oidc_email_unverified"
+  | "oidc_account_unverified"
+  | "identity_taken"
+  | "password_required"
+  | "reauth_required"
+  | "oidc_wrong_origin"
+  | "session_changed";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
@@ -89,6 +101,8 @@ export type SessionSinkOptions = {
   shared?: boolean;
   /** Shared cookie state changed; its authoritative identity is still loading. */
   invalidate?: boolean;
+  /** The session payload's `operator` flag, when the value came with one. */
+  operator?: boolean;
 };
 export type SessionSink = (user: unknown, options?: SessionSinkOptions) => void;
 
@@ -274,7 +288,8 @@ function isSignInPath(path: string): boolean {
     path === "/auth/login" ||
     path === "/auth/register" ||
     path === "/auth/verify-email" ||
-    path === "/auth/password-reset/confirm"
+    path === "/auth/password-reset/confirm" ||
+    path === "/auth/oidc/complete"
   );
 }
 
@@ -365,6 +380,18 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "upstream_unavailable",
   "upstream_quota",
   "internal",
+  "invitation_required",
+  "invitation_invalid",
+  "account_disabled",
+  "server_blocked",
+  "oidc_unavailable",
+  "oidc_email_unverified",
+  "oidc_account_unverified",
+  "identity_taken",
+  "password_required",
+  "reauth_required",
+  "oidc_wrong_origin",
+  "session_changed",
 ]);
 
 function toErrorCode(raw: string | undefined): ApiErrorCode {
@@ -461,6 +488,7 @@ async function performAuthApi<T>(
       sessionSink?.(user, {
         // A password change keeps the account, and with it its caches.
         force: explicit && !logout && path !== "/auth/password",
+        operator: operatorFlag(payload),
       });
     }
     return payload as T;
@@ -586,7 +614,7 @@ async function retryWithSession(
     // new identity must never inherit the old mutation's intent.
     rememberCsrf(payload);
     settleCookieIdentity(actualId);
-    sessionSink?.(payload.user);
+    sessionSink?.(payload.user, { operator: operatorFlag(payload) });
   }
   // Credentials express an explicit sign-in intent, independent of whichever
   // account owns the shared cookie. An anonymous logout also revokes a sign-in
@@ -629,6 +657,16 @@ function isSessionPayload(payload: unknown): payload is {
       typeof user.email === "string" &&
       "name" in user &&
       typeof user.name === "string")
+  );
+}
+
+/** `operator` of a session payload (v0.10); older servers send none. */
+function operatorFlag(payload: unknown): boolean {
+  return (
+    payload !== null &&
+    typeof payload === "object" &&
+    "operator" in payload &&
+    payload.operator === true
   );
 }
 

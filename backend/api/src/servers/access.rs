@@ -142,7 +142,8 @@ pub async fn publish_changed(state: &AppState, server_id: Uuid) {
 }
 
 /// Everyone in the server who holds `permission`: the owner, plus every
-/// member whose base role or custom roles grant it. By join order.
+/// member whose base role or custom roles grant it. By join order. Nobody
+/// in a blocked server.
 pub async fn holders<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     server_id: Uuid,
@@ -150,7 +151,7 @@ pub async fn holders<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
 ) -> Result<Vec<Uuid>, ApiError> {
     Ok(sqlx::query_scalar(
         "SELECT m.user_id FROM server_members m JOIN servers s ON s.id = m.server_id \
-         WHERE m.server_id = $1 \
+         WHERE m.server_id = $1 AND s.blocked_at IS NULL \
            AND (m.user_id = s.owner_id OR server_member_bits(m.server_id, m.user_id) & $2 <> 0) \
          ORDER BY m.joined_at, m.user_id",
     )

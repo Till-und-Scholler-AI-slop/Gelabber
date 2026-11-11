@@ -309,7 +309,8 @@ type FieldName =
   | "color"
   | "permissions"
   | "roles"
-  | "role_ids";
+  | "role_ids"
+  | "invitation";
 
 type LabelKey = Extract<keyof typeof auth.de, `fieldLabel.${string}`>;
 
@@ -347,6 +348,7 @@ const FIELD_LABEL: Record<FieldName, LabelKey> = {
   permissions: "fieldLabel.memberPermissions",
   roles: "fieldLabel.roles",
   role_ids: "fieldLabel.roleIds",
+  invitation: "fieldLabel.invitation",
 };
 
 /** Inline copy for a field code. Unknown fields fall back to generic text. */
@@ -357,6 +359,9 @@ export function fieldMessage(field: string, code: FieldCode): string {
   );
   switch (code) {
     case "required":
+      // The API's `{"invitation":"required"}` (invitation_required).
+      if (field === "invitation")
+        return translate(auth, "error.invitationRequired");
       return translate(auth, "fieldError.required", { label });
     case "too_short":
       return field === "password"
@@ -410,6 +415,8 @@ export function fieldMessage(field: string, code: FieldCode): string {
           return translate(auth, "fieldError.contentTypeInvalid");
         case "role_ids":
           return translate(auth, "fieldError.roleIdsInvalid");
+        case "invitation":
+          return translate(auth, "error.invitationInvalid");
         default:
           return translate(auth, "fieldError.invalid", { label });
       }
@@ -460,6 +467,77 @@ export function errorMessage(code: ApiErrorCode): string {
     case "bad_request":
     case "internal":
       return translate(auth, "error.internal");
+    case "invitation_required":
+      return translate(auth, "error.invitationRequired");
+    case "invitation_invalid":
+      return translate(auth, "error.invitationInvalid");
+    case "account_disabled":
+      return translate(auth, "error.accountDisabled");
+    case "server_blocked":
+      return translate(auth, "error.serverBlocked");
+    case "oidc_unavailable":
+      return translate(auth, "error.oidcUnavailable");
+    case "oidc_email_unverified":
+      return translate(auth, "error.oidcEmailUnverified");
+    case "oidc_account_unverified":
+      return translate(auth, "error.oidcAccountUnverified");
+    case "identity_taken":
+      return translate(auth, "error.identityTaken");
+    case "password_required":
+      return translate(auth, "error.passwordRequired");
+    case "reauth_required":
+      return translate(auth, "error.reauthRequired");
+    case "oidc_wrong_origin":
+      return translate(auth, "error.oidcWrongOrigin");
+    case "session_changed":
+      return translate(auth, "error.sessionChanged");
+  }
+}
+
+/**
+ * Why a provider sign-in came back without signing in: the
+ * `?oidc_error=` of `/login`, `/register` and `/settings/konto`.
+ */
+export const OIDC_ERRORS = [
+  "cancelled",
+  "expired",
+  "failed",
+  "email_unverified",
+  "account_unverified",
+  "identity_taken",
+  "insecure_transport",
+  "session_changed",
+  "invitation_required",
+  "invitation_invalid",
+  "account_disabled",
+] as const;
+
+export type OidcError = (typeof OIDC_ERRORS)[number];
+
+export function isOidcError(value: unknown): value is OidcError {
+  return (OIDC_ERRORS as readonly unknown[]).includes(value);
+}
+
+/** Copy for an `oidc_error`, in the interface's language. */
+export function oidcErrorMessage(code: OidcError): string {
+  switch (code) {
+    case "cancelled":
+      return translate(auth, "oidc.error.cancelled");
+    case "expired":
+      return translate(auth, "oidc.error.expired");
+    case "failed":
+      return translate(auth, "oidc.error.failed");
+    case "email_unverified":
+      return errorMessage("oidc_email_unverified");
+    case "account_unverified":
+      return errorMessage("oidc_account_unverified");
+    case "identity_taken":
+    case "insecure_transport":
+    case "session_changed":
+    case "invitation_required":
+    case "invitation_invalid":
+    case "account_disabled":
+      return errorMessage(code);
   }
 }
 

@@ -1,6 +1,8 @@
 // Reference screenshots of the web client for the native parity check
 // (desktop/parity): every scene in scenes.json, signed in as its user, at
-// the scene size, device scale 1, reduced motion, no caret.
+// the scene size, device scale 1, reduced motion, no caret. Scenes with
+// `webOnly` (the "Betrieb" pages, which the native app leaves to the
+// browser) are shot here too, as the web reference; desktop/parity skips them.
 // Run in web/ against a seeded stack (seed.mjs):
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
@@ -313,8 +315,14 @@ for (const scene of scenes) {
         ).trim();
         said.push([who, id]);
       }
+      // A button, or a <summary> with that label (the user menu), which
+      // Playwright does not expose as a button.
       if (action.click)
-        await page.getByRole("button", { name: named(action.click), exact: true }).first().click();
+        await page
+          .getByRole("button", { name: named(action.click), exact: true })
+          .or(page.locator("summary").and(page.getByLabel(named(action.click), { exact: true })))
+          .first()
+          .click();
       if (action.menuitem)
         await page.getByRole("menuitem", { name: named(action.menuitem), exact: true }).first().click();
       if (action.link)

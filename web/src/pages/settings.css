@@ -752,3 +752,47 @@
   opacity: 0;
   pointer-events: none;
 }
+
+/* Sicherheit → Anmeldung: one row per sign-in method, its button on the
+   right; on a narrow screen the button goes under the text. */
+.settings-signin {
+  margin-top: 24px;
+}
+.settings-signin > .settings-group-title {
+  margin-bottom: 4px;
+}
+.settings-signin-list {
+  border-top: 1px solid var(--lr-border);
+}
+.settings-signin-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 52px;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--lr-border);
+}
+.settings-signin-row__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 14rem;
+}
+.settings-signin-row__title {
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+.settings-signin-row .ui-inline-status:not(:empty) {
+  margin-top: 4px;
+}
+.settings-signin-reauth {
+  margin-top: 10px;
+}
+.settings-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
