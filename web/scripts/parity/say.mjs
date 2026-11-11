@@ -9,6 +9,8 @@
 //   node scripts/parity/say.mjs theme <user> <preset-id|theme JSON>  (reset.mjs undoes it)
 //   node scripts/parity/say.mjs unmute <user> <channel-key|server-key>  (notification settings)
 //   node scripts/parity/say.mjs invite-code <user> <server-key>  → the seeded invite's code
+//   node scripts/parity/say.mjs oidc-pending   → the token of a first Google sign-in's name step
+//   node scripts/parity/say.mjs oidc-link <user> [nopassword]  (Google connected; reset.mjs undoes it)
 // <channel-key> is "dm" or a channel name of fixture.json; "{lena}" (any
 // user key) in the text becomes that user's mention token.
 /* global process, console, fetch, URL, setTimeout */
@@ -19,6 +21,54 @@ import { join } from "node:path";
 const here = new URL(".", import.meta.url).pathname;
 const fixture = JSON.parse(await readFile(join(here, "fixture.json"), "utf8"));
 const [command, who, target, ...words] = process.argv.slice(2);
+
+// Sign-in with Google, written straight into the database: the parity stack
+// has a client id but never talks to Google.
+if (command === "oidc-pending" || command === "oidc-link") {
+  const psql = (process.env.GELABBER_PARITY_PSQL ??
+    "docker exec -i gnative-pg psql -q -U gelabber -d gelabber -v ON_ERROR_STOP=1").split(" ");
+  const run = (sql) =>
+    execFileSync(psql[0], psql.slice(1), { input: sql, stdio: ["pipe", "inherit", "inherit"] });
+  if (command === "oidc-pending") {
+    // A new person's verified answer waiting for its name (/sign-in/name#token=…).
+    const token = "0123456789abcdef".repeat(4);
+    const hash = `sha256(convert_to('${token}', 'UTF8'))`;
+    run(`
+delete from oidc_results where code_hash = ${hash};
+insert into oidc_results (code_hash, provider, subject, email, email_verified, name_hint,
+                          purpose, binding_hash, signup, expires_at)
+values (${hash}, 'google', 'parity-neu', 'neu@example.test', true, 'Nora Neu',
+        'sign_in', sha256(convert_to('parity', 'UTF8')), true, now() + interval '30 minutes');
+`);
+    console.log(token);
+  } else {
+    const linked = fixture.users[who];
+    if (!linked || (target !== undefined && target !== "nopassword"))
+      throw new Error("usage: say.mjs oidc-link <user> [nopassword]");
+    if (!/^[0-9a-f-]{36}$/.test(linked.id)) throw new Error(`not a uuid: ${linked.id}`);
+    run(`
+insert into user_identities (provider, subject, user_id, email)
+values ('google', 'parity-${who}', '${linked.id}', '${linked.email}')
+on conflict do nothing;
+`);
+    // "nopassword": Google only. The shot tools still sign in with the
+    // password, so the hash goes once that sign-in has made its session.
+    if (target === "nopassword")
+      run(`
+create or replace function parity_drop_password() returns trigger language plpgsql as $$
+begin
+  update users set password_hash = null where id = new.user_id;
+  return new;
+end $$;
+set client_min_messages = warning;
+drop trigger if exists parity_drop_password on sessions;
+create trigger parity_drop_password after insert on sessions for each row
+when (new.user_id = '${linked.id}') execute function parity_drop_password();
+`);
+  }
+  process.exit(0);
+}
+
 const user = fixture.users[who];
 const COMMANDS = ["post", "delete", "revoke-unused", "theme", "unmute", "invite-code"];
 if (!user || !COMMANDS.includes(command) || !target)

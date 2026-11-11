@@ -2,8 +2,8 @@
 // read allgemein and nothing else, so spiele, musik and the DM stay unread.
 // Opening a channel marks it read, so both shot tools call this before every
 // scene; otherwise each run would change what the next one sees. Themes
-// (say.mjs theme), notification settings and the language (a scene's
-// `locale`) go back to the seeded ones too.
+// (say.mjs theme), notification settings, the language (a scene's
+// `locale`) and Google sign-in (say.mjs oidc-*) go back to the seeded ones too.
 // Run in web/: node scripts/parity/reset.mjs
 // GELABBER_PARITY_PSQL is the psql command line (default: the gnative-pg
 // container of the local stack).
@@ -40,5 +40,14 @@ update channel_read_state r set message_id = m.id, message_at = m.created_at, cr
 from (select id, created_at, created_order from messages where channel_id = ${allgemein}
       order by created_order desc limit 1) m
 where r.user_id = ${lena} and r.channel_id = ${allgemein};
+set client_min_messages = warning;
+drop trigger if exists parity_drop_password on sessions;
+drop function if exists parity_drop_password();
+-- Every fixture account has the same password, so another's hash restores it.
+update users set password_hash = (select password_hash from users
+                                  where id in (${people}) and password_hash is not null limit 1)
+where id in (${people}) and password_hash is null;
+delete from user_identities where user_id in (${people});
+delete from oidc_results where subject = 'parity-neu';
 `;
 execFileSync(psql[0], psql.slice(1), { input: sql, stdio: ["pipe", "inherit", "inherit"] });
