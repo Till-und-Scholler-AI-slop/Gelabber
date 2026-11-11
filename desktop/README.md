@@ -106,6 +106,12 @@ OIDC_GOOGLE_CLIENT_SECRET=parity
 APP_PUBLIC_URL=http://127.0.0.1:5180
 ```
 
+The parity stack's web dev server (Vite, in `web/`) runs with
+`GELABBER_DEV_PUBLIC_PAGES=scripts/parity/public-pages.json`. It publishes
+all three legal pages, so every scene in the auth frame shows the link row
+under the card, in both clients; the native app reads the same
+`/public-pages.json` from the instance.
+
 Packages, built by `desktop-native.yml` after merge and for releases:
 
 ```sh
