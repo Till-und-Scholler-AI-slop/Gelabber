@@ -459,20 +459,24 @@ a {
   .public-nav__wide {
     display: none;
   }
-  /* One row at 390 px, also with "Anmelden" and "Einladung anfragen". */
+  /* One row down to 375 px, also with "Anmelden" and "Einladung anfragen";
+     narrower, the links wrap under the brand instead of scrolling the page. */
   .public-bar {
-    gap: var(--lr-space-3);
+    flex-wrap: wrap;
+    gap: var(--lr-space-2);
+    padding-block: var(--lr-space-3);
   }
   .public-nav {
     flex-wrap: nowrap;
-    gap: var(--lr-space-3);
+    gap: var(--lr-space-2);
+    margin-inline-start: auto;
   }
   .public-brand {
     gap: 8px;
     font-size: 16px;
   }
   .public-bar .public-button {
-    padding-inline: 12px;
+    padding-inline: 10px;
     font-size: 13px;
   }
   /* Long commands wrap, and a wrapped line is indented under its start. */
