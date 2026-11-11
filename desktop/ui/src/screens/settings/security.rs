@@ -972,3 +972,332 @@ mod tests {
         );
     }
 }
+
+/// Sicherheit drawn whole against the stand-in API (app/testkit.rs).
+#[cfg(test)]
+mod drawn {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use egui::accesskit::Role as A11y;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use serde_json::{Value, json};
+
+    use crate::Launcher;
+    use crate::app::testkit::{
+        FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace,
+    };
+
+    const OTHER: &str = "00000000-0000-4000-8000-0000000000d2";
+
+    fn ago(days: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339()
+    }
+
+    /// Lena's devices as the parity scene has them.
+    fn sessions(revoked: bool) -> Value {
+        let mut list = vec![json!({
+            "id": "00000000-0000-4000-8000-0000000000d1", "client": "desktop", "os": "linux",
+            "created_at": ago(0), "last_used_at": ago(0), "current": true
+        })];
+        if !revoked {
+            list.push(json!({
+                "id": OTHER, "client": "firefox", "os": "windows",
+                "created_at": ago(3), "last_used_at": ago(1), "current": false
+            }));
+        }
+        list.push(json!({
+            "id": "00000000-0000-4000-8000-0000000000d3", "client": "desktop", "os": "windows",
+            "created_at": ago(20), "last_used_at": ago(12), "current": false
+        }));
+        json!({ "sessions": list })
+    }
+
+    fn methods() -> Value {
+        json!({"password": true, "providers": []})
+    }
+
+    fn no_export() -> Value {
+        json!({"export": null, "mail": false})
+    }
+
+    fn export(state: &str) -> Value {
+        let ready = state == "ready";
+        json!({"export": {
+            "state": state,
+            "requested_at": "2036-11-11T10:00:00Z",
+            "finished_at": ready.then_some("2036-11-11T10:05:00Z"),
+            "expires_at": ready.then_some("2036-11-18T10:05:00Z"),
+            "size_bytes": ready.then_some(48_234_496)
+        }, "mail": false})
+    }
+
+    /// The page's own reads; `None` for the rest.
+    fn page(method: &str, path: &str) -> Option<Reply> {
+        match (method, path) {
+            ("GET", "/auth/sessions") => Some(Reply::json(sessions(false))),
+            ("GET", "/auth/methods") => Some(Reply::json(methods())),
+            ("GET", "/me/export") => Some(Reply::json(no_export())),
+            _ => None,
+        }
+    }
+
+    fn button<'h>(h: &'h Harness<'_, Launcher>, label: &'h str) -> Vec<egui_kittest::Node<'h>> {
+        h.query_all_by_label(label)
+            .filter(|n| n.accesskit_node().role() == A11y::Button)
+            .collect()
+    }
+
+    fn href(h: &mut Harness<'_, Launcher>) -> String {
+        h.state_mut().app().expect("app").nav().location().href()
+    }
+
+    fn input<'h>(h: &'h Harness<'_, Launcher>, label: &'h str) -> Option<egui_kittest::Node<'h>> {
+        h.query_all_by_label(label).find(|n| {
+            matches!(
+                n.accesskit_node().role(),
+                A11y::TextInput | A11y::PasswordInput
+            )
+        })
+    }
+
+    fn type_into(h: &mut Harness<'_, Launcher>, label: &str, text: &str) {
+        wait_for(h, label, |h| input(h, label).is_some());
+        input(h, label).expect("input").focus();
+        h.step();
+        input(h, label).expect("input").type_text(text);
+        h.step();
+    }
+
+    /// The rows of hosted-security.png: the devices with "Dieses Gerät" on
+    /// this one, Überall abmelden as their last row, then Kontodaten.
+    /// "Abmelden" on another device ends it and reads the list again.
+    #[test]
+    fn the_devices_and_another_one_signed_out() {
+        let _config = crate::platform::paths::testing::TempConfig::new("security-devices");
+        let revoked = Arc::new(AtomicBool::new(false));
+        let gone = revoked.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/auth/sessions") => Some(Reply::json(sessions(gone.load(Ordering::SeqCst)))),
+            ("DELETE", p) if p == format!("/auth/sessions/{OTHER}") => {
+                gone.store(true, Ordering::SeqCst);
+                Some(Reply::json(json!({})))
+            }
+            _ => page(method, path),
+        });
+        let mut h = launcher(&api, "/settings/konto");
+        wait_for_label(&mut h, "Gelabber für Linux");
+        for label in [
+            "Angemeldete Geräte",
+            "Dieses Gerät",
+            "Zuletzt aktiv: gerade eben",
+            "Firefox unter Windows",
+            "Zuletzt aktiv: gestern",
+            "Gelabber für Windows",
+            "Zuletzt aktiv: vor 12 Tagen",
+            "Überall abmelden",
+            "Kontodaten",
+            "Daten exportieren",
+            "Deine Nachrichten, Dateien und Kontodaten als Archiv. Du kannst es hier herunterladen, sobald es bereitsteht.",
+            "Endgültig. Server, die dir gehören, übergibst oder löschst du vorher.",
+        ] {
+            assert!(h.query_by_label(label).is_some(), "{label}");
+        }
+        assert_eq!(button(&h, "Abmelden").len(), 3);
+        assert_eq!(button(&h, "Export anfordern").len(), 1);
+        assert_eq!(button(&h, "Konto löschen").len(), 1);
+        assert_eq!(button(&h, "Auf allen Geräten abmelden").len(), 1);
+        button(&h, "Abmelden")[1].click();
+        wait_for(&mut h, "the device gone", |h| {
+            h.query_by_label("Firefox unter Windows").is_none()
+        });
+        assert!(api.saw(&format!("DELETE /auth/sessions/{OTHER}")));
+        assert!(h.query_by_label("Gelabber für Windows").is_some());
+        assert_eq!(href(&mut h), "/settings/konto");
+    }
+
+    /// "Abmelden" on this device signs out as the user panel does.
+    #[test]
+    fn this_device_signs_out_here() {
+        let _config = crate::platform::paths::testing::TempConfig::new("security-this-device");
+        let api = FakeApi::start(true, |method, path, _| page(method, path));
+        let mut h = launcher(&api, "/settings/konto");
+        wait_for_label(&mut h, "Gelabber für Linux");
+        button(&h, "Abmelden")[0].click();
+        wait_for(&mut h, "the sign-in page", |h| {
+            h.query_by_label("Anmelden").is_some() && h.query_by_label("Dieses Gerät").is_none()
+        });
+        assert!(api.saw("POST /auth/logout"));
+        assert!(!api.saw("DELETE /auth/sessions/00000000-0000-4000-8000-0000000000d1"));
+    }
+
+    /// "Export anfordern" turns the row into "Wird erstellt…"; a request
+    /// within a day of the last says when the next one can be.
+    #[test]
+    fn requesting_the_export() {
+        let _config = crate::platform::paths::testing::TempConfig::new("security-export");
+        let asked = Arc::new(AtomicBool::new(false));
+        let flag = asked.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/me/export") if flag.load(Ordering::SeqCst) => {
+                Some(Reply::json(export("pending")))
+            }
+            ("POST", "/me/export") => {
+                flag.store(true, Ordering::SeqCst);
+                Some(Reply::status(202, export("pending")))
+            }
+            _ => page(method, path),
+        });
+        let mut h = launcher(&api, "/settings/konto");
+        wait_for_label(&mut h, "Export anfordern");
+        button(&h, "Export anfordern")[0].click();
+        wait_for_label(&mut h, "Wird erstellt. Das kann eine Weile dauern.");
+        let building = button(&h, "Wird erstellt…");
+        assert_eq!(building.len(), 1);
+        assert!(building[0].accesskit_node().is_disabled());
+        assert!(api.saw("POST /me/export"));
+
+        let api = FakeApi::start(true, |method, path, _| match (method, path) {
+            ("POST", "/me/export") => {
+                Some(Reply::error(429, "rate_limited").header("retry-after", "17990"))
+            }
+            _ => page(method, path),
+        });
+        let mut h = launcher(&api, "/settings/konto");
+        wait_for_label(&mut h, "Export anfordern");
+        button(&h, "Export anfordern")[0].click();
+        crate::app::testkit::wait_for_text(
+            &mut h,
+            "Einen neuen Export kannst du in 5 Stunden anfordern.",
+        );
+    }
+
+    /// A ready export: "Herunterladen" streams it into the file the save
+    /// dialog chose (here the Downloads folder), named for its day.
+    #[test]
+    fn downloading_the_ready_export() {
+        let _config = crate::platform::paths::testing::TempConfig::new("security-download");
+        let api = FakeApi::start(true, |method, path, _| match (method, path) {
+            ("GET", "/me/export") => Some(Reply::json(export("ready"))),
+            ("GET", "/me/export/download") => Some(Reply::json(json!({"zip": true}))),
+            _ => page(method, path),
+        });
+        let dir = std::env::temp_dir().join(format!("gelabber-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let mut h = launcher(&api, "/settings/konto");
+        crate::platform::files::set_choosers(
+            &h.ctx,
+            crate::platform::files::Choosers {
+                bus: None,
+                portal: false,
+                native: false,
+                zenity: String::new(),
+                kdialog: String::new(),
+                downloads: Some(dir.clone()),
+            },
+        );
+        wait_for_label(&mut h, "Bereit bis 18. November 2036, 46,0 MB.");
+        button(&h, "Herunterladen")[0].click();
+        let saved = dir.join("gelabber-export-2036-11-11.zip");
+        crate::app::testkit::wait_for_text(&mut h, "Gespeichert unter");
+        assert_eq!(std::fs::read(&saved).expect("saved"), br#"{"zip":true}"#);
+        assert!(api.saw("GET /me/export/download"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Owning a server (the list says so): the dialog names it with its
+    /// members and leads to its Gefahrenzone.
+    #[test]
+    fn deleting_while_owning_a_server_leads_to_it() {
+        let _config = crate::platform::paths::testing::TempConfig::new("security-delete-owned");
+        let api = FakeApi::start(true, |method, path, _| {
+            page(method, path).or_else(|| workspace(method, path))
+        });
+        let mut h = launcher(&api, "/settings/konto");
+        wait_for(&mut h, "the page", |h| {
+            !button(h, "Konto löschen").is_empty()
+        });
+        // The list of servers is in before the dialog decides.
+        wait_for(&mut h, "the servers", |_| api.saw("GET /servers"));
+        h.run_steps(3);
+        button(&h, "Konto löschen")[0].click();
+        wait_for_label(&mut h, "1 Mitglied");
+        // Its row, beside the rail's tile.
+        assert!(h.query_all_by_label("Wohnzimmer").count() >= 2);
+        assert!(h.query_by_label("Konto endgültig löschen?").is_none());
+        button(&h, "Servereinstellungen")[0].click();
+        wait_for(&mut h, "server settings", |h| {
+            h.query_by_label("Servereinstellungen").is_none()
+        });
+        let location = h.state_mut().app().expect("app").nav().location().clone();
+        assert_eq!(location.path, format!("/s/{HOME}/settings"));
+        assert_eq!(location.fragment, "server-settings-gefahrenzone");
+    }
+
+    /// No server of one's own: the password, then `202` leaves for
+    /// /login?reason=deleted, which says so. A `409 owns_servers` on the
+    /// way shows the servers instead.
+    #[test]
+    fn deleting_the_account_with_the_password() {
+        let _config = crate::platform::paths::testing::TempConfig::new("security-delete");
+        let deleted = Arc::new(AtomicBool::new(false));
+        let flag = deleted.clone();
+        let api = FakeApi::start(true, move |method, path, body| match (method, path) {
+            ("DELETE", "/me") if body.contains(r#""password":"geheim""#) => {
+                flag.store(true, Ordering::SeqCst);
+                Some(Reply::status(202, json!({"csrf_token": "n"})))
+            }
+            ("DELETE", "/me") => Some(Reply::status(
+                409,
+                json!({"error": "owns_servers", "message": "x", "servers": [
+                    {"id": HOME, "name": "Wohnzimmer", "member_count": 5}
+                ]}),
+            )),
+            ("GET", "/auth/session") if flag.load(Ordering::SeqCst) => {
+                Some(Reply::json(json!({"user": null, "csrf_token": "n"})))
+            }
+            _ => page(method, path),
+        });
+        let mut h = launcher(&api, "/settings/konto");
+        wait_for(&mut h, "the page", |h| {
+            !button(h, "Konto löschen").is_empty()
+        });
+        wait_for(&mut h, "the servers", |_| api.saw("GET /servers"));
+        h.run_steps(3);
+        button(&h, "Konto löschen")[0].click();
+        wait_for_label(&mut h, "Konto endgültig löschen?");
+        // Empty: nothing is sent.
+        button(&h, "Konto löschen").last().expect("submit").click();
+        h.run_steps(4);
+        assert!(!api.saw("DELETE /me"));
+        // The API knows of a server the list did not.
+        type_into(&mut h, "Passwort", "anders");
+        button(&h, "Konto löschen").last().expect("submit").click();
+        wait_for_label(&mut h, "5 Mitglieder");
+        button(&h, "Schließen").last().expect("close").click();
+        h.run_steps(4);
+        // Once more, now with nothing in the way.
+        button(&h, "Konto löschen")[0].click();
+        wait_for_label(&mut h, "Konto endgültig löschen?");
+        type_into(&mut h, "Passwort", "geheim");
+        button(&h, "Konto löschen").last().expect("submit").click();
+        wait_for_label(&mut h, "Dein Konto wurde gelöscht.");
+        assert_eq!(href(&mut h), "/login?reason=deleted");
+        assert!(deleted.load(Ordering::SeqCst));
+    }
+
+    /// `/login?reason=deleted` on its own.
+    #[test]
+    fn the_sign_in_page_says_the_account_is_gone() {
+        let _config = crate::platform::paths::testing::TempConfig::new("login-deleted");
+        let api = FakeApi::start(false, |_, _, _| None);
+        let mut h = launcher(&api, "/login?reason=deleted");
+        wait_for_label(&mut h, "Dein Konto wurde gelöscht.");
+        assert!(
+            h.query_by_label("Sitzung abgelaufen. Melde dich erneut an.")
+                .is_none()
+        );
+    }
+}
