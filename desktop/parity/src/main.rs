@@ -1026,4 +1026,16 @@ mod tests {
         );
         assert!(unknown_scenes(&scenes, None).is_empty());
     }
+
+    /// The web shot's `userAgent` (the Security scenes) is the browser's
+    /// business; the app sends its own, so the scene reads without it.
+    #[test]
+    fn a_scene_with_a_user_agent_reads() {
+        let scenes: Vec<Scene> = serde_json::from_value(serde_json::json!([
+            {"name": "settings-konto", "path": "/settings/konto", "user": "lena",
+             "userAgent": "Gelabber-Desktop/0.10.0 (linux)"}
+        ]))
+        .unwrap();
+        assert_eq!(scenes[0].name, "settings-konto");
+    }
 }
