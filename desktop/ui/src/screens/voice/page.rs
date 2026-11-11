@@ -18,7 +18,7 @@ use super::session::{self, Person, Picture, Room};
 use super::stage::{self, Kind, KinoKey, PicId, StageRect, Thumb, View};
 use super::tile::{self, Place};
 use super::video::{self, Fit};
-use super::{chips, hint, quick, summary};
+use super::{chips, hint, quick, summary, watchers};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::screens::layout;
@@ -89,6 +89,7 @@ pub(super) fn draw(ui: &mut Ui, app: &mut AppCtx, room: &Room, page: Rect) {
         }
     }
     tile::participant_menu(ui, app, room);
+    watchers::show(ui, app, room);
     fullscreen(ui, app, room);
 }
 
@@ -487,6 +488,13 @@ fn stage_room(
     } else {
         Vec::new()
     };
+    // The row says who watches the Live in front; a camera in front, nobody.
+    let watching_focus: Vec<Uuid> = focus
+        .as_ref()
+        .filter(|f| f.id.kind == Kind::Live)
+        .and_then(|f| room.watchers.get(&f.id.user))
+        .map(|(w, _)| w.clone())
+        .unwrap_or_default();
 
     // The room box.
     let (stage_rect, people_top) = if kino {
@@ -597,6 +605,7 @@ fn stage_room(
                 pinned == Some(pic.id),
                 awake,
                 opacity,
+                (pic.id.kind == Kind::Live).then(|| watchers::count(room, pic.id.user)),
             );
             if out.pin {
                 stage::pin(
@@ -628,7 +637,16 @@ fn stage_room(
             } else {
                 1.0
             };
-            tile::strip_person(ui, app, rect, room.server, p, kino, opacity);
+            tile::strip_person(
+                ui,
+                app,
+                rect,
+                room.server,
+                p,
+                kino,
+                opacity,
+                watching_focus.contains(&p.id),
+            );
         }
     }
     if let Some((top, rows)) = people_top {

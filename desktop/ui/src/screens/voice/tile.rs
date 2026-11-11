@@ -442,7 +442,10 @@ pub fn chip(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
 }
 
 /// A person in Fokus's or Kino's row: a 40px avatar and the name on a
-/// surface card (Kino: the panel at 92 % with a shadow).
+/// surface card (Kino: the panel at 92 % with a shadow). In Fokus the
+/// avatar sits at the start, the name and one status line beside it: live,
+/// else watching the Live in front (`watching`), else the state.
+#[allow(clippy::too_many_arguments)]
 pub fn strip_person(
     ui: &mut Ui,
     app: &mut AppCtx,
@@ -451,6 +454,7 @@ pub fn strip_person(
     p: &Person,
     kino: bool,
     opacity: f32,
+    watching: bool,
 ) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -486,9 +490,16 @@ pub fn strip_person(
             )
             .layout(ui),
     };
-    let content = 40.0 + 6.0 + block.height();
-    let top = rect.top() + (rect.height() - content) / 2.0;
-    let avatar = Rect::from_min_size(pos2(rect.center().x - 20.0, top), Vec2::splat(40.0));
+    let avatar = if kino {
+        let content = 40.0 + 6.0 + block.height();
+        let top = rect.top() + (rect.height() - content) / 2.0;
+        Rect::from_min_size(pos2(rect.center().x - 20.0, top), Vec2::splat(40.0))
+    } else {
+        Rect::from_min_size(
+            pos2(rect.left() + 14.0, rect.center().y - 20.0),
+            Vec2::splat(40.0),
+        )
+    };
     look::avatar(
         ui,
         app.images,
@@ -499,10 +510,14 @@ pub fn strip_person(
         fill,
         p.speaking,
     );
-    block.paint(
-        &painter,
-        pos2(rect.center().x - block.width() / 2.0, avatar.bottom() + 6.0),
-    );
+    if kino {
+        block.paint(
+            &painter,
+            pos2(rect.center().x - block.width() / 2.0, avatar.bottom() + 6.0),
+        );
+    } else {
+        strip_text(ui, &painter, rect, avatar, p, watching, opacity);
+    }
     avatar_button(ui, avatar, id.with("avatar"), server, p);
     if has_marks(ui.ctx(), p) {
         marks(
@@ -534,6 +549,75 @@ pub fn strip_person(
             open_menu(ui.ctx(), p.id, more);
         }
     }
+}
+
+/// Fokus's row beside the avatar: the name (meta 600, "(du)" at 400 and
+/// 75 %), under it one status line (meta) with its 12px icon: "Du bist
+/// live" / "Ist live" in the Live text colour, else "Schaut zu" muted, else
+/// the state, green while speaking.
+fn strip_text(
+    ui: &Ui,
+    painter: &Painter,
+    rect: Rect,
+    avatar: Rect,
+    p: &Person,
+    watching: bool,
+    opacity: f32,
+) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let x = avatar.right() + 10.0;
+    let max = (rect.right() - 14.0 - x).max(1.0);
+    let style = text::META.weight(600.0);
+    let name = if p.me {
+        text::Rich::new(style)
+            .push(&p.name, style, c.text.gamma_multiply(opacity))
+            .push(
+                &format!(" {}", texts::participant_self()),
+                style.weight(400.0),
+                c.text.gamma_multiply(0.75 * opacity),
+            )
+            .layout(ui)
+    } else {
+        line(ui, &p.name, style, c.text.gamma_multiply(opacity), max)
+    };
+    let (icon, words, color) = if p.live {
+        (
+            Some(Icon::Live),
+            if p.me {
+                texts::live_you_are_live()
+            } else {
+                texts::strip_is_live()
+            },
+            c.live_text,
+        )
+    } else if watching {
+        (Some(Icon::Eye), texts::strip_watching(), c.muted)
+    } else if p.speaking {
+        (None, p.state(), c.online_text)
+    } else {
+        (None, p.state(), c.muted)
+    };
+    let color = color.gamma_multiply(opacity);
+    let icon_w = if icon.is_some() { 12.0 + 4.0 } else { 0.0 };
+    let status = line(ui, words, text::META, color, (max - icon_w).max(1.0));
+    let top = rect.center().y - (name.height() + status.height()) / 2.0;
+    name.paint(painter, pos2(x, top));
+    let cy = top + name.height() + status.height() / 2.0;
+    if let Some(icon) = icon {
+        icons::paint(painter, icon, pos2(x, cy - 6.0), 12.0, color);
+    }
+    common::paint_mid(painter, &status, x + icon_w, cy);
+    let line_rect = Rect::from_min_size(
+        pos2(x, cy - status.height() / 2.0),
+        vec2(icon_w + status.width(), status.height()),
+    );
+    ui.interact(
+        line_rect,
+        Id::unique(("voice-strip-status", p.id)),
+        Sense::hover(),
+    )
+    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, words));
 }
 
 /// A person on the people stage (`Participant fill`, a call of two or more
@@ -795,6 +879,9 @@ pub struct PictureOut {
 }
 
 /// A camera or Live on the stage (`VoiceTile` in `.voice-stage-item`).
+/// `watchers`, on a Live of the channel's stage, is how many watch it: its
+/// caption is then the LIVE badge, the name and that count, which opens
+/// the list of watchers, and it has no Live tag.
 #[allow(clippy::too_many_arguments)]
 pub fn picture(
     ui: &mut Ui,
@@ -806,6 +893,7 @@ pub fn picture(
     pinned: bool,
     awake: bool,
     opacity: f32,
+    watchers: Option<usize>,
 ) -> PictureOut {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -958,17 +1046,22 @@ pub fn picture(
     let kino_focus = place == Place::KinoFocus;
     let strip = place.strip();
     // The Live badge, top left; beside it, on the own Live, what becomes of
-    // its sound (`.voice-video-tags`).
+    // its sound (`.voice-video-tags`). With the caption's badge only the
+    // sound stays, in the badge's place.
     if live && !kino_focus {
         let style = TextStyle::new(11.0, 600.0, 1.3);
         let label = Block::single(ui, texts::live_badge(), style, c.on_live);
         let inset = if strip { 6.0 } else { 8.0 };
-        let badge = Rect::from_min_size(
+        let mut badge = Rect::from_min_size(
             rect.min + vec2(inset, inset),
             vec2(label.width() + 12.0, label.height() + 4.0),
         );
-        painter.rect_filled(badge, corner(theme.radius.xs), c.live);
-        label.paint(&painter, badge.min + vec2(6.0, 2.0));
+        if watchers.is_none() {
+            painter.rect_filled(badge, corner(theme.radius.xs), c.live);
+            label.paint(&painter, badge.min + vec2(6.0, 2.0));
+        } else {
+            badge.max.x = badge.min.x - 4.0;
+        }
         let sound = (pic.own && !strip).then(|| app.call.with_state(|s| s.live_sound.clone()));
         if let Some(sound) = sound
             && let Some(notice) = live_sound_notice(&sound)
@@ -1004,9 +1097,12 @@ pub fn picture(
                 .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &notice));
         }
     }
-    // The name pill, bottom left.
+    // The name pill, bottom left; a Live's caption on the channel's stage.
     if !kino_focus {
-        name_pill(ui, &painter, rect, pic, person, strip, live);
+        match watchers.filter(|_| live) {
+            Some(count) => live_caption(ui, &painter, rect, pic, person, strip, count),
+            None => name_pill(ui, &painter, rect, pic, person, strip, live),
+        }
     }
     if frame.is_some()
         && let Some(limit) = video::limit()
@@ -1390,4 +1486,119 @@ fn name_pill(
         x += marks_w;
     }
     common::paint_mid(painter, &label, x, cy);
+}
+
+/// A Live's caption on the channel's stage (`.voice-live-caption`): the
+/// LIVE badge (10px caps on the Live colour), the owner's name ("(du)" for
+/// the own) and, after a divider, the eye and how many watch it. The count
+/// is a button that opens the list of watchers. Gap 8 and padding 0 8 on a
+/// 28px pill, 10px in; in the rows the caps pill, gap 5, 6px in.
+fn live_caption(
+    ui: &mut Ui,
+    painter: &Painter,
+    rect: Rect,
+    pic: &Picture,
+    person: Option<&Person>,
+    strip: bool,
+    count: usize,
+) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let (style, pad_x, pad_y, inset, gap, radius) = if strip {
+        (
+            text::CAPS.tracking(0.0),
+            6.0,
+            1.0,
+            6.0,
+            5.0,
+            theme.radius.xs,
+        )
+    } else {
+        (text::UI.weight(600.0), 8.0, 0.0, 10.0, 8.0, theme.radius.sm)
+    };
+    let name = match person {
+        Some(p) if p.me => texts::people_you(&p.name),
+        Some(p) => p.name.clone(),
+        None => texts::people_member().to_owned(),
+    };
+    let badge_style = TextStyle::new(10.0, 600.0, 1.3);
+    let badge = Block::single(
+        ui,
+        &texts::live_badge().to_uppercase(),
+        badge_style,
+        c.on_live,
+    );
+    let number = Block::single(
+        ui,
+        &gelabber_i18n::intl::count(count as u64),
+        style,
+        Color32::WHITE,
+    );
+    let (eye, count_pad, count_h) = if strip {
+        (14.0, 5.0, 14.0)
+    } else {
+        (14.0, 8.0, 18.0)
+    };
+    let count_w = 1.0 + count_pad + eye + 5.0 + number.width();
+    let badge_w = badge.width() + 10.0;
+    let max_w = rect.width() - 2.0 * inset;
+    let name_max = (max_w - 2.0 * pad_x - badge_w - count_w - 2.0 * gap).max(1.0);
+    let label = line(ui, &name, style, Color32::WHITE, name_max);
+    let h = if strip {
+        label.height().max(badge.height() + 2.0) + 2.0 * pad_y
+    } else {
+        28.0
+    };
+    let w = (2.0 * pad_x + badge_w + gap + label.width() + gap + count_w).min(max_w);
+    let pill_rect = Rect::from_min_size(
+        pos2(rect.left() + inset, rect.bottom() - inset - h),
+        vec2(w, h),
+    );
+    painter.rect_filled(pill_rect, corner(radius), pill(0.62));
+    let cy = pill_rect.center().y;
+    let mut x = pill_rect.left() + pad_x;
+    let badge_rect = Rect::from_min_size(
+        pos2(x, cy - (badge.height() + 2.0) / 2.0),
+        vec2(badge_w, badge.height() + 2.0),
+    );
+    painter.rect_filled(badge_rect, corner(theme.radius.xs), c.live);
+    badge.paint(painter, badge_rect.min + vec2(5.0, 1.0));
+    x = badge_rect.right() + gap;
+    common::paint_mid(painter, &label, x, cy);
+    x += label.width() + gap;
+    // The count: a divider, the eye and the number; a press lists them.
+    let button = Rect::from_min_size(pos2(x, cy - count_h / 2.0), vec2(count_w, count_h));
+    let owner = pic.id.user;
+    let response = ui.interact(
+        button,
+        Id::unique(("voice-live-count", owner)),
+        Sense::click(),
+    );
+    let text_s = super::watchers::count_label(count);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &text_s));
+    let open = super::watchers::is_open(ui.ctx(), owner);
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    painter.vline(
+        button.left() + 0.5,
+        button.y_range(),
+        Stroke::new(1.0, Color32::from_white_alpha((0.3 * 255.0) as u8)),
+    );
+    let eye_x = button.left() + 1.0 + count_pad;
+    icons::paint(
+        painter,
+        Icon::Eye,
+        pos2(eye_x, cy - eye / 2.0),
+        eye,
+        if response.hovered() || open {
+            c.live_text
+        } else {
+            Color32::WHITE
+        },
+    );
+    common::paint_mid(painter, &number, eye_x + eye + 5.0, cy);
+    if response.clicked() {
+        super::watchers::toggle(ui.ctx(), owner, button);
+    }
 }
