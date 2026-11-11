@@ -80,6 +80,8 @@ pub struct AppState {
     pub operators: Arc<HashSet<String>>,
     /// `API_REGISTRATION`.
     pub registration: RegistrationMode,
+    /// Sign-in through OpenID Connect; `None` while it is off.
+    pub oidc: Option<Arc<crate::auth::oidc::Oidc>>,
 }
 
 #[derive(Debug)]
@@ -89,6 +91,7 @@ pub enum StateError {
     Store(String),
     Http(String),
     Mail(String),
+    Oidc(String),
 }
 
 impl fmt::Display for StateError {
@@ -99,6 +102,7 @@ impl fmt::Display for StateError {
             Self::Store(err) => write!(f, "invalid object store: {err}"),
             Self::Http(err) => write!(f, "http client: {err}"),
             Self::Mail(err) => write!(f, "mail: {err}"),
+            Self::Oidc(err) => write!(f, "sign-in provider: {err}"),
         }
     }
 }
@@ -149,6 +153,13 @@ impl AppState {
             .map(crate::mail::Mailer::new)
             .transpose()
             .map_err(StateError::Mail)?;
+        let oidc = config
+            .oidc
+            .as_ref()
+            .map(crate::auth::oidc::Oidc::new)
+            .transpose()
+            .map_err(StateError::Oidc)?
+            .map(Arc::new);
         let gateway = Gateway::new(
             redis.clone(),
             config.ws_replay,
@@ -190,6 +201,7 @@ impl AppState {
             public_url: config.public_url.clone(),
             operators: Arc::new(config.operators.clone()),
             registration: config.registration,
+            oidc,
         })
     }
 

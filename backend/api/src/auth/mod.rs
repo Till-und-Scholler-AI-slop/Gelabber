@@ -19,6 +19,7 @@
 //! registration signs in at once and `409 email_taken` names a known
 //! address, as before.
 
+pub mod oidc;
 pub mod session;
 pub mod tokens;
 pub mod user;

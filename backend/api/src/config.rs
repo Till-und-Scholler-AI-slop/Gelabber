@@ -82,6 +82,11 @@ pub const RUST_LOG: &str = "RUST_LOG";
 pub const API_OPERATOR_EMAILS: &str = "API_OPERATOR_EMAILS";
 /// `open` (default) or `invitation`: who may create an account.
 pub const API_REGISTRATION: &str = "API_REGISTRATION";
+/// Sign-in with Google (OpenID Connect). Both client values set: on.
+pub const OIDC_GOOGLE_CLIENT_ID: &str = "OIDC_GOOGLE_CLIENT_ID";
+pub const OIDC_GOOGLE_CLIENT_SECRET: &str = "OIDC_GOOGLE_CLIENT_SECRET";
+/// Optional; default [`GOOGLE_ISSUER`]. Tests point it at a mock issuer.
+pub const OIDC_GOOGLE_ISSUER: &str = "OIDC_GOOGLE_ISSUER";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
@@ -175,6 +180,9 @@ pub struct Config {
     pub operators: HashSet<String>,
     /// `API_REGISTRATION`.
     pub registration: RegistrationMode,
+    /// Sign-in through OpenID Connect. `None` (off) unless a provider's
+    /// client ID and secret are both set.
+    pub oidc: Option<OidcConfig>,
 }
 
 /// Who may create an account (`API_REGISTRATION`).
@@ -251,6 +259,60 @@ impl fmt::Debug for MailConfig {
             .field("from", &self.from)
             .field("public_url", &self.public_url.as_str())
             .finish()
+    }
+}
+
+/// Google's issuer, the base of its discovery document.
+pub const GOOGLE_ISSUER: &str = "https://accounts.google.com";
+
+/// Sign-in through OpenID Connect providers. Only Google is read from the
+/// environment in v0.10; the rest of the code is provider-generic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OidcConfig {
+    /// `APP_PUBLIC_URL`: the callback is `{public_url}/api/auth/oidc/{id}/callback`.
+    pub public_url: url::Url,
+    pub providers: Vec<OidcProvider>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct OidcProvider {
+    /// In routes and tables: `google`.
+    pub id: &'static str,
+    /// Shown on buttons and under Sicherheit: `Google`.
+    pub name: &'static str,
+    /// Discovery base. `https://`, or `http://` on a loopback host (tests).
+    pub issuer: url::Url,
+    pub client_id: String,
+    pub client_secret: String,
+    pub scopes: &'static str,
+    /// Added to the authorization URL.
+    pub extra_auth_params: &'static [(&'static str, &'static str)],
+}
+
+impl fmt::Debug for OidcProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OidcProvider")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("issuer", &self.issuer.as_str())
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .field("scopes", &self.scopes)
+            .field("extra_auth_params", &self.extra_auth_params)
+            .finish()
+    }
+}
+
+/// `localhost` (and `*.localhost`), `127.0.0.0/8` or `[::1]`.
+pub fn is_loopback_url(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => {
+            host.eq_ignore_ascii_case("localhost")
+                || host.to_ascii_lowercase().ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
     }
 }
 
@@ -569,6 +631,7 @@ impl Config {
             },
             None => RegistrationMode::Open,
         };
+        let oidc = parse_oidc(&get, public_url.as_ref())?;
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -608,6 +671,7 @@ impl Config {
             public_url,
             operators,
             registration,
+            oidc,
         })
     }
 }
@@ -655,6 +719,50 @@ fn parse_operators(get: &impl Fn(&str) -> Option<String>) -> Result<HashSet<Stri
         operators.insert(crate::auth::validate::canonical(&email));
     }
     Ok(operators)
+}
+
+/// `OIDC_GOOGLE_*`. Both client values unset: off. Needs `APP_PUBLIC_URL`,
+/// where the provider sends people back. No network here: discovery is
+/// fetched on the first sign-in.
+fn parse_oidc(
+    get: &impl Fn(&str) -> Option<String>,
+    public_url: Option<&url::Url>,
+) -> Result<Option<OidcConfig>, ConfigError> {
+    let (client_id, client_secret) =
+        match (get(OIDC_GOOGLE_CLIENT_ID), get(OIDC_GOOGLE_CLIENT_SECRET)) {
+            (None, None) => return Ok(None),
+            (Some(id), Some(secret)) => (id.trim().to_owned(), secret.trim().to_owned()),
+            (Some(_), None) => return Err(ConfigError::Missing(OIDC_GOOGLE_CLIENT_SECRET)),
+            (None, Some(_)) => return Err(ConfigError::Missing(OIDC_GOOGLE_CLIENT_ID)),
+        };
+    let public_url = public_url
+        .cloned()
+        .ok_or(ConfigError::Missing(APP_PUBLIC_URL))?;
+    let raw_issuer = get(OIDC_GOOGLE_ISSUER).unwrap_or_else(|| GOOGLE_ISSUER.to_owned());
+    let issuer = url::Url::parse(raw_issuer.trim())
+        .ok()
+        .filter(|url| url.host_str().is_some())
+        .filter(|url| url.query().is_none() && url.fragment().is_none())
+        .filter(|url| url.scheme() == "https" || (url.scheme() == "http" && is_loopback_url(url)))
+        .ok_or_else(|| {
+            invalid(
+                OIDC_GOOGLE_ISSUER,
+                &raw_issuer,
+                "expected an https:// URL (http:// only on a loopback host)",
+            )
+        })?;
+    Ok(Some(OidcConfig {
+        public_url,
+        providers: vec![OidcProvider {
+            id: "google",
+            name: "Google",
+            issuer,
+            client_id,
+            client_secret,
+            scopes: "openid email profile",
+            extra_auth_params: &[("prompt", "select_account")],
+        }],
+    }))
 }
 
 fn parse_mail(
@@ -2019,6 +2127,127 @@ mod tests {
                 }
             ),
             "{err}"
+        );
+    }
+    #[test]
+    fn oidc_is_off_by_default_and_with_empty_values() {
+        assert_eq!(base(&[]).unwrap().oidc, None);
+        // Compose passes unset variables through as empty values.
+        let config = base(&[
+            (OIDC_GOOGLE_CLIENT_ID, ""),
+            (OIDC_GOOGLE_CLIENT_SECRET, " "),
+            (OIDC_GOOGLE_ISSUER, ""),
+        ])
+        .unwrap();
+        assert_eq!(config.oidc, None);
+    }
+
+    #[test]
+    fn oidc_reads_the_google_provider() {
+        let oidc = base(&[
+            (APP_PUBLIC_URL, "https://chat.example.org"),
+            (OIDC_GOOGLE_CLIENT_ID, " id.apps.googleusercontent.com "),
+            (OIDC_GOOGLE_CLIENT_SECRET, "google-secret"),
+        ])
+        .unwrap()
+        .oidc
+        .expect("oidc on");
+        assert_eq!(oidc.public_url.as_str(), "https://chat.example.org/");
+        let [google] = oidc.providers.as_slice() else {
+            panic!("one provider: {:?}", oidc.providers);
+        };
+        assert_eq!(google.id, "google");
+        assert_eq!(google.name, "Google");
+        assert_eq!(google.issuer.as_str(), "https://accounts.google.com/");
+        assert_eq!(google.client_id, "id.apps.googleusercontent.com");
+        assert_eq!(google.client_secret, "google-secret");
+        assert_eq!(google.scopes, "openid email profile");
+        assert_eq!(google.extra_auth_params, &[("prompt", "select_account")]);
+    }
+
+    #[test]
+    fn oidc_needs_both_client_values() {
+        let err = base(&[
+            (APP_PUBLIC_URL, "https://chat.example.org"),
+            (OIDC_GOOGLE_CLIENT_ID, "id"),
+        ])
+        .unwrap_err();
+        assert_eq!(err, ConfigError::Missing(OIDC_GOOGLE_CLIENT_SECRET));
+        let err = base(&[
+            (APP_PUBLIC_URL, "https://chat.example.org"),
+            (OIDC_GOOGLE_CLIENT_SECRET, "secret"),
+        ])
+        .unwrap_err();
+        assert_eq!(err, ConfigError::Missing(OIDC_GOOGLE_CLIENT_ID));
+    }
+
+    #[test]
+    fn oidc_needs_the_public_url() {
+        let err = base(&[
+            (OIDC_GOOGLE_CLIENT_ID, "id"),
+            (OIDC_GOOGLE_CLIENT_SECRET, "secret"),
+        ])
+        .unwrap_err();
+        assert_eq!(err, ConfigError::Missing(APP_PUBLIC_URL));
+    }
+
+    #[test]
+    fn oidc_issuer_is_https_unless_loopback() {
+        let issuer = |raw: &'static str| {
+            base(&[
+                (APP_PUBLIC_URL, "https://chat.example.org"),
+                (OIDC_GOOGLE_CLIENT_ID, "id"),
+                (OIDC_GOOGLE_CLIENT_SECRET, "secret"),
+                (OIDC_GOOGLE_ISSUER, raw),
+            ])
+            .map(|config| config.oidc.unwrap().providers[0].issuer.to_string())
+        };
+        assert_eq!(
+            issuer("https://issuer.example.org").unwrap(),
+            "https://issuer.example.org/"
+        );
+        for raw in [
+            "http://127.0.0.1:41234",
+            "http://localhost:8080/issuer",
+            "http://[::1]:9000",
+        ] {
+            assert!(issuer(raw).is_ok(), "{raw}");
+        }
+        for raw in [
+            "http://issuer.example.org",
+            "http://10.0.0.1",
+            "ftp://issuer.example.org",
+            "issuer.example.org",
+            "https://issuer.example.org/?x=1",
+        ] {
+            let err = issuer(raw).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: OIDC_GOOGLE_ISSUER,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn oidc_secret_is_redacted_in_debug() {
+        let config = base(&[
+            (APP_PUBLIC_URL, "https://chat.example.org"),
+            (OIDC_GOOGLE_CLIENT_ID, "id.apps.googleusercontent.com"),
+            (OIDC_GOOGLE_CLIENT_SECRET, "very-secret-value"),
+        ])
+        .unwrap();
+        let printed = format!("{config:?}");
+        assert!(!printed.contains("very-secret-value"), "{printed}");
+        assert!(printed.contains("<redacted>"), "{printed}");
+        assert!(
+            printed.contains("id.apps.googleusercontent.com"),
+            "{printed}"
         );
     }
 }
