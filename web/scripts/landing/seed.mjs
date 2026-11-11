@@ -1,7 +1,8 @@
 // Seeds the server shown on the landing page's screenshot
 // (docs/design/v0.10/landing-preview-en.png): Lena's "Living Room" with
-// general, games, music and the voice rooms Lounge, Sofa and Cinema, the
-// people Mira, Tom, Lena, Jonas and Ada, and the preview's conversation.
+// general, the voice room Lounge, Chatting (games, music) and a second
+// voice group (Sofa, Cinema), the people Mira, Tom, Lena, Jonas and Ada,
+// and the preview's conversation.
 // `de` seeds the same shape with German names and text.
 // Each language has accounts of its own (lena.en@…, lena.de@…), so Lena's
 // server rail shows only that language's servers. Lena's account takes the
@@ -33,8 +34,6 @@ const TEXT = {
     music: "music",
     cinema: "Cinema",
     chat: [
-      ["jonas", "Hello everyone!"],
-      ["jonas", "Who’s in tonight?"],
       ["mira", "I’m in. **Film or game?**", "plan"],
       ["tom", "Game! I’d be up for *board games* or something co-op."],
       ["lena", "Sounds good. @Jonas, are you bringing the snacks?"],
@@ -65,8 +64,6 @@ const TEXT = {
     music: "musik",
     cinema: "Kino",
     chat: [
-      ["jonas", "Hallo zusammen!"],
-      ["jonas", "Wer ist heute Abend dabei?"],
       ["mira", "Ich bin dabei. **Film oder Spiel?**", "plan"],
       [
         "tom",
@@ -201,8 +198,12 @@ const channel = (name, kind, category) =>
   });
 const games = await channel(TEXT.games, "text", textCat);
 const music = await channel(TEXT.music, "text", textCat);
-const sofa = await channel("Sofa", "voice", voiceCat);
-const cinema = await channel(TEXT.cinema, "voice", voiceCat);
+// The preview's second voice group, after Chatting, named like the first.
+const voiceCat2 = await lena.call("POST", `/servers/${home.id}/categories`, {
+  name: voiceCat.name,
+});
+const sofa = await channel("Sofa", "voice", voiceCat2);
+const cinema = await channel(TEXT.cinema, "voice", voiceCat2);
 const invite = await lena.call("POST", `/servers/${home.id}/invites`, {});
 for (const p of [jonas, mira, tom, ada])
   await p.call("POST", `/invites/${invite.code}/join`);
