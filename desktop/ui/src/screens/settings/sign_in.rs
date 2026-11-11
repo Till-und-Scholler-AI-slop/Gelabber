@@ -311,21 +311,27 @@ pub fn action_row(
         ui.put(at, InlineStatus::new(Some(message), tone));
     }
     let Some(button) = button else {
+        // `put` leaves the cursor under what it placed: back under the row.
+        ui.advance_cursor_after_rect(rect);
         return false;
     };
     let at = Rect::from_min_size(
         pos2(rect.right() - button_w, middle - 16.0),
         vec2(button_w, 32.0),
     );
-    ui.put(
-        at,
-        Button::new(button.label)
-            .small()
-            .width(button_w)
-            .disabled(button.disabled)
-            .pending(button.pending),
-    )
-    .clicked()
+    let clicked = ui
+        .put(
+            at,
+            Button::new(button.label)
+                .small()
+                .width(button_w)
+                .disabled(button.disabled)
+                .pending(button.pending),
+        )
+        .clicked();
+    // `put` leaves the cursor under what it placed: back under the row.
+    ui.advance_cursor_after_rect(rect);
+    clicked
 }
 
 // --------------------------------------------------------- password row
@@ -641,8 +647,11 @@ fn reauth_note(ui: &mut Ui, provider: Option<&AuthProvider>, pending: Option<&st
         ),
         vec2(w, 32.0),
     );
-    ui.put(at, Button::new(&label).small().width(w).pending(pending))
-        .clicked()
+    let clicked = ui
+        .put(at, Button::new(&label).small().width(w).pending(pending))
+        .clicked();
+    ui.advance_cursor_after_rect(rect);
+    clicked
 }
 
 // --------------------------------------------------------- provider row
