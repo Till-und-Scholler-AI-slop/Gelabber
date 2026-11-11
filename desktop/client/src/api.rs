@@ -156,6 +156,106 @@ impl Http {
         .await
     }
 
+    /// `GET /api/auth/providers`: the sign-in providers the instance offers.
+    pub async fn auth_providers(&self) -> Result<Vec<AuthProvider>> {
+        self.get::<AuthProviders>("/auth/providers")
+            .await
+            .map(|answer| answer.providers)
+    }
+
+    /// `POST /api/auth/oidc/{provider}/start`, desktop variant: the URL of
+    /// the provider's sign-in page for the system browser. The flow in
+    /// `oidc.rs` makes `desktop` and runs the rest.
+    pub async fn oidc_start(
+        &self,
+        provider: &str,
+        start: &OidcStart,
+        desktop: &OidcDesktop,
+    ) -> Result<String> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            #[serde(flatten)]
+            start: &'a OidcStart,
+            desktop: &'a OidcDesktop,
+        }
+        let answer: OidcStartResponse = self
+            .send(
+                Method::POST,
+                &format!("/auth/oidc/{}/start", encode_component(provider)),
+                &Body { start, desktop },
+            )
+            .await?;
+        Ok(answer.url)
+    }
+
+    /// `POST /api/auth/oidc/desktop/exchange`: trades the code the loopback
+    /// receiver got, proven by the flow's PKCE verifier. `signed_in` puts
+    /// the session cookie into the jar and rotates CSRF, as [`Self::sign_in`].
+    pub async fn oidc_exchange(&self, code: &str, verifier: &str) -> Result<OidcExchange> {
+        self.send(
+            Method::POST,
+            "/auth/oidc/desktop/exchange",
+            &json!({"code": code, "verifier": verifier}),
+        )
+        .await
+    }
+
+    /// `POST /api/auth/oidc/pending`: the first sign-in a name-step token
+    /// stands for; does not use it up.
+    pub async fn oidc_pending(&self, token: &str) -> Result<OidcPending> {
+        self.send(Method::POST, "/auth/oidc/pending", &json!({"token": token}))
+            .await
+    }
+
+    /// `POST /api/auth/oidc/complete` with the desktop flow's verifier:
+    /// creates the account with its chosen name and signs it in.
+    pub async fn oidc_complete(
+        &self,
+        token: &str,
+        name: &str,
+        verifier: &str,
+    ) -> Result<OidcCompleteResponse> {
+        self.send(
+            Method::POST,
+            "/auth/oidc/complete",
+            // The language the app shows becomes the account's.
+            &json!({
+                "token": token,
+                "name": name,
+                "verifier": verifier,
+                "locale": gelabber_i18n::get().as_str(),
+            }),
+        )
+        .await
+    }
+
+    /// `GET /api/auth/methods`: password and providers of the account.
+    pub async fn sign_in_methods(&self) -> Result<SignInMethods> {
+        self.get("/auth/methods").await
+    }
+
+    /// Detaches a provider; `409 password_required` without a password.
+    pub async fn disconnect_provider(&self, provider: &str) -> Result<SignInMethods> {
+        self.send_empty(
+            Method::DELETE,
+            &format!("/auth/oidc/{}", encode_component(provider)),
+        )
+        .await
+    }
+
+    /// The first password of an account that signs in only through a
+    /// provider (no `current_password`). Needs a recent sign-in
+    /// (`403 reauth_required`); like [`Self::change_password`], this client
+    /// gets a fresh session and all others are revoked.
+    pub async fn set_password(&self, password: &str) -> Result<SessionResponse> {
+        self.send(
+            Method::POST,
+            "/auth/password",
+            &json!({"password": password}),
+        )
+        .await
+    }
+
     // --------------------------------------------------------------- me
 
     pub async fn me(&self) -> Result<User> {

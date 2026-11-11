@@ -171,6 +171,148 @@ pub struct ProfilePatch {
     pub avatar_decoration: Option<String>,
 }
 
+/// A sign-in provider the instance offers (`GET /api/auth/providers`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthProvider {
+    /// Its route segment, e.g. `google`.
+    pub id: String,
+    /// Shown on buttons and in Sicherheit, e.g. `Google`.
+    pub name: String,
+}
+
+/// `GET /api/auth/providers`: empty while the operator has it off.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthProviders {
+    #[serde(deserialize_with = "lenient_list")]
+    pub providers: Vec<AuthProvider>,
+}
+
+/// `GET /api/auth/methods`: how the signed-in account can sign in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SignInMethods {
+    /// Whether the account has a password.
+    pub password: bool,
+    #[serde(deserialize_with = "lenient_list")]
+    pub providers: Vec<SignInProvider>,
+}
+
+/// One provider row of [`SignInMethods`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SignInProvider {
+    pub id: String,
+    pub name: String,
+    /// `false`: the operator turned it off; it can still be disconnected.
+    pub configured: bool,
+    pub connected: Option<ProviderConnection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderConnection {
+    /// The provider's address at the last sign-in.
+    pub email: String,
+    pub since: Timestamp,
+}
+
+/// What a provider flow is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OidcPurpose {
+    SignIn,
+    /// Connect the provider to the signed-in account.
+    Link,
+}
+
+/// `POST /api/auth/oidc/{provider}/start`, apart from the app's loopback
+/// fields ([`OidcDesktop`]), which the flow adds itself.
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub struct OidcStart {
+    pub purpose: OidcPurpose,
+    /// Where to continue after signing in; the API drops unsafe targets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirect: Option<String>,
+    /// `link` only, required when the account has a password.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_password: Option<String>,
+    /// A beta invitation's code, which admits a new account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invitation: Option<String>,
+}
+
+impl OidcStart {
+    pub fn new(purpose: OidcPurpose) -> Self {
+        Self {
+            purpose,
+            redirect: None,
+            current_password: None,
+            invitation: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for OidcStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcStart")
+            .field("purpose", &self.purpose)
+            .field("redirect", &self.redirect)
+            .field(
+                "current_password",
+                &self.current_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "invitation",
+                &self.invitation.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+/// The start body's `desktop`: where the system browser hands the result
+/// back (`http://127.0.0.1:{port}/callback`), the app's own `state` and
+/// the PKCE challenge that binds the result to this app.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcDesktop {
+    pub port: u16,
+    pub state: String,
+    pub challenge: String,
+}
+
+/// `POST /api/auth/oidc/{provider}/start`: the provider's sign-in page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcStartResponse {
+    pub url: String,
+}
+
+/// `POST /api/auth/oidc/pending`, and the exchange's `needs_name`: a first
+/// sign-in waiting for its display name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcPending {
+    pub provider: AuthProvider,
+    pub email: String,
+    /// The provider's name for the person, a suggestion.
+    pub name: Option<String>,
+}
+
+/// `POST /api/auth/oidc/complete`: the new account, signed in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OidcCompleteResponse {
+    pub user: User,
+    pub csrf_token: String,
+    /// Where the sign-in was headed, e.g. an invite.
+    pub redirect: Option<String>,
+}
+
+/// `POST /api/auth/oidc/desktop/exchange`, by its `result`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum OidcExchange {
+    /// Signed in; the session cookie is in the jar.
+    SignedIn(Box<SessionResponse>),
+    /// A new account: `complete` with the same code and verifier.
+    NeedsName(OidcPending),
+    /// The provider is now connected to the signed-in account.
+    Linked(SignInMethods),
+}
+
 // ------------------------------------------------------------------- themes
 
 /// `GET/PUT /api/me/themes`, the only camelCase shape of the API. The server

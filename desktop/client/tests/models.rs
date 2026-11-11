@@ -252,3 +252,78 @@ fn a_newer_server_degrades_per_element() {
         })
     ));
 }
+
+/// The sign-in-through-a-provider shapes (#518), as
+/// backend/api/src/auth/oidc/routes.rs writes them and
+/// backend/api/tests/oidc.rs checks them.
+#[test]
+fn sign_in_through_a_provider() {
+    use serde_json::json;
+    let providers: AuthProviders =
+        serde_json::from_value(json!({"providers": [{"id": "google", "name": "Google"}]})).unwrap();
+    assert_eq!(providers.providers[0].name, "Google");
+    let off: AuthProviders = serde_json::from_value(json!({"providers": []})).unwrap();
+    assert!(off.providers.is_empty());
+
+    let methods = json!({
+        "password": false,
+        "providers": [
+            {"id": "google", "name": "Google", "configured": true,
+             "connected": {"email": "lena@example.test", "since": "2026-11-10T10:00:00Z"}},
+            {"id": "old", "name": "old", "configured": false, "connected": null},
+        ],
+    });
+    let read: SignInMethods = serde_json::from_value(methods.clone()).unwrap();
+    assert!(!read.password);
+    let google = read.providers[0].connected.as_ref().unwrap();
+    assert_eq!(google.email, "lena@example.test");
+    assert!(!read.providers[1].configured && read.providers[1].connected.is_none());
+    assert_eq!(serde_json::to_value(&read).unwrap(), methods);
+
+    let pending = json!({
+        "provider": {"id": "google", "name": "Google"},
+        "email": "neu@example.test",
+        "name": null,
+    });
+    let read: OidcPending = serde_json::from_value(pending.clone()).unwrap();
+    assert_eq!(read.name, None);
+    assert_eq!(serde_json::to_value(&read).unwrap(), pending);
+
+    let mut session = fixture("session");
+    session["redirect"] = "/invite/abc123".into();
+    let complete: OidcCompleteResponse = serde_json::from_value(session.clone()).unwrap();
+    assert_eq!(complete.user.name, "Lena");
+    assert_eq!(complete.redirect.as_deref(), Some("/invite/abc123"));
+    assert_eq!(serde_json::to_value(&complete).unwrap(), session);
+
+    // The exchange, by `result`.
+    let mut signed_in = fixture("session");
+    signed_in["result"] = "signed_in".into();
+    let read: OidcExchange = serde_json::from_value(signed_in.clone()).unwrap();
+    assert!(matches!(&read, OidcExchange::SignedIn(s) if s.user.is_some()));
+    assert_eq!(serde_json::to_value(&read).unwrap(), signed_in);
+    let mut needs_name = pending.clone();
+    needs_name["result"] = "needs_name".into();
+    needs_name["name"] = "Lena".into();
+    let read: OidcExchange = serde_json::from_value(needs_name.clone()).unwrap();
+    assert!(matches!(&read, OidcExchange::NeedsName(p) if p.name.as_deref() == Some("Lena")));
+    assert_eq!(serde_json::to_value(&read).unwrap(), needs_name);
+    let mut linked = methods;
+    linked["result"] = "linked".into();
+    let read: OidcExchange = serde_json::from_value(linked.clone()).unwrap();
+    assert!(matches!(&read, OidcExchange::Linked(m) if !m.password));
+    assert_eq!(serde_json::to_value(&read).unwrap(), linked);
+
+    // The start body: only what is set, with the app's loopback fields.
+    let mut start = OidcStart::new(OidcPurpose::Link);
+    start.current_password = Some("geheim".into());
+    assert_eq!(
+        serde_json::to_value(&start).unwrap(),
+        json!({"purpose": "link", "current_password": "geheim"})
+    );
+    assert!(!format!("{start:?}").contains("geheim"));
+    assert_eq!(
+        serde_json::to_value(OidcStart::new(OidcPurpose::SignIn)).unwrap(),
+        json!({"purpose": "sign_in"})
+    );
+}
