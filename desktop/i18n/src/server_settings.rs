@@ -128,7 +128,7 @@ crate::strings! {
 pub fn members_title(count: usize) -> String {
     match get() {
         Locale::De => format!("Mitglieder ({count})"),
-        Locale::En => format!("Members ({count})"),
+        Locale::En => format!("Members ({})", crate::intl::english_count(count as u64)),
     }
 }
 

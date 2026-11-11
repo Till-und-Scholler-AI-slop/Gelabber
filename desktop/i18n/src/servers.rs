@@ -171,7 +171,10 @@ pub fn overview_members(count: u64) -> String {
             format!("{count} Mitglied"),
             format!("{count} Mitglieder"),
         ),
-        Locale::En => plural(count, format!("{count} member"), format!("{count} members")),
+        Locale::En => {
+            let n = crate::intl::english_count(count);
+            plural(count, format!("{n} member"), format!("{n} members"))
+        }
     }
 }
 

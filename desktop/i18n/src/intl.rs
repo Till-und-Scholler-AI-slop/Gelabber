@@ -194,6 +194,21 @@ pub fn format_relative(value: i64, unit: Unit) -> String {
     }
 }
 
+/// A count in an English text, grouped as the web's catalogs format a
+/// `{count}`: "3,963". The German texts keep the plain digits they have
+/// always shown.
+pub fn english_count(count: u64) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 /// `formatNumber` with `minimumFractionDigits` and
 /// `maximumFractionDigits`: "1.234,5" / "1,234.5". Rounds half away from
 /// zero, as `Intl` does.
@@ -331,5 +346,24 @@ mod tests {
         assert_eq!(format_number(2.675, 0, 2), "2.68");
         assert_eq!(format_number(999.96, 0, 1), "1,000");
         assert_eq!(format_number(1_150_000.0, 0, 0), "1,150,000");
+    }
+
+    /// English counts are grouped in either interface language; German
+    /// texts do not call this.
+    #[test]
+    fn english_counts_group_by_thousands() {
+        let _de = on_this_thread(Locale::De);
+        assert_eq!(english_count(0), "0");
+        assert_eq!(english_count(999), "999");
+        assert_eq!(english_count(3963), "3,963");
+        assert_eq!(english_count(1_234_567), "1,234,567");
+        assert_eq!(crate::emoji::picker_found(3963), "3963 Emojis gefunden");
+        let _en = on_this_thread(Locale::En);
+        assert_eq!(crate::emoji::picker_found(3963), "3,963 emoji found");
+        assert_eq!(
+            crate::chat::composer_chars_over(1200),
+            "1,200 characters too many"
+        );
+        assert_eq!(crate::auth::invite_members(1), "1 member");
     }
 }

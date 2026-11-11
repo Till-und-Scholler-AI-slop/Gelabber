@@ -272,7 +272,11 @@ pub fn page_resend_in(seconds: u64) -> String {
 pub fn invite_members(count: u64) -> String {
     match get() {
         Locale::De => format!("{count} {}", plural(count, "Mitglied", "Mitglieder")),
-        Locale::En => format!("{count} {}", plural(count, "member", "members")),
+        Locale::En => format!(
+            "{} {}",
+            crate::intl::english_count(count),
+            plural(count, "member", "members")
+        ),
     }
 }
 

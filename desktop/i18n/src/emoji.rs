@@ -19,7 +19,7 @@ crate::strings! {
 pub fn picker_found(count: u64) -> String {
     match get() {
         Locale::De => format!("{count} Emojis gefunden"),
-        Locale::En => format!("{count} emoji found"),
+        Locale::En => format!("{} emoji found", crate::intl::english_count(count)),
     }
 }
 
