@@ -141,11 +141,8 @@ export function RegisterPage() {
   return (
     <section className="lr-auth-card">
       {invited ? <InviteContextBanner /> : null}
-      {oidcError ? (
-        <p role="alert" className="auth-banner">
-          {oidcErrorMessage(oidcError)}
-        </p>
-      ) : showsInvitationOnly(codeState) ? (
+      {/* A refused provider sign-in says why at the form, as on /login. */}
+      {!oidcError && showsInvitationOnly(codeState) ? (
         <p role="status" className="auth-banner">
           {t("register.invitationOnly")}
         </p>
@@ -228,7 +225,15 @@ export function RegisterPage() {
             error={errors.fields.invitation}
           />
         ) : null}
-        <FormError message={errors.form} />
+        {errors.form === null && oidcError ? (
+          // Why the provider sign-in came back here; nothing failed on
+          // this page, so no alert.
+          <p role="status" className="ui-form-error">
+            {oidcErrorMessage(oidcError)}
+          </p>
+        ) : (
+          <FormError message={errors.form} />
+        )}
         <SubmitButton
           size="lg"
           pending={mutation.isPending}

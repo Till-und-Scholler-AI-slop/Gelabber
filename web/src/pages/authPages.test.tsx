@@ -182,14 +182,14 @@ describe("register page on an invitation-only instance", () => {
     fixture.search = { oidc_error: "invitation_required" };
     let html = render(<RegisterPage />);
     expect(html).toContain(
-      '<p role="alert" class="auth-banner">Zum Registrieren brauchst du eine Einladung.</p>',
+      '<p role="status" class="ui-form-error">Zum Registrieren brauchst du eine Einladung.</p>',
     );
     expect(html).toMatch(FIELD);
     fixture.registration = "invitation";
     fixture.search = { oidc_error: "invitation_invalid", invitation: "abc" };
     html = render(<RegisterPage />);
     expect(html).toContain(
-      '<p role="alert" class="auth-banner">Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.</p>',
+      '<p role="status" class="ui-form-error">Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.</p>',
     );
     expect(html).not.toContain(ONLY);
     expect(html).toMatch(/<input[^>]*id="invitation"[^>]*value="abc"/);
@@ -347,7 +347,7 @@ describe("sign-in through a provider", () => {
     fixture.search = { oidc_error: "failed" };
     const html = render(<RegisterPage />);
     expect(html).toContain(
-      '<p role="alert" class="auth-banner">Die Anmeldung beim Anbieter hat nicht geklappt. Bitte noch einmal versuchen.</p>',
+      '<p role="status" class="ui-form-error">Die Anmeldung beim Anbieter hat nicht geklappt. Bitte noch einmal versuchen.</p>',
     );
     expect(html).not.toContain('id="invitation"');
   });
