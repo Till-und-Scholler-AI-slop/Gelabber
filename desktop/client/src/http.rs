@@ -106,7 +106,7 @@ impl ApiError {
 // A marker `code()` reads, not text of its own.
 const TIMEOUT_PREFIX: &str = "Zeitüberschreitung: "; // i18n-ok
 
-const KNOWN_CODES: [&str; 21] = [
+const KNOWN_CODES: [&str; 29] = [
     "validation_failed",
     "bad_request",
     "unauthenticated",
@@ -128,6 +128,14 @@ const KNOWN_CODES: [&str; 21] = [
     "internal",
     "network",
     "timeout",
+    "oidc_unavailable",
+    "oidc_email_unverified",
+    "oidc_account_unverified",
+    "identity_taken",
+    "password_required",
+    "reauth_required",
+    "oidc_wrong_origin",
+    "session_changed",
 ];
 
 /// The copy per error code, as web/src/auth/rules.ts (the auth catalog's
@@ -153,6 +161,14 @@ pub fn error_message(code: &str) -> &'static str {
         "upstream_quota" => auth::error_upstream_quota(),
         "network" => auth::error_network(),
         "timeout" => auth::error_timeout(),
+        "oidc_unavailable" => auth::error_oidc_unavailable(),
+        "oidc_email_unverified" => auth::error_oidc_email_unverified(),
+        "oidc_account_unverified" => auth::error_oidc_account_unverified(),
+        "identity_taken" => auth::error_identity_taken(),
+        "password_required" => auth::error_password_required(),
+        "reauth_required" => auth::error_reauth_required(),
+        "oidc_wrong_origin" => auth::error_oidc_wrong_origin(),
+        "session_changed" => auth::error_session_changed(),
         _ => auth::error_internal(),
     }
 }
@@ -1000,6 +1016,34 @@ mod tests {
         let last = posts().pop().unwrap();
         assert!(last.starts_with("POST /api/auth/logout "), "{last}");
         assert!(!last.contains("gelabber_session"), "{last}");
+    }
+
+    #[test]
+    fn sign_in_codes_are_known_with_their_copy() {
+        let api = |code: &str| ApiError::Api {
+            status: 409,
+            code: code.into(),
+            message: String::new(),
+            fields: serde_json::Value::Null,
+            retry_after: None,
+        };
+        for code in [
+            "oidc_unavailable",
+            "oidc_email_unverified",
+            "oidc_account_unverified",
+            "identity_taken",
+            "password_required",
+            "reauth_required",
+            "oidc_wrong_origin",
+            "session_changed",
+        ] {
+            assert_eq!(api(code).code(), code);
+            assert_ne!(api(code).text(), auth::error_internal(), "{code}");
+        }
+        assert_eq!(
+            api("password_required").text(),
+            "Lege zuerst ein Passwort fest, sonst kannst du dich nicht mehr anmelden."
+        );
     }
 
     #[test]

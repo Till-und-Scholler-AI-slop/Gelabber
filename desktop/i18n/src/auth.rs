@@ -206,6 +206,34 @@ crate::strings! {
     not_found_body = "Diese Adresse gibt es in Gelabber nicht."
         | "This address doesn’t exist in Gelabber.";
     not_found_home = "Zur Startseite" | "Go to the start page";
+
+    // Sign-in through a provider (#518): its API error codes, the
+    // `oidc_error` a flow can end with, and the page the system browser
+    // shows when it hands the result back to the app.
+    error_oidc_unavailable = "Die Anmeldung beim Anbieter ist gerade nicht erreichbar. Bitte später noch einmal versuchen."
+        | "Sign-in through the provider isn’t reachable right now. Please try again later.";
+    error_oidc_email_unverified = "Dein Konto beim Anbieter hat keine bestätigte E-Mail-Adresse, damit kann Gelabber dich nicht anmelden."
+        | "Your account with the provider has no confirmed email address, so Gelabber can’t sign you in.";
+    error_oidc_account_unverified = "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde. Melde dich mit deinem Passwort an und verbinde den Anbieter dann unter Einstellungen → Sicherheit."
+        | "An account with this email address exists, but its address was never confirmed. Sign in with your password, then connect the provider under Settings → Security.";
+    error_identity_taken = "Dieses Konto beim Anbieter ist schon mit einem anderen Gelabber-Konto verbunden."
+        | "This provider account is already connected to another Gelabber account.";
+    error_password_required = "Lege zuerst ein Passwort fest, sonst kannst du dich nicht mehr anmelden."
+        | "Set a password first, or you won’t be able to sign in any more.";
+    error_reauth_required = "Bitte bestätige zuerst, dass du es bist, und melde dich noch einmal an."
+        | "Please confirm it’s you first by signing in again.";
+    error_oidc_wrong_origin = "Die Anmeldung über einen Anbieter geht nur unter der eingerichteten Adresse dieses Gelabber-Servers. Öffne Gelabber dort und versuche es noch einmal."
+        | "Signing in through a provider only works at this Gelabber server’s configured address. Open Gelabber there and try again.";
+    error_session_changed = "Inzwischen ist hier ein anderes Konto angemeldet. Bitte noch einmal versuchen."
+        | "Another account has signed in here in the meantime. Please try again.";
+    oidc_error_cancelled = "Anmeldung abgebrochen." | "Sign-in cancelled.";
+    oidc_error_expired = "Die Anmeldung ist abgelaufen oder wurde in einem anderen Browser gestartet. Bitte noch einmal versuchen."
+        | "The sign-in expired or was started in another browser. Please try again.";
+    oidc_error_failed = "Die Anmeldung beim Anbieter hat nicht geklappt. Bitte noch einmal versuchen."
+        | "Signing in with the provider didn’t work. Please try again.";
+    // Native only: the system browser's page after the loopback callback.
+    oidc_loopback_done = "Du kannst dieses Fenster schließen und zu Gelabber zurückkehren."
+        | "You can close this window and return to Gelabber.";
 }
 
 /// `fieldError.required`: "{label} fehlt.".
