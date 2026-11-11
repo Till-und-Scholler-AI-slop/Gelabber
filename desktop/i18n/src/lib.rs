@@ -43,6 +43,9 @@ pub mod language;
 pub mod app;
 pub mod auth;
 
+pub mod chat;
+pub mod emoji;
+
 pub mod notifications;
 pub mod server_settings;
 pub mod settings;
@@ -68,6 +71,8 @@ pub const NAMESPACES: &[(&str, Entries)] = &[
     ("themes", themes::ALL),
     ("notifications", notifications::ALL),
     ("server_settings", server_settings::ALL),
+    ("chat", chat::ALL),
+    ("emoji", emoji::ALL),
 ];
 
 /// A language of the interface.
