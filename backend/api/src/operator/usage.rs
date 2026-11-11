@@ -89,7 +89,7 @@ async fn usage(State(state): State<AppState>, op: Operator) -> Result<Json<Usage
              COUNT(*) FILTER (WHERE created_at > now() - interval '30 days') AS new_30d, \
              (SELECT COUNT(DISTINCT user_id) FROM sessions WHERE expires_at > now()) \
                  AS with_live_session \
-         FROM users",
+         FROM users WHERE deleted_at IS NULL",
     )
     .fetch_one(&state.db)
     .await?;

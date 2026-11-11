@@ -1,5 +1,4 @@
 import { useMutation } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import {
   useId,
   useRef,
@@ -24,7 +23,6 @@ import {
 } from "../auth/rules.ts";
 import {
   claimProfileWrite,
-  logoutEverywhere,
   updateProfile,
   uploadAvatar,
   useProfileWrites,
@@ -33,19 +31,16 @@ import {
 import type { User } from "../auth/types.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Avatar } from "../components/Avatar.tsx";
-import { confirmAction } from "../components/confirm.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { useDebouncedValue } from "../components/useDebouncedValue.ts";
-import { T, translate, useT } from "../i18n/catalog.ts";
+import { useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
-import { leaveVoice } from "../voice/session.ts";
 import { ProfileCardForm } from "./ProfileCardForm.tsx";
-import { SignInSection } from "./SignInSection.tsx";
 import "./settings.css";
 
 /** Settings area "Profil": name and picture. */
@@ -61,13 +56,6 @@ export function ProfileCardArea() {
   const user = useSession((state) => state.user);
   if (!user) return null;
   return <ProfileCardForm key={user.id} user={user} />;
-}
-
-/** Settings area "Sicherheit". */
-export function SecurityArea() {
-  const user = useSession((state) => state.user);
-  if (!user) return null;
-  return <AccountSecurity key={user.id} userId={user.id} email={user.email} />;
 }
 
 type Upload = { file: File; release: () => void };
@@ -293,58 +281,5 @@ function ProfileForm({ user }: { user: User }) {
         />
       </div>
     </form>
-  );
-}
-
-/**
- * The sign-in methods (#518) and signing out every device (issue #188).
- */
-function AccountSecurity({ userId, email }: { userId: string; email: string }) {
-  const t = useT(settings);
-  const navigate = useNavigate();
-
-  const onLogoutEverywhere = async () => {
-    if (
-      !(await confirmAction({
-        title: translate(settings, "security.everywhere.confirmTitle"),
-        message: translate(settings, "security.everywhere.confirmMessage"),
-        confirmLabel: translate(settings, "security.everywhere.confirmLabel"),
-      }))
-    )
-      return;
-    leaveVoice();
-    void logoutEverywhere();
-    void navigate({ to: "/login" });
-  };
-
-  return (
-    <>
-      <p className="settings-hint">
-        <T
-          catalog={settings}
-          k="security.signedInAs"
-          params={{ email }}
-          tags={{
-            b: (text) => <strong className="settings-strong">{text}</strong>,
-          }}
-        />
-      </p>
-      <SignInSection userId={userId} />
-
-      <section
-        className="settings-group settings-danger"
-        aria-labelledby="logout-everywhere-heading"
-      >
-        <h3 id="logout-everywhere-heading" className="settings-group-title">
-          {t("security.everywhere.title")}
-        </h3>
-        <p className="settings-hint">{t("security.everywhere.hint")}</p>
-        <div className="settings-actions">
-          <Button variant="danger-outline" onClick={onLogoutEverywhere}>
-            {t("security.everywhere.button")}
-          </Button>
-        </div>
-      </section>
-    </>
   );
 }

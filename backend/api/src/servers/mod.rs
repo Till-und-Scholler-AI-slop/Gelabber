@@ -27,12 +27,12 @@ use axum::routing::{get, post};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::auth::session::CurrentUser;
 use crate::error::{ApiError, FieldErrors};
-use crate::gateway::Recheck;
+use crate::gateway::{EventKind, Recheck, publish_server};
 use crate::i18n;
 use crate::json::Body;
 use crate::path::Id;
@@ -50,6 +50,7 @@ pub fn router() -> Router<AppState> {
             get(get_server).patch(update_server).delete(delete_server),
         )
         .route("/api/servers/{id}/leave", post(leave_server))
+        .route("/api/servers/{id}/transfer", post(transfer_server))
         .merge(channel::router())
         .merge(icon::router())
         .merge(invite::router())
@@ -151,6 +152,12 @@ pub struct CreateServerBody {
 }
 
 #[derive(Debug, Default, Deserialize)]
+pub struct TransferBody {
+    #[serde(default)]
+    pub user_id: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 pub struct UpdateServerBody {
     pub name: Option<String>,
     /// Full replacement of the member flag set, as names.
@@ -192,6 +199,11 @@ async fn create_server(
     let name = name.expect("validated");
 
     let mut tx = state.db.begin().await?;
+    // Waits for an account deletion that holds the row and then refuses: a
+    // deleted account must not end up owning a server (`account::delete_me`).
+    if !account_alive(&mut tx, user.id).await? {
+        return Err(ApiError::Unauthenticated);
+    }
     let server = sqlx::query_as::<_, ServerRow>(
         "INSERT INTO servers (name, owner_id, member_permissions) VALUES ($1, $2, $3) \
          RETURNING id, name, owner_id, member_permissions, icon_url, created_at",
@@ -401,8 +413,9 @@ async fn delete_server(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Members can leave; the owner cannot (there is no ownership transfer in
-/// v1 — delete the server instead). A blocked server can still be left.
+/// Members can leave; the owner cannot and must transfer the server
+/// ([`transfer_server`]) or delete it first. A blocked server can still be
+/// left.
 async fn leave_server(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -426,4 +439,100 @@ async fn leave_server(
     state.gateway.announce_recheck(Recheck::User(user.id)).await;
     info!(server_id = %server_id, user_id = %user.id, "member left");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Owner only: another member becomes the owner (#519 §4.1). The previous
+/// owner stays a member with the base role plus the roles they already
+/// hold. A blocked server cannot be transferred (`load` answers
+/// `403 server_blocked`); it can still be deleted.
+async fn transfer_server(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Id(server_id): Id,
+    Body(body): Body<TransferBody>,
+) -> Result<Json<ServerView>, ApiError> {
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
+    let member = membership::load(&mut *tx, server_id, user.id).await?;
+    member.require_owner()?;
+
+    let raw = body.user_id.as_deref().map(str::trim).unwrap_or_default();
+    let target_id = match raw.parse::<Uuid>() {
+        _ if raw.is_empty() => Err("required"),
+        Ok(id) if id != user.id => Ok(id),
+        _ => Err("invalid"),
+    }
+    .map_err(|code| ApiError::Validation(FieldErrors::from([("user_id", code)])))?;
+    let is_member: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM server_members WHERE server_id = $1 AND user_id = $2)",
+    )
+    .bind(server_id)
+    .bind(target_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    // An account under deletion has left every server already; one that is
+    // being deleted right now is waited for. A disabled account cannot sign
+    // in to manage the server, so it is refused like a non-member.
+    if !is_member || !account_usable(&mut tx, target_id).await? {
+        return Err(ApiError::NotFound);
+    }
+
+    let server = sqlx::query_as::<_, ServerRow>(
+        "UPDATE servers SET owner_id = $2, updated_at = now() WHERE id = $1 \
+         RETURNING id, name, owner_id, member_permissions, icon_url, created_at",
+    )
+    .bind(server_id)
+    .bind(target_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    // The former owner now holds only the base role and their own roles.
+    if access::former_owner_lost_voice(&mut tx, server_id, user.id).await? {
+        state
+            .gateway
+            .revoke_voice_access(&[user.id], server_id)
+            .await?;
+    }
+    tx.commit().await?;
+    state
+        .gateway
+        .announce_recheck(Recheck::Server(server_id))
+        .await;
+    if let Err(err) = publish_server(
+        &state,
+        server_id,
+        EventKind::E,
+        None,
+        Some(serde_json::json!({ "k": "o", "owner_id": target_id })),
+    )
+    .await
+    {
+        warn!(error = err.code(), %server_id, "ownership event not published");
+    }
+    info!(server_id = %server_id, from = %user.id, to = %target_id, "server ownership transferred");
+    Ok(Json(Membership { server, ..member }.into()))
+}
+
+/// Key-share locks the account's row until commit unless it is under
+/// deletion (`users.deleted_at`). The deletion takes the row `FOR UPDATE`,
+/// so whichever comes second waits and then sees the other's result.
+async fn account_alive(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, ApiError> {
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(found.is_some())
+}
+
+/// [`account_alive`] for an account that must also be able to sign in:
+/// not disabled by an operator (`users.disabled_at`).
+async fn account_usable(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, ApiError> {
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND disabled_at IS NULL \
+         FOR KEY SHARE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(found.is_some())
 }

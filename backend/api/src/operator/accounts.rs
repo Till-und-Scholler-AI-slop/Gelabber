@@ -108,9 +108,11 @@ macro_rules! account_select {
 }
 
 /// The list's search (`$1`, an `ILIKE` pattern or NULL) and filter (`$2`).
+/// An account under deletion (`deleted_at`) is left out.
 macro_rules! account_filter {
     () => {
-        "WHERE ($1::text IS NULL \
+        "WHERE u.deleted_at IS NULL \
+           AND ($1::text IS NULL \
              OR u.name ILIKE $1 ESCAPE '\\' OR u.email ILIKE $1 ESCAPE '\\') \
            AND CASE $2 \
              WHEN 'disabled' THEN u.disabled_at IS NOT NULL \
@@ -263,22 +265,26 @@ async fn load(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<Account>, ApiError> {
-    let row: Option<AccountRow> = sqlx::query_as(concat!(account_select!(), "WHERE u.id = $1"))
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await?;
+    let row: Option<AccountRow> = sqlx::query_as(concat!(
+        account_select!(),
+        "WHERE u.id = $1 AND u.deleted_at IS NULL"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?;
     Ok(row.map(|row| row.into_account(state)))
 }
 
 /// The target row, locked for the change: its address, whether that is
-/// confirmed, and whether it is disabled.
+/// confirmed, and whether it is disabled. `None` for an account under
+/// deletion, which the console no longer shows.
 async fn lock_target(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<(String, bool, bool)>, ApiError> {
     Ok(sqlx::query_as(
         "SELECT email, email_verified_at IS NOT NULL, disabled_at IS NOT NULL \
-         FROM users WHERE id = $1 FOR UPDATE",
+         FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut *conn)

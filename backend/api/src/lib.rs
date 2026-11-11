@@ -1,3 +1,4 @@
+pub mod account;
 pub mod attachments;
 pub mod auth;
 pub mod avatars;
@@ -50,6 +51,8 @@ pub use state::AppState;
 pub fn app(state: AppState) -> Router {
     state.gateway.ensure_delivery(state.clone());
     attachments::cleanup::start(state.clone());
+    account::deletion::start(state.clone());
+    account::export::start(state.clone());
     previews::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).
@@ -69,6 +72,7 @@ pub fn app(state: AppState) -> Router {
         .merge(previews::router())
         .merge(operator::router())
         .merge(directory::router())
+        .merge(account::router())
         // CSRF runs first: a refused cross-site post must not use up the
         // visitor's address window (the outer layer runs first).
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate))

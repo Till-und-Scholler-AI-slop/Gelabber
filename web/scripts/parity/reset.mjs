@@ -3,7 +3,9 @@
 // Opening a channel marks it read, so both shot tools call this before every
 // scene; otherwise each run would change what the next one sees. Themes
 // (say.mjs theme), notification settings, the language (a scene's
-// `locale`) and Google sign-in (say.mjs oidc-*) go back to the seeded ones too.
+// `locale`) and Google sign-in (say.mjs oidc-*) go back to the seeded ones too,
+// Lena's and Mira's signed-in devices to the reference's fixed ones, and no
+// fixture account has a data export (say.mjs export).
 // Run in web/: node scripts/parity/reset.mjs
 // GELABBER_PARITY_PSQL is the psql command line (default: the gnative-pg
 // container of the local stack).
@@ -21,6 +23,7 @@ const uuid = (v) => {
   return `'${v}'`;
 };
 const lena = uuid(fixture.users.lena.id);
+const mira = uuid(fixture.users.mira.id);
 const allgemein = uuid(fixture.servers.home.channels.allgemein);
 const people = Object.values(fixture.users)
   .map((u) => uuid(u.id))
@@ -49,5 +52,15 @@ update users set password_hash = (select password_hash from users
 where id in (${people}) and password_hash is null;
 delete from user_identities where user_id in (${people});
 delete from oidc_results where subject = 'parity-neu';
+-- Signed-in devices: Lena's two other devices of the reference, and nothing
+-- else; the scene's own sign-in adds the current one.
+delete from sessions where user_id in (${lena}, ${mira});
+insert into sessions (token_hash, user_id, created_at, last_used_at, expires_at, device_client, device_os)
+values (sha256(convert_to('parity-lena-firefox', 'UTF8')), ${lena}, now() - interval '1 day',
+        now() - interval '1 day', now() + interval '14 days', 'firefox', 'windows'),
+       (sha256(convert_to('parity-lena-desktop', 'UTF8')), ${lena}, now() - interval '12 days',
+        now() - interval '12 days', now() + interval '14 days', 'desktop', 'windows');
+-- A data export (say.mjs export); the trigger queues its archive key.
+delete from account_exports where user_id in (${people});
 `;
 execFileSync(psql[0], psql.slice(1), { input: sql, stdio: ["pipe", "inherit", "inherit"] });

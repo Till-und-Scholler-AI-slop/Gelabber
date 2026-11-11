@@ -11,6 +11,7 @@
 //   node scripts/parity/say.mjs invite-code <user> <server-key>  → the seeded invite's code
 //   node scripts/parity/say.mjs oidc-pending   → the token of a first Google sign-in's name step
 //   node scripts/parity/say.mjs oidc-link <user> [nopassword]  (Google connected; reset.mjs undoes it)
+//   node scripts/parity/say.mjs export <user> ready   (a ready data export; reset.mjs undoes it)
 // <channel-key> is "dm" or a channel name of fixture.json; "{lena}" (any
 // user key) in the text becomes that user's mention token.
 /* global process, console, fetch, URL, setTimeout */
@@ -66,6 +67,27 @@ create trigger parity_drop_password after insert on sessions for each row
 when (new.user_id = '${linked.id}') execute function parity_drop_password();
 `);
   }
+  process.exit(0);
+}
+
+// A finished data export, written straight into the database: no worker
+// builds it, so the archive key names no object.
+if (command === "export") {
+  const owner = fixture.users[who];
+  if (!owner || target !== "ready" || words.length) throw new Error("usage: say.mjs export <user> ready");
+  if (!/^[0-9a-f-]{36}$/.test(owner.id)) throw new Error(`not a uuid: ${owner.id}`);
+  const psql = (process.env.GELABBER_PARITY_PSQL ??
+    "docker exec -i gnative-pg psql -q -U gelabber -d gelabber -v ON_ERROR_STOP=1").split(" ");
+  execFileSync(psql[0], psql.slice(1), {
+    input: `
+delete from account_exports where user_id = '${owner.id}';
+insert into account_exports (user_id, state, requested_at, attempts, finished_at, expires_at,
+                             object_key, size_bytes)
+values ('${owner.id}', 'ready', now() - interval '1 hour', 1, now() - interval '1 hour',
+        '2036-11-18 12:00:00+00', 'exports/${owner.id}/parity.zip', 48234496);
+`,
+    stdio: ["pipe", "inherit", "inherit"],
+  });
   process.exit(0);
 }
 

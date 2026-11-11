@@ -505,6 +505,10 @@ export function errorMessage(code: ApiErrorCode): string {
       return translate(auth, "error.joinRequestsFull");
     case "already_member":
       return translate(auth, "error.alreadyMember");
+    case "owns_servers":
+      return translate(auth, "error.ownsServers");
+    case "export_pending":
+      return translate(auth, "error.exportPending");
   }
 }
 

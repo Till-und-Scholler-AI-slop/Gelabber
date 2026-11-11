@@ -147,6 +147,14 @@ export const setMemberRoles = (
     body: { role_ids: roleIds },
   });
 
+/** The owner hands the server to another member (#519); the answer is the
+ * server as the caller now sees it, as a member. */
+export const transferServer = (serverId: string, userId: string) =>
+  api<Server>(`/servers/${serverId}/transfer`, {
+    method: "POST",
+    body: { user_id: userId },
+  });
+
 /** The link people paste: same origin, web route `/invite/{code}`. */
 export function inviteUrl(code: string): string {
   return `${window.location.origin}/invite/${code}`;

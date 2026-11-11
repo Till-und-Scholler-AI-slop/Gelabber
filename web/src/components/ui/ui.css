@@ -30,7 +30,7 @@
       scale var(--lr-dur-micro) var(--lr-ease-standard);
   }
   /* A press gives way a little, and springs back on release. */
-  .ui-button:active:not(:disabled),
+  .ui-button:active:not(:disabled, [aria-disabled="true"]),
   .ui-icon-button:active:not(:disabled) {
     scale: var(--lr-press-scale);
   }
@@ -86,8 +86,10 @@
     background: color-mix(in srgb, var(--lr-danger-bg) 14%, transparent);
   }
   /* Disabled reads as unavailable, not as a dimmed primary. A pending
-     button keeps its look: it is busy, not unavailable. */
-  .ui-button:disabled:not([aria-busy="true"]) {
+     button keeps its look: it is busy, not unavailable. An aria-disabled
+     one stays focusable and looks the same. */
+  .ui-button:disabled:not([aria-busy="true"]),
+  .ui-button[aria-disabled="true"]:not([aria-busy="true"]) {
     border-color: var(--lr-border);
     background: var(--lr-surface);
     color: var(--lr-subtle);

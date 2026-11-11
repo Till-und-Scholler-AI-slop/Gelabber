@@ -112,6 +112,19 @@ pub enum ApiError {
     JoinRequestsFull,
     /// 409: a request to join a server the caller is a member of.
     AlreadyMember,
+    /// 409: deleting an account that still owns servers; the body lists
+    /// them (`servers`) so the client can point at each one.
+    OwnsServers(Vec<OwnedServer>),
+    /// 409: a data export is already queued or being built.
+    ExportPending,
+}
+
+/// A server that keeps an account from being deleted (`owns_servers`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+pub struct OwnedServer {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub member_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +135,8 @@ pub struct ErrorBody {
     pub fields: FieldErrors,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub servers: Option<Vec<OwnedServer>>,
 }
 
 impl ApiError {
@@ -162,6 +177,8 @@ impl ApiError {
             Self::JoinRequestDeclined { .. } => "join_request_declined",
             Self::JoinRequestsFull => "join_requests_full",
             Self::AlreadyMember => "already_member",
+            Self::OwnsServers(_) => "owns_servers",
+            Self::ExportPending => "export_pending",
         }
     }
 
@@ -198,6 +215,8 @@ impl ApiError {
             | Self::JoinRequestDeclined { .. }
             | Self::JoinRequestsFull
             | Self::AlreadyMember => StatusCode::CONFLICT,
+            Self::OwnsServers(_) => StatusCode::CONFLICT,
+            Self::ExportPending => StatusCode::CONFLICT,
         }
     }
 
@@ -250,6 +269,8 @@ impl ApiError {
             }
             Self::JoinRequestsFull => "Too many open requests to join. Try again later.",
             Self::AlreadyMember => "You are already a member of this server.",
+            Self::OwnsServers(_) => "Transfer or delete your servers first.",
+            Self::ExportPending => "Your data export is still being built.",
         }
     }
 
@@ -267,11 +288,16 @@ impl ApiError {
             | Self::JoinRequestDeclined { retry_after } => Some(*retry_after),
             _ => None,
         };
+        let servers = match self {
+            Self::OwnsServers(servers) => Some(servers.clone()),
+            _ => None,
+        };
         ErrorBody {
             error: self.code(),
             message: self.message(),
             fields,
             retry_after,
+            servers,
         }
     }
 }
@@ -427,6 +453,36 @@ mod tests {
         let err = ApiError::OidcUnavailable("token endpoint said invalid_grant".into());
         let json = serde_json::to_value(err.body()).unwrap();
         assert!(!json.to_string().contains("invalid_grant"));
+    }
+
+    #[test]
+    fn owns_servers_body_carries_the_servers() {
+        let id = uuid::Uuid::new_v4();
+        let err = ApiError::OwnsServers(vec![OwnedServer {
+            id,
+            name: "Wohnzimmer".into(),
+            member_count: 5,
+        }]);
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "owns_servers");
+        assert_eq!(json["message"], "Transfer or delete your servers first.");
+        assert_eq!(
+            json["servers"],
+            serde_json::json!([{ "id": id, "name": "Wohnzimmer", "member_count": 5 }])
+        );
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::CONFLICT);
+        let other = serde_json::to_value(ApiError::NotFound.body()).unwrap();
+        assert!(other.get("servers").is_none());
+    }
+
+    #[test]
+    fn export_pending_is_409() {
+        let err = ApiError::ExportPending;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "export_pending");
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::CONFLICT);
     }
 
     #[test]

@@ -290,7 +290,7 @@ async fn renew(
     }
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        crate::auth::session::touch(state, &session.hash, session.created_at, expires_at),
+        crate::auth::session::touch(state, &session.hash, session.created_at, expires_at, None),
     )
     .await
     .ok()?
@@ -799,8 +799,14 @@ fn frame_scope(frame: &ServerFrame) -> Option<Scope> {
 }
 
 /// [`frame_scope`] for the dequeue check. Presence on a DM is published on
-/// the DM id, which is no server row: it is checked as the DM it is.
+/// the DM id, which is no server row: it is checked as the DM it is. A DM
+/// discovery notice carries only the channel id and is only ever queued for
+/// that DM's own participants; it passes unchecked, so the notice that a
+/// deleted account's DM is gone (`account::deletion`) reaches the peer.
 fn dequeue_scope(frame: &ServerFrame, dms: &HashSet<Uuid>) -> Option<Scope> {
+    if matches!(frame, ServerFrame::Dm { .. }) {
+        return None;
+    }
     match frame_scope(frame) {
         Some((sid, None))
             if matches!(frame, ServerFrame::Presence { .. }) && dms.contains(&sid) =>
@@ -942,9 +948,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(120))
-            .await
-            .unwrap();
+        let raw = crate::auth::session::create(
+            &pool,
+            user.id,
+            Duration::from_secs(120),
+            crate::auth::device::Device::UNKNOWN,
+        )
+        .await
+        .unwrap();
         let hash = crate::token::hash(&raw);
         let (created_at, expires_at): (
             chrono::DateTime<chrono::Utc>,
@@ -959,6 +970,8 @@ mod tests {
             hash: hash.clone(),
             created_at,
             expires_at,
+            id: uuid::Uuid::nil(),
+            device_client: crate::auth::device::DeviceClient::Unknown,
         };
 
         let renewed = renew(&state, &session, expires_at).await.expect("renewed");
@@ -1018,9 +1031,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(600))
-            .await
-            .unwrap();
+        let raw = crate::auth::session::create(
+            &pool,
+            user.id,
+            Duration::from_secs(600),
+            crate::auth::device::Device::UNKNOWN,
+        )
+        .await
+        .unwrap();
         let hash = crate::token::hash(&raw);
         let (created_at, expires_at) =
             sqlx::query_as("SELECT created_at, expires_at FROM sessions WHERE token_hash = $1")
@@ -1033,6 +1051,8 @@ mod tests {
             hash,
             created_at,
             expires_at,
+            id: uuid::Uuid::nil(),
+            device_client: crate::auth::device::DeviceClient::Unknown,
         };
         let server: Uuid = sqlx::query_scalar(
             "INSERT INTO servers (name, owner_id) VALUES ('Tick', $1) RETURNING id",

@@ -20,6 +20,8 @@ export const dms = defineCatalog(
     "conversation.loadFailed":
       "Diese Unterhaltung konnte nicht geladen werden.",
     "conversation.profileOf": "Profil von {name}",
+    "conversation.gone":
+      "Diese Unterhaltung gibt es nicht mehr, etwa weil das andere Konto gelöscht wurde.",
     "index.loadFailed": "Die Direktnachrichten konnten nicht geladen werden.",
     "index.pick": "Wähle eine Unterhaltung.",
     "index.empty": "Keine Unterhaltungen",
@@ -39,6 +41,8 @@ export const dms = defineCatalog(
     "open.failed": "Conversation not opened.",
     "conversation.loadFailed": "Couldn’t load this conversation.",
     "conversation.profileOf": "{name}’s profile",
+    "conversation.gone":
+      "This conversation no longer exists, for example because the other account was deleted.",
     "index.loadFailed": "Couldn’t load your direct messages.",
     "index.pick": "Pick a conversation.",
     "index.empty": "No conversations",

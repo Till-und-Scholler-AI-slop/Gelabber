@@ -11,15 +11,19 @@ import { setLocale } from "../i18n/locale.ts";
 import { syncPush } from "../pwa/push.ts";
 import { scopeGeneration } from "./scope.ts";
 import {
+  accountDeletedElsewhere,
+  accountDeletedHere,
   changePassword,
   checkSession,
   claimProfileWrite,
   completeOidc,
+  deleteAccount,
   disconnectProvider,
   ensureSession,
   login,
   logout,
   logoutEverywhere,
+  loggedOutOnPurpose,
   OIDC_LEAVING_MS,
   oidcPending,
   register,
@@ -396,6 +400,48 @@ describe("session store", () => {
     expect(useSessionProblems.getState().logout).toBeNull();
   });
 
+  it("deleteAccount signs this tab out once the server deleted it", async () => {
+    const calls = fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "DELETE /api/me": () => json(202, { csrf_token: "c7" }),
+    });
+    await login("ada@example.com", "password123");
+
+    await deleteAccount({ password: "password123" });
+    expect(calls).toContain("DELETE /api/me");
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
+    expect(getCsrfToken()).toBe("c7");
+    expect(loggedOutOnPurpose()).toBe(true);
+    expect(accountDeletedHere()).toBe(true);
+  });
+
+  it("deleteAccount leaves the tab signed in when it is refused", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "DELETE /api/me": () =>
+        json(409, {
+          error: "owns_servers",
+          message: "Transfer or delete your servers first.",
+          servers: [{ id: "s1", name: "Wohnzimmer", member_count: 5 }],
+        }),
+    });
+    await login("ada@example.com", "password123");
+
+    await expect(
+      deleteAccount({ password: "password123" }),
+    ).rejects.toMatchObject({
+      code: "owns_servers",
+      body: { servers: [{ id: "s1", name: "Wohnzimmer", member_count: 5 }] },
+    });
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(loggedOutOnPurpose()).toBe(false);
+    expect(accountDeletedHere()).toBe(false);
+  });
+
   it("changePassword keeps the account signed in with the new token", async () => {
     fakeApi({
       "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
@@ -735,6 +781,81 @@ describe("password change across tabs", () => {
       operator: false,
     });
     expect(scopeGeneration()).toBe(generation);
+  });
+
+  it("a refused account deletion leaves this tab signed in for its next request", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "DELETE /api/me": () =>
+        json(422, {
+          error: "validation_failed",
+          message: "Some fields are invalid.",
+          fields: { password: "wrong" },
+        }),
+      "GET /api/servers": () => json(200, []),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+
+    await expect(deleteAccount({ password: "nope" })).rejects.toMatchObject({
+      code: "validation_failed",
+    });
+    await expect(api("/servers")).resolves.toEqual([]);
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(scopeGeneration()).toBe(generation);
+  });
+
+  it("an account deletion settles the shared cookie state as signed out", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "DELETE /api/me": () => json(202, { csrf_token: "c7" }),
+    });
+    await login("ada@example.com", "password123");
+
+    await deleteAccount({ email: "ada@example.com" });
+    expect(JSON.parse(storage.get(FENCE)!)).toMatchObject({
+      phase: "settled",
+      userId: null,
+      ended: "deleted",
+    });
+    expect(JSON.parse(storage.get(FENCE)!)).not.toHaveProperty("keepsAccount");
+    expect(useSession.getState().status).toBe("anonymous");
+  });
+
+  it("another tab's account deletion is told apart from an expired session", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/servers": () =>
+        json(401, { error: "unauthenticated", message: "Sign in." }),
+    });
+    await login("ada@example.com", "password123");
+    expect(accountDeletedElsewhere()).toBe(false);
+
+    storage.set(
+      FENCE,
+      JSON.stringify({
+        generation: "g-deleted",
+        phase: "settled",
+        userId: null,
+        ended: "deleted",
+      }),
+    );
+    synchronizeSharedSession();
+    expect(accountDeletedElsewhere()).toBe(true);
+    expect(accountDeletedHere()).toBe(false);
+
+    // This tab's own 401 settles the same sign-out and keeps the reason.
+    await expect(api("/servers")).rejects.toMatchObject({
+      code: "unauthenticated",
+    });
+    expect(accountDeletedElsewhere()).toBe(true);
+
+    // A plain logout elsewhere says nothing of a deletion.
+    storage.set(
+      FENCE,
+      JSON.stringify({ generation: "g-out", phase: "settled", userId: null }),
+    );
+    expect(accountDeletedElsewhere()).toBe(false);
   });
 
   it("a write's csrf re-bootstrap after another tab's password change keeps the mark", async () => {

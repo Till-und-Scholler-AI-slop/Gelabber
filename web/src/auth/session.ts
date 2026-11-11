@@ -10,6 +10,7 @@ import {
   setSessionScope,
   setSessionSink,
   setSessionReconciler,
+  sharedAccountDeleted,
   synchronizeSharedSession,
   type SessionSinkOptions,
 } from "../api/client.ts";
@@ -123,6 +124,18 @@ export function loggedOutOnPurpose(): boolean {
   return loggedOutHere;
 }
 
+let deletedHere = false;
+
+/** Whether this tab's own account deletion ended the session (#519). */
+export function accountDeletedHere(): boolean {
+  return deletedHere;
+}
+
+/** Whether another tab of this browser deleted the account (#519). */
+export function accountDeletedElsewhere(): boolean {
+  return sharedAccountDeleted();
+}
+
 /**
  * `operator` comes with session payloads; without it (a profile write that
  * answered with a user) the same account keeps the flag it had.
@@ -135,7 +148,10 @@ function applySession(
   const previous = useSession.getState();
   const previousId = previous.user?.id ?? null;
   const nextId = user?.id ?? null;
-  if (user) loggedOutHere = false;
+  if (user) {
+    loggedOutHere = false;
+    deletedHere = false;
+  }
   stopSessionRetry();
   useSessionProblems.setState({ bootstrap: null });
   if (user && failedLogoutUserId !== null && user.id !== failedLogoutUserId) {
@@ -405,6 +421,27 @@ async function endSession(
 }
 
 /**
+ * Deletes the account for good (`DELETE /api/me`, #519), confirmed with the
+ * password, or with the address for an account without one. Every session
+ * ends, this tab's too, as on a logout; a refusal (wrong password, servers
+ * still owned) leaves it signed in.
+ */
+export async function deleteAccount(
+  confirmation: { password: string } | { email: string },
+): Promise<void> {
+  const before = { loggedOutHere, deletedHere };
+  // Set before the answer flips the store, so the guards see why.
+  loggedOutHere = true;
+  deletedHere = true;
+  try {
+    await api<LogoutResponse>("/me", { method: "DELETE", body: confirmation });
+  } catch (error) {
+    ({ loggedOutHere, deletedHere } = before);
+    throw error;
+  }
+}
+
+/**
  * Sets a new password. The server ends every session of the account and
  * answers with a fresh one for this browser; the account and its caches stay.
  */
@@ -633,6 +670,7 @@ export function resetSessionForTests(): void {
   activeAuthIntent = null;
   failedLogoutUserId = null;
   loggedOutHere = false;
+  deletedHere = false;
   stopSessionRetry();
   useSessionProblems.setState({
     bootstrap: null,

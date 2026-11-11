@@ -985,10 +985,12 @@ async fn stale_cleanup_ack_cannot_remove_a_new_claim_and_s3_does_not_hold_pool_c
 async fn migration_backfills_existing_bytes_and_rollback_preserves_metadata_and_jobs(pool: PgPool) {
     // 0013, 0021 (`email_verified_at`) and 0030 only add `users` columns
     // and account tokens, 0028 the `servers` icon column, 0031 the roles
-    // tables and `channels.limited`, and 0032 the operator columns
-    // (`users.disabled_at`), which the current binary's sign-up and server
-    // creation below read back; none touches the storage schema under test.
-    const READ_BACK_COLUMNS: [i64; 6] = [13, 21, 28, 30, 31, 32];
+    // tables and `channels.limited`, 0032 the operator columns
+    // (`users.disabled_at`), and 0034 the session's id and device, which the
+    // current binary's sign-up and server creation below read back; none
+    // touches the storage schema under test (0034's export trigger only
+    // writes `storage_cleanup` once an export row exists).
+    const READ_BACK_COLUMNS: [i64; 7] = [13, 21, 28, 30, 31, 32, 34];
     for migration in sqlx::migrate!("./migrations")
         .iter()
         .filter(|m| m.version < 8 || READ_BACK_COLUMNS.contains(&m.version))
@@ -1524,4 +1526,65 @@ async fn absent_upload_keeps_quota_through_grace_and_concurrent_expiry_refunds_o
     );
     presign(&mut client, &channel).await;
     assert_eq!(usage(&state, client.user_id()).await, (4, 0));
+}
+
+/// An export's archive goes to `storage_cleanup` when its row is deleted or
+/// its object is replaced, never while a row still points at it (#519).
+#[sqlx::test]
+async fn an_export_archive_is_queued_with_its_row(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let (client, _, _) = owner(&state).await;
+    let user = Uuid::parse_str(client.user_id()).unwrap();
+    let queued = |key: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM storage_cleanup WHERE object_key = $1)",
+            )
+            .bind(key)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let ready = |key: &'static str| {
+        sqlx::query(
+            "INSERT INTO account_exports (user_id, state, object_key, size_bytes, expires_at) \
+             VALUES ($1, 'ready', $2, 10, now() + interval '1 day') \
+             ON CONFLICT (user_id) DO UPDATE SET object_key = EXCLUDED.object_key",
+        )
+        .bind(user)
+        .bind(key)
+        .execute(&pool)
+    };
+
+    ready("exports/a.zip").await.unwrap();
+    assert!(!queued("exports/a.zip").await);
+    // A ready row without its object breaks the row's shape.
+    assert!(
+        sqlx::query("UPDATE account_exports SET object_key = NULL")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(!queued("exports/a.zip").await);
+
+    // Replacing the archive queues the old one only.
+    ready("exports/b.zip").await.unwrap();
+    assert!(queued("exports/a.zip").await);
+    assert!(!queued("exports/b.zip").await);
+    // A write that keeps the key queues nothing.
+    sqlx::query("UPDATE account_exports SET object_key = object_key, attempts = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!queued("exports/b.zip").await);
+
+    // Deleting the row queues its archive.
+    sqlx::query("DELETE FROM account_exports WHERE user_id = $1")
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(queued("exports/b.zip").await);
 }
