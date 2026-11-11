@@ -105,6 +105,21 @@ export type Report = {
   resolved_at: string | null;
   resolved_by: Person | null;
   resolution_note: string | null;
+  /**
+   * The directory listing as the reporter saw it when filing; `null` when
+   * the report did not come from a listing.
+   */
+  snapshot: ReportSnapshot | null;
+};
+
+/** What a listing showed when it was reported (`reports.snapshot`). */
+export type ReportSnapshot = {
+  name: string;
+  icon_url: string | null;
+  description: string;
+  /** An ISO 639-1 code from the directory's list. */
+  language: string;
+  join_mode: "open" | "request";
 };
 
 export type ReportPage = Page & { reports: Report[] };

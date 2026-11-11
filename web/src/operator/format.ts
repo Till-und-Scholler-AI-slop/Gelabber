@@ -2,6 +2,7 @@
 // language (through i18n/format.ts).
 
 import { formatNumber, formatRelative } from "../i18n/format.ts";
+import { currentLocale, intlLocale } from "../i18n/locale.ts";
 
 const BYTE_UNITS = [
   "byte",
@@ -71,4 +72,21 @@ export function formatWhen(
     if (Math.abs(count) < below) return formatRelative(count, unit, auto);
   }
   return formatRelative(Math.round(diff / (365 * DAY)), "year", auto);
+}
+
+/**
+ * A language code as the interface names it: "de" is "Deutsch" in German and
+ * "German" in English. An unknown code stays as it is.
+ */
+export function formatLanguage(code: string): string {
+  try {
+    return (
+      new Intl.DisplayNames(intlLocale(currentLocale()), {
+        type: "language",
+        fallback: "none",
+      }).of(code) ?? code
+    );
+  } catch {
+    return code;
+  }
 }

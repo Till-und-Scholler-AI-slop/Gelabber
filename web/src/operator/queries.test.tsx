@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -24,7 +25,12 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   },
 }));
 
-import { OVERVIEW_REFETCH_MS, useOperatorOverview } from "./queries.ts";
+import {
+  OVERVIEW_REFETCH_MS,
+  operatorKeys,
+  useOperatorOverview,
+  useOperatorRefresh,
+} from "./queries.ts";
 
 function Probe() {
   useOperatorOverview();
@@ -51,5 +57,31 @@ describe("operator queries", () => {
   it("does not ask the server for someone who is not an operator", () => {
     renderToStaticMarkup(<Probe />);
     expect(fixture.options[0]).toMatchObject({ enabled: false });
+  });
+
+  it("marks every cached list stale after an action that asks first", () => {
+    // Delist and relist run outside useOperatorAction and refresh this way;
+    // the Server page and Meldungen must show the new state without a reload.
+    const client = new QueryClient();
+    const servers = operatorKeys.servers("u1", 3, { filter: "listed" });
+    const reports = operatorKeys.reports("u1", 3, { status: "open" });
+    const other = ["user", "u1", 3, "servers"];
+    for (const key of [servers, reports, other]) client.setQueryData(key, {});
+    const refreshes: (() => void)[] = [];
+    function Actions({ found }: { found: (refresh: () => void) => void }) {
+      found(useOperatorRefresh());
+      return null;
+    }
+    renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <Actions found={(refresh) => refreshes.push(refresh)} />
+      </QueryClientProvider>,
+    );
+    refreshes[0]?.();
+    const stale = (key: readonly unknown[]) =>
+      client.getQueryState(key)?.isInvalidated;
+    expect(stale(servers)).toBe(true);
+    expect(stale(reports)).toBe(true);
+    expect(stale(other)).toBe(false);
   });
 });
