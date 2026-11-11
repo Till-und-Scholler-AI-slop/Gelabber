@@ -222,6 +222,13 @@ fn section_in_view(
     (current_section(headings, at_end), None)
 }
 
+/// The offset a jump to the heading at `y` (in the scroller's content)
+/// leaves: 64px over it (`scroll-margin-top`), and no further than the page
+/// scrolls, as `scrollBy` stops there; past the end egui would spring back.
+fn jump_offset(y: f32, content: f32, view: f32) -> f32 {
+    (y - 64.0).min(content - view).max(0.0)
+}
+
 fn state(ctx: &egui::Context) -> Arc<Mutex<State>> {
     let id = Id::unique("gelabber-server-settings");
     ctx.data_mut(|d| {
@@ -303,45 +310,21 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     );
     let requests = s.directory.pending();
 
-    // The anchor row: fixed under the header (sticky at the scroll top).
-    // Its links take input first, for the Tab order; they are painted after
-    // the body, with the section that is in view now.
+    // The anchor row: sticky at the top of the page's scroller, as the web's
+    // `.server-settings-nav` in `.settings-scroll`, so a scroll offset, a
+    // jump and a target scrolled to the middle land where the web's do. Its
+    // links are the scroller's first widgets, for the Tab order and over its
+    // drag area; they are painted after the body, with the section in view.
     let nav = Rect::from_min_size(
         pos2(rect.left(), rect.top() + 52.0),
         vec2(rect.width(), 49.0),
     );
-    let mut x = nav.left() + 32.0;
     let ids: Vec<(&'static str, &'static str)> = SECTIONS
         .iter()
         .map(|(id, label)| (*id, label()))
         .filter(|(id, _)| shows(id))
         .collect();
-    let mut links = Vec::with_capacity(ids.len());
-    for (id, label) in &ids {
-        let b = Block::single(ui, label, text::UI, c.muted);
-        // Verzeichnis counts the open requests in a badge, 6px after it.
-        let badge = requests
-            .filter(|_| *id == "verzeichnis")
-            .map_or(0.0, |n| 6.0 + count_width(ui, n));
-        let r = Rect::from_min_size(
-            pos2(x, nav.top() + 8.0),
-            vec2(b.width() + badge + 24.0, 32.0),
-        );
-        let wid = Id::unique(("gelabber-server-nav", *id));
-        let response = ui.interact(r, wid, Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, *label));
-        if let Some(n) = requests.filter(|_| *id == "verzeichnis") {
-            let count = texts::join_requests_count(n);
-            ctx.accesskit_node_builder(wid, |node| node.set_description(count));
-        }
-        if response.clicked() {
-            s.scroll_to = Some(id);
-        }
-        links.push((*id, b, response));
-        x += links.last().map_or(0.0, |(_, _, r)| r.rect.width()) + 4.0;
-    }
-
-    let body = Rect::from_min_max(pos2(rect.left(), nav.bottom()), rect.max);
+    let body = Rect::from_min_max(nav.min, rect.max);
     if let Some(id) = s.from_address
         && s.anchors.contains_key(id)
     {
@@ -350,15 +333,43 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let jump = s.scroll_to.take();
     let offset = jump
         .and_then(|id| s.anchors.get(id).copied())
-        .map(|y| (y - 64.0 + 49.0).max(0.0));
+        .map(|y| jump_offset(y, s.content_height, body.height()));
+    // Under the scrollbar, which floats over the row as over the page.
+    ui.painter().rect_filled(nav, 0.0, c.bg);
+    crate::widgets::rule_h(ui.painter(), c.border, nav.x_range(), nav.bottom() - 1.0);
     let st = &mut *s;
+    let mut links = Vec::with_capacity(ids.len());
     let (_, scrolled) = controls::scroll(ui, body, ("server", server), offset, |ui| {
+        let mut x = nav.left() + 32.0;
+        for (id, label) in &ids {
+            let b = Block::single(ui, label, text::UI, c.muted);
+            // Verzeichnis counts the open requests in a badge, 6px after it.
+            let badge = requests
+                .filter(|_| *id == "verzeichnis")
+                .map_or(0.0, |n| 6.0 + count_width(ui, n));
+            let r = Rect::from_min_size(
+                pos2(x, nav.top() + 8.0),
+                vec2(b.width() + badge + 24.0, 32.0),
+            );
+            let wid = Id::unique(("gelabber-server-nav", *id));
+            let response = ui.interact(r, wid, Sense::click());
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, *label));
+            if let Some(n) = requests.filter(|_| *id == "verzeichnis") {
+                let count = texts::join_requests_count(n);
+                ctx.accesskit_node_builder(wid, |node| node.set_description(count));
+            }
+            if response.clicked() {
+                st.scroll_to = Some(id);
+            }
+            x += response.rect.width() + 4.0;
+            links.push((*id, b, response));
+        }
         let width = ui.available_width().min(1040.0);
         // The roles editor is wider than the reading measure.
         let wide = (width - 80.0).max(0.0);
         let left = ui.cursor().min.x;
         let content_top = ui.cursor().min.y;
-        ui.add_space(32.0);
+        ui.add_space(nav.height() + 32.0);
         let inner = Rect::from_min_size(
             pos2(left + 40.0, ui.cursor().min.y),
             vec2((width - 80.0).min(controls::MEASURE), f32::INFINITY),
@@ -369,6 +380,12 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         col.spacing_mut().item_spacing = egui::Vec2::ZERO;
+        // Nothing shows or takes input under the anchor row.
+        let under = Rect::from_min_max(
+            pos2(f32::NEG_INFINITY, nav.bottom()),
+            pos2(f32::INFINITY, f32::INFINITY),
+        );
+        col.set_clip_rect(col.clip_rect().intersect(under));
         let mut first = true;
         let mut section =
             |col: &mut Ui, id: &'static str, title: &str, hint: Option<&str>, st: &mut State| {
@@ -458,7 +475,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     }
     let tops: Vec<(&'static str, f32)> = ids
         .iter()
-        .filter_map(|(id, _)| st.anchors.get(id).map(|y| (*id, y - scrolled)))
+        .filter_map(|(id, _)| {
+            st.anchors
+                .get(id)
+                .map(|y| (*id, y - scrolled - nav.height()))
+        })
         .collect();
     let (current, held) = section_in_view(
         &tops,
@@ -470,8 +491,6 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         st.jumped,
     );
     st.jumped = held;
-    ui.painter().rect_filled(nav, 0.0, c.bg);
-    crate::widgets::rule_h(ui.painter(), c.border, nav.x_range(), nav.bottom() - 1.0);
     for (id, b, response) in &links {
         let r = response.rect;
         let on = current == Some(*id);
@@ -1530,6 +1549,69 @@ mod tests {
             section_in_view(&at(&[15.0, 400.0]), page(0.0), Some(("s5", 0.0))).1,
             None
         );
+    }
+
+    /// A jump stops where the page ends, as the web's `scrollBy`.
+    #[test]
+    fn a_jump_goes_no_further_than_the_page() {
+        assert_eq!(jump_offset(500.0, 2000.0, 748.0), 436.0);
+        assert_eq!(jump_offset(1900.0, 2000.0, 748.0), 1252.0);
+        assert_eq!(jump_offset(40.0, 2000.0, 748.0), 0.0);
+        assert_eq!(jump_offset(500.0, 600.0, 748.0), 0.0);
+    }
+
+    /// The page scrolls as the web's `.settings-scroll` with its sticky
+    /// anchor row: a jump to the last section ends at the page's end without
+    /// springing back, and a target scrolled into view sits in the middle of
+    /// header bottom and window bottom, as Playwright's does on the web.
+    #[test]
+    fn the_page_scrolls_as_the_web_scroller() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label};
+        use egui::accesskit::{AriaCurrent, Role as A11y};
+        use egui_kittest::kittest::{NodeT, Queryable};
+        let _config = crate::platform::paths::testing::TempConfig::new("server-settings-scroll");
+        let api = FakeApi::start(
+            true,
+            with_jonas(std::sync::Arc::default(), std::sync::Arc::default()),
+        );
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Aktionen für Jonas");
+        harness.run_steps(10);
+        harness
+            .get_by_role_and_label(A11y::Link, "Gefahrenzone")
+            .click();
+        harness.run_steps(2);
+        let delete = |h: &egui_kittest::Harness<'_, crate::setup::Launcher>| {
+            h.get_by_role_and_label(A11y::Button, "Server löschen")
+                .rect()
+        };
+        let landed = delete(&harness);
+        harness.run_steps(30);
+        assert_eq!(delete(&harness), landed, "the page sprang back");
+        let current = harness.get_by_role_and_label(A11y::Link, "Gefahrenzone");
+        assert_eq!(
+            current.accesskit_node().aria_current(),
+            Some(AriaCurrent::Location)
+        );
+        // The delete row (52px, its button in the middle) ends 48px over
+        // the window's bottom.
+        assert!(
+            (landed.center().y + 26.0 + 48.0 - 800.0).abs() < 1.5,
+            "{landed:?}"
+        );
+
+        harness
+            .get_by_role_and_label(A11y::Link, "Allgemein")
+            .click();
+        harness.run_steps(4);
+        harness
+            .get_by_role_and_label(A11y::Button, "Aktionen für Jonas")
+            .scroll_to_me();
+        harness.run_steps(4);
+        let actions = harness
+            .get_by_role_and_label(A11y::Button, "Aktionen für Jonas")
+            .rect();
+        assert!((actions.center().y - 426.0).abs() < 1.0, "{actions:?}");
     }
 
     /// "Server erstellen" over a server's settings: two name fields in one
