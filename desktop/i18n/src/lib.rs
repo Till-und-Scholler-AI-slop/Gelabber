@@ -63,6 +63,12 @@ pub mod voice_settings;
 
 pub mod roles;
 
+pub mod discovery;
+
+pub mod operator;
+
+pub mod account;
+
 pub use system::detect_system;
 
 /// A static catalog entry as a value, for tables of labels: called when
@@ -94,6 +100,9 @@ pub const NAMESPACES: &[(&str, Entries)] = &[
     ("diagnostics", diagnostics::ALL),
     ("call", call::ALL),
     ("roles", roles::ALL),
+    ("discovery", discovery::ALL),
+    ("operator", operator::ALL),
+    ("account", account::ALL),
 ];
 
 /// A language of the interface.

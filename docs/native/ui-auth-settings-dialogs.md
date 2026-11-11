@@ -682,6 +682,15 @@ Sidebar = the server's channel sidebar (shell spec). Header h1 **"Servereinstell
 
 Load failure: LoadError "Die Servereinstellungen konnten nicht geladen werden.".
 
+**Verzeichnis** (v0.10 discovery, `pages/ServerDirectory.tsx`, `serverDirectory.css`; native `screens/server_settings/directory.rs`). While `GET /api/directory` says `enabled`, the owner and holders of `moderate_members` get the anchor **"Verzeichnis"** after Einladungen (`serverSettingsSections`, native `sections`). The anchor carries the open requests as the accent count pill (`.ui-badge--count`, 18px, 6px after the label; screen readers hear "1 offene Anfrage"); the queue read and every `jq` frame set it, and a `jq` reads the queue again.
+
+| Part | Spec |
+|---|---|
+| Heading | "Verzeichnis"; hint (owner only) "Ob und wie dein Server unter Entdecken erscheint." |
+| Form (owner) | `.settings-form` max 560, gap 20. Delisted note first (padding 10/12, radius md, border warning 40 %, bg warning 10 %): "Der Betreiber hat diesen Server aus dem Verzeichnis genommen." Switch row 44px "Im Verzeichnis zeigen"; "Beschreibung" textarea 88px (one line: breaks become spaces), under it "{n} / 300 Zeichen" (danger above 300); "Sprache" select 37px ("Sprache wählen" until picked, then the endonyms from `GET /api/directory`); "Beitritt" with two radio cards gap 8: "Offen" / "Jeder kann direkt beitreten.", "Auf Anfrage" / "Du oder wer Mitglieder moderieren darf, nimmt Anfragen an."; "Vorschau" then, 26px lower, the Entdecken row (§ discover, border-top) with its buttons inert; primary "Speichern" (pending "Speichert…", disabled unchanged with "Keine Änderungen.") and the inline status "Gespeichert." |
+| Checks | listed without description: "Im Verzeichnis braucht der Server eine Beschreibung."; too long / control characters: "Die Beschreibung ist zu lang." / "Die Beschreibung enthält Zeichen, die nicht erlaubt sind."; no language: "Bitte eine Sprache wählen." |
+| Beitrittsanfragen | 12px under the form; heading 600 13px + inline status, 10px gap; "Lade Anfragen…" / "Keine offenen Anfragen." / LoadError "Die Anfragen konnten nicht geladen werden."; list rows (§7 lists): avatar 32, "Kai · vor 2 Stunden" (time muted 400, `formatWhen` from when the section opened), message 14px muted, sm primary **"Annehmen"** and sm **"Ablehnen"** (all disabled while one answer runs). An answer drops the row; an accepted one reloads the server's members; a refusal shows in the heading's status. |
+
 ---
 
 ## 8. Profile card and profile dialogs

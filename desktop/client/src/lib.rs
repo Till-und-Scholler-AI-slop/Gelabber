@@ -8,6 +8,7 @@ mod commands;
 pub mod gateway;
 pub mod http;
 pub mod models;
+pub mod oidc;
 pub mod store;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

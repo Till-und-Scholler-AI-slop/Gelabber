@@ -39,7 +39,8 @@ impl Location {
             })
             .collect();
         Self {
-            route: Route::parse(path),
+            // With its query: `/discover` keeps its search in the route.
+            route: Route::parse(rest),
             path: path.to_owned(),
             query,
             fragment: fragment.to_owned(),
@@ -256,6 +257,8 @@ pub struct Session {
     check: Option<Pending<Result<Value, ApiError>>>,
     failures: usize,
     retry_at: Option<f64>,
+    /// `SessionResponse.operator`: the account may open "Betrieb".
+    operator: bool,
 }
 
 impl Session {
@@ -265,7 +268,13 @@ impl Session {
             check: None,
             failures: 0,
             retry_at: None,
+            operator: false,
         }
+    }
+
+    /// Signed in as an instance operator (the session store's `operator`).
+    pub fn operator(&self) -> bool {
+        self.operator && self.user().is_some()
     }
 
     pub fn user(&self) -> Option<&Value> {
@@ -302,6 +311,13 @@ impl Session {
     /// Adopts a `SessionResponse` (login, register, reset, verify).
     pub fn adopt(&mut self, response: &Value) {
         self.failures = 0;
+        let id = |user: Option<&Value>| user.and_then(|u| u.get("id")).cloned();
+        let same = id(self.user()).is_some() && id(self.user()) == id(response.get("user"));
+        self.operator = match response.get("operator").and_then(Value::as_bool) {
+            Some(operator) => operator,
+            // A changed profile (`{"user": …}` alone) keeps the account's flag.
+            None => same && self.operator,
+        };
         self.status = match response.get("user") {
             Some(user) if !user.is_null() => SessionStatus::Authenticated(user.clone()),
             _ => SessionStatus::Anonymous,
@@ -493,16 +509,23 @@ impl GelabberApp {
     /// and follows the client when the server ends the session.
     fn sync_workspace(&mut self) {
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
-        let (client_signed_in, expired) = self.client.with_state(|s| {
+        let (client_signed_in, expired, deleted) = self.client.with_state(|s| {
             (
                 matches!(s.session, gelabber_client::Session::Authenticated(_)),
                 s.session_expired,
+                s.account_deleted,
             )
         });
         if signed_in && self.client_signed_in && !client_signed_in {
             self.session.adopt(&Value::Null);
             self.workspace = false;
             self.expired = expired;
+            // Deleted from Sicherheit (`deleteAndLeave`): the call ends and
+            // the sign-in page says why.
+            if deleted {
+                self.call.leave();
+                self.nav.navigate("/login?reason=deleted");
+            }
         } else if signed_in && !self.workspace {
             self.workspace = true;
             self.expired = false;
@@ -859,6 +882,8 @@ pub fn is_workspace(route: &Route) -> bool {
             | Route::Dms
             | Route::Dm(_)
             | Route::Profile
+            | Route::Discover(_)
+            | Route::Operator(_)
     )
 }
 
@@ -1053,5 +1078,46 @@ mod tests {
             client.with_state(|s| s.detail(home).is_some()),
             "the loaded server was thrown away"
         );
+    }
+    /// The directory's search lives in the address, and the page is for
+    /// signed-in people only.
+    #[test]
+    fn discover_keeps_its_search_in_the_location() {
+        let l = Location::parse("/discover?q=rust&lang=en");
+        assert_eq!(
+            l.route,
+            Route::Discover(crate::route::DiscoverSearch::new(Some("rust"), Some("en")))
+        );
+        assert_eq!(l.href(), "/discover?q=rust&lang=en");
+        assert!(is_workspace(&l.route));
+        let mut nav = Nav::new("/discover");
+        nav.navigate_route(&Route::Discover(crate::route::DiscoverSearch::new(
+            Some("film"),
+            None,
+        )));
+        assert_eq!(nav.location().query("q"), Some("film"));
+    }
+
+    /// The session keeps `operator` next to the user (auth/session.ts): a
+    /// profile change keeps it, another account or a sign-out drops it.
+    #[test]
+    fn the_session_keeps_the_operator_flag() {
+        let lena = serde_json::json!({"id": "a", "name": "Lena"});
+        let mut session = Session::new();
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena, "csrf_token": "x", "operator": true}));
+        assert!(session.operator());
+        session.adopt(&serde_json::json!({"user": {"id": "a", "name": "Lena B."}}));
+        assert!(session.operator());
+        session.adopt(&serde_json::json!({"user": {"id": "b", "name": "Tom"}}));
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena, "operator": true}));
+        session.adopt(&Value::Null);
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena}));
+        assert!(!session.operator());
+        // An older server leaves it out: no operator.
+        session.adopt(&serde_json::json!({"user": lena, "operator": false}));
+        assert!(!session.operator());
     }
 }

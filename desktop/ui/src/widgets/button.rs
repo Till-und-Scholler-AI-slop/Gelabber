@@ -148,6 +148,15 @@ impl<'a> Button<'a> {
         self
     }
 
+    /// The width it takes without `width` or `fill`: the label (or the
+    /// pending one), the icon, the padding and the border.
+    pub fn natural_width(&self, ui: &Ui) -> f32 {
+        let label = self.pending.unwrap_or(self.label);
+        let block = Block::single(ui, label, self.style(), Color32::WHITE);
+        let icon_w = if self.icon.is_some() { 16.0 + 8.0 } else { 0.0 };
+        block.width() + icon_w + 2.0 * self.size.padding() + 2.0
+    }
+
     fn style(&self) -> text::TextStyle {
         let style = match self.size {
             ButtonSize::Lg => text::UI.size(14.0),

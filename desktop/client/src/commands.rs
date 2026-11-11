@@ -285,7 +285,10 @@ impl Client {
     pub(crate) fn signed_out_by_server(&self) {
         let this = self.clone();
         self.runtime().spawn(async move {
-            if this.with_state(|s| matches!(s.session, Session::Authenticated(_))) {
+            // A deletion on its way ends the session itself, and says so.
+            let deleting =
+                this.with_state(|s| matches!(s.op("delete_account"), Some(OpState::Pending)));
+            if !deleting && this.with_state(|s| matches!(s.session, Session::Authenticated(_))) {
                 this.stop_gateway();
                 this.write(|s| {
                     s.reset_account();
@@ -443,6 +446,17 @@ impl Client {
             }
             Err(e) if e.is_gone() => {
                 self.write_in(epoch, |s| s.forget_server(id));
+                self.sync_topics();
+                Err(e)
+            }
+            // Blocked meanwhile: it stays listed, marked, without its detail.
+            Err(e) if e.code() == "server_blocked" => {
+                self.write_in(epoch, |s| {
+                    if let Some(entry) = s.servers.iter_mut().find(|v| v.id == id) {
+                        entry.blocked = true;
+                    }
+                    s.server_details.remove(&id);
+                });
                 self.sync_topics();
                 Err(e)
             }
@@ -1915,6 +1929,165 @@ impl Client {
         });
     }
 
+    /// The account's signed-in devices into `State::devices`. Op key
+    /// `devices`.
+    pub fn load_devices(&self) {
+        let http = self.http().clone();
+        self.run(
+            "devices",
+            async move { http.sessions().await },
+            |s, list| s.devices = Some(list),
+        );
+    }
+
+    /// "Abmelden" on another device's row (`signOutDevice`): ended through
+    /// the API without asking, then the list is read again; one that is
+    /// gone already only refreshes the list. This device's row signs out
+    /// as the user panel does ([`Self::logout`]). Op key
+    /// `revoke_device:<id>`, done once the list is read again.
+    pub fn revoke_device(&self, id: Uuid) {
+        let http = self.http().clone();
+        self.run(
+            format!("revoke_device:{id}"),
+            async move {
+                match http.revoke_session(id).await {
+                    Err(e) if e.code() != "not_found" => return Err(e),
+                    _ => {}
+                }
+                http.sessions().await
+            },
+            |s, list| s.devices = Some(list),
+        );
+    }
+
+    /// The data export into `State::export`. While it is being built the
+    /// page calls this every [`EXPORT_POLL`] while it is shown. Op key
+    /// `export`.
+    pub fn load_export(&self) {
+        let http = self.http().clone();
+        self.run(
+            "export",
+            async move { http.export_status().await },
+            |s, e| s.export = Some(e),
+        );
+    }
+
+    /// "Export anfordern" / "Erneut anfordern". `export_pending` (409) and
+    /// `rate_limited` (429, with `retry_after`) fail the op. Op key
+    /// `request_export`.
+    pub fn request_export(&self) {
+        let http = self.http().clone();
+        self.run(
+            "request_export",
+            async move { http.request_export().await },
+            |s, e| s.export = Some(e),
+        );
+    }
+
+    /// "Herunterladen": streams the ready archive into `target`
+    /// ([`Http::download_to`](crate::Http::download_to)). Op key
+    /// `export_download`.
+    pub fn download_export(&self, target: std::path::PathBuf) {
+        let http = self.http().clone();
+        self.run(
+            "export_download",
+            async move { http.download_to(EXPORT_DOWNLOAD_PATH, &target).await },
+            |_, _| {},
+        );
+    }
+
+    /// Deletes the account (`deleteAndLeave`). On `202` this client signs
+    /// out as [`Self::logout`] does, without a request of its own, and
+    /// `State::account_deleted` asks the login page for its notice; the
+    /// interface leaves the call. `409 owns_servers` puts the servers in
+    /// the way into `State::owned_servers` and fails the op with that code.
+    /// Op key `delete_account`.
+    pub fn delete_account(&self, confirmation: DeleteConfirmation) {
+        // Pending at once: a 401 from the closing socket meanwhile is this
+        // deletion, not an expired session.
+        self.write(|s| {
+            s.owned_servers = None;
+            s.ops.insert("delete_account".into(), OpState::Pending)
+        });
+        let this = self.clone();
+        self.spawn(async move {
+            let epoch = this.epoch();
+            let http = this.http().clone();
+            match http.delete_account(&confirmation).await {
+                Ok(AccountDeletion::Deleted) => {
+                    this.stop_typing();
+                    this.stop_gateway();
+                    this.write(|s| {
+                        s.reset_account();
+                        s.session = Session::Anonymous;
+                        s.account_deleted = true;
+                        s.ops.insert("delete_account".into(), OpState::Done);
+                    });
+                }
+                Ok(AccountDeletion::OwnsServers(servers)) => {
+                    this.write_in(epoch, |s| s.owned_servers = Some(servers));
+                    if this.epoch() == epoch {
+                        this.fail_op("delete_account", owns_servers());
+                    }
+                }
+                Err(error) => {
+                    let ended = error.is_unauthenticated();
+                    if this.epoch() == epoch {
+                        this.fail_op("delete_account", error);
+                    }
+                    if ended {
+                        this.signed_out_by_server();
+                    }
+                }
+            }
+        });
+    }
+
+    /// "Übergeben": `user` becomes the server's owner; its detail is read
+    /// again for the caller's new role. Op key `transfer:<server>`.
+    pub fn transfer_server(&self, server: Uuid, user: Uuid) {
+        let http = self.http().clone();
+        self.server_change(format!("transfer:{server}"), server, async move {
+            http.transfer_server(server, user).await
+        });
+    }
+
+    /// "Beitreten" in Entdecken (`useJoinListing`): the server is in the
+    /// list as soon as the op is done (`rememberJoinedServer`), then the
+    /// list and the unread counts are read again. Op key
+    /// `join_listing:<server>`.
+    pub fn join_listing(&self, server: Uuid) {
+        let key = format!("join_listing:{server}");
+        let epoch = self.write(|s| {
+            s.ops.insert(key.clone(), OpState::Pending);
+            s.epoch
+        });
+        let this = self.clone();
+        self.spawn(async move {
+            let http = this.http().clone();
+            match http.join_listing(server).await {
+                Ok(joined) => {
+                    let kept = this.write_in(epoch, |s| {
+                        if s.server(joined.id).is_none() {
+                            s.servers.push(joined);
+                        }
+                        s.ops.insert(key, OpState::Done);
+                    });
+                    if kept.is_some() {
+                        this.sync_topics();
+                        this.reload_servers().await;
+                        this.reload_unread().await;
+                    }
+                }
+                Err(error) => {
+                    if this.epoch() == epoch {
+                        this.fail_op(&key, error);
+                    }
+                }
+            }
+        });
+    }
+
     // ------------------------------------------------------------- gateway
 
     fn ensure_gateway(&self) {
@@ -1986,6 +2159,16 @@ impl Client {
                 } else if event.is_access_change() {
                     self.refresh_access(event.s);
                 }
+                // Ownership moved (`k: "o"`): the caller's role and rights
+                // may have too.
+                if event.c.is_none() && event.t == EventKind::E && event.kind() == Some("o") {
+                    let this = self.clone();
+                    let server = event.s;
+                    self.spawn(async move {
+                        this.reload_servers().await;
+                        let _ = this.reload_server(server).await;
+                    });
+                }
                 if let Some(message) = created {
                     self.notify(Notice::Message {
                         server: event.s,
@@ -2036,6 +2219,7 @@ impl Client {
                 match (e.as_str(), s, c) {
                     ("kicked", Some(server), _) => self.removed_from(server, false),
                     ("banned", Some(server), _) => self.removed_from(server, true),
+                    ("server_blocked", Some(server), _) => self.server_blocked(server),
                     ("not_found", Some(server), Some(channel)) => {
                         if let Some(gateway) = self.gateway() {
                             gateway.forget_topic(Topic::channel(server, channel));
@@ -2057,6 +2241,11 @@ impl Client {
             }
             ServerFrame::Dm { .. } => self.schedule_recovery(false),
             ServerFrame::Locale { l } => self.write(|s| record_locale(s, l)),
+            ServerFrame::Joined { s } => {
+                let this = self.clone();
+                self.spawn(async move { this.joined(s).await });
+            }
+            ServerFrame::JoinRequests { s, n } => self.write(|st| st.set_join_requests(s, n)),
             _ => {}
         }
     }
@@ -2081,6 +2270,44 @@ impl Client {
                 text: gelabber_i18n::shell::removed_kicked().into(),
             }
         });
+    }
+
+    /// An operator blocked the server (`applyServerBlocked` in
+    /// useRealtime.ts): leave voice there; the first time, mark it in the
+    /// list, drop the rest of it and toast. Later subscribes meet the same
+    /// error and only drop voice again.
+    fn server_blocked(&self, server: Uuid) {
+        let in_voice = self.with_state(|s| s.voice_self.server == Some(server));
+        if in_voice {
+            self.voice_leave();
+        }
+        if !self.write(|s| s.mark_server_blocked(server)) {
+            return;
+        }
+        self.sync_topics();
+        self.notify(Notice::Blocked {
+            server,
+            text: gelabber_i18n::auth::error_server_blocked().into(),
+        });
+    }
+
+    /// `jn` (`applyDirectoryFrame`): the server list is read again, then a
+    /// toast names the new server. Nothing when the list does not hold it
+    /// or the account changed meanwhile.
+    async fn joined(&self, server: Uuid) {
+        let epoch = self.epoch();
+        self.reload_servers().await;
+        let name = self.with_state(|s| {
+            (s.epoch() == epoch)
+                .then(|| s.server(server).map(|v| v.name.clone()))
+                .flatten()
+        });
+        if let Some(name) = name {
+            self.notify(Notice::Joined {
+                server,
+                text: gelabber_i18n::discovery::toasts_joined(&name),
+            });
+        }
     }
 
     /// Coalesces gap/ready/resync/dm into REST rounds (`useRealtime.ts`):
@@ -2194,9 +2421,10 @@ impl Client {
         }
         let loaded: Vec<Uuid> = self.with_state(|s| s.server_details.keys().copied().collect());
         let results = join_all(loaded.into_iter().map(|id| self.reload_server(id))).await;
-        ok &= results
-            .iter()
-            .all(|r| r.as_ref().map_or_else(|e| e.is_gone(), |_| true));
+        ok &= results.iter().all(|r| {
+            r.as_ref()
+                .map_or_else(|e| e.is_gone() || e.code() == "server_blocked", |_| true)
+        });
         let visible = self.with_state(|s| s.view.channel);
         self.write(|s| {
             for (id, history) in s.channels.iter_mut() {
@@ -2287,6 +2515,17 @@ impl Client {
 pub(crate) fn record_locale(state: &mut State, locale: String) {
     if let Session::Authenticated(user) = &mut state.session {
         user.locale = Some(locale);
+    }
+}
+
+/// The op failure of a deletion that `409 owns_servers` refused.
+fn owns_servers() -> ApiError {
+    ApiError::Api {
+        status: 409,
+        code: "owns_servers".into(),
+        message: crate::http::error_message("owns_servers").into(),
+        fields: serde_json::Value::Null,
+        retry_after: None,
     }
 }
 
@@ -2421,6 +2660,51 @@ mod tests {
         }
     }
 
+    /// `err server_blocked` (`applyServerBlocked`): the server stays listed,
+    /// marked, its view goes, and a toast says why; a repeat says nothing.
+    #[test]
+    fn a_blocked_server_is_marked_with_one_notice() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        let server = Uuid::from_u128(7);
+        signed_in(&client, Uuid::from_u128(5));
+        client.write(|s| {
+            s.servers = vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": server, "name": "Wohnzimmer", "owner_id": Uuid::from_u128(9),
+                    "icon_url": null, "created_at": "2026-10-01T00:00:00Z", "role": "member",
+                    "permissions": [], "member_permissions": [],
+                }))
+                .unwrap(),
+            ];
+            s.view = View {
+                server: Some(server),
+                channel: None,
+            };
+        });
+        let blocked = || {
+            client.on_gateway(GatewayEvent::Frame(ServerFrame::Err {
+                e: "server_blocked".into(),
+                s: Some(server),
+                c: None,
+            }))
+        };
+        blocked();
+        assert!(client.with_state(|s| s.server(server).is_some_and(|v| v.blocked)));
+        assert_eq!(client.with_state(|s| s.view), View::default());
+        let notices = client.take_notices();
+        assert_eq!(
+            notices,
+            [Notice::Blocked {
+                server,
+                text: "Dieser Server wurde vom Betreiber gesperrt.".into(),
+            }]
+        );
+        blocked();
+        assert!(client.take_notices().is_empty());
+        assert_eq!(client.with_state(|s| s.servers.len()), 1);
+    }
+
     /// A failed round is tried again while the socket is wanted.
     #[test]
     fn a_failed_recovery_round_is_retried() {
@@ -2437,5 +2721,373 @@ mod tests {
             .filter(|l| l.starts_with("GET /api/servers "))
             .count();
         assert!(rounds >= 2, "{rounds} rounds");
+    }
+    /// Answers `GET /api/servers` with `list`, everything else with 500.
+    fn server_list(list: serde_json::Value) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = list.to_string();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let body = body.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    let answer = if head.starts_with("GET /api/servers ") {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    } else {
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                    };
+                    let _ = stream.write_all(answer.as_bytes());
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn listed(id: Uuid, name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "name": name, "owner_id": Uuid::from_u128(9),
+            "icon_url": null, "created_at": "2026-10-01T00:00:00Z", "role": "member",
+            "permissions": [], "member_permissions": [],
+        })
+    }
+
+    /// `jn` (`applyDirectoryFrame`): the list is read again and a toast
+    /// names the new server.
+    #[test]
+    fn an_accepted_request_reads_the_list_and_names_the_server() {
+        let keller = Uuid::from_u128(7);
+        let url = server_list(serde_json::json!([
+            listed(Uuid::from_u128(6), "Wohnzimmer"),
+            listed(keller, "Modellbau-Keller"),
+        ]));
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.on_gateway(GatewayEvent::Frame(ServerFrame::Joined { s: keller }));
+        let start = std::time::Instant::now();
+        let notices = loop {
+            let notices = client.take_notices();
+            if !notices.is_empty() {
+                break notices;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5), "no notice");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            notices,
+            [Notice::Joined {
+                server: keller,
+                text: "Du bist jetzt Mitglied von Modellbau-Keller.".into(),
+            }]
+        );
+        assert!(client.with_state(|s| s.server(keller).is_some()));
+    }
+
+    /// A list without the server (or a failed read) says nothing.
+    #[test]
+    fn a_join_the_list_does_not_hold_says_nothing() {
+        let url = server_list(serde_json::json!([listed(
+            Uuid::from_u128(6),
+            "Wohnzimmer"
+        )]));
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.on_gateway(GatewayEvent::Frame(ServerFrame::Joined {
+            s: Uuid::from_u128(7),
+        }));
+        let start = std::time::Instant::now();
+        while !client.with_state(|s| s.servers_loaded) {
+            assert!(start.elapsed() < Duration::from_secs(5), "list not read");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(client.take_notices().is_empty());
+    }
+
+    /// `jq`: the count is set and every frame counts as a change; no toast.
+    #[test]
+    fn a_queue_frame_sets_the_count() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let (home, other) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let queue = |n| {
+            client.on_gateway(GatewayEvent::Frame(ServerFrame::JoinRequests {
+                s: home,
+                n,
+            }));
+        };
+        queue(3);
+        queue(3);
+        let count = client.with_state(|s| s.join_requests.get(&home).copied());
+        assert_eq!(
+            count,
+            Some(crate::store::JoinRequestCount {
+                pending: 3,
+                changes: 2
+            })
+        );
+        assert!(client.with_state(|s| !s.join_requests.contains_key(&other)));
+        assert!(client.take_notices().is_empty());
+        assert!(seen.lock().is_empty(), "{:?}", seen.lock());
+        // A server that goes takes its count along.
+        client.write(|s| s.forget_server(home));
+        assert!(client.with_state(|s| s.join_requests.is_empty()));
+    }
+
+    /// A fake API: the session route hands out a CSRF token, `answer`
+    /// gives status and body for the rest by request line, which is kept.
+    fn routes(
+        answer: fn(&str) -> (&'static str, String),
+    ) -> (String, Arc<parking_lot::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 8192];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    let line = head.lines().next().unwrap_or("").to_owned();
+                    let (status, body) = if line.starts_with("GET /api/auth/session ") {
+                        ("200 OK", r#"{"user":null,"csrf_token":"t"}"#.to_owned())
+                    } else {
+                        log.lock().push(line.clone());
+                        answer(&line)
+                    };
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn wait(what: &str, done: impl Fn() -> bool) {
+        let start = std::time::Instant::now();
+        while !done() {
+            assert!(start.elapsed() < Duration::from_secs(5), "{what}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// `k: "o"` (`isOwnerChange`): the list and that server's detail are
+    /// read again, since the caller's role may have moved too.
+    #[test]
+    fn an_ownership_move_reads_the_server_again() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let home = Uuid::from_u128(7);
+        let event = |k: &str| EventFrame {
+            t: EventKind::E,
+            s: home,
+            c: None,
+            n: 1,
+            ep: None,
+            i: None,
+            d: Some(serde_json::json!({"k": k, "owner_id": Uuid::from_u128(1)})),
+            r: None,
+        };
+        client.on_gateway(GatewayEvent::Event(event("o")));
+        let detail = format!("GET /api/servers/{home} HTTP/1.1");
+        wait("no refetch", || {
+            let seen = seen.lock();
+            seen.iter().any(|l| l == "GET /api/servers HTTP/1.1") && seen.contains(&detail)
+        });
+        // Another server-level edit reads nothing here.
+        seen.lock().clear();
+        client.on_gateway(GatewayEvent::Event(EventFrame { n: 2, ..event("z") }));
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !seen
+                .lock()
+                .iter()
+                .any(|l| l.starts_with("GET /api/servers")),
+            "{:?}",
+            seen.lock()
+        );
+    }
+
+    /// A deletion that went through signs this client out and asks the
+    /// login page for its notice; a 401 meanwhile is no expired session.
+    #[test]
+    fn a_deleted_account_signs_out_with_its_notice() {
+        let (url, seen) = routes(|line| {
+            if line.starts_with("DELETE /api/me ") {
+                ("202 Accepted", r#"{"csrf_token":"n"}"#.to_owned())
+            } else {
+                ("500 Internal Server Error", String::new())
+            }
+        });
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.write(|s| s.ops.insert("delete_account".into(), OpState::Pending));
+        client.signed_out_by_server();
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(client.with_state(|s| s.me().is_some() && !s.session_expired));
+        client.delete_account(DeleteConfirmation::Password("pw".into()));
+        wait("not deleted", || client.with_state(|s| s.account_deleted));
+        client.with_state(|s| {
+            assert!(matches!(s.session, Session::Anonymous));
+            assert!(!s.session_expired);
+            assert!(matches!(s.op("delete_account"), Some(OpState::Done)));
+        });
+        assert!(seen.lock().contains(&"DELETE /api/me HTTP/1.1".to_owned()));
+    }
+
+    /// `409 owns_servers` keeps the session and names the servers.
+    #[test]
+    fn a_deletion_refused_for_owned_servers_names_them() {
+        let (url, _) = routes(|_| {
+            (
+                "409 Conflict",
+                r#"{"error":"owns_servers","message":"x","servers":[{"id":"00000000-0000-0000-0000-000000000007","name":"Wohnzimmer","member_count":5}]}"#
+                    .to_owned(),
+            )
+        });
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.delete_account(DeleteConfirmation::Password("pw".into()));
+        wait("not refused", || {
+            client.with_state(|s| matches!(s.op("delete_account"), Some(OpState::Failed(_))))
+        });
+        client.with_state(|s| {
+            let Some(OpState::Failed(error)) = s.op("delete_account") else {
+                unreachable!()
+            };
+            assert_eq!(error.code(), "owns_servers");
+            let owned = s.owned_servers.as_ref().unwrap();
+            assert_eq!(owned[0].name, "Wohnzimmer");
+            assert_eq!(owned[0].member_count, Some(5));
+            assert!(s.me().is_some() && !s.account_deleted);
+        });
+    }
+
+    /// "Abmelden" on another device: a row that is gone already only
+    /// refreshes the list. The export lands in the state.
+    #[test]
+    fn devices_and_the_export_land_in_the_state() {
+        let (url, seen) = routes(|line| {
+            if line.starts_with("DELETE /api/auth/sessions/") {
+                (
+                    "404 Not Found",
+                    r#"{"error":"not_found","message":"x"}"#.to_owned(),
+                )
+            } else if line.starts_with("GET /api/auth/sessions ") {
+                (
+                    "200 OK",
+                    r#"{"sessions":[{"id":"00000000-0000-0000-0000-000000000001","client":"desktop","os":"linux","created_at":"2026-11-01T18:00:00Z","last_used_at":"2026-11-10T19:02:00Z","current":true}]}"#
+                        .to_owned(),
+                )
+            } else if line.starts_with("POST /api/me/export ") {
+                (
+                    "202 Accepted",
+                    r#"{"export":{"state":"pending","requested_at":"2026-11-11T10:00:00Z","finished_at":null,"expires_at":null,"size_bytes":null},"mail":false}"#
+                        .to_owned(),
+                )
+            } else {
+                ("500 Internal Server Error", String::new())
+            }
+        });
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let other = Uuid::from_u128(2);
+        client.revoke_device(other);
+        let key = format!("revoke_device:{other}");
+        wait("not revoked", || {
+            client.with_state(|s| matches!(s.op(&key), Some(OpState::Done)))
+        });
+        client.with_state(|s| assert_eq!(s.devices.as_ref().unwrap().len(), 1));
+        client.request_export();
+        wait("no export", || client.with_state(|s| s.export.is_some()));
+        assert!(client.with_state(|s| s.export.as_ref().unwrap().building()));
+        assert_eq!(
+            seen.lock().clone(),
+            [
+                format!("DELETE /api/auth/sessions/{other} HTTP/1.1"),
+                "GET /api/auth/sessions HTTP/1.1".to_owned(),
+                "POST /api/me/export HTTP/1.1".to_owned(),
+            ]
+        );
+    }
+
+    /// "Beitreten" (`useJoinListing`): the server is in the list once the
+    /// op is done, and the list is read again after it.
+    #[test]
+    fn a_directory_join_puts_the_server_in_the_list() {
+        use std::io::{Read, Write};
+        let filmclub = Uuid::from_u128(7);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen: Arc<parking_lot::Mutex<Vec<String>>> = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let line = head.lines().next().unwrap_or("").to_owned();
+                    log.lock().push(line.clone());
+                    let body = if line.starts_with("POST /api/directory/listings/") {
+                        listed(filmclub, "Filmclub").to_string()
+                    } else if line.starts_with("GET /api/servers ") {
+                        serde_json::json!([listed(filmclub, "Filmclub")]).to_string()
+                    } else {
+                        "[]".to_owned()
+                    };
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                });
+            }
+        });
+        let client = Client::new(&format!("http://{addr}")).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.join_listing(filmclub);
+        let key = format!("join_listing:{filmclub}");
+        let start = std::time::Instant::now();
+        while !client.with_state(|s| matches!(s.op(&key), Some(OpState::Done))) {
+            assert!(start.elapsed() < Duration::from_secs(5), "not joined");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(client.with_state(|s| s.server(filmclub).is_some()));
+        while !seen
+            .lock()
+            .iter()
+            .any(|l| l.starts_with("GET /api/servers "))
+        {
+            assert!(start.elapsed() < Duration::from_secs(5), "list not read");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            seen.lock()
+                .iter()
+                .any(|l| l == &format!("POST /api/directory/listings/{filmclub}/join HTTP/1.1"))
+        );
     }
 }

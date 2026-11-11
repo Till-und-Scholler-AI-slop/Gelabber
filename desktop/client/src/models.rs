@@ -119,6 +119,10 @@ pub struct PublicProfile {
 pub struct SessionResponse {
     pub user: Option<User>,
     pub csrf_token: String,
+    /// The account is an instance operator, who may open "Betrieb";
+    /// `false` from a server older than v0.10.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operator: bool,
 }
 
 /// `POST /api/auth/register`: `201` signs in, `202` with
@@ -129,6 +133,9 @@ pub struct RegisterResponse {
     pub csrf_token: String,
     #[serde(default)]
     pub verification_sent: bool,
+    /// As [`SessionResponse::operator`]; a signed-in answer only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operator: bool,
 }
 
 /// Logout and logout-all answer only the rotated token.
@@ -169,6 +176,218 @@ pub struct ProfilePatch {
     pub banner_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar_decoration: Option<String>,
+}
+
+/// A sign-in provider the instance offers (`GET /api/auth/providers`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthProvider {
+    /// Its route segment, e.g. `google`.
+    pub id: String,
+    /// Shown on buttons and in Sicherheit, e.g. `Google`.
+    pub name: String,
+}
+
+/// `GET /api/auth/providers`: empty while the operator has it off.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthProviders {
+    #[serde(deserialize_with = "lenient_list")]
+    pub providers: Vec<AuthProvider>,
+}
+
+/// `GET /api/auth/methods`: how the signed-in account can sign in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SignInMethods {
+    /// Whether the account has a password.
+    pub password: bool,
+    #[serde(deserialize_with = "lenient_list")]
+    pub providers: Vec<SignInProvider>,
+}
+
+/// One provider row of [`SignInMethods`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SignInProvider {
+    pub id: String,
+    pub name: String,
+    /// `false`: the operator turned it off; it can still be disconnected.
+    pub configured: bool,
+    pub connected: Option<ProviderConnection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderConnection {
+    /// The provider's address at the last sign-in.
+    pub email: String,
+    pub since: Timestamp,
+}
+
+/// What a provider flow is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OidcPurpose {
+    SignIn,
+    /// Connect the provider to the signed-in account.
+    Link,
+}
+
+/// `POST /api/auth/oidc/{provider}/start`, apart from the app's loopback
+/// fields ([`OidcDesktop`]), which the flow adds itself.
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub struct OidcStart {
+    pub purpose: OidcPurpose,
+    /// Where to continue after signing in; the API drops unsafe targets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirect: Option<String>,
+    /// `link` only, required when the account has a password.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_password: Option<String>,
+    /// A beta invitation's code, which admits a new account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invitation: Option<String>,
+}
+
+impl OidcStart {
+    pub fn new(purpose: OidcPurpose) -> Self {
+        Self {
+            purpose,
+            redirect: None,
+            current_password: None,
+            invitation: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for OidcStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcStart")
+            .field("purpose", &self.purpose)
+            .field("redirect", &self.redirect)
+            .field(
+                "current_password",
+                &self.current_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "invitation",
+                &self.invitation.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+/// The start body's `desktop`: where the system browser hands the result
+/// back (`http://127.0.0.1:{port}/callback`), the app's own `state` and
+/// the PKCE challenge that binds the result to this app.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcDesktop {
+    pub port: u16,
+    pub state: String,
+    pub challenge: String,
+}
+
+/// `POST /api/auth/oidc/{provider}/start`: the provider's sign-in page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcStartResponse {
+    pub url: String,
+}
+
+/// `POST /api/auth/oidc/pending`, and the exchange's `needs_name`: a first
+/// sign-in waiting for its display name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcPending {
+    pub provider: AuthProvider,
+    pub email: String,
+    /// The provider's name for the person, a suggestion.
+    pub name: Option<String>,
+}
+
+/// `POST /api/auth/oidc/complete`: the new account, signed in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OidcCompleteResponse {
+    pub user: User,
+    pub csrf_token: String,
+    /// Where the sign-in was headed, e.g. an invite.
+    pub redirect: Option<String>,
+    /// As [`SessionResponse::operator`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub operator: bool,
+}
+
+/// `POST /api/auth/oidc/desktop/exchange`, by its `result`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum OidcExchange {
+    /// Signed in; the session cookie is in the jar.
+    SignedIn(Box<SessionResponse>),
+    /// A new account: `complete` with the same code and verifier.
+    NeedsName(OidcPending),
+    /// The provider is now connected to the signed-in account.
+    Linked(SignInMethods),
+}
+
+/// Who may create an account (`GET /api/auth/registration`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegistrationMode {
+    /// Anyone; invitation codes are ignored.
+    Open,
+    /// Only with a beta invitation or the invite of a server that is not
+    /// blocked.
+    Invitation,
+}
+
+/// `GET /api/auth/registration`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistrationStatus {
+    pub mode: RegistrationMode,
+}
+
+/// `POST /api/auth/register`. The codes admit a new account on an
+/// invitation-only instance (`AdmissionCodes` in web/src/auth/session.ts).
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub struct RegisterBody {
+    pub email: String,
+    pub password: String,
+    pub name: String,
+    /// `de` or `en`: the language the app shows becomes the account's.
+    pub locale: String,
+    /// A beta invitation's code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invitation: Option<String>,
+    /// The code of the server invite being followed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_invite: Option<String>,
+}
+
+impl RegisterBody {
+    /// Without codes, in the language the app shows.
+    pub fn new(email: &str, password: &str, name: &str) -> Self {
+        Self {
+            email: email.to_owned(),
+            password: password.to_owned(),
+            name: name.to_owned(),
+            locale: gelabber_i18n::get().as_str().to_owned(),
+            invitation: None,
+            server_invite: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for RegisterBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegisterBody")
+            .field("email", &self.email)
+            .field("password", &"<redacted>")
+            .field("name", &self.name)
+            .field("locale", &self.locale)
+            .field(
+                "invitation",
+                &self.invitation.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "server_invite",
+                &self.server_invite.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 // ------------------------------------------------------------------- themes
@@ -278,6 +497,10 @@ pub struct Server {
     pub permissions: Vec<Permission>,
     /// What every non-owner holds.
     pub member_permissions: Vec<Permission>,
+    /// An operator blocked the server: it stays in the list, everything
+    /// else answers `403 server_blocked`. `false` from older servers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
 }
 
 impl Server {
@@ -426,7 +649,9 @@ pub struct Ban {
     pub user_id: Uuid,
     pub name: String,
     pub avatar_url: Option<String>,
-    pub banned_by: Uuid,
+    /// `None` once the account that issued the ban was deleted; the ban
+    /// stays (v0.10).
+    pub banned_by: Option<Uuid>,
     pub banned_at: Timestamp,
 }
 
@@ -939,6 +1164,280 @@ pub struct GifPage {
     pub next_page: Option<u32>,
 }
 
+// ----------------------------------------------------------------- directory
+
+/// One of the backend's fixed languages (`directory/languages.rs`). The
+/// name is its endonym, the same in every interface language.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectoryLanguage {
+    pub code: String,
+    pub name: String,
+    /// Listings the caller can see in this language.
+    pub listings: i64,
+}
+
+/// `GET /api/directory`. Off, `languages` is empty.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectoryStatus {
+    pub enabled: bool,
+    #[serde(deserialize_with = "lenient_list")]
+    pub languages: Vec<DirectoryLanguage>,
+}
+
+/// How a listed server is joined from the directory. Invites work either
+/// way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JoinMode {
+    Open,
+    /// "Beitritt anfragen": the owner or a moderator answers.
+    Request,
+}
+
+/// The caller's own request to join a listed server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestState {
+    Pending,
+    /// Only while the 7-day cooldown lasts.
+    Declined,
+}
+
+/// A listed server as anyone signed in sees it: no owner, no channels.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Listing {
+    pub server_id: Uuid,
+    pub name: String,
+    pub icon_url: Option<String>,
+    pub description: String,
+    pub language: String,
+    pub member_count: i64,
+    pub join_mode: JoinMode,
+    /// The caller is a member already.
+    pub member: bool,
+    pub request: Option<RequestState>,
+    /// While `request` is `declined`: when the caller may ask again.
+    #[serde(default)]
+    pub retry_at: Option<Timestamp>,
+}
+
+/// `GET /api/directory/listings`: 30 at a time, `next_offset` `None` on
+/// the last page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListingPage {
+    #[serde(deserialize_with = "lenient_list")]
+    pub listings: Vec<Listing>,
+    pub next_offset: Option<u32>,
+}
+
+/// `GET`/`PUT /api/servers/{id}/listing`: the owner's form, as every
+/// member may read it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListingSettings {
+    pub listed: bool,
+    pub description: String,
+    /// `None` until the owner first saved the form.
+    pub language: Option<String>,
+    pub join_mode: JoinMode,
+    /// The operator took the server out of the directory.
+    pub delisted: bool,
+    /// The first time the owner listed it.
+    pub listed_at: Option<Timestamp>,
+}
+
+/// `PUT /api/servers/{id}/listing`: all four fields are required.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListingSettingsBody {
+    pub listed: bool,
+    pub description: String,
+    pub language: String,
+    pub join_mode: JoinMode,
+}
+
+/// `POST /api/directory/listings/{id}/request`: `201` new, `200` when it
+/// was pending already.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestAnswer {
+    pub request: RequestState,
+}
+
+/// A pending request in a server's queue (`GET …/join-requests`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequest {
+    pub user_id: Uuid,
+    pub name: String,
+    pub avatar_url: Option<String>,
+    pub message: String,
+    pub created_at: Timestamp,
+}
+
+/// The reasons of operator's `POST /api/servers/{id}/reports`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReportReason {
+    Spam,
+    Harassment,
+    Sexual,
+    Illegal,
+    /// Needs `details`.
+    Other,
+}
+
+/// `POST /api/servers/{id}/reports`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportBody {
+    pub reason: ReportReason,
+    /// Required for [`ReportReason::Other`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+}
+
+/// The answer of a report: `201` new, `200` the reporter's open one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportFiled {
+    pub id: Uuid,
+    pub created_at: Timestamp,
+}
+
+// ------------------------------------------------------------------- account
+
+/// The app or browser of a session (`auth/device.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceClient {
+    Desktop,
+    Firefox,
+    Chrome,
+    Edge,
+    Safari,
+    Browser,
+    #[serde(other)]
+    Unknown,
+}
+
+/// The system of a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceOs {
+    Linux,
+    Windows,
+    Macos,
+    Android,
+    Ios,
+    #[serde(other)]
+    Other,
+}
+
+/// One live session of the account (`GET /api/auth/sessions`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeviceSession {
+    pub id: Uuid,
+    pub client: DeviceClient,
+    pub os: DeviceOs,
+    pub created_at: Timestamp,
+    /// Moves with the session's renewal: right to the day, not the minute.
+    pub last_used_at: Timestamp,
+    /// The session of this app.
+    pub current: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DeviceSessions {
+    pub sessions: Lenient<DeviceSession>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportState {
+    Pending,
+    Running,
+    Ready,
+    Failed,
+}
+
+/// The account's one data export (`ExportView`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExportView {
+    pub state: ExportState,
+    pub requested_at: Timestamp,
+    pub finished_at: Option<Timestamp>,
+    pub expires_at: Option<Timestamp>,
+    pub size_bytes: Option<u64>,
+}
+
+impl ExportView {
+    /// The name the server gives the archive (`Content-Disposition`), for
+    /// the save dialog: the UTC day it was finished.
+    pub fn file_name(&self) -> String {
+        let day = self.finished_at.unwrap_or(self.requested_at);
+        format!("gelabber-export-{}.zip", day.format("%Y-%m-%d"))
+    }
+}
+
+/// `GET`/`POST /api/me/export`: the export, if any, and whether a mail
+/// announces it when ready.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExportStatus {
+    pub export: Option<ExportView>,
+    pub mail: bool,
+}
+
+impl ExportStatus {
+    /// Pending or running: the page asks again every 10 s
+    /// ([`EXPORT_POLL`]).
+    pub fn building(&self) -> bool {
+        matches!(
+            self.export.as_ref().map(|e| e.state),
+            Some(ExportState::Pending | ExportState::Running)
+        )
+    }
+}
+
+/// How often the page reads a building export again (web `EXPORT_POLL_MS`).
+pub const EXPORT_POLL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The download of the ready archive, under `/api`.
+pub const EXPORT_DOWNLOAD_PATH: &str = "/api/me/export/download";
+
+/// How the person confirms deleting the account: the password, or the
+/// account's address when it has none (it signs in only through a
+/// provider). Serialises as `{"password": …}` or `{"email": …}`.
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeleteConfirmation {
+    Password(String),
+    Email(String),
+}
+
+impl std::fmt::Debug for DeleteConfirmation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Password(_) => f.write_str("Password(<redacted>)"),
+            Self::Email(email) => f.debug_tuple("Email").field(email).finish(),
+        }
+    }
+}
+
+/// A server the account still owns, as `409 owns_servers` lists it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnedServer {
+    pub id: Uuid,
+    pub name: String,
+    /// Absent in rows taken from the server list, which has no count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_count: Option<i64>,
+}
+
+/// What `DELETE /api/me` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AccountDeletion {
+    /// `202`: the account is gone and this session with it.
+    Deleted,
+    /// `409 owns_servers`: these servers have to be handed over or deleted
+    /// first.
+    OwnsServers(Vec<OwnedServer>),
+}
+
 // ------------------------------------------------------------------ gateway
 
 /// Presence as the gateway spells it.
@@ -1130,6 +1629,13 @@ pub enum ServerFrame {
     /// The account's language changed (on another device, or here).
     #[serde(rename = "lc")]
     Locale { l: String },
+    /// A request to join `s` was accepted: the account is a member now.
+    #[serde(rename = "jn")]
+    Joined { s: Uuid },
+    /// The pending requests of `s` changed; `n` is their number now. Only
+    /// the owner and holders of `moderate_members` get it.
+    #[serde(rename = "jq")]
+    JoinRequests { s: Uuid, n: i64 },
     #[serde(other)]
     Unknown,
 }
@@ -1186,6 +1692,12 @@ impl EventFrame {
                 .and_then(|d| d.get("k"))
                 .and_then(|k| k.as_str())
                 == Some("a")
+    }
+
+    /// `d.k` of a server-level event: why a member left (`k` kick, `b`
+    /// ban, `x` account deleted) or what changed (`a` access, `o` owner).
+    pub fn kind(&self) -> Option<&str> {
+        self.d.as_ref()?.get("k")?.as_str()
     }
 }
 

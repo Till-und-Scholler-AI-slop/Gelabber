@@ -153,6 +153,10 @@ crate::strings! {
     error_unreadable_page = "keine lesbare Nachricht auf der älteren Seite"
         | "no readable message on the older page";
     user_panel_call_settings = "Anrufeinstellungen" | "Call settings";
+    /// The user menu's way to the operator area (operators only).
+    user_panel_operator = "Betrieb" | "Operations";
+    /// The rail's tile to the directory, while the instance runs one.
+    rail_discover = "Entdecken" | "Discover";
 }
 
 /// The desktop app's own: the server turned the upgrade down, with why

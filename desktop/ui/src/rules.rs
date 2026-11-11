@@ -132,6 +132,7 @@ fn field_label(field: &str) -> &'static str {
         "permissions" => auth::field_label_member_permissions(),
         "roles" => auth::field_label_roles(),
         "role_ids" => auth::field_label_role_ids(),
+        "invitation" => auth::field_label_invitation(),
         _ => auth::field_label_other(),
     }
 }
@@ -140,6 +141,8 @@ fn field_label(field: &str) -> &'static str {
 pub fn field_message(field: &str, code: &str) -> String {
     let label = field_label(field);
     match code {
+        // The API's `{"invitation":"required"}` (invitation_required).
+        "required" if field == "invitation" => auth::error_invitation_required().into(),
         "required" => auth::field_error_required(label),
         "too_short" if field == "password" => auth::field_error_password_too_short(PASSWORD_MIN),
         "too_short" => auth::field_error_too_short(label),
@@ -165,6 +168,7 @@ pub fn field_message(field: &str, code: &str) -> String {
             "pronouns" | "status_text" => auth::field_error_line_invalid().into(),
             "content_type" => auth::field_error_content_type_invalid().into(),
             "role_ids" => auth::field_error_role_ids_invalid().into(),
+            "invitation" => auth::error_invitation_invalid().into(),
             _ => auth::field_error_invalid(label),
         },
     }
@@ -192,7 +196,89 @@ pub fn error_message(code: &str) -> &'static str {
         "validation_failed" => auth::error_validation_failed(),
         "timeout" => auth::error_timeout(),
         "network" => auth::error_network(),
+        "oidc_unavailable" => auth::error_oidc_unavailable(),
+        "oidc_email_unverified" => auth::error_oidc_email_unverified(),
+        "oidc_account_unverified" => auth::error_oidc_account_unverified(),
+        "identity_taken" => auth::error_identity_taken(),
+        "password_required" => auth::error_password_required(),
+        "reauth_required" => auth::error_reauth_required(),
+        "oidc_wrong_origin" => auth::error_oidc_wrong_origin(),
+        "session_changed" => auth::error_session_changed(),
+        "invitation_required" => auth::error_invitation_required(),
+        "invitation_invalid" => auth::error_invitation_invalid(),
+        "account_disabled" => auth::error_account_disabled(),
+        "server_blocked" => auth::error_server_blocked(),
+        "join_request_required" => auth::error_join_request_required(),
+        "join_request_declined" => auth::error_join_request_declined(),
+        "join_requests_full" => auth::error_join_requests_full(),
+        "already_member" => auth::error_already_member(),
         _ => auth::error_internal(),
+    }
+}
+
+/// `apiErrorMessage`: the copy of a failure with what its body adds. A
+/// declined request to join names the day from which the person may ask
+/// again (`retry_after` seconds from `now`).
+pub fn failure_message(failure: &Failure, now: chrono::DateTime<chrono::Utc>) -> String {
+    if failure.code == "join_request_declined"
+        && let Some(wait) = failure.retry_after.filter(|w| *w > 0.0)
+    {
+        let at = now + chrono::Duration::milliseconds((wait * 1000.0) as i64);
+        return auth::error_join_request_declined_until(&format_day(at));
+    }
+    error_message(&failure.code).to_owned()
+}
+
+/// `formatDate(at)`: the local day, "18. November 2026".
+pub fn format_day(at: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::{Datelike, Timelike};
+    let at = at.with_timezone(&chrono::Local);
+    let fields = gelabber_i18n::intl::DateTime {
+        year: at.year(),
+        month: at.month(),
+        day: at.day(),
+        weekday: at.weekday().num_days_from_monday(),
+        hour: at.hour(),
+        minute: at.minute(),
+    };
+    gelabber_i18n::intl::format_date(&fields, gelabber_i18n::intl::DateStyle::Long)
+}
+
+/// `OIDC_ERRORS`: why a provider sign-in came back without signing in
+/// (the `?oidc_error=` of `/login`, `/register` and `/settings/konto`).
+pub const OIDC_ERRORS: [&str; 11] = [
+    "cancelled",
+    "expired",
+    "failed",
+    "email_unverified",
+    "account_unverified",
+    "identity_taken",
+    "insecure_transport",
+    "session_changed",
+    "invitation_required",
+    "invitation_invalid",
+    "account_disabled",
+];
+
+/// `isOidcError`: the code when it is one of [`OIDC_ERRORS`].
+pub fn oidc_error(value: Option<&str>) -> Option<&'static str> {
+    let value = value?;
+    OIDC_ERRORS.iter().copied().find(|code| *code == value)
+}
+
+/// `oidcErrorMessage`: the copy of an `oidc_error`, in the interface's
+/// language. The operator's codes take the client's copy.
+pub fn oidc_error_message(code: &str) -> &'static str {
+    match code {
+        "cancelled" => auth::oidc_error_cancelled(),
+        "expired" => auth::oidc_error_expired(),
+        "failed" => auth::oidc_error_failed(),
+        "email_unverified" => error_message("oidc_email_unverified"),
+        "account_unverified" => error_message("oidc_account_unverified"),
+        "invitation_required" | "invitation_invalid" | "account_disabled" => {
+            gelabber_client::error_message(code)
+        }
+        _ => error_message(code),
     }
 }
 
@@ -293,7 +379,7 @@ impl FormErrors {
             .map(|(f, code)| (f.clone(), field_message(f, code)))
             .collect();
         self.form = if fields.is_empty() {
-            Some(error_message(&failure.code).to_owned())
+            Some(failure_message(failure, chrono::Utc::now()))
         } else if fields.len() > 1 {
             Some(auth::error_validation_failed().to_owned())
         } else {
@@ -449,5 +535,133 @@ mod tests {
         let token = "ab".repeat(32);
         assert_eq!(link_token(&format!("#token={token}")), Some(token.clone()));
         assert_eq!(link_token("#token=xyz"), None);
+    }
+
+    /// Every sign-in code has its own copy, and only the listed
+    /// `oidc_error` codes are read from an address.
+    #[test]
+    fn sign_in_codes_have_copy() {
+        for code in [
+            "oidc_unavailable",
+            "oidc_email_unverified",
+            "oidc_account_unverified",
+            "identity_taken",
+            "password_required",
+            "reauth_required",
+            "oidc_wrong_origin",
+            "session_changed",
+        ] {
+            assert_ne!(error_message(code), auth::error_internal(), "{code}");
+        }
+        for code in OIDC_ERRORS {
+            assert_eq!(oidc_error(Some(code)), Some(code));
+            assert_ne!(oidc_error_message(code), auth::error_internal(), "{code}");
+        }
+        assert_eq!(oidc_error(Some("registration_closed")), None);
+        assert_eq!(oidc_error(None), None);
+        assert_eq!(
+            oidc_error_message("account_unverified"),
+            auth::error_oidc_account_unverified()
+        );
+        assert_eq!(oidc_error_message("cancelled"), "Anmeldung abgebrochen.");
+        assert_eq!(
+            oidc_error_message("invitation_required"),
+            "Zum Registrieren brauchst du eine Einladung."
+        );
+    }
+
+    /// The operator's codes (auth/rules.test.ts): the form line, and the
+    /// invitation field's own copy for `required` and `invalid`.
+    #[test]
+    fn operator_codes_have_copy() {
+        assert_eq!(
+            error_message("account_disabled"),
+            "Dieses Konto ist gesperrt."
+        );
+        assert_eq!(
+            error_message("server_blocked"),
+            "Dieser Server wurde vom Betreiber gesperrt."
+        );
+        assert_eq!(
+            error_message("invitation_required"),
+            "Zum Registrieren brauchst du eine Einladung."
+        );
+        assert_eq!(
+            error_message("invitation_invalid"),
+            "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt."
+        );
+        assert_eq!(
+            field_message("invitation", "required"),
+            auth::error_invitation_required()
+        );
+        assert_eq!(
+            field_message("invitation", "invalid"),
+            auth::error_invitation_invalid()
+        );
+        assert_eq!(
+            field_message("invitation", "too_long"),
+            "Einladungscode ist zu lang."
+        );
+        // A sign-in refused for a disabled account says so at the form.
+        let mut errors = FormErrors::default();
+        errors.from_failure(
+            &Failure {
+                code: "account_disabled".into(),
+                ..Failure::default()
+            },
+            &["email", "password"],
+        );
+        assert_eq!(errors.form.as_deref(), Some("Dieses Konto ist gesperrt."));
+    }
+
+    /// The directory's refusals (auth/rules.test.ts): their copy, and a
+    /// declined request names the day it may be asked again.
+    #[test]
+    fn join_request_codes_have_copy() {
+        for code in [
+            "join_request_required",
+            "join_request_declined",
+            "join_requests_full",
+            "already_member",
+        ] {
+            assert_ne!(error_message(code), auth::error_internal(), "{code}");
+        }
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-11T12:00:00Z")
+            .expect("time")
+            .with_timezone(&chrono::Utc);
+        let declined = Failure {
+            code: "join_request_declined".into(),
+            retry_after: Some(7.0 * 24.0 * 3600.0),
+            ..Failure::default()
+        };
+        let day = format_day(now + chrono::Duration::days(7));
+        assert!(day.ends_with("November 2026"), "{day}");
+        assert_eq!(
+            failure_message(&declined, now),
+            format!(
+                "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {day} wieder anfragen."
+            )
+        );
+        // Without the wait it is the plain line.
+        let plain = Failure {
+            retry_after: None,
+            ..declined
+        };
+        assert_eq!(
+            failure_message(&plain, now),
+            auth::error_join_request_declined()
+        );
+        let mut errors = FormErrors::default();
+        errors.from_failure(
+            &Failure {
+                code: "join_requests_full".into(),
+                ..Failure::default()
+            },
+            &["message"],
+        );
+        assert_eq!(
+            errors.form.as_deref(),
+            Some(auth::error_join_requests_full())
+        );
     }
 }

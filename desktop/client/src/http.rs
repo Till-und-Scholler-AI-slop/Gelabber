@@ -106,7 +106,7 @@ impl ApiError {
 // A marker `code()` reads, not text of its own.
 const TIMEOUT_PREFIX: &str = "Zeitüberschreitung: "; // i18n-ok
 
-const KNOWN_CODES: [&str; 21] = [
+const KNOWN_CODES: [&str; 39] = [
     "validation_failed",
     "bad_request",
     "unauthenticated",
@@ -128,6 +128,24 @@ const KNOWN_CODES: [&str; 21] = [
     "internal",
     "network",
     "timeout",
+    "oidc_unavailable",
+    "oidc_email_unverified",
+    "oidc_account_unverified",
+    "identity_taken",
+    "password_required",
+    "reauth_required",
+    "oidc_wrong_origin",
+    "session_changed",
+    "invitation_required",
+    "invitation_invalid",
+    "account_disabled",
+    "server_blocked",
+    "join_request_required",
+    "join_request_declined",
+    "join_requests_full",
+    "already_member",
+    "owns_servers",
+    "export_pending",
 ];
 
 /// The copy per error code, as web/src/auth/rules.ts (the auth catalog's
@@ -153,6 +171,24 @@ pub fn error_message(code: &str) -> &'static str {
         "upstream_quota" => auth::error_upstream_quota(),
         "network" => auth::error_network(),
         "timeout" => auth::error_timeout(),
+        "oidc_unavailable" => auth::error_oidc_unavailable(),
+        "oidc_email_unverified" => auth::error_oidc_email_unverified(),
+        "oidc_account_unverified" => auth::error_oidc_account_unverified(),
+        "identity_taken" => auth::error_identity_taken(),
+        "password_required" => auth::error_password_required(),
+        "reauth_required" => auth::error_reauth_required(),
+        "oidc_wrong_origin" => auth::error_oidc_wrong_origin(),
+        "session_changed" => auth::error_session_changed(),
+        "invitation_required" => auth::error_invitation_required(),
+        "invitation_invalid" => auth::error_invitation_invalid(),
+        "account_disabled" => auth::error_account_disabled(),
+        "server_blocked" => auth::error_server_blocked(),
+        "join_request_required" => auth::error_join_request_required(),
+        "join_request_declined" => auth::error_join_request_declined(),
+        "join_requests_full" => auth::error_join_requests_full(),
+        "already_member" => auth::error_already_member(),
+        "owns_servers" => auth::error_owns_servers(),
+        "export_pending" => auth::error_export_pending(),
         _ => auth::error_internal(),
     }
 }
@@ -203,6 +239,17 @@ struct HeldSignOut {
     everywhere: bool,
 }
 
+/// `User-Agent` of every request: the version and the system this build is
+/// for, so the account's device list names it (the server's `auth/device.rs`
+/// reads `Gelabber-Desktop/<version> (<os>)` with `linux`, `windows` or
+/// `macos`).
+#[cfg(target_os = "windows")]
+pub const USER_AGENT: &str = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"), " (windows)");
+#[cfg(target_os = "macos")]
+pub const USER_AGENT: &str = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"), " (macos)");
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const USER_AGENT: &str = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"), " (linux)");
+
 /// `Accept-Language` for the interface's language right now.
 fn accept_language() -> &'static str {
     match gelabber_i18n::get() {
@@ -220,7 +267,7 @@ impl Http {
             header::ACCEPT,
             header::HeaderValue::from_static("application/json"),
         );
-        let user_agent = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"));
+        let user_agent = USER_AGENT;
         let client = reqwest::Client::builder()
             .cookie_provider(jar.clone())
             .default_headers(headers)
@@ -380,6 +427,20 @@ impl Http {
         body: Option<Body>,
         session: Option<&str>,
     ) -> Result<Vec<u8>, ApiError> {
+        self.execute_keeping(method, path, body, session, &mut None)
+            .await
+    }
+
+    /// [`Self::execute_as`]; the body of a refusal also lands in `refusal`,
+    /// for codes that carry more than the envelope (`owns_servers`).
+    async fn execute_keeping(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Body>,
+        session: Option<&str>,
+        refusal: &mut Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, ApiError> {
         let write = method != Method::GET && method != Method::HEAD;
         if write && self.csrf.read().is_none() {
             self.refresh_csrf().await?;
@@ -435,8 +496,32 @@ impl Http {
                     hook();
                 }
             }
+            *refusal = Some(bytes.to_vec());
             return Err(error);
         }
+    }
+
+    /// [`Self::send`], and a refusal comes with its whole body, as the
+    /// web's `ApiError.body` (the servers of `409 owns_servers`).
+    pub async fn send_keeping_refusal<B: Serialize, T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: &B,
+    ) -> Result<T, Box<(ApiError, serde_json::Value)>> {
+        let json = serde_json::to_vec(body)
+            .map_err(|e| Box::new((ApiError::Decode(e.to_string()), serde_json::Value::Null)))?;
+        let mut refusal = None;
+        let answer = self
+            .execute_keeping(method, path, Some(Body::Json(json)), None, &mut refusal)
+            .await;
+        let bytes = answer.map_err(|error| {
+            let body = refusal
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or(serde_json::Value::Null);
+            Box::new((error, body))
+        })?;
+        decode(path, &bytes).map_err(|e| Box::new((e, serde_json::Value::Null)))
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
@@ -650,6 +735,64 @@ impl Http {
         Ok(bytes)
     }
 
+    /// Streams a resource of the own origin (the data export) into the
+    /// file at `path`, without a cap and without holding it in memory, as
+    /// [`Self::bytes`] would. A redirect to the object store is followed.
+    /// The bytes go to `<path>.part` first and replace `path` only when
+    /// complete, so a failed download leaves no half file and keeps one
+    /// that was there. Returns the number of bytes written.
+    pub async fn download_to(&self, path: &str, target: &std::path::Path) -> Result<u64, ApiError> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut res = self
+            .client
+            .get(self.url(path))
+            // Large archives: no limit on the whole, only on silence.
+            .timeout(DOWNLOAD_TOTAL)
+            .send()
+            .await
+            .map_err(ApiError::from_reqwest)?;
+        self.track_clock(&res);
+        let status = res.status();
+        if !status.is_success() {
+            let wait = retry_after_header(res.headers());
+            let mut body = Vec::new();
+            while let Some(chunk) = next_chunk(&mut res).await? {
+                if body.len() + chunk.len() > ERROR_BODY_MAX {
+                    break;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            let error = envelope(status, &body, wait);
+            if error.is_unauthenticated() {
+                self.report_unauthenticated();
+            }
+            return Err(error);
+        }
+        let mut part = target.as_os_str().to_owned();
+        part.push(".part");
+        let part = std::path::PathBuf::from(part);
+        let io = |e: std::io::Error| ApiError::Transport(e.to_string());
+        let written = async {
+            let mut file = tokio::fs::File::create(&part).await.map_err(io)?;
+            let mut written = 0u64;
+            while let Some(chunk) = next_chunk(&mut res).await? {
+                file.write_all(&chunk).await.map_err(io)?;
+                written += chunk.len() as u64;
+            }
+            file.flush().await.map_err(io)?;
+            file.sync_all().await.map_err(io)?;
+            drop(file);
+            tokio::fs::rename(&part, target).await.map_err(io)?;
+            Ok(written)
+        }
+        .await;
+        if written.is_err() {
+            let _ = tokio::fs::remove_file(&part).await;
+        }
+        written
+    }
+
     /// Any successful body with a `csrf_token` string replaces the token
     /// (web `rememberCsrf`): sign-in and sign-out rotate it.
     fn remember_csrf(&self, bytes: &[u8]) {
@@ -676,6 +819,24 @@ impl Http {
             let offset = server.timestamp_millis() - chrono::Utc::now().timestamp_millis();
             self.clock_offset.store(offset, Ordering::Relaxed);
         }
+    }
+}
+
+/// [`Http::download_to`]: the whole may take long, a pause may not.
+const DOWNLOAD_TOTAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// [`Http::download_to`]: the longest wait for the next bytes.
+const DOWNLOAD_IDLE: Duration = UPLOAD_TIMEOUT;
+/// The most of an error answer read for its envelope.
+const ERROR_BODY_MAX: usize = 64 * 1024;
+
+/// The next piece of a streamed body, or a timeout after
+/// [`DOWNLOAD_IDLE`] without one.
+async fn next_chunk(
+    res: &mut reqwest::Response,
+) -> Result<Option<impl std::ops::Deref<Target = [u8]> + use<>>, ApiError> {
+    match tokio::time::timeout(DOWNLOAD_IDLE, res.chunk()).await {
+        Ok(chunk) => chunk.map_err(ApiError::from_reqwest),
+        Err(elapsed) => Err(ApiError::timeout(elapsed)),
     }
 }
 
@@ -1003,10 +1164,199 @@ mod tests {
     }
 
     #[test]
+    fn sign_in_codes_are_known_with_their_copy() {
+        let api = |code: &str| ApiError::Api {
+            status: 409,
+            code: code.into(),
+            message: String::new(),
+            fields: serde_json::Value::Null,
+            retry_after: None,
+        };
+        for code in [
+            "oidc_unavailable",
+            "oidc_email_unverified",
+            "oidc_account_unverified",
+            "identity_taken",
+            "password_required",
+            "reauth_required",
+            "oidc_wrong_origin",
+            "session_changed",
+        ] {
+            assert_eq!(api(code).code(), code);
+            assert_ne!(api(code).text(), auth::error_internal(), "{code}");
+        }
+        assert_eq!(
+            api("password_required").text(),
+            "Lege zuerst ein Passwort fest, sonst kannst du dich nicht mehr anmelden."
+        );
+    }
+
+    #[test]
+    fn operator_codes_are_known_with_their_copy() {
+        let api = |code: &str| ApiError::Api {
+            status: 403,
+            code: code.into(),
+            message: String::new(),
+            fields: serde_json::Value::Null,
+            retry_after: None,
+        };
+        let german = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::De);
+        for (code, text) in [
+            (
+                "invitation_required",
+                "Zum Registrieren brauchst du eine Einladung.",
+            ),
+            (
+                "invitation_invalid",
+                "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+            ),
+            ("account_disabled", "Dieses Konto ist gesperrt."),
+            (
+                "server_blocked",
+                "Dieser Server wurde vom Betreiber gesperrt.",
+            ),
+        ] {
+            assert_eq!(api(code).code(), code);
+            assert_eq!(api(code).text(), text);
+        }
+        drop(german);
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(
+            api("account_disabled").text(),
+            "This account has been disabled."
+        );
+    }
+
+    #[test]
+    fn the_registration_mode_is_read() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = serve(|_| {
+            let body = r#"{"mode":"invitation"}"#;
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_bytes()
+        });
+        let http = Http::new(&base).unwrap();
+        let mode = runtime.block_on(http.registration_mode()).unwrap();
+        assert_eq!(mode, crate::models::RegistrationMode::Invitation);
+        assert!(seen.lock()[0].starts_with("GET /api/auth/registration "));
+    }
+
+    #[test]
     fn ws_url_follows_the_scheme() {
         let http = Http::new("http://127.0.0.1:5180").unwrap();
         assert_eq!(http.ws_url("/ws"), "ws://127.0.0.1:5180/ws");
         let https = Http::new("https://gelabber.example").unwrap();
         assert_eq!(https.ws_url("/media/ws"), "wss://gelabber.example/media/ws");
+    }
+
+    /// The device list tells the systems apart: the app names its own, in
+    /// the form `auth/device.rs` on the server reads as `desktop`.
+    #[test]
+    fn the_user_agent_names_the_system() {
+        let os = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        };
+        let expected = format!("Gelabber-Desktop/{} ({os})", env!("CARGO_PKG_VERSION"));
+        assert_eq!(USER_AGENT, expected);
+        let rest = USER_AGENT.strip_prefix("Gelabber-Desktop/").unwrap();
+        let (_, tail) = rest.split_once('(').unwrap();
+        assert_eq!(tail.split_once(')').unwrap().0.trim(), os);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = serve(|_| ok_body(1));
+        let http = Http::new(&base).unwrap();
+        runtime.block_on(http.bytes("/x", Download::Image)).unwrap();
+        runtime
+            .block_on(http.bytes(&format!("{base}/y"), Download::Image))
+            .unwrap();
+        for head in seen.lock().iter() {
+            let agent = head
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.eq_ignore_ascii_case("user-agent")
+                        .then(|| v.trim().to_owned())
+                })
+                .unwrap();
+            assert_eq!(agent, expected, "{head}");
+        }
+    }
+
+    /// The export goes to disk as it comes, past what an attachment may
+    /// be; an error answer keeps its code and leaves no file behind.
+    #[test]
+    fn a_download_to_a_file_has_no_cap() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let size = Download::File.max_bytes() + 1;
+        let (base, seen) = serve(move |head| {
+            if head.starts_with("GET /api/me/export/download ") {
+                ok_body(size)
+            } else {
+                let body = r#"{"error":"not_found","message":"Not found"}"#;
+                format!(
+                    "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .into_bytes()
+            }
+        });
+        let dir = std::env::temp_dir().join(format!("gelabber-download-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("gelabber-export-2026-11-11.zip");
+        std::fs::write(&target, b"old").unwrap();
+        let http = Http::new(&base).unwrap();
+        http.restore_session_cookie("tok");
+        let written = runtime
+            .block_on(http.download_to("/api/me/export/download", &target))
+            .unwrap();
+        assert_eq!(written, size as u64);
+        assert_eq!(std::fs::metadata(&target).unwrap().len(), size as u64);
+        assert!(seen.lock()[0].contains("gelabber_session=tok"));
+        let gone = dir.join("gone.zip");
+        let error = runtime
+            .block_on(http.download_to("/api/elsewhere", &gone))
+            .unwrap_err();
+        assert_eq!(error.code(), "not_found");
+        assert!(!gone.exists());
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(leftovers.len(), 1, "{leftovers:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn account_codes_are_known_with_their_copy() {
+        let api = |code: &str| ApiError::Api {
+            status: 409,
+            code: code.into(),
+            message: String::new(),
+            fields: serde_json::Value::Null,
+            retry_after: None,
+        };
+        let german = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::De);
+        assert_eq!(api("owns_servers").code(), "owns_servers");
+        assert_eq!(
+            api("owns_servers").text(),
+            "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst."
+        );
+        assert_eq!(api("export_pending").code(), "export_pending");
+        assert_eq!(
+            api("export_pending").text(),
+            "Dein Export wird schon erstellt."
+        );
+        drop(german);
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(
+            api("export_pending").text(),
+            "Your export is already being prepared."
+        );
     }
 }

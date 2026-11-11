@@ -932,6 +932,27 @@ mod tests {
         assert!(matches!(f, ServerFrame::Err { ref e, c: None, .. } if e == "kicked"));
     }
 
+    /// The directory's account frames, as backend/api/src/gateway/protocol.rs
+    /// writes them; both reach the handler.
+    #[test]
+    fn directory_frames_decode_like_the_server_sends_them() {
+        let jn = r#"{"op":"jn","s":"00000000-0000-0000-0000-000000000001"}"#;
+        let f: ServerFrame = serde_json::from_str(jn).unwrap();
+        assert_eq!(f, ServerFrame::Joined { s: id(1) });
+        assert_eq!(serde_json::to_string(&f).unwrap(), jn);
+        let jq = r#"{"op":"jq","s":"00000000-0000-0000-0000-000000000001","n":3}"#;
+        let f: ServerFrame = serde_json::from_str(jq).unwrap();
+        assert_eq!(f, ServerFrame::JoinRequests { s: id(1), n: 3 });
+        assert_eq!(serde_json::to_string(&f).unwrap(), jq);
+        // A count is required: without it the frame is not readable.
+        assert!(
+            serde_json::from_str::<ServerFrame>(
+                r#"{"op":"jq","s":"00000000-0000-0000-0000-000000000001"}"#
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn only_an_unreadable_event_names_its_topic_for_a_gap() {
         let bad = r#"{"op":"e","t":"c","s":"00000000-0000-0000-0000-000000000001","c":"00000000-0000-0000-0000-000000000002","n":"sieben"}"#;

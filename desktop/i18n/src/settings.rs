@@ -18,8 +18,8 @@ crate::strings! {
     area_profilkarte_label = "Profilkarte" | "Profile card";
     area_profilkarte_description = "So sehen dich andere." | "How others see you.";
     area_konto_label = "Sicherheit" | "Security";
-    area_konto_description = "Passwort ändern und überall abmelden."
-        | "Change your password and sign out everywhere.";
+    area_konto_description = "Anmeldung, Geräte und Kontodaten."
+        | "Sign-in, devices and account data.";
     area_darstellung_label = "Darstellung" | "Appearance";
     area_darstellung_description = "Sprache, Farbschema, Textgröße und Bewegung."
         | "Language, colour scheme, text size and motion.";
@@ -246,6 +246,110 @@ crate::strings! {
         | "A running call goes on. Quit from the icon in the notification area.";
     app_setting_failed = "Die Einstellung konnte nicht gespeichert werden."
         | "The setting could not be saved.";
+
+    // Sicherheit → Anmeldung (#518): the password and one row per provider.
+    security_sign_in_title = "Anmeldung" | "Sign-in";
+    security_sign_in_load_failed = "Deine Anmeldemethoden konnten nicht geladen werden."
+        | "Your sign-in methods could not be loaded.";
+    security_sign_in_password = "Passwort" | "Password";
+    security_sign_in_password_hint = "Zum Anmelden mit deiner E-Mail-Adresse."
+        | "For signing in with your email address.";
+    security_sign_in_password_unset = "Noch keins gesetzt." | "None set yet.";
+    security_sign_in_password_change = "Ändern" | "Change";
+    security_sign_in_password_set = "Festlegen" | "Set";
+    security_sign_in_password_set_title = "Passwort festlegen" | "Set a password";
+    security_sign_in_password_set_submit = "Passwort festlegen" | "Set password";
+    security_sign_in_password_setting = "Festlegen…" | "Setting…";
+    security_sign_in_password_set_done = "Festgelegt. Andere Geräte sind abgemeldet."
+        | "Set. Your other devices are signed out.";
+    security_sign_in_provider_not_connected = "Nicht verbunden." | "Not connected.";
+    security_sign_in_provider_connect = "Verbinden" | "Connect";
+    security_sign_in_provider_disconnect = "Trennen" | "Disconnect";
+    security_sign_in_provider_disconnecting = "Trennen…" | "Disconnecting…";
+    security_sign_in_provider_disconnected = "Getrennt." | "Disconnected.";
+    security_sign_in_disconnect_confirm_label = "Trennen" | "Disconnect";
+}
+
+/// `security.signIn.password.none`.
+pub fn security_sign_in_password_none(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("Noch keins gesetzt. Du meldest dich mit {provider} an."),
+        Locale::En => format!("None set yet. You sign in with {provider}."),
+    }
+}
+
+/// `security.signIn.reauth`: sign in again through the provider.
+pub fn security_sign_in_reauth(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("Mit {provider} bestätigen"),
+        Locale::En => format!("Confirm with {provider}"),
+    }
+}
+
+/// `security.signIn.provider.connected`.
+pub fn security_sign_in_provider_connected(email: &str) -> String {
+    match get() {
+        Locale::De => {
+            format!("Verbunden mit {email}. Trennen geht nur, solange ein Passwort gesetzt ist.")
+        }
+        Locale::En => {
+            format!("Connected to {email}. You can only disconnect while a password is set.")
+        }
+    }
+}
+
+/// `security.signIn.provider.justConnected`.
+pub fn security_sign_in_provider_just_connected(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("{provider} ist jetzt verbunden."),
+        Locale::En => format!("{provider} is now connected."),
+    }
+}
+
+/// `security.signIn.connect.title`.
+pub fn security_sign_in_connect_title(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("{provider} verbinden"),
+        Locale::En => format!("Connect {provider}"),
+    }
+}
+
+/// `security.signIn.connect.lead`.
+pub fn security_sign_in_connect_lead(provider: &str) -> String {
+    match get() {
+        Locale::De => {
+            format!("Bestätige mit deinem Passwort. Danach geht es weiter zu {provider}.")
+        }
+        Locale::En => format!("Confirm with your password. Then you continue to {provider}."),
+    }
+}
+
+/// `security.signIn.connect.submit`.
+pub fn security_sign_in_connect_submit(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("Weiter zu {provider}"),
+        Locale::En => format!("Continue to {provider}"),
+    }
+}
+
+/// `security.signIn.disconnect.confirmTitle`.
+pub fn security_sign_in_disconnect_confirm_title(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("{provider} trennen?"),
+        Locale::En => format!("Disconnect {provider}?"),
+    }
+}
+
+/// `security.signIn.disconnect.confirmMessage`.
+pub fn security_sign_in_disconnect_confirm_message(provider: &str) -> String {
+    match get() {
+        Locale::De => format!(
+            "Du meldest dich dann nicht mehr mit {provider} an. Verbinden kannst du es jederzeit wieder."
+        ),
+        Locale::En => format!(
+            "You will no longer sign in with {provider}. You can connect it again at any time."
+        ),
+    }
 }
 
 /// "{percent} %" / "{percent}%".

@@ -235,17 +235,38 @@ fn icon_button(
     response
 }
 
+/// What an item of the user menu does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuItem {
+    Profile,
+    Settings,
+    /// Operators only: the operator area, in the system browser.
+    Operator,
+    SwitchServer,
+    SignOut,
+}
+
+/// The menu's items, in the web's order; "Betrieb" follows
+/// "Einstellungen" for operators.
+fn menu_items(operator: bool) -> Vec<(MenuItem, &'static str)> {
+    let mut items = vec![
+        (MenuItem::Profile, shell::user_panel_edit_profile()),
+        (MenuItem::Settings, shell::user_panel_settings()),
+    ];
+    if operator {
+        items.push((MenuItem::Operator, shell::user_panel_operator()));
+    }
+    // "Server wechseln …" is the desktop app's own (isDesktopApp).
+    items.push((MenuItem::SwitchServer, shell::user_panel_switch_server()));
+    items.push((MenuItem::SignOut, shell::user_panel_sign_out()));
+    items
+}
+
 /// The account menu above the chevron: panel colour, 37px items.
 fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    // "Server wechseln …" is the desktop app's own (isDesktopApp).
-    let items = [
-        shell::user_panel_edit_profile(),
-        shell::user_panel_settings(),
-        shell::user_panel_switch_server(),
-        shell::user_panel_sign_out(),
-    ];
+    let items = menu_items(app.session.operator());
     let width = 180.0;
     let height = 2.0 + 16.0 + 37.0 * items.len() as f32 + 3.0 * (items.len() - 1) as f32;
     let frame = Rect::from_min_max(
@@ -273,13 +294,13 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 StrokeKind::Inside,
             );
             let mut y = frame.top() + 9.0;
-            for (i, label) in items.iter().enumerate() {
+            for (i, (action, label)) in items.iter().enumerate() {
                 let item =
                     Rect::from_min_size(pos2(frame.left() + 9.0, y), Vec2::new(width - 18.0, 37.0));
                 let response = common::click(ui, item, Id::unique(("user-menu-item", i)));
                 response
                     .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *label));
-                let response = if i == 2 {
+                let response = if *action == MenuItem::SwitchServer {
                     response.on_hover_text(format!(
                         "{}+{}+S",
                         shell::keys_ctrl(),
@@ -294,7 +315,7 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 let block = Block::single(ui, label, text::BODY, c.text);
                 block.paint(ui.painter(), pos2(item.left() + 10.0, item.top() + 8.0));
                 if response.clicked() {
-                    picked = Some(i);
+                    picked = Some(*action);
                 }
                 y += 37.0 + 3.0;
             }
@@ -313,10 +334,15 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
         state::with(ui.ctx(), |s| s.user_menu = false);
     }
     match picked {
-        Some(0) => app.nav.navigate("/settings/profil"),
-        Some(1) => app.nav.navigate("/settings/darstellung"),
-        Some(2) => crate::setup::switch_server(ui.ctx()),
-        Some(_) => log_out(ui.ctx(), app),
+        Some(MenuItem::Profile) => app.nav.navigate("/settings/profil"),
+        Some(MenuItem::Settings) => app.nav.navigate("/settings/darstellung"),
+        Some(MenuItem::Operator) => super::operator::open_in_browser(
+            ui.ctx(),
+            app,
+            &format!("/betrieb/{}", super::operator::DEFAULT_PAGE),
+        ),
+        Some(MenuItem::SwitchServer) => crate::setup::switch_server(ui.ctx()),
+        Some(MenuItem::SignOut) => log_out(ui.ctx(), app),
         None => {}
     }
 }
@@ -668,7 +694,11 @@ mod tests {
         harness
             .get_by_role_and_label(Role::Button, "Auf allen Geräten abmelden")
             .click();
-        wait_for_label(&mut harness, "Überall abmelden");
+        // The question's button; the row of Sicherheit has that title too.
+        wait_for(&mut harness, "the question", |h| {
+            h.query_by_role_and_label(Role::Button, "Überall abmelden")
+                .is_some()
+        });
         harness
             .get_by_role_and_label(Role::Button, "Überall abmelden")
             .click();
@@ -745,5 +775,101 @@ mod tests {
             );
             assert_eq!(reads(), before, "nothing marked read (shift: {shift})");
         }
+    }
+
+    /// The stand-in API with Lena's workspace, Lena an operator or not.
+    fn operator_api(operator: bool) -> FakeApi {
+        FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/auth/session") => Some(Reply::json(serde_json::json!({
+                "user": crate::app::testkit::lena(), "csrf_token": "csrf", "operator": operator
+            }))),
+            _ => crate::app::testkit::workspace(method, path),
+        })
+    }
+
+    /// A stand-in for the system browser that notes what it was handed.
+    fn browser(
+        harness: &egui_kittest::Harness<'_, crate::Launcher>,
+    ) -> std::sync::Arc<parking_lot::Mutex<Vec<String>>> {
+        let opened: std::sync::Arc<parking_lot::Mutex<Vec<String>>> = Default::default();
+        let seen = opened.clone();
+        crate::screens::auth::oidc::set_opener(
+            &harness.ctx,
+            std::sync::Arc::new(move |url: &str| {
+                seen.lock().push(url.to_owned());
+                Ok(())
+            }),
+        );
+        opened
+    }
+
+    /// "Betrieb" is in the menu for operators only, after "Einstellungen",
+    /// and opens /betrieb/server in the browser; the app stays where it was.
+    #[test]
+    fn betrieb_shows_for_operators_and_opens_the_browser() {
+        use crate::app::testkit::HOME;
+
+        let _config = TempConfig::new("menu-operator");
+        let api = operator_api(false);
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        open_menu(&mut harness);
+        assert!(harness.query_by_label("Betrieb").is_none());
+
+        let api = operator_api(true);
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        let opened = browser(&harness);
+        open_menu(&mut harness);
+        let labels: Vec<String> = harness
+            .query_all_by_role(Role::Button)
+            .filter_map(|n| n.accesskit_node().label())
+            .filter(|l| {
+                ["Profil bearbeiten", "Einstellungen", "Betrieb", "Abmelden"].contains(&l.as_str())
+            })
+            .collect();
+        assert!(
+            labels.ends_with(&[
+                "Profil bearbeiten".into(),
+                "Einstellungen".into(),
+                "Betrieb".into(),
+                "Abmelden".into()
+            ]),
+            "{labels:?}"
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Betrieb")
+            .click();
+        wait_for(&mut harness, "the browser", |_| !opened.lock().is_empty());
+        assert_eq!(
+            opened.lock().as_slice(),
+            [format!("{}/betrieb/server", api.origin)]
+        );
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Abmelden").is_none());
+        let route = harness.state_mut().app().unwrap().nav().route().clone();
+        assert_eq!(route, crate::route::Route::Server(HOME.parse().unwrap()));
+    }
+
+    /// `/betrieb/{page}`: operators get the hand-off card, which opens the
+    /// same page in the browser; anyone else meets "not found".
+    #[test]
+    fn betrieb_in_the_app_hands_off_to_the_browser() {
+        let _config = TempConfig::new("route-operator");
+        let api = operator_api(true);
+        let mut harness = launcher(&api, "/betrieb/meldungen");
+        let opened = browser(&harness);
+        wait_for_label(&mut harness, "Im Browser öffnen");
+        harness
+            .get_by_role_and_label(Role::Button, "Im Browser öffnen")
+            .click();
+        wait_for(&mut harness, "the browser", |_| !opened.lock().is_empty());
+        assert_eq!(
+            opened.lock().as_slice(),
+            [format!("{}/betrieb/meldungen", api.origin)]
+        );
+
+        let api = operator_api(false);
+        let mut harness = launcher(&api, "/betrieb");
+        wait_for_label(&mut harness, "Zur Startseite");
+        assert!(harness.query_by_label("Im Browser öffnen").is_none());
     }
 }

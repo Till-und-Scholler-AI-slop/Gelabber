@@ -511,7 +511,13 @@ fn muted_box(ui: &mut Ui, text: &str, disabled: bool) -> bool {
 }
 
 /// A `RadioCard` whose description is optional.
-fn radio_card(ui: &mut Ui, label: &str, desc: Option<&str>, checked: bool, disabled: bool) -> bool {
+pub(crate) fn radio_card(
+    ui: &mut Ui,
+    label: &str,
+    desc: Option<&str>,
+    checked: bool,
+    disabled: bool,
+) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let width = ui.available_width();

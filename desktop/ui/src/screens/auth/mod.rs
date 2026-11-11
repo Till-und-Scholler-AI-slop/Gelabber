@@ -6,9 +6,12 @@ pub mod invite;
 pub mod layout;
 pub mod login;
 pub mod not_found;
+pub mod oidc;
 pub mod recovery;
 pub mod register;
+pub mod registration;
 pub mod reset_password;
+pub mod sign_in_name;
 pub mod verify_email;
 
 use egui::{Color32, Rect, Sense, Ui, Vec2, pos2};
@@ -65,6 +68,22 @@ pub fn form_error(ui: &mut Ui, errors: &FormErrors) {
         ui.add(FormError::new(message).on(theme.c.panel));
         ui.add_space(space::S5);
     }
+}
+
+/// Why a provider sign-in came back to this page (`?oidc_error=`), in
+/// `<FormError>`'s place while the form has no error of its own; true when
+/// shown.
+pub fn oidc_error_line(ui: &mut Ui, app: &crate::app::AppCtx, errors: &FormErrors) -> bool {
+    if errors.form.is_some() {
+        return false;
+    }
+    let Some(code) = crate::rules::oidc_error(app.nav.location().query("oidc_error")) else {
+        return false;
+    };
+    let theme = Theme::of(ui.ctx());
+    ui.add(FormError::new(crate::rules::oidc_error_message(code)).on(theme.c.panel));
+    ui.add_space(space::S5);
+    true
 }
 
 /// `<SubmitButton size="lg">`: the primary, full-width form action.

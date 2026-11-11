@@ -1793,10 +1793,13 @@ dependencies = [
 name = "gelabber-client"
 version = "0.9.3"
 dependencies = [
+ "aws-lc-rs",
+ "base64 0.23.1",
  "chrono",
  "futures-util",
  "gelabber-i18n",
  "parking_lot",
+ "rand 0.10.3",
  "reqwest",
  "rustls",
  "rustls-platform-verifier",

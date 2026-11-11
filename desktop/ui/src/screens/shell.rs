@@ -5,6 +5,7 @@
 //! workspace shortcuts; the pages draw into the rects it hands them.
 
 pub(crate) mod access;
+mod blocked;
 mod channel_sidebar;
 pub(crate) mod common;
 pub mod connection;
@@ -13,12 +14,13 @@ mod dm_index;
 mod dm_sidebar;
 mod home;
 mod members;
+mod operator;
 pub mod overlays;
 pub(crate) mod overview;
 mod rail;
-mod row_menu;
+pub(crate) mod row_menu;
 mod state;
-mod user_panel;
+pub(crate) mod user_panel;
 
 use egui::{Key, Modifiers, Rect, Ui, UiBuilder, pos2};
 use gelabber_client::{ChannelKind, OpState, View};
@@ -27,7 +29,7 @@ use uuid::Uuid;
 use crate::app::AppCtx;
 use crate::route::Route;
 use crate::screens::layout::{self, MEMBERS_WIDTH, RAIL_WIDTH, SIDEBAR_WIDTH};
-use crate::screens::{chat, server_settings, settings, voice};
+use crate::screens::{chat, discover, server_settings, settings, voice};
 use crate::theme::{Theme, layout::DOCK_HEIGHT};
 use crate::widgets::hairline_v;
 
@@ -153,7 +155,21 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         user_panel::show(ui, app, dock, context);
         crate::app::content_anchor(ui, main_at);
     };
+    // SelectedServer: a server an operator blocked opens to its notice.
+    let blocked_server = match route {
+        Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s) => {
+            blocked::blocked(app, s)
+        }
+        _ => None,
+    };
     match route.clone() {
+        _ if blocked_server.is_some() => {
+            if let Some(server) = &blocked_server {
+                channel_sidebar::brand_named(ui, sidebar, &server.name);
+                panel(ui, app);
+                blocked::show(ui, app, layout::page_rect(content, false), server);
+            }
+        }
         Route::Server(s) => {
             channel_sidebar::show(ui, app, sidebar, s, None, true);
             panel(ui, app);
@@ -207,6 +223,20 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             let mut main =
                 ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             chat::dm_page(&mut main, app, c);
+        }
+        Route::Discover(search) => {
+            let mut side = ui.new_child(UiBuilder::new().max_rect(sidebar));
+            discover::sidebar(&mut side, app, &search);
+            panel(ui, app);
+            let mut main =
+                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
+            discover::page(&mut main, app, &search);
+        }
+        Route::Operator(page) => {
+            channel_sidebar::brand(ui, sidebar);
+            panel(ui, app);
+            let path = Route::Operator(page.or(Some(operator::DEFAULT_PAGE.into()))).path();
+            operator::show(ui, app, layout::page_rect(content, false), &path);
         }
         _ => {
             // `/`: the brand sidebar; the page sends the user on.
@@ -318,6 +348,14 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
     }
     let user = app.client.with_state(|s| s.me().map(|m| m.id));
     match &route {
+        // Blocked: nothing of it loads; the notice needs only the list.
+        Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s)
+            if blocked::blocked(app, *s).is_some() =>
+        {
+            if app.client.with_state(|s| s.view != View::default()) {
+                app.client.close_view();
+            }
+        }
         Route::Server(s) => {
             app.client.open_server(*s);
             if first {

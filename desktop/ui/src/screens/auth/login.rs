@@ -1,11 +1,12 @@
 //! `/login` (pages/LoginPage.tsx).
 
 use egui::{Sense, Ui, Vec2};
-use gelabber_client::ApiError;
+use gelabber_client::{ApiError, OidcPurpose, OidcStart};
 use gelabber_i18n::auth;
 
 use super::{
-    Request, banner, fail, focus_invalid, form_error, invite_banner, layout, submit_after,
+    Request, banner, fail, focus_invalid, form_error, invite_banner, layout, oidc, oidc_error_line,
+    submit_after,
 };
 use crate::app::{AppCtx, is_invite_redirect, with_query};
 use crate::rules::{FormErrors, field_message, validate_email};
@@ -20,6 +21,8 @@ pub struct State {
     pub password: String,
     pub errors: FormErrors,
     request: Request,
+    /// "Über Google anmelden" and its flow through the system browser.
+    pub provider: oidc::ProviderSignIn,
 }
 
 const ORDER: [&str; 2] = ["email", "password"];
@@ -36,8 +39,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             Err(error) => fail(&mut s.errors, &error, &ORDER),
         }
     }
+    if s.provider.poll(ui, app, &mut s.errors, &ORDER) {
+        return;
+    }
     let invited = is_invite_redirect(redirect.as_deref());
-    let expired = app.nav.location().query("reason") == Some("expired");
+    let reason = app.nav.location().query("reason");
+    let expired = reason == Some("expired");
+    let deleted = reason == Some("deleted");
     let pending = s.request.is_some();
 
     layout::frame(ui, app, "login", |ui, app| {
@@ -46,6 +54,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         if expired {
             banner(ui, auth::login_session_expired(), false);
+        } else if deleted {
+            banner(ui, auth::login_account_deleted(), false);
         }
         layout::heading(ui, auth::login_title());
         let register = with_query(
@@ -64,8 +74,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         } else if layout::lead_with_link(ui, auth::login_no_account(), auth::login_register()) {
             app.nav.navigate(&register);
         }
-
-        ui.add_space(space::S6);
+        let start = || OidcStart {
+            redirect: redirect.clone(),
+            ..OidcStart::new(OidcPurpose::SignIn)
+        };
+        if !s.provider.show(ui, app, &mut s.errors, start) {
+            ui.add_space(space::S6);
+        }
         let email = TextField::new("email", &mut s.email)
             .label(auth::field_label_email())
             .autofocus(true)
@@ -84,7 +99,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             s.errors.clear_field("password");
         }
         ui.add_space(space::S5);
-        form_error(ui, &s.errors);
+        if !oidc_error_line(ui, app, &s.errors) {
+            form_error(ui, &s.errors);
+        }
         let cooldown = s.errors.cooldown();
         let clicked = submit_after(
             ui,
@@ -103,6 +120,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             }
             if fields.is_empty() {
                 s.errors = FormErrors::default();
+                // The password goes first; the browser's sign-in is dropped.
+                s.provider.cancel();
                 let http = app.client.http().clone();
                 let (email, password) = (s.email.clone(), s.password.clone());
                 s.request = Some(Pending::spawn(app.client, async move {

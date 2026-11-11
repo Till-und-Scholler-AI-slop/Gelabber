@@ -464,6 +464,27 @@ pub enum Notice {
         server: Uuid,
         message: Box<Message>,
     },
+    /// An operator blocked the server: like a kick it leaves the server's
+    /// view, but the server stays listed, marked.
+    Blocked {
+        server: Uuid,
+        text: String,
+    },
+    /// A request to join was accepted (`jn`): the server is in the list
+    /// now, and `text` names it.
+    Joined {
+        server: Uuid,
+        text: String,
+    },
+}
+
+/// A server's pending requests to join, as the last `jq` said.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct JoinRequestCount {
+    pub pending: i64,
+    /// Bumped by every `jq`, so a queue on screen reads itself again even
+    /// when the number stayed (one answered, one new).
+    pub changes: u64,
 }
 
 #[derive(Debug, Default)]
@@ -522,6 +543,18 @@ pub struct State {
     /// The newest Lives worth a notice, oldest first; each consumer keeps
     /// the last `seq` it handled.
     pub live_started: Vec<LiveStart>,
+    /// server → its pending requests to join, from `jq` (owner and
+    /// `moderate_members` only); absent until the first frame.
+    pub join_requests: HashMap<Uuid, JoinRequestCount>,
+    /// The account's signed-in devices (`load_devices`); `None` until read.
+    pub devices: Option<Vec<DeviceSession>>,
+    /// The account's data export (`load_export`); `None` until read.
+    pub export: Option<ExportStatus>,
+    /// The servers a refused deletion named (`409 owns_servers`).
+    pub owned_servers: Option<Vec<OwnedServer>>,
+    /// The account was deleted from here ("Dein Konto wurde gelöscht." on
+    /// the login page).
+    pub account_deleted: bool,
     /// When the server list and each server's detail were last fetched
     /// (or a background refetch began), for the stale refetch.
     pub(crate) servers_fetched: Option<Instant>,
@@ -723,13 +756,14 @@ impl State {
             (None, EventKind::D) => {
                 let user = event.i?;
                 let me = self.me().map(|u| u.id);
+                let kind = event.kind();
+                // This account's own deletion ends its sessions; nothing to
+                // leave.
+                if kind == Some("x") && Some(user) == me {
+                    return None;
+                }
                 if Some(user) == me {
-                    let banned = event
-                        .d
-                        .as_ref()
-                        .and_then(|d| d.get("k"))
-                        .and_then(|k| k.as_str())
-                        == Some("b");
+                    let banned = kind == Some("b");
                     return Some((event.s, banned));
                 }
                 if let Some(detail) = self.server_details.get_mut(&event.s) {
@@ -738,10 +772,56 @@ impl State {
                 if let Some(map) = self.presence.get_mut(&event.s) {
                     map.remove(&user);
                 }
+                if kind == Some("x") {
+                    self.drop_author_messages(event.s, user);
+                }
+            }
+            // Ownership moved: the list entry and the detail name the new
+            // owner at once; the caller's role follows with the refetch
+            // (`Client::on_gateway`).
+            (None, EventKind::E) if event.kind() == Some("o") => {
+                let owner = event
+                    .d
+                    .as_ref()
+                    .and_then(|d| d.get("owner_id"))
+                    .and_then(|o| o.as_str())
+                    .and_then(|o| Uuid::parse_str(o).ok());
+                if let Some(owner) = owner {
+                    if let Some(entry) = self.servers.iter_mut().find(|v| v.id == event.s) {
+                        entry.owner_id = owner;
+                    }
+                    if let Some(detail) = self.server_details.get_mut(&event.s) {
+                        detail.server.owner_id = owner;
+                    }
+                }
             }
             _ => {}
         }
         None
+    }
+
+    /// A member's account was deleted (`k: "x"`): their messages leave the
+    /// loaded histories of the server's channels, as deleted ones do; the
+    /// server removes them without an event per message.
+    pub fn drop_author_messages(&mut self, server: Uuid, author: Uuid) {
+        let Some(detail) = self.server_details.get(&server) else {
+            return;
+        };
+        let channels: Vec<Uuid> = detail.channels.iter().map(|c| c.id).collect();
+        for channel in channels {
+            let Some(history) = self.channels.get_mut(&channel) else {
+                continue;
+            };
+            let ids: Vec<Uuid> = history
+                .messages
+                .iter()
+                .filter(|m| m.author.id == author)
+                .map(|m| m.id)
+                .collect();
+            for id in ids {
+                history.remove(id);
+            }
+        }
     }
 
     /// Kicked, banned, left or deleted: drop everything of that server.
@@ -769,6 +849,35 @@ impl State {
         if self.voice_self.server == Some(server) {
             self.voice_self = VoiceSelf::default();
         }
+        self.join_requests.remove(&server);
+    }
+
+    /// An operator blocked the server (`markServerBlocked`): everything of
+    /// it goes as with [`Self::forget_server`], but it stays in the list,
+    /// marked, so its tile opens the blocked notice. `false` when the list
+    /// already said so: nothing is news then.
+    pub fn mark_server_blocked(&mut self, server: Uuid) -> bool {
+        let index = self.servers.iter().position(|s| s.id == server);
+        if index.is_some_and(|i| self.servers[i].blocked) {
+            return false;
+        }
+        let listed = index.map(|i| {
+            let mut entry = self.servers[i].clone();
+            entry.blocked = true;
+            (i, entry)
+        });
+        self.forget_server(server);
+        if let Some((i, entry)) = listed {
+            self.servers.insert(i, entry);
+        }
+        true
+    }
+
+    /// `jq`: the number of a server's pending requests to join changed.
+    pub fn set_join_requests(&mut self, server: Uuid, pending: i64) {
+        let count = self.join_requests.entry(server).or_default();
+        count.pending = pending;
+        count.changes += 1;
     }
 
     // ----------------------------------------------------------- presence
@@ -1522,6 +1631,47 @@ mod tests {
         assert_eq!(s.epoch, epoch + 1);
     }
 
+    /// A blocked server stays listed, marked, without anything else of it;
+    /// a second block is no news.
+    #[test]
+    fn a_blocked_server_stays_listed_and_marked() {
+        let mut s = State::default();
+        let server = |n: u128, name: &str| -> Server {
+            serde_json::from_value(serde_json::json!({
+                "id": id(n), "name": name, "owner_id": id(9), "icon_url": null,
+                "created_at": "2026-10-01T00:00:00Z", "role": "member",
+                "permissions": [], "member_permissions": [],
+            }))
+            .unwrap()
+        };
+        s.servers = vec![server(1, "Wohnzimmer"), server(2, "Spieleabend")];
+        let blocked = id(1);
+        s.view = View {
+            server: Some(blocked),
+            channel: None,
+        };
+        s.last_server = Some(blocked);
+        s.voice_self.server = Some(blocked);
+        s.voice.insert(blocked, HashMap::new());
+        assert!(s.mark_server_blocked(blocked));
+        let names: Vec<&str> = s.servers.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, ["Wohnzimmer", "Spieleabend"]);
+        assert!(s.servers[0].blocked && !s.servers[1].blocked);
+        assert_eq!(s.view, View::default());
+        assert_eq!(s.last_server, None);
+        assert_eq!(s.voice_self, VoiceSelf::default());
+        assert!(!s.voice.contains_key(&blocked));
+        assert!(
+            !s.desired_topics()
+                .iter()
+                .any(|t| t.key() == Topic::server(blocked).key())
+        );
+        assert!(!s.mark_server_blocked(blocked));
+        // Not listed (yet): still news.
+        assert!(s.mark_server_blocked(id(3)));
+        assert_eq!(s.servers.len(), 2);
+    }
+
     fn api(status: u16, code: &str, fields: serde_json::Value) -> ApiError {
         ApiError::Api {
             status,
@@ -2037,5 +2187,130 @@ mod tests {
         let mut names = vec!["Zoe", "ärger", "Anna", "bob"];
         names.sort_by_cached_key(|n| collation_key(n));
         assert_eq!(names, vec!["Anna", "ärger", "bob", "Zoe"]);
+    }
+
+    /// A state with Lena signed in (id 5) and one loaded server (id 1,
+    /// owner id 9) with a text channel (100), Jonas (id 1) and Kai (id 3)
+    /// as members, and a history of both.
+    fn workspace() -> State {
+        let mut s = State::default();
+        let mut me: User = serde_json::from_str(include_str!("../tests/fixtures/me.json")).unwrap();
+        me.id = id(5);
+        s.session = Session::Authenticated(Box::new(me));
+        let member = |n: u128, name: &str| {
+            serde_json::json!({"user_id": id(n), "name": name, "avatar_url": null,
+                "joined_at": "2026-10-01T00:00:00Z", "status_text": null,
+                "accent_color": null, "avatar_decoration": null, "role": "member"})
+        };
+        let detail: ServerDetail = serde_json::from_value(serde_json::json!({
+            "id": id(1), "name": "Wohnzimmer", "owner_id": id(9), "icon_url": null,
+            "created_at": "2026-10-01T00:00:00Z", "role": "member",
+            "permissions": [], "member_permissions": [],
+            "categories": [],
+            "channels": [{"id": id(100), "server_id": id(1), "category_id": null,
+                "name": "allgemein", "kind": "text", "created_at": "2026-10-01T00:00:00Z"}],
+            "members": [member(1, "Jonas"), member(3, "Kai"), member(5, "Lena")],
+        }))
+        .unwrap();
+        s.servers.push(detail.server.clone());
+        s.server_details.insert(id(1), detail);
+        let history = s.channel_mut(id(100));
+        history.loaded = true;
+        history.upsert(message(1, 10, 1));
+        let mut kai = message(2, 20, 1);
+        kai.author.id = id(3);
+        history.upsert(kai);
+        let mut reply = message(3, 30, 1);
+        reply.reply = Some(Reply {
+            id: id(1),
+            deleted: false,
+            author: None,
+            excerpt: Some("m1".into()),
+            has_attachment: false,
+            has_gif: false,
+            system: None,
+        });
+        reply.author.id = id(3);
+        history.upsert(reply);
+        s
+    }
+
+    fn server_event(t: EventKind, user: Option<Uuid>, d: serde_json::Value) -> EventFrame {
+        EventFrame {
+            t,
+            s: id(1),
+            c: None,
+            n: 1,
+            ep: None,
+            i: user,
+            d: Some(d),
+            r: None,
+        }
+    }
+
+    /// `k: "x"` (`applyAccountDeleted`): the member leaves the list and
+    /// their messages leave the histories; replies to them read as deleted.
+    #[test]
+    fn a_deleted_account_takes_its_messages_along() {
+        let mut s = workspace();
+        s.apply_presence(id(1), Some(id(1)), Some(PresenceStatus::Online), None);
+        let gone = s.apply_event(&server_event(
+            EventKind::D,
+            Some(id(1)),
+            serde_json::json!({"k": "x"}),
+        ));
+        assert_eq!(gone, None);
+        let members: Vec<Uuid> = s.server_details[&id(1)]
+            .members
+            .iter()
+            .map(|m| m.user_id)
+            .collect();
+        assert_eq!(members, [id(3), id(5)]);
+        assert!(!s.presence[&id(1)].contains_key(&id(1)));
+        let history = &s.channels[&id(100)];
+        let ids: Vec<Uuid> = history.messages.iter().map(|m| m.id).collect();
+        assert_eq!(ids, [id(2), id(3)]);
+        assert!(history.get(id(3)).unwrap().reply.as_ref().unwrap().deleted);
+        // A kick leaves the messages.
+        s.apply_event(&server_event(
+            EventKind::D,
+            Some(id(3)),
+            serde_json::json!({"k": "k"}),
+        ));
+        assert_eq!(s.channels[&id(100)].messages.len(), 2);
+    }
+
+    /// The own deletion is no removal: the session ends anyway.
+    #[test]
+    fn the_own_deleted_account_leaves_nothing() {
+        let mut s = workspace();
+        let me = server_event(EventKind::D, Some(id(5)), serde_json::json!({"k": "x"}));
+        assert_eq!(s.apply_event(&me), None);
+        assert_eq!(s.server_details[&id(1)].members.len(), 3);
+        // A ban of the own account still is one.
+        let banned = server_event(EventKind::D, Some(id(5)), serde_json::json!({"k": "b"}));
+        assert_eq!(s.apply_event(&banned), Some((id(1), true)));
+    }
+
+    /// `k: "o"`: the list entry and the detail name the new owner.
+    #[test]
+    fn an_ownership_move_names_the_new_owner() {
+        let mut s = workspace();
+        let moved = server_event(
+            EventKind::E,
+            None,
+            serde_json::json!({"k": "o", "owner_id": id(5)}),
+        );
+        assert_eq!(moved.kind(), Some("o"));
+        assert_eq!(s.apply_event(&moved), None);
+        assert_eq!(s.servers[0].owner_id, id(5));
+        assert_eq!(s.server_details[&id(1)].server.owner_id, id(5));
+        // Without a readable owner nothing changes.
+        s.apply_event(&server_event(
+            EventKind::E,
+            None,
+            serde_json::json!({"k": "o"}),
+        ));
+        assert_eq!(s.servers[0].owner_id, id(5));
     }
 }

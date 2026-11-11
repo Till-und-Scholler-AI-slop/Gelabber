@@ -291,7 +291,7 @@ fn dead(ui: &mut Ui, app: &mut AppCtx, code: &str) {
 }
 
 /// `SkeletonCard` (min-height 300) while the preview loads.
-fn skeleton(ui: &mut Ui, app: &mut AppCtx) {
+pub(super) fn skeleton(ui: &mut Ui, app: &mut AppCtx) {
     layout::frame(ui, app, "invite-loading", |ui, _app| {
         let theme = Theme::of(ui.ctx());
         let width = ui.available_width();

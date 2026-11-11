@@ -143,6 +143,56 @@ crate::strings! {
     terms_uses_unlimited = "Unbegrenzt" | "Unlimited";
     terms_valid_forever = "unbegrenzt gültig" | "never expires";
     terms_uses_unlimited_summary = "unbegrenzt nutzbar" | "unlimited uses";
+
+    // Handing the server on (web serverSettings transfer.*, #519).
+    transfer_title = "Server übergeben" | "Transfer server";
+    transfer_hint = "Ein anderes Mitglied wird Eigentümer. Du bleibst Mitglied."
+        | "Another member becomes the owner. You stay a member.";
+    transfer_no_member = "Lade zuerst jemanden ein, dem du den Server übergeben kannst."
+        | "Invite someone first who you can hand the server to.";
+    transfer_open = "Übergeben…" | "Transfer…";
+    transfer_member = "Neuer Eigentümer" | "New owner";
+    transfer_submit = "Übergeben" | "Transfer";
+    transfer_pending = "Wird übergeben…" | "Transferring…";
+    transfer_confirm_message = "Du kannst das nicht selbst rückgängig machen."
+        | "You can’t undo this yourself.";
+
+    // Verzeichnis (web serverSettings directory.* and joinRequests.*, #520).
+    section_directory = "Verzeichnis" | "Directory";
+    directory_hint = "Ob und wie dein Server unter Entdecken erscheint."
+        | "Whether and how your server appears in Discover.";
+    directory_loading = "Lade den Eintrag…" | "Loading the listing…";
+    directory_load_failed = "Der Eintrag konnte nicht geladen werden."
+        | "The listing couldn’t be loaded.";
+    directory_delisted = "Der Betreiber hat diesen Server aus dem Verzeichnis genommen."
+        | "The operator has removed this server from the directory.";
+    directory_listed = "Im Verzeichnis zeigen" | "Show in the directory";
+    directory_description = "Beschreibung" | "Description";
+    directory_description_required = "Im Verzeichnis braucht der Server eine Beschreibung."
+        | "A server in the directory needs a description.";
+    directory_description_invalid = "Die Beschreibung enthält Zeichen, die nicht erlaubt sind."
+        | "The description contains characters that aren’t allowed.";
+    directory_description_too_long = "Die Beschreibung ist zu lang."
+        | "The description is too long.";
+    directory_language = "Sprache" | "Language";
+    directory_language_pick = "Sprache wählen" | "Choose a language";
+    directory_language_required = "Bitte eine Sprache wählen." | "Please choose a language.";
+    directory_join_mode = "Beitritt" | "Joining";
+    directory_join_open = "Offen" | "Open";
+    directory_join_open_hint = "Jeder kann direkt beitreten." | "Anyone can join straight away.";
+    directory_join_request = "Auf Anfrage" | "On request";
+    directory_join_request_hint = "Du oder wer Mitglieder moderieren darf, nimmt Anfragen an."
+        | "You or anyone who may moderate members accepts requests.";
+    directory_preview = "Vorschau" | "Preview";
+    directory_saving = "Speichert…" | "Saving…";
+    directory_unchanged = "Keine Änderungen." | "No changes.";
+    join_requests_title = "Beitrittsanfragen" | "Join requests";
+    join_requests_loading = "Lade Anfragen…" | "Loading requests…";
+    join_requests_load_failed = "Die Anfragen konnten nicht geladen werden."
+        | "The requests couldn’t be loaded.";
+    join_requests_empty = "Keine offenen Anfragen." | "No open requests.";
+    join_requests_accept = "Annehmen" | "Accept";
+    join_requests_decline = "Ablehnen" | "Decline";
 }
 
 /// "Mitglieder ({count})".
@@ -314,5 +364,34 @@ pub fn members_roles_for(name: &str) -> String {
     match get() {
         Locale::De => format!("Rollen für {name}"),
         Locale::En => format!("Roles for {name}"),
+    }
+}
+
+/// "„{server}“ an {name} übergeben?"
+pub fn transfer_confirm_title(server: &str, name: &str) -> String {
+    match get() {
+        Locale::De => format!("„{server}“ an {name} übergeben?"),
+        Locale::En => format!("Transfer “{server}” to {name}?"),
+    }
+}
+
+/// `directory.descriptionCount`: "31 / 300 Zeichen"; counts stay
+/// unformatted, as on the profile.
+pub fn directory_description_count(length: usize, max: usize) -> String {
+    match get() {
+        Locale::De => format!("{length} / {max} Zeichen"),
+        Locale::En => format!("{length} / {max} characters"),
+    }
+}
+
+/// `joinRequests.count`: "1 offene Anfrage", the anchor's count for screen
+/// readers.
+pub fn join_requests_count(count: u64) -> String {
+    match get() {
+        Locale::De => format!(
+            "{count} {}",
+            plural(count, "offene Anfrage", "offene Anfragen")
+        ),
+        Locale::En => format!("{count} {}", plural(count, "open request", "open requests")),
     }
 }

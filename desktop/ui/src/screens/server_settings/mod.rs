@@ -2,8 +2,10 @@
 //! and icon, roles, invites, members, bans and the danger zone, each for
 //! whom [`sections`] shows it.
 
+mod directory;
 mod invite;
 pub(crate) mod roles;
+mod transfer;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -83,10 +85,11 @@ const PERMISSIONS: [(Permission, Text, Text); 9] = [
 ];
 
 /// Each section's label; the ids stay German, as the web's URL fragments.
-const SECTIONS: [(&str, Text); 6] = [
+const SECTIONS: [(&str, Text); 7] = [
     ("allgemein", texts::section_general),
     ("rollen", texts::section_roles),
     ("einladungen", texts::section_invites),
+    ("verzeichnis", texts::section_directory),
     ("mitglieder", texts::section_members),
     ("sperren", texts::section_bans),
     ("gefahrenzone", texts::section_danger),
@@ -96,13 +99,19 @@ const SECTIONS: [(&str, Text); 6] = [
 /// who sees which (web pages/serverSettingsSections.ts
 /// `serverSettingsSections`; later packages add their line here).
 /// `manage_server` edits the server; `moderate_members` kicks, bans and so
-/// sees the ban list; everyone sees the members and can leave.
-fn sections(server: &Server) -> Vec<&'static str> {
+/// sees the ban list; everyone sees the members and can leave. While the
+/// directory is on, the owner (the listing) and `moderate_members` (the
+/// join requests) see Verzeichnis, after Einladungen. The owner holds
+/// every right, as the web's `can`.
+fn sections(server: &Server, directory: bool) -> Vec<&'static str> {
     let manage = server.can(Permission::ManageServer);
-    let moderate = server.can(Permission::ModerateMembers);
+    let moderate = server.role == Role::Owner || server.can(Permission::ModerateMembers);
     let mut out = Vec::new();
     if manage {
         out.extend(["allgemein", "rollen", "einladungen"]);
+    }
+    if directory && moderate {
+        out.push("verzeichnis");
     }
     out.push("mitglieder");
     if moderate {
@@ -150,6 +159,13 @@ struct State {
     jumped: Option<(&'static str, f32)>,
     content_height: f32,
     opened_at: f64,
+    /// The section the address names (`#server-settings-gefahrenzone`),
+    /// jumped to once its heading has a place.
+    from_address: Option<&'static str>,
+    /// "Server übergeben", while its dialog is open.
+    transfer: Option<transfer::Dialog>,
+    /// Verzeichnis: the listing form and the join requests.
+    directory: directory::Directory,
 }
 
 /// How far below the anchor row a heading may sit and still count as
@@ -246,16 +262,28 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let entered =
         crate::widgets::field::mounted(&ctx, Id::unique("gelabber-server-settings-mount"));
     if s.server != Some(server) || entered {
+        let fragment = app.nav.location().fragment.clone();
         *s = State {
             server: Some(server),
             opened_at: chrono::Utc::now().timestamp_millis() as f64,
+            from_address: SECTIONS
+                .iter()
+                .map(|(id, _)| *id)
+                .find(|id| fragment.strip_prefix("server-settings-") == Some(*id)),
             ..State::default()
         };
     }
-    let shown = sections(&detail.server);
-    let shows = |id: &str| shown.contains(&id);
     let manage = detail.server.can(Permission::ManageServer);
     let moderate = detail.server.can(Permission::ModerateMembers);
+    let owner = detail.server.role == Role::Owner;
+    let directory_on = crate::screens::discover::enabled(&ctx, app) == Some(true);
+    let shown = sections(&detail.server, directory_on);
+    let shows = |id: &str| shown.contains(&id);
+    let languages = if shows("verzeichnis") {
+        crate::screens::discover::languages(&ctx, app)
+    } else {
+        Vec::new()
+    };
     poll_loads(
         ui,
         app,
@@ -265,6 +293,15 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         shows("sperren"),
     );
     roles::poll(ui, app, &mut s.roles, &detail);
+    directory::poll_loads(
+        ui,
+        app,
+        &mut s.directory,
+        &detail,
+        shows("verzeichnis"),
+        owner,
+    );
+    let requests = s.directory.pending();
 
     // The anchor row: fixed under the header (sticky at the scroll top).
     // Its links take input first, for the Tab order; they are painted after
@@ -282,10 +319,21 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let mut links = Vec::with_capacity(ids.len());
     for (id, label) in &ids {
         let b = Block::single(ui, label, text::UI, c.muted);
-        let r = Rect::from_min_size(pos2(x, nav.top() + 8.0), vec2(b.width() + 24.0, 32.0));
+        // Verzeichnis counts the open requests in a badge, 6px after it.
+        let badge = requests
+            .filter(|_| *id == "verzeichnis")
+            .map_or(0.0, |n| 6.0 + count_width(ui, n));
+        let r = Rect::from_min_size(
+            pos2(x, nav.top() + 8.0),
+            vec2(b.width() + badge + 24.0, 32.0),
+        );
         let wid = Id::unique(("gelabber-server-nav", *id));
         let response = ui.interact(r, wid, Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, *label));
+        if let Some(n) = requests.filter(|_| *id == "verzeichnis") {
+            let count = texts::join_requests_count(n);
+            ctx.accesskit_node_builder(wid, |node| node.set_description(count));
+        }
         if response.clicked() {
             s.scroll_to = Some(id);
         }
@@ -294,6 +342,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     }
 
     let body = Rect::from_min_max(pos2(rect.left(), nav.bottom()), rect.max);
+    if let Some(id) = s.from_address
+        && s.anchors.contains_key(id)
+    {
+        s.scroll_to = s.from_address.take();
+    }
     let jump = s.scroll_to.take();
     let offset = jump
         .and_then(|id| s.anchors.get(id).copied())
@@ -362,6 +415,16 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
             );
             invites(&mut col, app, st, &detail);
         }
+        if shows("verzeichnis") {
+            section(
+                &mut col,
+                "verzeichnis",
+                texts::section_directory(),
+                owner.then(texts::directory_hint),
+                st,
+            );
+            directory::section(&mut col, app, &mut st.directory, &detail, &languages, owner);
+        }
         let title = texts::members_title(detail.members.len());
         let hint = manage.then(texts::members_hint);
         section(&mut col, "mitglieder", &title, hint, st);
@@ -376,20 +439,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
             );
             bans(&mut col, app, st);
         }
-        let owner = detail.server.role == Role::Owner;
-        let hint = if owner {
-            texts::danger_owner_hint()
-        } else {
-            texts::danger_member_hint()
-        };
-        section(
-            &mut col,
-            "gefahrenzone",
-            texts::section_danger(),
-            Some(hint),
-            st,
-        );
-        danger(&mut col, app, &detail);
+        // The owner's rows each say what they do (#519); members keep the
+        // section's sentence.
+        let hint = (!owner).then(texts::danger_member_hint);
+        section(&mut col, "gefahrenzone", texts::section_danger(), hint, st);
+        danger(&mut col, app, st, &detail);
         let used = col.min_rect();
         st.content_height = used.bottom() + 48.0 - content_top;
         ui.advance_cursor_after_rect(Rect::from_min_max(
@@ -447,6 +501,15 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 c.muted
             }),
         );
+        if let Some(n) = requests.filter(|_| *id == "verzeichnis") {
+            crate::widgets::count_badge(
+                ui.painter(),
+                ui,
+                pos2(r.right() - 12.0, r.center().y + 9.0),
+                n.min(u64::from(u32::MAX)) as u32,
+                None,
+            );
+        }
         if response.hovered() {
             ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -461,8 +524,24 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         st.inviting = None;
         reload_invites(app, st, server);
     }
+    if let Some(dialog) = &mut st.transfer
+        && !dialog.show(&ctx, app, &detail)
+    {
+        st.transfer = None;
+    }
     drop(s);
     controls::show_confirm(&ctx);
+}
+
+/// The width of a [`crate::widgets::count_badge`] showing `n`.
+fn count_width(ui: &Ui, n: u64) -> f32 {
+    let label = if n > 99 {
+        "99+".to_owned()
+    } else {
+        n.to_string()
+    };
+    let style = TextStyle::new(11.0, 700.0, 1.0);
+    (Block::single(ui, &label, style, Color32::WHITE).width() + 10.0).max(18.0)
 }
 
 /// Whether a copy can land anywhere: without a display server (Linux) there
@@ -1246,34 +1325,74 @@ fn bans(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
 }
 
-fn danger(ui: &mut Ui, _app: &mut AppCtx, detail: &ServerDetail) {
-    let owner = detail.server.role == Role::Owner;
-    let label = if owner {
-        texts::danger_delete()
-    } else {
-        texts::danger_leave()
-    };
+/// Gefahrenzone (web `DangerSection`): for the owner one list of two rows,
+/// "Server übergeben" then "Server löschen"; for everyone else the
+/// "Server verlassen" button under the section's sentence.
+fn danger(ui: &mut Ui, _app: &mut AppCtx, s: &mut State, detail: &ServerDetail) {
+    let name = &detail.server.name;
+    let key = format!("drop-server:{}", detail.server.id);
+    if detail.server.role == Role::Owner {
+        let theme = Theme::of(ui.ctx());
+        // `.settings-action-list`: a hairline over the first row.
+        let width = ui.available_width();
+        crate::widgets::rule_h(
+            ui.painter(),
+            theme.c.border,
+            ui.cursor().min.x..=ui.cursor().min.x + width,
+            ui.cursor().min.y,
+        );
+        ui.add_space(1.0);
+        let none = transfer::candidates(detail).is_empty();
+        let hint = if none {
+            texts::transfer_no_member()
+        } else {
+            texts::transfer_hint()
+        };
+        if controls::action_row(
+            ui,
+            texts::transfer_title(),
+            hint,
+            None,
+            Some(controls::RowButton::new(texts::transfer_open()).disabled(none)),
+        ) && !none
+        {
+            s.transfer = Some(transfer::Dialog::default());
+        }
+        if controls::action_row(
+            ui,
+            texts::danger_delete(),
+            texts::danger_owner_hint(),
+            None,
+            Some(
+                controls::RowButton::new(texts::danger_delete())
+                    .variant(ButtonVariant::DangerOutline),
+            ),
+        ) {
+            controls::ask(
+                ui.ctx(),
+                Confirm::danger(
+                    &key,
+                    texts::danger_delete_title(name),
+                    Some(texts::danger_delete_message()),
+                    texts::danger_delete(),
+                ),
+            );
+        }
+        return;
+    }
     if ui
-        .add(Button::new(label).variant(ButtonVariant::DangerOutline))
+        .add(Button::new(texts::danger_leave()).variant(ButtonVariant::DangerOutline))
         .clicked()
     {
-        let name = &detail.server.name;
-        let confirm = if owner {
+        controls::ask(
+            ui.ctx(),
             Confirm::danger(
-                &format!("drop-server:{}", detail.server.id),
-                texts::danger_delete_title(name),
-                Some(texts::danger_delete_message()),
-                texts::danger_delete(),
-            )
-        } else {
-            Confirm::danger(
-                &format!("drop-server:{}", detail.server.id),
+                &key,
                 texts::danger_leave_title(name),
                 None,
                 texts::danger_leave_confirm(),
-            )
-        };
-        controls::ask(ui.ctx(), confirm);
+            ),
+        );
     }
 }
 
@@ -1699,19 +1818,21 @@ mod tests {
         assert!(harness.query_by_label("Rollen verwalten").is_none());
     }
 
-    /// `serverSettingsSections`: who sees which section.
+    /// `serverSettingsSections`: who sees which section, with the
+    /// directory off and on.
     #[test]
     fn the_sections_follow_the_rights() {
-        let server = |perms: &[&str]| -> Server {
+        let server = |role: &str, perms: &[&str]| -> Server {
             serde_json::from_value(serde_json::json!({
                 "id": Uuid::nil(), "name": "W", "owner_id": Uuid::nil(), "icon_url": null,
-                "created_at": "2026-01-01T00:00:00Z", "role": "member",
+                "created_at": "2026-01-01T00:00:00Z", "role": role,
                 "permissions": perms, "member_permissions": []
             }))
             .unwrap()
         };
+        let member = |perms: &[&str]| server("member", perms);
         assert_eq!(
-            sections(&server(&["manage_server", "moderate_members"])),
+            sections(&member(&["manage_server", "moderate_members"]), false),
             [
                 "allgemein",
                 "rollen",
@@ -1722,7 +1843,19 @@ mod tests {
             ]
         );
         assert_eq!(
-            sections(&server(&["manage_server"])),
+            sections(&member(&["manage_server", "moderate_members"]), true),
+            [
+                "allgemein",
+                "rollen",
+                "einladungen",
+                "verzeichnis",
+                "mitglieder",
+                "sperren",
+                "gefahrenzone"
+            ]
+        );
+        assert_eq!(
+            sections(&member(&["manage_server"]), true),
             [
                 "allgemein",
                 "rollen",
@@ -1732,9 +1865,19 @@ mod tests {
             ]
         );
         assert_eq!(
-            sections(&server(&["moderate_members"])),
+            sections(&member(&["moderate_members"]), true),
+            ["verzeichnis", "mitglieder", "sperren", "gefahrenzone"]
+        );
+        assert_eq!(
+            sections(&member(&["moderate_members"]), false),
             ["mitglieder", "sperren", "gefahrenzone"]
         );
-        assert_eq!(sections(&server(&[])), ["mitglieder", "gefahrenzone"]);
+        assert_eq!(sections(&member(&[]), true), ["mitglieder", "gefahrenzone"]);
+        // The owner holds every right, as the web's `can`, even before the
+        // list says so.
+        assert_eq!(
+            sections(&server("owner", &[]), true),
+            ["verzeichnis", "mitglieder", "sperren", "gefahrenzone"]
+        );
     }
 }

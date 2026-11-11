@@ -1,18 +1,17 @@
-//! "Profil" (name and picture) and "Sicherheit" (password, sign out
-//! everywhere) of pages/ProfilePage.tsx.
+//! "Profil" (name and picture) of pages/ProfilePage.tsx. "Sicherheit"
+//! moved to security.rs, as the web's to SecurityArea.tsx.
 
-use egui::{Ui, vec2};
+use egui::Ui;
 use gelabber_client::{ApiError, ProfilePatch, User};
 use gelabber_i18n::{common, settings as texts};
 
-use super::controls::{self, Confirm, Picked};
+use super::controls::{self, Picked};
 use super::{adopt_user, op_pending, settled};
 use crate::app::AppCtx;
-use crate::rules::{Failure, FormErrors, field_message, validate_name, validate_password};
+use crate::rules::{Failure, FormErrors, field_message, validate_name};
 use crate::screens::auth::form_error;
-use crate::text;
 use crate::theme::Theme;
-use crate::widgets::{Avatar, AvatarSize, Button, ButtonVariant, TextField};
+use crate::widgets::{Avatar, AvatarSize, Button, TextField};
 
 /// `isUploadedAvatar`: an image the API stores itself.
 pub fn is_uploaded_avatar(url: &str) -> bool {
@@ -320,166 +319,6 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
 fn prepare(ctx: &egui::Context, s: &mut ProfileState, file: controls::ImageFile) {
     s.saved = false;
     s.preparing = Some(controls::prepare(ctx, file, 256, 256));
-}
-
-// ------------------------------------------------------------ security
-
-#[derive(Default)]
-pub struct SecurityState {
-    current: String,
-    password: String,
-    changed: bool,
-    running: bool,
-    errors: FormErrors,
-}
-
-const SECURITY_ORDER: [&str; 2] = ["current_password", "password"];
-
-/// Settings area "Sicherheit".
-pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityState) {
-    let theme = Theme::of(ui.ctx());
-    let c = &theme.c;
-    if s.running
-        && let Some(result) = settled(app, "password")
-    {
-        s.running = false;
-        match result {
-            Ok(()) => {
-                s.current.clear();
-                s.password.clear();
-                s.changed = true;
-                if let Some(updated) = app.client.with_state(|st| st.me().cloned()) {
-                    adopt_user(app, &updated);
-                }
-            }
-            Err(e) => s
-                .errors
-                .from_failure(&Failure::from_api(&e), &SECURITY_ORDER),
-        }
-    }
-    if let Some(true) = controls::answer(ui.ctx(), "logout-all") {
-        app.client.voice_leave();
-        app.client.logout_all();
-        app.session.adopt(&serde_json::json!({ "user": null }));
-        app.nav.navigate("/login");
-        return;
-    }
-    controls::column(ui, 560.0, |ui| {
-        // "Angemeldet als <b>{email}</b>": split first, then the address
-        // goes in, so it cannot add tags.
-        let mut block = text::Rich::new(controls::HINT);
-        for piece in gelabber_i18n::pieces(texts::security_signed_in_as()) {
-            let shown = piece.text.replace("{email}", &user.email);
-            block = match piece.tag {
-                Some(_) => block.push(&shown, controls::HINT.weight(600.0), c.text),
-                None => block.push(&shown, controls::HINT, c.muted),
-            };
-        }
-        let block = block.layout(ui);
-        crate::text::show(ui, &block);
-        ui.add_space(20.0);
-        let current = TextField::new("current_password", &mut s.current)
-            .label(texts::security_current_password())
-            .password()
-            .error(s.errors.field("current_password"))
-            .show(ui);
-        if current.response.changed() {
-            s.changed = false;
-            s.errors.clear_field("current_password");
-        }
-        ui.add_space(20.0);
-        let new = TextField::new("new_password", &mut s.password)
-            .label(texts::security_new_password())
-            .password()
-            .error(s.errors.field("password"))
-            .hint(Some(texts::security_new_password_hint()))
-            .show(ui);
-        if new.response.changed() {
-            s.changed = false;
-            s.errors.clear_field("password");
-        }
-        ui.add_space(20.0);
-        form_error(ui, &s.errors);
-        let mut submit = current.submitted || new.submitted;
-        controls::row(ui, 12.0, 36.0, |ui| {
-            submit |= ui
-                .add(
-                    Button::new(texts::security_change())
-                        .primary()
-                        .pending(s.running.then_some(texts::security_changing())),
-                )
-                .clicked();
-            if s.changed {
-                ui.add(crate::widgets::InlineStatus::new(
-                    Some(texts::security_changed()),
-                    crate::widgets::StatusTone::Success,
-                ));
-            }
-        });
-        if submit && !s.running {
-            s.changed = false;
-            let mut fields = Vec::new();
-            if s.current.is_empty() {
-                fields.push((
-                    "current_password",
-                    field_message("current_password", "required"),
-                ));
-            }
-            if let Some(code) = validate_password(&s.password) {
-                fields.push(("password", field_message("password", code)));
-            }
-            if fields.is_empty() {
-                s.errors = FormErrors::default();
-                s.running = true;
-                app.client.change_password(&s.current, &s.password);
-            } else {
-                s.errors.set_fields(fields);
-            }
-        }
-        // ProfilePage's forms call useFormErrors() without a form ref: focus stays put.
-        s.errors.focus = None;
-
-        // `.settings-danger`: margin-top 40, border-top, padding-top 24.
-        ui.add_space(32.0);
-        let top = ui.cursor().min.y;
-        crate::widgets::rule_h(ui.painter(), c.border, ui.max_rect().x_range(), top);
-        ui.add_space(25.0);
-        controls::paint(
-            ui,
-            ui.cursor().min,
-            texts::security_everywhere_title(),
-            text::TITLE_SM,
-            c.text,
-        );
-        ui.allocate_exact_size(vec2(560.0, 20.8), egui::Sense::hover());
-        // `.settings-danger .settings-hint`: margin 4 0 12.
-        ui.add_space(4.0);
-        controls::paragraph(
-            ui,
-            texts::security_everywhere_hint(),
-            controls::HINT,
-            c.muted,
-            560.0,
-        );
-        ui.add_space(12.0);
-        if ui
-            .add(
-                Button::new(texts::security_everywhere_button())
-                    .variant(ButtonVariant::DangerOutline),
-            )
-            .clicked()
-        {
-            controls::ask(
-                ui.ctx(),
-                Confirm::danger(
-                    "logout-all",
-                    texts::security_everywhere_confirm_title(),
-                    Some(texts::security_everywhere_confirm_message()),
-                    texts::security_everywhere_confirm_label(),
-                ),
-            );
-        }
-    });
 }
 
 #[cfg(test)]

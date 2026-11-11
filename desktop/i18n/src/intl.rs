@@ -278,6 +278,65 @@ fn round_decimal(text: &str, places: usize) -> (String, String) {
     (String::from_utf8(digits).unwrap_or_default(), fraction)
 }
 
+/// `formatRelative` with `numeric: "auto"`: "gestern", "letzten Monat",
+/// "in dieser Minute" where `Intl` has a word, otherwise as
+/// [`format_relative`].
+pub fn format_relative_auto(value: i64, unit: Unit) -> String {
+    let word = match (get(), unit, value) {
+        (Locale::De, Unit::Minute, 0) => "in dieser Minute",
+        (Locale::De, Unit::Hour, 0) => "in dieser Stunde",
+        (Locale::De, Unit::Day, -2) => "vorgestern",
+        (Locale::De, Unit::Day, -1) => "gestern",
+        (Locale::De, Unit::Day, 0) => "heute",
+        (Locale::De, Unit::Day, 1) => "morgen",
+        (Locale::De, Unit::Day, 2) => "übermorgen",
+        (Locale::De, Unit::Month, -1) => "letzten Monat",
+        (Locale::De, Unit::Month, 0) => "diesen Monat",
+        (Locale::De, Unit::Month, 1) => "nächsten Monat",
+        (Locale::De, Unit::Year, -1) => "letztes Jahr",
+        (Locale::De, Unit::Year, 0) => "dieses Jahr",
+        (Locale::De, Unit::Year, 1) => "nächstes Jahr",
+        (Locale::En, Unit::Minute, 0) => "this minute",
+        (Locale::En, Unit::Hour, 0) => "this hour",
+        (Locale::En, Unit::Day, -1) => "yesterday",
+        (Locale::En, Unit::Day, 0) => "today",
+        (Locale::En, Unit::Day, 1) => "tomorrow",
+        (Locale::En, Unit::Month, -1) => "last month",
+        (Locale::En, Unit::Month, 0) => "this month",
+        (Locale::En, Unit::Month, 1) => "next month",
+        (Locale::En, Unit::Year, -1) => "last year",
+        (Locale::En, Unit::Year, 0) => "this year",
+        (Locale::En, Unit::Year, 1) => "next year",
+        _ => return format_relative(value, unit),
+    };
+    word.to_owned()
+}
+
+/// `formatWhen` (operator/format.ts): how long ago or until when, `diff_ms`
+/// from now, in the first unit whose rounded count stays below the next:
+/// "vor 5 Minuten", "gestern", "in 3 Tagen".
+pub fn format_when(diff_ms: i64) -> String {
+    const MINUTE: f64 = 60_000.0;
+    const HOUR: f64 = 60.0 * MINUTE;
+    const DAY: f64 = 24.0 * HOUR;
+    // `Math.round`: halves go up.
+    let round = |x: f64| (x + 0.5).floor() as i64;
+    let diff = diff_ms as f64;
+    let steps = [
+        (MINUTE, 60, Unit::Minute),
+        (HOUR, 24, Unit::Hour),
+        (DAY, 31, Unit::Day),
+        (30.0 * DAY, 12, Unit::Month),
+    ];
+    for (size, below, unit) in steps {
+        let count = round(diff / size);
+        if count.abs() < below {
+            return format_relative_auto(count, unit);
+        }
+    }
+    format_relative_auto(round(diff / (365.0 * DAY)), Unit::Year)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,5 +439,25 @@ mod tests {
             "1,200 characters too many"
         );
         assert_eq!(crate::auth::invite_members(1), "1 member");
+    }
+
+    /// The cases of operator/format.test.ts `formatWhen`.
+    #[test]
+    fn when_in_words() {
+        const MIN: i64 = 60_000;
+        const DAY: i64 = 24 * 60 * MIN;
+        assert_eq!(format_when(-10_000), "in dieser Minute");
+        assert_eq!(format_when(-5 * MIN), "vor 5 Minuten");
+        assert_eq!(format_when(-2 * 60 * MIN), "vor 2 Stunden");
+        assert_eq!(format_when(-DAY), "gestern");
+        assert_eq!(format_when(-2 * DAY), "vorgestern");
+        assert_eq!(format_when(7 * DAY), "in 7 Tagen");
+        assert_eq!(format_when(-40 * DAY), "letzten Monat");
+        assert_eq!(format_when(-400 * DAY), "letztes Jahr");
+        let _english = on_this_thread(Locale::En);
+        assert_eq!(format_when(-10_000), "this minute");
+        assert_eq!(format_when(-5 * MIN), "5 minutes ago");
+        assert_eq!(format_when(-DAY), "yesterday");
+        assert_eq!(format_when(-2 * DAY), "2 days ago");
     }
 }

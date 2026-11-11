@@ -456,3 +456,192 @@ pub fn placeholder(ui: &mut Ui) {
         pos2(screen.center().x - status.width() / 2.0, y),
     );
 }
+
+/// Google's standard colour "G" (the web's inline SVG in
+/// components/ProviderButton.tsx), drawn untinted.
+const GOOGLE_MARK: &[u8] = include_bytes!("../../../assets/images/google-g.svg");
+
+/// The Google mark at `size` px, rasterised once per physical size.
+fn google_mark(ctx: &egui::Context, size: f32) -> Option<egui::TextureHandle> {
+    use resvg::{tiny_skia, usvg};
+    let px = (size * ctx.pixels_per_point()).round().max(1.0) as u32;
+    let id = Id::unique(("gelabber-google-mark", px));
+    if let Some(texture) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(texture);
+    }
+    let tree = usvg::Tree::from_data(GOOGLE_MARK, &usvg::Options::default()).ok()?;
+    let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
+    let scale = px as f32 / 48.0;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let image =
+        egui::ColorImage::from_rgba_premultiplied([px as usize, px as usize], pixmap.data());
+    let texture = ctx.load_texture(
+        format!("google-mark-{px}"),
+        image,
+        egui::TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|d| d.insert_temp(id, texture.clone()));
+    Some(texture)
+}
+
+/// `.auth-provider--google`: 500 14px/20px, letter-spacing 0.25px, in
+/// Google's own colours (its font is not bundled; the app's stands in, as
+/// on the web).
+const GOOGLE_LABEL: TextStyle = TextStyle::new(14.0, 500.0, 20.0 / 14.0).tracking(0.25 / 14.0);
+
+/// `<ProviderButton>`: a full-width `size="lg"` button that leaves for the
+/// provider. Google's keeps Google's light or dark button after the page's
+/// tone on every theme; any other provider is a transparent secondary
+/// button with its initial in a ring. `pending` swaps the label and keeps
+/// the look (`aria-busy`); `disabled` fades it.
+pub fn provider_button(
+    ui: &mut Ui,
+    provider: &gelabber_client::AuthProvider,
+    pending: Option<&str>,
+    disabled: bool,
+) -> egui::Response {
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
+    let google = provider.id == "google";
+    let own_label;
+    let label = match pending {
+        Some(label) => label,
+        None if google => auth::oidc_sign_in_with_google(),
+        None => {
+            own_label = auth::oidc_sign_in_with(&provider.name);
+            &own_label
+        }
+    };
+    let enabled = pending.is_none() && !disabled;
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), crate::theme::control::LG),
+        sense,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let hovered = enabled && response.hovered();
+    // (fill, hover fill, border, text)
+    let (fill, hover, border, ink) = if !google {
+        (Color32::TRANSPARENT, c.hover, c.border_strong, c.text)
+    } else if crate::theme::is_dark_tone(c.bg) {
+        let (bg, ink) = (
+            Color32::from_rgb(0x13, 0x13, 0x14),
+            Color32::from_rgb(0xe3, 0xe3, 0xe3),
+        );
+        (
+            bg,
+            crate::theme::mix(bg, ink, 0.08),
+            Color32::from_rgb(0x8e, 0x91, 0x8f),
+            ink,
+        )
+    } else {
+        let (bg, ink) = (Color32::WHITE, Color32::from_rgb(0x1f, 0x1f, 0x1f));
+        (
+            bg,
+            crate::theme::mix(bg, ink, 0.08),
+            Color32::from_rgb(0x74, 0x77, 0x75),
+            ink,
+        )
+    };
+    let fill = crate::widgets::eased(ui.ctx(), response.id.with("hover"), hovered, fill, hover);
+    // `opacity: 0.6` over the card while another provider's flow runs.
+    let faded = |color: Color32| {
+        if disabled && pending.is_none() {
+            color.gamma_multiply(0.6)
+        } else {
+            color
+        }
+    };
+    let painter = ui.painter();
+    let box_rect = crate::widgets::snap(ui.ctx(), rect);
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring(painter, box_rect, theme.radius.sm, &theme);
+    }
+    painter.rect(
+        box_rect,
+        corner(theme.radius.sm),
+        faded(fill),
+        Stroke::new(1.0, faded(border)),
+        StrokeKind::Inside,
+    );
+    let style = if google {
+        GOOGLE_LABEL
+    } else {
+        text::UI.size(14.0).weight(600.0)
+    };
+    let block = Block::single(ui, label, style, faded(ink));
+    // `gap: 10px` for Google's mark, the button's 8px otherwise.
+    let gap = if google { 10.0 } else { 8.0 };
+    let content = 20.0 + gap + block.width();
+    let left = (rect.center().x - content / 2.0).round();
+    let mark = Rect::from_min_size(
+        pos2(left, (rect.center().y - 10.0).round()),
+        Vec2::splat(20.0),
+    );
+    if google {
+        if let Some(texture) = google_mark(ui.ctx(), 20.0) {
+            painter.image(
+                texture.id(),
+                mark,
+                Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+                faded(Color32::WHITE),
+            );
+        }
+    } else {
+        // `.auth-provider__mark`: the initial in a 1.5px ring.
+        painter.circle_stroke(mark.center(), 9.25, Stroke::new(1.5, faded(ink)));
+        let initial: String = provider
+            .name
+            .chars()
+            .next()
+            .map(|ch| ch.to_uppercase().collect())
+            .unwrap_or_default();
+        let letter = Block::single(ui, &initial, TextStyle::new(11.0, 700.0, 1.0), faded(ink));
+        letter.paint(painter, mark.center() - letter.size() / 2.0);
+    }
+    block.paint(
+        painter,
+        pos2(left + 20.0 + gap, rect.center().y - style.line_px() / 2.0),
+    );
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    } else if pending.is_some() && response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Progress);
+    }
+    response
+}
+
+/// `.auth-divider`: "oder" between two hairlines, `--lr-type-meta`, muted,
+/// 12px apart.
+pub fn divider(ui: &mut Ui) {
+    let theme = Theme::of(ui.ctx());
+    let block = Block::single(ui, auth::oidc_or(), text::META, theme.c.muted);
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), layout_unit(block.height())),
+        Sense::hover(),
+    );
+    let left = rect.center().x - block.width() / 2.0;
+    block.paint(ui.painter(), pos2(left, rect.top()));
+    // The rules' 1px top borders, centred on the line box.
+    let y = (rect.center().y - 0.5).round();
+    let line = |from: f32, to: f32| {
+        ui.painter().rect_filled(
+            Rect::from_min_max(pos2(from, y), pos2(to, y + 1.0)),
+            0.0,
+            theme.c.border,
+        );
+    };
+    line(rect.left(), left - space::S3);
+    line(left + block.width() + space::S3, rect.right());
+}

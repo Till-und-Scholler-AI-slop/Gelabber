@@ -143,6 +143,7 @@ crate::strings! {
     // /login
     login_session_expired = "Sitzung abgelaufen. Melde dich erneut an."
         | "Session expired. Please sign in again.";
+    login_account_deleted = "Dein Konto wurde gelöscht." | "Your account has been deleted.";
     login_title = "Anmelden" | "Sign in";
     login_new_here = "Neu bei Gelabber?" | "New to Gelabber?";
     login_create_account = "Konto anlegen" | "Create account";
@@ -221,6 +222,92 @@ crate::strings! {
     legal_imprint = "Impressum" | "Imprint";
     legal_privacy = "Datenschutz" | "Privacy";
     legal_terms = "Nutzungsbedingungen" | "Terms";
+    // Sign-in through a provider (#518): its API error codes, the
+    // `oidc_error` a flow can end with, and the page the system browser
+    // shows when it hands the result back to the app.
+    error_oidc_unavailable = "Die Anmeldung beim Anbieter ist gerade nicht erreichbar. Bitte später noch einmal versuchen."
+        | "Sign-in through the provider isn’t reachable right now. Please try again later.";
+    error_oidc_email_unverified = "Dein Konto beim Anbieter hat keine bestätigte E-Mail-Adresse, damit kann Gelabber dich nicht anmelden."
+        | "Your account with the provider has no confirmed email address, so Gelabber can’t sign you in.";
+    error_oidc_account_unverified = "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde. Melde dich mit deinem Passwort an und verbinde den Anbieter dann unter Einstellungen → Sicherheit."
+        | "An account with this email address exists, but its address was never confirmed. Sign in with your password, then connect the provider under Settings → Security.";
+    error_identity_taken = "Dieses Konto beim Anbieter ist schon mit einem anderen Gelabber-Konto verbunden."
+        | "This provider account is already connected to another Gelabber account.";
+    error_password_required = "Lege zuerst ein Passwort fest, sonst kannst du dich nicht mehr anmelden."
+        | "Set a password first, or you won’t be able to sign in any more.";
+    error_reauth_required = "Bitte bestätige zuerst, dass du es bist, und melde dich noch einmal an."
+        | "Please confirm it’s you first by signing in again.";
+    error_oidc_wrong_origin = "Die Anmeldung über einen Anbieter geht nur unter der eingerichteten Adresse dieses Gelabber-Servers. Öffne Gelabber dort und versuche es noch einmal."
+        | "Signing in through a provider only works at this Gelabber server’s configured address. Open Gelabber there and try again.";
+    error_session_changed = "Inzwischen ist hier ein anderes Konto angemeldet. Bitte noch einmal versuchen."
+        | "Another account has signed in here in the meantime. Please try again.";
+    oidc_error_cancelled = "Anmeldung abgebrochen." | "Sign-in cancelled.";
+    oidc_error_expired = "Die Anmeldung ist abgelaufen oder wurde in einem anderen Browser gestartet. Bitte noch einmal versuchen."
+        | "The sign-in expired or was started in another browser. Please try again.";
+    oidc_error_failed = "Die Anmeldung beim Anbieter hat nicht geklappt. Bitte noch einmal versuchen."
+        | "Signing in with the provider didn’t work. Please try again.";
+    // Native only: the system browser's page after the loopback callback.
+    oidc_loopback_done = "Du kannst dieses Fenster schließen und zu Gelabber zurückkehren."
+        | "You can close this window and return to Gelabber.";
+    error_invitation_required = "Zum Registrieren brauchst du eine Einladung."
+        | "You need an invitation to register.";
+    error_invitation_invalid = "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt."
+        | "This invitation is unknown, expired or already used.";
+    error_account_disabled = "Dieses Konto ist gesperrt." | "This account has been disabled.";
+    error_server_blocked = "Dieser Server wurde vom Betreiber gesperrt."
+        | "This server has been blocked by the operator.";
+    error_join_request_required = "Diesem Server trittst du nur auf Anfrage bei."
+        | "This server can only be joined by request.";
+    error_join_request_declined = "Deine Anfrage wurde nicht angenommen. Du kannst in ein paar Tagen wieder anfragen."
+        | "Your request was not accepted. You can ask again in a few days.";
+    error_join_requests_full = "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen."
+        | "Too many requests are open right now. Please try again later.";
+    error_already_member = "Du bist schon Mitglied dieses Servers."
+        | "You are already a member of this server.";
+    error_owns_servers = "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst."
+        | "You still own servers. Hand them over to another member or delete them first.";
+    error_export_pending = "Dein Export wird schon erstellt." | "Your export is already being prepared.";
+
+    // Sign-in through a provider on /login and /register (#518): Google's
+    // own wording for its button, the divider above the form, and, native
+    // only, the card while the system browser has the sign-in.
+    oidc_sign_in_with_google = "Über Google anmelden" | "Sign in with Google";
+    oidc_or = "oder" | "or";
+    oidc_waiting = "Weiter im Browser …" | "Continue in your browser …";
+    // /sign-in/name: a first sign-in through a provider picks its name.
+    sign_in_name_title = "Anzeigenamen wählen" | "Choose a display name";
+    sign_in_name_lead = "Dein Konto ist gleich fertig. Wähle den Namen, den andere sehen."
+        | "Your account is almost ready. Choose the name others will see.";
+    /// Split with [`crate::pieces`]; `{provider}` and `{email}` are filled
+    /// in afterwards.
+    sign_in_name_signed_in_as = "Angemeldet mit {provider} als <b>{email}</b>"
+        | "Signed in with {provider} as <b>{email}</b>";
+    sign_in_name_name_label = "Anzeigename" | "Display name";
+    sign_in_name_submit = "Konto anlegen" | "Create account";
+    sign_in_name_submitting = "Konto wird angelegt…" | "Creating account…";
+    sign_in_name_expired_title = "Anmeldung abgelaufen" | "Sign-in expired";
+    sign_in_name_expired = "Melde dich noch einmal an, um dein Konto anzulegen."
+        | "Sign in again to create your account.";
+    // /register on an invitation-only instance (#517).
+    field_label_invitation = "Einladungscode" | "Invitation code";
+    register_invitation_only = "Gelabber ist gerade nur mit Einladung offen."
+        | "Gelabber is open by invitation only for now.";
+}
+
+/// `oidc.signInWith`: the button of a provider other than Google.
+pub fn oidc_sign_in_with(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("Mit {provider} anmelden"),
+        Locale::En => format!("Sign in with {provider}"),
+    }
+}
+
+/// `oidc.redirecting`: a provider button while the flow starts.
+pub fn oidc_redirecting(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("Weiter zu {provider}…"),
+        Locale::En => format!("Continuing to {provider}…"),
+    }
 }
 
 /// `fieldError.required`: "{label} fehlt.".
@@ -309,5 +396,18 @@ pub fn invite_expiry_days(days: i64) -> String {
         (Locale::De, 2) => "übermorgen".to_owned(),
         (Locale::En, 1) => "tomorrow".to_owned(),
         _ => format_relative(days, Unit::Day),
+    }
+}
+
+/// `error.joinRequestDeclinedUntil`: a declined request to join names the
+/// day from which the person may ask again; `date` is formatted already.
+pub fn error_join_request_declined_until(date: &str) -> String {
+    match get() {
+        Locale::De => {
+            format!(
+                "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {date} wieder anfragen."
+            )
+        }
+        Locale::En => format!("Your request was not accepted. You can ask again from {date}."),
     }
 }
