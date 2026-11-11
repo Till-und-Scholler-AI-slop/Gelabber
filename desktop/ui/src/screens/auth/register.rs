@@ -1,13 +1,14 @@
 //! `/register` (pages/RegisterPage.tsx) and its "Postfach prüfen" step.
 
 use egui::Ui;
+use gelabber_client::{OidcPurpose, OidcStart};
 use gelabber_i18n::auth;
 use reqwest::Method;
 use serde_json::{Value, json};
 
 use super::{
-    RESEND_COOLDOWN_S, Request, fail, focus_invalid, form_error, invite_banner, layout,
-    result_lines, result_with_strong, seconds_left, submit_after, wide_button,
+    RESEND_COOLDOWN_S, Request, fail, focus_invalid, form_error, invite_banner, layout, oidc,
+    oidc_error_line, result_lines, result_with_strong, seconds_left, submit_after, wide_button,
 };
 use crate::app::{AppCtx, is_invite_redirect, with_query};
 use crate::rules::{
@@ -31,6 +32,8 @@ pub struct State {
     resend: Request,
     resend_until: Option<f64>,
     status: Option<(String, StatusTone)>,
+    /// "Über Google anmelden" and its flow through the system browser.
+    pub provider: oidc::ProviderSignIn,
 }
 
 const ORDER: [&str; 3] = ["name", "email", "password"];
@@ -52,6 +55,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             Err(error) => fail(&mut s.errors, &error, &ORDER),
         }
     }
+    if s.provider.poll(ui, app, &mut s.errors, &ORDER) {
+        return;
+    }
     if s.mailed_to.is_some() {
         mail_sent(ui, app, s, redirect.as_deref());
         return;
@@ -70,7 +76,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 &[("redirect", redirect.as_deref().unwrap_or(""))],
             ));
         }
-        ui.add_space(space::S6);
+        let start = || OidcStart {
+            redirect: redirect.clone(),
+            ..OidcStart::new(OidcPurpose::SignIn)
+        };
+        if !s.provider.show(ui, app, &mut s.errors, start) {
+            ui.add_space(space::S6);
+        }
         let name = TextField::new("name", &mut s.name)
             .label(auth::field_label_name())
             .autofocus(true)
@@ -101,7 +113,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             s.errors.clear_field("password");
         }
         ui.add_space(space::S5);
-        form_error(ui, &s.errors);
+        if !oidc_error_line(ui, app, &s.errors) {
+            form_error(ui, &s.errors);
+        }
         let cooldown = s.errors.cooldown();
         let clicked = submit_after(
             ui,
@@ -125,6 +139,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 .collect();
             if fields.is_empty() {
                 s.errors = FormErrors::default();
+                s.provider.cancel();
                 let http = app.client.http().clone();
                 let body = json!({ "email": s.email, "password": s.password, "name": s.name });
                 s.request = Some(Pending::spawn(app.client, async move {
