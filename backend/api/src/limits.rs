@@ -54,9 +54,15 @@ pub const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// is answered as usual and nothing is sent, so nobody can flood an inbox
 /// through the instance.
 pub const MAIL_PER_ADDRESS_PER_HOUR: u32 = 5;
+/// Directory joins and requests to join per account and hour (handler
+/// bucket `dir_join`).
+pub const DIRECTORY_JOIN_PER_HOUR: u32 = 10;
+/// Directory searches per account and minute (handler bucket `dir_search`,
+/// also on GET): far above the debounced search box and its paging.
+pub const DIRECTORY_SEARCH_PER_MIN: u32 = 60;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
-const HOUR: Duration = Duration::from_secs(3600);
+pub(crate) const HOUR: Duration = Duration::from_secs(3600);
 
 /// Above this many keys the limiter drops expired windows, at most once per
 /// [`SWEEP_EVERY`].

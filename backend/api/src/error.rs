@@ -102,6 +102,16 @@ pub enum ApiError {
     OidcWrongOrigin,
     /// 409: the signed-in account changed while connecting a provider.
     SessionChanged,
+    /// 409: the listed server takes requests to join, not direct joins.
+    JoinRequestRequired,
+    /// 409: the server declined the caller's last request to join, and the
+    /// cooldown has `retry_after` seconds left.
+    JoinRequestDeclined { retry_after: u64 },
+    /// 409: the caller or the server has as many pending requests to join as
+    /// the directory allows.
+    JoinRequestsFull,
+    /// 409: a request to join a server the caller is a member of.
+    AlreadyMember,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,6 +158,10 @@ impl ApiError {
             Self::ReauthRequired => "reauth_required",
             Self::OidcWrongOrigin => "oidc_wrong_origin",
             Self::SessionChanged => "session_changed",
+            Self::JoinRequestRequired => "join_request_required",
+            Self::JoinRequestDeclined { .. } => "join_request_declined",
+            Self::JoinRequestsFull => "join_requests_full",
+            Self::AlreadyMember => "already_member",
         }
     }
 
@@ -180,6 +194,10 @@ impl ApiError {
             Self::ReauthRequired => StatusCode::FORBIDDEN,
             Self::OidcWrongOrigin => StatusCode::CONFLICT,
             Self::SessionChanged => StatusCode::CONFLICT,
+            Self::JoinRequestRequired
+            | Self::JoinRequestDeclined { .. }
+            | Self::JoinRequestsFull
+            | Self::AlreadyMember => StatusCode::CONFLICT,
         }
     }
 
@@ -226,6 +244,12 @@ impl ApiError {
             Self::ReauthRequired => "Sign in again to confirm it is you.",
             Self::OidcWrongOrigin => "Open this instance at its public address to sign in.",
             Self::SessionChanged => "You signed in to another account meanwhile. Try again.",
+            Self::JoinRequestRequired => "This server takes requests to join.",
+            Self::JoinRequestDeclined { .. } => {
+                "Your request to join was not accepted. You can ask again later."
+            }
+            Self::JoinRequestsFull => "Too many open requests to join. Try again later.",
+            Self::AlreadyMember => "You are already a member of this server.",
         }
     }
 
@@ -238,9 +262,9 @@ impl ApiError {
             _ => BTreeMap::new(),
         };
         let retry_after = match self {
-            Self::RateLimited { retry_after } | Self::UpstreamQuota { retry_after } => {
-                Some(*retry_after)
-            }
+            Self::RateLimited { retry_after }
+            | Self::UpstreamQuota { retry_after }
+            | Self::JoinRequestDeclined { retry_after } => Some(*retry_after),
             _ => None,
         };
         ErrorBody {
@@ -412,5 +436,31 @@ mod tests {
         assert_eq!(json["error"], "server_blocked");
         assert!(json.get("fields").is_none());
         assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn join_errors_are_409_and_the_decline_carries_retry_after() {
+        for (err, code) in [
+            (ApiError::JoinRequestRequired, "join_request_required"),
+            (
+                ApiError::JoinRequestDeclined { retry_after: 3600 },
+                "join_request_declined",
+            ),
+            (ApiError::JoinRequestsFull, "join_requests_full"),
+            (ApiError::AlreadyMember, "already_member"),
+        ] {
+            let json = serde_json::to_value(err.body()).unwrap();
+            assert_eq!(json["error"], code);
+            assert!(json.get("fields").is_none());
+            assert_eq!(err.status(), StatusCode::CONFLICT, "{code}");
+        }
+        let json = serde_json::to_value(ApiError::JoinRequestDeclined { retry_after: 3600 }.body())
+            .unwrap();
+        assert_eq!(json["retry_after"], 3600);
+        let json = serde_json::to_value(ApiError::AlreadyMember.body()).unwrap();
+        assert!(json.get("retry_after").is_none());
+        // Not a rate limit: no Retry-After header.
+        let response = ApiError::JoinRequestDeclined { retry_after: 60 }.into_response();
+        assert!(response.headers().get(RETRY_AFTER).is_none());
     }
 }

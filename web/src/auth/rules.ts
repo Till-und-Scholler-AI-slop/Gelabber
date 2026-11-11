@@ -3,9 +3,15 @@
 // field codes render through the same `fieldMessage` table, whose copy is in
 // the `auth` catalog (`error.*`, `fieldLabel.*`, `fieldError.*`).
 
-import type { ApiErrorCode, FieldCode, FieldErrors } from "../api/client.ts";
+import type {
+  ApiError,
+  ApiErrorCode,
+  FieldCode,
+  FieldErrors,
+} from "../api/client.ts";
 import { translate } from "../i18n/catalog.ts";
 import { auth } from "../i18n/catalogs/auth.ts";
+import { formatDate } from "../i18n/format.ts";
 import type { AvatarDecoration, ProfileCard, ProfilePatch } from "./types.ts";
 
 export const PASSWORD_MIN = 8;
@@ -491,6 +497,14 @@ export function errorMessage(code: ApiErrorCode): string {
       return translate(auth, "error.oidcWrongOrigin");
     case "session_changed":
       return translate(auth, "error.sessionChanged");
+    case "join_request_required":
+      return translate(auth, "error.joinRequestRequired");
+    case "join_request_declined":
+      return translate(auth, "error.joinRequestDeclined");
+    case "join_requests_full":
+      return translate(auth, "error.joinRequestsFull");
+    case "already_member":
+      return translate(auth, "error.alreadyMember");
   }
 }
 
@@ -539,6 +553,21 @@ export function oidcErrorMessage(code: OidcError): string {
     case "account_disabled":
       return errorMessage(code);
   }
+}
+
+/**
+ * The copy of an API error, with what its body adds: a declined request to
+ * join names the day from which the person may ask again.
+ */
+export function apiErrorMessage(
+  error: Pick<ApiError, "code" | "retryAfter">,
+  now: number = Date.now(),
+): string {
+  if (error.code === "join_request_declined" && error.retryAfter) {
+    const date = formatDate(now + error.retryAfter * 1000);
+    return translate(auth, "error.joinRequestDeclinedUntil", { date });
+  }
+  return errorMessage(error.code);
 }
 
 /** Turns per-field codes into per-field messages. */

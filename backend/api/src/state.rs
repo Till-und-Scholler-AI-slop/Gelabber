@@ -82,6 +82,8 @@ pub struct AppState {
     pub registration: RegistrationMode,
     /// Sign-in through OpenID Connect; `None` while it is off.
     pub oidc: Option<Arc<crate::auth::oidc::Oidc>>,
+    /// `API_DIRECTORY`: the server directory is on (`directory`).
+    pub directory: bool,
 }
 
 #[derive(Debug)]
@@ -202,6 +204,7 @@ impl AppState {
             operators: Arc::new(config.operators.clone()),
             registration: config.registration,
             oidc,
+            directory: config.directory,
         })
     }
 

@@ -111,6 +111,17 @@ export type AccountFrame =
       /** The account's language changed on some device. */
       op: "lc";
       l: Locale;
+    }
+  | {
+      /** A join request was accepted: the account is now a member of `s`. */
+      op: "jn";
+      s: string;
+    }
+  | {
+      /** The pending join requests of server `s` changed; `n` are open. */
+      op: "jq";
+      s: string;
+      n: number;
     };
 
 /** A conversation's new read position, as `PUT …/read` answers it. */
@@ -171,7 +182,9 @@ export function decode(raw: string): ServerFrame | null {
     op === "dm" ||
     op === "ns" ||
     op === "rd" ||
-    op === "lc"
+    op === "lc" ||
+    op === "jn" ||
+    op === "jq"
   ) {
     return value as ServerFrame;
   }

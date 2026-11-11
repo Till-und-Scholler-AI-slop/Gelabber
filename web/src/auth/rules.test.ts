@@ -5,6 +5,7 @@ import { setLocale } from "../i18n/locale.ts";
 import {
   OIDC_ERRORS,
   PASSWORD_MAX,
+  apiErrorMessage,
   avatarFieldAfterRemoval,
   errorMessage,
   fieldMessage,
@@ -305,5 +306,52 @@ describe("sign-in through a provider (#518)", () => {
     expect(isOidcError("expired")).toBe(true);
     expect(isOidcError("registration_closed")).toBe(false);
     expect(isOidcError(42)).toBe(false);
+  });
+});
+
+describe("directory codes (#520)", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("has German and English text for the join refusals", () => {
+    expect(errorMessage("join_request_required")).toBe(
+      "Diesem Server trittst du nur auf Anfrage bei.",
+    );
+    expect(errorMessage("join_request_declined")).toBe(
+      "Deine Anfrage wurde nicht angenommen. Du kannst in ein paar Tagen wieder anfragen.",
+    );
+    expect(errorMessage("join_requests_full")).toBe(
+      "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen.",
+    );
+    expect(errorMessage("already_member")).toBe(
+      "Du bist schon Mitglied dieses Servers.",
+    );
+    setLocale("en", { persist: false });
+    expect(errorMessage("join_request_required")).toBe(
+      "This server can only be joined by request.",
+    );
+    expect(errorMessage("already_member")).toBe(
+      "You are already a member of this server.",
+    );
+  });
+  it("names the day a declined request may ask again", () => {
+    const now = Date.UTC(2026, 10, 11, 12);
+    const week = 7 * 24 * 3600;
+    expect(
+      apiErrorMessage({ code: "join_request_declined", retryAfter: week }, now),
+    ).toBe(
+      "Deine Anfrage wurde nicht angenommen. Du kannst ab dem 18. November 2026 wieder anfragen.",
+    );
+    expect(
+      apiErrorMessage({ code: "join_request_declined", retryAfter: null }, now),
+    ).toBe(errorMessage("join_request_declined"));
+    setLocale("en", { persist: false });
+    expect(
+      apiErrorMessage({ code: "join_request_declined", retryAfter: week }, now),
+    ).toBe(
+      "Your request was not accepted. You can ask again from 18 November 2026.",
+    );
+    expect(
+      apiErrorMessage({ code: "already_member", retryAfter: null }, now),
+    ).toBe("You are already a member of this server.");
   });
 });

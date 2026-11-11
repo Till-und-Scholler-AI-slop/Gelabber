@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { translate } from "../../i18n/catalog.ts";
+import { discovery } from "../../i18n/catalogs/discovery.ts";
+import { operator } from "../../i18n/catalogs/operator.ts";
 import { setLocale } from "../../i18n/locale.ts";
 import type { Report, ReportPage, ReportQuery } from "../types.ts";
 
@@ -40,7 +43,7 @@ vi.mock("../../components/ui/ChipGroup.tsx", () => ({
   },
 }));
 
-import { ReportsPage } from "./ReportsPage.tsx";
+import { ListingSnapshot, ReportsPage } from "./ReportsPage.tsx";
 
 const report = (overrides: Partial<Report> = {}): Report => ({
   id: "r1",
@@ -59,6 +62,7 @@ const report = (overrides: Partial<Report> = {}): Report => ({
   resolved_at: null,
   resolved_by: null,
   resolution_note: null,
+  snapshot: null,
   ...overrides,
 });
 const page = (reports: Report[]) =>
@@ -120,7 +124,7 @@ describe("Meldungen page", () => {
       "Fi Filmclub Spam Lauter Werbelinks im Kanal #allgemein. Tom vor 5 Minuten",
     );
     expect(body).toContain(
-      "Sp Spieleabend Gesperrt Anderes – keine Angabe Gelöschtes Konto",
+      "Sp Spieleabend Gesperrt Sonstiges – keine Angabe Gelöschtes Konto",
     );
     expect(html).toContain('aria-label="Aktionen für die Meldung zu Filmclub"');
     expect(html).toContain('data-label="Gemeldet von"');
@@ -164,7 +168,7 @@ describe("Meldungen page", () => {
       "Belästigung",
       "Sexuelle Inhalte",
       "Rechtswidrige Inhalte",
-      "Anderes",
+      "Sonstiges",
     ])
       expect(body).toContain(label);
     setLocale("en", { persist: false });
@@ -177,6 +181,71 @@ describe("Meldungen page", () => {
       "Reported by",
     ])
       expect(english).toContain(label);
+  });
+
+  it("names the reasons as the report dialog does", () => {
+    const reasons = [
+      "spam",
+      "harassment",
+      "sexual",
+      "illegal",
+      "other",
+    ] as const satisfies readonly Report["reason"][];
+    for (const locale of ["de", "en"] as const) {
+      setLocale(locale, { persist: false });
+      for (const reason of reasons)
+        expect(translate(operator, `reports.reason.${reason}`)).toBe(
+          translate(discovery, `report.reasons.${reason}`),
+        );
+    }
+  });
+
+  it("offers the reported listing only on reports that have one", () => {
+    const snapshot = {
+      name: "Filmclub",
+      icon_url: null,
+      description: "Jeden Freitag ein Film.",
+      language: "de",
+      join_mode: "open",
+    } as const;
+    fixture.result = {
+      data: page([report({ snapshot }), report({ id: "r2" })]),
+    };
+    const html = render();
+    expect(html.match(/Eintrag im Verzeichnis anzeigen/g)).toHaveLength(1);
+    expect(html).toContain(
+      'class="operator-more operator-snapshot-toggle" aria-expanded="false"',
+    );
+    // Closed until asked for, like long details.
+    expect(html).not.toContain('operator-snapshot"');
+    expect(html).not.toContain("Jeden Freitag ein Film.");
+  });
+
+  it("shows the listing as it was when reported", () => {
+    const at = "2026-11-03T18:05:00Z";
+    const listing = (join_mode: "open" | "request") =>
+      text(
+        renderToStaticMarkup(
+          <ListingSnapshot
+            snapshot={{
+              name: "Filmclub",
+              icon_url: null,
+              description: "Jeden Freitag ein Film.\nPopcorn mitbringen.",
+              language: "de",
+              join_mode,
+            }}
+            reportedAt={at}
+          />,
+        ),
+      );
+    expect(listing("open")).toMatch(
+      /^Verzeichniseintrag zur Zeit der Meldung \(03\.11\.2026, \d\d:05\) Name Filmclub Beschreibung Jeden Freitag ein Film\. Popcorn mitbringen\. Sprache Deutsch Beitritt Offen$/,
+    );
+    expect(listing("request")).toContain("Beitritt Auf Anfrage");
+    setLocale("en", { persist: false });
+    expect(listing("request")).toMatch(
+      /^Directory listing at the time of the report \(3 Nov 2026, \d\d:05\) Name Filmclub Description .* Language German Joining On request$/,
+    );
   });
 
   it("has a load error", () => {

@@ -22,9 +22,9 @@ use uuid::Uuid;
 use super::access::Operator;
 use super::accounts::{PAGE, offset};
 use super::audit::{self, Action, Targets};
-use super::servers::directory;
 use crate::auth::session::CurrentUser;
 use crate::auth::validate;
+use crate::directory::state_of;
 use crate::error::{ApiError, FieldErrors};
 use crate::json::Body;
 use crate::path::Id;
@@ -167,15 +167,25 @@ pub struct Filed {
 }
 
 /// `POST /api/servers/{id}/reports`: `201` with a new report, `200` with the
-/// reporter's open one. Only members may report here; whoever is not one
-/// gets `404`, like every other server route.
+/// reporter's open one. Members may report, and so may whoever can see the
+/// server's directory listing; anyone else gets `404`, like every other
+/// server route. When the caller can see the listing, the report keeps a
+/// snapshot of it (`directory::report_snapshot`).
 async fn create(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
     Body(body): Body<CreateBody>,
 ) -> Result<(StatusCode, Json<Filed>), ApiError> {
-    membership::load(&state.db, server_id, user.id).await?;
+    let snapshot = match membership::load(&state.db, server_id, user.id).await {
+        Ok(_) => crate::directory::report_snapshot(&state, server_id, user.id).await?,
+        Err(ApiError::NotFound) => Some(
+            crate::directory::report_snapshot(&state, server_id, user.id)
+                .await?
+                .ok_or(ApiError::NotFound)?,
+        ),
+        Err(err) => return Err(err),
+    };
     rate_limit(&state, user.id)?;
     let mut conn = state.db.acquire().await?;
     let (id, created) = file(
@@ -185,7 +195,7 @@ async fn create(
             reporter_id: user.id,
             reason: body.reason.unwrap_or_default(),
             details: body.details,
-            snapshot: None,
+            snapshot,
         },
     )
     .await?;
@@ -216,7 +226,7 @@ pub struct ReportedServer {
     pub name: String,
     pub icon_url: Option<String>,
     pub blocked: bool,
-    /// See [`directory`].
+    /// See [`state_of`].
     pub directory: &'static str,
 }
 
@@ -235,6 +245,10 @@ pub struct Report {
     pub resolved_at: Option<DateTime<Utc>>,
     pub resolved_by: Option<Person>,
     pub resolution_note: Option<String>,
+    /// The directory listing as the reporter saw it (`name`, `icon_url`,
+    /// `description`, `language`, `join_mode`); `null` when the report was
+    /// not filed from a listing the reporter could see.
+    pub snapshot: Option<serde_json::Value>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -245,6 +259,7 @@ struct ReportRow {
     server_icon_url: Option<String>,
     server_blocked: bool,
     server_delisted: bool,
+    server_listed: bool,
     reporter_id: Option<Uuid>,
     reporter_name: Option<String>,
     reason: String,
@@ -255,6 +270,7 @@ struct ReportRow {
     resolved_by: Option<Uuid>,
     resolved_by_name: Option<String>,
     resolution_note: Option<String>,
+    snapshot: Option<serde_json::Value>,
 }
 
 fn person(id: Option<Uuid>, name: Option<String>) -> Option<Person> {
@@ -273,7 +289,7 @@ impl From<ReportRow> for Report {
                 name: row.server_name,
                 icon_url: row.server_icon_url,
                 blocked: row.server_blocked,
-                directory: directory(row.server_delisted),
+                directory: state_of(row.server_delisted, row.server_listed),
             },
             reporter: person(row.reporter_id, row.reporter_name),
             reason: row.reason,
@@ -283,6 +299,7 @@ impl From<ReportRow> for Report {
             resolved_at: row.resolved_at,
             resolved_by: person(row.resolved_by, row.resolved_by_name),
             resolution_note: row.resolution_note,
+            snapshot: row.snapshot,
         }
     }
 }
@@ -294,9 +311,11 @@ macro_rules! report_select {
         "SELECT r.id, r.server_id, s.name AS server_name, s.icon_url AS server_icon_url, \
              s.blocked_at IS NOT NULL AS server_blocked, \
              s.delisted_at IS NOT NULL AS server_delisted, \
+             EXISTS (SELECT 1 FROM server_listings l \
+                      WHERE l.server_id = s.id AND l.listed) AS server_listed, \
              r.reporter_id, rep.name AS reporter_name, r.reason, r.details, r.status, \
              r.created_at, r.resolved_at, r.resolved_by, res.name AS resolved_by_name, \
-             r.resolution_note \
+             r.resolution_note, r.snapshot \
          FROM reports r \
          JOIN servers s ON s.id = r.server_id \
          LEFT JOIN users rep ON rep.id = r.reporter_id \

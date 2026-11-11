@@ -138,6 +138,8 @@ services:
       OIDC_GOOGLE_CLIENT_ID: ${OIDC_GOOGLE_CLIENT_ID:-}
       OIDC_GOOGLE_CLIENT_SECRET: ${OIDC_GOOGLE_CLIENT_SECRET:-}
       OIDC_GOOGLE_ISSUER: ${OIDC_GOOGLE_ISSUER:-}
+      # Server directory "Entdecken", off by default (deploy/README.md, "Verzeichnis").
+      API_DIRECTORY: ${API_DIRECTORY:-false}
     expose:
       - "8080"
     depends_on:

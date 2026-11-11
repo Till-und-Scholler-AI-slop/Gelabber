@@ -113,7 +113,7 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `error` | string code (table below) | always |
 | `message` | English fallback string | always |
 | `fields` | object `{field: field_code}` | only when non-empty (`skip_serializing_if = BTreeMap::is_empty`) |
-| `retry_after` | integer seconds | only for `rate_limited` and `upstream_quota`; the same value is also sent as `Retry-After` header |
+| `retry_after` | integer seconds | only for `rate_limited` and `upstream_quota`, where the same value is also sent as `Retry-After` header; and (v0.10) for `join_request_declined`, in the body only |
 
 | `error` | HTTP | `message` (server, English) | German UI text (`web/src/auth/rules.ts:369-413`) |
 |---|---|---|---|
@@ -148,6 +148,10 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `reauth_required` | 403 | Sign in again to confirm it is you. | v0.10: `auth` `error.reauthRequired` |
 | `oidc_wrong_origin` | 409 | Open this instance at its public address to sign in. | v0.10: `auth` `error.oidcWrongOrigin` |
 | `session_changed` | 409 | You signed in to another account meanwhile. Try again. | v0.10: `auth` `error.sessionChanged` |
+| `join_request_required` | 409 | This server takes requests to join. | v0.10: `auth` `error.joinRequestRequired` |
+| `join_request_declined` | 409 | Your request to join was not accepted. You can ask again later. (also `retry_after`: seconds until the cooldown ends) | v0.10: `auth` `error.joinRequestDeclined`, or `error.joinRequestDeclinedUntil` with the date |
+| `join_requests_full` | 409 | Too many open requests to join. Try again later. | v0.10: `auth` `error.joinRequestsFull` |
+| `already_member` | 409 | You are already a member of this server. | v0.10: `auth` `error.alreadyMember` |
 | client-only `network` | 0 | Network error. | Keine Verbindung zum Server. |
 | client-only `timeout` | 0 | Request timed out. | Der Server antwortet nicht. Bitte noch einmal versuchen. |
 
@@ -194,6 +198,8 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | account mail | address | 5 / hour (silently not sent) | register, login of unverified, password-reset |
 | `report` | user | 10 / hour → `429 rate_limited` | `POST /api/servers/{id}/reports` (v0.10) |
 | `mail_invite` | invited address | 5 / hour (silently not sent; the invitation is still created) | `POST /api/operator/invitations` with `send_mail` (v0.10) |
+| `dir_join` | user | 10 / hour → `429 rate_limited`, shared by both routes | `POST /api/directory/listings/{id}/join` and `/request` (v0.10, §4.7) |
+| `dir_search` | user | 60 / min → `429 rate_limited`, **also on GET** | `GET /api/directory/listings` (v0.10, §4.7) |
 
 A native client must not send `X-Forwarded-For` (the API trusts the last entry).
 
@@ -466,9 +472,9 @@ Reporting a server:
 
 | Method & path | Request | Success | Errors |
 |---|---|---|---|
-| `POST /api/servers/{id}/reports` | `{"reason": "spam" \| "harassment" \| "sexual" \| "illegal" \| "other", "details"?: string}`; `details` trimmed, ≤ 1000 chars, line breaks and tabs allowed, required for `other` | `201 {"id", "created_at"}`; when the caller already has an open report of this server: `200` with that one | `404` not a member (or unknown/unparseable id); `403 server_blocked`; `429 rate_limited` (`report`, 10 per hour per account, counted before validation); `422` fields `reason: invalid`, `details: too_long \| invalid \| required` |
+| `POST /api/servers/{id}/reports` | `{"reason": "spam" \| "harassment" \| "sexual" \| "illegal" \| "other", "details"?: string}`; `details` trimmed, ≤ 1000 chars, line breaks and tabs allowed, required for `other` | `201 {"id", "created_at"}`; when the caller already has an open report of this server: `200` with that one | `404` neither a member nor able to see its listing (or unknown/unparseable id); `403 server_blocked` (members); `429 rate_limited` (`report`, 10 per hour per account, counted before validation); `422` fields `reason: invalid`, `details: too_long \| invalid \| required` |
 
-Only members can report in v0.10. Reports are read only by operators; owners never see them.
+Members can report, and while the directory is on (§4.7) so can anyone who can see the server's listing; that is how "Melden" on a listing reports. When the caller can see the listing, members included, the report stores a snapshot of it (`name`, `icon_url`, `description`, `language`, `join_mode` at that moment), so later edits cannot hide what was reported. Reports are read only by operators; owners never see them. `GET /api/operator/reports` and the resolve answer (§4.6) return that snapshot as the report's `snapshot`, or `null` when the report has none.
 
 ### 4.6 Operator area "Betrieb" (v0.10, web only)
 
@@ -490,6 +496,38 @@ Only members can report in v0.10. Reports are read only by operators; owners nev
 | `GET /api/operator/usage` | — | `200` counts of accounts, servers, messages, storage and live use |
 
 The shapes and every error are in `backend/api/src/operator/` and issue #517. Every successful call writes a row of the operator audit (deploy/README.md, "Betrieb"), except `GET /api/operator` and disabling an account that is disabled already. A call that changes nothing else records `"changed": false` in the row's `detail`.
+
+### 4.7 Directory "Entdecken" (v0.10, `backend/api/src/directory/`)
+
+Off unless the instance sets `API_DIRECTORY=true` (deploy/README.md, "Verzeichnis"). Signed-in only: every route answers `401` without a session, also while the directory is off. While it is off, `GET /api/directory` answers `{"enabled": false, "languages": []}`, and every `/api/directory/listings*` route and `/api/servers/{id}/listing` answer `404`; the queue routes keep working.
+
+A listing is **visible** to the caller while the owner has it `listed`, the server is neither delisted nor blocked by an operator (§4.5, §4.6), and the caller is not banned from it. A listing the caller cannot see answers `404` on every route, like an unknown id.
+
+Shapes:
+
+- `Language`: `{"code": "de", "name": "Deutsch", "listings": 3}`; `name` is the endonym and is not translated; `listings` counts the listings visible to the caller. The codes, in this order: `de`, `en`, `es`, `fr`, `it`, `nl`, `pl`, `pt`, `tr`, `uk`.
+- `Listing`: exactly `{"server_id", "name", "icon_url": string|null, "description", "language", "member_count": int, "join_mode": "open"|"request", "member": bool, "request": null|"pending"|"declined", "retry_at": ts|null}`. `member` and `request` are the caller's own; `request` is `"declined"` only while its 7-day cooldown lasts, and `retry_at` is then when that cooldown ends (otherwise `null`). `icon_url` loads through `GET /api/server-icons/…`, which any signed-in account may read.
+- `ListingSettings`: `{"listed": bool, "description": string, "language": string|null, "join_mode": "open"|"request", "delisted": bool, "listed_at": string|null}`. Without a saved form: `listed: false`, `description: ""`, `language: null`, `join_mode: "request"`, `listed_at: null`. `delisted` says an operator took the server out; the operator's reason is not shown.
+- `JoinRequest`: `{"user_id", "name", "avatar_url": string|null, "message", "created_at"}`.
+
+| Method & path | Who | Request | Success | Errors |
+|---|---|---|---|---|
+| `GET /api/directory` | any account | — | `200 {"enabled": bool, "languages": Language[]}`; all ten languages, also those with `listings: 0` | — |
+| `GET /api/directory/listings` | any account | `?q=&language=&offset=`: `q` trimmed, ≤ 100 chars, no control characters, blank = no search, matches name or description case-insensitively with `%` and `_` literal; `language` a code from the list, empty = all; `offset` a multiple of 30 from 0 to 990 | `200 {"listings": Listing[], "next_offset": int\|null}`, 30 per page, ordered by `member_count` descending, then first listed, then server id; `next_offset` is `null` on the last page | `422` fields `q: too_long \| invalid`, `language: invalid`, `offset: invalid`; `429 rate_limited` (`dir_search`, after validation) |
+| `POST /api/directory/listings/{id}/join` | any account | none | `200 ServerView` (§4.1, as `POST /api/invites/{code}/join`); also when already a member | `404` not visible; `409 join_request_required` (join mode `request`, not a member); `429 rate_limited` (`dir_join`, counted first; a member's repeat neither counts nor is refused) |
+| `POST /api/directory/listings/{id}/request` | any account | `{"message"?: string}`: trimmed, one line, ≤ 300 chars; absent = empty | `201 {"request": "pending"}` new; `200 {"request": "pending"}` when one is pending already (its message is kept) | in this order: `422` field `message: too_long \| invalid` (before the limit); `429 rate_limited` (`dir_join`); `404` not visible; `409 already_member`; `409 join_request_declined` with `retry_after` while the cooldown lasts; `409 join_requests_full` when the caller has 10 pending requests or the server 100 |
+| `DELETE /api/directory/listings/{id}/request` | the requester | — | `204` | `404` no pending request. No visibility check, so it works after a delist |
+| `GET /api/servers/{id}/listing` | any member | — | `200 ListingSettings` | `404` not a member; `403 server_blocked` |
+| `PUT /api/servers/{id}/listing` | owner | `{"listed": bool, "description": string, "language": string, "join_mode": "open"\|"request"}`, all four required; `description` trimmed, one line, ≤ 300 chars, not empty while `listed` | `200 ListingSettings`; while delisted the save succeeds and the listing stays hidden (`delisted: true`) | `404` not a member; `403 forbidden` not the owner; `403 server_blocked`; `422` fields `listed: required`, `description: required \| too_long \| invalid`, `language: required \| invalid`, `join_mode: required \| invalid` |
+| `GET /api/servers/{id}/join-requests` | owner, `moderate_members` | — | `200 JoinRequest[]`, pending only, oldest first, at most 100 | `404` not a member; `403 forbidden`; `403 server_blocked` |
+| `POST /api/servers/{id}/join-requests/{user_id}/accept` | owner, `moderate_members` | none | `204`; the requester becomes a member (`jn` to them), or only loses the request if they are a member already | `404` no pending request, or the requester was banned meanwhile (the request is deleted); `403 forbidden`; `403 server_blocked` |
+| `POST /api/servers/{id}/join-requests/{user_id}/decline` | owner, `moderate_members` | none | `204`; the requester sees `request: "declined"` for 7 days | `404` no pending request; `403 forbidden`; `403 server_blocked` |
+
+- The queue routes work whatever the listing, the delist or `API_DIRECTORY` say, so pending requests can always be answered.
+- After every new request (`201`), withdrawal, accept and decline, the owner and every member holding `moderate_members` get `jq` with the new pending count; an accepted requester gets `jn` (protocol-gateway §3). Both are best effort; the next REST read catches up.
+- Joining by invite, joining through the directory and a ban each delete the person's request for that server; these send no `jq`.
+- The join mode governs only the directory: invites work as before. Switching the mode or unlisting keeps the pending requests.
+- Reporting a listing uses `POST /api/servers/{id}/reports` (§4.5).
 
 ---
 
@@ -831,6 +869,12 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 | GET | /api/auth/oidc/{provider}/callback | browser redirect (v0.10) | 2.3 |
 | POST | /api/auth/oidc/desktop/exchange | native only (v0.10) | 2.3 |
 | DELETE | /api/auth/oidc/{provider} | yes (v0.10) | 2.3 |
+| GET | /api/directory, /api/directory/listings | yes (v0.10) | 4.7 |
+| POST | /api/directory/listings/{id}/join | yes (v0.10) | 4.7 |
+| POST, DELETE | /api/directory/listings/{id}/request | yes (v0.10) | 4.7 |
+| GET, PUT | /api/servers/{id}/listing | yes (v0.10) | 4.7 |
+| GET | /api/servers/{id}/join-requests | yes (v0.10) | 4.7 |
+| POST | /api/servers/{id}/join-requests/{user_id}/accept, /decline | yes (v0.10) | 4.7 |
 | GET | /health, /ready, /metrics | no | — |
 | GET | /ws (upgrade) | yes | gateway spec |
 

@@ -1,12 +1,16 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { scopeGeneration } from "./auth/scope.ts";
 import { useSession } from "./auth/session.ts";
+import { directoryKeys } from "./discover/queries.ts";
+import { validateDiscoverSearch } from "./discover/search.ts";
 import { OPERATOR_PAGES } from "./operator/areas.ts";
 import { SETTINGS_AREAS } from "./pages/settingsAreas.ts";
 import { router, validateAuthSearch } from "./routes.tsx";
+import { queryClient, setQueryScope } from "./queryClient.ts";
 
 /** Runs a route's guard and returns what it threw, if anything. */
 function guard(routeId: string, params: Record<string, string> = {}) {
@@ -304,5 +308,61 @@ describe("operator routes", () => {
         await guardAsync("/workspace/betrieb/$page", { page: "audit" }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("the directory route", () => {
+  const status = (enabled: boolean) =>
+    queryClient.setQueryData(directoryKeys.status("u1", scopeGeneration()), {
+      enabled,
+      languages: [],
+    });
+  async function guardDiscover() {
+    try {
+      await router.routesById["/workspace/discover"].options.beforeLoad?.(
+        {} as never,
+      );
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  }
+  beforeEach(() => {
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Lena", email: "lena@example.test" } as never,
+    });
+    setQueryScope("u1", scopeGeneration());
+  });
+  afterEach(() => {
+    queryClient.clear();
+    setQueryScope(null, 0);
+    useSession.setState({ status: "anonymous", user: null });
+  });
+
+  it("lives inside the workspace at /discover", () => {
+    expect(
+      router.matchRoutes("/discover", {}).map((match) => match.routeId),
+    ).toEqual(["__root__", "/workspace", "/workspace/discover"]);
+  });
+
+  it("is not found while the directory is off", async () => {
+    status(false);
+    expect(isNotFound(await guardDiscover())).toBe(true);
+  });
+
+  it("opens while the directory is on", async () => {
+    status(true);
+    expect(await guardDiscover()).toBeUndefined();
+  });
+
+  it("keeps a search and a language code from the address", () => {
+    expect(validateDiscoverSearch({ q: "  rust ", lang: "en" })).toEqual({
+      q: "rust",
+      lang: "en",
+    });
+    expect(validateDiscoverSearch({ q: 1984 })).toEqual({ q: "1984" });
+    expect(validateDiscoverSearch({ q: "   ", lang: "english" })).toEqual({});
+    expect(validateDiscoverSearch({ q: "x".repeat(150) }).q).toHaveLength(100);
   });
 });

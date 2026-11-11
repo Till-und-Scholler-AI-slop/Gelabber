@@ -6,9 +6,10 @@ import {
   redirect,
 } from "@tanstack/react-router";
 
+import { ApiError } from "./api/client.ts";
 import { safeRedirect } from "./auth/redirect.ts";
 import { isOidcError, type OidcError } from "./auth/rules.ts";
-import { currentUserId } from "./auth/scope.ts";
+import { currentUserId, takeStamp } from "./auth/scope.ts";
 import { SECURITY_PATH } from "./auth/signInMethods.ts";
 import {
   ensureSession,
@@ -44,6 +45,10 @@ import {
 import { VerifyEmailPage } from "./pages/VerifyEmailPage.tsx";
 import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
 import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
+import { DiscoverPage } from "./pages/DiscoverPage.tsx";
+import { ensureDirectoryStatus } from "./discover/queries.ts";
+import { validateDiscoverSearch } from "./discover/search.ts";
+import { queryClient } from "./queryClient.ts";
 import { placeFromPath, useLastPlace } from "./servers/lastPlace.ts";
 import { translate } from "./i18n/catalog.ts";
 import { shell } from "./i18n/catalogs/shell.ts";
@@ -362,6 +367,33 @@ const operatorPageRoute = createRoute({
   },
 });
 
+/** The directory "Entdecken" exists only while the instance runs one. */
+async function requireDirectory() {
+  await ensureSession();
+  const stamp = takeStamp();
+  if (!stamp) return;
+  try {
+    const status = await ensureDirectoryStatus(queryClient, stamp);
+    if (!status.enabled) throw notFound();
+  } catch (error) {
+    // An API from before the directory has no status route.
+    if (error instanceof ApiError && error.code === "not_found")
+      throw notFound();
+    throw error;
+  }
+}
+
+const discoverRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/discover",
+  validateSearch: validateDiscoverSearch,
+  beforeLoad: requireDirectory,
+  component: function DiscoverRoute() {
+    const { q, lang } = discoverRoute.useSearch();
+    return <DiscoverPage q={q} lang={lang} />;
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   profileRoute,
   authLayout.addChildren([
@@ -384,6 +416,7 @@ const routeTree = rootRoute.addChildren([
     dmRoute,
     operatorRoute,
     operatorPageRoute,
+    discoverRoute,
   ]),
 ]);
 

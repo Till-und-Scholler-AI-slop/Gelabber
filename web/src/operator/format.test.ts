@@ -4,6 +4,7 @@ import { setLocale } from "../i18n/locale.ts";
 import {
   formatBytes as bytesWithNbsp,
   formatCount,
+  formatLanguage,
   formatWhen,
 } from "./format.ts";
 
@@ -55,5 +56,13 @@ describe("operator formats", () => {
     expect(formatWhen(now - 2 * 60 * MINUTE, now)).toBe("2 hours ago");
     expect(formatWhen(now - 60 * DAY, now)).toBe("2 months ago");
     expect(formatWhen(now - 400 * DAY, now)).toBe("last year");
+  });
+
+  it("names a listing's language in the interface's language", () => {
+    expect(formatLanguage("de")).toBe("Deutsch");
+    expect(formatLanguage("uk")).toBe("Ukrainisch");
+    expect(formatLanguage("zz")).toBe("zz");
+    setLocale("en", { persist: false });
+    expect(formatLanguage("de")).toBe("German");
   });
 });

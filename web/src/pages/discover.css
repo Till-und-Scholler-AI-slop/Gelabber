@@ -1,0 +1,187 @@
+/* "Entdecken" (docs/design/v0.10/directory.png): the sidebar reuses the
+   settings rows; the page is a title, a search and one row per server. */
+.discover-language {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.discover-language[aria-pressed="true"] {
+  background: var(--lr-selected);
+  color: var(--lr-text);
+  font-weight: 600;
+}
+.discover-language[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--lr-accent);
+}
+
+.discover-screen {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+/* The look of the conversation header line, empty as in the reference. */
+.discover-header {
+  flex-shrink: 0;
+  height: var(--lr-header-height);
+  border-bottom: 1px solid var(--lr-border);
+  background: var(--lr-bg);
+}
+.discover-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.discover-page {
+  max-width: 940px;
+  padding: 27px 40px 40px;
+}
+.discover-page-head h1 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+  color: var(--lr-text);
+}
+.discover-page-head p {
+  margin-top: 4px;
+  font-size: 14px;
+  color: var(--lr-muted);
+}
+
+.discover-search {
+  position: relative;
+  max-width: 420px;
+  margin-top: var(--lr-space-5);
+}
+.discover-search svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  translate: 0 -50%;
+  color: var(--lr-muted);
+  pointer-events: none;
+}
+.discover-search .ui-field {
+  width: 100%;
+  min-height: 40px;
+  padding-left: 38px;
+}
+
+.discover-list,
+.discover-skeleton,
+.discover-empty {
+  margin-top: 18px;
+}
+.discover-list {
+  border-top: 1px solid var(--lr-border);
+}
+.discover-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  /* 84px from line to line: the 56px tile, 14px above and 13px below. */
+  min-height: 84px;
+  padding: 14px 0 13px;
+  border-bottom: 1px solid var(--lr-border);
+}
+/* A server tile as in the rail, but square. */
+.discover-tile {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border-radius: var(--lr-radius-lg);
+  background: var(--server-tile, var(--lr-surface));
+  color: var(--lr-text);
+  font: 600 18px / 1 var(--lr-font);
+}
+.discover-row-text {
+  flex: 1;
+  min-width: 0;
+}
+.discover-row-text h2 {
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--lr-text);
+  overflow-wrap: anywhere;
+}
+.discover-row-description {
+  margin-top: 1px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--lr-text);
+  overflow-wrap: anywhere;
+}
+.discover-row-meta {
+  margin-top: 1px;
+  font: var(--lr-type-meta);
+  line-height: 16px;
+  color: var(--lr-muted);
+}
+.discover-action,
+.discover-more-button {
+  flex-shrink: 0;
+}
+/* "Nicht angenommen" is aria-disabled, so it keeps focus and its tooltip;
+   it looks like a disabled button (ui.css) and does nothing. */
+.discover-action[aria-disabled="true"],
+.discover-action[aria-disabled="true"]:hover {
+  border-color: var(--lr-border);
+  background: var(--lr-surface);
+  color: var(--lr-subtle);
+  filter: none;
+  cursor: not-allowed;
+}
+.discover-empty {
+  font-size: 14px;
+  color: var(--lr-muted);
+}
+.discover-more {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--lr-space-5);
+}
+.discover-request-lead {
+  font-size: 14px;
+  color: var(--lr-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Phones have the top bar with the drawer button instead. */
+@media (max-width: 800px) {
+  .discover-header {
+    display: none;
+  }
+  .discover-page {
+    padding: 20px 16px 32px;
+  }
+  .discover-row {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .discover-tile {
+    width: 44px;
+    height: 44px;
+    font-size: 15px;
+  }
+  .discover-row-text {
+    flex-basis: calc(100% - 56px);
+  }
+  .discover-action {
+    margin-left: 56px;
+  }
+}

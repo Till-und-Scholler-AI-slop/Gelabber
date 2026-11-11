@@ -87,6 +87,8 @@ pub const OIDC_GOOGLE_CLIENT_ID: &str = "OIDC_GOOGLE_CLIENT_ID";
 pub const OIDC_GOOGLE_CLIENT_SECRET: &str = "OIDC_GOOGLE_CLIENT_SECRET";
 /// Optional; default [`GOOGLE_ISSUER`]. Tests point it at a mock issuer.
 pub const OIDC_GOOGLE_ISSUER: &str = "OIDC_GOOGLE_ISSUER";
+/// `true` turns on the server directory "Entdecken" (v0.10); off by default.
+pub const API_DIRECTORY: &str = "API_DIRECTORY";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
@@ -183,6 +185,8 @@ pub struct Config {
     /// Sign-in through OpenID Connect. `None` (off) unless a provider's
     /// client ID and secret are both set.
     pub oidc: Option<OidcConfig>,
+    /// `API_DIRECTORY`: the server directory is on.
+    pub directory: bool,
 }
 
 /// Who may create an account (`API_REGISTRATION`).
@@ -632,6 +636,10 @@ impl Config {
             None => RegistrationMode::Open,
         };
         let oidc = parse_oidc(&get, public_url.as_ref())?;
+        let directory = match get(API_DIRECTORY) {
+            Some(raw) => parse_bool(API_DIRECTORY, &raw)?,
+            None => false,
+        };
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -672,6 +680,7 @@ impl Config {
             operators,
             registration,
             oidc,
+            directory,
         })
     }
 }
@@ -2039,6 +2048,28 @@ mod tests {
             serde_json::to_value(RegistrationMode::Open).unwrap(),
             "open"
         );
+    }
+
+    #[test]
+    fn directory_is_off_unless_turned_on() {
+        assert!(!base(&[]).unwrap().directory);
+        // Compose passes an unset variable through as an empty value.
+        assert!(!base(&[(API_DIRECTORY, "")]).unwrap().directory);
+        assert!(!base(&[(API_DIRECTORY, "false")]).unwrap().directory);
+        assert!(base(&[(API_DIRECTORY, " True ")]).unwrap().directory);
+        for raw in ["maybe", "2", "enabled"] {
+            let err = base(&[(API_DIRECTORY, raw)]).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: API_DIRECTORY,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
     }
 
     #[test]

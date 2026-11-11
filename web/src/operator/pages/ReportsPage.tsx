@@ -1,9 +1,10 @@
 // "Meldungen": reported servers, the open ones oldest first. A report is
 // closed without action here, or by taking its server out of the directory
-// or blocking it, which closes all of the server's open reports.
+// or blocking it, which closes all of the server's open reports. A report
+// filed from the directory also shows the listing as it was then.
 
 import { useNavigate } from "@tanstack/react-router";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 
 import { LoadError } from "../../components/LoadError.tsx";
 import { Badge } from "../../components/ui/Badge.tsx";
@@ -13,7 +14,7 @@ import { useT } from "../../i18n/catalog.ts";
 import { operator } from "../../i18n/catalogs/operator.ts";
 import { formatDate } from "../../i18n/format.ts";
 import { OperatorPageFrame } from "../OperatorPageFrame.tsx";
-import { formatWhen } from "../format.ts";
+import { formatLanguage, formatWhen } from "../format.ts";
 import { usePaging } from "../paging.ts";
 import { Pager, RowMenuButton, ServerName } from "../parts.tsx";
 import { useOperatorReports } from "../queries.ts";
@@ -23,7 +24,7 @@ import {
   useServerActions,
   type ReportHandlers,
 } from "../serverActions.tsx";
-import type { Report, ReportListStatus } from "../types.ts";
+import type { Report, ReportListStatus, ReportSnapshot } from "../types.ts";
 
 const REPORT_FILTERS = [
   "open",
@@ -148,6 +149,12 @@ export function ReportTable({
             </td>
             <td data-label={column.details} className="is-details">
               <Details text={report.details} />
+              {report.snapshot ? (
+                <SnapshotToggle
+                  snapshot={report.snapshot}
+                  reportedAt={report.created_at}
+                />
+              ) : null}
             </td>
             <td data-label={column.reporter}>
               {report.reporter?.name ?? (
@@ -256,5 +263,88 @@ function Details({ text }: { text: string }) {
         </button>
       ) : null}
     </>
+  );
+}
+
+/** "Eintrag im Verzeichnis anzeigen", and the listing below it when open. */
+function SnapshotToggle({
+  snapshot,
+  reportedAt,
+}: {
+  snapshot: ReportSnapshot;
+  reportedAt: string;
+}) {
+  const t = useT(operator);
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className="operator-more operator-snapshot-toggle"
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? t("reports.snapshot.hide") : t("reports.snapshot.show")}
+      </button>
+      {open ? (
+        <ListingSnapshot id={id} snapshot={snapshot} reportedAt={reportedAt} />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The listing as the reporter saw it: name, description, language and join
+ * mode, headed by when that was, so it does not read as the current one.
+ */
+export function ListingSnapshot({
+  id,
+  snapshot,
+  reportedAt,
+}: {
+  id?: string;
+  snapshot: ReportSnapshot;
+  reportedAt: string;
+}) {
+  const t = useT(operator);
+  const when = formatDate(reportedAt, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  return (
+    <div id={id} className="operator-snapshot">
+      <p className="operator-snapshot-title">
+        {t("reports.snapshot.title", { when })}
+      </p>
+      <dl>
+        <div>
+          <dt>{t("reports.snapshot.name")}</dt>
+          <dd>{snapshot.name}</dd>
+        </div>
+        <div>
+          <dt>{t("reports.snapshot.description")}</dt>
+          <dd className="operator-snapshot-text">
+            {snapshot.description.trim() ? (
+              snapshot.description
+            ) : (
+              <>
+                <span aria-hidden="true">{t("cell.none")}</span>
+                <span className="sr-only">{t("cell.noneLabel")}</span>
+              </>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("reports.snapshot.language")}</dt>
+          <dd>{formatLanguage(snapshot.language)}</dd>
+        </div>
+        <div>
+          <dt>{t("reports.snapshot.joinMode")}</dt>
+          <dd>{t(`reports.snapshot.join.${snapshot.join_mode}`)}</dd>
+        </div>
+      </dl>
+    </div>
   );
 }

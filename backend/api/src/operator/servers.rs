@@ -21,6 +21,7 @@ use super::access::Operator;
 use super::accounts::{PAGE, offset, search_pattern};
 use super::audit::{self, Action, Targets};
 use crate::auth::validate;
+use crate::directory::state_of;
 use crate::error::{ApiError, FieldErrors};
 use crate::gateway::Recheck;
 use crate::json::Body;
@@ -61,7 +62,7 @@ pub struct ServerAdmin {
     /// Bytes of the attachments of sent messages. Icons and link-preview
     /// images are not counted: their size is not stored.
     pub storage_bytes: i64,
-    /// `off`, `listed` or `delisted`; see [`directory`].
+    /// `off`, `listed` or `delisted`; see [`state_of`].
     pub directory: &'static str,
     pub open_reports: i64,
     pub blocked_at: Option<DateTime<Utc>>,
@@ -80,6 +81,7 @@ struct ServerRow {
     members: i64,
     storage_bytes: i64,
     delisted: bool,
+    listed: bool,
     open_reports: i64,
     blocked_at: Option<DateTime<Utc>>,
     blocked_reason: Option<String>,
@@ -99,19 +101,12 @@ impl From<ServerRow> for ServerAdmin {
             },
             members: row.members,
             storage_bytes: row.storage_bytes,
-            directory: directory(row.delisted),
+            directory: state_of(row.delisted, row.listed),
             open_reports: row.open_reports,
             blocked_at: row.blocked_at,
             blocked_reason: row.blocked_reason,
         }
     }
-}
-
-/// The server's place in the directory. `delisted` while an operator took it
-/// out. The directory itself (`listed`) comes with the discovery package;
-/// until then every other server is `off`.
-pub fn directory(delisted: bool) -> &'static str {
-    if delisted { "delisted" } else { "off" }
 }
 
 /// The server columns plus owner and counts, over `servers s` joined with
@@ -126,6 +121,8 @@ macro_rules! server_select {
                         WHERE c.server_id = s.id AND a.message_id IS NOT NULL), 0)::bigint \
                  AS storage_bytes, \
              s.delisted_at IS NOT NULL AS delisted, \
+             EXISTS (SELECT 1 FROM server_listings l \
+                      WHERE l.server_id = s.id AND l.listed) AS listed, \
              (SELECT COUNT(*) FROM reports r \
                  WHERE r.server_id = s.id AND r.status = 'open') AS open_reports, \
              s.blocked_at, s.blocked_reason \
@@ -134,14 +131,15 @@ macro_rules! server_select {
 }
 
 /// The list's search (`$1`, an `ILIKE` pattern or NULL: server name, owner
-/// name or owner address) and filter (`$2`). `listed` is empty until the
-/// directory exists.
+/// name or owner address) and filter (`$2`). `listed` matches
+/// [`state_of`]: the owner has it listed and no operator delisted it.
 macro_rules! server_filter {
     () => {
         "WHERE ($1::text IS NULL OR s.name ILIKE $1 ESCAPE '\\' \
              OR o.name ILIKE $1 ESCAPE '\\' OR o.email ILIKE $1 ESCAPE '\\') \
            AND CASE $2 \
-             WHEN 'listed' THEN false \
+             WHEN 'listed' THEN s.delisted_at IS NULL AND EXISTS (SELECT 1 \
+                 FROM server_listings l WHERE l.server_id = s.id AND l.listed) \
              WHEN 'reported' THEN EXISTS (SELECT 1 FROM reports r \
                  WHERE r.server_id = s.id AND r.status = 'open') \
              WHEN 'blocked' THEN s.blocked_at IS NOT NULL \
@@ -502,11 +500,5 @@ mod tests {
         assert_eq!(Filter::parse(Some("reported")), Some(Filter::Reported));
         assert_eq!(Filter::parse(Some("blocked")), Some(Filter::Blocked));
         assert_eq!(Filter::parse(Some("disabled")), None);
-    }
-
-    #[test]
-    fn directory_is_off_until_discovery() {
-        assert_eq!(directory(true), "delisted");
-        assert_eq!(directory(false), "off");
     }
 }

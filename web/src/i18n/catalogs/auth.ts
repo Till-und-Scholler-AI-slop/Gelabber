@@ -57,6 +57,15 @@ export const auth = defineCatalog(
       "Die Anmeldung über einen Anbieter geht nur unter der eingerichteten Adresse dieses Gelabber-Servers. Öffne Gelabber dort und versuche es noch einmal.",
     "error.sessionChanged":
       "Inzwischen ist hier ein anderes Konto angemeldet. Bitte noch einmal versuchen.",
+    "error.joinRequestRequired":
+      "Diesem Server trittst du nur auf Anfrage bei.",
+    "error.joinRequestDeclined":
+      "Deine Anfrage wurde nicht angenommen. Du kannst in ein paar Tagen wieder anfragen.",
+    "error.joinRequestsFull":
+      "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen.",
+    "error.alreadyMember": "Du bist schon Mitglied dieses Servers.",
+    "error.joinRequestDeclinedUntil":
+      "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {date} wieder anfragen.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -312,6 +321,14 @@ export const auth = defineCatalog(
       "Signing in through a provider only works at this Gelabber server’s configured address. Open Gelabber there and try again.",
     "error.sessionChanged":
       "Another account has signed in here in the meantime. Please try again.",
+    "error.joinRequestRequired": "This server can only be joined by request.",
+    "error.joinRequestDeclined":
+      "Your request was not accepted. You can ask again in a few days.",
+    "error.joinRequestsFull":
+      "Too many requests are open right now. Please try again later.",
+    "error.alreadyMember": "You are already a member of this server.",
+    "error.joinRequestDeclinedUntil":
+      "Your request was not accepted. You can ask again from {date}.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",

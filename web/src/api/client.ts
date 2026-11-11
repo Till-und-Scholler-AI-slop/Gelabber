@@ -55,7 +55,11 @@ export type ApiErrorCode =
   | "password_required"
   | "reauth_required"
   | "oidc_wrong_origin"
-  | "session_changed";
+  | "session_changed"
+  | "join_request_required"
+  | "join_request_declined"
+  | "join_requests_full"
+  | "already_member";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;

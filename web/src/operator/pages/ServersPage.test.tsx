@@ -147,6 +147,15 @@ describe("Server page", () => {
     );
   });
 
+  it("shows a server the owner listed in the directory", () => {
+    fixture.result = { data: page([server({ directory: "listed" })]) };
+    const html = render();
+    expect(html).toContain(
+      '<span class="ui-badge ui-badge--neutral">Gelistet</span>',
+    );
+    expect(text(html)).not.toContain("Nicht im Verzeichnis");
+  });
+
   it("marks a blocked server", () => {
     fixture.result = {
       data: page([server({ blocked_at: "2026-11-01T00:00:00Z" })]),

@@ -485,3 +485,13 @@ export function StopIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** The directory "Entdecken" (v0.10): a dial and its diamond needle. */
+export function CompassIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="m16.24 7.76-1.8 5.41a2 2 0 0 1-1.27 1.27l-5.41 1.8 1.8-5.41a2 2 0 0 1 1.27-1.27z" />
+    </svg>
+  );
+}

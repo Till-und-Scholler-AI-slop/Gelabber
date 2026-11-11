@@ -37,6 +37,7 @@ import { useNavigationDrawer } from "../components/navigationDrawer.ts";
 import { notify } from "../components/toasts.ts";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { useShellShortcuts } from "../components/useShellShortcuts.ts";
+import { useDirectoryStatus } from "../discover/queries.ts";
 import { useDms } from "../dms/queries.ts";
 import { offerDesktopApp } from "../pwa/desktopApp.ts";
 import { useInstallation } from "../pwa/install.ts";
@@ -47,6 +48,7 @@ import { forgetServer, useServer, useServers } from "../servers/queries.ts";
 import { BlockedServerNotice } from "../servers/BlockedServerNotice.tsx";
 import { SettingsSidebar } from "./UserSettingsPage.tsx";
 import { OperatorSidebar } from "../operator/OperatorSidebar.tsx";
+import { DiscoverSidebar } from "./DiscoverPage.tsx";
 import { translate, useT } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
 
@@ -92,6 +94,9 @@ function Workspace() {
   const operator = useSession((state) => state.operator);
   const onOperator =
     operator && (pathname === "/betrieb" || pathname.startsWith("/betrieb/"));
+  // Only while the directory is on: otherwise the page is "not found".
+  const { data: directory } = useDirectoryStatus();
+  const onDiscover = pathname === "/discover" && directory?.enabled === true;
   // Before the early returns so hooks keep their order; the rail shares it.
   const { data: servers } = useServers();
   // Voice room and settings load in the background once the first screen is
@@ -114,6 +119,13 @@ function Workspace() {
       <WorkspaceFrame
         place={t("place.operator")}
         sidebar={<OperatorSidebar />}
+      />
+    );
+  if (onDiscover)
+    return (
+      <WorkspaceFrame
+        place={t("place.discover")}
+        sidebar={<DiscoverSidebar />}
       />
     );
   return (

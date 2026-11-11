@@ -449,7 +449,7 @@ The page shows the mode but cannot change it; change `.env` and recreate the API
 
 **Blocking a server** (Server, or Meldungen) closes it for everyone, its owner included: every request answers `403 server_blocked`, members in voice are removed, open sockets get `{"op":"err","e":"server_blocked"}`, and its invite links answer as invalid. It stays in its members' server list with a notice; members can still leave it and the owner can still delete it. Its open reports are closed as actioned. Unblocking restores access; nothing was deleted. **Delisting** only removes a server from the directory and closes its open reports; its members notice nothing, and only an operator can let it be listed again.
 
-**Reports** come from members of a server (`POST /api/servers/{id}/reports`, at most 10 per account and hour). Owners never see them; operators close them under "Meldungen".
+**Reports** come from members of a server and, while the directory is on, from anyone who can see its listing (`POST /api/servers/{id}/reports`, at most 10 per account and hour; see "Verzeichnis"). Owners never see them; operators close them under "Meldungen".
 
 **Audit:** every operator request that succeeds writes a row to `operator_audit`, reads included (`*.list` with the search in `detail`). Opening the area writes none, and neither does disabling an account that is disabled already. Any other request that changes nothing, such as blocking a server twice, writes a row with `"changed": false` in `detail`. Rows are never purged, and there is no page for them. Read them with SQL (with your `POSTGRES_USER` and `POSTGRES_DB`):
 
@@ -465,6 +465,36 @@ The actions are `invitations.list|create|revoke`, `accounts.list|disable|enable`
 **Usage** (Auslastung) shows numbers from the database, from Redis (who is in voice and live) and from this one API process (open sockets). Media-server numbers (rooms, peers, forwarded bytes) are not there: they stay in Grafana, on the dashboard under "Metrics" (SFU rooms, SFU peers, Forwarded RTP).
 
 Migration 0032 adds the columns and tables for this. As with every migration, an older API binary does not start against the migrated database.
+
+## Verzeichnis
+
+The server directory "Entdecken" lets owners list their servers so that other accounts of this instance can find and join them. It is off by default. Turn it on in `.env` and recreate the API:
+
+```sh
+API_DIRECTORY=true
+docker compose up -d --no-deps --force-recreate api
+```
+
+While it is off, `GET /api/directory` answers `enabled: false`, the apps show no compass tile and no "Verzeichnis" section, and the listing routes (`/api/directory/listings*`, `/api/servers/{id}/listing`) answer `404`. Listings, requests and reports already stored stay in the database. The queue routes (`/api/servers/{id}/join-requests…`) keep answering, so pending requests can still be accepted or declined through the API, but the apps show the queue only while the directory is on; operators can still delist servers. Turning it on again shows the listings as they were.
+
+**Listing** is opt-in per server. Only the owner lists a server, under server settings → "Verzeichnis", with a description (at most 300 characters), a language from a fixed list (`de`, `en`, `es`, `fr`, `it`, `nl`, `pl`, `pt`, `tr`, `uk`) and a join mode: "Offen" (anyone joins at once) or "Auf Anfrage" (a request queue). A server that nobody listed never appears anywhere. Invite links work as before, whatever the join mode.
+
+**What non-members see** is only the listing: name, icon, description, language, member count and join mode. No owner, channels, members or messages. The directory is for signed-in accounts only; signed-out visitors and the landing page show nothing of it. A listing is hidden from everyone while its server is delisted or blocked, and from the people banned from that server, for whom every directory route of it answers `404`. A kicked (not banned) person can join again through the directory.
+
+**Requests to join** go to the owner and to members whose role holds "Mitglieder moderieren". They accept or decline them in server settings → "Verzeichnis"; a decline shows the requester "Nicht angenommen", and the same person cannot ask that server again for 7 days. A ban removes the person's request.
+
+**Limits**, per account:
+
+- 10 joins and requests to join per hour together (`dir_join` in `gelabber_rate_limited_total`), then `429 rate_limited`;
+- 60 searches and result pages per minute (`dir_search`), then `429 rate_limited`;
+- 10 pending requests across all servers, and 100 pending requests per server, then `409 join_requests_full`;
+- 10 reports per hour (`report`), shared with reports made from inside a server.
+
+**Reports:** "Melden" on a listing files a report through the same route as from inside a server, and it lands under Betrieb → "Meldungen" like any other. Anyone who can see the listing may report it, members or not. The report keeps a copy of the listing as it was then (name, icon, description, language and join mode), so a later edit by the owner does not change what was reported; it is stored in `reports.snapshot`. Owners never see reports.
+
+**Delisting** is under Betrieb → "Server": "Aus dem Verzeichnis nehmen" hides the listing at once and closes the server's open reports as actioned. Members notice nothing, and pending requests stay in the queue. The owner can still edit the listing, but it stays hidden and the settings say that the operator took it out; only an operator lets it back in ("Wieder zulassen"). It then shows again if the owner still has it listed. Blocking a server hides its listing too.
+
+Migration 0035 adds the tables for this (`server_listings`, `server_join_requests`).
 
 ## Backup
 

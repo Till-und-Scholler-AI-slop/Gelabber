@@ -283,6 +283,12 @@ async fn join(
             .bind(&invite.code)
             .execute(&mut *tx)
             .await?;
+        // In now, so a request to join through the directory is moot.
+        sqlx::query("DELETE FROM server_join_requests WHERE server_id = $1 AND user_id = $2")
+            .bind(invite.server_id)
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     if !already {
