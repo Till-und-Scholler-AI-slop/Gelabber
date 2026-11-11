@@ -136,6 +136,16 @@
 .discover-more-button {
   flex-shrink: 0;
 }
+/* "Nicht angenommen" is aria-disabled, so it keeps focus and its tooltip;
+   it looks like a disabled button (ui.css) and does nothing. */
+.discover-action[aria-disabled="true"],
+.discover-action[aria-disabled="true"]:hover {
+  border-color: var(--lr-border);
+  background: var(--lr-surface);
+  color: var(--lr-subtle);
+  filter: none;
+  cursor: not-allowed;
+}
 .discover-empty {
   font-size: 14px;
   color: var(--lr-muted);

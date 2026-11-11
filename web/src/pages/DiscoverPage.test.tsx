@@ -177,6 +177,7 @@ describe("Entdecken", () => {
         label: match?.[3],
         primary: match?.[2].includes("ui-button--primary") ?? false,
         disabled: match?.[2].includes("disabled") ?? false,
+        focusable: !/ disabled=""/.test(match?.[2] ?? ""),
         to: match?.[2].match(/data-to="([^"]+)"/)?.[1],
       };
     };
@@ -184,6 +185,7 @@ describe("Entdecken", () => {
       label: "Öffnen",
       primary: false,
       disabled: false,
+      focusable: true,
       to: "/s/filmclub",
     });
     expect(button({ join_mode: "open" })).toMatchObject({
@@ -199,9 +201,11 @@ describe("Entdecken", () => {
     expect(button({ join_mode: "request", request: "pending" })).toMatchObject({
       label: "Angefragt",
       disabled: true,
+      focusable: false,
     });
+    // Declined stays focusable, so its tooltip reaches the keyboard too.
     expect(button({ join_mode: "request", request: "declined" })).toMatchObject(
-      { label: "Nicht angenommen", disabled: true },
+      { label: "Nicht angenommen", disabled: true, focusable: true },
     );
   });
 
@@ -211,9 +215,8 @@ describe("Entdecken", () => {
       request: "declined",
       retry_at: "2026-11-18T09:30:00Z",
     });
-    expect(html).toContain(
-      'title="Du kannst ab dem 18. November 2026 wieder anfragen."',
-    );
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).not.toContain(" title=");
     // Also for screen readers, next to the server's name.
     const id = html.match(/<h2 id="([^"]+)">Filmclub<\/h2>/)?.[1];
     expect(html).toContain(`aria-describedby="${id} ${id}-until"`);

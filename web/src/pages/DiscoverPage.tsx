@@ -20,6 +20,7 @@ import { useDebouncedValue } from "../components/useDebouncedValue.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { buttonClass } from "../components/ui/buttonClass.ts";
 import { IconButton } from "../components/ui/IconButton.tsx";
+import { useTooltip } from "../components/ui/Tooltip.tsx";
 import { Input } from "../components/ui/Input.tsx";
 import { SkeletonRows } from "../components/ui/Skeleton.tsx";
 import {
@@ -284,9 +285,7 @@ export function DiscoverRow({
         <p className="discover-row-description">{listing.description}</p>
         <p className="discover-row-meta">
           {/* The settings preview has no language until one is chosen. */}
-          {language
-            ? t("row.meta", { language, members })
-            : members}
+          {language ? t("row.meta", { language, members }) : members}
         </p>
       </div>
       <ListingButton
@@ -420,30 +419,49 @@ function ListingButton({
           {t("actions.requested")}
         </Button>
       );
-    case "declined": {
-      const until = listing.retry_at
-        ? t("actions.declinedUntil", { date: formatDate(listing.retry_at) })
-        : undefined;
+    case "declined":
       return (
-        <>
-          <Button
-            className="discover-action"
-            aria-describedby={
-              until ? `${describedBy} ${describedBy}-until` : describedBy
-            }
-            title={until}
-            disabled
-          >
-            {t("actions.declined")}
-          </Button>
-          {/* The title alone reaches neither touch nor every screen reader. */}
-          {until ? (
-            <span id={`${describedBy}-until`} className="sr-only">
-              {until}
-            </span>
-          ) : null}
-        </>
+        <DeclinedButton describedBy={describedBy} retryAt={listing.retry_at} />
       );
-    }
   }
+}
+
+/**
+ * "Nicht angenommen": unavailable, yet focusable, so its tooltip can say
+ * from when the person may ask again, on hover and on keyboard focus. A
+ * disabled button gets neither, and a `title` shows on hover only.
+ */
+function DeclinedButton({
+  describedBy,
+  retryAt,
+}: {
+  describedBy: string;
+  retryAt: string | null;
+}) {
+  const t = useT(discovery);
+  const until = retryAt
+    ? t("actions.declinedUntil", { date: formatDate(retryAt) })
+    : null;
+  const tip = useTooltip({ label: t("actions.declined"), detail: until });
+  return (
+    <>
+      <Button
+        {...(until ? tip.trigger : {})}
+        className="discover-action"
+        aria-disabled="true"
+        aria-describedby={
+          until ? `${describedBy} ${describedBy}-until` : describedBy
+        }
+      >
+        {t("actions.declined")}
+      </Button>
+      {/* The tooltip is hidden from screen readers; this is not. */}
+      {until ? (
+        <span id={`${describedBy}-until`} className="sr-only">
+          {until}
+        </span>
+      ) : null}
+      {until ? tip.tooltip : null}
+    </>
+  );
 }
