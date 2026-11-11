@@ -541,7 +541,7 @@ mod flows {
 
     use crate::common::mock_issuer::{MockIssuer, MockUser};
     use crate::common::{self, Client, Response};
-    use crate::{ADA, PASSWORD, outbox};
+    use crate::{ADA, PASSWORD, outbox, token};
 
     const PUBLIC: &str = "http://localhost:5180";
     const HOST: &str = "localhost:5180";
@@ -1246,6 +1246,93 @@ mod flows {
         assert_eq!(
             count(&pool, "SELECT count(*) FROM user_identities").await,
             1
+        );
+    }
+
+    fn link_with_password() -> Value {
+        json!({ "purpose": "link", "current_password": PASSWORD })
+    }
+
+    fn stranger() -> MockUser {
+        MockUser::verified("sub-stranger", "stranger@example.com", "Stranger")
+    }
+
+    /// Ada's inbox gets a reset link and sets a new password with it.
+    async fn reset_by_mail(state: &AppState, mailer: &Mailer) {
+        let mut owner = browser(state).await;
+        let before = mailer.outbox().len();
+        let res = owner
+            .send(
+                Method::POST,
+                "/api/auth/password-reset",
+                Some(json!({ "email": ADA })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+        let sent = outbox(mailer, before + 1).await;
+        let res = owner
+            .send(
+                Method::POST,
+                "/api/auth/password-reset/confirm",
+                Some(
+                    json!({ "token": token(sent.last().unwrap()), "password": "the owner's own" }),
+                ),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+
+    #[sqlx::test]
+    async fn a_password_reset_disconnects_what_the_inbox_does_not_vouch_for(pool: PgPool) {
+        let (issuer, mut state) = setup(pool.clone()).await;
+        // Registered by a stranger while mail was off, who then connects
+        // their own Google account with the password they chose.
+        let mut by_stranger = registered(&state, false).await;
+        let res = web_sign_in(&issuer, &mut by_stranger, link_with_password(), stranger()).await;
+        assert_eq!(location(&res), "/settings/konto?connected=google");
+
+        // Mail is on now; the owner of the address resets the password.
+        let mailer = with_mail(&mut state);
+        reset_by_mail(&state, &mailer).await;
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM user_identities").await,
+            0
+        );
+        // The stranger's Google account no longer opens Ada's account.
+        let mut client = browser(&state).await;
+        let res = web_sign_in(&issuer, &mut client, sign_in(), stranger()).await;
+        token_of(&location(&res));
+        assert!(res.set_cookie(common::SESSION).is_none());
+    }
+
+    #[sqlx::test]
+    async fn a_password_reset_keeps_the_provider_account_of_the_address(pool: PgPool) {
+        let (issuer, mut state) = setup(pool.clone()).await;
+        let mut ada_client = registered(&state, true).await;
+        let res = web_sign_in(&issuer, &mut ada_client, link_with_password(), ada()).await;
+        assert_eq!(location(&res), "/settings/konto?connected=google");
+
+        let mailer = with_mail(&mut state);
+        reset_by_mail(&state, &mailer).await;
+        let mut client = browser(&state).await;
+        let res = web_sign_in(&issuer, &mut client, sign_in(), ada()).await;
+        assert_eq!(location(&res), "/");
+        assert_eq!(client.bootstrap().await.body["user"]["email"], ADA);
+
+        // One connected under another address goes, even on a confirmed
+        // account: whoever knew the old password may have connected it.
+        sqlx::query("UPDATE user_identities SET subject = 'sub-stranger'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE user_identities SET email = 'stranger@example.com'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        reset_by_mail(&state, &mailer).await;
+        assert_eq!(
+            count(&pool, "SELECT count(*) FROM user_identities").await,
+            0
         );
     }
 
