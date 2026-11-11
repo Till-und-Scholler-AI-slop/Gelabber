@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use egui::{Color32, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{ApiError, Client, ThemeColors, ThemeDocument};
-use gelabber_i18n::{common, themes as texts};
+use gelabber_i18n::{Text, common, themes as texts};
 use parking_lot::Mutex;
 
 use super::controls::{self, Confirm, Picked, Status};
@@ -824,7 +824,7 @@ impl PanelState {
     }
 }
 
-const COLOR_LABELS: [fn() -> &'static str; 8] = [
+const COLOR_LABELS: [Text; 8] = [
     texts::color_background,
     texts::color_panel,
     texts::color_surface,

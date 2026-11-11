@@ -12,7 +12,7 @@ use gelabber_client::{
     ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, ServerDetail,
     ServerPatch,
 };
-use gelabber_i18n::{common, server_settings as texts};
+use gelabber_i18n::{Text, common, server_settings as texts};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
@@ -33,7 +33,7 @@ use crate::widgets::{
 };
 
 /// `PERMISSIONS` of servers/permissions.ts.
-const PERMISSIONS: [(Permission, fn() -> &'static str, fn() -> &'static str); 8] = [
+const PERMISSIONS: [(Permission, Text, Text); 8] = [
     (
         Permission::ManageServer,
         texts::permission_manage_server_label,
@@ -76,7 +76,7 @@ const PERMISSIONS: [(Permission, fn() -> &'static str, fn() -> &'static str); 8]
     ),
 ];
 
-const SECTIONS: [(&str, fn() -> &'static str); 6] = [
+const SECTIONS: [(&str, Text); 6] = [
     ("allgemein", texts::section_general),
     ("rechte", texts::section_permissions),
     ("einladungen", texts::section_invites),

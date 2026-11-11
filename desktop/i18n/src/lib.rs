@@ -50,6 +50,10 @@ pub mod themes;
 
 pub use system::detect_system;
 
+/// A static catalog entry as a value, for tables of labels: called when
+/// drawn, so it follows the current language.
+pub type Text = fn() -> &'static str;
+
 /// A namespace's static entries: key, German, English.
 pub type Entries = &'static [(&'static str, &'static str, &'static str)];
 

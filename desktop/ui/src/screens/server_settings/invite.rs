@@ -4,7 +4,7 @@
 
 use egui::{Id, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use gelabber_client::{ApiError, Invite, Server};
-use gelabber_i18n::{common, server_settings as texts};
+use gelabber_i18n::{Text, common, server_settings as texts};
 use uuid::Uuid;
 
 use crate::app::AppCtx;
@@ -15,13 +15,13 @@ use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
 use crate::widgets::{Button, InlineStatus, Modal, StatusTone};
 
-const EXPIRY: [(fn() -> &'static str, Option<u32>); 4] = [
+const EXPIRY: [(Text, Option<u32>); 4] = [
     (texts::terms_expiry_hour, Some(1)),
     (texts::terms_expiry_day, Some(24)),
     (texts::terms_expiry_week, Some(168)),
     (texts::terms_expiry_never, None),
 ];
-const USES: [(fn() -> &'static str, Option<u32>); 4] = [
+const USES: [(Text, Option<u32>); 4] = [
     (|| "1", Some(1)),
     (|| "5", Some(5)),
     (|| "25", Some(25)),

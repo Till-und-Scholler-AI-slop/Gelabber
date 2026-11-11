@@ -4,7 +4,7 @@
 
 use egui::{Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use gelabber_client::OpState;
-use gelabber_i18n::{Locale, common, language, settings as texts};
+use gelabber_i18n::{Locale, Text, common, language, settings as texts};
 
 use super::controls::{self, Scope, Status};
 use super::prefs::{self, UiScale};
@@ -16,7 +16,7 @@ use crate::widgets::{Link, eased, focus_ring, keyboard_focus, link};
 
 /// Each mode: id, label, hint. The presets' names are names, the same in
 /// every language.
-const MODES: [(&str, fn() -> &'static str, fn() -> &'static str); 3] = [
+const MODES: [(&str, Text, Text); 3] = [
     ("light", texts::appearance_mode_light, || "Gelabber Hell"), // i18n-ok
     ("dark", texts::appearance_mode_dark, || "Gelabber Dunkel"), // i18n-ok
     (

@@ -5,7 +5,7 @@
 //! native media core reports devices.
 
 use egui::{Color32, Id, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
-use gelabber_i18n::{Locale, settings as texts};
+use gelabber_i18n::{Locale, Text, settings as texts};
 
 use super::controls;
 use super::prefs::{self, Prefs};
@@ -29,7 +29,7 @@ const HINT: TextStyle = text::META;
 
 /// `AUDIO_PROCESSING_DESKTOP`: mode, label and hint as the desktop app
 /// words them, since its native core filters, not a browser.
-pub const PROCESSING_MODES: [(&str, fn() -> &'static str, fn() -> &'static str); 3] = [
+pub const PROCESSING_MODES: [(&str, Text, Text); 3] = [
     (
         "enhanced",
         texts::media_mode_enhanced,

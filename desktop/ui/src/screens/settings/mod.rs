@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use egui::{Color32, Id, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{OpState, User};
-use gelabber_i18n::settings as texts;
+use gelabber_i18n::{Text, settings as texts};
 use parking_lot::Mutex;
 
 use crate::app::AppCtx;
@@ -33,8 +33,8 @@ pub use themes::apply_theme;
 pub struct Area {
     pub id: &'static str,
     pub group: &'static str,
-    pub label: fn() -> &'static str,
-    pub description: fn() -> &'static str,
+    pub label: Text,
+    pub description: Text,
     pub scope: Option<Scope>,
 }
 
@@ -105,8 +105,7 @@ pub const AREAS: [Area; 9] = [
     },
 ];
 
-const GROUPS: [(&str, fn() -> &'static str); 2] =
-    [("konto", texts::group_konto), ("app", texts::group_app)];
+const GROUPS: [(&str, Text); 2] = [("konto", texts::group_konto), ("app", texts::group_app)];
 
 /// Where `/settings` and the gear lead.
 pub const DEFAULT_AREA: &str = "darstellung";
