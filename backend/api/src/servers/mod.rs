@@ -514,7 +514,10 @@ async fn transfer_server(
 /// Key-share locks the account's row until commit unless it is under
 /// deletion (`users.deleted_at`). The deletion takes the row `FOR UPDATE`,
 /// so whichever comes second waits and then sees the other's result.
-async fn account_alive(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, ApiError> {
+pub(crate) async fn account_alive(
+    tx: &mut sqlx::PgConnection,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
     let found: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE",
     )

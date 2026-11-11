@@ -892,3 +892,83 @@ async fn a_released_reservation_needs_no_ledger_row(pool: PgPool) {
     assert!(queued("att/reserved").await);
     assert!(state.store.fetch("att/reserved").await.is_ok());
 }
+
+/// Pending requests to join a listed server go with phase one, like the
+/// memberships: the queue no longer lists the person and its handlers hear
+/// the smaller count. A declined request stays until the purge.
+#[sqlx::test]
+async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
+    let mut state = common::ws_state(pool.clone());
+    state.directory = true;
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
+    let mut lena = signed_up(&state, "lena@example.com", "Lena").await;
+    let lena_id = Uuid::parse_str(lena.user_id()).unwrap();
+    let keller = id_of(&create_server(&mut ada, "Modellbau-Keller").await);
+    let werkstatt = id_of(&create_server(&mut ada, "Werkstatt").await);
+    let res = ada
+        .send(
+            Method::PUT,
+            &format!("/api/servers/{keller}/listing"),
+            Some(json!({
+                "listed": true,
+                "description": "Kommt vorbei.",
+                "language": "de",
+                "join_mode": "request",
+            })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    sqlx::query(
+        "INSERT INTO server_join_requests (server_id, user_id, status, decided_at, decided_by) \
+         VALUES ($1, $2, 'declined', now(), $3)",
+    )
+    .bind(Uuid::parse_str(&werkstatt).unwrap())
+    .bind(lena_id)
+    .bind(Uuid::parse_str(ada.user_id()).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut ada_ws = socket(addr, &ada).await;
+    ada_ws
+        .send(Message::Text(json!({ "op": "h" }).to_string().into()))
+        .await
+        .unwrap();
+    next_frame(&mut ada_ws, |f| f["op"] == "h").await;
+    let res = lena
+        .send(
+            Method::POST,
+            &format!("/api/directory/listings/{keller}/request"),
+            Some(json!({ "message": "Darf ich?" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
+    assert_eq!(frame, json!({ "op": "jq", "s": keller, "n": 1 }));
+
+    let res = delete_me(&mut lena, json!({ "password": PASSWORD })).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
+    assert_eq!(frame, json!({ "op": "jq", "s": keller, "n": 0 }));
+    let res = ada
+        .send(
+            Method::GET,
+            &format!("/api/servers/{keller}/join-requests"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body, json!([]));
+    // Before the purge: the pending row is gone, the declined one stays.
+    let left: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT server_id, status FROM server_join_requests WHERE user_id = $1")
+            .bind(lena_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        left,
+        vec![(Uuid::parse_str(&werkstatt).unwrap(), "declined".to_owned())]
+    );
+}

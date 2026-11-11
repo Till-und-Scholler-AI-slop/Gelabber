@@ -18,6 +18,7 @@ use crate::auth::session::CurrentUser;
 use crate::error::ApiError;
 use crate::gateway::protocol::UserFrame;
 use crate::path::{Id, Ids};
+use crate::servers;
 use crate::servers::access;
 use crate::servers::membership;
 use crate::servers::permissions::Permission;
@@ -70,7 +71,8 @@ async fn list(
 
 /// `POST /api/servers/{id}/join-requests/{user_id}/accept`: the requester
 /// becomes a member. A banned requester's request goes and answers `404`;
-/// one who is a member already only loses the request.
+/// one who is a member already only loses the request. An account under
+/// deletion answers `404` like a request that is gone.
 async fn accept(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -79,6 +81,12 @@ async fn accept(
     let mut tx = membership::lock_server(&state.db, server_id, true).await?;
     let member = membership::load(&mut *tx, server_id, user.id).await?;
     member.require(Permission::ModerateMembers)?;
+    // An account under deletion has no requests left; one that is being
+    // deleted right now is waited for (`servers::account_alive`). Before the
+    // request's row lock, in the order the deletion takes them.
+    if !servers::account_alive(&mut tx, requester).await? {
+        return Err(ApiError::NotFound);
+    }
 
     let pending: Option<Uuid> = sqlx::query_scalar(
         "SELECT user_id FROM server_join_requests \

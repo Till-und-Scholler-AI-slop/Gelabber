@@ -38,7 +38,7 @@ use crate::json::Body;
 use crate::limits::{DIRECTORY_JOIN_PER_HOUR, DIRECTORY_SEARCH_PER_MIN, HOUR, MINUTE};
 use crate::path::Id;
 use crate::servers::ServerView;
-use crate::servers::membership;
+use crate::servers::{self, membership};
 use crate::state::AppState;
 
 use self::languages::LANGUAGES;
@@ -371,6 +371,10 @@ async fn join(
     let listing = visible_listing(&mut *tx, server_id, user.id)
         .await?
         .ok_or(ApiError::NotFound)?;
+    // Waits for a deletion of the account in progress, then refuses.
+    if !servers::account_alive(&mut tx, user.id).await? {
+        return Err(ApiError::NotFound);
+    }
     let already = is_member(&mut tx, server_id, user.id).await?;
     if !already {
         if listing.join_mode() != JoinMode::Open {
@@ -431,6 +435,10 @@ async fn request(
     visible_listing(&mut *tx, server_id, user.id)
         .await?
         .ok_or(ApiError::NotFound)?;
+    // Waits for a deletion of the account in progress, then refuses.
+    if !servers::account_alive(&mut tx, user.id).await? {
+        return Err(ApiError::NotFound);
+    }
     if is_member(&mut tx, server_id, user.id).await? {
         return Err(ApiError::AlreadyMember);
     }

@@ -1393,6 +1393,92 @@ async fn the_queue_works_while_off_and_accept_settles_races(pool: PgPool) {
     assert!(request_rows(&pool, keller).await.is_empty());
 }
 
+/// An account marked deleted whose pending request is still there (a row
+/// from before the deletion withdrew requests, or one filed in the race):
+/// the queue cannot let it in.
+#[sqlx::test]
+async fn an_account_under_deletion_is_not_accepted(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let lena = registered(&state, "lena@example.test", "Lena").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    insert_request(&pool, keller, id_of(&lena), "hallo").await;
+    sqlx::query("UPDATE users SET deleted_at = now() WHERE id = $1")
+        .bind(id_of(&lena))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = answer(&mut ada, keller, id_of(&lena), "accept").await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert_eq!(res.body["error"], "not_found");
+    assert!(!is_member(&pool, keller, id_of(&lena)).await);
+}
+
+/// Holds the account's row the way phase one of a deletion does, starts
+/// `call` with a second browser of `client`, marks the account deleted
+/// while the call waits, commits, and returns the call's answer.
+async fn racing_the_deletion<F, Fut>(
+    state: &AppState,
+    pool: &PgPool,
+    client: &Client,
+    call: F,
+) -> common::Response
+where
+    F: FnOnce(Client) -> Fut,
+    Fut: std::future::Future<Output = common::Response> + Send + 'static,
+{
+    let user = id_of(client);
+    let mut deleting = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(user)
+        .execute(&mut *deleting)
+        .await
+        .unwrap();
+    let mut browser = Client::from_state(state.clone());
+    browser.jar = client.jar.clone();
+    browser.csrf = client.csrf.clone();
+    let pending = tokio::spawn(call(browser));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !pending.is_finished(),
+        "the call waits for the account's row"
+    );
+    sqlx::query("UPDATE users SET deleted_at = now() WHERE id = $1")
+        .bind(user)
+        .execute(&mut *deleting)
+        .await
+        .unwrap();
+    deleting.commit().await.unwrap();
+    pending.await.unwrap()
+}
+
+#[sqlx::test]
+async fn a_join_or_request_racing_the_deletion_is_refused(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let lena = registered(&state, "lena@example.test", "Lena").await;
+    let tom = registered(&state, "tom@example.test", "Tom").await;
+    let offen = create_server(&mut ada, "Offene Runde").await;
+    list_with(&mut ada, offen, "de", "open").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list_with(&mut ada, keller, "de", "request").await;
+
+    let res = racing_the_deletion(&state, &pool, &lena, move |mut lena| async move {
+        join(&mut lena, offen).await
+    })
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert!(!is_member(&pool, offen, id_of(&lena)).await);
+
+    let res = racing_the_deletion(&state, &pool, &tom, move |mut tom| async move {
+        ask(&mut tom, keller, "hallo").await
+    })
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert!(request_rows(&pool, keller).await.is_empty());
+}
+
 type Ws =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
