@@ -112,4 +112,29 @@ mod tests {
         );
         assert_eq!(stage_facts(1, 0, &[], true), "1 im Kanal · Du bist live");
     }
+
+    #[test]
+    fn sentences_in_english() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(
+            name_list(&s(&["Mia", "Lena", "Kim", "Tom"])),
+            "Mia, Lena and 2 more"
+        );
+        assert_eq!(
+            room_summary(&s(&["Jonas"]), false, &s(&["Jonas"])),
+            "Jonas is here. Jonas is live."
+        );
+        assert_eq!(
+            room_summary(&[], true, &[]),
+            "It’s just you in the channel."
+        );
+        assert_eq!(
+            stage_facts(3, 2, &[], false),
+            "3 in the channel · 2 cameras"
+        );
+        assert_eq!(
+            stage_facts(2, 0, &s(&["Mia"]), true),
+            "2 in the channel · You and Mia are live"
+        );
+    }
 }

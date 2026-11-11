@@ -575,6 +575,15 @@ mod tests {
         assert_eq!(number(1234.5, 1, false), "1.234,5");
     }
 
+    #[test]
+    fn english_numbers() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(format_bps(Some(1_250_000.0)), "1.3 Mbit/s");
+        assert_eq!(format_bps(None), "unknown");
+        assert_eq!(format_ratio(Some(0.06)), "6.0%");
+        assert_eq!(number(1234.5, 1, false), "1,234.5");
+    }
+
     fn flow(send: bool, loss: f64) -> Flow {
         Flow {
             send,

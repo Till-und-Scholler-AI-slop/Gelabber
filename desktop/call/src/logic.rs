@@ -1344,4 +1344,22 @@ mod tests {
         assert_eq!(video_key(user, Kind::V), video_key(user, Kind::V));
         assert_ne!(video_key(user, Kind::V), video_key(user, Kind::S));
     }
+
+    #[test]
+    fn messages_follow_the_language() {
+        assert_eq!(
+            media_error_message("unavailable"),
+            "Kein freier Sprachplatz."
+        );
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(media_error_message("unavailable"), "No free voice seat.");
+        assert_eq!(
+            mic_denied(),
+            "Microphone access not allowed, you’re only listening."
+        );
+        assert_eq!(
+            screen_failed(" timeout "),
+            "Screen capture could not be started (timeout)."
+        );
+    }
 }

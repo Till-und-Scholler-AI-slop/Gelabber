@@ -566,6 +566,43 @@ fn an_unread_row_marks_a_draft() {
 }
 
 #[test]
+fn the_call_bar_speaks_english() {
+    let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Unavailable));
+    let mut h = harness(client, call.clone(), bar);
+    h.run_steps(6);
+    h.get_by_label("Leave");
+    h.get_by_label("Go Live");
+    h.get_by_label("Call settings");
+    assert!(h.query_by_label("Verlassen").is_none());
+    h.get_by_label("No microphone").click();
+    h.run_steps(6);
+    h.get_by_label("Microphone not found or in use.");
+    h.get_by_label("Choose microphone…");
+    h.get_by_label("Try again");
+    call.set_state(in_sofa(MicStatus::Live));
+    h.run_steps(6);
+    h.get_by_label("Mute");
+}
+
+#[test]
+fn the_voice_dialog_speaks_english() {
+    use crate::screens::voice::dialogs::{self, Tab};
+    let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let (client, call) = offline();
+    let mut h = harness(client, call, dialogs::show);
+    dialogs::open_settings(&h.ctx, Tab::Diagnose);
+    h.run_steps(6);
+    h.get_by_label("Diagnostics");
+    h.get_by_label("Video & Live");
+    h.get_by_label("For troubleshooting");
+    h.get_by_label("Done").click();
+    h.run_steps(6);
+    assert!(!dialogs::open(&h.ctx));
+}
+
+#[test]
 fn the_voice_dialog_opens_on_its_tab_and_moves_with_the_arrows() {
     use crate::screens::voice::dialogs::{self, Tab};
     use egui_kittest::kittest::NodeT;
