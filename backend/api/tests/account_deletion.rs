@@ -838,38 +838,57 @@ async fn a_deletion_waits_for_a_server_being_created(pool: PgPool) {
 }
 
 /// A queued object deletion whose reservation was released goes through
-/// without a ledger row to settle against.
+/// without a ledger row to settle against. One that still holds reserved
+/// bytes waits for its ledger row and stays queued, which is why the purge
+/// releases the person's reservations before it deletes their ledger.
 #[sqlx::test]
 async fn a_released_reservation_needs_no_ledger_row(pool: PgPool) {
     use gelabber_api::attachments::cleanup;
 
     let state = common::state(pool.clone());
     let uploader = Uuid::new_v4();
-    state
-        .store
-        .put("att/orphan", "image/png", vec![1, 2, 3])
-        .await
-        .unwrap();
+    for key in ["att/orphan", "att/reserved"] {
+        state
+            .store
+            .put(key, "image/png", vec![1, 2, 3])
+            .await
+            .unwrap();
+    }
     sqlx::query(
         "INSERT INTO storage_cleanup (object_key, retain_until, quota_uploader, quota_day, \
-             reserved_bytes) VALUES ('att/orphan', now(), $1, CURRENT_DATE, 0)",
+             reserved_bytes) \
+         VALUES ('att/orphan', now(), $1, CURRENT_DATE, 0), \
+                ('att/reserved', now(), $1, CURRENT_DATE, 3)",
     )
     .bind(uploader)
     .execute(&pool)
     .await
     .unwrap();
+    let queued = |key: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM storage_cleanup WHERE object_key = $1)",
+            )
+            .bind(key)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let mut deleted = false;
     for _ in 0..100 {
         cleanup::delete_pending(&state, 32).await.unwrap();
-        let left: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM storage_cleanup WHERE object_key = 'att/orphan')",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        if !left {
-            return;
+        if !queued("att/orphan").await {
+            deleted = true;
+            break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    panic!("the queued object was not deleted");
+    assert!(deleted, "the queued object was not deleted");
+    // Past its retry delay, the reserved one is still waiting.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    cleanup::delete_pending(&state, 32).await.unwrap();
+    assert!(queued("att/reserved").await);
+    assert!(state.store.fetch("att/reserved").await.is_ok());
 }
