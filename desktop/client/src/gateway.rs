@@ -1061,6 +1061,7 @@ mod tests {
                     c,
                     k: Some(crate::models::TrackKind::Sa),
                     on: None,
+                    o: None,
                 },
                 serde_json::json!({"op":"sig","t":"p","s":s,"c":c,"k":"sa"}),
             ),

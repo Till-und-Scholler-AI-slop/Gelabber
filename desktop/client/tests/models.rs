@@ -241,7 +241,7 @@ fn a_newer_server_degrades_per_element() {
     .unwrap();
     assert!(matches!(frame, ServerFrame::Sig(SigFrame { k: None, .. })));
     let frame: ServerFrame = serde_json::from_value(serde_json::json!({
-        "op": "sig", "t": "w", "s": "00000000-0000-0000-0000-000000000001",
+        "op": "sig", "t": "x", "s": "00000000-0000-0000-0000-000000000001",
     }))
     .unwrap();
     assert!(matches!(
@@ -251,4 +251,67 @@ fn a_newer_server_degrades_per_element() {
             ..
         })
     ));
+}
+
+/// Who watches a Live (#521), as `backend/api/src/gateway/protocol.rs`
+/// writes and reads it.
+#[test]
+fn watch_frames() {
+    let (s, c, u) = (
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+        "00000000-0000-0000-0000-000000000003",
+    );
+    let owner = "00000000-0000-0000-0000-000000000004";
+    let json = serde_json::json!({"op": "sig", "t": "w", "s": s, "c": c, "u": u, "w": [owner]});
+    let frame: ServerFrame = serde_json::from_value(json.clone()).unwrap();
+    let ServerFrame::Sig(sig) = &frame else {
+        panic!("not a sig frame: {frame:?}");
+    };
+    assert_eq!(sig.t, SigKind::W);
+    assert_eq!(sig.w, Some(vec![owner.parse().unwrap()]));
+    assert_eq!(serde_json::to_value(&frame).unwrap(), json);
+    // An empty set is a set: it survives the round trip.
+    let json = serde_json::json!({"op": "sig", "t": "w", "s": s, "c": c, "u": u, "w": []});
+    let frame: ServerFrame = serde_json::from_value(json.clone()).unwrap();
+    assert!(matches!(&frame, ServerFrame::Sig(SigFrame { w: Some(w), .. }) if w.is_empty()));
+    assert_eq!(serde_json::to_value(&frame).unwrap(), json);
+    // Other frames carry none, and an entry this client cannot read drops.
+    let frame: ServerFrame =
+        serde_json::from_value(serde_json::json!({"op": "sig", "t": "j", "s": s, "c": c, "u": u}))
+            .unwrap();
+    assert!(matches!(frame, ServerFrame::Sig(SigFrame { w: None, .. })));
+    assert!(!serde_json::to_string(&frame).unwrap().contains(r#""w""#));
+    let frame: ServerFrame = serde_json::from_value(
+        serde_json::json!({"op": "sig", "t": "w", "s": s, "c": c, "u": u, "w": [owner, 7]}),
+    )
+    .unwrap();
+    assert!(matches!(&frame, ServerFrame::Sig(SigFrame { w: Some(w), .. }) if w.len() == 1));
+
+    let request = ClientFrame::Sig {
+        t: SigKind::W,
+        s: s.parse().unwrap(),
+        c: c.parse().unwrap(),
+        k: Some(TrackKind::S),
+        on: Some(true),
+        o: Some(owner.parse().unwrap()),
+    };
+    let json = serde_json::json!(
+        {"op": "sig", "t": "w", "s": s, "c": c, "k": "s", "on": true, "o": owner}
+    );
+    assert_eq!(serde_json::to_value(&request).unwrap(), json);
+    assert_eq!(
+        serde_json::from_value::<ClientFrame>(json).unwrap(),
+        request
+    );
+    // The other requests name no owner.
+    let request = ClientFrame::Sig {
+        t: SigKind::J,
+        s: s.parse().unwrap(),
+        c: c.parse().unwrap(),
+        k: None,
+        on: None,
+        o: None,
+    };
+    assert!(!serde_json::to_string(&request).unwrap().contains(r#""o""#));
 }

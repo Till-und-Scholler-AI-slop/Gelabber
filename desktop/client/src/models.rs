@@ -871,6 +871,9 @@ pub enum SigKind {
     D,
     /// Occupancy snapshot (server only).
     R,
+    /// Watch a Live (`o` its owner); from the server, the full set of
+    /// owners the user watches in that channel (`w`).
+    W,
     /// A kind this client does not know.
     #[serde(other)]
     Unknown,
@@ -930,6 +933,9 @@ pub enum ClientFrame {
         k: Option<TrackKind>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         on: Option<bool>,
+        /// The owner of the Live a `w` watches.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        o: Option<Uuid>,
     },
     #[serde(rename = "f")]
     Focus { on: bool },
@@ -1084,6 +1090,13 @@ pub struct SigFrame {
     /// Someone who is there already, replayed to a new occupant: no news.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub replay: bool,
+    /// `w`: every owner whose Live the user watches in the channel.
+    #[serde(
+        default,
+        deserialize_with = "lenient_opt_list",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub w: Option<Vec<Uuid>>,
 }
 
 /// A gateway topic: a server (`c: None`), a channel, or a DM (`s == c`).

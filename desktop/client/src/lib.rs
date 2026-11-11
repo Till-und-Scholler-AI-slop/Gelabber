@@ -37,6 +37,10 @@ pub type EventTap = Arc<dyn Fn(&EventFrame) + Send + Sync>;
 /// in, for the call (gelabber-call), which keeps its own room state.
 pub type VoiceHook = Arc<dyn Fn(&GatewayEvent) + Send + Sync>;
 
+/// Sees every frame this client sends on the gateway socket, whether or not
+/// one is open (tests of the call, which has no socket).
+pub type FrameTap = Arc<dyn Fn(&models::ClientFrame) + Send + Sync>;
+
 /// A voice command, run in the order the commands were given.
 type VoiceJob = Box<dyn FnOnce(&Client) + Send>;
 
@@ -92,6 +96,7 @@ struct Inner {
     /// What the server confirmed for an older change while a newer one was
     /// still on its way, with the account's epoch.
     locale_meanwhile: Mutex<Option<(u64, String)>>,
+    frame_tap: RwLock<Option<FrameTap>>,
 }
 
 impl Drop for Inner {
@@ -141,6 +146,7 @@ impl Client {
                 event_tap: RwLock::new(None),
                 locale_change: AtomicU64::new(0),
                 locale_meanwhile: Mutex::new(None),
+                frame_tap: RwLock::new(None),
             }),
         };
         let weak = Arc::downgrade(&client.inner);
@@ -177,6 +183,10 @@ impl Client {
 
     pub fn set_event_tap(&self, tap: Option<EventTap>) {
         *self.inner.event_tap.write() = tap;
+    }
+
+    pub fn set_frame_tap(&self, tap: Option<FrameTap>) {
+        *self.inner.frame_tap.write() = tap;
     }
 
     pub fn set_repaint(&self, repaint: Repaint) {

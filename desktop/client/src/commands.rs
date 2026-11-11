@@ -142,6 +142,10 @@ impl Client {
     }
 
     fn send_frame(&self, frame: ClientFrame) {
+        let tap = self.inner.frame_tap.read().clone();
+        if let Some(tap) = tap {
+            tap(&frame);
+        }
         if let Some(gateway) = self.gateway() {
             gateway.send(frame);
         }
@@ -1288,6 +1292,7 @@ impl Client {
                     c,
                     k: None,
                     on: None,
+                    o: None,
                 });
             }
             let me = this.with_state(|s| s.me().map(|u| u.id));
@@ -1309,6 +1314,7 @@ impl Client {
                         d: Some(current.deafened),
                         snap: None,
                         replay: false,
+                        w: None,
                     });
                 }
             });
@@ -1329,6 +1335,7 @@ impl Client {
             c,
             k: None,
             on,
+            o: None,
         };
         self.send_frame(sig(SigKind::J, None));
         if me.muted {
@@ -1351,6 +1358,7 @@ impl Client {
                 c,
                 k: None,
                 on: None,
+                o: None,
             });
             let me = this.with_state(|st| st.me().map(|u| u.id));
             this.write(|st| {
@@ -1371,6 +1379,7 @@ impl Client {
                         d: None,
                         snap: None,
                         replay: false,
+                        w: None,
                     });
                 }
             });
@@ -1395,6 +1404,7 @@ impl Client {
                         c,
                         k: None,
                         on: Some(muted),
+                        o: None,
                     });
                 }
                 if current.deafened != deafened {
@@ -1404,6 +1414,7 @@ impl Client {
                         c,
                         k: None,
                         on: Some(deafened),
+                        o: None,
                     });
                 }
             }
@@ -1438,6 +1449,7 @@ impl Client {
                         c,
                         k: None,
                         on: Some(muted),
+                        o: None,
                     });
                 }
                 this.send_frame(ClientFrame::Sig {
@@ -1446,6 +1458,7 @@ impl Client {
                     c,
                     k: None,
                     on: Some(deafened),
+                    o: None,
                 });
             }
         });
@@ -1464,6 +1477,26 @@ impl Client {
                 c,
                 k: Some(kind),
                 on: None,
+                o: None,
+            });
+        });
+    }
+
+    /// Announces (`on`) or retracts watching `owner`'s Live from my seat;
+    /// the gateway tells the room who watches (`sig t:"w"`).
+    pub fn voice_watch(&self, owner: Uuid, on: bool) {
+        self.voice_queue(move |this| {
+            let me = this.with_state(|s| s.voice_self);
+            let (Some(s), Some(c)) = (me.server, me.channel) else {
+                return;
+            };
+            this.send_frame(ClientFrame::Sig {
+                t: SigKind::W,
+                s,
+                c,
+                k: Some(TrackKind::S),
+                on: Some(on),
+                o: Some(owner),
             });
         });
     }

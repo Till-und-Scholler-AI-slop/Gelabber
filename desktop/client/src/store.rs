@@ -494,6 +494,10 @@ pub struct State {
     pub voice: HashMap<Uuid, HashMap<Uuid, VoiceOccupant>>,
     /// server → channel → users who are live, in the order they went live.
     pub live: HashMap<Uuid, HashMap<Uuid, Vec<Uuid>>>,
+    /// server → channel → watcher → the owners whose Live they watch there
+    /// (`sig t:"w"`). Per channel, as the web keeps it: the gateway sends
+    /// each room's set, and one person's seats can sit in two rooms.
+    pub watches: HashMap<Uuid, HashMap<Uuid, HashMap<Uuid, Vec<Uuid>>>>,
     pub voice_self: VoiceSelf,
     pub gateway: GatewayStatus,
     /// Why the gateway's upgrade is turned down (`HTTP 403`, `TLS: …`)
@@ -749,6 +753,7 @@ impl State {
         self.presence.remove(&server);
         self.voice.remove(&server);
         self.live.remove(&server);
+        self.watches.remove(&server);
         if self.view.server == Some(server) {
             self.view = View::default();
         }
@@ -917,6 +922,15 @@ impl State {
                 live.entry(entry.c).or_default().push(entry.u);
             }
             self.live.insert(server, live);
+            // The snapshot carries no watches: keep those of people still
+            // in a call.
+            if let Some(watches) = self.watches.get_mut(&server) {
+                let roster = &self.voice[&server];
+                for people in watches.values_mut() {
+                    people.retain(|u, _| roster.contains_key(u));
+                }
+                watches.retain(|_, people| !people.is_empty());
+            }
             return;
         }
         let (Some(channel), Some(user)) = (sig.c, sig.u) else {
@@ -936,6 +950,16 @@ impl State {
                 );
             }
             SigKind::L => {
+                // Nobody watches from a channel they left; the watches of a
+                // seat in another channel stay, set by that room's `w`.
+                if let Some(watches) = self.watches.get_mut(&server)
+                    && let Some(people) = watches.get_mut(&channel)
+                {
+                    people.remove(&user);
+                    if people.is_empty() {
+                        watches.remove(&channel);
+                    }
+                }
                 let shown = roster.get(&user).map(|o| o.channel_id);
                 let live = self.live.entry(server).or_default();
                 if let Some(users) = live.get_mut(&channel) {
@@ -980,8 +1004,40 @@ impl State {
                     users.retain(|u| *u != user);
                 }
             }
+            SigKind::W => {
+                // The full set of the room: it replaces what was there.
+                self.watches
+                    .entry(server)
+                    .or_default()
+                    .entry(channel)
+                    .or_default()
+                    .insert(user, sig.w.clone().unwrap_or_default());
+            }
             _ => {}
         }
+    }
+
+    /// The people in `channel` other than `owner` who watch `owner`'s Live,
+    /// and the others there, each sorted by name (web `watchersOf`). Only
+    /// the gateway's sets: the own watch is the call's to add.
+    pub fn watchers_of(&self, server: Uuid, channel: Uuid, owner: Uuid) -> (Vec<Uuid>, Vec<Uuid>) {
+        let watches = self.watches.get(&server).and_then(|w| w.get(&channel));
+        let mut watching = Vec::new();
+        let mut not_watching = Vec::new();
+        for (user, _) in self.voice_occupants(server, channel) {
+            if user == owner {
+                continue;
+            }
+            let watches_owner = watches
+                .and_then(|w| w.get(&user))
+                .is_some_and(|owners| owners.contains(&owner));
+            if watches_owner {
+                watching.push(user);
+            } else {
+                not_watching.push(user);
+            }
+        }
+        (watching, not_watching)
     }
 
     /// Who sits in a voice channel, sorted by name like the sidebar.
@@ -1651,6 +1707,7 @@ mod tests {
             d: None,
             snap: None,
             replay,
+            w: None,
         };
         let at = chrono::Utc::now();
         let roster = SigFrame {
@@ -1791,6 +1848,7 @@ mod tests {
             d: None,
             snap: None,
             replay: false,
+            w: None,
         };
         s.apply_sig(&SigFrame {
             snap: Some(vec![VoiceEntry {
@@ -1820,6 +1878,75 @@ mod tests {
         assert_eq!(s.voice_occupants(srv, b).len(), 1);
         s.apply_sig(&sig(SigKind::L, Some(b)));
         assert!(s.voice_occupants(srv, b).is_empty());
+    }
+
+    #[test]
+    fn watches_follow_sig_and_split_the_room() {
+        let mut s = State::default();
+        let (srv, room, other) = (id(1), id(2), id(3));
+        let (owner, ada, bea, cid) = (id(10), id(11), id(12), id(13));
+        let sig = |t, u: Uuid, c: Uuid| SigFrame {
+            t,
+            s: srv,
+            c: Some(c),
+            u: Some(u),
+            k: None,
+            on: None,
+            m: None,
+            d: None,
+            snap: None,
+            replay: false,
+            w: None,
+        };
+        let watch = |u: Uuid, c: Uuid, owners: Vec<Uuid>| SigFrame {
+            w: Some(owners),
+            ..sig(SigKind::W, u, c)
+        };
+        for u in [owner, ada, bea, cid] {
+            s.apply_sig(&sig(SigKind::J, u, room));
+        }
+        assert_eq!(
+            s.watchers_of(srv, room, owner),
+            (vec![], vec![ada, bea, cid])
+        );
+        s.apply_sig(&watch(ada, room, vec![owner]));
+        s.apply_sig(&watch(bea, room, vec![cid, owner]));
+        assert_eq!(s.watchers_of(srv, room, owner), (vec![ada, bea], vec![cid]));
+        // The owner is never in either list.
+        assert_eq!(s.watchers_of(srv, room, cid), (vec![bea], vec![owner, ada]));
+        // Each frame is the full set.
+        s.apply_sig(&watch(bea, room, vec![]));
+        assert_eq!(s.watchers_of(srv, room, owner).0, vec![ada]);
+        // A frame without the set reads as watching nothing.
+        s.apply_sig(&sig(SigKind::W, ada, room));
+        assert!(s.watchers_of(srv, room, owner).0.is_empty());
+        s.apply_sig(&watch(ada, room, vec![owner]));
+        s.apply_sig(&watch(bea, room, vec![owner]));
+        // A leave of another room keeps the watches here.
+        s.apply_sig(&sig(SigKind::L, ada, other));
+        assert_eq!(s.watchers_of(srv, room, owner).0, vec![ada, bea]);
+        s.apply_sig(&sig(SigKind::L, ada, room));
+        assert_eq!(s.watchers_of(srv, room, owner), (vec![bea], vec![cid]));
+        assert!(!s.watches[&srv][&room].contains_key(&ada));
+        // A snapshot keeps the watches of those still in a call.
+        let entry = |u| VoiceEntry {
+            u,
+            c: room,
+            m: false,
+            d: false,
+            s: u == owner,
+        };
+        s.apply_sig(&watch(cid, room, vec![owner]));
+        s.apply_sig(&SigFrame {
+            snap: Some(vec![entry(owner), entry(bea)]),
+            c: None,
+            u: None,
+            ..sig(SigKind::R, owner, room)
+        });
+        assert_eq!(s.watchers_of(srv, room, owner), (vec![bea], vec![]));
+        assert!(!s.watches[&srv][&room].contains_key(&cid));
+        s.forget_server(srv);
+        assert!(s.watches.is_empty());
     }
 
     #[test]
