@@ -124,6 +124,12 @@ async fn ban_member(
         .bind(target_id)
         .execute(&mut *tx)
         .await?;
+    // A banned person's request to join, pending or declined, goes too.
+    sqlx::query("DELETE FROM server_join_requests WHERE server_id = $1 AND user_id = $2")
+        .bind(server_id)
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?;
     info!(server_id = %server_id, user_id = %target_id, "member banned");
     after_removal(&state, &mut tx, server_id, target_id, "banned").await?;
     tx.commit().await?;
