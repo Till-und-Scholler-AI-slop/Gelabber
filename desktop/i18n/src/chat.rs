@@ -331,31 +331,27 @@ pub fn composer_remove_file_label(name: &str) -> String {
 
 /// "{count} Zeichen übrig".
 pub fn composer_chars_left(count: u64) -> String {
+    let n = crate::intl::count(count);
     match get() {
-        Locale::De => format!("{count} Zeichen übrig"),
-        Locale::En => {
-            let n = crate::intl::english_count(count);
-            plural(
-                count,
-                format!("{n} character left"),
-                format!("{n} characters left"),
-            )
-        }
+        Locale::De => format!("{n} Zeichen übrig"),
+        Locale::En => plural(
+            count,
+            format!("{n} character left"),
+            format!("{n} characters left"),
+        ),
     }
 }
 
 /// "{count} Zeichen zu viel".
 pub fn composer_chars_over(count: u64) -> String {
+    let n = crate::intl::count(count);
     match get() {
-        Locale::De => format!("{count} Zeichen zu viel"),
-        Locale::En => {
-            let n = crate::intl::english_count(count);
-            plural(
-                count,
-                format!("{n} character too many"),
-                format!("{n} characters too many"),
-            )
-        }
+        Locale::De => format!("{n} Zeichen zu viel"),
+        Locale::En => plural(
+            count,
+            format!("{n} character too many"),
+            format!("{n} characters too many"),
+        ),
     }
 }
 

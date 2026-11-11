@@ -194,15 +194,18 @@ pub fn format_relative(value: i64, unit: Unit) -> String {
     }
 }
 
-/// A count in an English text, grouped as the web's catalogs format a
-/// `{count}`: "3,963". The German texts keep the plain digits they have
-/// always shown.
-pub fn english_count(count: u64) -> String {
+/// A count in a text, grouped as the web's catalogs format a `{count}`:
+/// "3.963" / "3,963".
+pub fn count(count: u64) -> String {
+    let group = match get() {
+        Locale::De => '.',
+        Locale::En => ',',
+    };
     let digits = count.to_string();
     let mut out = String::new();
     for (i, digit) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
+            out.push(group);
         }
         out.push(digit);
     }
@@ -348,17 +351,29 @@ mod tests {
         assert_eq!(format_number(1_150_000.0, 0, 0), "1,150,000");
     }
 
-    /// English counts are grouped in either interface language; German
-    /// texts do not call this.
+    /// Counts are grouped by thousands, as `Intl.NumberFormat` does for
+    /// the web's `{count}`.
     #[test]
-    fn english_counts_group_by_thousands() {
+    fn counts_group_by_thousands() {
         let _de = on_this_thread(Locale::De);
-        assert_eq!(english_count(0), "0");
-        assert_eq!(english_count(999), "999");
-        assert_eq!(english_count(3963), "3,963");
-        assert_eq!(english_count(1_234_567), "1,234,567");
-        assert_eq!(crate::emoji::picker_found(3963), "3963 Emojis gefunden");
+        assert_eq!(count(0), "0");
+        assert_eq!(count(999), "999");
+        assert_eq!(count(3963), "3.963");
+        assert_eq!(count(1_234_567), "1.234.567");
+        assert_eq!(crate::emoji::picker_found(3963), "3.963 Emojis gefunden");
+        assert_eq!(crate::emoji::picker_found(12), "12 Emojis gefunden");
+        assert_eq!(
+            crate::chat::composer_chars_left(1200),
+            "1.200 Zeichen übrig"
+        );
+        assert_eq!(crate::servers::overview_members(1), "1 Mitglied");
+        assert_eq!(
+            crate::server_settings::members_title(1500),
+            "Mitglieder (1.500)"
+        );
         let _en = on_this_thread(Locale::En);
+        assert_eq!(count(3963), "3,963");
+        assert_eq!(count(1_234_567), "1,234,567");
         assert_eq!(crate::emoji::picker_found(3963), "3,963 emoji found");
         assert_eq!(
             crate::chat::composer_chars_over(1200),

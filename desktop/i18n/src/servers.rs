@@ -165,16 +165,10 @@ pub fn terms_uses_limited(count: u64) -> String {
 
 /// "{count} Mitglied(er)".
 pub fn overview_members(count: u64) -> String {
+    let n = crate::intl::count(count);
     match get() {
-        Locale::De => plural(
-            count,
-            format!("{count} Mitglied"),
-            format!("{count} Mitglieder"),
-        ),
-        Locale::En => {
-            let n = crate::intl::english_count(count);
-            plural(count, format!("{n} member"), format!("{n} members"))
-        }
+        Locale::De => plural(count, format!("{n} Mitglied"), format!("{n} Mitglieder")),
+        Locale::En => plural(count, format!("{n} member"), format!("{n} members")),
     }
 }
 
