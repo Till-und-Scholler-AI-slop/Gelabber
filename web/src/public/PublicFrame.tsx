@@ -101,7 +101,7 @@ export function PublicFrame({ children, ...props }: FrameProps) {
 export function Brand() {
   return (
     <a className="public-brand" href="/">
-      <img src="/icons/brand-mark.png" alt="" width={28} height={28} />
+      <img src="/icons/brand-mark.png" alt="" width={32} height={32} />
       {/* i18n-ok */}Gelabber
     </a>
   );
