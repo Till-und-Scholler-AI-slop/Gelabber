@@ -82,6 +82,26 @@ pub enum ApiError {
     /// 403: an operator blocked the server (`servers.blocked_at`). Members
     /// still see it in their list; only leaving and deleting it work.
     ServerBlocked,
+    /// 502: a sign-in provider (discovery, keys or token endpoint) failed or
+    /// answered something unusable. The string is logged, not returned.
+    OidcUnavailable(String),
+    /// 403: the provider did not report the address as verified, so the
+    /// sign-in neither joins nor creates an account.
+    OidcEmailUnverified,
+    /// 409: an account with the provider's address exists but was never
+    /// confirmed; its owner signs in with the password and connects there.
+    OidcAccountUnverified,
+    /// 409: the provider account is already connected to another account,
+    /// or this account already has one from that provider.
+    IdentityTaken,
+    /// 409: disconnecting the last way to sign in; set a password first.
+    PasswordRequired,
+    /// 403: the step needs a sign-in less than `auth::REAUTH_WINDOW` old.
+    ReauthRequired,
+    /// 409: a web sign-in started at a host other than `APP_PUBLIC_URL`.
+    OidcWrongOrigin,
+    /// 409: the signed-in account changed while connecting a provider.
+    SessionChanged,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,6 +140,14 @@ impl ApiError {
             Self::InvitationRequired => "invitation_required",
             Self::InvitationInvalid => "invitation_invalid",
             Self::ServerBlocked => "server_blocked",
+            Self::OidcUnavailable(_) => "oidc_unavailable",
+            Self::OidcEmailUnverified => "oidc_email_unverified",
+            Self::OidcAccountUnverified => "oidc_account_unverified",
+            Self::IdentityTaken => "identity_taken",
+            Self::PasswordRequired => "password_required",
+            Self::ReauthRequired => "reauth_required",
+            Self::OidcWrongOrigin => "oidc_wrong_origin",
+            Self::SessionChanged => "session_changed",
         }
     }
 
@@ -144,6 +172,14 @@ impl ApiError {
             Self::InvitationRequired => StatusCode::FORBIDDEN,
             Self::InvitationInvalid => StatusCode::GONE,
             Self::ServerBlocked => StatusCode::FORBIDDEN,
+            Self::OidcUnavailable(_) => StatusCode::BAD_GATEWAY,
+            Self::OidcEmailUnverified => StatusCode::FORBIDDEN,
+            Self::OidcAccountUnverified => StatusCode::CONFLICT,
+            Self::IdentityTaken => StatusCode::CONFLICT,
+            Self::PasswordRequired => StatusCode::CONFLICT,
+            Self::ReauthRequired => StatusCode::FORBIDDEN,
+            Self::OidcWrongOrigin => StatusCode::CONFLICT,
+            Self::SessionChanged => StatusCode::CONFLICT,
         }
     }
 
@@ -176,6 +212,20 @@ impl ApiError {
             Self::InvitationRequired => "Registration needs an invitation.",
             Self::InvitationInvalid => "This invitation is unknown, expired or already used.",
             Self::ServerBlocked => "This server has been blocked by the operator.",
+            Self::OidcUnavailable(_) => {
+                "The sign-in provider did not answer. Try again in a moment."
+            }
+            Self::OidcEmailUnverified => "The provider has not verified this e-mail address.",
+            Self::OidcAccountUnverified => {
+                "An account with this address exists but was never confirmed. Sign in with its password and connect the provider there."
+            }
+            Self::IdentityTaken => "This provider account is already connected to an account.",
+            Self::PasswordRequired => {
+                "Set a password before disconnecting the last sign-in method."
+            }
+            Self::ReauthRequired => "Sign in again to confirm it is you.",
+            Self::OidcWrongOrigin => "Open this instance at its public address to sign in.",
+            Self::SessionChanged => "You signed in to another account meanwhile. Try again.",
         }
     }
 
@@ -208,6 +258,9 @@ impl IntoResponse for ApiError {
             Self::Internal(detail) => error!(error = %detail, "request failed"),
             Self::Upstream(detail) => tracing::warn!(error = %detail, "upstream failed"),
             Self::BadRequest(detail) => tracing::debug!(error = %detail, "bad request"),
+            Self::OidcUnavailable(detail) => {
+                tracing::warn!(error = %detail, "oidc provider failed")
+            }
             _ => {}
         }
         let retry_after = match &self {
@@ -291,6 +344,65 @@ mod tests {
         assert_eq!(json["error"], "invitation_invalid");
         assert_eq!(json["fields"]["invitation"], "invalid");
         assert_eq!(err.status(), StatusCode::GONE);
+    }
+
+    #[test]
+    fn oidc_errors_have_their_codes_and_statuses() {
+        let cases = [
+            (
+                ApiError::OidcUnavailable("discovery: timeout".into()),
+                "oidc_unavailable",
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                ApiError::OidcEmailUnverified,
+                "oidc_email_unverified",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                ApiError::OidcAccountUnverified,
+                "oidc_account_unverified",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::IdentityTaken,
+                "identity_taken",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::PasswordRequired,
+                "password_required",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::ReauthRequired,
+                "reauth_required",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                ApiError::OidcWrongOrigin,
+                "oidc_wrong_origin",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::SessionChanged,
+                "session_changed",
+                StatusCode::CONFLICT,
+            ),
+        ];
+        for (err, code, status) in cases {
+            let json = serde_json::to_value(err.body()).unwrap();
+            assert_eq!(json["error"], code);
+            assert!(json.get("fields").is_none(), "{code}");
+            assert_eq!(err.status(), status, "{code}");
+        }
+    }
+
+    #[test]
+    fn oidc_unavailable_body_hides_detail() {
+        let err = ApiError::OidcUnavailable("token endpoint said invalid_grant".into());
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert!(!json.to_string().contains("invalid_grant"));
     }
 
     #[test]
