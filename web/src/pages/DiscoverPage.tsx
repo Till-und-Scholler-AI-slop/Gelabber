@@ -2,11 +2,16 @@
 // and a language filter (reference docs/design/v0.10/directory.png).
 
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { useEffect, useId, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 
-import { RequestJoinDialog } from "../components/DirectoryDialogs.tsx";
-import { SearchIcon } from "../components/Icons.tsx";
+import {
+  ReportListingDialog,
+  RequestJoinDialog,
+} from "../components/DirectoryDialogs.tsx";
+import { MoreIcon, SearchIcon } from "../components/Icons.tsx";
 import { LoadError } from "../components/LoadError.tsx";
+import { RowMenu } from "../components/RowMenu.tsx";
+import type { MenuEntry } from "../components/rowMenuEntries.ts";
 import { ServerIconFace } from "../components/ServerIcon.tsx";
 import { UserPanel } from "../components/UserPanel.tsx";
 import { tileInitials, tileTint } from "../components/initials.ts";
@@ -14,17 +19,20 @@ import { notifyError } from "../components/toasts.ts";
 import { useDebouncedValue } from "../components/useDebouncedValue.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { buttonClass } from "../components/ui/buttonClass.ts";
+import { IconButton } from "../components/ui/IconButton.tsx";
 import { Input } from "../components/ui/Input.tsx";
 import { SkeletonRows } from "../components/ui/Skeleton.tsx";
 import {
   useDirectoryStatus,
   useJoinListing,
   useListings,
+  useWithdrawRequest,
 } from "../discover/queries.ts";
 import {
   QUERY_MAX,
   SEARCH_DEBOUNCE_MS,
   listingAction,
+  listingMenuActions,
   validateQuery,
 } from "../discover/rules.ts";
 import type { DiscoverSearch } from "../discover/search.ts";
@@ -134,6 +142,7 @@ export function DiscoverPage({ q, lang }: DiscoverSearch) {
   const { data: status } = useDirectoryStatus();
   const listings = useListings(q ?? "", lang);
   const [requesting, setRequesting] = useState<Listing | null>(null);
+  const [reporting, setReporting] = useState<Listing | null>(null);
   const rows = listings.data?.pages.flatMap((page) => page.listings);
 
   return (
@@ -176,6 +185,7 @@ export function DiscoverPage({ q, lang }: DiscoverSearch) {
                     listing={listing}
                     languages={status?.languages ?? []}
                     onRequest={setRequesting}
+                    onReport={setReporting}
                   />
                 ))}
               </ul>
@@ -198,6 +208,10 @@ export function DiscoverPage({ q, lang }: DiscoverSearch) {
         listing={requesting}
         onClose={() => setRequesting(null)}
       />
+      <ReportListingDialog
+        listing={reporting}
+        onClose={() => setReporting(null)}
+      />
     </div>
   );
 }
@@ -206,10 +220,13 @@ export function DiscoverRow({
   listing,
   languages,
   onRequest,
+  onReport,
 }: {
   listing: Listing;
   languages: readonly DirectoryLanguage[];
   onRequest: (listing: Listing) => void;
+  /** Opens "Server melden"; without it the row has no "…" menu. */
+  onReport?: (listing: Listing) => void;
 }) {
   const t = useT(discovery);
   const nameId = useId();
@@ -245,7 +262,60 @@ export function DiscoverRow({
         describedBy={nameId}
         onRequest={() => onRequest(listing)}
       />
+      {onReport ? (
+        <ListingMenu listing={listing} onReport={() => onReport(listing)} />
+      ) : null}
     </li>
+  );
+}
+
+/** The row's "…": "Melden", and "Anfrage zurückziehen" while one waits. */
+function ListingMenu({
+  listing,
+  onReport,
+}: {
+  listing: Listing;
+  onReport: () => void;
+}) {
+  const t = useT(discovery);
+  const button = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const withdraw = useWithdrawRequest();
+  const label = t("actions.more", { name: listing.name });
+  const entries = listingMenuActions(listing).map((action): MenuEntry =>
+    action === "report"
+      ? { kind: "item", label: t("actions.report"), onSelect: onReport }
+      : {
+          kind: "item",
+          label: t("actions.withdraw"),
+          onSelect: () =>
+            withdraw.mutate(listing.server_id, {
+              onError: (error) => notifyError(error),
+            }),
+        },
+  );
+  return (
+    <>
+      <IconButton
+        ref={button}
+        label={label}
+        icon={<MoreIcon size={18} />}
+        size="sm"
+        className="discover-more-button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      />
+      {open ? (
+        <RowMenu
+          open
+          onClose={() => setOpen(false)}
+          anchor={button}
+          label={label}
+          entries={entries}
+        />
+      ) : null}
+    </>
   );
 }
 

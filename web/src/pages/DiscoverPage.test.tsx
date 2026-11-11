@@ -48,9 +48,14 @@ vi.mock("../discover/queries.ts", () => ({
   },
   useJoinListing: () => ({ mutate: vi.fn(), isPending: false }),
   useRequestJoin: () => ({ mutate: vi.fn(), isPending: false }),
+  useWithdrawRequest: () => ({ mutate: vi.fn(), isPending: false }),
+  useReportListing: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
-import { RequestJoinDialog } from "../components/DirectoryDialogs.tsx";
+import {
+  ReportListingDialog,
+  RequestJoinDialog,
+} from "../components/DirectoryDialogs.tsx";
 import { DiscoverPage, DiscoverRow, DiscoverSidebar } from "./DiscoverPage.tsx";
 
 const LANGUAGES = [
@@ -263,5 +268,80 @@ describe("the request dialog", () => {
       <RequestJoinDialog listing={null} onClose={vi.fn()} />,
     );
     expect(html).not.toContain("Anfrage senden");
+  });
+});
+
+describe("the row menu", () => {
+  it("is a named … button after the row's action", () => {
+    const html = renderToStaticMarkup(
+      <DiscoverRow
+        listing={listing()}
+        languages={LANGUAGES}
+        onRequest={vi.fn()}
+        onReport={vi.fn()}
+      />,
+    );
+    expect(html).toContain('aria-label="Mehr zu Filmclub"');
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html.indexOf("Beitreten")).toBeLessThan(
+      html.indexOf("Mehr zu Filmclub"),
+    );
+  });
+
+  it("is on every row of the page, and not in a row without reports", () => {
+    fixture.listings = {
+      data: pages([listing(), listing({ server_id: "b", name: "B" })]),
+    };
+    const html = renderToStaticMarkup(<DiscoverPage />);
+    expect(html).toContain('aria-label="Mehr zu Filmclub"');
+    expect(html).toContain('aria-label="Mehr zu B"');
+    expect(row()).not.toContain("Mehr zu");
+  });
+});
+
+describe("the report dialog", () => {
+  const dialog = () =>
+    renderToStaticMarkup(
+      <ReportListingDialog listing={listing()} onClose={vi.fn()} />,
+    );
+
+  it("offers the five reasons, details and Melden", () => {
+    const html = dialog();
+    expect(text(html)).toContain("Server melden");
+    expect(text(html)).toContain("Meldung zu Filmclub.");
+    expect(
+      [...html.matchAll(/type="radio"[^>]*value="(\w+)"/g)].map((m) => m[1]),
+    ).toEqual(["spam", "harassment", "sexual", "illegal", "other"]);
+    for (const label of [
+      "Spam",
+      "Belästigung",
+      "Sexuelle Inhalte",
+      "Rechtswidrige Inhalte",
+      "Sonstiges",
+    ])
+      expect(text(html)).toContain(label);
+    // No reason is chosen for the reporter.
+    expect(html).not.toContain("checked");
+    expect(html).toContain("<textarea");
+    expect(html).toContain('maxLength="1000"');
+    expect(text(html)).toContain("Bei „Sonstiges“ nötig.");
+    expect(html).toMatch(/<button[^>]*type="submit"[^>]*>[^<]*Melden/);
+  });
+
+  it("speaks English", () => {
+    setLocale("en", { persist: false });
+    const html = text(dialog());
+    expect(html).toContain("Report server");
+    expect(html).toContain("Harassment");
+    expect(html).toContain("Other");
+    expect(html).toContain("Report");
+  });
+
+  it("is closed without a server", () => {
+    const html = renderToStaticMarkup(
+      <ReportListingDialog listing={null} onClose={vi.fn()} />,
+    );
+    expect(html).not.toContain("Server melden");
   });
 });

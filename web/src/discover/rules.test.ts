@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  REPORT_DETAILS_MAX,
+  REPORT_REASONS,
   isJoinMode,
   listingAction,
+  listingMenuActions,
   validateDescription,
   validateLanguage,
   validateMessage,
   validateQuery,
+  validateReportDetails,
 } from "./rules.ts";
 
 describe("directory rules", () => {
@@ -66,5 +70,37 @@ describe("directory rules", () => {
     expect(row(false, "request", null)).toBe("request");
     expect(row(false, "request", "pending")).toBe("requested");
     expect(row(false, "request", "declined")).toBe("declined");
+  });
+
+  it("offers to withdraw only a waiting request, and a report always", () => {
+    expect(listingMenuActions({ request: null })).toEqual(["report"]);
+    expect(listingMenuActions({ request: "declined" })).toEqual(["report"]);
+    expect(listingMenuActions({ request: "pending" })).toEqual([
+      "report",
+      "withdraw",
+    ]);
+  });
+
+  it("checks a report's details like operator's route", () => {
+    expect(REPORT_REASONS).toEqual([
+      "spam",
+      "harassment",
+      "sexual",
+      "illegal",
+      "other",
+    ]);
+    expect(validateReportDetails("", "spam")).toBeNull();
+    expect(validateReportDetails("", "other")).toBe("required");
+    expect(validateReportDetails("   ", "other")).toBe("required");
+    expect(
+      validateReportDetails("Zeile eins\nZeile zwei\t", "other"),
+    ).toBeNull();
+    expect(validateReportDetails("a\u0000b", "spam")).toBe("invalid");
+    expect(
+      validateReportDetails("ä".repeat(REPORT_DETAILS_MAX), "spam"),
+    ).toBeNull();
+    expect(
+      validateReportDetails("x".repeat(REPORT_DETAILS_MAX + 1), "other"),
+    ).toBe("too_long");
   });
 });

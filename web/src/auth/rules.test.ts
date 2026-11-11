@@ -287,10 +287,7 @@ describe("directory codes (#520)", () => {
     const now = Date.UTC(2026, 10, 11, 12);
     const week = 7 * 24 * 3600;
     expect(
-      apiErrorMessage(
-        { code: "join_request_declined", retryAfter: week },
-        now,
-      ),
+      apiErrorMessage({ code: "join_request_declined", retryAfter: week }, now),
     ).toBe(
       "Deine Anfrage wurde nicht angenommen. Du kannst ab dem 18. November 2026 wieder anfragen.",
     );
@@ -299,11 +296,10 @@ describe("directory codes (#520)", () => {
     ).toBe(errorMessage("join_request_declined"));
     setLocale("en", { persist: false });
     expect(
-      apiErrorMessage(
-        { code: "join_request_declined", retryAfter: week },
-        now,
-      ),
-    ).toBe("Your request was not accepted. You can ask again from 18 November 2026.");
+      apiErrorMessage({ code: "join_request_declined", retryAfter: week }, now),
+    ).toBe(
+      "Your request was not accepted. You can ask again from 18 November 2026.",
+    );
     expect(
       apiErrorMessage({ code: "already_member", retryAfter: null }, now),
     ).toBe("You are already a member of this server.");

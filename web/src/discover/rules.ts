@@ -1,11 +1,18 @@
 // Client-side mirror of `backend/api/src/directory/validate.rs`.
 
 import type { FieldCode } from "../api/client.ts";
-import type { DirectoryLanguage, JoinMode, Listing } from "./types.ts";
+import type {
+  DirectoryLanguage,
+  JoinMode,
+  Listing,
+  ReportReason,
+} from "./types.ts";
 
 export const DESCRIPTION_MAX = 300;
 export const MESSAGE_MAX = 300;
 export const QUERY_MAX = 100;
+/** The longest details of a report (operator's `reports::DETAILS_MAX`). */
+export const REPORT_DETAILS_MAX = 1000;
 /** The directory answers this many listings at a time. */
 export const PAGE_SIZE = 30;
 /** Typing in the search waits this long before it asks. */
@@ -75,4 +82,38 @@ export function listingAction(
   if (listing.request === "pending") return "requested";
   if (listing.request === "declined") return "declined";
   return "request";
+}
+
+/** What a row's "…" menu offers: "Melden" always, also to members, and
+ * "Anfrage zurückziehen" while a request waits. */
+export type ListingMenuAction = "report" | "withdraw";
+
+export function listingMenuActions(
+  listing: Pick<Listing, "request">,
+): ListingMenuAction[] {
+  return listing.request === "pending" ? ["report", "withdraw"] : ["report"];
+}
+
+/** The reasons of a report, in the order the dialog lists them. */
+export const REPORT_REASONS: readonly ReportReason[] = [
+  "spam",
+  "harassment",
+  "sexual",
+  "illegal",
+  "other",
+];
+
+/** A report's details: required for "other"; line breaks are allowed. */
+export function validateReportDetails(
+  raw: string,
+  reason: ReportReason,
+): FieldCode | null {
+  const value = raw.trim();
+  if (chars(value) > REPORT_DETAILS_MAX) return "too_long";
+  // Operator's check: control characters other than line breaks and tabs.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(value))
+    return "invalid";
+  if (value.length === 0 && reason === "other") return "required";
+  return null;
 }

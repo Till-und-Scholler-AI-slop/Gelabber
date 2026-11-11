@@ -127,7 +127,8 @@
   font: var(--lr-type-meta);
   color: var(--lr-muted);
 }
-.discover-action {
+.discover-action,
+.discover-more-button {
   flex-shrink: 0;
 }
 .discover-empty {
