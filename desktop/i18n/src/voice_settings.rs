@@ -267,6 +267,12 @@ crate::strings! {
         | "All settings…";
     quick_send_level = "Pegel, den die anderen hören"
         | "Level the others hear";
+
+    // The desktop app's own.
+    devices_system_default = "Systemstandard" | "System default";
+    mic_test_local_only = "Der Test läuft lokal, ohne Aufnahme oder Übertragung."
+        | "The test runs locally, without recording or sending.";
+    mic_test_starting = "Mikrofon wird gestartet." | "Starting the microphone.";
 }
 
 /// "{percent} %".

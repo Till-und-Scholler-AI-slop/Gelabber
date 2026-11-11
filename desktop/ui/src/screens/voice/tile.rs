@@ -5,6 +5,7 @@
 //! hover actions.
 
 use egui::{Color32, Id, Painter, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use gelabber_i18n::voice as texts;
 use uuid::Uuid;
 
 use super::look::{self, MARK_ON_PICTURE, VIDEO_BG, pill};
@@ -76,7 +77,12 @@ pub fn participant_menu(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
             child.add_space(8.0);
             // A row of the menu: out to its edges, the label in line.
             let left = child.cursor().min.x - 12.0;
-            let profile = super::chips::ghost_row(&mut child, "Profil ansehen", left, inner + 24.0);
+            let profile = super::chips::ghost_row(
+                &mut child,
+                texts::participant_view_profile(),
+                left,
+                inner + 24.0,
+            );
             let used = child.min_rect();
             ui.allocate_exact_size(vec2(288.0 - 18.0, used.height() + 3.0), Sense::hover());
             if profile.clicked() {
@@ -118,7 +124,7 @@ fn avatar_button(ui: &mut Ui, rect: Rect, id: Id, server: Uuid, p: &Person) {
         egui::WidgetInfo::labeled(
             egui::Role::Button,
             p.member,
-            format!("Profil von {}", p.name),
+            texts::participant_profile_label(&p.name),
         )
     });
     if hit.clicked() {
@@ -138,7 +144,7 @@ fn more_button(
 ) -> Response {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let label = format!("Optionen für {name}");
+    let label = texts::participant_options_label(name);
     let response = ui.interact(rect, id, Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
     let response = response.on_hover_text(&label);
@@ -243,7 +249,7 @@ pub fn card(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
     );
     let inner_w = shown.width() - 2.0 - 24.0;
     let name_text = if p.me {
-        format!("{} (du)", p.name)
+        texts::people_you(&p.name)
     } else {
         p.name.clone()
     };
@@ -320,7 +326,7 @@ pub fn seat(ui: &Ui, rect: Rect) {
 pub fn seat_sized(ui: &Ui, rect: Rect, diameter: f32, top: f32, bottom: f32) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let label = Block::single(ui, "Platz frei", text::META, c.subtle);
+    let label = Block::single(ui, texts::room_free_seat(), text::META, c.subtle);
     let content = diameter + 6.0 + 2.0 + label.height();
     let y = rect.top() + top + (rect.height() - top - bottom - content) / 2.0;
     let r = diameter / 2.0;
@@ -338,7 +344,7 @@ pub fn seat_sized(ui: &Ui, rect: Rect, diameter: f32, top: f32, bottom: f32) {
 /// The width of a chip in the row of people without a camera.
 pub fn chip_width(ui: &Ui, p: &Person, open: bool) -> f32 {
     let name = if p.me {
-        format!("{} (du)", p.name)
+        texts::people_you(&p.name)
     } else {
         p.name.clone()
     };
@@ -358,7 +364,7 @@ fn marks_width(ui: &Ui, p: &Person) -> f32 {
     if !p.me && !lv.muted && (lv.volume - 1.0).abs() > f64::EPSILON {
         let label = Block::single(
             ui,
-            &format!("{} %", (lv.volume * 100.0).round() as i64),
+            &texts::percent(&((lv.volume * 100.0).round() as i64).to_string()),
             text::META.weight(600.0),
             Color32::WHITE,
         );
@@ -406,7 +412,7 @@ pub fn chip(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
         p.speaking,
     );
     let name = if p.me {
-        format!("{} (du)", p.name)
+        texts::people_you(&p.name)
     } else {
         p.name.clone()
     };
@@ -473,7 +479,11 @@ pub fn strip_person(
         Some(n) => line(ui, n, style, c.text, rect.width() - 16.0),
         None => text::Rich::new(style)
             .push(&p.name, style, c.text)
-            .push(" (du)", style.weight(400.0), c.text.gamma_multiply(0.75))
+            .push(
+                &format!(" {}", texts::participant_self()),
+                style.weight(400.0),
+                c.text.gamma_multiply(0.75),
+            )
             .layout(ui),
     };
     let content = 40.0 + 6.0 + block.height();
@@ -532,10 +542,10 @@ pub fn live_sound_notice(sound: &gelabber_call::LiveSound) -> Option<String> {
     use gelabber_call::LiveSound;
     match sound {
         LiveSound::Off => None,
-        LiveSound::Sharing => Some("Ton wird mitgesendet".into()),
-        LiveSound::Silent(app) => Some(format!("Kein Ton von „{app}“")),
-        LiveSound::Unavailable(_) => Some("Live-Ton nicht aufgenommen · Video läuft weiter".into()),
-        LiveSound::Ended => Some("Live-Ton beendet · Video läuft weiter".into()),
+        LiveSound::Sharing => Some(texts::room_sound_sharing().into()),
+        LiveSound::Silent(app) => Some(texts::room_sound_silent(app)),
+        LiveSound::Unavailable(_) => Some(texts::room_sound_not_captured().into()),
+        LiveSound::Ended => Some(texts::room_sound_ended().into()),
     }
 }
 
@@ -551,14 +561,10 @@ pub enum VideoLimit {
 /// The badge of a limited picture: its text and `LIMIT_REASON` tooltip.
 pub fn limit_badge(limit: VideoLimit) -> (&'static str, &'static str) {
     (
-        "Geringe Bildqualität",
+        texts::tile_low_quality(),
         match limit {
-            VideoLimit::Transport => {
-                "Der Server blockiert die schnelle Bildübertragung der Desktop-App (Content-Security-Policy). Das Bild bleibt deshalb klein."
-            }
-            VideoLimit::Renderer => {
-                "WebGL ist hier nicht verfügbar. Das Bild bleibt deshalb klein."
-            }
+            VideoLimit::Transport => texts::tile_limit_transport(),
+            VideoLimit::Renderer => texts::tile_limit_renderer(),
         },
     )
 }
@@ -696,8 +702,8 @@ pub fn picture(
     if in_window {
         // The picture plays in its own window; the tile says so.
         let color = Color32::from_white_alpha((0.72 * 255.0) as u8);
-        let words = Block::single(ui, "Läuft im eigenen Fenster.", text::META, color);
-        let label = "Fenster schließen";
+        let words = Block::single(ui, texts::tile_in_window(), text::META, color);
+        let label = texts::tile_close_window();
         let bw = Block::single(ui, label, text::UI.weight(600.0), Color32::WHITE).width() + 26.0;
         let total = words.height() + 8.0 + 32.0;
         let top = rect.center().y - total / 2.0;
@@ -709,7 +715,7 @@ pub fn picture(
             Sense::hover(),
         )
         .widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Label, true, "Läuft im eigenen Fenster.")
+            egui::WidgetInfo::labeled(egui::Role::Label, true, texts::tile_in_window())
         });
         let button = Rect::from_min_size(
             pos2(rect.center().x - bw / 2.0, top + words.height() + 8.0),
@@ -742,14 +748,20 @@ pub fn picture(
         }
         (_, true) if in_window || in_large_view => {}
         (_, true) => {
-            let label = Block::single(ui, "Zuschauen", text::UI.weight(600.0), c.accent_ink);
+            let label = Block::single(
+                ui,
+                texts::watch_watch(),
+                text::UI.weight(600.0),
+                c.accent_ink,
+            );
             let button = Rect::from_center_size(
                 rect.center(),
                 vec2(label.width() + 28.0, label.height() + 18.0),
             );
             let response = ui.interact(button, id.with("watch"), Sense::click());
-            response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zuschauen"));
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, true, texts::watch_watch())
+            });
             painter.rect_filled(button, corner(theme.radius.sm), c.accent);
             label.paint(&painter, pos2(button.left() + 14.0, button.top() + 9.0));
             if response.hovered() {
@@ -796,7 +808,7 @@ pub fn picture(
     // its sound (`.voice-video-tags`).
     if live && !kino_focus {
         let style = TextStyle::new(11.0, 600.0, 1.3);
-        let label = Block::single(ui, "Live", style, c.on_live);
+        let label = Block::single(ui, texts::live_badge(), style, c.on_live);
         let inset = if strip { 6.0 } else { 8.0 };
         let badge = Rect::from_min_size(
             rect.min + vec2(inset, inset),
@@ -809,7 +821,16 @@ pub fn picture(
             && let Some(notice) = live_sound_notice(&sound)
         {
             let on = matches!(sound, gelabber_call::LiveSound::Sharing);
-            let word = Block::single(ui, if on { "Mit Ton" } else { "Ohne Ton" }, style, c.text);
+            let word = Block::single(
+                ui,
+                if on {
+                    texts::tile_with_sound()
+                } else {
+                    texts::tile_without_sound()
+                },
+                style,
+                c.text,
+            );
             let chip = Rect::from_min_size(
                 pos2(badge.right() + 4.0, badge.top()),
                 vec2(6.0 + 12.0 + 4.0 + word.width() + 6.0, badge.height()),
@@ -844,7 +865,7 @@ pub fn picture(
             ui,
             &painter,
             rect,
-            window::FAILED,
+            window::failed_text(),
             vec2(10.0, 10.0),
             Color32::from_rgba_unmultiplied(22, 25, 27, 242),
         );
@@ -882,7 +903,7 @@ pub fn picture(
     };
     let mut buttons: Vec<(Icon, &str, bool, u8)> = Vec::new();
     if live && pic.watching {
-        buttons.push((Icon::EyeOff, "Nicht mehr zuschauen", false, 0));
+        buttons.push((Icon::EyeOff, texts::tile_stop_watching(), false, 0));
     }
     // `StreamSoundAction`: the global stream sound, on the picture in front.
     let stream_muted = crate::screens::settings::prefs::get(ui.ctx()).source_audio_muted;
@@ -893,18 +914,18 @@ pub fn picture(
             } else {
                 Icon::Speaker
             },
-            "Live-Ton stummschalten",
+            texts::tile_mute_live_sound(),
             stream_muted,
             3,
         ));
     }
     if !kino_focus {
-        buttons.push((Icon::Pin, "Anheften", pinned, 1));
+        buttons.push((Icon::Pin, texts::tile_pin(), pinned, 1));
     }
-    buttons.push((Icon::Expand, "Vollbild", false, 2));
+    buttons.push((Icon::Expand, texts::tile_fullscreen(), false, 2));
     // "Weitere Aktionen": someone else's video, which can have a window.
     if !pic.own && pic.key.is_some() {
-        buttons.push((Icon::More, "Weitere Aktionen", false, 4));
+        buttons.push((Icon::More, texts::tile_more_actions(), false, 4));
     }
     let mut x = rect.right() - right;
     for (icon, label, pressed, action) in buttons.iter().rev() {
@@ -913,7 +934,7 @@ pub fn picture(
         let response = ui.interact(r, id.with(("action", *action)), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *label));
         let tip = if *action == 2 {
-            "Vollbild (auch per Doppelklick)"
+            texts::tile_fullscreen_title()
         } else {
             label
         };
@@ -1003,9 +1024,9 @@ fn tile_menu(ui: &mut Ui, pic: &Picture, anchor: Rect) {
     let Some(key) = pic.key else { return };
     let open = window::is_open(&ctx, key);
     let label = if open {
-        "Fenster schließen"
+        texts::tile_close_window()
     } else {
-        "Eigenes Fenster"
+        texts::tile_own_window()
     };
     let shown = Popover::new(
         ("voice-tile-menu", pic.id.user, pic.id.kind == Kind::Live),
@@ -1075,9 +1096,9 @@ fn placeholder(
     }
     let text = if waited < stage::FRAME_STALLED {
         ui.ctx().request_repaint();
-        "Video wird geladen …"
+        texts::tile_loading()
     } else {
-        "Kein Bild empfangen"
+        texts::tile_no_picture()
     };
     let block = Block::single(ui, text, style, color);
     let stalled = waited >= stage::FRAME_STALLED;
@@ -1092,14 +1113,22 @@ fn placeholder(
     if stalled {
         let words = rect.center().y - (block.height() + 8.0 + 32.0) / 2.0;
         block.paint(painter, pos2(rect.center().x - block.width() / 2.0, words));
-        let label = Block::single(ui, "Neu laden", text::UI.weight(600.0), Color32::WHITE);
+        let label = Block::single(
+            ui,
+            texts::tile_reload(),
+            text::UI.weight(600.0),
+            Color32::WHITE,
+        );
         let w = label.width() + 24.0 + 2.0;
         let button = Rect::from_min_size(
             pos2(rect.center().x - w / 2.0, words + block.height() + 8.0),
             vec2(w, 32.0),
         );
         return ui
-            .put(button, crate::widgets::Button::new("Neu laden").small())
+            .put(
+                button,
+                crate::widgets::Button::new(texts::tile_reload()).small(),
+            )
             .clicked();
     }
     {
@@ -1172,10 +1201,11 @@ fn name_pill(
             max_w - 2.0 * pad_x - marks_w,
         )
     } else {
-        let name = pic.label.trim_end_matches(" (du)");
+        let own = format!(" {}", texts::participant_self());
+        let name = pic.label.trim_end_matches(own.as_str());
         text::Rich::new(style)
             .push(name, style, Color32::WHITE)
-            .push(" (du)", style.weight(400.0), Color32::from_white_alpha(191))
+            .push(&own, style.weight(400.0), Color32::from_white_alpha(191))
             .layout(ui)
     };
     let h = if strip {

@@ -2,15 +2,6 @@
 # relative to desktop/. The batch deletes this list when it is done
 # (docs/i18n.md); i18n/tests/literals.rs skips the files listed here.
 ui/src/screens/voice/call_bar.rs
-ui/src/screens/voice/chips.rs
 ui/src/screens/voice/diagnostics.rs
 ui/src/screens/voice/dialogs.rs
-ui/src/screens/voice/hint.rs
-ui/src/screens/voice/page.rs
 ui/src/screens/voice/quick.rs
-ui/src/screens/voice/session.rs
-ui/src/screens/voice/summary.rs
-ui/src/screens/voice/tile.rs
-ui/src/screens/voice/video.rs
-ui/src/screens/voice/volume.rs
-ui/src/screens/voice/window.rs

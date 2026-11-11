@@ -252,6 +252,18 @@ crate::strings! {
         | "ICE error";
     event_recovery = "Recovery"
         | "Recovery";
+
+    // The desktop app's own.
+    processing_desktop_browser = "Desktop-App: WebRTC-Rauschfilter im nativen Kern"
+        | "Desktop app: WebRTC noise filter in the native core";
+    processing_desktop_original = "Desktop-App: Originalton (Stereo, ohne Filter)"
+        | "Desktop app: original sound (stereo, no filters)";
+    processing_desktop_enhanced = "Desktop-App: RNNoise im nativen Kern"
+        | "Desktop app: RNNoise in the native core";
+    mic_noise_webrtc = "Rauschfilter (WebRTC)" | "Noise filter (WebRTC)";
+    mic_auto_gain_webrtc = "Auto-Gain (WebRTC)" | "Auto gain (WebRTC)";
+    ui_save_title = "Diagnose speichern" | "Save diagnostics";
+    debug_desktop_app = "Desktop-App" | "Desktop app";
 }
 
 /// "Audioprozessor ausgefallen; {state} (Mikrofonverstärkung 100 %)".
@@ -589,5 +601,13 @@ pub fn line_quality_limit(limit: &str) -> String {
     match get() {
         Locale::De => format!("Qualitätslimit: {limit}"),
         Locale::En => format!("Quality limit: {limit}"),
+    }
+}
+
+/// "{words}; Standardmikrofon": the chosen microphone did not open.
+pub fn processing_default_mic(words: &str) -> String {
+    match get() {
+        Locale::De => format!("{words}; Standardmikrofon"),
+        Locale::En => format!("{words}; default microphone"),
     }
 }

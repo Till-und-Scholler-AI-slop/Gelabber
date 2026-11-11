@@ -6,6 +6,7 @@
 use gelabber_call::{CallState, CallStatus, VideoKey};
 use gelabber_client::store::collation_key;
 use gelabber_client::{Permission, State, VoiceOccupant};
+use gelabber_i18n::voice as texts;
 use uuid::Uuid;
 
 use super::stage::{Kind, PicId};
@@ -109,22 +110,25 @@ impl Person {
     /// `Taub` / `Stumm` / `Spricht` / `Im Raum` + ` · Live` / ` · Kamera an`.
     pub fn status(&self) -> String {
         let state = if self.deafened {
-            "Taub"
+            texts::participant_deafened()
         } else if self.muted {
-            "Stumm"
+            texts::participant_muted()
         } else if self.speaking {
-            "Spricht"
+            texts::participant_speaking()
         } else {
-            "Im Raum"
+            texts::participant_present()
         };
         let media = if self.live {
-            " · Live"
+            Some(texts::live_badge())
         } else if self.camera {
-            " · Kamera an"
+            Some(texts::room_camera_on())
         } else {
-            ""
+            None
         };
-        format!("{state}{media}")
+        match media {
+            Some(media) => format!("{state} · {media}"),
+            None => state.to_owned(),
+        }
     }
 }
 
@@ -178,9 +182,9 @@ impl Room {
     /// `nameOf`: `{name} (du)` for the own account.
     pub fn name_of(&self, id: Uuid) -> String {
         match self.person(id) {
-            Some(p) if p.me => format!("{} (du)", p.name),
+            Some(p) if p.me => texts::people_you(&p.name),
             Some(p) => p.name.clone(),
-            None => "Mitglied".into(),
+            None => texts::people_member().into(),
         }
     }
 }
@@ -238,9 +242,9 @@ pub fn build(s: &State, call: &CallState, server: Uuid, channel: Uuid) -> Option
         let own = Some(id) == me;
         let name = member.map(|m| m.name.clone()).unwrap_or_else(|| {
             if own {
-                me_user.map_or("Du".into(), |u| u.name.clone())
+                me_user.map_or(texts::names_you().into(), |u| u.name.clone())
             } else {
-                "Mitglied".into()
+                texts::people_member().into()
             }
         });
         let avatar = member.and_then(|m| m.avatar_url.clone()).or_else(|| {
@@ -275,13 +279,14 @@ pub fn build(s: &State, call: &CallState, server: Uuid, channel: Uuid) -> Option
             camera,
         });
         if !own {
-            let summary_name = member.map_or("Jemand".to_owned(), |m| m.name.clone());
+            let summary_name =
+                member.map_or(texts::people_someone().to_owned(), |m| m.name.clone());
             room.others.push(summary_name.clone());
             if live {
                 room.others_live.push(summary_name);
             }
         }
-        let shown = if own { format!("{name} (du)") } else { name };
+        let shown = if own { texts::people_you(&name) } else { name };
         if sharing {
             room.shares.push(Picture {
                 id: PicId {
@@ -289,7 +294,7 @@ pub fn build(s: &State, call: &CallState, server: Uuid, channel: Uuid) -> Option
                     kind: Kind::Live,
                 },
                 key: p.and_then(|p| p.live),
-                label: format!("{shown} — Live"),
+                label: texts::room_live_tile(&shown),
                 mirror: false,
                 speaking: false,
                 watching: !own && p.is_some_and(|p| p.watching),

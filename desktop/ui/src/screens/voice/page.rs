@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use egui::{Color32, Id, Rect, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2};
+use gelabber_i18n::voice as texts;
 use uuid::Uuid;
 
 use super::look::VIDEO_BG;
@@ -121,9 +122,9 @@ fn header(ui: &mut Ui, app: &mut AppCtx, page: Rect, name: &str, server: Uuid, c
 
     let on = layout::members_visible(ui.ctx());
     let label = if on {
-        "Mitgliederliste ausblenden"
+        texts::members_hide()
     } else {
-        "Mitgliederliste einblenden"
+        texts::members_show()
     };
     let id = Id::unique(("gelabber-voice-members", channel));
     let response = ui.interact(toggle, id, Sense::click());
@@ -230,12 +231,10 @@ pub(super) fn room_content(
         y += 16.0;
         let note = Block::wrapped(
             ui,
-            &format!(
-                "Du verlässt dabei {}.",
-                room.elsewhere_name
-                    .as_deref()
-                    .unwrap_or("deinen Sprachkanal")
-            ),
+            &match room.elsewhere_name.as_deref() {
+                Some(name) => texts::room_switch_note(name),
+                None => texts::room_switch_note_unnamed().to_owned(),
+            },
             text::META,
             c.muted,
             w,
@@ -261,9 +260,9 @@ pub(super) fn room_content(
 fn invite_prompt(ui: &mut Ui, app: &AppCtx, room: &Room, left: f32, top: f32, width: f32) -> f32 {
     let theme = Theme::of(ui.ctx());
     let row_h = 32.0;
-    let ask = Block::single(ui, "Fehlt noch jemand?", text::BODY, theme.c.muted);
+    let ask = Block::single(ui, texts::room_ask_company(), text::BODY, theme.c.muted);
     // The small button: its label, the 16px icon and gap 8, padding 12.
-    let label = Block::single(ui, "Einladen", text::UI, theme.c.text);
+    let label = Block::single(ui, texts::room_invite(), text::UI, theme.c.text);
     let button_w = label.width() + 24.0 + 24.0;
     let wraps = ask.width() + 16.0 + button_w > width;
     common::paint_mid(ui.painter(), &ask, left, top + row_h / 2.0);
@@ -276,7 +275,7 @@ fn invite_prompt(ui: &mut Ui, app: &AppCtx, room: &Room, left: f32, top: f32, wi
         pos2(bx, by),
         vec2(button_w.max(200.0), row_h),
     )));
-    let button = Button::new("Einladen").small().icon(Icon::Link);
+    let button = Button::new(texts::room_invite()).small().icon(Icon::Link);
     if child.add(button).clicked() {
         let name = app.client.with_state(|s| {
             s.server(room.server)
@@ -303,9 +302,9 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     let mut x = left;
     if room.allowed {
         let label = if room.elsewhere {
-            "Hierher wechseln"
+            texts::room_switch_here()
         } else {
-            "Beitreten"
+            texts::room_join()
         };
         let join = chips::join_button(
             ui,
@@ -321,7 +320,7 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     } else {
         let p = Block::single(
             ui,
-            "Keine Berechtigung für Sprachkanäle.",
+            texts::room_no_permission(),
             text::UI.weight(400.0),
             c.muted,
         );
@@ -332,7 +331,7 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     if ui
         .put(
             mic,
-            IconButton::new(Icon::Mic, "Mikrofon testen")
+            IconButton::new(Icon::Mic, texts::room_test_microphone())
                 .secondary()
                 .icon_size(18.0),
         )
@@ -343,9 +342,12 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
         gear,
-        IconButton::new(Icon::Gear, "Anrufeinstellungen")
-            .secondary()
-            .icon_size(17.0),
+        IconButton::new(
+            Icon::Gear,
+            gelabber_i18n::voice_settings::quick_call_settings(),
+        )
+        .secondary()
+        .icon_size(17.0),
     );
     quick::button(ui, app, response, gear);
     top + 44.0
@@ -762,7 +764,7 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
             if pic.id.kind == Kind::Live {
                 let theme = Theme::of(ui.ctx());
                 let style = TextStyle::new(11.0, 600.0, 1.3);
-                let label = Block::single(ui, "Live", style, theme.c.on_live);
+                let label = Block::single(ui, texts::live_badge(), style, theme.c.on_live);
                 let badge = Rect::from_min_size(
                     screen.min + vec2(8.0, 8.0),
                     vec2(label.width() + 12.0, label.height() + 4.0),
@@ -791,9 +793,9 @@ fn watch_strip(
     let white = Color32::WHITE;
     let label = Block::single(ui, &pic.label, text::UI.weight(600.0), white);
     let button_label = |ui: &Ui, s: &str| Block::single(ui, s, text::UI, white);
-    let end = button_label(ui, "Vollbild beenden");
+    let end = button_label(ui, texts::tile_exit_fullscreen());
     let stop = (pic.id.kind == Kind::Live && pic.watching)
-        .then(|| button_label(ui, "Nicht mehr zuschauen"));
+        .then(|| button_label(ui, texts::tile_stop_watching()));
     let toggles = room.here;
     // `StreamVolume`: someone else's Live has the stream sound beside it.
     let stream_sound = pic.id.kind == Kind::Live && !pic.own;
@@ -846,7 +848,7 @@ fn watch_strip(
         for (icon, label, off, which) in [
             (
                 if off_mic { Icon::MicOff } else { Icon::Mic },
-                "Stummschalten",
+                texts::controls_mute(),
                 off_mic,
                 0,
             ),
@@ -856,7 +858,7 @@ fn watch_strip(
                 } else {
                     Icon::Headset
                 },
-                "Taubschalten",
+                texts::controls_deafen(),
                 state.deafened,
                 1,
             ),
@@ -910,12 +912,17 @@ fn watch_strip(
         let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
         let resp = common::click(ui, r, Id::unique("watch-strip-stream-mute"));
         resp.widget_info(|| {
-            egui::WidgetInfo::selected(egui::Role::Button, true, muted, "Live-Ton stummschalten")
+            egui::WidgetInfo::selected(
+                egui::Role::Button,
+                true,
+                muted,
+                texts::tile_mute_live_sound(),
+            )
         });
         let resp = resp.on_hover_text(if muted {
-            "Live-Ton wieder einschalten"
+            texts::tile_unmute_live_sound()
         } else {
-            "Live-Ton stummschalten"
+            texts::tile_mute_live_sound()
         });
         let fill = if muted {
             c.danger_bg.gamma_multiply(0.45)
@@ -949,7 +956,7 @@ fn watch_strip(
                 crate::screens::settings::controls::slider_named(
                     ui,
                     "watch-strip-stream-volume",
-                    "Live-Ton-Lautstärke",
+                    texts::tile_live_sound_volume(),
                     &mut pos,
                     (0.0, 200.0, 1.0),
                     muted || state.deafened,
@@ -981,11 +988,17 @@ fn watch_strip(
         resp.clicked()
     };
     if let Some(s) = &stop
-        && pill_button(ui, &mut x, Icon::EyeOff, s, "Nicht mehr zuschauen")
+        && pill_button(ui, &mut x, Icon::EyeOff, s, texts::tile_stop_watching())
     {
         app.call.watch(pic.id.user, false);
     }
-    pill_button(ui, &mut x, Icon::Collapse, &end, "Vollbild beenden")
+    pill_button(
+        ui,
+        &mut x,
+        Icon::Collapse,
+        &end,
+        texts::tile_exit_fullscreen(),
+    )
 }
 
 #[cfg(test)]

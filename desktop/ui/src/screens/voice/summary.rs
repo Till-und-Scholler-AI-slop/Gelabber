@@ -1,26 +1,33 @@
 //! The room's lines about who is there (web voice/roomSummary.ts).
 
+use gelabber_i18n::voice as texts;
+
 /// "Mia", "Mia und Lena", "Mia, Lena und Kim", "Mia, Lena und 2 weitere".
 pub fn name_list(names: &[String]) -> String {
     match names {
         [] => String::new(),
         [a] => a.clone(),
-        [a, b] => format!("{a} und {b}"),
-        [a, b, c] => format!("{a}, {b} und {c}"),
-        [a, b, ..] => format!("{a}, {b} und {} weitere", names.len() - 2),
+        [a, b] => texts::names_two(a, b),
+        [a, b, c] => texts::names_three(a, b, c),
+        [a, b, ..] => texts::names_more(a, b, &(names.len() - 2).to_string()),
     }
 }
 
+/// The viewer among the names of [`live_sentence`]: "Du" / "You".
+pub fn you_name() -> String {
+    texts::names_you().to_owned()
+}
+
 /// "Mia ist live", "Mia und Lena sind live", "Du bist live", "Du und Mia
-/// seid live".
+/// seid live". With `own`, the first name is the viewer's ([`you_name`]).
 pub fn live_sentence(names: &[String], own: bool) -> String {
-    let verb = match (own, names.len() == 1) {
-        (true, true) => "bist",
-        (true, false) => "seid",
-        (false, true) => "ist",
-        (false, false) => "sind",
-    };
-    format!("{} {verb} live", name_list(names))
+    let list = name_list(names);
+    match (own, names.len() == 1) {
+        (true, true) => texts::is_live_self(&list),
+        (true, false) => texts::is_live_self_and_others(&list),
+        (false, true) => texts::is_live_one(&list),
+        (false, false) => texts::is_live_many(&list),
+    }
 }
 
 /// `roomSummary`: occupancy, never a claim that anyone is talking.
@@ -28,28 +35,31 @@ pub fn live_sentence(names: &[String], own: bool) -> String {
 pub fn room_summary(others: &[String], here: bool, live: &[String]) -> String {
     if here {
         return if others.is_empty() {
-            "Nur du bist im Kanal.".into()
+            texts::summary_only_you().into()
         } else {
-            format!("Du bist hier mit {}.", name_list(others))
+            texts::summary_you_with(&name_list(others))
         };
     }
     if others.is_empty() {
-        return "Niemand im Kanal.".into();
+        return texts::summary_nobody().into();
     }
-    let verb = |n: usize| if n == 1 { "ist" } else { "sind" };
-    let there = format!("{} {} da.", name_list(others), verb(others.len()));
+    let there = if others.len() == 1 {
+        texts::summary_there_one(&name_list(others))
+    } else {
+        texts::summary_there_many(&name_list(others))
+    };
     if live.is_empty() {
         return there;
     }
-    format!("{there} {} {} live.", name_list(live), verb(live.len()))
+    texts::summary_there_and_live(&there, &live_sentence(live, false))
 }
 
 /// `stageFacts`: "3 im Kanal · 2 Kameras", "3 im Kanal · Jonas ist live".
 pub fn stage_facts(people: usize, cameras: usize, live: &[String], own_live: bool) -> String {
-    let count = format!("{people} im Kanal");
+    let count = texts::facts_people(&people.to_string());
     if !live.is_empty() || own_live {
         let names: Vec<String> = if own_live {
-            std::iter::once("Du".to_owned())
+            std::iter::once(you_name())
                 .chain(live.iter().cloned())
                 .collect()
         } else {
@@ -59,8 +69,7 @@ pub fn stage_facts(people: usize, cameras: usize, live: &[String], own_live: boo
     }
     match cameras {
         0 => count,
-        1 => format!("{count} · 1 Kamera"),
-        n => format!("{count} · {n} Kameras"),
+        n => format!("{count} · {}", texts::facts_cameras(n as u64)),
     }
 }
 

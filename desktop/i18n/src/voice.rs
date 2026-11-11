@@ -296,6 +296,35 @@ crate::strings! {
         | "you’re only listening";
     mic_consequence_switch = "der Wechsel hat nicht geklappt"
         | "the switch didn’t work";
+
+    // The desktop app's own.
+    window_failed = "Das Videofenster konnte nicht geöffnet werden."
+        | "The video window could not be opened.";
+    room_sound_not_captured = "Live-Ton nicht aufgenommen · Video läuft weiter"
+        | "Live audio not captured · Video keeps going";
+    tile_low_quality = "Geringe Bildqualität" | "Low picture quality";
+    tile_limit_transport = "Der Server blockiert die schnelle Bildübertragung der Desktop-App (Content-Security-Policy). Das Bild bleibt deshalb klein."
+        | "The server blocks the desktop app’s fast picture transfer (Content-Security-Policy), so the picture stays small.";
+    tile_limit_renderer = "WebGL ist hier nicht verfügbar. Das Bild bleibt deshalb klein."
+        | "WebGL isn’t available here, so the picture stays small.";
+    tile_in_window = "Läuft im eigenen Fenster." | "Playing in its own window.";
+    tile_close_window = "Fenster schließen" | "Close window";
+    tile_own_window = "Eigenes Fenster" | "Own window";
+    tile_more_actions = "Weitere Aktionen" | "More actions";
+    notice_sound_failed = "Der Live-Ton konnte nicht aufgenommen werden. Das Video läuft weiter."
+        | "The Live audio could not be captured. The video keeps going.";
+    notice_sound_all_apps = "Dein Stream sendet den Ton aller Anwendungen außer Gelabber."
+        | "Your stream sends the sound of every application except Gelabber.";
+    controls_mute_shortcut = "Strg+Umschalt+M" | "Ctrl+Shift+M";
+    controls_deafen_shortcut = "Strg+Umschalt+D" | "Ctrl+Shift+D";
+    mic_blocked_system = "Kein Zugriff auf das Mikrofon. Erlaube ihn in den Systemeinstellungen."
+        | "No access to the microphone. Allow it in your system settings.";
+    live_sound_all_apps = "Ton aller Anwendungen außer Gelabber"
+        | "Sound of every application except Gelabber";
+    live_sound_choose_app = "Anwendung für den Ton wählen …"
+        | "Choose an application for the sound…";
+    members_show = "Mitgliederliste einblenden" | "Show member list";
+    members_hide = "Mitgliederliste ausblenden" | "Hide member list";
 }
 
 /// "{percent} %".
@@ -599,5 +628,41 @@ pub fn mic_failure_unavailable(consequence: &str) -> String {
     match get() {
         Locale::De => format!("Das Mikrofon ist gerade nicht verfügbar, {consequence}."),
         Locale::En => format!("The microphone isn’t available right now, {consequence}."),
+    }
+}
+
+/// "Kein Ton von „{app}“": the chosen application plays nothing.
+pub fn room_sound_silent(app: &str) -> String {
+    match get() {
+        Locale::De => format!("Kein Ton von „{app}“"),
+        Locale::En => format!("No sound from “{app}”"),
+    }
+}
+
+/// "Der Live-Ton konnte nicht aufgenommen werden ({reason}). …"
+pub fn notice_sound_failed_because(reason: &str) -> String {
+    match get() {
+        Locale::De => format!(
+            "Der Live-Ton konnte nicht aufgenommen werden ({reason}). Das Video läuft weiter."
+        ),
+        Locale::En => {
+            format!("The Live audio could not be captured ({reason}). The video keeps going.")
+        }
+    }
+}
+
+/// "Kein Ton von „{name}“."
+pub fn notice_sound_silent(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Kein Ton von „{name}“."),
+        Locale::En => format!("No sound from “{name}”."),
+    }
+}
+
+/// "Ton von „{app}“": the Live's sound comes from one application.
+pub fn live_sound_from(app: &str) -> String {
+    match get() {
+        Locale::De => format!("Ton von „{app}“"),
+        Locale::En => format!("Sound from “{app}”"),
     }
 }

@@ -520,7 +520,7 @@ fn a_video_opens_in_a_window_of_its_own() {
     h.get_by_label("Eigenes Fenster").click();
     h.run_steps(6);
     assert!(!window::is_open(&h.ctx, key));
-    h.get_by_label(window::FAILED);
+    h.get_by_label(window::failed_text());
 }
 
 #[test]

@@ -12,7 +12,9 @@ use gelabber_call::{Call, CallStatus, VideoKey};
 use super::video::{self, Fit};
 
 /// What the tile says when its window did not open.
-pub const FAILED: &str = "Das Videofenster konnte nicht geöffnet werden.";
+pub fn failed_text() -> &'static str {
+    gelabber_i18n::voice::window_failed()
+}
 
 #[derive(Clone, Default)]
 struct Windows {
@@ -248,7 +250,10 @@ mod tests {
         harness.step();
         assert!(failed(&harness.ctx, key));
         assert!(!is_open(&harness.ctx, key));
-        assert_eq!(FAILED, "Das Videofenster konnte nicht geöffnet werden.");
+        assert_eq!(
+            failed_text(),
+            "Das Videofenster konnte nicht geöffnet werden."
+        );
     }
 
     /// The camera going off, then the call ending, close the window: it

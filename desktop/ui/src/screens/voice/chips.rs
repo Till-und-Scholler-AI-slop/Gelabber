@@ -3,6 +3,7 @@
 //! Kino's exit and label chips.
 
 use egui::{Color32, Id, Rect, Response, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use gelabber_i18n::voice as texts;
 
 use super::look::pill;
 use super::stage::View;
@@ -94,8 +95,8 @@ pub fn view_switch(ui: &mut Ui, right: f32, center_y: f32, view: View) -> (Rect,
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let options = [
-        (View::Raster, Icon::Grid, "Raster"),
-        (View::Fokus, Icon::Focus, "Fokus"),
+        (View::Raster, Icon::Grid, texts::room_view_grid()),
+        (View::Fokus, Icon::Focus, texts::room_view_focus()),
     ];
     let widths: Vec<(f32, Block, Block)> = options
         .iter()
@@ -184,12 +185,13 @@ pub fn view_switch(ui: &mut Ui, right: f32, center_y: f32, view: View) -> (Rect,
 pub fn kino_button(ui: &mut Ui, right: f32, center_y: f32) -> (Rect, bool) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let label = Block::single(ui, "Kino", text::UI, c.text);
+    let label = Block::single(ui, texts::room_cinema(), text::UI, c.text);
     let w = 12.0 + 15.0 + 6.0 + label.width() + 12.0 + 2.0;
     let rect = Rect::from_min_size(pos2(right - w, center_y - 17.0), vec2(w, 34.0));
     let response = common::click(ui, rect, Id::unique("gelabber-stage-kino"));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Kino"));
-    let response = response.on_hover_text("Kino (K)");
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, texts::room_cinema()));
+    let response = response.on_hover_text(texts::room_cinema_title());
     let fill = eased(
         ui.ctx(),
         response.id.with("hover"),
@@ -232,13 +234,20 @@ pub fn kino_bar(ui: &mut Ui, room: Rect, label: Option<(bool, String, String)>) 
     let grey = Color32::from_rgb(0xc9, 0xcd, 0xd0);
     let top = room.top() + 24.0;
     let cy = top + 17.0;
-    let text_s = Block::single(ui, "Kino verlassen", text::UI, white);
-    let kbd = Block::single(ui, "Esc", TextStyle::new(11.0, 400.0, 1.4), grey);
+    let text_s = Block::single(ui, texts::room_leave_cinema(), text::UI, white);
+    let kbd = Block::single(
+        ui,
+        texts::room_esc_key(),
+        TextStyle::new(11.0, 400.0, 1.4),
+        grey,
+    );
     let kbd_w = kbd.width() + 10.0 + 2.0;
     let w = 12.0 + 15.0 + 8.0 + text_s.width() + 8.0 + kbd_w + 12.0;
     let exit = Rect::from_min_size(pos2(room.left() + 16.0, top), vec2(w, 34.0));
     let response = common::click(ui, exit, Id::unique("gelabber-kino-exit"));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Kino verlassen"));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, true, texts::room_leave_cinema())
+    });
     let alpha = if response.hovered() { 0.88 } else { 0.72 };
     ui.painter()
         .rect_filled(exit, corner(theme.radius.md), pill(alpha));
@@ -268,8 +277,14 @@ pub fn kino_bar(ui: &mut Ui, room: Rect, label: Option<(bool, String, String)>) 
         let max = room.width() - 160.0 - w - 10.0;
         let mut x = exit.right() + 10.0;
         let chip_left = x;
-        let badge =
-            live.then(|| Block::single(ui, "Live", TextStyle::new(10.0, 600.0, 1.3), c.on_live));
+        let badge = live.then(|| {
+            Block::single(
+                ui,
+                texts::live_badge(),
+                TextStyle::new(10.0, 600.0, 1.3),
+                c.on_live,
+            )
+        });
         let strong = Block::single(ui, &name, text::UI.weight(900.0), white);
         let rest = Block::single(ui, &format!("· {place}"), text::UI.weight(400.0), grey);
         let mut content = strong.width() + 8.0 + rest.width();
