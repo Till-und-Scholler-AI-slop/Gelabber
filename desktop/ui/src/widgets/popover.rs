@@ -22,6 +22,8 @@ pub struct Popover {
     beside: Option<Rect>,
     /// Presses here are not outside (an open submenu).
     inside: Option<Rect>,
+    /// Inside the 1px border; 8 unless a popover sets its own.
+    padding: f32,
 }
 
 /// `SUBMENU_INSET` of RowMenu.tsx: the submenu's padding and border, so its
@@ -40,6 +42,7 @@ impl Popover {
             takes_focus: true,
             beside: None,
             inside: None,
+            padding: 8.0,
         }
     }
 
@@ -78,6 +81,12 @@ impl Popover {
 
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = width;
+        self
+    }
+
+    /// Its own padding inside the border (the role picker's 12).
+    pub fn padding(mut self, padding: f32) -> Self {
+        self.padding = padding;
         self
     }
 
@@ -165,11 +174,12 @@ impl Popover {
             .order(Order::Foreground)
             .fixed_pos(pos2(left, top))
             .show(ctx, |ui| {
+                let inset = self.padding + 1.0;
                 let inner_rect = Rect::from_min_size(
-                    pos2(left + 9.0, top + 9.0),
+                    pos2(left + inset, top + inset),
                     Vec2::new(
-                        (size.x - 18.0).max(self.min_width - 18.0),
-                        (size.y - 18.0).max(0.0),
+                        (size.x - 2.0 * inset).max(self.min_width - 2.0 * inset),
+                        (size.y - 2.0 * inset).max(0.0),
                     ),
                 );
                 let frame_rect = Rect::from_min_size(pos2(left, top), size);
@@ -186,8 +196,8 @@ impl Popover {
                 out = Some(content(&mut child));
                 let used = child.min_rect();
                 let measured = Vec2::new(
-                    (used.width() + 18.0).max(self.min_width).min(360.0),
-                    used.height() + 18.0,
+                    (used.width() + 2.0 * inset).max(self.min_width).min(360.0),
+                    used.height() + 2.0 * inset,
                 );
                 if (measured - size).length() > 0.5 {
                     ctx.data_mut(|d| d.insert_temp(size_id, measured));

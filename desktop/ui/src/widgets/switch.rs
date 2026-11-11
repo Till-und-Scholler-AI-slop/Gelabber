@@ -78,6 +78,8 @@ pub struct Checkbox<'a> {
     /// Only the mark, for a card that is the control itself.
     decorative: bool,
     label: Option<&'a str>,
+    /// The box's side; 20 unless a list asks for smaller ones.
+    size: f32,
 }
 
 impl<'a> Checkbox<'a> {
@@ -88,7 +90,14 @@ impl<'a> Checkbox<'a> {
             disabled: false,
             decorative: false,
             label: None,
+            size: 20.0,
         }
+    }
+
+    /// A smaller box, as the role picker's 16px ones with a 10px mark.
+    pub fn size(mut self, size: f32) -> Self {
+        self.size = size;
+        self
     }
 
     /// The accessible name, where the text beside it is drawn apart.
@@ -134,7 +143,7 @@ impl Widget for Checkbox<'_> {
         } else {
             Sense::click()
         };
-        let (rect, mut response) = ui.allocate_exact_size(Vec2::splat(20.0), sense);
+        let (rect, mut response) = ui.allocate_exact_size(Vec2::splat(self.size), sense);
         if response.clicked() {
             *self.checked = if self.radio { true } else { !*self.checked };
             response.mark_changed();
@@ -155,7 +164,11 @@ impl Widget for Checkbox<'_> {
             } else {
                 (c.bg, c.border_strong)
             };
-            let radius = if self.radio { 10.0 } else { theme.radius.xs };
+            let radius = if self.radio {
+                self.size / 2.0
+            } else {
+                theme.radius.xs
+            };
             let painter = ui.painter();
             if response.has_focus() && keyboard_focus(ui.ctx()) {
                 focus_ring(painter, rect, radius, &theme);
@@ -175,7 +188,8 @@ impl Widget for Checkbox<'_> {
                 if self.radio {
                     painter.circle_filled(rect.center(), 4.0 * scale, ink);
                 } else {
-                    let size = 12.0 * scale;
+                    // 12 in a 20px box, 10 in a 16px one.
+                    let size = (self.size * 0.6).round() * scale;
                     let min = rect.center() - Vec2::splat(size / 2.0);
                     let points: Vec<Pos2> = CHECK
                         .iter()

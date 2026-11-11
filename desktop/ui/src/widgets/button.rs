@@ -16,6 +16,8 @@ pub enum ButtonVariant {
     Ghost,
     Danger,
     DangerOutline,
+    /// A border and no fill until hovered ("+ Neue Rolle").
+    Outline,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -197,6 +199,12 @@ fn look(theme: &Theme, variant: ButtonVariant) -> Look {
             hover_fill: c.danger_bg.gamma_multiply(0.14),
             border: c.danger,
             text: c.danger,
+        },
+        ButtonVariant::Outline => Look {
+            fill: Color32::TRANSPARENT,
+            hover_fill: c.hover,
+            border: c.border_strong,
+            text: c.text,
         },
     }
 }
