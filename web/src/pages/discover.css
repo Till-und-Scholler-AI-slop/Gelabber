@@ -73,6 +73,7 @@
 }
 .discover-search .ui-field {
   width: 100%;
+  min-height: 40px;
   padding-left: 38px;
 }
 
@@ -88,8 +89,9 @@
   display: flex;
   align-items: center;
   gap: 16px;
+  /* 84px from line to line: the 56px tile, 14px above and 13px below. */
   min-height: 84px;
-  padding: 14px 0;
+  padding: 14px 0 13px;
   border-bottom: 1px solid var(--lr-border);
 }
 /* A server tile as in the rail, but square. */
@@ -112,19 +114,22 @@
 }
 .discover-row-text h2 {
   font-size: 16px;
+  line-height: 20px;
   font-weight: 600;
   color: var(--lr-text);
   overflow-wrap: anywhere;
 }
 .discover-row-description {
-  margin-top: 2px;
-  font-size: 14px;
+  margin-top: 1px;
+  font-size: 13px;
+  line-height: 18px;
   color: var(--lr-text);
   overflow-wrap: anywhere;
 }
 .discover-row-meta {
-  margin-top: 2px;
+  margin-top: 1px;
   font: var(--lr-type-meta);
+  line-height: 16px;
   color: var(--lr-muted);
 }
 .discover-action,

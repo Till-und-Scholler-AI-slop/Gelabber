@@ -618,6 +618,10 @@ describe("server settings Verzeichnis", () => {
       /<option value="" disabled="" selected="">Sprache wählen/,
     );
     expect(html).toContain("0 / 300 Zeichen");
+    // The preview leaves out the language until one is chosen.
+    const preview = text(html.slice(html.indexOf(">Vorschau<")));
+    expect(preview).toContain("Wo Wohnzimmer 5 Mitglieder Beitritt anfragen");
+    expect(preview).not.toContain("· 5 Mitglieder");
   });
 
   it("tells the owner when the operator took the server out", () => {
@@ -635,6 +639,12 @@ describe("server settings Verzeichnis", () => {
       /^>Beitrittsanfragen K Kai · \S.* Ich bin Jonas’ Bruder\. Annehmen Ablehnen/,
     );
     expect(html).toContain(`<time dateTime="${created_at}">`);
+    // Each button names whose request it answers.
+    const id = html.match(/<span id="([^"]+)">Kai<\/span>/)?.[1];
+    expect(id).toBeTruthy();
+    expect(html.match(new RegExp(`aria-describedby="${id}"`, "g"))).toHaveLength(
+      2,
+    );
   });
 
   it("says when no request waits", () => {

@@ -174,6 +174,7 @@ function ListingForm({
     join_mode: form.join_mode,
     member: false,
     request: null,
+    retry_at: null,
   };
   const descriptionError = errors.fields.description;
 
@@ -359,7 +360,9 @@ export function JoinRequestQueue({ server }: { server: ServerDetail }) {
               <Avatar name={request.name} url={request.avatar_url} />
               <div className="server-settings-row__main">
                 <span className="server-settings-row__name">
-                  {request.name}
+                  <span id={`${headingId}-${request.user_id}`}>
+                    {request.name}
+                  </span>
                   <span className="server-directory-requests__when">
                     {" · "}
                     <time dateTime={request.created_at}>
@@ -377,6 +380,7 @@ export function JoinRequestQueue({ server }: { server: ServerDetail }) {
                 <Button
                   size="sm"
                   variant="primary"
+                  aria-describedby={`${headingId}-${request.user_id}`}
                   disabled={answer.isPending}
                   pending={busy(request, true)}
                   pendingLabel={t("joinRequests.accept")}
@@ -386,6 +390,7 @@ export function JoinRequestQueue({ server }: { server: ServerDetail }) {
                 </Button>
                 <Button
                   size="sm"
+                  aria-describedby={`${headingId}-${request.user_id}`}
                   disabled={answer.isPending}
                   pending={busy(request, false)}
                   pendingLabel={t("joinRequests.decline")}

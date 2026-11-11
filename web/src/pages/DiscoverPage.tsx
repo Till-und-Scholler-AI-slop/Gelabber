@@ -39,6 +39,7 @@ import type { DiscoverSearch } from "../discover/search.ts";
 import type { DirectoryLanguage, Listing } from "../discover/types.ts";
 import { useT } from "../i18n/catalog.ts";
 import { discovery } from "../i18n/catalogs/discovery.ts";
+import { formatDate } from "../i18n/format.ts";
 import "./settings.css";
 import "./discover.css";
 
@@ -233,6 +234,7 @@ export function DiscoverRow({
   const language =
     languages.find((entry) => entry.code === listing.language)?.name ??
     listing.language;
+  const members = t("row.members", { count: listing.member_count });
   return (
     <li className="discover-row">
       <span
@@ -251,10 +253,10 @@ export function DiscoverRow({
         <h2 id={nameId}>{listing.name}</h2>
         <p className="discover-row-description">{listing.description}</p>
         <p className="discover-row-meta">
-          {t("row.meta", {
-            language,
-            members: t("row.members", { count: listing.member_count }),
-          })}
+          {/* The settings preview has no language until one is chosen. */}
+          {language
+            ? t("row.meta", { language, members })
+            : members}
         </p>
       </div>
       <ListingButton
@@ -386,15 +388,30 @@ function ListingButton({
           {t("actions.requested")}
         </Button>
       );
-    case "declined":
+    case "declined": {
+      const until = listing.retry_at
+        ? t("actions.declinedUntil", { date: formatDate(listing.retry_at) })
+        : undefined;
       return (
-        <Button
-          className="discover-action"
-          aria-describedby={describedBy}
-          disabled
-        >
-          {t("actions.declined")}
-        </Button>
+        <>
+          <Button
+            className="discover-action"
+            aria-describedby={
+              until ? `${describedBy} ${describedBy}-until` : describedBy
+            }
+            title={until}
+            disabled
+          >
+            {t("actions.declined")}
+          </Button>
+          {/* The title alone reaches neither touch nor every screen reader. */}
+          {until ? (
+            <span id={`${describedBy}-until`} className="sr-only">
+              {until}
+            </span>
+          ) : null}
+        </>
       );
+    }
   }
 }

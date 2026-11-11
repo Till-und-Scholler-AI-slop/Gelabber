@@ -74,6 +74,7 @@ const listing = (overrides: Partial<Listing> = {}): Listing => ({
   join_mode: "open",
   member: false,
   request: null,
+  retry_at: null,
   ...overrides,
 });
 const pages = (listings: Listing[], next_offset: number | null = null) => ({
@@ -198,6 +199,23 @@ describe("Entdecken", () => {
     });
     expect(button({ join_mode: "request", request: "declined" })).toMatchObject(
       { label: "Nicht angenommen", disabled: true },
+    );
+  });
+
+  it("says from when a declined person may ask again", () => {
+    const html = row({
+      join_mode: "request",
+      request: "declined",
+      retry_at: "2026-11-18T09:30:00Z",
+    });
+    expect(html).toContain(
+      'title="Du kannst ab dem 18. November 2026 wieder anfragen."',
+    );
+    // Also for screen readers, next to the server's name.
+    const id = html.match(/<h2 id="([^"]+)">Filmclub<\/h2>/)?.[1];
+    expect(html).toContain(`aria-describedby="${id} ${id}-until"`);
+    expect(html).toContain(
+      `<span id="${id}-until" class="sr-only">Du kannst ab dem 18. November 2026 wieder anfragen.</span>`,
     );
   });
 

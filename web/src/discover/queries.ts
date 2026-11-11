@@ -163,6 +163,7 @@ export function useJoinListing() {
         ...listing,
         member: true,
         request: null,
+        retry_at: null,
         member_count: listing.member
           ? listing.member_count
           : listing.member_count + 1,
@@ -191,6 +192,7 @@ export function useRequestJoin() {
       patchListing(client, stamp, serverId, (listing) => ({
         ...listing,
         request: answer.request,
+        retry_at: null,
       }));
     },
     onError: (_error, _input, stamp) => {
@@ -210,6 +212,7 @@ export function useWithdrawRequest() {
       patchListing(client, stamp, serverId, (listing) => ({
         ...listing,
         request: null,
+        retry_at: null,
       }));
     },
     onError: (_error, _serverId, stamp) => {

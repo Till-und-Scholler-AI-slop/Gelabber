@@ -33,6 +33,8 @@ export type Listing = {
   /** The caller is a member already. */
   member: boolean;
   request: RequestState | null;
+  /** While `request` is `declined`: when the caller may ask again. */
+  retry_at: string | null;
 };
 
 /** `GET /api/directory/listings`: 30 at a time, `next_offset` null on the
