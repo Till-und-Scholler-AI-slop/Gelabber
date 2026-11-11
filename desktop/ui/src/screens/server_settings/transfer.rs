@@ -184,3 +184,139 @@ impl Dialog {
         changed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use parking_lot::Mutex;
+    use serde_json::{Value, json};
+
+    use crate::app::testkit::{
+        FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace,
+    };
+    use crate::platform::paths::testing::TempConfig;
+
+    const JONAS: &str = "00000000-0000-4000-8000-000000000038";
+    const MIRA: &str = "00000000-0000-4000-8000-000000000039";
+
+    fn member(id: &str, name: &str, role: &str) -> Value {
+        json!({
+            "user_id": id, "name": name, "avatar_url": null,
+            "joined_at": "2026-01-02T00:00:00Z", "status_text": null,
+            "accent_color": null, "avatar_decoration": null, "role": role
+        })
+    }
+
+    /// Wohnzimmer with Lena as `role` and the `others` beside her; the
+    /// bodies of transfer requests go into `sent`.
+    fn api(role: &'static str, others: Vec<Value>, sent: Arc<Mutex<Vec<String>>>) -> FakeApi {
+        FakeApi::start(true, move |method, path, body| {
+            let detail = format!("/servers/{HOME}");
+            match (method, path) {
+                ("POST", p) if p == format!("{detail}/transfer") => {
+                    sent.lock().push(body.to_owned());
+                    let mut server = workspace("GET", "/servers")?.body[0].clone();
+                    server["role"] = json!("member");
+                    Some(Reply::json(server))
+                }
+                ("GET", "/servers") => {
+                    let mut list = workspace(method, path)?.body;
+                    list[0]["role"] = json!(role);
+                    Some(Reply::json(list))
+                }
+                ("GET", p) if p == detail => {
+                    let mut server = workspace(method, path)?.body;
+                    server["role"] = json!(role);
+                    if role != "owner" {
+                        server["permissions"] = json!([]);
+                    }
+                    let members = server["members"].as_array_mut()?;
+                    members.extend(others.iter().cloned());
+                    Some(Reply::json(server))
+                }
+                _ => workspace(method, path),
+            }
+        })
+    }
+
+    fn route() -> String {
+        format!("/s/{HOME}/settings")
+    }
+
+    /// The owner picks the first other member, confirms, and the dialog
+    /// closes once the server has it (`transfer_server`).
+    #[test]
+    fn the_owner_hands_the_server_on() {
+        let _config = TempConfig::new("transfer-owner");
+        let sent = Arc::default();
+        let others = vec![
+            member(JONAS, "Jonas", "member"),
+            member(MIRA, "Mira", "member"),
+        ];
+        let api = api("owner", others, Arc::clone(&sent));
+        let mut harness = launcher(&api, &route());
+        wait_for_label(&mut harness, "Übergeben…");
+        harness.get_by_label("Ein anderes Mitglied wird Eigentümer. Du bleibst Mitglied.");
+        // Down the page first, as the scene does: a row out of view takes
+        // no click.
+        harness
+            .get_by_role_and_label(Role::Link, "Gefahrenzone")
+            .click();
+        for _ in 0..30 {
+            harness.step();
+        }
+        harness
+            .get_by_role_and_label(Role::Button, "Übergeben…")
+            .click();
+        wait_for_label(&mut harness, "Neuer Eigentümer");
+        harness
+            .get_by_role_and_label(Role::Button, "Übergeben")
+            .click();
+        wait_for_label(&mut harness, "„Wohnzimmer“ an Jonas übergeben?");
+        harness.get_by_label("Du kannst das nicht selbst rückgängig machen.");
+        assert!(!api.saw(&format!("POST /servers/{HOME}/transfer")));
+        let confirm = harness
+            .query_all_by_label("Übergeben")
+            .rfind(|n| n.accesskit_node().role() == Role::Button)
+            .expect("the question's button");
+        confirm.click();
+        let transfer = format!("POST /servers/{HOME}/transfer");
+        wait_for(&mut harness, "the transfer", |_| api.saw(&transfer));
+        let body: Value = serde_json::from_str(&sent.lock()[0]).expect("json body");
+        assert_eq!(body, json!({ "user_id": JONAS }));
+        wait_for(&mut harness, "the dialog to close", |h| {
+            h.query_by_label("Neuer Eigentümer").is_none()
+        });
+    }
+
+    /// Alone on the server, there is nobody to hand it to.
+    #[test]
+    fn without_another_member_the_row_waits_for_one() {
+        let _config = TempConfig::new("transfer-alone");
+        let api = api("owner", Vec::new(), Arc::default());
+        let mut harness = launcher(&api, &route());
+        wait_for_label(&mut harness, "Übergeben…");
+        harness.get_by_label("Lade zuerst jemanden ein, dem du den Server übergeben kannst.");
+        let open = harness.get_by_role_and_label(Role::Button, "Übergeben…");
+        assert!(open.accesskit_node().is_disabled());
+        harness.get_by_role_and_label(Role::Button, "Server löschen");
+        // The deletion sentence is the row's hint, not the section's.
+        harness.get_by_label(
+            "Löscht Kanäle, Kategorien, Nachrichten, Einladungen und Mitgliedschaften endgültig.",
+        );
+    }
+
+    /// Members only leave; the transfer row is the owner's.
+    #[test]
+    fn a_member_sees_no_transfer() {
+        let _config = TempConfig::new("transfer-member");
+        let api = api("member", Vec::new(), Arc::default());
+        let mut harness = launcher(&api, &route());
+        wait_for_label(&mut harness, "Server verlassen");
+        assert!(harness.query_by_label("Übergeben…").is_none());
+        assert!(harness.query_by_label("Server übergeben").is_none());
+    }
+}
