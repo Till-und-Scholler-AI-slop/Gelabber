@@ -1,5 +1,5 @@
-//! The server directory "Entdecken" (#520): the switch, the status route
-//! and the owner's listing form.
+//! The server directory "Entdecken" (#520): the switch, the status route,
+//! the owner's listing form, the search, joining and requests to join.
 
 mod common;
 
@@ -446,4 +446,661 @@ async fn the_status_counts_the_listings_the_caller_can_see(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(rows, 0);
+}
+
+async fn list_with(client: &mut Client, server: Uuid, language: &str, join_mode: &str) {
+    let res = put_listing(
+        client,
+        server,
+        json!({
+            "listed": true,
+            "description": "Kommt vorbei.",
+            "language": language,
+            "join_mode": join_mode,
+        }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
+async fn search(client: &mut Client, query: &str) -> common::Response {
+    client
+        .send(
+            Method::GET,
+            &format!("/api/directory/listings{query}"),
+            None,
+        )
+        .await
+}
+
+/// The names of the search's page, in order.
+async fn names(client: &mut Client, query: &str) -> Vec<String> {
+    let res = search(client, query).await;
+    assert_eq!(res.status, StatusCode::OK, "{query}: {}", res.body);
+    res.body["listings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// The listing of `server` in the caller's unfiltered search.
+async fn listing_of(client: &mut Client, server: Uuid) -> Option<Value> {
+    let res = search(client, "").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    res.body["listings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["server_id"] == server.to_string())
+        .cloned()
+}
+
+async fn join(client: &mut Client, server: Uuid) -> common::Response {
+    client
+        .send(
+            Method::POST,
+            &format!("/api/directory/listings/{server}/join"),
+            None,
+        )
+        .await
+}
+
+async fn ask(client: &mut Client, server: Uuid, message: &str) -> common::Response {
+    client
+        .send(
+            Method::POST,
+            &format!("/api/directory/listings/{server}/request"),
+            Some(json!({ "message": message })),
+        )
+        .await
+}
+
+async fn withdraw(client: &mut Client, server: Uuid) -> common::Response {
+    client
+        .send(
+            Method::DELETE,
+            &format!("/api/directory/listings/{server}/request"),
+            None,
+        )
+        .await
+}
+
+async fn request_rows(pool: &PgPool, server: Uuid) -> Vec<(Uuid, String)> {
+    sqlx::query_as(
+        "SELECT user_id, status FROM server_join_requests WHERE server_id = $1 ORDER BY user_id",
+    )
+    .bind(server)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn is_member(pool: &PgPool, server: Uuid, user: Uuid) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM server_members WHERE server_id = $1 AND user_id = $2)",
+    )
+    .bind(server)
+    .bind(user)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+fn id_of(client: &Client) -> Uuid {
+    client.user_id().parse().unwrap()
+}
+
+#[sqlx::test]
+async fn while_off_the_listing_routes_are_not_found(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let server = create_server(&mut ada, "Filmclub").await;
+    // Listed while the directory was on, then switched off.
+    sqlx::query(
+        "INSERT INTO server_listings (server_id, listed, description, language, join_mode, listed_at) \
+         VALUES ($1, true, 'Kino', 'de', 'open', now())",
+    )
+    .bind(server)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for res in [
+        search(&mut lena, "").await,
+        join(&mut lena, server).await,
+        ask(&mut lena, server, "").await,
+        withdraw(&mut lena, server).await,
+    ] {
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+        assert_eq!(res.body["error"], "not_found");
+    }
+    assert!(!is_member(&pool, server, id_of(&lena)).await);
+}
+
+#[sqlx::test]
+async fn the_search_shows_only_visible_listings_and_nothing_more(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut bob = registered(&state, "bob@example.test", "Bob").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    let privat = create_server(&mut ada, "Privat").await;
+    invite_and_join(&mut ada, &mut bob, filmclub).await;
+    list(&mut ada, filmclub, "de", "Jeden Freitag ein Film.").await;
+    list_with(&mut ada, keller, "de", "request").await;
+    let res = put_listing(
+        &mut ada,
+        privat,
+        json!({ "listed": false, "description": "", "language": "de", "join_mode": "open" }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Biggest first; the unlisted one is missing.
+    let res = search(&mut lena, "").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["next_offset"], Value::Null);
+    let listings = res.body["listings"].as_array().unwrap();
+    assert_eq!(listings.len(), 2, "{}", res.body);
+    assert_eq!(
+        listings[0],
+        json!({
+            "server_id": filmclub.to_string(),
+            "name": "Filmclub",
+            "icon_url": null,
+            "description": "Jeden Freitag ein Film.",
+            "language": "de",
+            "member_count": 2,
+            "join_mode": "open",
+            "member": false,
+            "request": null,
+        })
+    );
+    assert_eq!(listings[1]["name"], "Modellbau-Keller");
+    assert_eq!(listings[1]["join_mode"], "request");
+    // A member sees the listing as one.
+    assert_eq!(
+        listing_of(&mut bob, filmclub).await.unwrap()["member"],
+        true
+    );
+    // Seeing the listing does not open the server itself.
+    let res = lena
+        .send(Method::GET, &format!("/api/servers/{filmclub}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+    // Banned, delisted and blocked servers are out, and every listing route
+    // answers 404 for them.
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/servers/{filmclub}/ban"),
+            Some(json!({ "user_id": bob.user_id() })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert!(listing_of(&mut bob, filmclub).await.is_none());
+    assert!(listing_of(&mut lena, filmclub).await.is_some());
+    for res in [
+        join(&mut bob, filmclub).await,
+        ask(&mut bob, filmclub, "").await,
+    ] {
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    }
+    assert!(!is_member(&pool, filmclub, id_of(&bob)).await);
+
+    sqlx::query("UPDATE servers SET delisted_at = now() WHERE id = $1")
+        .bind(keller)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE servers SET blocked_at = now(), blocked_reason = 'x' WHERE id = $1")
+        .bind(filmclub)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(names(&mut lena, "").await, Vec::<String>::new());
+    for server in [filmclub, keller, privat, Uuid::new_v4()] {
+        let res = join(&mut lena, server).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+        let res = ask(&mut lena, server, "").await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    }
+    assert!(request_rows(&pool, keller).await.is_empty());
+}
+
+#[sqlx::test]
+async fn the_search_matches_name_and_description_literally(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    let rust = create_server(&mut ada, "Rust Study Hall").await;
+    let percent = create_server(&mut ada, "100% Kaffee").await;
+    let under = create_server(&mut ada, "a_b").await;
+    list(&mut ada, filmclub, "de", "Jeden Freitag ein Film.").await;
+    list(&mut ada, rust, "en", "Learning RUST together.").await;
+    list(&mut ada, percent, "de", "Bohnen").await;
+    list(&mut ada, under, "de", "Unterstrich").await;
+
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    assert_eq!(names(&mut lena, "?q=FILM").await, ["Filmclub"]);
+    // Name and description both match, either case.
+    assert_eq!(names(&mut lena, "?q=rust").await, ["Rust Study Hall"]);
+    assert_eq!(names(&mut lena, "?q=freitag").await, ["Filmclub"]);
+    // % and _ are no wildcards.
+    assert_eq!(names(&mut lena, "?q=%25").await, ["100% Kaffee"]);
+    assert_eq!(names(&mut lena, "?q=_").await, ["a_b"]);
+    assert_eq!(names(&mut lena, "?q=a%25b").await, Vec::<String>::new());
+    // Blank is no search; trimmed.
+    assert_eq!(names(&mut lena, "?q=%20%20").await.len(), 4);
+    assert_eq!(names(&mut lena, "?q=%20film%20").await, ["Filmclub"]);
+
+    assert_eq!(
+        sorted(names(&mut lena, "?language=de").await),
+        ["100% Kaffee", "Filmclub", "a_b"]
+    );
+    assert_eq!(names(&mut lena, "?language=en").await, ["Rust Study Hall"]);
+    assert_eq!(names(&mut lena, "?language=fr").await, Vec::<String>::new());
+    assert_eq!(
+        names(&mut lena, "?language=en&q=film").await,
+        Vec::<String>::new()
+    );
+    assert_eq!(names(&mut lena, "?language=").await.len(), 4);
+
+    for (query, field, code) in [
+        ("?language=xx", "language", "invalid"),
+        ("?offset=15", "offset", "invalid"),
+        ("?offset=-30", "offset", "invalid"),
+        ("?offset=1020", "offset", "invalid"),
+        ("?offset=x", "offset", "invalid"),
+        ("?q=a%0Ab", "q", "invalid"),
+    ] {
+        let res = search(&mut lena, query).await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{query}");
+        assert_eq!(res.body["fields"][field], code, "{query}: {}", res.body);
+    }
+    let long = "q".repeat(101);
+    let res = search(&mut lena, &format!("?q={long}")).await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["q"], "too_long");
+}
+
+#[sqlx::test]
+async fn the_search_pages_thirty_at_a_time(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let big = create_server(&mut ada, "Zuerst").await;
+    let mut tom = registered(&state, "tom@example.test", "Tom").await;
+    invite_and_join(&mut ada, &mut tom, big).await;
+    list(&mut ada, big, "de", "Am meisten Mitglieder.").await;
+    // 31 more without members, listed one second apart.
+    sqlx::query(
+        "WITH s AS (INSERT INTO servers (name, owner_id) \
+                    SELECT 'Bulk ' || lpad(g::text, 2, '0'), $1 FROM generate_series(1, 31) g \
+                    RETURNING id, name) \
+         INSERT INTO server_listings (server_id, listed, description, language, join_mode, listed_at) \
+         SELECT id, true, 'Viele', 'en', 'open', \
+                now() + make_interval(secs => substr(name, 6)::int) FROM s",
+    )
+    .bind(id_of(&ada))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let res = search(&mut lena, "").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let first: Vec<&str> = res.body["listings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(first.len(), 30);
+    // Most members first, then the oldest listing.
+    assert_eq!(first[0], "Zuerst");
+    assert_eq!(first[1], "Bulk 01");
+    assert_eq!(first[29], "Bulk 29");
+    assert_eq!(res.body["next_offset"], 30);
+
+    let res = search(&mut lena, "?offset=30").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let rest: Vec<&str> = res.body["listings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(rest, ["Bulk 30", "Bulk 31"]);
+    assert_eq!(res.body["next_offset"], Value::Null);
+
+    // Filtered searches page the same way.
+    let res = search(&mut lena, "?q=bulk&offset=30").await;
+    assert_eq!(res.body["listings"].as_array().unwrap().len(), 1);
+    let res = search(&mut lena, "?language=en").await;
+    assert_eq!(res.body["next_offset"], 30);
+    let res = search(&mut lena, "?offset=990").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["listings"], json!([]));
+    assert_eq!(res.body["next_offset"], Value::Null);
+}
+
+#[sqlx::test]
+async fn an_open_server_is_joined_at_once(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list(&mut ada, filmclub, "de", "Kino").await;
+    list_with(&mut ada, keller, "de", "request").await;
+
+    let res = join(&mut lena, filmclub).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["id"], filmclub.to_string());
+    assert_eq!(res.body["name"], "Filmclub");
+    assert_eq!(res.body["role"], "member");
+    assert!(is_member(&pool, filmclub, id_of(&lena)).await);
+    // Idempotent.
+    let res = join(&mut lena, filmclub).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["id"], filmclub.to_string());
+    let listing = listing_of(&mut lena, filmclub).await.unwrap();
+    assert_eq!(listing["member"], true);
+    assert_eq!(listing["member_count"], 2);
+    let res = lena
+        .send(Method::GET, &format!("/api/servers/{filmclub}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Request mode takes no direct joins.
+    let res = join(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(res.body["error"], "join_request_required");
+    assert!(!is_member(&pool, keller, id_of(&lena)).await);
+
+    // A kicked person joins again; a request left from before goes away.
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/servers/{filmclub}/kick"),
+            Some(json!({ "user_id": lena.user_id() })),
+        )
+        .await;
+    assert!(res.status.is_success(), "{}", res.body);
+    let res = ask(&mut lena, filmclub, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = join(&mut lena, filmclub).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(request_rows(&pool, filmclub).await.is_empty());
+}
+
+#[sqlx::test]
+async fn requests_are_filed_repeated_and_withdrawn(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list_with(&mut ada, keller, "de", "request").await;
+    let lena_id = id_of(&lena);
+
+    let res = ask(&mut lena, keller, "  Ich baue Schiffe.  ").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(res.body, json!({ "request": "pending" }));
+    // Again: 200, and the first message stays.
+    let res = ask(&mut lena, keller, "Anders").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body, json!({ "request": "pending" }));
+    let message: String = sqlx::query_scalar(
+        "SELECT message FROM server_join_requests WHERE server_id = $1 AND user_id = $2",
+    )
+    .bind(keller)
+    .bind(lena_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(message, "Ich baue Schiffe.");
+    assert_eq!(
+        listing_of(&mut lena, keller).await.unwrap()["request"],
+        "pending"
+    );
+
+    let res = withdraw(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert!(request_rows(&pool, keller).await.is_empty());
+    assert_eq!(
+        listing_of(&mut lena, keller).await.unwrap()["request"],
+        Value::Null
+    );
+    let res = withdraw(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+    // An open server takes a request too; a missing body message is empty.
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    list(&mut ada, filmclub, "de", "Kino").await;
+    let res = lena
+        .send(
+            Method::POST,
+            &format!("/api/directory/listings/{filmclub}/request"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    // Withdrawing still works after the operator delisted the server.
+    let res = ask(&mut lena, keller, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    sqlx::query("UPDATE servers SET delisted_at = now() WHERE id = $1")
+        .bind(keller)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = withdraw(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+
+    // The message is one line of at most 300 characters.
+    for (message, code) in [
+        ("x".repeat(301), "too_long"),
+        ("a\nb".to_owned(), "invalid"),
+    ] {
+        let res = ask(&mut lena, filmclub, &message).await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+        assert_eq!(res.body["fields"]["message"], code);
+    }
+
+    // A member cannot ask.
+    let res = ask(&mut ada, filmclub, "").await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(res.body["error"], "already_member");
+}
+
+#[sqlx::test]
+async fn a_declined_request_waits_seven_days(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list_with(&mut ada, keller, "de", "request").await;
+    let res = ask(&mut lena, keller, "Erstes Mal").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    sqlx::query(
+        "UPDATE server_join_requests SET status = 'declined', decided_at = now(), decided_by = $2 \
+         WHERE server_id = $1",
+    )
+    .bind(keller)
+    .bind(id_of(&ada))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        listing_of(&mut lena, keller).await.unwrap()["request"],
+        "declined"
+    );
+    let res = ask(&mut lena, keller, "Zweites Mal").await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(res.body["error"], "join_request_declined");
+    let retry_after = res.body["retry_after"].as_u64().unwrap();
+    assert!(
+        (7 * 86_400 - 60..=7 * 86_400).contains(&retry_after),
+        "{retry_after}"
+    );
+    // A declined request is no pending one to withdraw.
+    let res = withdraw(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+    // Once the seven days are over, a new request replaces the row.
+    sqlx::query(
+        "UPDATE server_join_requests SET decided_at = now() - interval '7 days 1 second' \
+         WHERE server_id = $1",
+    )
+    .bind(keller)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        listing_of(&mut lena, keller).await.unwrap()["request"],
+        Value::Null
+    );
+    let res = ask(&mut lena, keller, "Zweites Mal").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let row: (String, String, Option<Uuid>) = sqlx::query_as(
+        "SELECT status, message, decided_by FROM server_join_requests WHERE server_id = $1",
+    )
+    .bind(keller)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row, ("pending".to_owned(), "Zweites Mal".to_owned(), None));
+}
+
+#[sqlx::test]
+async fn pending_requests_are_capped_per_person_and_per_server(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let mut tom = registered(&state, "tom@example.test", "Tom").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list_with(&mut ada, keller, "de", "request").await;
+
+    // Lena has 10 pending requests elsewhere (a declined one does not count).
+    sqlx::query(
+        "WITH s AS (INSERT INTO servers (name, owner_id) \
+                    SELECT 'Andere ' || g, $1 FROM generate_series(1, 11) g RETURNING id) \
+         INSERT INTO server_join_requests (server_id, user_id, status, decided_at) \
+         SELECT id, $2, CASE WHEN row_number() OVER () = 1 THEN 'declined' ELSE 'pending' END, \
+                CASE WHEN row_number() OVER () = 1 THEN now() END FROM s",
+    )
+    .bind(id_of(&ada))
+    .bind(id_of(&lena))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let res = ask(&mut lena, keller, "").await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(res.body["error"], "join_requests_full");
+    sqlx::query(
+        "DELETE FROM server_join_requests WHERE user_id = $1 AND server_id = \
+         (SELECT server_id FROM server_join_requests WHERE user_id = $1 AND status = 'pending' LIMIT 1)",
+    )
+    .bind(id_of(&lena))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let res = ask(&mut lena, keller, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    // The server holds 100 pending requests, Lena's included.
+    sqlx::query(
+        "WITH u AS (INSERT INTO users (email, name, password_hash) \
+                    SELECT 'bulk' || g || '@example.test', 'Bulk ' || g, 'x' \
+                    FROM generate_series(1, 99) g RETURNING id) \
+         INSERT INTO server_join_requests (server_id, user_id) SELECT $1, id FROM u",
+    )
+    .bind(keller)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let res = ask(&mut tom, keller, "").await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    assert_eq!(res.body["error"], "join_requests_full");
+    // Lena's own pending request still answers 200.
+    let res = ask(&mut lena, keller, "").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = withdraw(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let res = ask(&mut tom, keller, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn joins_and_requests_share_ten_per_hour(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let mut tom = registered(&state, "tom@example.test", "Tom").await;
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list(&mut ada, filmclub, "de", "Kino").await;
+    list_with(&mut ada, keller, "de", "request").await;
+
+    for _ in 0..5 {
+        let res = join(&mut lena, filmclub).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        let res = ask(&mut lena, keller, "").await;
+        assert!(res.status.is_success(), "{}", res.body);
+    }
+    for res in [
+        join(&mut lena, filmclub).await,
+        ask(&mut lena, keller, "").await,
+    ] {
+        assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+        assert_eq!(res.body["error"], "rate_limited");
+        assert!(res.body["retry_after"].as_u64().unwrap() > 0);
+    }
+    // Per person: Tom still gets in, and withdrawing is not limited.
+    let res = join(&mut tom, filmclub).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = withdraw(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn an_invite_join_and_a_ban_remove_the_request(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let mut tom = registered(&state, "tom@example.test", "Tom").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    list_with(&mut ada, keller, "de", "request").await;
+
+    let res = ask(&mut lena, keller, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = ask(&mut tom, keller, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    invite_and_join(&mut ada, &mut lena, keller).await;
+    assert_eq!(
+        request_rows(&pool, keller).await,
+        [(id_of(&tom), "pending".to_owned())]
+    );
+    assert_eq!(listing_of(&mut lena, keller).await.unwrap()["member"], true);
+
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/servers/{keller}/ban"),
+            Some(json!({ "user_id": tom.user_id() })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert!(request_rows(&pool, keller).await.is_empty());
 }
