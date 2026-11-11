@@ -96,6 +96,7 @@ fn field_label(field: &str) -> &'static str {
         "gif" => auth::field_label_gif(),
         "q" => auth::field_label_q(),
         "token" => auth::field_label_token(),
+        "invitation" => auth::field_label_invitation(),
         _ => auth::field_label_other(),
     }
 }
@@ -104,6 +105,8 @@ fn field_label(field: &str) -> &'static str {
 pub fn field_message(field: &str, code: &str) -> String {
     let label = field_label(field);
     match code {
+        // The API's `{"invitation":"required"}` (invitation_required).
+        "required" if field == "invitation" => auth::error_invitation_required().into(),
         "required" => auth::field_error_required(label),
         "too_short" if field == "password" => auth::field_error_password_too_short(PASSWORD_MIN),
         "too_short" => auth::field_error_too_short(label),
@@ -125,6 +128,7 @@ pub fn field_message(field: &str, code: &str) -> String {
             "bio" => auth::field_error_bio_invalid().into(),
             "pronouns" | "status_text" => auth::field_error_line_invalid().into(),
             "content_type" => auth::field_error_content_type_invalid().into(),
+            "invitation" => auth::error_invitation_invalid().into(),
             _ => auth::field_error_invalid(label),
         },
     }
@@ -160,6 +164,10 @@ pub fn error_message(code: &str) -> &'static str {
         "reauth_required" => auth::error_reauth_required(),
         "oidc_wrong_origin" => auth::error_oidc_wrong_origin(),
         "session_changed" => auth::error_session_changed(),
+        "invitation_required" => auth::error_invitation_required(),
+        "invitation_invalid" => auth::error_invitation_invalid(),
+        "account_disabled" => auth::error_account_disabled(),
+        "server_blocked" => auth::error_server_blocked(),
         _ => auth::error_internal(),
     }
 }
@@ -451,5 +459,46 @@ mod tests {
             oidc_error_message("invitation_required"),
             "Zum Registrieren brauchst du eine Einladung."
         );
+    }
+
+    /// The operator's codes (auth/rules.test.ts): the form line, and the
+    /// invitation field's own copy for `required` and `invalid`.
+    #[test]
+    fn operator_codes_have_copy() {
+        assert_eq!(
+            error_message("account_disabled"),
+            "Dieses Konto ist gesperrt."
+        );
+        assert_eq!(
+            error_message("server_blocked"),
+            "Dieser Server wurde vom Betreiber gesperrt."
+        );
+        assert_eq!(
+            error_message("invitation_required"),
+            "Zum Registrieren brauchst du eine Einladung."
+        );
+        assert_eq!(
+            error_message("invitation_invalid"),
+            "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt."
+        );
+        assert_eq!(
+            field_message("invitation", "required"),
+            auth::error_invitation_required()
+        );
+        assert_eq!(
+            field_message("invitation", "invalid"),
+            auth::error_invitation_invalid()
+        );
+        assert_eq!(field_message("invitation", "too_long"), "Einladungscode ist zu lang.");
+        // A sign-in refused for a disabled account says so at the form.
+        let mut errors = FormErrors::default();
+        errors.from_failure(
+            &Failure {
+                code: "account_disabled".into(),
+                ..Failure::default()
+            },
+            &["email", "password"],
+        );
+        assert_eq!(errors.form.as_deref(), Some("Dieses Konto ist gesperrt."));
     }
 }

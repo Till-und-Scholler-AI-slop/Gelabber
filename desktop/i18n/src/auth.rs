@@ -273,6 +273,10 @@ crate::strings! {
     sign_in_name_expired_title = "Anmeldung abgelaufen" | "Sign-in expired";
     sign_in_name_expired = "Melde dich noch einmal an, um dein Konto anzulegen."
         | "Sign in again to create your account.";
+    // /register on an invitation-only instance (#517).
+    field_label_invitation = "Einladungscode" | "Invitation code";
+    register_invitation_only = "Gelabber ist gerade nur mit Einladung offen."
+        | "Gelabber is open by invitation only for now.";
 }
 
 /// `oidc.signInWith`: the button of a provider other than Google.
