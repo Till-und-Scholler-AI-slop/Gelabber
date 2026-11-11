@@ -66,7 +66,7 @@ Undecided:
 - The interface identity is the shipped one, called "Living Room" in the code (`--lr-*` tokens): rail, sidebar, optional members panel and a bottom call bar, drawn by default in the dark theme "Gelabber Dunkel" with an amber accent. New features are drawn in this identity. Four replacement directions were rejected on 2026-10-27, and three ways to fold the server rail into the sidebar were rejected on 2026-11-10: the rail stays.
 - Existing parts stay as shipped unless a change is asked for (2026-11-10: the sidebar participant list, the red of "Verlassen", row spacing).
 - People can switch themes (14 presets, a theme editor, three styles), so every design must keep working in all of them.
-- Interface copy is German today, informal ("du").
+- Interface copy is German and English from v0.10, in both clients. The German is informal ("du"); the English is British.
 
 ## Evidence on Hand
 
