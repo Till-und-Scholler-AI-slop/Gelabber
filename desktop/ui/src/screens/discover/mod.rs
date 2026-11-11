@@ -748,8 +748,10 @@ fn row(
 ) {
     let action = action(listing);
     let joining = s.joining.contains(&listing.server_id);
-    let (response, more, more_response) = draw_row(ui, app, listing, languages, width, joining);
-    if more_response.clicked() || row_menu::menu_key(ui, &more_response) {
+    let (response, more) = draw_row(ui, app, listing, languages, width, joining, true);
+    if let Some((more, more_response)) = more
+        && (more_response.clicked() || row_menu::menu_key(ui, &more_response))
+    {
         row_menu::open(
             ui.ctx(),
             Owner::Listing(
@@ -784,7 +786,7 @@ pub fn preview(ui: &mut Ui, app: &AppCtx, listing: &Listing, languages: &[Direct
         ui.disable();
         // Disabled, but painted as it is.
         ui.set_opacity(opacity);
-        draw_row(ui, app, listing, languages, width, false);
+        draw_row(ui, app, listing, languages, width, false, false);
     });
 }
 
@@ -800,8 +802,9 @@ pub fn languages(ctx: &egui::Context, app: &AppCtx) -> Vec<DirectoryLanguage> {
     })
 }
 
-/// Paints a row and places its button and "…": their responses, and where
-/// the "…" sits.
+/// Paints a row and places its button and, with `menu`, the "…" (a row
+/// without `onReport` has none): the button's response, and where the "…"
+/// sits with its response.
 fn draw_row(
     ui: &mut Ui,
     app: &AppCtx,
@@ -809,7 +812,8 @@ fn draw_row(
     languages: &[DirectoryLanguage],
     width: f32,
     joining: bool,
-) -> (egui::Response, Rect, egui::Response) {
+    menu: bool,
+) -> (egui::Response, Option<(Rect, egui::Response)>) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let left = ui.cursor().min.x;
@@ -831,7 +835,8 @@ fn draw_row(
         _ => widget,
     };
     let button_w = widget.natural_width(ui);
-    let text_w = (width - 56.0 - 16.0 - 16.0 - button_w - 16.0 - 32.0).max(40.0);
+    let menu_w = if menu { 16.0 + 32.0 } else { 0.0 };
+    let text_w = (width - 56.0 - 16.0 - 16.0 - button_w - menu_w).max(40.0);
     let language = languages
         .iter()
         .find(|l| l.code == listing.language)
@@ -901,16 +906,19 @@ fn draw_row(
     meta.paint(&painter, pos2(x, y));
 
     // The "…" at the right edge, the button 16px before it.
-    let more = Rect::from_min_size(pos2(left + width - 32.0, mid - 16.0), vec2(32.0, 32.0));
-    let menu_label = texts::actions_more(&listing.name);
-    let more_response = ui.add(
-        IconButton::new(Icon::More, &menu_label)
-            .size(32.0)
-            .icon_size(18.0)
-            .at(more),
-    );
+    let more = menu.then(|| {
+        let more = Rect::from_min_size(pos2(left + width - 32.0, mid - 16.0), vec2(32.0, 32.0));
+        let menu_label = texts::actions_more(&listing.name);
+        let response = ui.add(
+            IconButton::new(Icon::More, &menu_label)
+                .size(32.0)
+                .icon_size(18.0)
+                .at(more),
+        );
+        (more, response)
+    });
     let button = Rect::from_min_size(
-        pos2(more.left() - 16.0 - button_w, mid - 18.0),
+        pos2(left + width - menu_w - button_w, mid - 18.0),
         vec2(button_w, 36.0),
     );
     let response = ui.put(button, widget.width(button_w));
@@ -927,7 +935,7 @@ fn draw_row(
     }
     // Last: the placed button and "…" moved the cursor to their bottom.
     ui.allocate_rect(rect, Sense::hover());
-    (response, more, more_response)
+    (response, more)
 }
 
 /// The row menu's "Melden".

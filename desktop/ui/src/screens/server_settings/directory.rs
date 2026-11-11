@@ -432,8 +432,16 @@ fn listing(
     ui.add_space(space::S5);
 
     // Vorschau: the row as Entdecken shows it; its buttons do nothing here.
-    label(ui, texts::directory_preview());
-    ui.add_space(space::S2 + 18.0);
+    // The label, then the list 8 + 18px (`.discover-list` margin) under it.
+    let line = layout_unit(text::UI.line_px());
+    controls::paint(
+        ui,
+        ui.cursor().min,
+        texts::directory_preview(),
+        text::UI,
+        c.text,
+    );
+    ui.add_space(line + space::S2 + 18.0);
     let preview = Listing {
         server_id: server,
         name: detail.server.name.clone(),
@@ -528,13 +536,14 @@ fn label(ui: &mut Ui, s: &str) {
     ui.add_space(layout_unit(text::UI.line_px()) + space::S1_5);
 }
 
-/// `Switch` with its label (`.ui-choice-row--between`): 44px, the label
-/// left, the switch right; the whole row toggles it.
+/// `Switch` with its label (`.ui-choice-row--between`): 36px (the 4px
+/// padding inside the min-height), the label left, the switch right; the
+/// whole row toggles it.
 fn listed_switch(ui: &mut Ui, on: &mut bool) -> bool {
     let theme = Theme::of(ui.ctx());
     let label = texts::directory_listed();
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 36.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, true, *on, label));
     let block = Block::single(ui, label, text::UI, theme.c.text);
     block.paint(
