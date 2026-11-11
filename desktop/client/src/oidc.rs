@@ -150,11 +150,21 @@ fn flow_error_message(code: &str) -> &'static str {
 
 /// A finished desktop flow: the exchange's answer, plus the code and
 /// verifier that `complete` needs after a `needs_name`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OidcOutcome {
     pub exchange: OidcExchange,
     pub code: String,
     pub verifier: String,
+}
+
+impl std::fmt::Debug for OidcOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcOutcome")
+            .field("exchange", &self.exchange)
+            .field("code", &"<redacted>")
+            .field("verifier", &"<redacted>")
+            .finish()
+    }
 }
 
 /// The one-shot receiver of the provider flow's result.
@@ -385,6 +395,16 @@ mod tests {
         assert_eq!(pair.challenge(), challenge(pair.verifier()));
         assert_ne!(pair.verifier(), Pkce::new().verifier());
         assert!(!format!("{pair:?}").contains(pair.verifier()));
+        let outcome = OidcOutcome {
+            exchange: OidcExchange::Linked(crate::models::SignInMethods {
+                password: true,
+                providers: Vec::new(),
+            }),
+            code: "one-time-code".into(),
+            verifier: pair.verifier().to_owned(),
+        };
+        let shown = format!("{outcome:?}");
+        assert!(!shown.contains("one-time-code") && !shown.contains(pair.verifier()));
         let state = app_state();
         assert!(url_safe(&state));
         assert_ne!(state, app_state());

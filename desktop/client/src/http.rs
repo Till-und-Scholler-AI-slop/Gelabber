@@ -94,7 +94,10 @@ impl ApiError {
         Self::Transport(format!("{TIMEOUT_PREFIX}{detail}"))
     }
 
+    // Without the URL: a redirect's target can be a presigned link, a
+    // credential that must not reach the error text or the log.
     fn from_reqwest(error: reqwest::Error) -> Self {
+        let error = error.without_url();
         if error.is_timeout() {
             Self::timeout(error)
         } else {
@@ -1004,6 +1007,20 @@ mod tests {
         assert_eq!(ApiError::Transport("x".into()).code(), "network");
         assert_eq!(ApiError::timeout("x").code(), "timeout");
         assert_eq!(api("banned").text(), "Du bist auf diesem Server gesperrt.");
+    }
+
+    #[test]
+    fn transport_errors_leave_the_url_out() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let error = runtime
+            .block_on(
+                reqwest::Client::new()
+                    .get("http://127.0.0.1:1/x?X-Amz-Signature=secret")
+                    .send(),
+            )
+            .unwrap_err();
+        let text = ApiError::from_reqwest(error).to_string();
+        assert!(!text.contains("secret"), "{text}");
     }
 
     #[test]
