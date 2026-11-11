@@ -110,15 +110,7 @@ pub struct Person {
 impl Person {
     /// `Taub` / `Stumm` / `Spricht` / `Im Raum` + ` · Live` / ` · Kamera an`.
     pub fn status(&self) -> String {
-        let state = if self.deafened {
-            texts::participant_deafened()
-        } else if self.muted {
-            texts::participant_muted()
-        } else if self.speaking {
-            texts::participant_speaking()
-        } else {
-            texts::participant_present()
-        };
+        let state = self.state();
         let media = if self.live {
             Some(texts::live_badge())
         } else if self.camera {
@@ -129,6 +121,21 @@ impl Person {
         match media {
             Some(media) => format!("{state} · {media}"),
             None => state.to_owned(),
+        }
+    }
+}
+
+impl Person {
+    /// `Taub` / `Stumm` / `Spricht` / `Im Raum`.
+    pub fn state(&self) -> &'static str {
+        if self.deafened {
+            texts::participant_deafened()
+        } else if self.muted {
+            texts::participant_muted()
+        } else if self.speaking {
+            texts::participant_speaking()
+        } else {
+            texts::participant_present()
         }
     }
 }

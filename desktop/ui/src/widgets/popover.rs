@@ -15,6 +15,8 @@ pub struct Popover {
     anchor: Rect,
     align_end: bool,
     min_width: f32,
+    /// `top-*`: over the anchor when it fits there.
+    above: bool,
     takes_focus: bool,
     /// A submenu: the menu it opens beside (`submenuPosition`).
     beside: Option<Rect>,
@@ -34,6 +36,7 @@ impl Popover {
             anchor,
             align_end: false,
             min_width: 180.0,
+            above: false,
             takes_focus: true,
             beside: None,
             inside: None,
@@ -66,6 +69,13 @@ impl Popover {
         self
     }
 
+    /// `top-start` / `top-end`: over the anchor, under it only when it
+    /// does not fit above.
+    pub fn above(mut self) -> Self {
+        self.above = true;
+        self
+    }
+
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = width;
         self
@@ -94,6 +104,8 @@ impl Popover {
                 screen.top() + 8.0,
                 (screen.bottom() - 8.0 - size.y).max(screen.top() + 8.0),
             )
+        } else if self.above && self.anchor.top() - 6.0 - size.y >= screen.top() + 8.0 {
+            self.anchor.top() - 6.0 - size.y
         } else if below + size.y > screen.bottom() - 8.0 {
             (self.anchor.top() - 6.0 - size.y).max(screen.top() + 8.0)
         } else {
