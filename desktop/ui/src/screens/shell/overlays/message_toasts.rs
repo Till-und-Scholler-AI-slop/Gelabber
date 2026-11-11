@@ -6,6 +6,7 @@
 
 use egui::{Id, Order, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::{Message, Notice, NotificationLevel, SettingScope};
+use gelabber_i18n::{chat, shell};
 use uuid::Uuid;
 
 use crate::app::AppCtx;
@@ -124,7 +125,7 @@ pub fn preview_text(content: &str, has_attachment: bool, gif: bool) -> String {
     if !trimmed.is_empty() {
         let chars: Vec<char> = trimmed.chars().collect();
         return if chars.len() > 140 {
-            chars[..137].iter().collect::<String>() + "…"
+            chars[..137].iter().collect::<String>() + "…" // i18n-ok
         } else {
             trimmed
         };
@@ -132,9 +133,9 @@ pub fn preview_text(content: &str, has_attachment: bool, gif: bool) -> String {
     if gif {
         "GIF".into()
     } else if has_attachment {
-        "Datei".into()
+        chat::notify_file().into()
     } else {
-        "Neue Nachricht".into()
+        chat::notify_new_message().into()
     }
 }
 
@@ -152,7 +153,7 @@ fn readable(content: &str, names: &[(Uuid, String)]) -> String {
             out.push('@');
             match names.iter().find(|(u, _)| *u == id) {
                 Some((_, name)) => out.push_str(name),
-                None => out.push_str("Unbekannt"),
+                None => out.push_str(chat::mention_unknown()),
             }
             rest = &tail[37..];
             continue;
@@ -164,6 +165,17 @@ fn readable(content: &str, names: &[(Uuid, String)]) -> String {
     out
 }
 
+/// The words after the on-air tag: " in {voice}" (chat `toast.live`
+/// without its `<b>` piece).
+fn live_after_tag(voice: &str) -> String {
+    gelabber_i18n::pieces(chat::toast_live())
+        .iter()
+        .filter(|p| p.tag.is_none())
+        .map(|p| p.text)
+        .collect::<String>()
+        .replace("{voice}", voice)
+}
+
 fn system_text(message: &Message) -> Option<String> {
     let system = message.system.as_ref()?;
     Some(if system.kind == "live_started" {
@@ -172,9 +184,9 @@ fn system_text(message: &Message) -> Option<String> {
             .get("voice_name")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        format!("{} ist live in {voice}.", message.author.name)
+        chat::system_live_started(&message.author.name, voice)
     } else {
-        format!("Systemnachricht von {}", message.author.name)
+        chat::system_unknown(&message.author.name)
     })
 }
 
@@ -274,7 +286,7 @@ fn live_toasts(
             let detail = s.detail(start.server)?;
             let voice = detail.channels.iter().find(|c| c.id == start.channel)?;
             let member = detail.members.iter().find(|m| m.user_id == start.user);
-            let author = member.map_or_else(|| "Jemand".to_owned(), |m| m.name.clone());
+            let author = member.map_or_else(|| shell::someone().to_owned(), |m| m.name.clone());
             Some(Incoming {
                 channel: start.channel,
                 server: start.server,
@@ -343,7 +355,7 @@ fn incoming(app: &AppCtx, server: Uuid, message: &Message) -> Option<Incoming> {
         let (label, names) = match dm {
             Some(dm) => (
                 // The author already names a DM: the place says what it is.
-                "Direktnachricht".to_owned(),
+                chat::toast_direct_message().to_owned(),
                 vec![
                     (me, s.me().map(|m| m.name.clone()).unwrap_or_default()),
                     (dm.peer.id, dm.peer.name.clone()),
@@ -353,7 +365,10 @@ fn incoming(app: &AppCtx, server: Uuid, message: &Message) -> Option<Incoming> {
                 let detail = s.detail(server);
                 let label = detail
                     .and_then(|d| d.channels.iter().find(|c| c.id == channel))
-                    .map_or_else(|| "Kanal".to_owned(), |c| format!("#{}", c.name));
+                    .map_or_else(
+                        || chat::toast_channel().to_owned(),
+                        |c| format!("#{}", c.name),
+                    );
                 let names = detail
                     .map(|d| {
                         d.members
@@ -426,7 +441,7 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                     Sense::click(),
                 );
                 let where_ = if toast.count > 1 {
-                    format!("{} · {} neu", toast.label, toast.count)
+                    chat::toast_new_count(&toast.label, u64::from(toast.count))
                 } else {
                     toast.label.clone()
                 };
@@ -435,18 +450,15 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                         egui::Role::Button,
                         true,
                         if toast.live.is_some() {
-                            format!("Öffnen: {where_}, {}", toast.preview)
-                        } else {
-                            format!(
-                                "Öffnen: {where_}, {}{}: {}",
-                                toast.author,
-                                if toast.mentioned {
-                                    " hat dich erwähnt"
-                                } else {
-                                    ""
-                                },
-                                toast.preview
+                            shell::toast_open_live_label(&where_, &toast.preview)
+                        } else if toast.mentioned {
+                            shell::toast_open_mentioned_label(
+                                &where_,
+                                &toast.author,
+                                &toast.preview,
                             )
+                        } else {
+                            shell::toast_open_label(&where_, &toast.author, &toast.preview)
                         },
                     )
                 });
@@ -491,7 +503,7 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                 if toast.mentioned {
                     let small = line(
                         ui,
-                        " hat dich erwähnt",
+                        &format!(" {}", chat::toast_mentioned_you()),
                         text::UI.weight(400.0),
                         c.muted,
                         (max - who.width()).max(0.0),
@@ -522,14 +534,8 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                     tag.paint(painter, t.min + Vec2::new(5.0, 1.0));
                     let x = t.right() + 4.0;
                     let rest = (r.left() - 8.0 - x).max(0.0);
-                    line(
-                        ui,
-                        &format!(" in {}", live.voice),
-                        text::BODY,
-                        c.muted,
-                        rest,
-                    )
-                    .paint(painter, pos2(x, ty));
+                    line(ui, &live_after_tag(&live.voice), text::BODY, c.muted, rest)
+                        .paint(painter, pos2(x, ty));
                 } else {
                     line(ui, &toast.preview, text::BODY, c.muted, max)
                         .paint(painter, pos2(left, ty));
@@ -544,7 +550,7 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                 );
                 if ui
                     .add(
-                        IconButton::new(Icon::Close, "Schließen")
+                        IconButton::new(Icon::Close, gelabber_i18n::common::close())
                             .size(28.0)
                             .icon_size(14.0)
                             .at(close),

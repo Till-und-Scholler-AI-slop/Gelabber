@@ -9,6 +9,7 @@ use egui::{Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::{
     NotificationLevel, NotificationSettingBody, OpState, ReadScope, SettingScope, SettingTarget,
 };
+use gelabber_i18n::{Locale, Text, intl, notifications as texts, shell};
 use uuid::Uuid;
 
 use crate::app::AppCtx;
@@ -73,7 +74,7 @@ impl Target {
         Self {
             scope: SettingScope::Channel,
             id: Uuid::nil(),
-            name: "Direktnachrichten".into(),
+            name: shell::rail_dms().into(),
             server: None,
             dm: false,
             all_dms: true,
@@ -111,39 +112,47 @@ impl NotifyDialog {
 fn failure_text(e: &gelabber_client::ApiError) -> &'static str {
     if matches!(e, gelabber_client::ApiError::Api { code, .. } if code == "unknown_level") {
         // The client refused it: the stored level is newer than this app.
-        "Diese Stufe kennt diese Version von Gelabber nicht. Bitte wähle zuerst eine Stufe."
+        shell::notify_unknown_level()
     } else if e.status() == Some(404) {
-        "Nicht mehr verfügbar."
+        texts::dialog_gone()
     } else {
-        "Nicht gespeichert. Versuch es noch einmal."
+        texts::dialog_not_saved()
     }
 }
 
 /// `MUTES` of notificationActions.ts: the length, its short form for the
 /// dialog's row of chips, and the minutes (none: until turned back on).
-pub(crate) const MUTES: [(&str, &str, Option<i64>); 5] = [
-    ("15 Minuten", "15 Min.", Some(15)),
-    ("1 Stunde", "1 Std.", Some(60)),
-    ("8 Stunden", "8 Std.", Some(8 * 60)),
-    ("24 Stunden", "24 Std.", Some(24 * 60)),
-    ("Bis ich es wieder einschalte", "Unbegrenzt", None),
+pub(crate) const MUTES: [(Text, Text, Option<i64>); 5] = [
+    (
+        texts::mute_quarter_hour,
+        texts::mute_quarter_hour_short,
+        Some(15),
+    ),
+    (texts::mute_hour, texts::mute_hour_short, Some(60)),
+    (
+        texts::mute_eight_hours,
+        texts::mute_eight_hours_short,
+        Some(8 * 60),
+    ),
+    (texts::mute_day, texts::mute_day_short, Some(24 * 60)),
+    (texts::mute_forever, texts::mute_forever_short, None),
 ];
 
-pub(crate) const LEVELS: [(NotificationLevel, &str, &str); 3] = [
+pub(crate) const LEVELS: [(NotificationLevel, Text, Text); 3] = [
     (
         NotificationLevel::All,
-        "Alle Nachrichten",
-        "Jede neue Nachricht",
+        texts::level_all,
+        texts::level_all_hint,
     ),
     (
         NotificationLevel::Mentions,
-        "Nur @Erwähnungen",
-        "Wenn dich jemand erwähnt oder @everyone/@here schreibt",
+        texts::level_mentions,
+        texts::level_mentions_hint,
     ),
     (
         NotificationLevel::None,
-        "Nichts",
-        "Keine Benachrichtigungen, kein Zähler",
+        texts::level_none,
+        texts::level_none_hint,
     ),
 ];
 
@@ -151,7 +160,7 @@ pub(crate) fn level_name(level: NotificationLevel) -> &'static str {
     LEVELS
         .iter()
         .find(|(l, _, _)| *l == level)
-        .map_or("Alle Nachrichten", |(_, n, _)| n)
+        .map_or_else(texts::level_all, |(_, n, _)| n())
 }
 
 /// `text-sm font-semibold`: 600 14px/20px.
@@ -214,8 +223,8 @@ impl Setting {
 /// "Stumm bis 14:30 Uhr" or "Stumm, bis du es aufhebst".
 pub(crate) fn muted_line(until: Option<DateTime<Utc>>) -> String {
     match until {
-        Some(until) => format!("Stumm bis {}", format_until(until)),
-        None => "Stumm, bis du es aufhebst".to_owned(),
+        Some(until) => texts::muted_until(&format_until(until)),
+        None => texts::muted_until_unmuted().to_owned(),
     }
 }
 
@@ -301,14 +310,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
     let mut done = false;
     let mut mark = false;
     let first = crate::widgets::field::mounted(&ctx, egui::Id::unique("gelabber-notify-open"));
-    let title = format!("Benachrichtigungen: {}", target.name);
+    let title = texts::dialog_title_for(&target.name);
     let output = Modal::new("notification-settings", &title).show(
         &ctx,
         |ui| {
             ui.spacing_mut().item_spacing.y = 20.0;
             ui.scope(|ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
-                text::label(ui, "Stummschalten", HEAD, c.text);
+                text::label(ui, texts::dialog_mute(), HEAD, c.text);
                 if muted {
                     if muted_box(ui, &muted_line(own.until), saving) {
                         save = Some(own.unmute());
@@ -319,26 +328,28 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
                     let gap = 8.0;
                     let natural: Vec<f32> = MUTES
                         .iter()
-                        .map(|(_, short, _)| Block::single(ui, short, text::UI, c.text).width() + 26.0)
+                        .map(|(_, short, _)| {
+                            Block::single(ui, short(), text::UI, c.text).width() + 26.0
+                        })
                         .collect();
                     let total = natural.iter().sum::<f32>() + gap * (natural.len() - 1) as f32;
                     let extra = ((ui.available_width() - total) / natural.len() as f32).max(0.0);
                     super::row(ui, 32.0, gap, |ui| {
                         for ((label, short, minutes), w) in MUTES.iter().zip(&natural) {
-                            if chip(ui, short, label, w + extra, saving).clicked() {
+                            if chip(ui, short(), label(), w + extra, saving).clicked() {
                                 save = Some(own.mute(*minutes));
                             }
                         }
                     });
                 }
                 let mut hint = if target.dm {
-                    "Stumm: kein Zähler, keine Benachrichtigung und kein Ton.".to_owned()
+                    texts::dialog_mute_hint_dm().to_owned()
                 } else {
-                    "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter."
-                        .to_owned()
+                    texts::dialog_mute_hint_channel().to_owned()
                 };
                 if server_muted {
-                    hint.push_str(" Der ganze Server ist gerade stumm.");
+                    hint.push(' ');
+                    hint.push_str(texts::dialog_server_muted());
                 }
                 let w = ui.available_width();
                 let block = Block::wrapped(ui, &hint, text::META, c.muted, w);
@@ -348,7 +359,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
                 ui.scope(|ui| {
                     ui.spacing_mut().item_spacing.y = 8.0;
                     // The legend's own 4px margin before the first card.
-                    let legend = Block::single(ui, "Benachrichtigen bei", HEAD, c.text);
+                    let legend = Block::single(ui, texts::dialog_level_legend(), HEAD, c.text);
                     let (r, _) = ui.allocate_exact_size(
                         Vec2::new(ui.available_width(), legend.height() + 4.0 - 8.0),
                         Sense::hover(),
@@ -356,7 +367,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
                     legend.paint(ui.painter(), r.min);
                     let server_scope = target.server.is_none();
                     if target.server.is_some() {
-                        let label = format!("Wie der Server ({})", level_name(inherited));
+                        let label = texts::level_inherit(level_name(inherited));
                         if radio_card(ui, &label, None, own.level.is_none(), saving) {
                             save = Some(own.with_level(None, false, now));
                         }
@@ -367,7 +378,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
                         } else {
                             own.level.unwrap_or_default() == level
                         };
-                        if radio_card(ui, label, Some(hint), checked, saving) {
+                        if radio_card(ui, label(), Some(hint()), checked, saving) {
                             save = Some(own.with_level(Some(level), server_scope, now));
                         }
                     }
@@ -382,13 +393,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
             // `.notify-footer`: marking read is an action, beside "Fertig".
             super::row(ui, 36.0, 8.0, |ui| {
                 if ui
-                    .add(Button::new("Als gelesen markieren").size(ButtonSize::Sm))
+                    .add(Button::new(texts::dialog_mark_read()).size(ButtonSize::Sm))
                     .clicked()
                 {
                     mark = true;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let fertig = ui.add(Button::new("Fertig").ghost());
+                    let fertig = ui.add(Button::new(gelabber_i18n::common::done()).ghost());
                     if first {
                         fertig.request_focus();
                     }
@@ -481,7 +492,7 @@ fn muted_box(ui: &mut Ui, text: &str, disabled: bool) -> bool {
         rect.left() + 12.0 + 24.0,
         rect.center().y,
     );
-    let label = Block::single(ui, "Aufheben", text::UI, c.text);
+    let label = Block::single(ui, texts::dialog_unmute(), text::UI, c.text);
     let bw = label.width() + 26.0;
     let button = Rect::from_min_size(
         pos2(rect.right() - 12.0 - bw, rect.center().y - 16.0),
@@ -492,7 +503,7 @@ fn muted_box(ui: &mut Ui, text: &str, disabled: bool) -> bool {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(button));
     child
         .add(
-            Button::new("Aufheben")
+            Button::new(texts::dialog_unmute())
                 .size(ButtonSize::Sm)
                 .disabled(disabled),
         )
@@ -558,25 +569,24 @@ fn radio_card(ui: &mut Ui, label: &str, desc: Option<&str>, checked: bool, disab
     response.clicked() && !checked
 }
 
-const WEEKDAYS: [&str; 7] = ["Mo.", "Di.", "Mi.", "Do.", "Fr.", "Sa.", "So."];
-const MONTHS: [&str; 12] = [
-    "Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez.",
-];
-
-/// `formatUntil`: "14:30 Uhr" today, else "Mi., 5. Nov., 14:30 Uhr".
+/// `formatUntil`: "14:30 Uhr" today, else "Mi., 5. Nov., 14:30 Uhr"
+/// ("14:30", "Wed 5 Nov, 14:30" in English).
 fn format_until(until: DateTime<Utc>) -> String {
     let local = until.with_timezone(&Local);
     let today = Local::now().date_naive();
-    let time = local.format("%H:%M");
+    let time = local.format("%H:%M").to_string();
     if local.date_naive() == today {
-        format!("{time} Uhr")
+        texts::until_today(&time)
     } else {
-        format!(
-            "{}, {}. {}, {time} Uhr",
-            WEEKDAYS[local.weekday().num_days_from_monday() as usize],
-            local.day(),
-            MONTHS[local.month0() as usize]
-        )
+        let weekday = intl::weekday_name(local.weekday().num_days_from_monday(), true);
+        let month = intl::month_name(local.month(), true);
+        let day = local.day();
+        // `weekday: short, day: numeric, month: short` in de-DE / en-GB.
+        let date = match gelabber_i18n::get() {
+            Locale::De => format!("{weekday}, {day}. {month}"),
+            Locale::En => format!("{weekday} {day} {month}"),
+        };
+        texts::until_later(&date, &time)
     }
 }
 
