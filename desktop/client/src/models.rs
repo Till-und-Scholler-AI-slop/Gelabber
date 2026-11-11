@@ -1557,6 +1557,12 @@ impl EventFrame {
         }
         Some(message)
     }
+
+    /// `d.k` of a server-level event: why a member left (`k` kick, `b`
+    /// ban, `x` account deleted) or what changed (`a` access, `o` owner).
+    pub fn kind(&self) -> Option<&str> {
+        self.d.as_ref()?.get("k")?.as_str()
+    }
 }
 
 /// Voice presence (`op: "sig"`).
