@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
   mail: undefined as boolean | undefined,
   registration: undefined as "open" | "invitation" | undefined,
+  providers: [] as { id: string; name: string }[],
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -36,6 +37,9 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../auth/mail.ts", () => ({
   useAccountMailStatus: () => fixture.mail,
 }));
+vi.mock("../auth/providers.ts", () => ({
+  useAuthProviders: () => fixture.providers,
+}));
 vi.mock("../auth/registration.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../auth/registration.ts")>()),
   useRegistrationMode: () => fixture.registration,
@@ -58,6 +62,7 @@ beforeEach(() => {
   fixture.search = {};
   fixture.mail = undefined;
   fixture.registration = undefined;
+  fixture.providers = [];
 });
 
 describe("login page", () => {
@@ -265,5 +270,75 @@ describe("in English", () => {
       "Confirmation link sent to <strong>new@example.org</strong>. It is valid for 24 hours.",
     );
     expect(html).toMatch(/>Send again \(60 s\)<\/button>/);
+  });
+});
+
+describe("sign-in through a provider", () => {
+  const GOOGLE = { id: "google", name: "Google" };
+  const BUTTON =
+    /<button type="button" class="ui-button ui-button--secondary ui-button--lg auth-provider"><span class="auth-provider__mark" aria-hidden="true">G<\/span>Mit Google anmelden<\/button>/;
+  const DIVIDER = '<p class="auth-divider">oder</p>';
+
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("shows nothing new while no provider is configured", () => {
+    for (const page of [<LoginPage />, <RegisterPage />]) {
+      const html = render(page);
+      expect(html).not.toContain("auth-provider");
+      expect(html).not.toContain(DIVIDER);
+    }
+  });
+
+  it("puts a button per provider and the divider above the form", () => {
+    fixture.providers = [GOOGLE];
+    for (const page of [<LoginPage />, <RegisterPage />]) {
+      const html = render(page);
+      expect(html).toMatch(BUTTON);
+      expect(html).toContain(DIVIDER);
+      expect(html.indexOf("auth-lead")).toBeLessThan(
+        html.indexOf("auth-provider"),
+      );
+      expect(html.indexOf("auth-provider")).toBeLessThan(html.indexOf(DIVIDER));
+      expect(html.indexOf(DIVIDER)).toBeLessThan(html.indexOf("<form"));
+    }
+  });
+
+  it("speaks English too", () => {
+    setLocale("en", { persist: false });
+    fixture.providers = [GOOGLE];
+    const html = render(<LoginPage />);
+    expect(html).toContain("Sign in with Google</button>");
+    expect(html).toContain('<p class="auth-divider">or</p>');
+  });
+
+  it("says why a provider sign-in came back to the login page", () => {
+    fixture.search = { oidc_error: "cancelled" };
+    let html = render(<LoginPage />);
+    expect(html).toContain(
+      '<p role="status" class="ui-form-error">Anmeldung abgebrochen.</p>',
+    );
+    expect(html).not.toContain('role="alert"');
+    // In the form, where a failed sign-in would say why.
+    expect(html.indexOf("<form")).toBeLessThan(html.indexOf("ui-form-error"));
+    expect(html.indexOf("ui-form-error")).toBeLessThan(
+      html.indexOf('type="submit"'),
+    );
+    fixture.search = { oidc_error: "account_unverified" };
+    html = render(<LoginPage />);
+    expect(html).toContain("dessen Adresse nie bestätigt wurde");
+    setLocale("en", { persist: false });
+    fixture.search = { oidc_error: "expired" };
+    expect(render(<LoginPage />)).toContain(
+      "The sign-in expired or was started in another browser.",
+    );
+  });
+
+  it("shows a sign-in's other refusals on the register page without the code field", () => {
+    fixture.search = { oidc_error: "failed" };
+    const html = render(<RegisterPage />);
+    expect(html).toContain(
+      '<p role="alert" class="auth-banner">Die Anmeldung beim Anbieter hat nicht geklappt. Bitte noch einmal versuchen.</p>',
+    );
+    expect(html).not.toContain('id="invitation"');
   });
 });

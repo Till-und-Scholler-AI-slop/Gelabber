@@ -32,6 +32,7 @@ import { useFocusOnMount } from "../auth/useFocusOnMount.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
+import { ProviderSignIn } from "../components/ProviderButton.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
@@ -160,6 +161,14 @@ export function RegisterPage() {
           {t("register.signIn")}
         </Link>
       </p>
+      <ProviderSignIn
+        redirect={redirect}
+        // A new account on an invitation-only instance needs the code too.
+        invitation={() =>
+          admissionCodes(askCode ? invitation : null, undefined).invitation
+        }
+        onError={fromError}
+      />
 
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <Field

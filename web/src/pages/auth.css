@@ -143,6 +143,48 @@
   background: color-mix(in srgb, var(--lr-accent) 14%, var(--lr-panel));
 }
 
+/* Sign-in through a provider (ProviderSignIn), above the form. */
+.auth-providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-6);
+}
+.auth-provider.ui-button--secondary {
+  background: transparent;
+  font-weight: 600;
+}
+.auth-provider.ui-button--secondary:hover:not(:disabled) {
+  background: var(--lr-hover);
+}
+.auth-provider__mark {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font: 700 11px / 1 var(--lr-font);
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-3);
+  margin-top: var(--lr-space-4);
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--lr-border);
+}
+.auth-divider + .auth-form {
+  margin-top: var(--lr-space-4);
+}
+
 @media (pointer: coarse) {
   /* 44px hit areas for text links, without loosening the layout. */
   .auth-link {
