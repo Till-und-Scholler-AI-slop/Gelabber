@@ -9,6 +9,8 @@
 // canvas instead of Chromium's moving fake screen, so web and native shots
 // get the same frames.
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
+// GELABBER_PARITY_FIXTURE names another fixture in the same shape (default
+// fixture.json here), such as the landing screenshot's (scripts/landing).
 /* global process, console, URL, Buffer, navigator, document, setInterval */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +18,9 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 
 const here = new URL(".", import.meta.url).pathname;
-const fixture = JSON.parse(await readFile(join(here, "fixture.json"), "utf8"));
+const fixture = JSON.parse(
+  await readFile(process.env.GELABBER_PARITY_FIXTURE ?? join(here, "fixture.json"), "utf8"),
+);
 const channelName = process.argv[2] ?? "Sofa";
 const people = (process.argv[3] ?? "jonas,mira:muted").split(",").map((entry) => {
   const [name, ...flags] = entry.split(":");
