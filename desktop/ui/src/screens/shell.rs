@@ -4,6 +4,7 @@
 //! route, remembers where the user was, sends "/" there, and runs the
 //! workspace shortcuts; the pages draw into the rects it hands them.
 
+mod blocked;
 mod channel_sidebar;
 pub(crate) mod common;
 pub mod connection;
@@ -12,14 +13,13 @@ mod dm_index;
 mod dm_sidebar;
 mod home;
 mod members;
+mod operator;
 pub mod overlays;
 pub(crate) mod overview;
 mod rail;
 mod row_menu;
 mod state;
 mod user_panel;
-mod blocked;
-mod operator;
 
 use egui::{Key, Modifiers, Rect, Ui, UiBuilder, pos2};
 use gelabber_client::{ChannelKind, OpState, View};
