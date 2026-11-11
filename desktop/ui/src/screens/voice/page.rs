@@ -3,7 +3,9 @@
 //! then the room. Before joining: who is there, their cards, free seats,
 //! "Beitreten" with the microphone test and the quick settings. Inside: the
 //! cards, or the stage while pictures run (Raster, Fokus, Kino with K and
-//! Esc), the people without a camera under it, and the fullscreen view.
+//! Esc), the people without a camera under it, and the fullscreen view. In
+//! a call of two or more without pictures the people fill the stage. In the
+//! call the header carries the room's facts, the view switch and Kino.
 
 use std::sync::Arc;
 
@@ -52,6 +54,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
     let Some(room) = session::room(app, server, channel) else {
         return;
     };
+    draw(ui, app, &room, page);
+}
+
+/// The page of `room` in `page` (tests build the room by hand).
+pub(super) fn draw(ui: &mut Ui, app: &mut AppCtx, room: &Room, page: Rect) {
+    let (server, channel) = (room.server, room.channel);
     let joined = app.call.with_state(session::joined);
     let call = (server, channel);
     let choices = stage::choices(ui.ctx(), call, joined);
@@ -68,25 +76,59 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
     }
     if kino {
         let body = page;
-        stage_room(ui, app, &room, body, choices, true);
+        stage_room(ui, app, room, body, choices, true);
     } else {
-        header(ui, app, page, &room.channel_name, room.server, channel);
+        header(ui, app, page, room, choices, can_kino);
         let body = Rect::from_min_max(pos2(page.left(), page.top() + HEADER), page.max);
         if staged {
-            stage_room(ui, app, &room, body, choices, false);
+            stage_room(ui, app, room, body, choices, false);
+        } else if people_stage(room) {
+            people_room(ui, app, room, body);
         } else {
-            plain_room(ui, app, &room, body);
+            plain_room(ui, app, room, body);
         }
     }
-    tile::participant_menu(ui, app, &room);
-    fullscreen(ui, app, &room);
+    tile::participant_menu(ui, app, room);
+    fullscreen(ui, app, room);
 }
 
-/// The header (`.lr-channel-header`): the speaker and the name, the
-/// members toggle at the end.
-fn header(ui: &mut Ui, app: &mut AppCtx, page: Rect, name: &str, server: Uuid, channel: Uuid) {
+/// No pictures, and company: the people fill the stage, in the grid the
+/// pictures use. Alone, the card and the invite stay.
+pub(super) fn people_stage(room: &Room) -> bool {
+    room.here && !room.staged() && room.occupants.len() >= 2
+}
+
+/// The header's facts in the call: with pictures how many are there and
+/// what runs, else who is there; nothing outside the call.
+pub(super) fn facts(room: &Room) -> Option<String> {
+    if !room.here {
+        return None;
+    }
+    Some(if room.staged() {
+        summary::stage_facts(
+            room.occupants.len(),
+            room.cameras.len(),
+            room.occupants.iter().filter(|p| p.live).count(),
+        )
+    } else {
+        summary::room_summary(&room.others, true, &[])
+    })
+}
+
+/// The header (`.lr-channel-header`): the speaker and the name, in the
+/// call the room's facts after it (else the Live pill), the view switch
+/// while pictures run and Kino, the members toggle at the end; gap 10.
+fn header(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    page: Rect,
+    room: &Room,
+    choices: stage::Choices,
+    can_kino: bool,
+) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
+    let (name, server, channel) = (&room.channel_name, room.server, room.channel);
     let rect = Rect::from_min_size(page.min, vec2(page.width(), HEADER));
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, c.bg);
@@ -104,21 +146,46 @@ fn header(ui: &mut Ui, app: &mut AppCtx, page: Rect, name: &str, server: Uuid, c
         pos2(rect.right() - 12.0 - 32.0, mid - 16.0),
         Vec2::splat(32.0),
     );
-    let max = toggle.left() - 10.0 - x - 28.0;
+    // Kino, then the view switch, right to left before the members.
+    let ctx = ui.ctx().clone();
+    let mut end = toggle.left();
+    if can_kino {
+        let (r, pressed) = chips::kino_button(ui, end - 10.0, mid);
+        if pressed {
+            stage::set_kino(&ctx, true);
+        }
+        end = r.left();
+    }
+    // A phone keeps its column of pictures (`narrow`, 640px).
+    if room.staged() && ctx.content_rect().width() > 640.0 {
+        let view = stage::view_for(
+            choices.view,
+            room.shares.iter().any(|t| Some(t.id.user) != room.me),
+        );
+        let (frame, chosen) = chips::view_switch(ui, end - 10.0, mid, view);
+        if let Some(v) = chosen {
+            stage::choose_view(&ctx, (server, channel), v);
+        }
+        end = frame.left();
+    }
+    let max = end - 10.0 - x - 28.0;
     let mut job = text::job(name, TITLE, c.text, Some(max.max(40.0)));
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     let title = Block::new(ui, job, TITLE);
     title.paint(ui.painter(), pos2(x + 28.0, mid - TITLE.line_px() / 2.0));
-    // Who is live on the server, right after the name (`LiveHint pill`).
-    hint::pill(
-        ui,
-        app,
-        server,
-        x + 28.0 + title.width() + 10.0,
-        mid,
-        toggle.left() - 20.0,
-    );
+    let after = x + 28.0 + title.width() + 10.0;
+    if let Some(facts) = facts(room) {
+        // `.voice-header-facts`: 13/500 muted, one line with an ellipsis.
+        let room_for = end - 10.0 - after;
+        if room_for > 0.0 {
+            let block = common::line(ui, &facts, text::UI, c.muted, room_for);
+            common::paint_mid(ui.painter(), &block, after, mid);
+        }
+    } else {
+        // Who is live on the server, right after the name (`LiveHint pill`).
+        hint::pill(ui, app, server, after, mid, end - 20.0);
+    }
 
     let on = layout::members_visible(ui.ctx());
     let label = if on {
@@ -170,6 +237,28 @@ fn plain_room(ui: &mut Ui, app: &mut AppCtx, room: &Room, body: Rect) {
         });
 }
 
+/// The people stage (`.voice-room[data-stage="people"]`): inset 20 24 24,
+/// at least 360 high, every occupant in a tile of the pictures' grid.
+fn people_room(ui: &mut Ui, app: &mut AppCtx, room: &Room, body: Rect) {
+    let inner = Rect::from_min_max(
+        pos2(body.left() + 24.0, body.top() + 20.0),
+        pos2(
+            body.right() - 24.0,
+            (body.bottom() - 24.0).max(body.top() + 360.0 - 24.0),
+        ),
+    );
+    let rects = stage::raster_rects(
+        room.occupants.len(),
+        inner.width().floor() as i32,
+        inner.height().floor() as i32,
+    );
+    let mut child = ui.new_child(UiBuilder::new().max_rect(body));
+    child.set_clip_rect(body.intersect(ui.clip_rect()));
+    for (p, rect) in room.occupants.iter().zip(rects) {
+        tile::person_tile(&mut child, app, rect.on(inner.min), room.server, p);
+    }
+}
+
 /// The not-staged room from `top`; returns its bottom (padding included).
 pub(super) fn room_content(
     ui: &mut Ui,
@@ -187,10 +276,14 @@ pub(super) fn room_content(
     let left = left + 28.0;
     let w = (width - 56.0).max(0.0);
     let mut y = top + if compact { 16.0 } else { 20.0 };
-    let line = summary::room_summary(&room.others, room.here, &room.others_live);
-    let block = Block::wrapped(ui, &line, text::BODY, c.muted, w);
-    block.paint(ui.painter(), pos2(left, y + 2.0));
-    y += 2.0 + block.height();
+    // In the call the header carries the facts, and a card alone starts
+    // where the people stage does.
+    if !room.here {
+        let line = summary::room_summary(&room.others, room.here, &room.others_live);
+        let block = Block::wrapped(ui, &line, text::BODY, c.muted, w);
+        block.paint(ui.painter(), pos2(left, y + 2.0));
+        y += 2.0 + block.height();
+    }
 
     let free = if room.here || !room.allowed {
         0
@@ -201,7 +294,9 @@ pub(super) fn room_content(
     };
     let count = room.occupants.len() + free;
     if count > 0 {
-        y += 16.0;
+        if !room.here {
+            y += 16.0;
+        }
         let grid_w = w.min(1100.0);
         let cols = (((grid_w + 12.0) / 212.0).floor() as usize).max(1);
         let tile_w = (grid_w - 12.0 * (cols as f32 - 1.0)) / cols as f32;
@@ -353,8 +448,8 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     top + 44.0
 }
 
-/// The room with pictures: the stage bar, the stage, the people without a
-/// camera under it; in Kino the stage alone on the video background.
+/// The room with pictures: the stage, the people without a camera under
+/// it; in Kino the stage alone on the video background.
 fn stage_room(
     ui: &mut Ui,
     app: &mut AppCtx,
@@ -363,8 +458,6 @@ fn stage_room(
     choices: stage::Choices,
     kino: bool,
 ) {
-    let theme = Theme::of(ui.ctx());
-    let c = theme.c;
     let ctx = ui.ctx().clone();
     let call = (room.server, room.channel);
     let now = ui.input(|i| i.time);
@@ -407,35 +500,7 @@ fn stage_room(
                 (body.bottom() - 16.0).max(body.top() + 360.0 - 16.0),
             ),
         );
-        // The stage bar.
-        let cy = inner.top() + 18.0;
-        let mut right = inner.right();
-        if roomy(ui) {
-            let (r, pressed) = chips::kino_button(ui, right, cy);
-            if pressed {
-                stage::set_kino(&ctx, true);
-            }
-            right = r.left() - 12.0;
-        }
-        let (frame, chosen) = chips::view_switch(ui, right, cy, view);
-        if let Some(v) = chosen {
-            stage::choose_view(&ctx, call, v);
-        }
-        let facts = summary::stage_facts(
-            room.occupants.len(),
-            room.cameras.len(),
-            &room.others_live,
-            room.own_live,
-        );
-        let block = common::line(
-            ui,
-            &facts,
-            text::UI.weight(400.0),
-            c.muted,
-            frame.left() - 12.0 - inner.left(),
-        );
-        common::paint_mid(ui.painter(), &block, inner.left(), cy);
-        let stage_top = inner.top() + 36.0 + 12.0;
+        let stage_top = inner.top();
         let mut stage_bottom = inner.bottom();
         let mut people_top = None;
         if focus.is_none() && !without_camera.is_empty() {
@@ -589,10 +654,6 @@ fn stage_room(
             stage::set_kino(&ctx, false);
         }
     }
-}
-
-fn roomy(ui: &Ui) -> bool {
-    ui.ctx().content_rect().width() > 800.0
 }
 
 /// The chips of the people without a camera, wrapped into rows.

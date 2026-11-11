@@ -1003,3 +1003,70 @@ fn only_a_live_offers_to_reload_a_missing_picture() {
         );
     }
 }
+
+/// The page of `room` under `state`, as the channel's page draws it at
+/// 1280×800 with the member list open.
+fn page(state: CallState, room: crate::screens::voice::session::Room) -> H {
+    let (client, call) = offline();
+    call.set_state(state);
+    let mut h = harness(client, call, move |ui, app| {
+        let rect = Rect::from_min_size(pos2(288.0, 0.0), vec2(744.0, 744.0));
+        crate::screens::voice::page::draw(ui, app, &room, rect);
+    });
+    h.run_steps(4);
+    h
+}
+
+/// In the call the header carries the facts, the view switch and Kino;
+/// the stage has no bar of its own.
+#[test]
+fn the_header_holds_the_facts_the_view_and_kino() {
+    use crate::screens::voice::{page as room_page, session};
+    let mut state = super::joined();
+    state.camera = true;
+    state.participants[1].camera = Some(VideoKey(7));
+    state.participants[2].live = Some(VideoKey(8));
+    let mut s = super::state();
+    s.live.insert(SERVER, [(SOFA, vec![super::MIRA])].into());
+    let room = session::build(&s, &state, SERVER, SOFA).expect("room");
+    assert_eq!(
+        room_page::facts(&room).as_deref(),
+        Some("3 im Kanal · 1 Live")
+    );
+    let h = page(state, room);
+    for label in ["Raster", "Fokus", "Kino"] {
+        let rect = h.get_by_label(label).rect();
+        assert!(rect.bottom() < 52.0, "{label} in the header: {rect:?}");
+    }
+    // Kino comes after the view switch, right before the members.
+    assert!(h.get_by_label("Fokus").rect().right() < h.get_by_label("Kino").rect().left());
+}
+
+/// A call of two or more without pictures: the people fill the stage in
+/// the pictures' grid, and the header says who is there.
+#[test]
+fn the_people_fill_the_stage_without_pictures() {
+    use crate::screens::voice::{page as room_page, session, stage};
+    let state = super::joined();
+    let room = session::build(&super::state(), &state, SERVER, SOFA).expect("room");
+    assert!(room_page::people_stage(&room));
+    assert_eq!(
+        room_page::facts(&room).as_deref(),
+        Some("Du bist hier mit Jonas und Mira.")
+    );
+    let h = page(state, room);
+    // 744 wide under the 52 header: the stage is 696×648 from (312, 72).
+    let rects = stage::raster_rects(3, 696, 648);
+    for (name, rect) in ["Lena", "Jonas", "Mira"].iter().zip(rects) {
+        let tile = rect.on(pos2(312.0, 72.0));
+        let avatar = h.get_by_label(&format!("Profil von {name}")).rect();
+        assert!(
+            (avatar.center().x - tile.center().x).abs() < 1.0,
+            "{name}: {avatar:?} in {tile:?}"
+        );
+        assert_eq!(avatar.width(), stage::person_tile(tile.height()).0);
+    }
+    // No pictures: no view to switch, no Kino.
+    assert!(h.query_by_label("Raster").is_none());
+    assert!(h.query_by_label("Kino").is_none());
+}
