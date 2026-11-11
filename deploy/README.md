@@ -423,7 +423,7 @@ Migration 0032 adds the columns and tables for this. As with every migration, an
 
 ## Account data
 
-Under Einstellungen → Sicherheit people see their signed-in devices, export their data and delete their account. There is nothing to turn on; the only setting is how long an export is kept.
+Under Einstellungen → Sicherheit people see their signed-in devices, export their data and delete their account. There is nothing to turn on; the only settings are how long an export is kept and how large it may get.
 
 **Signed-in devices.** Each session records a client (desktop app, Firefox, Chrome, Edge, Safari, another browser) and an operating system, read from the `User-Agent` of the request that signed in. Only these two codes are stored, never the `User-Agent` itself. Sessions from before the upgrade show as an unknown device until their next renewal fills them in. Signing out one device ends its sockets, media tickets and push notifications at once, as "Überall abmelden" does for all of them.
 
@@ -431,7 +431,7 @@ Under Einstellungen → Sicherheit people see their signed-in devices, export th
 
 - One request per 24 hours; a failed export can be requested again at once, and a new request replaces the previous archive. With account mail on, the person gets a mail when the archive is ready; without it, the page shows when it is ready.
 - The archive is stored in the bucket under `exports/{user}/` and downloaded only by its signed-in account (like an attachment, so `ATTACHMENT_DELIVERY` applies). It is kept for `API_EXPORT_RETENTION_HOURS` (default `168`, 7 days; 1 to 720, other values stop the API at start), then deleted within seconds. Change it in `.env` and recreate the API (`docker compose up -d --no-deps --force-recreate api`); archives that are ready already keep their expiry.
-- The API writes the archive to a temporary file in the container (`/tmp`) before uploading it, one export at a time. Leave room on the Docker host's disk for the largest account's files; the file is removed when the upload ends or fails.
+- The API writes the archive to a temporary file in the container (`/tmp`) before uploading it, one export at a time. Leave room on the Docker host's disk for the largest archive; the file is removed when the upload ends or fails. An archive may be at most `API_EXPORT_MAX_BYTES` (default `10737418240`, 10 GiB; a positive number of bytes, other values stop the API at start). A larger export fails at once without further attempts, and the person sees that it failed.
 
 **Deleting an account** is final; there is no grace period and no undo. It needs the account's password (wrong guesses count like failed sign-ins), or for an account without a password its address, typed within 10 minutes of signing in. Someone who owns a server must hand it to another member first (Servereinstellungen → Gefahrenzone → "Server übergeben") or delete it; until then deletion answers `409 owns_servers` with those servers, blocked ones included.
 
