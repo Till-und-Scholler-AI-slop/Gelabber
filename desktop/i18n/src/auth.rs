@@ -252,6 +252,43 @@ crate::strings! {
     error_owns_servers = "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst."
         | "You still own servers. Hand them over to another member or delete them first.";
     error_export_pending = "Dein Export wird schon erstellt." | "Your export is already being prepared.";
+
+    // Sign-in through a provider on /login and /register (#518): Google's
+    // own wording for its button, the divider above the form, and, native
+    // only, the card while the system browser has the sign-in.
+    oidc_sign_in_with_google = "Über Google anmelden" | "Sign in with Google";
+    oidc_or = "oder" | "or";
+    oidc_waiting = "Weiter im Browser …" | "Continue in your browser …";
+    // /sign-in/name: a first sign-in through a provider picks its name.
+    sign_in_name_title = "Anzeigenamen wählen" | "Choose a display name";
+    sign_in_name_lead = "Dein Konto ist gleich fertig. Wähle den Namen, den andere sehen."
+        | "Your account is almost ready. Choose the name others will see.";
+    /// Split with [`crate::pieces`]; `{provider}` and `{email}` are filled
+    /// in afterwards.
+    sign_in_name_signed_in_as = "Angemeldet mit {provider} als <b>{email}</b>"
+        | "Signed in with {provider} as <b>{email}</b>";
+    sign_in_name_name_label = "Anzeigename" | "Display name";
+    sign_in_name_submit = "Konto anlegen" | "Create account";
+    sign_in_name_submitting = "Konto wird angelegt…" | "Creating account…";
+    sign_in_name_expired_title = "Anmeldung abgelaufen" | "Sign-in expired";
+    sign_in_name_expired = "Melde dich noch einmal an, um dein Konto anzulegen."
+        | "Sign in again to create your account.";
+}
+
+/// `oidc.signInWith`: the button of a provider other than Google.
+pub fn oidc_sign_in_with(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("Mit {provider} anmelden"),
+        Locale::En => format!("Sign in with {provider}"),
+    }
+}
+
+/// `oidc.redirecting`: a provider button while the flow starts.
+pub fn oidc_redirecting(provider: &str) -> String {
+    match get() {
+        Locale::De => format!("Weiter zu {provider}…"),
+        Locale::En => format!("Continuing to {provider}…"),
+    }
 }
 
 /// `fieldError.required`: "{label} fehlt.".
