@@ -375,3 +375,137 @@ fn operator_flags_registration_and_admission_codes() {
         assert!(!logged.contains(secret), "{logged}");
     }
 }
+
+/// The directory's shapes (#520), as backend/api/src/directory and
+/// backend/api/tests/directory.rs write them.
+#[test]
+fn directory_listings_settings_requests_and_reports() {
+    use serde_json::json;
+    let round = |value: &Value| assert_eq!(serde_json::to_value(value).unwrap(), *value);
+
+    let status = json!({"enabled": true, "languages": [
+        {"code": "de", "name": "Deutsch", "listings": 3},
+        {"code": "uk", "name": "Українська", "listings": 0},
+    ]});
+    let read: DirectoryStatus = serde_json::from_value(status.clone()).unwrap();
+    assert!(read.enabled);
+    assert_eq!(read.languages[1].name, "Українська");
+    assert_eq!(serde_json::to_value(&read).unwrap(), status);
+    let off: DirectoryStatus =
+        serde_json::from_value(json!({"enabled": false, "languages": []})).unwrap();
+    assert!(!off.enabled && off.languages.is_empty());
+
+    let filmclub = json!({
+        "server_id": "00000000-0000-0000-0000-000000000001",
+        "name": "Filmclub",
+        "icon_url": null,
+        "description": "Jeden Freitag ein Film.",
+        "language": "de",
+        "member_count": 2,
+        "join_mode": "open",
+        "member": false,
+        "request": null,
+        "retry_at": null,
+    });
+    let declined = json!({
+        "server_id": "00000000-0000-0000-0000-000000000002",
+        "name": "Modellbau-Keller",
+        "icon_url": "/api/server-icons/00000000-0000-0000-0000-000000000002/a.png",
+        "description": "Kleine Dinge, große Geduld.",
+        "language": "de",
+        "member_count": 48,
+        "join_mode": "request",
+        "member": false,
+        "request": "declined",
+        "retry_at": "2026-11-18T10:00:00Z",
+    });
+    let page = json!({"listings": [filmclub, declined], "next_offset": 30});
+    let read: ListingPage = serde_json::from_value(page.clone()).unwrap();
+    assert_eq!(read.next_offset, Some(30));
+    assert_eq!(read.listings[0].join_mode, JoinMode::Open);
+    assert_eq!(read.listings[0].request, None);
+    assert_eq!(read.listings[1].join_mode, JoinMode::Request);
+    assert_eq!(read.listings[1].request, Some(RequestState::Declined));
+    assert!(read.listings[1].retry_at.is_some());
+    assert_eq!(serde_json::to_value(&read).unwrap(), page);
+    // A row this client cannot read costs only that row; the last page
+    // has no next offset.
+    let mut odd = filmclub.clone();
+    odd["join_mode"] = "invite_only".into();
+    let read: ListingPage =
+        serde_json::from_value(json!({"listings": [odd, filmclub], "next_offset": null})).unwrap();
+    assert_eq!(read.listings.len(), 1);
+    assert_eq!(read.next_offset, None);
+    for (value, expected) in [
+        ("pending", RequestState::Pending),
+        ("declined", RequestState::Declined),
+    ] {
+        let mut row = declined.clone();
+        row["request"] = value.into();
+        let listing: Listing = serde_json::from_value(row).unwrap();
+        assert_eq!(listing.request, Some(expected));
+    }
+
+    // The form: the defaults of a server without a row, and a saved one.
+    let fresh = json!({"listed": false, "description": "", "language": null,
+        "join_mode": "request", "delisted": false, "listed_at": null});
+    let read: ListingSettings = serde_json::from_value(fresh.clone()).unwrap();
+    assert_eq!((read.language, read.join_mode), (None, JoinMode::Request));
+    round(&fresh);
+    let saved = json!({"listed": true, "description": "Gemütliche Abende mit Freunden.",
+        "language": "de", "join_mode": "open", "delisted": true,
+        "listed_at": "2026-11-10T10:00:00Z"});
+    let read: ListingSettings = serde_json::from_value(saved.clone()).unwrap();
+    assert!(read.listed && read.delisted);
+    assert_eq!(serde_json::to_value(&read).unwrap(), saved);
+    let body = ListingSettingsBody {
+        listed: true,
+        description: "Gemütliche Abende mit Freunden.".into(),
+        language: "de".into(),
+        join_mode: JoinMode::Request,
+    };
+    assert_eq!(
+        serde_json::to_value(&body).unwrap(),
+        json!({"listed": true, "description": "Gemütliche Abende mit Freunden.",
+            "language": "de", "join_mode": "request"})
+    );
+
+    let answer: RequestAnswer = serde_json::from_value(json!({"request": "pending"})).unwrap();
+    assert_eq!(answer.request, RequestState::Pending);
+
+    let queue = json!([{"user_id": "00000000-0000-0000-0000-000000000003", "name": "Kai",
+        "avatar_url": null, "message": "Ich baue Schiffe.",
+        "created_at": "2026-11-10T10:00:00Z"}]);
+    let read: Vec<JoinRequest> = serde_json::from_value(queue.clone()).unwrap();
+    assert_eq!(read[0].name, "Kai");
+    assert_eq!(serde_json::to_value(&read).unwrap(), queue);
+
+    // Reports: `details` only when given.
+    assert_eq!(
+        serde_json::to_value(ReportBody {
+            reason: ReportReason::Spam,
+            details: None
+        })
+        .unwrap(),
+        json!({"reason": "spam"})
+    );
+    assert_eq!(
+        serde_json::to_value(ReportBody {
+            reason: ReportReason::Other,
+            details: Some("Werbung für Fremdes".into())
+        })
+        .unwrap(),
+        json!({"reason": "other", "details": "Werbung für Fremdes"})
+    );
+    for (reason, text) in [
+        (ReportReason::Harassment, "harassment"),
+        (ReportReason::Sexual, "sexual"),
+        (ReportReason::Illegal, "illegal"),
+    ] {
+        assert_eq!(serde_json::to_value(reason).unwrap(), text);
+    }
+    let filed: ReportFiled = serde_json::from_value(json!({
+        "id": "00000000-0000-0000-0000-000000000004", "created_at": "2026-11-10T10:00:00Z"}))
+    .unwrap();
+    assert_eq!(filed.id.as_u128(), 4);
+}

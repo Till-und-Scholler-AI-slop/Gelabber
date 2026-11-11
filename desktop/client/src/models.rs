@@ -1045,6 +1045,141 @@ pub struct GifPage {
     pub next_page: Option<u32>,
 }
 
+// ----------------------------------------------------------------- directory
+
+/// One of the backend's fixed languages (`directory/languages.rs`). The
+/// name is its endonym, the same in every interface language.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectoryLanguage {
+    pub code: String,
+    pub name: String,
+    /// Listings the caller can see in this language.
+    pub listings: i64,
+}
+
+/// `GET /api/directory`. Off, `languages` is empty.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectoryStatus {
+    pub enabled: bool,
+    #[serde(deserialize_with = "lenient_list")]
+    pub languages: Vec<DirectoryLanguage>,
+}
+
+/// How a listed server is joined from the directory. Invites work either
+/// way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JoinMode {
+    Open,
+    /// "Beitritt anfragen": the owner or a moderator answers.
+    Request,
+}
+
+/// The caller's own request to join a listed server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestState {
+    Pending,
+    /// Only while the 7-day cooldown lasts.
+    Declined,
+}
+
+/// A listed server as anyone signed in sees it: no owner, no channels.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Listing {
+    pub server_id: Uuid,
+    pub name: String,
+    pub icon_url: Option<String>,
+    pub description: String,
+    pub language: String,
+    pub member_count: i64,
+    pub join_mode: JoinMode,
+    /// The caller is a member already.
+    pub member: bool,
+    pub request: Option<RequestState>,
+    /// While `request` is `declined`: when the caller may ask again.
+    #[serde(default)]
+    pub retry_at: Option<Timestamp>,
+}
+
+/// `GET /api/directory/listings`: 30 at a time, `next_offset` `None` on
+/// the last page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListingPage {
+    #[serde(deserialize_with = "lenient_list")]
+    pub listings: Vec<Listing>,
+    pub next_offset: Option<u32>,
+}
+
+/// `GET`/`PUT /api/servers/{id}/listing`: the owner's form, as every
+/// member may read it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListingSettings {
+    pub listed: bool,
+    pub description: String,
+    /// `None` until the owner first saved the form.
+    pub language: Option<String>,
+    pub join_mode: JoinMode,
+    /// The operator took the server out of the directory.
+    pub delisted: bool,
+    /// The first time the owner listed it.
+    pub listed_at: Option<Timestamp>,
+}
+
+/// `PUT /api/servers/{id}/listing`: all four fields are required.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListingSettingsBody {
+    pub listed: bool,
+    pub description: String,
+    pub language: String,
+    pub join_mode: JoinMode,
+}
+
+/// `POST /api/directory/listings/{id}/request`: `201` new, `200` when it
+/// was pending already.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestAnswer {
+    pub request: RequestState,
+}
+
+/// A pending request in a server's queue (`GET …/join-requests`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequest {
+    pub user_id: Uuid,
+    pub name: String,
+    pub avatar_url: Option<String>,
+    pub message: String,
+    pub created_at: Timestamp,
+}
+
+/// The reasons of operator's `POST /api/servers/{id}/reports`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReportReason {
+    Spam,
+    Harassment,
+    Sexual,
+    Illegal,
+    /// Needs `details`.
+    Other,
+}
+
+/// `POST /api/servers/{id}/reports`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportBody {
+    pub reason: ReportReason,
+    /// Required for [`ReportReason::Other`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+}
+
+/// The answer of a report: `201` new, `200` the reporter's open one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportFiled {
+    pub id: Uuid,
+    pub created_at: Timestamp,
+}
+
 // ------------------------------------------------------------------ gateway
 
 /// Presence as the gateway spells it.
@@ -1230,6 +1365,13 @@ pub enum ServerFrame {
     /// The account's language changed (on another device, or here).
     #[serde(rename = "lc")]
     Locale { l: String },
+    /// A request to join `s` was accepted: the account is a member now.
+    #[serde(rename = "jn")]
+    Joined { s: Uuid },
+    /// The pending requests of `s` changed; `n` is their number now. Only
+    /// the owner and holders of `moderate_members` get it.
+    #[serde(rename = "jq")]
+    JoinRequests { s: Uuid, n: i64 },
     #[serde(other)]
     Unknown,
 }
