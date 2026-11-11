@@ -80,6 +80,8 @@ pub struct AppState {
     pub operators: Arc<HashSet<String>>,
     /// `API_REGISTRATION`.
     pub registration: RegistrationMode,
+    /// `API_DIRECTORY`: the server directory is on (`directory`).
+    pub directory: bool,
 }
 
 #[derive(Debug)]
@@ -190,6 +192,7 @@ impl AppState {
             public_url: config.public_url.clone(),
             operators: Arc::new(config.operators.clone()),
             registration: config.registration,
+            directory: config.directory,
         })
     }
 

@@ -82,6 +82,8 @@ pub const RUST_LOG: &str = "RUST_LOG";
 pub const API_OPERATOR_EMAILS: &str = "API_OPERATOR_EMAILS";
 /// `open` (default) or `invitation`: who may create an account.
 pub const API_REGISTRATION: &str = "API_REGISTRATION";
+/// `true` turns on the server directory "Entdecken" (v0.10); off by default.
+pub const API_DIRECTORY: &str = "API_DIRECTORY";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
@@ -175,6 +177,8 @@ pub struct Config {
     pub operators: HashSet<String>,
     /// `API_REGISTRATION`.
     pub registration: RegistrationMode,
+    /// `API_DIRECTORY`: the server directory is on.
+    pub directory: bool,
 }
 
 /// Who may create an account (`API_REGISTRATION`).
@@ -569,6 +573,10 @@ impl Config {
             },
             None => RegistrationMode::Open,
         };
+        let directory = match get(API_DIRECTORY) {
+            Some(raw) => parse_bool(API_DIRECTORY, &raw)?,
+            None => false,
+        };
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -608,6 +616,7 @@ impl Config {
             public_url,
             operators,
             registration,
+            directory,
         })
     }
 }
@@ -1931,6 +1940,28 @@ mod tests {
             serde_json::to_value(RegistrationMode::Open).unwrap(),
             "open"
         );
+    }
+
+    #[test]
+    fn directory_is_off_unless_turned_on() {
+        assert!(!base(&[]).unwrap().directory);
+        // Compose passes an unset variable through as an empty value.
+        assert!(!base(&[(API_DIRECTORY, "")]).unwrap().directory);
+        assert!(!base(&[(API_DIRECTORY, "false")]).unwrap().directory);
+        assert!(base(&[(API_DIRECTORY, " True ")]).unwrap().directory);
+        for raw in ["maybe", "2", "enabled"] {
+            let err = base(&[(API_DIRECTORY, raw)]).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: API_DIRECTORY,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
     }
 
     #[test]
