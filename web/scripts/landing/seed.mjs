@@ -33,6 +33,8 @@ const TEXT = {
     games: "games",
     music: "music",
     cinema: "Cinema",
+    // Ada's three rules make the conversation tall enough that the 1280×800
+    // shot starts at the date divider, not halfway through the start block.
     chat: [
       ["mira", "I’m in. **Film or game?**", "plan"],
       ["tom", "Game! I’d be up for *board games* or something co-op."],
@@ -40,7 +42,7 @@ const TEXT = {
       ["jonas", "Sure, I’ll bring crisps and lemonade.", "reply"],
       [
         "ada",
-        "I’ve already looked up the rules:\n> Each round, everyone draws two cards.\n> Whoever reaches ten points first wins.",
+        "I’ve already looked up the rules:\n> The youngest player starts.\n> Each round, everyone draws two cards.\n> Whoever reaches ten points first wins.",
       ],
       [
         "tom",
@@ -73,7 +75,7 @@ const TEXT = {
       ["jonas", "Klar, ich bring Chips und Limo mit.", "reply"],
       [
         "ada",
-        "Ich habe die Regeln schon mal rausgesucht:\n> Jede Runde zieht jede Person zwei Karten.\n> Wer zuerst zehn Punkte hat, gewinnt.",
+        "Ich habe die Regeln schon mal rausgesucht:\n> Die jüngste Person fängt an.\n> Jede Runde zieht jede Person zwei Karten.\n> Wer zuerst zehn Punkte hat, gewinnt.",
       ],
       [
         "tom",
