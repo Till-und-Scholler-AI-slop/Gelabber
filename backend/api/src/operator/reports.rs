@@ -167,15 +167,25 @@ pub struct Filed {
 }
 
 /// `POST /api/servers/{id}/reports`: `201` with a new report, `200` with the
-/// reporter's open one. Only members may report here; whoever is not one
-/// gets `404`, like every other server route.
+/// reporter's open one. Members may report, and so may whoever can see the
+/// server's directory listing; anyone else gets `404`, like every other
+/// server route. When the caller can see the listing, the report keeps a
+/// snapshot of it (`directory::report_snapshot`).
 async fn create(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
     Body(body): Body<CreateBody>,
 ) -> Result<(StatusCode, Json<Filed>), ApiError> {
-    membership::load(&state.db, server_id, user.id).await?;
+    let snapshot = match membership::load(&state.db, server_id, user.id).await {
+        Ok(_) => crate::directory::report_snapshot(&state, server_id, user.id).await?,
+        Err(ApiError::NotFound) => Some(
+            crate::directory::report_snapshot(&state, server_id, user.id)
+                .await?
+                .ok_or(ApiError::NotFound)?,
+        ),
+        Err(err) => return Err(err),
+    };
     rate_limit(&state, user.id)?;
     let mut conn = state.db.acquire().await?;
     let (id, created) = file(
@@ -185,7 +195,7 @@ async fn create(
             reporter_id: user.id,
             reason: body.reason.unwrap_or_default(),
             details: body.details,
-            snapshot: None,
+            snapshot,
         },
     )
     .await?;

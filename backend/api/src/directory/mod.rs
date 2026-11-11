@@ -265,6 +265,45 @@ pub async fn visible_listing<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres
     .await?)
 }
 
+/// What a report of server `server_id` keeps of its listing, when
+/// `user_id` can see one: name, icon, description, language, join mode and
+/// member count as they are now, so later edits cannot hide what was
+/// reported. `None` while the directory is off or the listing is not
+/// visible to the caller.
+pub async fn report_snapshot(
+    state: &AppState,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<serde_json::Value>, ApiError> {
+    if !state.directory {
+        return Ok(None);
+    }
+    let row: Option<(String, Option<String>, String, String, String, i64)> =
+        sqlx::query_as(concat!(
+            "SELECT s.name, s.icon_url, l.description, l.language, l.join_mode, \
+                    (SELECT count(*) FROM server_members m WHERE m.server_id = s.id) \
+             FROM server_listings l JOIN servers s ON s.id = l.server_id \
+             WHERE l.server_id = $2 AND ",
+            visible_listing_where!()
+        ))
+        .bind(user_id)
+        .bind(server_id)
+        .fetch_optional(&state.db)
+        .await?;
+    Ok(row.map(
+        |(name, icon_url, description, language, join_mode, member_count)| {
+            serde_json::json!({
+                "name": name,
+                "icon_url": icon_url,
+                "description": description,
+                "language": language,
+                "join_mode": join_mode,
+                "member_count": member_count,
+            })
+        },
+    ))
+}
+
 /// The `dir_join` bucket: joins and requests to join per account and hour.
 fn hit_join_limit(state: &AppState, user_id: Uuid) -> Result<(), ApiError> {
     const BUCKET: &str = "dir_join";
