@@ -1,13 +1,11 @@
 //! Locale-bound formatting in the interface's language, as
 //! web/src/i18n/format.ts does it with `Intl` in `de-DE` and `en-GB`:
-//! dates, times, relative times, numbers and the sort order of names.
-//! Every date, time, number and name sort people read goes through here
-//! instead of spelling out a language itself.
+//! dates, times, relative times and numbers. Every date, time and number
+//! people read goes through here instead of spelling out a language
+//! itself. Names sort by `gelabber_client::store::collation_key`.
 //!
 //! The functions take the calendar fields, not a time type, so this crate
 //! stays without dependencies; the caller converts to local time first.
-
-use std::cmp::Ordering;
 
 use crate::{Locale, get};
 
@@ -34,7 +32,7 @@ pub enum DateStyle {
     /// `dateStyle: "medium"`: "05.11.2026" / "5 Nov 2026".
     Medium,
     /// `dateStyle: "full"`: "Donnerstag, 5. November 2026" /
-    /// "Thursday 5 November 2026".
+    /// "Thursday, 5 November 2026".
     Full,
 }
 
@@ -129,7 +127,7 @@ pub fn format_date(at: &DateTime, style: DateStyle) -> String {
             month_name(month, false)
         ),
         (Locale::En, DateStyle::Full) => format!(
-            "{} {day} {} {year}",
+            "{}, {day} {} {year}",
             weekday_name(at.weekday, false),
             month_name(month, false)
         ),
@@ -205,10 +203,11 @@ pub fn format_number(value: f64, min_fraction: usize, max_fraction: usize) -> St
         Locale::De => ('.', ','),
         Locale::En => (',', '.'),
     };
-    let scale = 10f64.powi(max_fraction as i32);
-    let rounded = (value.abs() * scale).round() / scale;
-    let text = format!("{rounded:.max_fraction$}");
-    let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
+    if !value.is_finite() {
+        return value.to_string();
+    }
+    let (whole, fraction) = round_decimal(&value.abs().to_string(), max_fraction);
+    let whole = whole.as_str();
     let mut fraction = fraction.trim_end_matches('0').to_owned();
     while fraction.len() < min_fraction {
         fraction.push('0');
@@ -231,35 +230,34 @@ pub fn format_number(value: f64, min_fraction: usize, max_fraction: usize) -> St
     out
 }
 
-/// `compareNames`: the order people read names in, as `Intl.Collator`
-/// sorts them in German and English alike: letters before their accents,
-/// then case, upper case last.
-pub fn compare_names(a: &str, b: &str) -> Ordering {
-    fn base(s: &str) -> Vec<char> {
-        s.chars()
-            .flat_map(char::to_lowercase)
-            .flat_map(|c| {
-                let folded: &[char] = match c {
-                    'ä' | 'à' | 'á' | 'â' | 'ã' | 'å' => &['a'],
-                    'ö' | 'ò' | 'ó' | 'ô' | 'õ' | 'ø' => &['o'],
-                    'ü' | 'ù' | 'ú' | 'û' => &['u'],
-                    'é' | 'è' | 'ê' | 'ë' => &['e'],
-                    'í' | 'ì' | 'î' | 'ï' => &['i'],
-                    'ç' => &['c'],
-                    'ñ' => &['n'],
-                    'ß' => &['s', 's'],
-                    _ => return vec![c],
-                };
-                folded.to_vec()
-            })
-            .collect()
+/// Rounds a plain decimal (`f64`'s shortest `Display`, never an exponent)
+/// to `places` fraction digits, half away from zero on the digits as
+/// written, as `Intl` does: 1.15 is 1.2, though the float is a hair below.
+fn round_decimal(text: &str, places: usize) -> (String, String) {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let up = fraction.as_bytes().get(places).is_some_and(|d| *d >= b'5');
+    let mut digits: Vec<u8> = whole
+        .bytes()
+        .chain(fraction.bytes().chain(std::iter::repeat(b'0')).take(places))
+        .collect();
+    if up {
+        let mut carry = true;
+        for d in digits.iter_mut().rev() {
+            if *d == b'9' {
+                *d = b'0';
+            } else {
+                *d += 1;
+                carry = false;
+                break;
+            }
+        }
+        if carry {
+            digits.insert(0, b'1');
+        }
     }
-    let accents = |s: &str| -> Vec<char> { s.chars().flat_map(char::to_lowercase).collect() };
-    base(a)
-        .cmp(&base(b))
-        .then_with(|| accents(a).cmp(&accents(b)))
-        // Lower case first, as the collator's tertiary level has it.
-        .then_with(|| b.cmp(a))
+    let split = digits.len() - places;
+    let fraction = String::from_utf8(digits.split_off(split)).unwrap_or_default();
+    (String::from_utf8(digits).unwrap_or_default(), fraction)
 }
 
 #[cfg(test)]
@@ -293,7 +291,7 @@ mod tests {
         assert_eq!(format_date(&THURSDAY, DateStyle::Medium), "5 Nov 2026");
         assert_eq!(
             format_date(&THURSDAY, DateStyle::Full),
-            "Thursday 5 November 2026"
+            "Thursday, 5 November 2026"
         );
         assert_eq!(format_time(&THURSDAY), "09:07");
         assert_eq!(month_name(9, true), "Sept");
@@ -325,16 +323,13 @@ mod tests {
         assert_eq!(format_number(1234.5, 0, 1), "1,234.5");
         assert_eq!(format_number(999.0, 0, 2), "999");
         assert_eq!(format_number(12.346, 2, 2), "12.35");
-    }
-
-    #[test]
-    fn names_sort_as_people_read_them() {
-        let mut names = vec!["Zoe", "émile", "Anna", "Ärger", "anna", "Bert", "Öl"];
-        names.sort_by(|a, b| compare_names(a, b));
-        assert_eq!(
-            names,
-            ["anna", "Anna", "Ärger", "Bert", "émile", "Öl", "Zoe"]
-        );
-        assert_eq!(compare_names("Straße", "Strasse"), Ordering::Greater);
+        // Halves round on the decimal digits, not on the float's.
+        assert_eq!(format_number(1.15, 0, 1), "1.2");
+        assert_eq!(format_number(0.35, 0, 1), "0.4");
+        assert_eq!(format_number(0.145, 0, 2), "0.15");
+        assert_eq!(format_number(1.005, 0, 2), "1.01");
+        assert_eq!(format_number(2.675, 0, 2), "2.68");
+        assert_eq!(format_number(999.96, 0, 1), "1,000");
+        assert_eq!(format_number(1_150_000.0, 0, 0), "1,150,000");
     }
 }

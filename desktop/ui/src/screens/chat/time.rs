@@ -141,13 +141,13 @@ mod tests {
         assert_eq!(format_when(at(14, 9, 5), now), "14/10, 09:05");
         assert_eq!(
             format_full(at(21, 14, 2)),
-            "Wednesday 21 October 2026 at 14:02"
+            "Wednesday, 21 October 2026 at 14:02"
         );
         let old = Local
             .with_ymd_and_hms(2025, 3, 4, 8, 0, 0)
             .unwrap()
             .with_timezone(&Utc);
-        assert_eq!(day_label(old, now), "Tuesday 4 March 2025");
+        assert_eq!(day_label(old, now), "Tuesday, 4 March 2025");
         assert_eq!(format_when(old, now), "04/03/2025, 08:00");
     }
 }
