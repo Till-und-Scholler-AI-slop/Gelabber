@@ -68,7 +68,8 @@
       "name": "settings-konto",
       "path": "/settings/konto",
       "user": "lena",
-      "desktop": true
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)"
     },
     {
       "name": "settings-darstellung",
@@ -2408,14 +2409,16 @@
       "path": "/settings/konto",
       "user": "lena",
       "desktop": true,
-      "before": "oidc-link lena"
+      "before": "oidc-link lena",
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)"
     },
     {
       "name": "settings-konto-google-only",
       "path": "/settings/konto",
       "user": "lena",
       "desktop": true,
-      "before": "oidc-link lena nopassword"
+      "before": "oidc-link lena nopassword",
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)"
     },
     {
       "name": "login-oidc-error",
@@ -2504,6 +2507,71 @@
       "path": "/discover",
       "user": "lena",
       "before": "theme lena light"
+    },
+    {
+      "name": "settings-konto-password",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
+      "actions": [
+        {
+          "click": "Ändern"
+        }
+      ]
+    },
+    {
+      "name": "settings-konto-export-ready",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
+      "before": "export lena ready"
+    },
+    {
+      "name": "settings-konto-delete",
+      "path": "/settings/konto",
+      "user": "mira",
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
+      "actions": [
+        {
+          "click": "Konto löschen"
+        }
+      ]
+    },
+    {
+      "name": "settings-konto-delete-owned",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
+      "actions": [
+        {
+          "click": "Konto löschen"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-transfer",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Gefahrenzone"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "click": "Übergeben…"
+        }
+      ]
+    },
+    {
+      "name": "login-deleted",
+      "path": "/login?reason=deleted",
+      "user": null
     }
   ]
 }

@@ -140,6 +140,10 @@ services:
       OIDC_GOOGLE_ISSUER: ${OIDC_GOOGLE_ISSUER:-}
       # Server directory "Entdecken", off by default (deploy/README.md, "Verzeichnis").
       API_DIRECTORY: ${API_DIRECTORY:-false}
+      # Hours a finished data export stays downloadable; empty: 168 (7 days).
+      API_EXPORT_RETENTION_HOURS: ${API_EXPORT_RETENTION_HOURS:-}
+      # Largest export archive in bytes; empty: 10737418240 (10 GiB).
+      API_EXPORT_MAX_BYTES: ${API_EXPORT_MAX_BYTES:-}
     expose:
       - "8080"
     depends_on:

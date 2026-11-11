@@ -455,6 +455,44 @@ async fn operators_cannot_disable_themselves_or_each_other(pool: PgPool) {
     assert_eq!(disabled, 0);
 }
 
+/// An account under deletion waits only for its purge: the console neither
+/// lists nor counts it, and disabling or enabling it answers 404.
+#[sqlx::test]
+async fn an_account_under_deletion_leaves_the_console(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let tom = registered(&state, TOM, "Tom").await;
+    let tom_id = tom.user_id().to_owned();
+    sqlx::query("UPDATE users SET deleted_at = now() WHERE id = $1::uuid")
+        .bind(&tom_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = lena.send(Method::GET, "/api/operator/accounts", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["total"], 1);
+    assert_eq!(res.body["accounts"][0]["name"], "Lena");
+    let res = lena.send(Method::GET, "/api/operator/usage", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["accounts"]["total"], 1, "{}", res.body);
+    assert_eq!(
+        disable(&mut lena, &tom_id, json!({})).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        enable(&mut lena, &tom_id).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let disabled: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT disabled_at FROM users WHERE id = $1::uuid")
+            .bind(&tom_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(disabled.is_none());
+}
+
 #[sqlx::test]
 async fn the_account_list_searches_filters_and_pages(pool: PgPool) {
     let state = operator_state(pool.clone());

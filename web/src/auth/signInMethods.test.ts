@@ -7,6 +7,7 @@ import {
   oidcErrorRows,
   signInFeedback,
   needsReauth,
+  reopensDeletion,
   signInProvider,
   withPassword,
   withoutFeedback,
@@ -43,9 +44,25 @@ describe("what a link flow reports back to Sicherheit", () => {
 describe("the address after the feedback was read", () => {
   it("loses the feedback and keeps everything else", () => {
     expect(
-      withoutFeedback({ connected: "google", oidc_error: "failed", tab: 2 }),
+      withoutFeedback({
+        connected: "google",
+        oidc_error: "failed",
+        delete: 1,
+        tab: 2,
+      }),
     ).toEqual({ tab: 2 });
     expect(withoutFeedback({})).toEqual({});
+  });
+});
+
+describe("coming back to Konto löschen from a fresh sign-in", () => {
+  it("opens the dialog again only when the sign-in worked", () => {
+    expect(reopensDeletion({ delete: 1 })).toBe(true);
+    expect(reopensDeletion({ delete: "1" })).toBe(true);
+    expect(reopensDeletion({ delete: 1, oidc_error: "failed" })).toBe(false);
+    expect(reopensDeletion({ delete: 2 })).toBe(false);
+    expect(reopensDeletion({})).toBe(false);
+    expect(reopensDeletion(undefined)).toBe(false);
   });
 });
 

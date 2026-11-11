@@ -66,6 +66,9 @@ export const auth = defineCatalog(
     "error.alreadyMember": "Du bist schon Mitglied dieses Servers.",
     "error.joinRequestDeclinedUntil":
       "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {date} wieder anfragen.",
+    "error.ownsServers":
+      "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst.",
+    "error.exportPending": "Dein Export wird schon erstellt.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -177,6 +180,7 @@ export const auth = defineCatalog(
 
     // /login
     "login.sessionExpired": "Sitzung abgelaufen. Melde dich erneut an.",
+    "login.accountDeleted": "Dein Konto wurde gelöscht.",
     "login.title": "Anmelden",
     "login.newHere": "Neu bei Gelabber?",
     "login.createAccount": "Konto anlegen",
@@ -329,6 +333,9 @@ export const auth = defineCatalog(
     "error.alreadyMember": "You are already a member of this server.",
     "error.joinRequestDeclinedUntil":
       "Your request was not accepted. You can ask again from {date}.",
+    "error.ownsServers":
+      "You still own servers. Hand them over to another member or delete them first.",
+    "error.exportPending": "Your export is already being prepared.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",
@@ -429,6 +436,7 @@ export const auth = defineCatalog(
     "page.linkUsed": "This link has expired or has already been used.",
 
     "login.sessionExpired": "Session expired. Please sign in again.",
+    "login.accountDeleted": "Your account has been deleted.",
     "login.title": "Sign in",
     "login.newHere": "New to Gelabber?",
     "login.createAccount": "Create account",

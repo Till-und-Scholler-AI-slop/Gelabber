@@ -1,7 +1,8 @@
 //! Durable object cleanup. No pool connection is held during S3 requests.
 //! `storage_cleanup` holds attachment keys and uploaded profile image keys
-//! (`avatars/{user}/{file}`, `banners/{user}/{file}`, see `crate::avatars`);
-//! this worker deletes all of them.
+//! (`avatars/{user}/{file}`, `banners/{user}/{file}`, see `crate::avatars`),
+//! and the archives of data exports (`exports/{user}/{id}.zip`, queued by the
+//! `account_export_cleanup` trigger); this worker deletes all of them.
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 

@@ -19,7 +19,8 @@ import type { DirectMessage } from "../dms/types.ts";
 import type { Member } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { useTypingInput } from "../ws/useLive.ts";
-import { useT } from "../i18n/catalog.ts";
+import { notify } from "../components/toasts.ts";
+import { translate, useT } from "../i18n/catalog.ts";
 import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
 
 export function DmChannelPage() {
@@ -46,6 +47,8 @@ export function DmChannelPage() {
     // Same as a vanished server: drop the list row + last-DM, leave, then
     // drop the detail so this still-mounted query does not refetch.
     if (!userId) return;
+    // Say why the conversation closed: its peer deleted their account (#519).
+    notify(translate(dmsCatalog, "conversation.gone"));
     forgetDm(client, userId, channelId, { keepDetail: true });
     forgetLast(userId, channelId);
     void navigate({ to: "/d", replace: true }).then(() =>

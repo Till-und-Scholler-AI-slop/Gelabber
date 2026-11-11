@@ -82,8 +82,9 @@ const rootRoute = createRootRoute({
 
 export type AuthSearch = {
   redirect?: string;
-  /** "expired": the session ended while the app was open. */
-  reason?: "expired";
+  /** "expired": the session ended while the app was open. "deleted": the
+   * account was just deleted (#519). */
+  reason?: "expired" | "deleted";
   /** Carried from sign-in to "Passwort vergessen", so it is not retyped. */
   email?: string;
   /** A beta invitation's code (`/register?invitation=…`), which pre-fills
@@ -99,7 +100,8 @@ export const validateAuthSearch = (
   const out: AuthSearch = {};
   const target = safeRedirect(search.redirect);
   if (target) out.redirect = target;
-  if (search.reason === "expired") out.reason = "expired";
+  if (search.reason === "expired" || search.reason === "deleted")
+    out.reason = search.reason;
   if (
     typeof search.email === "string" &&
     search.email.length > 0 &&
@@ -152,9 +154,13 @@ async function requireAnonymous({ search }: { search: AuthSearch }) {
  */
 export function signedInTarget(search: AuthSearch): string {
   const target = search.redirect ?? "/";
-  if (search.oidc_error && target === SECURITY_PATH)
-    return `${target}?${new URLSearchParams({ oidc_error: search.oidc_error })}`;
-  return target;
+  if (!search.oidc_error) return target;
+  // Also from the Konto löschen dialog, which comes back with `?delete=1`.
+  const [path, query] = target.split("?", 2);
+  if (path !== SECURITY_PATH) return target;
+  const params = new URLSearchParams(query);
+  params.set("oidc_error", search.oidc_error);
+  return `${path}?${params}`;
 }
 
 // The profile became the first settings area; old links and bookmarks land

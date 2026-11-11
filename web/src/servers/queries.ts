@@ -1372,3 +1372,21 @@ export function useSetMemberRoles(serverId: string) {
   const client = useQueryClient();
   return useMutation(setMemberRolesOptions(client, useUserId(), serverId));
 }
+
+/**
+ * Hands the server to another member (#519). Not optimistic: the answer is
+ * the caller's new view of the server, and the members' roles and the
+ * caller's rights are read again.
+ */
+export function useTransferServer(serverId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => remote.transferServer(serverId, userId),
+    onMutate: () => takeStamp(),
+    onSuccess: (server, _userId, stamp) => {
+      if (!stampHolds(stamp)) return;
+      mergeServer(client, stamp.userId, stamp.generation, server);
+      refetchServer(client, stamp.userId, stamp.generation, serverId);
+    },
+  });
+}
