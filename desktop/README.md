@@ -81,6 +81,8 @@ keys to this one block):
 ```sh
 # lena is an operator, for the "Betrieb" scenes; registration stays open.
 API_OPERATOR_EMAILS=lena@example.test
+# The directory is on, for the "Entdecken" scenes; seed.mjs stops without it.
+API_DIRECTORY=true
 ```
 
 Packages, built by `desktop-native.yml` after merge and for releases:
