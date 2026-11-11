@@ -53,6 +53,21 @@ use self::user::User;
 /// to be allowed to log in at all.
 const CSRF_COOKIE_MAX_AGE_SECS: u64 = 365 * 24 * 3600;
 
+/// How recent a sign-in must be for a step that cannot ask for a password
+/// because the account has none, such as setting the first one
+/// (`403 reauth_required` otherwise).
+pub const REAUTH_WINDOW: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Refuses with `403 reauth_required` unless `current` was signed in less
+/// than [`REAUTH_WINDOW`] ago.
+pub fn recently_signed_in(current: &CurrentSession) -> Result<(), ApiError> {
+    let age = chrono::Utc::now() - current.created_at;
+    match chrono::Duration::from_std(REAUTH_WINDOW) {
+        Ok(window) if age < window => Ok(()),
+        _ => Err(ApiError::ReauthRequired),
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/auth/register", post(register))
@@ -474,7 +489,9 @@ async fn login(
     {
         found = user::credentials_by_email(&state.db, ascii).await?;
     }
-    let stored = found.as_ref().map(|c| c.password_hash.clone());
+    // An account without a password (migration 0033) runs against the
+    // dummy hash too and answers like a wrong password.
+    let stored = found.as_ref().and_then(|c| c.password_hash.clone());
     let ok = password::verify(body.password, stored).await?;
 
     let Some(credentials) = found.filter(|_| ok) else {
@@ -588,6 +605,10 @@ fn signed_out_cookies(
 /// account ends, this one included, and the caller gets a fresh one: a
 /// stolen cookie dies with the old password. Wrong guesses count against the
 /// account like failed logins, so a hijacked session cannot brute-force it.
+///
+/// An account without a password (it signs in through a provider) sets its
+/// first one without `current_password`, but only from a session signed in
+/// less than [`REAUTH_WINDOW`] ago (`403 reauth_required` otherwise).
 async fn change_password(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -595,28 +616,31 @@ async fn change_password(
     Body(body): Body<PasswordBody>,
 ) -> Result<Response, ApiError> {
     transport_allowed(&state, &headers)?;
+    let stored = user::password_hash_by_id(&state.db, current.user.id).await?;
     let mut errors = FieldErrors::new();
-    if body.current_password.is_empty() {
+    if stored.is_some() && body.current_password.is_empty() {
         errors.insert("current_password", "required");
     }
     let new_password = validate::password(&body.password, &mut errors);
     validate::finish(errors)?;
     let new_password = new_password.expect("validated");
 
-    let user = current.user;
-    let key = validate::canonical(&user.email);
-    limits::login_attempt(&state, &key)?;
-    let stored = user::password_hash_by_id(&state.db, user.id).await?;
-    let ok = body.current_password.chars().count() <= validate::PASSWORD_MAX
-        && password::verify(body.current_password, stored).await?;
-    if !ok {
-        return Err(ApiError::Validation(FieldErrors::from([(
-            "current_password",
-            "wrong",
-        )])));
+    if stored.is_some() {
+        let key = validate::canonical(&current.user.email);
+        limits::login_attempt(&state, &key)?;
+        let ok = body.current_password.chars().count() <= validate::PASSWORD_MAX
+            && password::verify(body.current_password, stored).await?;
+        if !ok {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "current_password",
+                "wrong",
+            )])));
+        }
+        limits::login_succeeded(&state, &key);
+    } else {
+        recently_signed_in(&current)?;
     }
-
-    limits::login_succeeded(&state, &key);
+    let user = current.user;
 
     let hash = password::hash(new_password).await?;
     let revoked = user::set_password_hash(&state.db, user.id, &hash).await?;
@@ -677,6 +701,8 @@ async fn verify_email(
     let user = session::reload(&state.db, user_id).await?;
     let key = validate::canonical(&user.email);
     limits::login_attempt(&state, &key)?;
+    // An account without a password has no pending registration to confirm
+    // (a provider's takeover clears it); `verify` then answers `wrong`.
     let stored = user::password_hash_by_id(&state.db, user_id).await?;
     let ok = body.password.chars().count() <= validate::PASSWORD_MAX
         && password::verify(body.password, stored).await?;

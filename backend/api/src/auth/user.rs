@@ -109,7 +109,9 @@ pub async fn card_visible(db: &PgPool, viewer: Uuid, target: Uuid) -> Result<boo
 #[derive(Debug, FromRow)]
 pub struct Credentials {
     pub id: Uuid,
-    pub password_hash: String,
+    /// `None`: the account signs in only through a provider (migration
+    /// 0033) until its owner sets a password.
+    pub password_hash: Option<String>,
     /// The owner opened a confirmation or reset link (migration 0021).
     pub email_verified: bool,
     /// An operator disabled the account (migration 0032).
@@ -146,6 +148,37 @@ pub async fn insert_in(
     .bind(email)
     .bind(name)
     .bind(password_hash)
+    .bind(locale)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| match &err {
+        // SQLSTATE 23505 = unique_violation.
+        sqlx::Error::Database(db_err) if db_err.code().as_deref() == Some("23505") => {
+            ApiError::EmailTaken
+        }
+        _ => err.into(),
+    })
+}
+
+/// Inserts an account created through a provider's first sign-in: no
+/// password, the address confirmed (the provider reported it verified).
+/// `email` must already be normalised. A unique-index hit maps to
+/// `ApiError::EmailTaken`.
+pub async fn insert_oidc(
+    conn: &mut PgConnection,
+    email: &str,
+    name: &str,
+    locale: Locale,
+) -> Result<User, ApiError> {
+    sqlx::query_as::<_, User>(
+        "INSERT INTO users (email, name, password_hash, email_verified_at, \
+             registration_pending, locale) \
+         VALUES ($1, $2, NULL, now(), false, $3) \
+         RETURNING id, email, name, avatar_url, created_at, bio, pronouns, status_text, \
+             accent_color, banner_color, banner_url, avatar_decoration, locale",
+    )
+    .bind(email)
+    .bind(name)
     .bind(locale)
     .fetch_one(&mut *conn)
     .await
@@ -247,12 +280,15 @@ pub async fn is_disabled(db: &PgPool, id: Uuid) -> Result<bool, ApiError> {
     )
 }
 
+/// The account's password hash; `None` for an unknown id and for an
+/// account without a password (migration 0033).
 pub async fn password_hash_by_id(db: &PgPool, id: Uuid) -> Result<Option<String>, ApiError> {
     Ok(
-        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        sqlx::query_scalar::<_, Option<String>>("SELECT password_hash FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
-            .await?,
+            .await?
+            .flatten(),
     )
 }
 
