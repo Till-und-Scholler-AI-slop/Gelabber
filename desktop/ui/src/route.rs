@@ -24,6 +24,9 @@ pub enum Route {
     NotFound(String),
     /// `/discover?q=&lang=`: the directory, its search and language filter.
     Discover(DiscoverSearch),
+    /// `/sign-in/name#token=`: a first sign-in through a provider names
+    /// its new account, signed in or not.
+    SignInName,
 }
 
 /// The directory's search in the address (`validateDiscoverSearch` in
@@ -114,6 +117,7 @@ impl Route {
                 _ => Self::NotFound(path.to_owned()),
             },
             ["discover"] => Self::Discover(DiscoverSearch::parse(query)),
+            ["sign-in", "name"] => Self::SignInName,
             _ => Self::NotFound(path.to_owned()),
         }
     }
@@ -137,6 +141,7 @@ impl Route {
             Self::Profile => "/profile".into(),
             Self::NotFound(p) => p.clone(),
             Self::Discover(search) => format!("/discover{}", search.query()),
+            Self::SignInName => "/sign-in/name".into(),
         }
     }
 
@@ -222,6 +227,16 @@ mod tests {
         );
         // Other routes ignore a query.
         assert_eq!(Route::parse("/d?q=1"), Route::Dms);
+    }
+
+    /// The name step of a provider sign-in; its token is in the fragment.
+    #[test]
+    fn sign_in_name_parses_and_writes() {
+        assert_eq!(Route::parse("/sign-in/name"), Route::SignInName);
+        assert_eq!(Route::parse("/sign-in/name#token=abc"), Route::SignInName);
+        assert_eq!(Route::SignInName.path(), "/sign-in/name");
+        assert!(!Route::SignInName.is_anonymous());
+        assert_eq!(Route::parse("/sign-in"), Route::NotFound("/sign-in".into()));
     }
 
     #[test]
