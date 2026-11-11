@@ -2065,12 +2065,39 @@ impl Client {
         });
     }
 
-    /// "Übergeben": `user` becomes the server's owner; its detail is read
-    /// again for the caller's new role. Op key `transfer:<server>`.
+    /// "Übergeben": `user` becomes the server's owner. The answer (the
+    /// caller now a member) goes into the list and the detail in the same
+    /// write that settles the op, as the web's `mergeServer`, so the
+    /// owner's Gefahrenzone is gone at once; then the detail is read
+    /// again. Op key `transfer:<server>`.
     pub fn transfer_server(&self, server: Uuid, user: Uuid) {
         let http = self.http().clone();
-        self.server_change(format!("transfer:{server}"), server, async move {
-            http.transfer_server(server, user).await
+        let op = format!("transfer:{server}");
+        let epoch = self.write(|s| {
+            s.ops.insert(op.clone(), OpState::Pending);
+            s.epoch
+        });
+        let this = self.clone();
+        self.spawn(async move {
+            match http.transfer_server(server, user).await {
+                Ok(view) => {
+                    this.write_in(epoch, |s| {
+                        s.ops.insert(op, OpState::Done);
+                        if let Some(entry) = s.servers.iter_mut().find(|v| v.id == server) {
+                            *entry = view.clone();
+                        }
+                        if let Some(detail) = s.server_details.get_mut(&server) {
+                            detail.server = view;
+                        }
+                    });
+                    let _ = this.reload_server(server).await;
+                }
+                Err(error) => {
+                    if this.epoch() == epoch {
+                        this.fail_op(&op, error);
+                    }
+                }
+            }
         });
     }
 
