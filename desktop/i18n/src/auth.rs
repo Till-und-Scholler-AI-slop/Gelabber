@@ -249,6 +249,9 @@ crate::strings! {
         | "Too many requests are open right now. Please try again later.";
     error_already_member = "Du bist schon Mitglied dieses Servers."
         | "You are already a member of this server.";
+    error_owns_servers = "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst."
+        | "You still own servers. Hand them over to another member or delete them first.";
+    error_export_pending = "Dein Export wird schon erstellt." | "Your export is already being prepared.";
 }
 
 /// `fieldError.required`: "{label} fehlt.".

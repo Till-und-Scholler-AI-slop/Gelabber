@@ -106,7 +106,7 @@ impl ApiError {
 // A marker `code()` reads, not text of its own.
 const TIMEOUT_PREFIX: &str = "Zeitüberschreitung: "; // i18n-ok
 
-const KNOWN_CODES: [&str; 37] = [
+const KNOWN_CODES: [&str; 39] = [
     "validation_failed",
     "bad_request",
     "unauthenticated",
@@ -144,6 +144,8 @@ const KNOWN_CODES: [&str; 37] = [
     "join_request_declined",
     "join_requests_full",
     "already_member",
+    "owns_servers",
+    "export_pending",
 ];
 
 /// The copy per error code, as web/src/auth/rules.ts (the auth catalog's
@@ -185,6 +187,8 @@ pub fn error_message(code: &str) -> &'static str {
         "join_request_declined" => auth::error_join_request_declined(),
         "join_requests_full" => auth::error_join_requests_full(),
         "already_member" => auth::error_already_member(),
+        "owns_servers" => auth::error_owns_servers(),
+        "export_pending" => auth::error_export_pending(),
         _ => auth::error_internal(),
     }
 }
@@ -1288,5 +1292,33 @@ mod tests {
             .collect();
         assert_eq!(leftovers.len(), 1, "{leftovers:?}");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn account_codes_are_known_with_their_copy() {
+        let api = |code: &str| ApiError::Api {
+            status: 409,
+            code: code.into(),
+            message: String::new(),
+            fields: serde_json::Value::Null,
+            retry_after: None,
+        };
+        let german = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::De);
+        assert_eq!(api("owns_servers").code(), "owns_servers");
+        assert_eq!(
+            api("owns_servers").text(),
+            "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst."
+        );
+        assert_eq!(api("export_pending").code(), "export_pending");
+        assert_eq!(
+            api("export_pending").text(),
+            "Dein Export wird schon erstellt."
+        );
+        drop(german);
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(
+            api("export_pending").text(),
+            "Your export is already being prepared."
+        );
     }
 }
