@@ -1564,9 +1564,24 @@ impl Client {
 
     /// Op key `server_update:<id>`.
     pub fn update_server(&self, id: Uuid, patch: ServerPatch) {
+        self.server_update(format!("server_update:{id}"), id, patch);
+    }
+
+    /// "Alle Mitglieder": the members' permissions, one op per write so
+    /// quick toggles each get their own answer. Op key
+    /// `server_update:<id>:<seq>`.
+    pub fn update_member_permissions(&self, id: Uuid, permissions: Vec<Permission>, seq: u64) {
+        let patch = ServerPatch {
+            name: None,
+            member_permissions: Some(permissions),
+        };
+        self.server_update(format!("server_update:{id}:{seq}"), id, patch);
+    }
+
+    fn server_update(&self, op: String, id: Uuid, patch: ServerPatch) {
         let http = self.http().clone();
         self.run(
-            format!("server_update:{id}"),
+            op,
             async move { http.update_server(id, &patch).await },
             move |s, server| {
                 if let Some(entry) = s.servers.iter_mut().find(|v| v.id == id) {
@@ -1731,10 +1746,10 @@ impl Client {
         });
     }
 
-    /// Op key `role:<id>`.
-    pub fn update_role(&self, server: Uuid, role: Uuid, patch: RolePatch) {
+    /// Op key `role:<id>:<seq>`: each write its own answer.
+    pub fn update_role(&self, server: Uuid, role: Uuid, patch: RolePatch, seq: u64) {
         let http = self.http().clone();
-        self.role_change(format!("role:{role}"), server, async move {
+        self.role_change(format!("role:{role}:{seq}"), server, async move {
             http.update_role(role, &patch).await
         });
     }
@@ -1748,10 +1763,10 @@ impl Client {
     }
 
     /// Full replacement of a member's custom roles. Op key
-    /// `member_roles:<user>`.
-    pub fn set_member_roles(&self, server: Uuid, user: Uuid, role_ids: Vec<Uuid>) {
+    /// `member_roles:<user>:<seq>`: each write its own answer.
+    pub fn set_member_roles(&self, server: Uuid, user: Uuid, role_ids: Vec<Uuid>, seq: u64) {
         let http = self.http().clone();
-        self.role_change(format!("member_roles:{user}"), server, async move {
+        self.role_change(format!("member_roles:{user}:{seq}"), server, async move {
             http.set_member_roles(server, user, &role_ids).await
         });
     }

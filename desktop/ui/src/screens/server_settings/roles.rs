@@ -8,8 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use egui::{Color32, Id, Painter, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{
-    ApiError, Member, NewRole, OpState, Permission, RoleColor, RolePatch, ServerDetail,
-    ServerPatch, ServerRole,
+    ApiError, Member, NewRole, OpState, Permission, RoleColor, RolePatch, ServerDetail, ServerRole,
 };
 use gelabber_i18n::{common, roles as role_texts, server_settings as texts, servers};
 use uuid::Uuid;
@@ -51,17 +50,20 @@ impl<T> Ahead<T> {
 /// How long a settled value may wait for the detail to agree.
 const SETTLE_SECS: f64 = 3.0;
 
-/// A write on its way, by what it does.
+/// A write on its way, by what it does. The quick ones carry their own
+/// number: each settles from its own request's answer.
 #[derive(Clone, Debug, PartialEq)]
 enum Write {
     /// "Neue Rolle", with the name it sent.
     Create(String),
     /// Colour or permissions.
-    Role(Uuid),
-    Rename(Uuid),
+    Role(Uuid, u64),
+    Rename(Uuid, u64),
     Delete(Uuid),
     /// A member's roles, by user.
-    Member(Uuid),
+    Member(Uuid, u64),
+    /// "Alle Mitglieder".
+    Base(u64),
 }
 
 impl Write {
@@ -69,9 +71,21 @@ impl Write {
     fn key(&self, server: Uuid) -> String {
         match self {
             Self::Create(_) => format!("create_role:{server}"),
-            Self::Role(id) | Self::Rename(id) => format!("role:{id}"),
+            Self::Role(id, seq) | Self::Rename(id, seq) => format!("role:{id}:{seq}"),
             Self::Delete(id) => format!("delete_role:{id}"),
-            Self::Member(user) => format!("member_roles:{user}"),
+            Self::Member(user, seq) => format!("member_roles:{user}:{seq}"),
+            Self::Base(seq) => format!("server_update:{server}:{seq}"),
+        }
+    }
+
+    /// Whether `other` writes the same value ahead of the server.
+    fn same_value(&self, other: &Write) -> bool {
+        match (self, other) {
+            (Self::Role(a, _), Self::Role(b, _)) | (Self::Member(a, _), Self::Member(b, _)) => {
+                a == b
+            }
+            (Self::Base(_), Self::Base(_)) => true,
+            _ => false,
         }
     }
 }
@@ -100,8 +114,9 @@ pub(super) struct Roles {
     /// Members' role ids, by user.
     members: HashMap<Uuid, Ahead<Vec<Uuid>>>,
     /// "Alle Mitglieder" ahead of the server's answer.
-    pub(super) base: Option<Vec<Permission>>,
-    pub(super) saving_base: bool,
+    base: Option<Ahead<Vec<Permission>>>,
+    /// The last write's number.
+    seq: u64,
     /// The member whose picker is open.
     pub(super) picker: Option<Uuid>,
 }
@@ -215,6 +230,12 @@ impl Roles {
             .map_or(&member.role_ids, |a| &a.value)
     }
 
+    /// The number of the next quick write.
+    fn next(&mut self) -> u64 {
+        self.seq += 1;
+        self.seq
+    }
+
     fn track(&mut self, app: &AppCtx, server: Uuid, write: Write) {
         // A finished write of the same key must not read as this one's.
         app.client.clear_op(write.key(server));
@@ -270,6 +291,12 @@ pub(super) fn poll(ui: &Ui, app: &mut AppCtx, r: &mut Roles, detail: &ServerDeta
         .retain(|id, a| role(id).is_some_and(|x| x.permissions != a.value) && !stale(a.settled));
     r.colors
         .retain(|id, a| role(id).is_some_and(|x| x.color != a.value) && !stale(a.settled));
+    if r.base
+        .as_ref()
+        .is_some_and(|a| a.value == detail.server.member_permissions || stale(a.settled))
+    {
+        r.base = None;
+    }
     r.members.retain(|user, a| {
         detail
             .members
@@ -285,6 +312,7 @@ pub(super) fn poll(ui: &Ui, app: &mut AppCtx, r: &mut Roles, detail: &ServerDeta
         .map(|a| a.settled)
         .chain(r.colors.values().map(|a| a.settled))
         .chain(r.members.values().map(|a| a.settled))
+        .chain(r.base.iter().map(|a| a.settled))
         .any(|s| s.is_some());
     if waiting {
         ui.ctx()
@@ -301,6 +329,9 @@ fn settle(
     outcome: &Result<(), ApiError>,
     now: f64,
 ) {
+    // A later write of the same value still on its way carries this one's
+    // change too: the value stays ahead until the last one answers.
+    let last = !r.writes.iter().any(|w| w.same_value(&write));
     match (write, outcome) {
         (Write::Create(name), Ok(())) => {
             // The command put the new role into the detail before it ended.
@@ -317,22 +348,27 @@ fn settle(
             app.toasts
                 .failure(servers::error_role_not_created(), None, e)
         }
-        (Write::Role(id), Ok(())) | (Write::Rename(id), Ok(())) => {
-            r.status.success(ui, common::saved());
-            if let Some(a) = r.permissions.get_mut(&id) {
-                a.settled = Some(now);
-            }
-            if let Some(a) = r.colors.get_mut(&id) {
-                a.settled = Some(now);
+        (Write::Role(id, _), Ok(())) => {
+            if last {
+                r.status.success(ui, common::saved());
+                if let Some(a) = r.permissions.get_mut(&id) {
+                    a.settled = Some(now);
+                }
+                if let Some(a) = r.colors.get_mut(&id) {
+                    a.settled = Some(now);
+                }
             }
         }
-        (Write::Role(id), Err(e)) => {
-            r.permissions.remove(&id);
-            r.colors.remove(&id);
+        (Write::Rename(..), Ok(())) => r.status.success(ui, common::saved()),
+        (Write::Role(id, _), Err(e)) => {
+            if last {
+                r.permissions.remove(&id);
+                r.colors.remove(&id);
+            }
             r.status.error(ui, common::not_saved());
             app.toasts.failure(servers::error_role_not_saved(), None, e);
         }
-        (Write::Rename(_), Err(e)) => {
+        (Write::Rename(..), Err(e)) => {
             r.name_errors.from_failure(&Failure::from_api(e), &["name"]);
             r.name_errors.focus = None;
             r.status.error(ui, common::not_saved());
@@ -344,15 +380,32 @@ fn settle(
             app.toasts
                 .failure(servers::error_role_not_deleted(), None, e);
         }
-        (Write::Member(user), Ok(())) => {
-            if let Some(a) = r.members.get_mut(&user) {
+        (Write::Member(user, _), Ok(())) => {
+            if last && let Some(a) = r.members.get_mut(&user) {
                 a.settled = Some(now);
             }
         }
-        (Write::Member(user), Err(e)) => {
-            r.members.remove(&user);
+        (Write::Member(user, _), Err(e)) => {
+            if last {
+                r.members.remove(&user);
+            }
             app.toasts
                 .failure(servers::error_member_roles_not_saved(), None, e);
+        }
+        // The client toasts a failed server write (`server_update`).
+        (Write::Base(_), Ok(())) => {
+            if last {
+                r.status.success(ui, common::saved());
+                if let Some(a) = r.base.as_mut() {
+                    a.settled = Some(now);
+                }
+            }
+        }
+        (Write::Base(_), Err(_)) => {
+            if last {
+                r.base = None;
+            }
+            r.status.error(ui, common::not_saved());
         }
     }
 }
@@ -616,26 +669,18 @@ fn owner_panel(ui: &mut Ui) {
 fn base_panel(ui: &mut Ui, app: &mut AppCtx, r: &mut Roles, detail: &ServerDetail) {
     panel_header(ui, role_texts::base());
     ui.add_space(16.0);
-    let current = r
-        .base
-        .clone()
-        .unwrap_or_else(|| detail.server.member_permissions.clone());
+    let current = r.base.as_ref().map_or_else(
+        || detail.server.member_permissions.clone(),
+        |a| a.value.clone(),
+    );
     if let Some(flag) = switches(ui, "base", |p| current.contains(&p), |_| false, false) {
         let next = toggle_permission(&current, flag);
-        r.base = Some(next.clone());
-        r.saving_base = true;
+        r.base = Some(Ahead::new(next.clone()));
         r.status.clear();
-        app.client.update_server(
-            detail.server.id,
-            ServerPatch {
-                name: None,
-                member_permissions: Some(next),
-            },
-        );
-    }
-    // A finished save hands over to the server's flags again.
-    if !r.saving_base && r.base.as_ref() == Some(&detail.server.member_permissions) {
-        r.base = None;
+        let server = detail.server.id;
+        let seq = r.next();
+        r.track(app, server, Write::Base(seq));
+        app.client.update_member_permissions(server, next, seq);
     }
 }
 
@@ -738,7 +783,8 @@ fn custom_panel(
                     .set_fields(vec![("name", field_message("name", code))]),
                 None => {
                     r.status.clear();
-                    r.track(app, server, Write::Rename(role.id));
+                    let seq = r.next();
+                    r.track(app, server, Write::Rename(role.id, seq));
                     app.client.update_role(
                         server,
                         role.id,
@@ -746,6 +792,7 @@ fn custom_panel(
                             name: Some(name.to_owned()),
                             ..RolePatch::default()
                         },
+                        seq,
                     );
                 }
             }
@@ -762,7 +809,8 @@ fn custom_panel(
     {
         r.status.clear();
         r.colors.insert(role.id, Ahead::new(color));
-        r.track(app, server, Write::Role(role.id));
+        let seq = r.next();
+        r.track(app, server, Write::Role(role.id, seq));
         app.client.update_role(
             server,
             role.id,
@@ -770,6 +818,7 @@ fn custom_panel(
                 color: Some(color),
                 ..RolePatch::default()
             },
+            seq,
         );
     }
     ui.add_space(16.0);
@@ -786,7 +835,8 @@ fn custom_panel(
         let next = toggle_permission(&flags, flag);
         r.status.clear();
         r.permissions.insert(role.id, Ahead::new(next.clone()));
-        r.track(app, server, Write::Role(role.id));
+        let seq = r.next();
+        r.track(app, server, Write::Role(role.id, seq));
         app.client.update_role(
             server,
             role.id,
@@ -794,6 +844,7 @@ fn custom_panel(
                 permissions: Some(next),
                 ..RolePatch::default()
             },
+            seq,
         );
     }
 }
@@ -1064,8 +1115,10 @@ pub(super) fn picker(
         Some(Choose::Role(id)) => {
             let next = toggle_role(&held, id);
             r.members.insert(member.user_id, Ahead::new(next.clone()));
-            r.track(app, server, Write::Member(member.user_id));
-            app.client.set_member_roles(server, member.user_id, next);
+            let seq = r.next();
+            r.track(app, server, Write::Member(member.user_id, seq));
+            app.client
+                .set_member_roles(server, member.user_id, next, seq);
             Picked::Nothing
         }
         Some(Choose::Manage) => {

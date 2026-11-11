@@ -681,10 +681,6 @@ fn poll_loads(
                 s.name = None;
                 s.name_status.success(ui, common::saved());
             }
-            if s.roles.saving_base {
-                s.roles.saving_base = false;
-                s.roles.status.success(ui, common::saved());
-            }
         }
         Some(OpState::Failed(e)) => {
             app.client.clear_op(key);
@@ -692,11 +688,6 @@ fn poll_loads(
                 s.saving_name = false;
                 s.name_errors
                     .from_failure(&Failure::from_api(&e), &["name"]);
-            }
-            if s.roles.saving_base {
-                s.roles.saving_base = false;
-                s.roles.base = None;
-                s.roles.status.error(ui, common::not_saved());
             }
         }
         _ => {}
@@ -1865,6 +1856,53 @@ mod tests {
             .next()
             .expect("the switch");
         assert!(switch.accesskit_node().is_disabled());
+    }
+
+    /// Two quick switches on one role: each write settles from its own
+    /// answer, so the second one's failure is said and not "Gespeichert.".
+    #[test]
+    fn a_failed_second_switch_is_not_saved() {
+        use crate::app::testkit::wait_for_label;
+        use crate::app::testkit::{FakeApi, HOME, MODERATION, Reply, launcher, wait_for};
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("roles-second-fails");
+        let log = Log::default();
+        let inner = with_roles(log.clone());
+        let patches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failed = log.clone();
+        let api = FakeApi::start(true, move |method, path, body| {
+            if method == "PATCH" && path.starts_with("/roles/") {
+                let n = patches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 1 {
+                    failed
+                        .lock()
+                        .push((method.into(), path.into(), body.into()));
+                    return Some(Reply::error(403, "forbidden"));
+                }
+            }
+            inner(method, path, body)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Neue Rolle");
+        harness.get_by_role_and_label(A11y::Link, "Rollen").click();
+        harness.run_steps(4);
+        harness
+            .query_all_by_label("Server verwalten")
+            .next()
+            .expect("the switch")
+            .click();
+        harness.run_steps(1);
+        harness
+            .query_all_by_label("Kanäle verwalten")
+            .next()
+            .expect("the switch")
+            .click();
+        let path = format!("/roles/{MODERATION}");
+        wait_for(&mut harness, "both writes", |_| {
+            logged(&log, "PATCH", &path).len() == 2
+        });
+        wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
     }
 
     /// The "+" on a member row lists the roles; a checkbox saves the
