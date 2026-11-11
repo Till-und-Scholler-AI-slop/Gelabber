@@ -464,6 +464,12 @@ pub enum Notice {
         server: Uuid,
         message: Box<Message>,
     },
+    /// An operator blocked the server: like a kick it leaves the server's
+    /// view, but the server stays listed, marked.
+    Blocked {
+        server: Uuid,
+        text: String,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -758,6 +764,27 @@ impl State {
         if self.voice_self.server == Some(server) {
             self.voice_self = VoiceSelf::default();
         }
+    }
+
+    /// An operator blocked the server (`markServerBlocked`): everything of
+    /// it goes as with [`Self::forget_server`], but it stays in the list,
+    /// marked, so its tile opens the blocked notice. `false` when the list
+    /// already said so: nothing is news then.
+    pub fn mark_server_blocked(&mut self, server: Uuid) -> bool {
+        let index = self.servers.iter().position(|s| s.id == server);
+        if index.is_some_and(|i| self.servers[i].blocked) {
+            return false;
+        }
+        let listed = index.map(|i| {
+            let mut entry = self.servers[i].clone();
+            entry.blocked = true;
+            (i, entry)
+        });
+        self.forget_server(server);
+        if let Some((i, entry)) = listed {
+            self.servers.insert(i, entry);
+        }
+        true
     }
 
     // ----------------------------------------------------------- presence
@@ -1458,6 +1485,47 @@ mod tests {
         let epoch = s.epoch;
         s.reset_account();
         assert_eq!(s.epoch, epoch + 1);
+    }
+
+    /// A blocked server stays listed, marked, without anything else of it;
+    /// a second block is no news.
+    #[test]
+    fn a_blocked_server_stays_listed_and_marked() {
+        let mut s = State::default();
+        let server = |n: u128, name: &str| -> Server {
+            serde_json::from_value(serde_json::json!({
+                "id": id(n), "name": name, "owner_id": id(9), "icon_url": null,
+                "created_at": "2026-10-01T00:00:00Z", "role": "member",
+                "permissions": [], "member_permissions": [],
+            }))
+            .unwrap()
+        };
+        s.servers = vec![server(1, "Wohnzimmer"), server(2, "Spieleabend")];
+        let blocked = id(1);
+        s.view = View {
+            server: Some(blocked),
+            channel: None,
+        };
+        s.last_server = Some(blocked);
+        s.voice_self.server = Some(blocked);
+        s.voice.insert(blocked, HashMap::new());
+        assert!(s.mark_server_blocked(blocked));
+        let names: Vec<&str> = s.servers.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, ["Wohnzimmer", "Spieleabend"]);
+        assert!(s.servers[0].blocked && !s.servers[1].blocked);
+        assert_eq!(s.view, View::default());
+        assert_eq!(s.last_server, None);
+        assert_eq!(s.voice_self, VoiceSelf::default());
+        assert!(!s.voice.contains_key(&blocked));
+        assert!(
+            !s.desired_topics()
+                .iter()
+                .any(|t| t.key() == Topic::server(blocked).key())
+        );
+        assert!(!s.mark_server_blocked(blocked));
+        // Not listed (yet): still news.
+        assert!(s.mark_server_blocked(id(3)));
+        assert_eq!(s.servers.len(), 2);
     }
 
     fn api(status: u16, code: &str, fields: serde_json::Value) -> ApiError {

@@ -442,6 +442,17 @@ impl Client {
                 self.sync_topics();
                 Err(e)
             }
+            // Blocked meanwhile: it stays listed, marked, without its detail.
+            Err(e) if e.code() == "server_blocked" => {
+                self.write_in(epoch, |s| {
+                    if let Some(entry) = s.servers.iter_mut().find(|v| v.id == id) {
+                        entry.blocked = true;
+                    }
+                    s.server_details.remove(&id);
+                });
+                self.sync_topics();
+                Err(e)
+            }
             Err(e) => Err(e),
         }
     }
@@ -1927,6 +1938,7 @@ impl Client {
                 match (e.as_str(), s, c) {
                     ("kicked", Some(server), _) => self.removed_from(server, false),
                     ("banned", Some(server), _) => self.removed_from(server, true),
+                    ("server_blocked", Some(server), _) => self.server_blocked(server),
                     ("not_found", Some(server), Some(channel)) => {
                         if let Some(gateway) = self.gateway() {
                             gateway.forget_topic(Topic::channel(server, channel));
@@ -1971,6 +1983,25 @@ impl Client {
                 server,
                 text: gelabber_i18n::shell::removed_kicked().into(),
             }
+        });
+    }
+
+    /// An operator blocked the server (`applyServerBlocked` in
+    /// useRealtime.ts): leave voice there; the first time, mark it in the
+    /// list, drop the rest of it and toast. Later subscribes meet the same
+    /// error and only drop voice again.
+    fn server_blocked(&self, server: Uuid) {
+        let in_voice = self.with_state(|s| s.voice_self.server == Some(server));
+        if in_voice {
+            self.voice_leave();
+        }
+        if !self.write(|s| s.mark_server_blocked(server)) {
+            return;
+        }
+        self.sync_topics();
+        self.notify(Notice::Blocked {
+            server,
+            text: gelabber_i18n::auth::error_server_blocked().into(),
         });
     }
 
@@ -2085,9 +2116,10 @@ impl Client {
         }
         let loaded: Vec<Uuid> = self.with_state(|s| s.server_details.keys().copied().collect());
         let results = join_all(loaded.into_iter().map(|id| self.reload_server(id))).await;
-        ok &= results
-            .iter()
-            .all(|r| r.as_ref().map_or_else(|e| e.is_gone(), |_| true));
+        ok &= results.iter().all(|r| {
+            r.as_ref()
+                .map_or_else(|e| e.is_gone() || e.code() == "server_blocked", |_| true)
+        });
         let visible = self.with_state(|s| s.view.channel);
         self.write(|s| {
             for (id, history) in s.channels.iter_mut() {
@@ -2293,6 +2325,51 @@ mod tests {
             assert!(start.elapsed() < Duration::from_millis(500), "still alive");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// `err server_blocked` (`applyServerBlocked`): the server stays listed,
+    /// marked, its view goes, and a toast says why; a repeat says nothing.
+    #[test]
+    fn a_blocked_server_is_marked_with_one_notice() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        let server = Uuid::from_u128(7);
+        signed_in(&client, Uuid::from_u128(5));
+        client.write(|s| {
+            s.servers = vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": server, "name": "Wohnzimmer", "owner_id": Uuid::from_u128(9),
+                    "icon_url": null, "created_at": "2026-10-01T00:00:00Z", "role": "member",
+                    "permissions": [], "member_permissions": [],
+                }))
+                .unwrap(),
+            ];
+            s.view = View {
+                server: Some(server),
+                channel: None,
+            };
+        });
+        let blocked = || {
+            client.on_gateway(GatewayEvent::Frame(ServerFrame::Err {
+                e: "server_blocked".into(),
+                s: Some(server),
+                c: None,
+            }))
+        };
+        blocked();
+        assert!(client.with_state(|s| s.server(server).is_some_and(|v| v.blocked)));
+        assert_eq!(client.with_state(|s| s.view), View::default());
+        let notices = client.take_notices();
+        assert_eq!(
+            notices,
+            [Notice::Blocked {
+                server,
+                text: "Dieser Server wurde vom Betreiber gesperrt.".into(),
+            }]
+        );
+        blocked();
+        assert!(client.take_notices().is_empty());
+        assert_eq!(client.with_state(|s| s.servers.len()), 1);
     }
 
     /// A failed round is tried again while the socket is wanted.

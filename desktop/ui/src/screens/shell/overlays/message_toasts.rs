@@ -200,7 +200,9 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
     };
     for notice in app.client.take_notices() {
         match notice {
-            Notice::Kicked { server, text } | Notice::Banned { server, text } => {
+            Notice::Kicked { server, text }
+            | Notice::Banned { server, text }
+            | Notice::Blocked { server, text } => {
                 app.toasts.notify(text);
                 let here = match app.nav.route() {
                     Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s) => {
