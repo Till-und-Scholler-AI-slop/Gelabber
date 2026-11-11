@@ -15,7 +15,8 @@ use crate::widgets::{Button, ButtonVariant};
 
 /// The list entry of `server` when the list marks it blocked.
 pub fn blocked(app: &AppCtx, server: uuid::Uuid) -> Option<Server> {
-    app.client.with_state(|s| s.server(server).filter(|v| v.blocked).cloned())
+    app.client
+        .with_state(|s| s.server(server).filter(|v| v.blocked).cloned())
 }
 
 /// The notice in the page column: `.lr-auth-card mx-auto my-10 w-full
@@ -72,4 +73,64 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, page: Rect, server: &Server) {
         }
     });
     controls::show_confirm(ui.ctx());
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    use crate::app::testkit::{FakeApi, HOME, LENA, Reply, launcher, wait_for, wait_for_label};
+    use crate::platform::paths::testing::TempConfig;
+
+    /// Wohnzimmer, blocked, with Lena as `role`.
+    fn blocked_api(role: &'static str) -> FakeApi {
+        FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/servers") => Some(Reply::json(serde_json::json!([{
+                "id": HOME, "name": "Wohnzimmer", "owner_id": LENA, "icon_url": null,
+                "created_at": "2026-01-01T00:00:00Z", "role": role,
+                "permissions": [], "member_permissions": [], "blocked": true
+            }]))),
+            ("GET", p) if p == format!("/servers/{HOME}") => {
+                Some(Reply::error(403, "server_blocked"))
+            }
+            ("DELETE", p) if p == format!("/servers/{HOME}") => {
+                Some(Reply::status(204, serde_json::Value::Null))
+            }
+            _ => None,
+        })
+    }
+
+    /// The server's page is the notice; the owner deletes it after the
+    /// settings' confirmation.
+    #[test]
+    fn a_blocked_server_opens_to_its_notice() {
+        let _config = TempConfig::new("blocked-owner");
+        let api = blocked_api("owner");
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for_label(&mut harness, "Server löschen");
+        assert!(harness.query_by_label("Server verlassen").is_none());
+        harness
+            .get_by_role_and_label(Role::Button, "Server löschen")
+            .click();
+        wait_for_label(&mut harness, "Server „Wohnzimmer“ endgültig löschen?");
+        let confirm = harness
+            .query_all_by_label("Server löschen")
+            .rfind(|n| n.accesskit_node().role() == Role::Button)
+            .expect("the dialog's button");
+        confirm.click();
+        let delete = format!("DELETE /servers/{HOME}");
+        wait_for(&mut harness, "the delete", |_| api.saw(&delete));
+    }
+
+    /// A member is offered to leave.
+    #[test]
+    fn a_member_of_a_blocked_server_may_leave() {
+        let _config = TempConfig::new("blocked-member");
+        let api = blocked_api("member");
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for_label(&mut harness, "Server verlassen");
+        harness.get_by_role_and_label(Role::Button, "Server verlassen");
+        assert!(harness.query_by_label("Server löschen").is_none());
+    }
 }

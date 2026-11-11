@@ -761,4 +761,100 @@ mod tests {
             assert_eq!(reads(), before, "nothing marked read (shift: {shift})");
         }
     }
+
+    /// The stand-in API with Lena's workspace, Lena an operator or not.
+    fn operator_api(operator: bool) -> FakeApi {
+        FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/auth/session") => Some(Reply::json(serde_json::json!({
+                "user": crate::app::testkit::lena(), "csrf_token": "csrf", "operator": operator
+            }))),
+            _ => crate::app::testkit::workspace(method, path),
+        })
+    }
+
+    /// A stand-in for the system browser that notes what it was handed.
+    fn browser(
+        harness: &egui_kittest::Harness<'_, crate::Launcher>,
+    ) -> std::sync::Arc<parking_lot::Mutex<Vec<String>>> {
+        let opened: std::sync::Arc<parking_lot::Mutex<Vec<String>>> = Default::default();
+        let seen = opened.clone();
+        crate::screens::auth::oidc::set_opener(
+            &harness.ctx,
+            std::sync::Arc::new(move |url: &str| {
+                seen.lock().push(url.to_owned());
+                Ok(())
+            }),
+        );
+        opened
+    }
+
+    /// "Betrieb" is in the menu for operators only, after "Einstellungen",
+    /// and opens /betrieb/server in the browser; the app stays where it was.
+    #[test]
+    fn betrieb_shows_for_operators_and_opens_the_browser() {
+        use crate::app::testkit::HOME;
+
+        let _config = TempConfig::new("menu-operator");
+        let api = operator_api(false);
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        open_menu(&mut harness);
+        assert!(harness.query_by_label("Betrieb").is_none());
+
+        let api = operator_api(true);
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        let opened = browser(&harness);
+        open_menu(&mut harness);
+        let labels: Vec<String> = harness
+            .query_all_by_role(Role::Button)
+            .filter_map(|n| n.accesskit_node().label())
+            .filter(|l| {
+                ["Profil bearbeiten", "Einstellungen", "Betrieb", "Abmelden"].contains(&l.as_str())
+            })
+            .collect();
+        assert!(
+            labels.ends_with(&[
+                "Profil bearbeiten".into(),
+                "Einstellungen".into(),
+                "Betrieb".into(),
+                "Abmelden".into()
+            ]),
+            "{labels:?}"
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Betrieb")
+            .click();
+        wait_for(&mut harness, "the browser", |_| !opened.lock().is_empty());
+        assert_eq!(
+            opened.lock().as_slice(),
+            [format!("{}/betrieb/server", api.origin)]
+        );
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Abmelden").is_none());
+        let route = harness.state_mut().app().unwrap().nav().route().clone();
+        assert_eq!(route, crate::route::Route::Server(HOME.parse().unwrap()));
+    }
+
+    /// `/betrieb/{page}`: operators get the hand-off card, which opens the
+    /// same page in the browser; anyone else meets "not found".
+    #[test]
+    fn betrieb_in_the_app_hands_off_to_the_browser() {
+        let _config = TempConfig::new("route-operator");
+        let api = operator_api(true);
+        let mut harness = launcher(&api, "/betrieb/meldungen");
+        let opened = browser(&harness);
+        wait_for_label(&mut harness, "Im Browser öffnen");
+        harness
+            .get_by_role_and_label(Role::Button, "Im Browser öffnen")
+            .click();
+        wait_for(&mut harness, "the browser", |_| !opened.lock().is_empty());
+        assert_eq!(
+            opened.lock().as_slice(),
+            [format!("{}/betrieb/meldungen", api.origin)]
+        );
+
+        let api = operator_api(false);
+        let mut harness = launcher(&api, "/betrieb");
+        wait_for_label(&mut harness, "Zur Startseite");
+        assert!(harness.query_by_label("Im Browser öffnen").is_none());
+    }
 }

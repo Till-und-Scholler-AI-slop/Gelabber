@@ -536,3 +536,187 @@ fn a_dead_name_step_says_the_sign_in_expired() {
     wait_for_label(&mut harness, "Zur Anmeldung");
     assert!(!api.saw("POST /auth/oidc/pending"));
 }
+
+// ------------------------------------------------------------ invitations
+
+/// The stand-in API with `mode` for `GET /auth/registration`; the bodies of
+/// `POST /auth/register` land in the returned list, and `answer` replies.
+fn registration(
+    mode: &'static str,
+    answer: fn() -> Reply,
+) -> (
+    FakeApi,
+    std::sync::Arc<parking_lot::Mutex<Vec<serde_json::Value>>>,
+) {
+    let bodies: std::sync::Arc<parking_lot::Mutex<Vec<serde_json::Value>>> = Default::default();
+    let seen = bodies.clone();
+    let api = FakeApi::start(false, move |method, at, body| match (method, at) {
+        ("GET", "/auth/registration") => Some(Reply::json(serde_json::json!({"mode": mode}))),
+        ("POST", "/auth/register") => {
+            seen.lock()
+                .push(serde_json::from_str(body).unwrap_or_default());
+            Some(answer())
+        }
+        _ => None,
+    });
+    (api, bodies)
+}
+
+fn mailed() -> Reply {
+    Reply::status(
+        202,
+        serde_json::json!({"user": null, "csrf_token": "csrf", "verification_sent": true}),
+    )
+}
+
+fn fill_account(harness: &mut egui_kittest::Harness<'_, crate::Launcher>) {
+    wait_for_label(harness, "Name");
+    type_into(harness, "Name", "Mira");
+    type_into(harness, "E-Mail-Adresse", "mira@example.test");
+    type_into(harness, "Passwort", "parity-pass-123");
+}
+
+/// `/register?invitation=`: the field shows, pre-filled, and the code goes
+/// with the registration, next to the language.
+#[test]
+fn an_invitation_link_fills_the_code_and_sends_it() {
+    let _config = TempConfig::new("auth-invitation-link");
+    let (api, bodies) = registration("open", mailed);
+    let mut harness = launcher(&api, "/register?invitation=k7m2p9qrs4tx");
+    fill_account(&mut harness);
+    assert_eq!(
+        input(&harness, "Einladungscode")
+            .accesskit_node()
+            .value()
+            .as_deref(),
+        Some("k7m2p9qrs4tx")
+    );
+    assert!(
+        harness
+            .query_by_label("Gelabber ist gerade nur mit Einladung offen.")
+            .is_none()
+    );
+    harness
+        .get_by_role_and_label(Role::Button, "Registrieren")
+        .click();
+    wait_for_label(&mut harness, "Andere Adresse verwenden");
+    let body = bodies.lock()[0].clone();
+    assert_eq!(body["invitation"], "k7m2p9qrs4tx");
+    assert_eq!(body["locale"], "de");
+    assert!(body.get("server_invite").is_none(), "{body}");
+}
+
+/// Invitation-only without a code: the line above the heading, the field,
+/// and no request while it is empty.
+#[test]
+fn an_invitation_only_instance_asks_for_a_code() {
+    let _config = TempConfig::new("auth-invitation-only");
+    let (api, bodies) = registration("invitation", mailed);
+    let mut harness = launcher(&api, "/register");
+    wait_for_label(&mut harness, "Gelabber ist gerade nur mit Einladung offen.");
+    fill_account(&mut harness);
+    harness
+        .get_by_role_and_label(Role::Button, "Registrieren")
+        .click();
+    // The field's own error takes the focus (its copy: rules.rs tests).
+    wait_for(&mut harness, "the code field's error", |h| {
+        crate::app::testkit::focused_label(h).as_deref() == Some("Einladungscode")
+    });
+    assert!(bodies.lock().is_empty());
+    type_into(&mut harness, "Einladungscode", " abc123 ");
+    harness
+        .get_by_role_and_label(Role::Button, "Registrieren")
+        .click();
+    wait_for_label(&mut harness, "Andere Adresse verwenden");
+    assert_eq!(bodies.lock()[0]["invitation"], "abc123");
+}
+
+/// Following a server invite on an invitation-only instance: no field, no
+/// line, the invite's code goes along, and a refusal is the form's line.
+#[test]
+fn a_server_invite_admits_without_the_field() {
+    let _config = TempConfig::new("auth-invitation-server");
+    let (api, bodies) = registration("invitation", || {
+        Reply::status(
+            410,
+            serde_json::json!({"error": "invitation_invalid", "message": "x",
+                               "fields": {"invitation": "invalid"}}),
+        )
+    });
+    let mut harness = launcher(&api, "/register?redirect=%2Finvite%2Fabc123");
+    fill_account(&mut harness);
+    harness.run_steps(5);
+    assert!(
+        harness
+            .query_all_by_label("Einladungscode")
+            .next()
+            .is_none()
+    );
+    assert!(
+        harness
+            .query_by_label("Gelabber ist gerade nur mit Einladung offen.")
+            .is_none()
+    );
+    harness
+        .get_by_role_and_label(Role::Button, "Registrieren")
+        .click();
+    wait_for_text(
+        &mut harness,
+        "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+    );
+    let body = bodies.lock()[0].clone();
+    assert_eq!(body["server_invite"], "abc123");
+    assert!(body.get("invitation").is_none(), "{body}");
+    assert!(
+        harness
+            .query_all_by_label("Einladungscode")
+            .next()
+            .is_none()
+    );
+}
+
+/// An open instance that asks for a code after all brings the field up,
+/// with the API's message under it.
+#[test]
+fn a_refusal_for_a_code_brings_the_field_up() {
+    let _config = TempConfig::new("auth-invitation-asked");
+    let (api, _) = registration("open", || {
+        Reply::status(
+            403,
+            serde_json::json!({"error": "invitation_required", "message": "x",
+                               "fields": {"invitation": "required"}}),
+        )
+    });
+    let mut harness = launcher(&api, "/register");
+    fill_account(&mut harness);
+    assert!(
+        harness
+            .query_all_by_label("Einladungscode")
+            .next()
+            .is_none()
+    );
+    harness
+        .get_by_role_and_label(Role::Button, "Registrieren")
+        .click();
+    wait_for_label(&mut harness, "Einladungscode");
+    wait_for(&mut harness, "the code field's error", |h| {
+        crate::app::testkit::focused_label(h).as_deref() == Some("Einladungscode")
+    });
+}
+
+/// A disabled account's sign-in says so (`account_disabled`).
+#[test]
+fn a_disabled_account_is_told_at_sign_in() {
+    let _config = TempConfig::new("auth-account-disabled");
+    let api = FakeApi::start(false, |method, at, _| {
+        (method == "POST" && at == "/auth/login").then(|| Reply::error(403, "account_disabled"))
+    });
+    let mut harness = launcher(&api, "/login");
+    wait_for_label(&mut harness, "E-Mail-Adresse");
+    type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
+    type_into(&mut harness, "Passwort", "parity-pass-123");
+    harness
+        .get_by_role_and_label(Role::Button, "Anmelden")
+        .click();
+    wait_for_text(&mut harness, "Dieses Konto ist gesperrt.");
+}

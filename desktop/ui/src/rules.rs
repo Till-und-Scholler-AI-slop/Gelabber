@@ -489,7 +489,10 @@ mod tests {
             field_message("invitation", "invalid"),
             auth::error_invitation_invalid()
         );
-        assert_eq!(field_message("invitation", "too_long"), "Einladungscode ist zu lang.");
+        assert_eq!(
+            field_message("invitation", "too_long"),
+            "Einladungscode ist zu lang."
+        );
         // A sign-in refused for a disabled account says so at the form.
         let mut errors = FormErrors::default();
         errors.from_failure(
