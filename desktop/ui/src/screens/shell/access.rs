@@ -177,14 +177,16 @@ pub fn field(ui: &mut Ui, id: Id, roles: &[ServerRole], value: &mut Selection) {
             open = !open;
         }
         let painter = ui.painter();
-        if open || (response.has_focus() && crate::widgets::keyboard_focus(ui.ctx())) {
+        // The open list holds the focus, so the trigger shows no ring then.
+        let focused = response.has_focus() && crate::widgets::keyboard_focus(ui.ctx());
+        if focused {
             crate::widgets::focus_ring(painter, rect, theme.radius.sm, &theme);
         }
         painter.rect(
             rect,
             corner(theme.radius.sm),
             c.bg,
-            Stroke::new(1.0, if open { c.focus } else { c.border_strong }),
+            Stroke::new(1.0, if focused { c.focus } else { c.border_strong }),
             StrokeKind::Inside,
         );
         // `.channel-access-trigger`: 12 in, 34 kept for the chevron.
