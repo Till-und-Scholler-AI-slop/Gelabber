@@ -168,8 +168,40 @@ pub fn error_message(code: &str) -> &'static str {
         "invitation_invalid" => auth::error_invitation_invalid(),
         "account_disabled" => auth::error_account_disabled(),
         "server_blocked" => auth::error_server_blocked(),
+        "join_request_required" => auth::error_join_request_required(),
+        "join_request_declined" => auth::error_join_request_declined(),
+        "join_requests_full" => auth::error_join_requests_full(),
+        "already_member" => auth::error_already_member(),
         _ => auth::error_internal(),
     }
+}
+
+/// `apiErrorMessage`: the copy of a failure with what its body adds. A
+/// declined request to join names the day from which the person may ask
+/// again (`retry_after` seconds from `now`).
+pub fn failure_message(failure: &Failure, now: chrono::DateTime<chrono::Utc>) -> String {
+    if failure.code == "join_request_declined"
+        && let Some(wait) = failure.retry_after.filter(|w| *w > 0.0)
+    {
+        let at = now + chrono::Duration::milliseconds((wait * 1000.0) as i64);
+        return auth::error_join_request_declined_until(&format_day(at));
+    }
+    error_message(&failure.code).to_owned()
+}
+
+/// `formatDate(at)`: the local day, "18. November 2026".
+pub fn format_day(at: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::{Datelike, Timelike};
+    let at = at.with_timezone(&chrono::Local);
+    let fields = gelabber_i18n::intl::DateTime {
+        year: at.year(),
+        month: at.month(),
+        day: at.day(),
+        weekday: at.weekday().num_days_from_monday(),
+        hour: at.hour(),
+        minute: at.minute(),
+    };
+    gelabber_i18n::intl::format_date(&fields, gelabber_i18n::intl::DateStyle::Long)
 }
 
 /// `OIDC_ERRORS`: why a provider sign-in came back without signing in
@@ -307,7 +339,7 @@ impl FormErrors {
             .map(|(f, code)| (f.clone(), field_message(f, code)))
             .collect();
         self.form = if fields.is_empty() {
-            Some(error_message(&failure.code).to_owned())
+            Some(failure_message(failure, chrono::Utc::now()))
         } else if fields.len() > 1 {
             Some(auth::error_validation_failed().to_owned())
         } else {
@@ -503,5 +535,56 @@ mod tests {
             &["email", "password"],
         );
         assert_eq!(errors.form.as_deref(), Some("Dieses Konto ist gesperrt."));
+    }
+
+    /// The directory's refusals (auth/rules.test.ts): their copy, and a
+    /// declined request names the day it may be asked again.
+    #[test]
+    fn join_request_codes_have_copy() {
+        for code in [
+            "join_request_required",
+            "join_request_declined",
+            "join_requests_full",
+            "already_member",
+        ] {
+            assert_ne!(error_message(code), auth::error_internal(), "{code}");
+        }
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-11T12:00:00Z")
+            .expect("time")
+            .with_timezone(&chrono::Utc);
+        let declined = Failure {
+            code: "join_request_declined".into(),
+            retry_after: Some(7.0 * 24.0 * 3600.0),
+            ..Failure::default()
+        };
+        let day = format_day(now + chrono::Duration::days(7));
+        assert!(day.ends_with("November 2026"), "{day}");
+        assert_eq!(
+            failure_message(&declined, now),
+            format!(
+                "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {day} wieder anfragen."
+            )
+        );
+        // Without the wait it is the plain line.
+        let plain = Failure {
+            retry_after: None,
+            ..declined
+        };
+        assert_eq!(
+            failure_message(&plain, now),
+            auth::error_join_request_declined()
+        );
+        let mut errors = FormErrors::default();
+        errors.from_failure(
+            &Failure {
+                code: "join_requests_full".into(),
+                ..Failure::default()
+            },
+            &["message"],
+        );
+        assert_eq!(
+            errors.form.as_deref(),
+            Some(auth::error_join_requests_full())
+        );
     }
 }

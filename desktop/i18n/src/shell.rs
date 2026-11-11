@@ -154,6 +154,8 @@ crate::strings! {
         | "no readable message on the older page";
     /// The user menu's way to the operator area (operators only).
     user_panel_operator = "Betrieb" | "Operations";
+    /// The rail's tile to the directory, while the instance runs one.
+    rail_discover = "Entdecken" | "Discover";
 }
 
 /// The desktop app's own: the server turned the upgrade down, with why

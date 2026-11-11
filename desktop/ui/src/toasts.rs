@@ -86,7 +86,10 @@ pub fn error_text(error: &ApiError) -> Option<String> {
             return Some(detail.join(" "));
         }
     }
-    Some(crate::rules::error_message(code).to_owned())
+    Some(crate::rules::failure_message(
+        &crate::rules::Failure::from_api(error),
+        chrono::Utc::now(),
+    ))
 }
 
 #[derive(Default)]
