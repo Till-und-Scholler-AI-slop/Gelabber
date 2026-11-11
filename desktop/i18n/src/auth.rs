@@ -71,6 +71,9 @@ crate::strings! {
     field_label_q = "Suche" | "Search";
     field_label_token = "Link" | "Link";
     field_label_other = "Eingabe" | "Input";
+    field_label_color = "Farbe" | "Colour";
+    field_label_roles = "Rollen" | "Roles";
+    field_label_role_ids = "Zugriff" | "Access";
 
     // Field codes without a parameter (rules.rs `field_message`).
     field_error_file_too_large = "Die Datei ist zu groß (max. 25 MB)."
@@ -103,6 +106,12 @@ crate::strings! {
         | "Only one line of text, no control characters.";
     field_error_content_type_invalid = "Dieser Dateityp ist nicht erlaubt."
         | "This file type isn’t allowed.";
+    field_error_role_name_taken = "Diesen Namen hat schon eine Rolle."
+        | "A role already has this name.";
+    field_error_too_many_roles = "Ein Server hat höchstens 50 Rollen."
+        | "A server has at most 50 roles.";
+    field_error_role_ids_invalid = "Eine der Rollen gibt es nicht mehr. Lade die Seite neu."
+        | "One of the roles no longer exists. Reload the page.";
 
     // Problems the sign-out strip shows (auth/session.ts).
     session_logout_unconfirmed = "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut."

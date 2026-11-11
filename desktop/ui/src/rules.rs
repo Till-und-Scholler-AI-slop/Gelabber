@@ -66,6 +66,38 @@ pub fn validate_name(raw: &str) -> Option<&'static str> {
     }
 }
 
+pub const ROLE_NAME_MAX: usize = 32;
+
+/// Names of the two fixed roles in both languages; no custom role takes one.
+pub const RESERVED_ROLE_NAMES: [&str; 4] = [
+    "Alle Mitglieder", // i18n-ok: compared, never shown
+    "All members",     // i18n-ok
+    "Inhaber",         // i18n-ok
+    "Owner",           // i18n-ok
+];
+
+/// `validateRoleName` (web/src/servers/rules.ts): trimmed, 1–32
+/// characters, no control characters, not a fixed role's name and not the
+/// name of another role (`others`), both ignoring case.
+pub fn validate_role_name(raw: &str, others: &[&str]) -> Option<&'static str> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Some("required");
+    }
+    if value.chars().count() > ROLE_NAME_MAX {
+        return Some("too_long");
+    }
+    if value.chars().any(char::is_control) {
+        return Some("invalid");
+    }
+    let lower = value.to_lowercase();
+    RESERVED_ROLE_NAMES
+        .iter()
+        .chain(others)
+        .any(|name| name.to_lowercase() == lower)
+        .then_some("taken")
+}
+
 fn field_label(field: &str) -> &'static str {
     match field {
         "email" => auth::field_label_email(),
@@ -96,6 +128,10 @@ fn field_label(field: &str) -> &'static str {
         "gif" => auth::field_label_gif(),
         "q" => auth::field_label_q(),
         "token" => auth::field_label_token(),
+        "color" => auth::field_label_color(),
+        "permissions" => auth::field_label_member_permissions(),
+        "roles" => auth::field_label_roles(),
+        "role_ids" => auth::field_label_role_ids(),
         _ => auth::field_label_other(),
     }
 }
@@ -112,12 +148,15 @@ pub fn field_message(field: &str, code: &str) -> String {
         "too_long" => auth::field_error_too_long(label),
         "too_large" => auth::field_error_too_large().into(),
         "mismatch" => auth::field_error_mismatch().into(),
+        // Only a role's name is taken by name; an address by email.
+        "taken" if field == "name" => auth::field_error_role_name_taken().into(),
         "taken" => auth::field_error_taken().into(),
         "wrong" => auth::field_error_wrong().into(),
         "stale" => auth::field_error_stale().into(),
         "exclusive" => auth::field_error_exclusive().into(),
         "unavailable" => auth::field_error_unavailable().into(),
         "not_editable" => auth::field_error_not_editable().into(),
+        "too_many" => auth::field_error_too_many_roles().into(),
         _ => match field {
             "email" => auth::field_error_email_invalid().into(),
             "avatar_url" => auth::field_error_avatar_url_invalid().into(),
@@ -125,6 +164,7 @@ pub fn field_message(field: &str, code: &str) -> String {
             "bio" => auth::field_error_bio_invalid().into(),
             "pronouns" | "status_text" => auth::field_error_line_invalid().into(),
             "content_type" => auth::field_error_content_type_invalid().into(),
+            "role_ids" => auth::field_error_role_ids_invalid().into(),
             _ => auth::field_error_invalid(label),
         },
     }
@@ -365,6 +405,43 @@ mod tests {
             plain.form.as_deref(),
             Some("Zu viele Anfragen. Bitte kurz warten und noch einmal versuchen.")
         );
+    }
+
+    #[test]
+    fn role_rules_and_copy() {
+        assert_eq!(validate_role_name("  ", &[]), Some("required"));
+        assert_eq!(validate_role_name(&"x".repeat(33), &[]), Some("too_long"));
+        assert_eq!(validate_role_name(&"ä".repeat(32), &[]), None);
+        assert_eq!(validate_role_name("Mo\u{85}d", &[]), Some("invalid"));
+        assert_eq!(validate_role_name("alle mitglieder", &[]), Some("taken"));
+        assert_eq!(validate_role_name("OWNER", &[]), Some("taken"));
+        assert_eq!(
+            validate_role_name(" moderation ", &["Moderation"]),
+            Some("taken")
+        );
+        assert_eq!(validate_role_name("Moderation", &["Stammgäste"]), None);
+        assert_eq!(
+            field_message("name", "taken"),
+            "Diesen Namen hat schon eine Rolle."
+        );
+        assert_eq!(
+            field_message("email", "taken"),
+            "Diese E-Mail-Adresse ist schon registriert."
+        );
+        assert_eq!(
+            field_message("roles", "too_many"),
+            "Ein Server hat höchstens 50 Rollen."
+        );
+        assert_eq!(
+            field_message("role_ids", "invalid"),
+            "Eine der Rollen gibt es nicht mehr. Lade die Seite neu."
+        );
+        assert_eq!(field_message("color", "invalid"), "Farbe ist ungültig.");
+        assert_eq!(
+            field_message("permissions", "invalid"),
+            "Rechte ist ungültig."
+        );
+        assert_eq!(field_message("roles", "required"), "Rollen fehlt.");
     }
 
     #[test]
