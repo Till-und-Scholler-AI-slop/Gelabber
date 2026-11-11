@@ -429,7 +429,7 @@ Reporting a server:
 |---|---|---|---|
 | `POST /api/servers/{id}/reports` | `{"reason": "spam" \| "harassment" \| "sexual" \| "illegal" \| "other", "details"?: string}`; `details` trimmed, ≤ 1000 chars, line breaks and tabs allowed, required for `other` | `201 {"id", "created_at"}`; when the caller already has an open report of this server: `200` with that one | `404` neither a member nor able to see its listing (or unknown/unparseable id); `403 server_blocked` (members); `429 rate_limited` (`report`, 10 per hour per account, counted before validation); `422` fields `reason: invalid`, `details: too_long \| invalid \| required` |
 
-Members can report, and while the directory is on (§4.7) so can anyone who can see the server's listing; that is how "Melden" on a listing reports. When the caller can see the listing, members included, the report stores a snapshot of it (`name`, `icon_url`, `description`, `language`, `join_mode` at that moment), so later edits cannot hide what was reported. Reports are read only by operators; owners never see them.
+Members can report, and while the directory is on (§4.7) so can anyone who can see the server's listing; that is how "Melden" on a listing reports. When the caller can see the listing, members included, the report stores a snapshot of it (`name`, `icon_url`, `description`, `language`, `join_mode` at that moment), so later edits cannot hide what was reported. Reports are read only by operators; owners never see them. `GET /api/operator/reports` and the resolve answer (§4.6) return that snapshot as the report's `snapshot`, or `null` when the report has none.
 
 ### 4.6 Operator area "Betrieb" (v0.10, web only)
 

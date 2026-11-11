@@ -1655,6 +1655,65 @@ async fn reports_of_listings_count_against_the_report_limit(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn the_operator_reads_the_listing_as_it_was_reported(pool: PgPool) {
+    let mut state = directory_state(pool.clone());
+    state.operators = std::sync::Arc::new(std::collections::HashSet::from([
+        "op@example.test".to_owned()
+    ]));
+    let mut op = registered(&state, "op@example.test", "Betrieb").await;
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let filmclub = create_server(&mut ada, "Filmclub").await;
+    let privat = create_server(&mut ada, "Privat").await;
+    list(&mut ada, filmclub, "de", "Jeden Freitag ein Film.").await;
+    let res = report(
+        &mut lena,
+        filmclub,
+        json!({ "reason": "other", "details": "Wirbt für Fremdseiten." }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let filed = res.body["id"].clone();
+    let res = report(&mut ada, privat, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    // The owner edits the listing afterwards; the report keeps the old one.
+    list(&mut ada, filmclub, "en", "Nothing to see here.").await;
+
+    let snapshot = json!({
+        "name": "Filmclub", "icon_url": null, "description": "Jeden Freitag ein Film.",
+        "language": "de", "join_mode": "open",
+    });
+    let res = op.send(Method::GET, "/api/operator/reports", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let reports = res.body["reports"].as_array().unwrap();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[0]["id"], filed);
+    assert_eq!(reports[0]["reason"], "other");
+    assert_eq!(reports[0]["details"], "Wirbt für Fremdseiten.");
+    assert_eq!(reports[0]["snapshot"], snapshot);
+    // A report without a listing has `snapshot: null`, not a missing key.
+    assert_eq!(reports[1]["server"]["id"], privat.to_string());
+    assert_eq!(reports[1]["snapshot"], Value::Null);
+    assert!(reports[1].as_object().unwrap().contains_key("snapshot"));
+
+    // Closing the report keeps the snapshot, in the answer and the list.
+    let res = op
+        .send(
+            Method::POST,
+            &format!("/api/operator/reports/{}/resolve", filed.as_str().unwrap()),
+            Some(json!({ "status": "dismissed" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["snapshot"], snapshot);
+    let res = op
+        .send(Method::GET, "/api/operator/reports?status=closed", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["reports"][0]["snapshot"], snapshot);
+}
+
+#[sqlx::test]
 async fn a_delist_hides_the_listing_and_keeps_its_requests(pool: PgPool) {
     let mut state = directory_state(pool.clone());
     state.operators = std::sync::Arc::new(std::collections::HashSet::from([

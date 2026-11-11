@@ -245,6 +245,10 @@ pub struct Report {
     pub resolved_at: Option<DateTime<Utc>>,
     pub resolved_by: Option<Person>,
     pub resolution_note: Option<String>,
+    /// The directory listing as the reporter saw it (`name`, `icon_url`,
+    /// `description`, `language`, `join_mode`); `null` when the report was
+    /// not filed from a listing the reporter could see.
+    pub snapshot: Option<serde_json::Value>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -266,6 +270,7 @@ struct ReportRow {
     resolved_by: Option<Uuid>,
     resolved_by_name: Option<String>,
     resolution_note: Option<String>,
+    snapshot: Option<serde_json::Value>,
 }
 
 fn person(id: Option<Uuid>, name: Option<String>) -> Option<Person> {
@@ -294,6 +299,7 @@ impl From<ReportRow> for Report {
             resolved_at: row.resolved_at,
             resolved_by: person(row.resolved_by, row.resolved_by_name),
             resolution_note: row.resolution_note,
+            snapshot: row.snapshot,
         }
     }
 }
@@ -309,7 +315,7 @@ macro_rules! report_select {
                       WHERE l.server_id = s.id AND l.listed) AS server_listed, \
              r.reporter_id, rep.name AS reporter_name, r.reason, r.details, r.status, \
              r.created_at, r.resolved_at, r.resolved_by, res.name AS resolved_by_name, \
-             r.resolution_note \
+             r.resolution_note, r.snapshot \
          FROM reports r \
          JOIN servers s ON s.id = r.server_id \
          LEFT JOIN users rep ON rep.id = r.reporter_id \
