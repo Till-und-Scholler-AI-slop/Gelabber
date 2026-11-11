@@ -4,7 +4,7 @@
 
 use egui::{Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use gelabber_client::OpState;
-use gelabber_i18n::{Locale, common, language};
+use gelabber_i18n::{Locale, common, language, settings as texts};
 
 use super::controls::{self, Scope, Status};
 use super::prefs::{self, UiScale};
@@ -14,10 +14,16 @@ use crate::text::{self, Block};
 use crate::theme::{BaseColors, Theme, corner};
 use crate::widgets::{Link, eased, focus_ring, keyboard_focus, link};
 
-const MODES: [(&str, &str, &str); 3] = [
-    ("light", "Hell", "Gelabber Hell"),
-    ("dark", "Dunkel", "Gelabber Dunkel"),
-    ("system", "System", "Folgt dem Gerät"),
+/// Each mode: id, label, hint. The presets' names are names, the same in
+/// every language.
+const MODES: [(&str, fn() -> &'static str, fn() -> &'static str); 3] = [
+    ("light", texts::appearance_mode_light, || "Gelabber Hell"), // i18n-ok
+    ("dark", texts::appearance_mode_dark, || "Gelabber Dunkel"), // i18n-ok
+    (
+        "system",
+        texts::appearance_mode_system,
+        texts::appearance_mode_system_hint,
+    ),
 ];
 
 #[derive(Default)]
@@ -86,8 +92,8 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     if s.waiting && !sync.saving {
         s.waiting = false;
         match &sync.error {
-            None => s.status.success(ui, "Gespeichert."),
-            Some(_) => s.status.error(ui, "Nicht gespeichert – erneut versuchen"),
+            None => s.status.success(ui, common::saved()),
+            Some(_) => s.status.error(ui, common::not_saved()),
         }
     }
     let active = sync.doc.active.clone();
@@ -95,12 +101,13 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let width = ui.available_width().min(640.0);
     let card_w = (width - 2.0 * gap) / 3.0;
     language_section(ui, app, s, card_w);
-    controls::group_legend(ui, "Farbschema", Some(Scope::Account));
+    controls::group_legend(ui, texts::appearance_color_scheme(), Some(Scope::Account));
     ui.add_space(4.0);
     let top = ui.cursor().min;
     let card_h = 126.3;
     let mut arrowed = None;
     for (i, (id, label, hint)) in MODES.iter().enumerate() {
+        let (label, hint) = (label(), hint());
         let rect = Rect::from_min_size(
             pos2(top.x + i as f32 * (card_w + gap), top.y),
             vec2(card_w, card_h),
@@ -134,7 +141,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             }
         }
         response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::Role::RadioButton, true, checked, *label)
+            egui::WidgetInfo::selected(egui::Role::RadioButton, true, checked, label)
         });
         let fill = eased(ui.ctx(), wid, response.hovered(), c.panel, c.hover);
         let painter = ui.painter();
@@ -232,9 +239,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         if !sync.saving {
             ui.add_space(8.0);
             let label = if sync.pending {
-                "Erneut anwenden"
+                texts::appearance_retry_apply()
             } else {
-                "Erneut versuchen"
+                common::try_again()
             };
             if ui.add(crate::widgets::Button::new(label).small()).clicked() {
                 themes::retry(ui.ctx(), app);
@@ -246,11 +253,15 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let other =
         (!MODES.iter().any(|m| m.0 == active)).then(|| themes::theme_name(&sync.doc, &active));
     let lead = other
-        .map(|n| format!("Gerade aktiv: {n}. "))
+        .map(|n| format!("{} ", texts::appearance_active_theme(&n)))
         .unwrap_or_default();
     let rich = text::Rich::new(controls::HINT)
         .push(&lead, controls::HINT, c.muted)
-        .push("Weitere Themes", controls::HINT, c.accent_text)
+        .push(
+            texts::appearance_more_themes(),
+            controls::HINT,
+            c.accent_text,
+        )
         .layout(ui);
     let link_top = ui.cursor().min;
     text::show(ui, &rich);
@@ -265,7 +276,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             c.accent_text,
         );
         let id = Id::unique("gelabber-more-themes");
-        if Link::interact(ui, r, id, "Weitere Themes").clicked() {
+        if Link::interact(ui, r, id, texts::appearance_more_themes()).clicked() {
             s.navigate = Some("/settings/themes");
         }
     }
@@ -275,16 +286,22 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
 
     let mut p = prefs::get(ui.ctx());
     let before = p.clone();
-    controls::group_legend(ui, "Ansicht", Some(Scope::Device));
+    controls::group_legend(ui, texts::appearance_view(), Some(Scope::Device));
     // Stacked row: label, hint, chips.
     let row_top = ui.cursor().min;
     ui.add_space(12.0);
-    controls::paint(ui, ui.cursor().min, "Textgröße", text::UI, c.text);
+    controls::paint(
+        ui,
+        ui.cursor().min,
+        texts::appearance_text_size(),
+        text::UI,
+        c.text,
+    );
     ui.add_space(text::UI.line_px() + 4.0);
     controls::paint(
         ui,
         ui.cursor().min,
-        "Gilt für die ganze Oberfläche.",
+        texts::appearance_text_size_hint(),
         controls::HINT,
         c.muted,
     );
@@ -309,16 +326,16 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     controls::switch_row(
         ui,
         "compact-rooms",
-        "Kompakte Sprachkanäle",
-        Some("Kleinere Avatare und weniger Abstand."),
+        texts::appearance_compact_rooms(),
+        Some(texts::appearance_compact_rooms_hint()),
         &mut p.compact_rooms,
         false,
     );
     controls::switch_row(
         ui,
         "reduced-motion",
-        "Bewegung reduzieren",
-        Some("Berücksichtigt auch die Einstellung deines Geräts."),
+        texts::appearance_reduced_motion(),
+        Some(texts::appearance_reduced_motion_hint()),
         &mut p.reduced_motion,
         false,
     );
@@ -516,6 +533,9 @@ mod tab_tests {
         wait_for_label(&mut harness, "Saved.");
         assert!(api.saw("PUT /me/locale"));
         assert!(harness.query_by_label("Language").is_some());
+        // The settings navigation names the area in English too.
+        assert!(harness.query_by_label("Appearance").is_some());
+        assert!(harness.query_by_label("Darstellung").is_none());
         assert_eq!(gelabber_i18n::get(), Locale::En);
         assert_eq!(
             super::prefs::get(&harness.ctx).locale,
@@ -533,8 +553,9 @@ mod tab_tests {
         let mut harness = launcher(&api, "/settings/darstellung");
         wait_for_label(&mut harness, "Sprache");
         harness.get_by_label("English").click();
-        harness.run_steps(2);
-        assert_eq!(gelabber_i18n::get(), Locale::En);
+        // The fake server may answer within the click's frames, so the
+        // switch itself is not asserted here (see the test above).
+        wait_for(&mut harness, "the save", |_| api.saw("PUT /me/locale"));
         wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
         assert_eq!(gelabber_i18n::get(), Locale::De);
         assert!(harness.query_by_label("Sprache").is_some());

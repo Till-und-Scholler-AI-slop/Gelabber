@@ -340,6 +340,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             let inner = width - 2.0 * pad;
             let (mut x, mut y) = (top.x, top.y);
             for (mode, label, _) in media::PROCESSING_MODES {
+                let label = label();
                 let block = Block::single(ui, label, text::UI.weight(400.0), c.text);
                 let w = 20.0 + 8.0 + block.width();
                 if x > top.x && x + w > top.x + inner {

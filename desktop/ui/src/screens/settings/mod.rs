@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use egui::{Color32, Id, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{OpState, User};
+use gelabber_i18n::settings as texts;
 use parking_lot::Mutex;
 
 use crate::app::AppCtx;
@@ -32,8 +33,8 @@ pub use themes::apply_theme;
 pub struct Area {
     pub id: &'static str,
     pub group: &'static str,
-    pub label: &'static str,
-    pub description: &'static str,
+    pub label: fn() -> &'static str,
+    pub description: fn() -> &'static str,
     pub scope: Option<Scope>,
 }
 
@@ -41,70 +42,71 @@ pub const AREAS: [Area; 9] = [
     Area {
         id: "profil",
         group: "konto",
-        label: "Profil",
-        description: "Name und Profilbild.",
+        label: texts::area_profil_label,
+        description: texts::area_profil_description,
         scope: Some(Scope::Account),
     },
     Area {
         id: "profilkarte",
         group: "konto",
-        label: "Profilkarte",
-        description: "So sehen dich andere.",
+        label: texts::area_profilkarte_label,
+        description: texts::area_profilkarte_description,
         scope: Some(Scope::Account),
     },
     Area {
         id: "konto",
         group: "konto",
-        label: "Sicherheit",
-        description: "Passwort ändern und überall abmelden.",
+        label: texts::area_konto_label,
+        description: texts::area_konto_description,
         scope: Some(Scope::Account),
     },
     Area {
         id: "darstellung",
         group: "app",
-        label: "Darstellung",
-        description: "Sprache, Farbschema, Textgröße und Bewegung.",
+        label: texts::area_darstellung_label,
+        description: texts::area_darstellung_description,
         scope: None,
     },
     Area {
         id: "themes",
         group: "app",
-        label: "Themes",
-        description: "Farbpaletten und eigene Themes.",
+        label: texts::area_themes_label,
+        description: texts::area_themes_description,
         scope: Some(Scope::Account),
     },
     Area {
         id: "audio",
         group: "app",
-        label: "Audio",
-        description: "Mikrofon, Lautsprecher und Lautstärke.",
+        label: texts::area_audio_label,
+        description: texts::area_audio_description,
         scope: Some(Scope::Device),
     },
     Area {
         id: "video",
         group: "app",
-        label: "Video",
-        description: "Kamera, Live gehen und Bildqualität.",
+        label: texts::area_video_label,
+        description: texts::area_video_description,
         scope: Some(Scope::Device),
     },
     Area {
         id: "benachrichtigungen",
         group: "app",
-        label: "Benachrichtigungen",
-        description: "Hinweise auf neue Nachrichten.",
+        label: texts::area_benachrichtigungen_label,
+        description: texts::area_benachrichtigungen_description,
         scope: None,
     },
     Area {
         id: "app",
         group: "app",
-        label: "App",
+        label: texts::area_app_label,
         // The web's "Gelabber als App installieren." is for the browser.
-        description: "Updates und was beim Schließen des Fensters passiert.",
+        description: texts::area_app_description_desktop,
         scope: None,
     },
 ];
 
-const GROUPS: [(&str, &str); 2] = [("konto", "Konto"), ("app", "App")];
+const GROUPS: [(&str, fn() -> &'static str); 2] =
+    [("konto", texts::group_konto), ("app", texts::group_app)];
 
 /// Where `/settings` and the gear lead.
 pub const DEFAULT_AREA: &str = "darstellung";
@@ -239,7 +241,7 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
     controls::paint(
         ui,
         pos2(column.left() + 16.0, column.top() + 13.5),
-        "Einstellungen",
+        texts::title(),
         BRAND,
         c.text,
     );
@@ -250,7 +252,7 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         if gi > 0 {
             y += 8.0;
         }
-        let caps = label.to_uppercase();
+        let caps = label().to_uppercase();
         controls::paint(
             ui,
             pos2(x + 10.0, y + 34.0 - 7.0 - text::CAPS.line_px()),
@@ -267,7 +269,7 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             let rect = Rect::from_min_size(pos2(x, y), vec2(width, 34.0));
             let id = Id::unique(("gelabber-settings-nav", a.id));
             let response = ui.interact(rect, id, Sense::click());
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, a.label));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, (a.label)()));
             let on = a.id == current;
             let hover = eased(
                 ui.ctx(),
@@ -308,7 +310,7 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             } else {
                 c.muted
             };
-            Block::single(ui, a.label, style, color)
+            Block::single(ui, (a.label)(), style, color)
                 .paint(painter, pos2(rect.left() + 10.0, rect.top() + 6.5));
             if response.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -337,9 +339,9 @@ fn leave(ctx: &egui::Context, app: &mut AppCtx, s: &mut PageState, href: &str) {
             ctx,
             controls::Confirm::danger(
                 "card-leave",
-                "Ungespeicherte Änderungen verwerfen?",
-                Some("Deine Änderungen an der Profilkarte gehen verloren."),
-                "Verwerfen",
+                texts::card_discard_title(),
+                Some(texts::card_discard_message()),
+                texts::card_discard(),
             ),
         );
     } else if s.area == "themes" && s.themes.draft_dirty() {
@@ -348,9 +350,9 @@ fn leave(ctx: &egui::Context, app: &mut AppCtx, s: &mut PageState, href: &str) {
             ctx,
             controls::Confirm::danger(
                 "theme-leave",
-                "Ungespeicherten Theme-Entwurf verwerfen?",
-                Some("Deine Änderungen an diesem Theme gehen verloren."),
-                "Verwerfen",
+                gelabber_i18n::themes::draft_discard_title(),
+                Some(gelabber_i18n::themes::draft_discard_message()),
+                gelabber_i18n::themes::draft_discard(),
             ),
         );
     } else {
@@ -427,9 +429,9 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         crate::app::focus_anchor(&child, heading, child.cursor().min, take);
         let description = match info.id {
             "app" => desktop_app::description(child.ctx()),
-            _ => info.description,
+            _ => (info.description)(),
         };
-        controls::area_heading(&mut child, info.label, info.scope, description);
+        controls::area_heading(&mut child, (info.label)(), info.scope, description);
         match info.id {
             "profil" => profile::profile(&mut child, app, &user, &mut st.profile),
             "profilkarte" => card::area(&mut child, app, &user, &mut st.card, viewport),

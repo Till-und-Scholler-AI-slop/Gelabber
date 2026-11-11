@@ -5,6 +5,7 @@
 //! native media core reports devices.
 
 use egui::{Color32, Id, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
+use gelabber_i18n::{Locale, settings as texts};
 
 use super::controls;
 use super::prefs::{self, Prefs};
@@ -28,21 +29,21 @@ const HINT: TextStyle = text::META;
 
 /// `AUDIO_PROCESSING_DESKTOP`: mode, label and hint as the desktop app
 /// words them, since its native core filters, not a browser.
-pub const PROCESSING_MODES: [(&str, &str, &str); 3] = [
+pub const PROCESSING_MODES: [(&str, fn() -> &'static str, fn() -> &'static str); 3] = [
     (
         "enhanced",
-        "Verbesserte Sprache",
-        "Lokale Rauschunterdrückung",
+        texts::media_mode_enhanced,
+        texts::media_mode_enhanced_hint,
     ),
     (
         "browser",
-        "WebRTC-Filter",
-        "Rauschunterdrückung und Auto-Gain von WebRTC",
+        texts::media_mode_browser,
+        texts::media_mode_browser_hint,
     ),
     (
         "original",
-        "Original / Musik",
-        "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung",
+        texts::media_mode_original,
+        texts::media_mode_original_hint,
     ),
 ];
 
@@ -348,7 +349,7 @@ fn labelled_select(
 }
 
 fn pct(v: f64) -> String {
-    format!("{} %", (v * 100.0).round() as i64)
+    texts::percent((v * 100.0).round() as i64)
 }
 
 const MAX_PLAYBACK: f64 = 4.0;
@@ -383,8 +384,8 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     refresh_lists(ui, app, "audio");
     let listed = app.call.with_state(|s| s.devices.clone());
     controls::column(ui, ui.available_width().min(720.0), |ui| {
-        group_head(ui, "Eingabe", None);
-        setting_row(ui, "Mikrofon", false, |ui| {
+        group_head(ui, texts::media_input_title(), None);
+        setting_row(ui, texts::media_input_microphone(), false, |ui| {
             if controls::select(
                 ui,
                 "audio-input",
@@ -396,11 +397,12 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             }
             // Next to the microphone, in view when the dialog opens.
             gap(ui);
-            if button(ui, "Mikrofon testen", false, false) {
+            if button(ui, texts::media_input_test_microphone(), false, false) {
                 crate::screens::voice::dialogs::open_mic_test(ui.ctx());
             }
         });
-        setting_row(ui, "Mikrofonverstärkung", false, |ui| {
+        let gain_scale = [pct(0.0), pct(1.0), pct(2.0)];
+        setting_row(ui, texts::media_input_gain(), false, |ui| {
             let mut v = (p.input_gain * 100.0).round();
             if slider(
                 ui,
@@ -410,16 +412,16 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 200.0,
                 1.0,
                 &pct(p.input_gain),
-                Some(["0 %", "100 %", "200 %"]),
-                Some("100 % fügt keine Verstärkung hinzu."),
+                Some(gain_scale.each_ref().map(String::as_str)),
+                Some(texts::media_input_gain_hint()),
                 false,
             ) {
                 p.input_gain = v / 100.0;
             }
         });
-        let modes = ["Sprachaktivierung", "Push-to-Talk"];
+        let modes = [texts::media_ptt_activity(), texts::media_ptt_ptt()];
         let ptt = p.voice_input == "ptt";
-        setting_row(ui, "Senden", false, |ui| {
+        setting_row(ui, texts::media_ptt_send(), false, |ui| {
             if let Some(i) = controls::chips(
                 ui,
                 "voice-input",
@@ -435,22 +437,20 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             hint(
                 ui,
                 if p.voice_input == "ptt" {
-                    "Das Mikrofon sendet nur, solange du die Taste hältst."
+                    texts::media_ptt_ptt_hint()
                 } else {
-                    "Das Mikrofon sendet, sobald du sprichst."
+                    texts::media_ptt_activity_hint()
                 },
             );
         });
         if p.voice_input == "ptt" {
-            setting_row(ui, "Taste", false, |ui| {
+            setting_row(ui, texts::media_ptt_key(), false, |ui| {
                 let label = if s.recording {
-                    "Taste oder Maustaste drücken … (Esc bricht ab)".to_owned()
+                    texts::media_ptt_recording().to_owned()
                 } else if p.ptt_key.is_empty() {
-                    "Taste festlegen".to_owned()
-                } else if !p.ptt_key_label.is_empty() {
-                    p.ptt_key_label.clone()
+                    texts::media_ptt_set_key().to_owned()
                 } else {
-                    key_label(&p.ptt_key)
+                    shown_key_label(&p.ptt_key, &p.ptt_key_label)
                 };
                 if button(ui, &label, false, false) {
                     s.recording = !s.recording;
@@ -467,7 +467,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 }
                 gap(ui);
                 let note = if p.ptt_key.is_empty() {
-                    "Ohne Taste bleibt dein Mikrofon im Gespräch stumm.".to_owned()
+                    texts::media_ptt_no_key_hint().to_owned()
                 } else {
                     let in_call = app.call.with_state(|s| {
                         matches!(
@@ -485,7 +485,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 };
                 hint(ui, &note);
             });
-            setting_row(ui, "Nachlaufzeit", false, |ui| {
+            setting_row(ui, texts::media_ptt_release_delay(), false, |ui| {
                 let suffix = format!("{} ms", p.ptt_release_delay.round() as i64);
                 slider(
                     ui,
@@ -496,18 +496,18 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                     50.0,
                     &suffix,
                     None,
-                    Some("So lange sendet das Mikrofon nach dem Loslassen weiter."),
+                    Some(texts::media_ptt_release_delay_hint()),
                     false,
                 );
             });
         }
-        setting_row(ui, "Filter", true, |ui| {
+        setting_row(ui, texts::media_input_filter(), true, |ui| {
             for (mode, label, desc) in PROCESSING_MODES {
                 if controls::radio_card(
                     ui,
                     ("processing", mode),
-                    label,
-                    desc,
+                    label(),
+                    desc(),
                     p.processing_mode == mode,
                 ) {
                     p.processing_mode = mode.into();
@@ -524,8 +524,8 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         });
         ui.add_space(20.0);
 
-        group_head(ui, "Ausgabe", None);
-        setting_row(ui, "Lautsprecher", false, |ui| {
+        group_head(ui, texts::media_output_title(), None);
+        setting_row(ui, texts::media_output_speaker(), false, |ui| {
             if controls::select(
                 ui,
                 "audio-output",
@@ -536,8 +536,9 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 app.call.set_output(chosen(&p.audio_output_id));
             }
         });
-        let scale = ["0 %", "100 %", "400 %"];
-        setting_row(ui, "Gespräche", false, |ui| {
+        let scale_texts = [pct(0.0), pct(1.0), pct(MAX_PLAYBACK)];
+        let scale = scale_texts.each_ref().map(String::as_str);
+        setting_row(ui, texts::media_output_calls(), false, |ui| {
             let mut pos = playback_position(p.output_volume);
             if slider(
                 ui,
@@ -548,13 +549,13 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 1.0,
                 &pct(p.output_volume),
                 Some(scale),
-                Some("Über 100 % wird der Ton digital verstärkt."),
+                Some(texts::media_output_calls_hint()),
                 false,
             ) {
                 p.output_volume = playback_volume(pos);
             }
         });
-        setting_row(ui, "Live-Ton", false, |ui| {
+        setting_row(ui, texts::media_output_live_sound(), false, |ui| {
             let mut pos = playback_position(p.source_audio_volume);
             if slider(
                 ui,
@@ -565,9 +566,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 1.0,
                 &pct(p.source_audio_volume),
                 Some(scale),
-                Some(
-                    "Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus.",
-                ),
+                Some(texts::media_output_live_sound_hint()),
                 p.source_audio_muted,
             ) {
                 p.source_audio_volume = playback_volume(pos);
@@ -576,16 +575,16 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             toggle(
                 ui,
                 "source-audio-muted",
-                "Live-Ton stummschalten",
+                texts::media_output_mute_live_sound(),
                 &mut p.source_audio_muted,
                 false,
             );
         });
-        setting_row(ui, "Signaltöne", true, |ui| {
+        setting_row(ui, texts::media_output_call_sounds(), true, |ui| {
             switch_line(
                 ui,
                 "call-sounds",
-                "Töne für Beitreten, Verlassen, Stumm, Taub, Kamera und Live.",
+                texts::media_output_call_sounds_hint(),
                 &mut p.call_sounds,
                 false,
             );
@@ -594,7 +593,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             toggle(
                 ui,
                 "other-mute-sounds",
-                "Töne, wenn andere sich stumm schalten",
+                texts::media_output_other_mute_sounds(),
                 &mut p.other_mute_sounds,
                 off,
             );
@@ -602,7 +601,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             controls::paint(
                 ui,
                 ui.cursor().min,
-                "Lautstärke der Signaltöne",
+                texts::media_output_call_sound_volume(),
                 HINT,
                 c.subtle,
             );
@@ -617,16 +616,14 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 0.05,
                 &suffix,
                 None,
-                Some(
-                    "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems.",
-                ),
+                Some(texts::media_output_call_sound_volume_hint()),
                 off,
             );
             gap(ui);
             let silent = off || p.call_sound_volume == 0.0 || p.output_volume == 0.0;
             // `VoiceSettings.tsx`: the test tone is the own join's cue.
             if controls::row(ui, 0.0, 36.0, |ui| {
-                button(ui, "Testton abspielen", false, silent)
+                button(ui, texts::media_output_test_sound(), false, silent)
             }) {
                 app.call.play_sound(gelabber_call::Sound::JoinSelf);
             }
@@ -682,11 +679,11 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
             summary.left() + 14.0 + 6.0 + 12.0,
             summary.center().y - text::UI.line_px() / 2.0,
         ),
-        "Echo und WebRTC-Filter",
+        texts::media_advanced_title(),
         text::UI.weight(600.0),
         c.text,
     );
-    let small = Block::single(ui, "Für Musik oder Lautsprecher", HINT, c.subtle);
+    let small = Block::single(ui, texts::media_advanced_subtitle(), HINT, c.subtle);
     small.paint(
         &painter,
         pos2(
@@ -711,32 +708,37 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
         child.spacing_mut().item_spacing = egui::Vec2::ZERO;
         let browser = p.processing_mode == "browser";
         let original = p.processing_mode == "original";
-        setting_row(&mut child, "Echo", !browser && original, |ui| {
-            switch_line(
-                ui,
-                "aec",
-                "Echo-Unterdrückung (AEC). Bei Lautsprechern empfohlen. Für Musik mit Kopfhörern kannst du sie ausschalten.",
-                &mut p.echo_cancellation,
-                false,
-            );
-        });
+        setting_row(
+            &mut child,
+            texts::media_advanced_echo(),
+            !browser && original,
+            |ui| {
+                switch_line(
+                    ui,
+                    "aec",
+                    texts::media_advanced_echo_hint(),
+                    &mut p.echo_cancellation,
+                    false,
+                );
+            },
+        );
         if browser {
-            setting_row(&mut child, "Rauschfilter", false, |ui| {
+            setting_row(&mut child, texts::media_advanced_noise(), false, |ui| {
                 switch_line(
                     ui,
                     "ns",
-                    "Rauschunterdrückung von WebRTC.",
+                    texts::media_advanced_noise_hint(),
                     &mut p.noise_suppression,
                     false,
                 );
             });
         }
         if !original {
-            setting_row(&mut child, "Auto-Gain", true, |ui| {
+            setting_row(&mut child, texts::media_advanced_auto_gain(), true, |ui| {
                 switch_line(
                     ui,
                     "agc",
-                    "Auto-Gain von WebRTC. Gleicht leise und laute Mikrofone auf einen hörbaren Pegel an.",
+                    texts::media_advanced_auto_gain_hint(),
                     &mut p.auto_gain_control,
                     false,
                 );
@@ -762,7 +764,8 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
 /// was `gelabber-desktop`, which the web client still names).
 fn hyprland_bind() -> String {
     format!(
-        "bind = , <Taste>, global, {}:push-to-talk",
+        "bind = , <{}>, global, {}:push-to-talk", // i18n-ok
+        texts::media_ptt_hyprland_key(),
         crate::platform::APP_ID
     )
 }
@@ -775,26 +778,19 @@ pub fn global_key_note(
     windows: bool,
 ) -> String {
     use crate::platform::PttStatus;
-    let linux = format!(
-        "Unter Linux bestimmt der Desktop die Taste: KDE und GNOME fragen beim ersten Mal nach, unter Hyprland gehört „{}“ in die hyprland.conf.",
-        hyprland_bind()
-    );
+    let linux = texts::media_ptt_global_linux(&hyprland_bind());
     match (wanted, status) {
-        (false, _) if windows => {
-            "Im Gespräch hört die App die Taste auch, wenn ein anderes Fenster vorne ist.".into()
+        (false, _) if windows => texts::media_ptt_global_in_call().into(),
+        (false, _) => format!("{} {linux}", texts::media_ptt_global_in_call()),
+        (true, None) => texts::media_ptt_global_setting_up().into(),
+        (true, Some(PttStatus::Bound { trigger: Some(t) })) => {
+            texts::media_ptt_global_active_trigger(t)
         }
-        (false, _) => format!(
-            "Im Gespräch hört die App die Taste auch, wenn ein anderes Fenster vorne ist. {linux}"
-        ),
-        (true, None) => "Die globale Taste wird eingerichtet …".into(),
-        (true, Some(PttStatus::Bound { trigger: Some(t) })) => format!("Global aktiv: {t}."),
         (true, Some(PttStatus::Bound { trigger: None })) if windows => {
-            "Global aktiv, auch wenn ein anderes Fenster vorne ist.".into()
+            texts::media_ptt_global_active_windows().into()
         }
-        (true, Some(PttStatus::Bound { trigger: None })) => format!("Global aktiv. {linux}"),
-        (true, Some(PttStatus::Failed { reason })) => {
-            format!("Die Taste wirkt nur, solange Gelabber im Vordergrund ist: {reason}")
-        }
+        (true, Some(PttStatus::Bound { trigger: None })) => texts::media_ptt_global_active(&linux),
+        (true, Some(PttStatus::Failed { reason })) => texts::media_ptt_global_failed(reason),
     }
 }
 
@@ -802,21 +798,34 @@ pub fn global_key_note(
 /// name it; `None` while push-to-talk is off or has no key.
 pub fn push_to_talk_key_name(ctx: &egui::Context) -> Option<String> {
     let p = super::prefs::get(ctx);
-    (p.voice_input == "ptt" && !p.ptt_key.is_empty()).then(|| {
-        if p.ptt_key_label.is_empty() {
-            key_label(&p.ptt_key)
-        } else {
-            p.ptt_key_label.clone()
-        }
+    (p.voice_input == "ptt" && !p.ptt_key.is_empty())
+        .then(|| shown_key_label(&p.ptt_key, &p.ptt_key_label))
+}
+
+/// The stored key's name: a label the recorder named the key with in
+/// either language follows the interface's, a typed character stays.
+fn shown_key_label(code: &str, label: &str) -> String {
+    if label.is_empty() || named_key(code, label) {
+        key_label(code)
+    } else {
+        label.to_owned()
+    }
+}
+
+/// Whether `label` is the key's own name, in some language.
+fn named_key(code: &str, label: &str) -> bool {
+    Locale::ALL.iter().any(|l| {
+        let _language = gelabber_i18n::on_this_thread(*l);
+        label == key_label(code)
     })
 }
 
 /// `pushToTalkKeyLabel`.
 fn key_label(code: &str) -> String {
     match code {
-        "Mouse4" => "Maustaste 4".into(),
-        "Mouse5" => "Maustaste 5".into(),
-        "Space" => "Leertaste".into(),
+        "Mouse4" => texts::media_key_mouse4().into(),
+        "Mouse5" => texts::media_key_mouse5().into(),
+        "Space" => texts::media_key_space().into(),
         _ => {
             let c = code
                 .strip_prefix("Key")
@@ -825,9 +834,9 @@ fn key_label(code: &str) -> String {
                 .unwrap_or(code);
             let c = c.replacen("Numpad", "Num ", 1);
             if let Some(side) = c.strip_suffix("Left") {
-                format!("{side} links")
+                texts::media_key_left(side)
             } else if let Some(side) = c.strip_suffix("Right") {
-                format!("{side} rechts")
+                texts::media_key_right(side)
             } else {
                 c
             }
@@ -858,7 +867,7 @@ pub fn window_key(code: &str, label: &str) -> Option<WindowKey> {
             _ => None,
         }
     };
-    if !crate::platform::ptt::known(code) || label.is_empty() || label == key_label(code) {
+    if !crate::platform::ptt::known(code) || label.is_empty() || named_key(code, label) {
         return egui::Key::from_name(code).map(WindowKey::Logical);
     }
     if let Some(key) = typed {
@@ -973,7 +982,7 @@ fn profile(id: &str) -> (bool, u32, u32) {
 fn summary(id: &str) -> String {
     let (auto, h, f) = profile(id);
     if auto {
-        return "Automatisch".into();
+        return texts::media_quality_auto().into();
     }
     let res = if h == 2160 {
         "4K".to_owned()
@@ -1000,21 +1009,28 @@ fn profile_fields(ui: &mut Ui, name: &str, value: &mut String, screen: bool) -> 
     } else {
         f.to_string()
     };
-    let res_opts: Vec<(String, String)> =
-        std::iter::once(("auto".to_owned(), "Auto (bis 1080p)".to_owned()))
-            .chain(RESOLUTIONS.iter().map(|r| {
-                (
-                    r.to_string(),
-                    if *r == 2160 {
-                        "4K · 2160p".to_owned()
-                    } else {
-                        format!("{r}p")
-                    },
-                )
-            }))
-            .collect();
+    let res_opts: Vec<(String, String)> = std::iter::once((
+        "auto".to_owned(),
+        texts::media_quality_resolution_auto().to_owned(),
+    ))
+    .chain(RESOLUTIONS.iter().map(|r| {
+        (
+            r.to_string(),
+            if *r == 2160 {
+                "4K · 2160p".to_owned()
+            } else {
+                format!("{r}p")
+            },
+        )
+    }))
+    .collect();
     let fps_opts: Vec<(String, String)> = auto
-        .then(|| ("auto".to_owned(), "Auto (bis 30 FPS)".to_owned()))
+        .then(|| {
+            (
+                "auto".to_owned(),
+                texts::media_quality_frame_rate_auto().to_owned(),
+            )
+        })
         .into_iter()
         .chain(
             FRAME_RATES
@@ -1023,9 +1039,12 @@ fn profile_fields(ui: &mut Ui, name: &str, value: &mut String, screen: bool) -> 
         )
         .collect();
     let mut changed = false;
-    for (i, (label, opts)) in [("Auflösung", &res_opts), ("Bildrate", &fps_opts)]
-        .into_iter()
-        .enumerate()
+    for (i, (label, opts)) in [
+        (texts::media_quality_resolution(), &res_opts),
+        (texts::media_quality_frame_rate(), &fps_opts),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let rect = Rect::from_min_size(
             pos2(top.x + i as f32 * (half + 12.0), top.y),
@@ -1070,12 +1089,7 @@ fn profile_fields(ui: &mut Ui, name: &str, value: &mut String, screen: bool) -> 
 }
 
 fn mbit(bits: f64) -> String {
-    let rounded = (bits / 1_000_000.0 * 10.0).round() / 10.0;
-    if rounded.fract() == 0.0 {
-        format!("{} Mbit/s", rounded as i64)
-    } else {
-        format!("{rounded:.1} Mbit/s").replace('.', ",")
-    }
+    texts::mbit(bits / 1_000_000.0)
 }
 
 pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
@@ -1087,8 +1101,12 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     refresh_lists(ui, app, "video");
     let listed = app.call.with_state(|s| s.devices.clone());
     controls::column(ui, ui.available_width().min(720.0), |ui| {
-        group_head(ui, "Kamera", Some(&summary(&p.camera_profile)));
-        setting_row(ui, "Gerät", false, |ui| {
+        group_head(
+            ui,
+            texts::media_camera_title(),
+            Some(&summary(&p.camera_profile)),
+        );
+        setting_row(ui, texts::media_camera_device(), false, |ui| {
             if controls::select(
                 ui,
                 "video-input",
@@ -1099,28 +1117,29 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 app.call.set_camera_device(chosen(&p.video_input_id));
             }
         });
-        setting_row(ui, "Qualität", true, |ui| {
+        setting_row(ui, texts::media_quality_label(), true, |ui| {
             profile_fields(ui, "camera-stream-profile", &mut p.camera_profile, false);
         });
         ui.add_space(20.0);
 
-        group_head(ui, "Live", Some(&summary(&p.screen_profile)));
-        setting_row(ui, "Qualität", false, |ui| {
+        group_head(
+            ui,
+            texts::media_live_title(),
+            Some(&summary(&p.screen_profile)),
+        );
+        setting_row(ui, texts::media_quality_label(), false, |ui| {
             profile_fields(ui, "screen-stream-profile", &mut p.screen_profile, true);
             gap(ui);
-            hint(
-                ui,
-                "Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab.",
-            );
+            hint(ui, texts::media_live_quality_hint());
         });
-        setting_row(ui, "Ton mitsenden", false, |ui| {
+        setting_row(ui, texts::media_live_share_sound(), false, |ui| {
             // `sharesSourceAudio` where "every application" leaves Gelabber
             // out: unchosen means on, so off is a choice to keep.
             let mut on = p.source_audio_share != "off";
             if switch_line(
                 ui,
                 "share-source-audio",
-                "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Live-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.",
+                texts::media_live_share_sound_hint(),
                 &mut on,
                 false,
             ) {
@@ -1129,7 +1148,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         });
         // `SourceAudioApp`: whose sound a Live carries; a saved application
         // that is quiet now stays selectable.
-        setting_row(ui, "Ton von", true, |ui| {
+        setting_row(ui, texts::media_live_sound_from(), true, |ui| {
             let apps = &listed.apps;
             let saved = &p.source_audio_app;
             let listed_id = |id: &str| apps.iter().any(|a| a.id == id);
@@ -1142,9 +1161,9 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                     .map_or_else(|| saved.clone(), |a| a.id.clone())
             };
             let quiet = (!chosen.is_empty() && !listed_id(&chosen))
-                .then(|| (chosen.clone(), format!("{chosen} (gerade still)")));
+                .then(|| (chosen.clone(), texts::media_live_sound_quiet(&chosen)));
             let options: Vec<(String, String)> =
-                std::iter::once((String::new(), "Alle Anwendungen außer Gelabber".to_owned()))
+                std::iter::once((String::new(), texts::media_live_sound_all_apps().to_owned()))
                     .chain(quiet)
                     .chain(apps.iter().map(|a| (a.id.clone(), a.label.clone())))
                     .collect();
@@ -1172,28 +1191,30 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         } else {
             None
         };
-        let badge = limit.map(mbit).unwrap_or_else(|| "ohne Limit".into());
-        group_head(ui, "Upload", Some(&badge));
-        setting_row(ui, "Sparmodus", false, |ui| {
+        let badge = limit
+            .map(mbit)
+            .unwrap_or_else(|| texts::media_upload_no_limit_badge().into());
+        group_head(ui, texts::media_upload_title(), Some(&badge));
+        setting_row(ui, texts::media_upload_economy(), false, |ui| {
             let text_s = if p.economy_mode {
-                format!(
-                    "Ausdrückliche Obergrenzen: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam {}.",
-                    mbit(limit.unwrap_or(2_500_000.0))
-                )
+                texts::media_upload_economy_on(&mbit(limit.unwrap_or(2_500_000.0)))
             } else {
-                "Für wenig Upload: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam 2,5 Mbit/s.".to_owned()
+                texts::media_upload_economy_off(&mbit(2_500_000.0))
             };
             switch_line(ui, "economy-mode", &text_s, &mut p.economy_mode, false);
         });
-        setting_row(ui, "Video-Limit", true, |ui| {
+        setting_row(ui, texts::media_upload_video_limit(), true, |ui| {
             let first = if p.economy_mode {
-                "Sparmodus (2,5 Mbit/s)"
+                texts::media_upload_economy_limit(&mbit(2_500_000.0))
             } else {
-                "Ohne Limit"
+                texts::media_upload_no_limit().to_owned()
             };
             let top = ui.cursor().min;
             let mut x = top.x;
-            for (i, label) in [first, "Eigenes Limit"].iter().enumerate() {
+            for (i, label) in [first.as_str(), texts::media_upload_custom_limit()]
+                .iter()
+                .enumerate()
+            {
                 let checked = if i == 0 {
                     p.video_upload_limit == 0.0
                 } else {
@@ -1258,27 +1279,18 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                     controls::paint(
                         ui,
                         pos2(ui.cursor().min.x, rect.center().y - 8.4),
-                        "Mbit/s für alle Videos zusammen",
+                        texts::media_upload_custom_limit_unit(),
                         HINT,
                         c.muted,
                     );
                 });
             }
             gap(ui);
-            hint(
-                ui,
-                "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate.",
-            );
+            hint(ui, texts::media_upload_limit_hint());
         });
         ui.add_space(20.0);
         let w = ui.available_width();
-        controls::paragraph(
-            ui,
-            "Änderungen gelten beim nächsten Start und werden, soweit unterstützt, auch auf laufende Streams angewendet.",
-            HINT,
-            c.subtle,
-            w,
-        );
+        controls::paragraph(ui, texts::media_apply_note(), HINT, c.subtle, w);
     });
     if p != before {
         prefs::update(&ctx, |x| *x = p);

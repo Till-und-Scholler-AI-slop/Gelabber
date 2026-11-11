@@ -175,8 +175,8 @@ pub enum Scope {
 impl Scope {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Account => "Für dein Konto",
-            Self::Device => "Nur dieses Gerät",
+            Self::Account => gelabber_i18n::common::scope_account(),
+            Self::Device => gelabber_i18n::common::scope_device(),
         }
     }
 }
@@ -1017,11 +1017,11 @@ pub fn prepare(ctx: &egui::Context, file: ImageFile, w: u32, h: u32) -> Prepared
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
 fn too_large() -> String {
-    "Das Bild ist zu groß (höchstens 20 MB).".into()
+    gelabber_i18n::settings::image_too_large().into()
 }
 
 fn unreadable() -> String {
-    "Dieses Bild kann Gelabber nicht lesen. PNG, JPEG, WebP oder GIF gehen.".into()
+    gelabber_i18n::settings::image_unreadable().into()
 }
 
 /// Reads a dropped file, unless its size already rules it out.

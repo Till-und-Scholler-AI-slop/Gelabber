@@ -85,12 +85,6 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     if s.failed {
         ui.add_space(6.0);
         let w = ui.available_width();
-        controls::paragraph(
-            ui,
-            texts::privacy_failed(),
-            text::META,
-            c.danger,
-            w,
-        );
+        controls::paragraph(ui, texts::privacy_failed(), text::META, c.danger, w);
     }
 }

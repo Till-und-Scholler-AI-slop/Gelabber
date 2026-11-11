@@ -32,9 +32,9 @@ impl UiScale {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Compact => "Kompakt",
-            Self::Standard => "Standard",
-            Self::Large => "Groß",
+            Self::Compact => gelabber_i18n::settings::appearance_scale_compact(),
+            Self::Standard => gelabber_i18n::settings::appearance_scale_standard(),
+            Self::Large => gelabber_i18n::settings::appearance_scale_large(),
         }
     }
 

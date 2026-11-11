@@ -211,6 +211,9 @@ fn the_language_section_follows_the_interface_language() {
         h.run_steps(4);
         assert!(h.query_by_label("Language").is_some());
         assert!(h.query_by_label("Sprache").is_none());
+        // The area's controls speak English too.
+        assert!(h.query_by_label("More themes").is_some());
+        assert!(h.query_by_label("Weitere Themes").is_none());
         // Each language is named in its own language on its option.
         assert!(h.query_by_label("Deutsch").is_some());
         assert!(h.query_by_label("English").is_some());

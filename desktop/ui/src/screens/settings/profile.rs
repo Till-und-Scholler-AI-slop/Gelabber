@@ -3,6 +3,7 @@
 
 use egui::{Ui, vec2};
 use gelabber_client::{ApiError, ProfilePatch, User};
+use gelabber_i18n::{common, settings as texts};
 
 use super::controls::{self, Confirm, Picked};
 use super::{adopt_user, op_pending, settled};
@@ -178,16 +179,16 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
             ui.spacing_mut().item_spacing.x = 8.0;
             let upload_clicked = ui
                 .add(
-                    Button::new("Bild hochladen")
+                    Button::new(texts::profile_upload())
                         .small()
                         .disabled(busy && !uploading)
-                        .pending(uploading.then_some("Lädt hoch…")),
+                        .pending(uploading.then_some(texts::profile_uploading())),
                 )
                 .clicked();
             if upload_clicked && !busy && s.picking.is_none() {
                 s.picking = Some(controls::pick_file(
                     ui.ctx(),
-                    "Avatar-Bild auswählen",
+                    texts::profile_pick_label(),
                     &controls::IMAGE_FILTER,
                 ));
             }
@@ -195,11 +196,11 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
                 let removing = s.running == Some("remove");
                 let remove = ui
                     .add(
-                        Button::new("Entfernen")
+                        Button::new(common::remove())
                             .small()
                             .ghost()
                             .disabled(busy && !removing)
-                            .pending(removing.then_some("Entfernt…")),
+                            .pending(removing.then_some(texts::profile_removing())),
                     )
                     .clicked();
                 if remove && !busy {
@@ -220,7 +221,7 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
         });
         ui.add_space(20.0);
         let name = TextField::new("name", &mut s.name)
-            .label("Name")
+            .label(texts::profile_name())
             .char_limit(64)
             .error(s.errors.field("name"))
             .show(ui);
@@ -232,11 +233,11 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
         let uploaded = is_uploaded_avatar(&s.avatar_url);
         let removal_unsaved = s.avatar_url.trim().is_empty() && user.avatar_url.is_some();
         let hint = if uploaded {
-            "Eine URL hier ersetzt das hochgeladene Bild."
+            texts::profile_avatar_url_replaces_upload()
         } else if removal_unsaved {
-            "Wird beim Speichern entfernt."
+            texts::profile_avatar_url_removed_on_save()
         } else {
-            "Wird bei jedem Aufruf von der fremden Seite geladen."
+            texts::profile_avatar_url_hint()
         };
         // An uploaded picture shows as an empty field with its own placeholder.
         let mut shown = if uploaded {
@@ -245,11 +246,11 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
             s.avatar_url.clone()
         };
         let url = TextField::new("avatar_url", &mut shown)
-            .label("Avatar-URL")
+            .label(texts::profile_avatar_url())
             .placeholder(if uploaded {
-                "Hochgeladenes Bild"
+                texts::profile_avatar_url_uploaded()
             } else {
-                "https://…"
+                texts::profile_avatar_url_placeholder()
             })
             .error(s.errors.field("avatar_url"))
             .hint(Some(hint))
@@ -267,24 +268,24 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
             let saving = s.running == Some("save");
             submit |= ui
                 .add(
-                    Button::new("Speichern")
+                    Button::new(common::save())
                         .primary()
                         .disabled(!dirty || (busy && !saving))
-                        .pending(saving.then_some("Speichern…")),
+                        .pending(saving.then_some(texts::profile_saving())),
                 )
                 .clicked();
             if unchanged {
                 controls::paint(
                     ui,
                     egui::pos2(ui.cursor().min.x, ui.max_rect().center().y - 9.0),
-                    "Keine Änderungen.",
+                    texts::profile_unchanged(),
                     controls::HINT,
                     theme.c.muted,
                 );
             }
             if s.saved && !dirty {
                 ui.add(crate::widgets::InlineStatus::new(
-                    Some("Gespeichert."),
+                    Some(common::saved()),
                     crate::widgets::StatusTone::Success,
                 ));
             }
@@ -364,14 +365,21 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
         return;
     }
     controls::column(ui, 560.0, |ui| {
-        let block = text::Rich::new(controls::HINT)
-            .push("Angemeldet als ", controls::HINT, c.muted)
-            .push(&user.email, controls::HINT.weight(600.0), c.text)
-            .layout(ui);
+        // "Angemeldet als <b>{email}</b>": split first, then the address
+        // goes in, so it cannot add tags.
+        let mut block = text::Rich::new(controls::HINT);
+        for piece in gelabber_i18n::pieces(texts::security_signed_in_as()) {
+            let shown = piece.text.replace("{email}", &user.email);
+            block = match piece.tag {
+                Some(_) => block.push(&shown, controls::HINT.weight(600.0), c.text),
+                None => block.push(&shown, controls::HINT, c.muted),
+            };
+        }
+        let block = block.layout(ui);
         crate::text::show(ui, &block);
         ui.add_space(20.0);
         let current = TextField::new("current_password", &mut s.current)
-            .label("Aktuelles Passwort")
+            .label(texts::security_current_password())
             .password()
             .error(s.errors.field("current_password"))
             .show(ui);
@@ -381,10 +389,10 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
         }
         ui.add_space(20.0);
         let new = TextField::new("new_password", &mut s.password)
-            .label("Neues Passwort")
+            .label(texts::security_new_password())
             .password()
             .error(s.errors.field("password"))
-            .hint(Some("Andere Geräte werden dabei abgemeldet."))
+            .hint(Some(texts::security_new_password_hint()))
             .show(ui);
         if new.response.changed() {
             s.changed = false;
@@ -396,14 +404,14 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
         controls::row(ui, 12.0, 36.0, |ui| {
             submit |= ui
                 .add(
-                    Button::new("Passwort ändern")
+                    Button::new(texts::security_change())
                         .primary()
-                        .pending(s.running.then_some("Ändern…")),
+                        .pending(s.running.then_some(texts::security_changing())),
                 )
                 .clicked();
             if s.changed {
                 ui.add(crate::widgets::InlineStatus::new(
-                    Some("Geändert. Andere Geräte sind abgemeldet."),
+                    Some(texts::security_changed()),
                     crate::widgets::StatusTone::Success,
                 ));
             }
@@ -439,7 +447,7 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
         controls::paint(
             ui,
             ui.cursor().min,
-            "Überall abmelden",
+            texts::security_everywhere_title(),
             text::TITLE_SM,
             c.text,
         );
@@ -448,23 +456,26 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
         ui.add_space(4.0);
         controls::paragraph(
             ui,
-            "Beendet jede Anmeldung, auch auf diesem Gerät.",
+            texts::security_everywhere_hint(),
             controls::HINT,
             c.muted,
             560.0,
         );
         ui.add_space(12.0);
         if ui
-            .add(Button::new("Auf allen Geräten abmelden").variant(ButtonVariant::DangerOutline))
+            .add(
+                Button::new(texts::security_everywhere_button())
+                    .variant(ButtonVariant::DangerOutline),
+            )
             .clicked()
         {
             controls::ask(
                 ui.ctx(),
                 Confirm::danger(
                     "logout-all",
-                    "Auf allen Geräten abmelden?",
-                    Some("Auch dieses Gerät. Danach musst du dich überall neu anmelden."),
-                    "Überall abmelden",
+                    texts::security_everywhere_confirm_title(),
+                    Some(texts::security_everywhere_confirm_message()),
+                    texts::security_everywhere_confirm_label(),
                 ),
             );
         }

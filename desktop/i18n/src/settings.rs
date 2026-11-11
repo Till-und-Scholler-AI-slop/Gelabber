@@ -357,7 +357,9 @@ pub fn media_upload_economy_off(video: &str) -> String {
             "Für wenig Upload: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam {video}."
         ),
         Locale::En => {
-            format!("For low upload: voice 64 kbit/s, Live audio 128 kbit/s, video {video} combined.")
+            format!(
+                "For low upload: voice 64 kbit/s, Live audio 128 kbit/s, video {video} combined."
+            )
         }
     }
 }
