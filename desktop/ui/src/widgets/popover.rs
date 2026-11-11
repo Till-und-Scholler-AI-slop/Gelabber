@@ -24,6 +24,8 @@ pub struct Popover {
     inside: Option<Rect>,
     /// Inside the 1px border; 8 unless a popover sets its own.
     padding: f32,
+    /// `matchAnchorWidth`: at least the anchor's width, past the 360 cap.
+    anchor_width: bool,
 }
 
 /// `SUBMENU_INSET` of RowMenu.tsx: the submenu's padding and border, so its
@@ -43,6 +45,7 @@ impl Popover {
             beside: None,
             inside: None,
             padding: 8.0,
+            anchor_width: false,
         }
     }
 
@@ -87,6 +90,14 @@ impl Popover {
     /// Its own padding inside the border (the role picker's 12).
     pub fn padding(mut self, padding: f32) -> Self {
         self.padding = padding;
+        self
+    }
+
+    /// `matchAnchorWidth`: as wide as the anchor at least. The inline
+    /// min-width wins over `.ui-popover`'s max-width of 360.
+    pub fn match_anchor_width(mut self) -> Self {
+        self.anchor_width = true;
+        self.min_width = self.min_width.max(self.anchor.width());
         self
     }
 
@@ -196,7 +207,11 @@ impl Popover {
                 out = Some(content(&mut child));
                 let used = child.min_rect();
                 let measured = Vec2::new(
-                    (used.width() + 2.0 * inset).max(self.min_width).min(360.0),
+                    if self.anchor_width {
+                        (used.width() + 2.0 * inset).min(360.0).max(self.min_width)
+                    } else {
+                        (used.width() + 2.0 * inset).max(self.min_width).min(360.0)
+                    },
                     used.height() + 2.0 * inset,
                 );
                 if (measured - size).length() > 0.5 {

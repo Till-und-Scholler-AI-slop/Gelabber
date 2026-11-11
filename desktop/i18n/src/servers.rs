@@ -41,6 +41,11 @@ crate::strings! {
     channel_kind_voice_hint = "Reden, Kamera, Live" | "Talk, camera, Live";
     channel_category_label = "Kategorie" | "Category";
     channel_no_category = "Ohne Kategorie" | "No category";
+    channel_access_label = "Zugriff" | "Access";
+    channel_access_hint = "Nur diese Rollen sehen den Kanal. Mit „Alle Mitglieder“ sieht ihn jeder auf dem Server."
+        | "Only these roles see the channel. With “All members” everyone on the server sees it.";
+    channel_access_no_roles = "Rollen legst du in den Servereinstellungen an."
+        | "You create roles in the server settings.";
 
     invite_making = "Link wird erstellt…" | "Creating link…";
     invite_copy = "Link kopieren" | "Copy link";
