@@ -99,6 +99,8 @@ keys to this one block):
 ```sh
 # lena is an operator, for the "Betrieb" scenes; registration stays open.
 API_OPERATOR_EMAILS=lena@example.test
+# The directory is on, for the "Entdecken" scenes; seed.mjs stops without it.
+API_DIRECTORY=true
 # Sign-in with Google is on, so the auth pages show its button; Google is
 # never contacted (say.mjs oidc-* writes the results into the database).
 OIDC_GOOGLE_CLIENT_ID=parity.apps.googleusercontent.com
