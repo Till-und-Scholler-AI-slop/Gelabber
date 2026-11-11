@@ -1036,7 +1036,7 @@ mod flows {
         let res = client
             .send(Method::POST, "/api/auth/oidc/complete", Some(complete))
             .await;
-        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
         assert_eq!(res.body["user"]["name"], "Ada");
         assert_eq!(count(&pool, "SELECT count(*) FROM users").await, 1);
         assert_eq!(

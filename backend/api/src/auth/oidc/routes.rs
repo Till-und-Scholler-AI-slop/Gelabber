@@ -737,15 +737,13 @@ async fn complete(
     }
     let (cookies, session) = signed_in_parts(&state, &headers, user).await?;
     info!(provider = provider.id, %user_id, outcome = outcome_of(resolved), "oidc complete");
-    let status = match resolved {
-        SignIn::New { .. } => StatusCode::CREATED,
-        _ => StatusCode::OK,
-    };
+    // `201` also when an account that appeared meanwhile was joined: the
+    // name step ends the same way for every client (#518).
     let body = Json(CompleteResponse {
         session,
         redirect: stored.redirect,
     });
-    let mut response = (status, AppendHeaders(cookies), body).into_response();
+    let mut response = (StatusCode::CREATED, AppendHeaders(cookies), body).into_response();
     if stored.binding_hash.is_some() {
         let (name, value) = clear_binding(&state);
         response.headers_mut().append(name, value);
