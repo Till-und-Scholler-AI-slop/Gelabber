@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub const VOICE_LEASE_MS: u64 = 5000;
+/// Most Lives one seat watches at once, the media service's `WATCH_LIMIT`.
+pub const WATCH_LIMIT: usize = 64;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct SeatRecord {
@@ -18,6 +20,9 @@ struct SeatRecord {
     d: bool,
     #[serde(deserialize_with = "known_kinds")]
     p: HashSet<TrackKind>,
+    /// Owners whose Live this seat watches. Seats written before #521 have none.
+    #[serde(default)]
+    w: HashSet<Uuid>,
 }
 
 /// A seat an API from before #353 wrote can still list the old Go Live
@@ -69,6 +74,7 @@ local count=0
 local muted=true
 local deafened=true
 local pubs={}
+local watch={}
 for _,key in ipairs(redis.call('ZRANGE',KEYS[1],0,-1)) do
   local seat=redis.call('GET',key)
   if seat then
@@ -76,12 +82,22 @@ for _,key in ipairs(redis.call('ZRANGE',KEYS[1],0,-1)) do
     if row.u==ARGV[1] then
       count=count+1; muted=muted and row.m; deafened=deafened and row.d
       for _,kind in ipairs(row.p) do pubs[kind]=true end
+      if type(row.w)=='table' then for _,owner in ipairs(row.w) do watch[owner]=true end end
     end
   else redis.call('ZREM',KEYS[1],key) end
 end
 local base='"s":"'..ARGV[2]..'","c":"'..ARGV[3]..'","u":"'..ARGV[1]..'"'
 local function send(t,extra) redis.call('PUBLISH',KEYS[2],'{"t":"'..t..'",'..base..(extra or '')..'}') end
 local function flags() send('m',',"on":'..tostring(muted)); send('d',',"on":'..tostring(deafened)) end
+-- By hand: cjson encodes an empty table as {}, and the set must read [].
+local function watches()
+  local owners={}
+  for owner in pairs(watch) do table.insert(owners,owner) end
+  table.sort(owners)
+  local list='['
+  for i,owner in ipairs(owners) do list=list..(i>1 and ',' or '')..'"'..owner..'"' end
+  send('w',',"w":'..list..']')
+end
 if ARGV[4]=='j' and count>0 then send('j',',"m":'..tostring(muted)..',"d":'..tostring(deafened))
 elseif ARGV[4]=='m' and count>0 then send('m',',"on":'..tostring(muted))
 elseif (ARGV[4]=='d' or ARGV[4]=='d+') and count>0 then
@@ -90,10 +106,12 @@ elseif ARGV[4]=='leave' then
   if count==0 then send('l') else
     flags()
     for _,kind in ipairs(cjson.decode(ARGV[6])) do if not pubs[kind] then send('u',',"k":"'..kind..'"') end end
+    watches()
   end
 elseif ARGV[4]=='u' then
   for _,kind in ipairs(cjson.decode(ARGV[6])) do if not pubs[kind] then send('u',',"k":"'..kind..'"') end end
 elseif ARGV[4]=='p' and pubs[ARGV[5]] then send('p',',"k":"'..ARGV[5]..'"')
+elseif ARGV[4]=='w' and count>0 then watches()
 end
 return 1
 "#;
@@ -136,6 +154,7 @@ impl VoiceRoster {
             m: seat.muted,
             d: seat.deafened,
             p: seat.pubs.clone(),
+            w: seat.watches.clone(),
         })?;
         self.connections
             .with_conn(|mut conn| {
@@ -250,6 +269,7 @@ impl VoiceRoster {
                     pubs: HashSet::new(),
                     muted: false,
                     deafened: false,
+                    watches: HashSet::new(),
                 })
                 .clone()
         };
@@ -264,15 +284,20 @@ impl VoiceRoster {
         }
         let result = async {
             let rows = self.records(room_key(c)).await?;
-            let mut peers: HashMap<Uuid, (bool, bool, HashSet<TrackKind>)> = HashMap::new();
+            type Peer = (bool, bool, HashSet<TrackKind>, HashSet<Uuid>);
+            let mut peers: HashMap<Uuid, Peer> = HashMap::new();
             for row in rows.into_iter().filter(|row| row.u != u) {
-                let peer = peers.entry(row.u).or_insert((true, true, HashSet::new()));
+                let peer =
+                    peers
+                        .entry(row.u)
+                        .or_insert((true, true, HashSet::new(), HashSet::new()));
                 peer.0 &= row.m;
                 peer.1 &= row.d;
                 peer.2.extend(row.p);
+                peer.3.extend(row.w);
             }
             let mut events = Vec::new();
-            for (uid, (m, d, pubs)) in peers {
+            for (uid, (m, d, pubs, watches)) in peers {
                 let mut joined = SigEvent::join_state(s, c, uid, m, d);
                 joined.replay = true;
                 events.push(joined);
@@ -281,6 +306,10 @@ impl VoiceRoster {
                     published.replay = true;
                     events.push(published);
                 }
+                // Also an empty set: a rejoin after a reconnect gets the whole room.
+                let mut watching = SigEvent::watching(s, c, uid, watches.into_iter().collect());
+                watching.replay = true;
+                events.push(watching);
             }
             self.aggregate_signal(u, s, c, "j", &HashSet::new()).await?;
             Ok(events)
@@ -464,6 +493,49 @@ impl VoiceRoster {
         }
         Ok(true)
     }
+    /// `false` when the connection has no seat in `c` on `s`, or when it
+    /// would watch more than [`WATCH_LIMIT`] Lives.
+    pub async fn set_voice_watch(
+        &self,
+        id: ConnId,
+        u: Uuid,
+        s: Uuid,
+        c: Uuid,
+        owner: Uuid,
+        on: bool,
+    ) -> Result<bool, ApiError> {
+        let _guard = self.connections.inner.voice_ops.lock().await;
+        let mut seat = {
+            let sockets = self.connections.inner.sockets.read().await;
+            let Some(seat) = sockets
+                .get(&id)
+                .and_then(|socket| socket.rooms.get(&c))
+                .filter(|seat| seat.server_id == s)
+            else {
+                return Ok(false);
+            };
+            seat.clone()
+        };
+        // A frame that changes nothing writes and publishes nothing: the set
+        // others hold is already current.
+        if seat.watches.contains(&owner) == on {
+            return Ok(true);
+        }
+        if on {
+            if seat.watches.len() >= WATCH_LIMIT {
+                return Ok(false);
+            }
+            seat.watches.insert(owner);
+        } else {
+            seat.watches.remove(&owner);
+        }
+        self.write_seat(id, u, c, &seat).await?;
+        if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+            socket.rooms.insert(c, seat);
+        }
+        self.aggregate_signal(u, s, c, "w", &HashSet::new()).await?;
+        Ok(true)
+    }
     pub async fn voice_snapshot(&self, s: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {
         let rows = self.records(server_key(s)).await?;
         let mut groups: HashMap<(Uuid, Uuid), (bool, bool, bool)> = HashMap::new();
@@ -535,6 +607,46 @@ impl VoiceRoster {
             }
         }
         Ok(())
+    }
+    /// The servers of every `gb:voice:server:*` index (`SCAN`, so Redis is
+    /// never blocked). An index may hold only expired seats; its
+    /// [`Self::voice_snapshot`] is then empty.
+    pub async fn voice_servers(&self) -> Result<Vec<Uuid>, ApiError> {
+        // `server_key` without the id.
+        let prefix = "gb:voice:server:";
+        let pattern = format!("{prefix}*");
+        let mut servers = HashSet::new();
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, keys): (u64, Vec<String>) = self
+                .connections
+                .with_conn(|mut conn| {
+                    let pattern = pattern.clone();
+                    async move {
+                        redis::cmd("SCAN")
+                            .arg(cursor)
+                            .arg("MATCH")
+                            .arg(pattern)
+                            .arg("COUNT")
+                            .arg(500)
+                            .query_async(&mut conn)
+                            .await
+                    }
+                })
+                .await
+                .map_err(redis_err)?;
+            servers.extend(
+                keys.iter()
+                    .filter_map(|key| key.strip_prefix(prefix)?.parse::<Uuid>().ok()),
+            );
+            if next == 0 {
+                break;
+            }
+            cursor = next;
+        }
+        let mut servers: Vec<Uuid> = servers.into_iter().collect();
+        servers.sort();
+        Ok(servers)
     }
 }
 impl VoiceRoster {
@@ -933,6 +1045,8 @@ mod tests {
         let rows = g.voice.records(room_key(c)).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].p, HashSet::from([TrackKind::A]));
+        // Written before watches were kept: it watches nothing.
+        assert!(rows[0].w.is_empty());
         assert_eq!(g.voice_snapshot(s).await.unwrap().len(), 1);
     }
 
@@ -961,7 +1075,8 @@ mod tests {
             kinds,
             [
                 super::super::protocol::SigKind::J,
-                super::super::protocol::SigKind::P
+                super::super::protocol::SigKind::P,
+                super::super::protocol::SigKind::W
             ]
         );
         assert!(replayed.iter().all(|event| event.replay));
@@ -1009,5 +1124,187 @@ mod tests {
         );
         assert!(g.voice_snapshot(s).await.unwrap()[0].s);
         g.detach(id).await;
+    }
+
+    use super::super::protocol::SigKind;
+
+    /// The next sig frame about `u` on this socket, skipping others.
+    async fn next_about(rx: &mut mpsc::Receiver<ServerFrame>, u: Uuid) -> ServerFrame {
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+                .await
+                .expect("a sig frame")
+                .expect("socket open");
+            if matches!(&frame, ServerFrame::Sig { u: Some(who), .. } if *who == u) {
+                return frame;
+            }
+        }
+    }
+
+    /// The next watch set published for `u`.
+    async fn next_watch(rx: &mut mpsc::Receiver<ServerFrame>, u: Uuid) -> Vec<Uuid> {
+        loop {
+            if let ServerFrame::Sig {
+                t: SigKind::W,
+                w: Some(set),
+                ..
+            } = next_about(rx, u).await
+            {
+                return set;
+            }
+        }
+    }
+
+    fn sorted(mut ids: Vec<Uuid>) -> Vec<Uuid> {
+        ids.sort();
+        ids
+    }
+
+    #[tokio::test]
+    async fn watch_writes_the_seat_publishes_the_set_and_stops_at_the_limit() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (id, mut rx) = socket(&g, u).await;
+        // No seat yet: nothing to watch from.
+        assert!(
+            !g.set_voice_watch(id, u, s, c, Uuid::new_v4(), true)
+                .await
+                .unwrap()
+        );
+        g.join_voice(id, u, s, c).await.unwrap();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        assert!(g.set_voice_watch(id, u, s, c, a, true).await.unwrap());
+        assert_eq!(next_watch(&mut rx, u).await, vec![a]);
+        assert!(g.set_voice_watch(id, u, s, c, b, true).await.unwrap());
+        assert_eq!(next_watch(&mut rx, u).await, sorted(vec![a, b]));
+        let rows = g.voice.records(room_key(c)).await.unwrap();
+        assert_eq!(rows[0].w, HashSet::from([a, b]));
+        // Another server's id for the same room is no seat either.
+        assert!(
+            !g.set_voice_watch(id, u, Uuid::new_v4(), c, a, true)
+                .await
+                .unwrap()
+        );
+        // Frames that change nothing still succeed but publish nothing.
+        assert!(g.set_voice_watch(id, u, s, c, a, true).await.unwrap());
+        assert!(
+            g.set_voice_watch(id, u, s, c, Uuid::new_v4(), false)
+                .await
+                .unwrap()
+        );
+        assert!(g.set_voice_watch(id, u, s, c, a, false).await.unwrap());
+        assert_eq!(next_watch(&mut rx, u).await, vec![b]);
+        for _ in 1..WATCH_LIMIT {
+            assert!(
+                g.set_voice_watch(id, u, s, c, Uuid::new_v4(), true)
+                    .await
+                    .unwrap()
+            );
+        }
+        let full = g.connections.inner.sockets.read().await[&id].rooms[&c]
+            .watches
+            .clone();
+        assert_eq!(full.len(), WATCH_LIMIT);
+        // The 65th owner is refused; one already watched still is fine.
+        assert!(
+            !g.set_voice_watch(id, u, s, c, Uuid::new_v4(), true)
+                .await
+                .unwrap()
+        );
+        assert!(g.set_voice_watch(id, u, s, c, b, true).await.unwrap());
+        assert_eq!(
+            g.connections.inner.sockets.read().await[&id].rooms[&c].watches,
+            full
+        );
+        g.detach(id).await;
+    }
+
+    #[tokio::test]
+    async fn two_tabs_watch_as_one_and_only_the_last_leave_drops_the_set() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let owner = Uuid::new_v4();
+        let (first, _r1) = socket(&g, u).await;
+        let (second, _r2) = socket(&g, u).await;
+        let other = Uuid::new_v4();
+        let (peer, mut rx) = socket(&g, other).await;
+        for id in [first, second] {
+            g.join_voice(id, u, s, c).await.unwrap();
+        }
+        g.join_voice(peer, other, s, c).await.unwrap();
+        for id in [first, second] {
+            assert!(g.set_voice_watch(id, u, s, c, owner, true).await.unwrap());
+            assert_eq!(next_watch(&mut rx, u).await, vec![owner]);
+        }
+        // The other tab still watches.
+        assert!(
+            g.set_voice_watch(first, u, s, c, owner, false)
+                .await
+                .unwrap()
+        );
+        assert_eq!(next_watch(&mut rx, u).await, vec![owner]);
+        // Leaving one seat republishes the set from the seat that stays.
+        assert!(g.leave_voice(second, u, s, c).await.unwrap());
+        assert_eq!(next_watch(&mut rx, u).await, Vec::<Uuid>::new());
+        // Leaving the last one sends only `l`.
+        assert!(g.leave_voice(first, u, s, c).await.unwrap());
+        let ServerFrame::Sig { t, .. } = next_about(&mut rx, u).await else {
+            unreachable!()
+        };
+        assert_eq!(t, SigKind::L);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), next_about(&mut rx, u))
+                .await
+                .is_err()
+        );
+        for id in [first, second, peer] {
+            g.detach(id).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn join_replays_one_watch_set_per_peer_even_an_empty_one() {
+        let g = gateway();
+        let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+        let (a, b, newcomer) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (sa, _ra) = socket(&g, a).await;
+        let (sb, _rb) = socket(&g, b).await;
+        let (sn, _rn) = socket(&g, newcomer).await;
+        g.join_voice(sa, a, s, c).await.unwrap();
+        g.join_voice(sb, b, s, c).await.unwrap();
+        assert!(
+            g.set_voice_pub(sa, a, s, c, TrackKind::S, true)
+                .await
+                .unwrap()
+        );
+        assert!(g.set_voice_watch(sb, b, s, c, a, true).await.unwrap());
+        let replayed = g.join_voice(sn, newcomer, s, c).await.unwrap();
+        assert!(replayed.iter().all(|event| event.replay));
+        let watches: HashMap<Uuid, Vec<Uuid>> = replayed
+            .iter()
+            .filter(|event| event.t == SigKind::W)
+            .map(|event| (event.u, event.w.clone().unwrap()))
+            .collect();
+        assert_eq!(watches, HashMap::from([(a, vec![]), (b, vec![a])]));
+        assert_eq!(
+            replayed
+                .iter()
+                .filter(|event| event.t == SigKind::W)
+                .count(),
+            2
+        );
+        // Each peer's set follows its own j and p.
+        for peer in [a, b] {
+            let kinds: Vec<_> = replayed
+                .iter()
+                .filter(|event| event.u == peer)
+                .map(|event| event.t)
+                .collect();
+            assert_eq!(kinds.first(), Some(&SigKind::J));
+            assert_eq!(kinds.last(), Some(&SigKind::W));
+        }
+        for id in [sa, sb, sn] {
+            g.detach(id).await;
+        }
     }
 }

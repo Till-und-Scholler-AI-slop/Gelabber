@@ -27,8 +27,12 @@ import {
 import { useSession } from "./store.ts";
 import type {
   LogoutResponse,
+  OidcCompleteResponse,
+  OidcPending,
+  OidcStartBody,
   ProfilePatch,
   SessionResponse,
+  SignInMethods,
   User,
 } from "./types.ts";
 
@@ -119,8 +123,17 @@ export function loggedOutOnPurpose(): boolean {
   return loggedOutHere;
 }
 
-function applySession(user: User | null, force = false): void {
-  const previousId = useSession.getState().user?.id ?? null;
+/**
+ * `operator` comes with session payloads; without it (a profile write that
+ * answered with a user) the same account keeps the flag it had.
+ */
+function applySession(
+  user: User | null,
+  force = false,
+  operator?: boolean,
+): void {
+  const previous = useSession.getState();
+  const previousId = previous.user?.id ?? null;
   const nextId = user?.id ?? null;
   if (user) loggedOutHere = false;
   stopSessionRetry();
@@ -132,6 +145,9 @@ function applySession(user: User | null, force = false): void {
   useSession.setState({
     status: user ? "authenticated" : "anonymous",
     user,
+    operator:
+      user !== null &&
+      (operator ?? (previousId === nextId && previous.operator)),
   });
   // Same account (profile rename, CSRF refresh) keeps its cache. A different
   // id, or nobody, drops the previous account before the next paint.
@@ -164,7 +180,7 @@ function receiveSession(value: unknown, options?: SessionSinkOptions): void {
     // invalidate the request the route guard is waiting for.
     if (previous.status === "unknown") return;
     if (activeAuthIntent === null || previous.user !== null) {
-      useSession.setState({ status: "unknown", user: null });
+      useSession.setState({ status: "unknown", user: null, operator: false });
     }
     if (options.force || previous.user !== null) releaseUserScope(null);
     return;
@@ -172,7 +188,7 @@ function receiveSession(value: unknown, options?: SessionSinkOptions): void {
   const user = isUser(value) ? value : null;
   // Foreign cookies must not replace an explicitly requested login/register.
   if (options?.shared && user && activeAuthIntent !== null) return;
-  applySession(user, options?.force);
+  applySession(user, options?.force, options?.operator);
 }
 setSessionSink(receiveSession);
 setSessionScope(takeSessionStamp);
@@ -264,10 +280,18 @@ function finishAuthIntent(intent: number): void {
 }
 
 async function signIn(path: string, body: unknown): Promise<User | null> {
+  return (await signInSession<SessionResponse>(path, body)).user;
+}
+
+/** `signIn` with the whole answer, for routes that say more than the user. */
+async function signInSession<T extends SessionResponse>(
+  path: string,
+  body: unknown,
+): Promise<T> {
   const intent = startAuthIntent();
   useSessionProblems.setState({ bootstrap: null });
   try {
-    const session = await api<SessionResponse>(path, {
+    const session = await api<T>(path, {
       method: "POST",
       body,
       authIntent: () => authIntent === intent,
@@ -276,7 +300,7 @@ async function signIn(path: string, body: unknown): Promise<User | null> {
       throw new DOMException("The session changed. Try again.", "AbortError");
     failedLogoutUserId = null;
     useSessionProblems.setState({ logout: null });
-    return session.user;
+    return session;
   } finally {
     finishAuthIntent(intent);
   }
@@ -294,6 +318,7 @@ export function register(
   email: string,
   password: string,
   name: string,
+  codes: AdmissionCodes = {},
 ): Promise<User | null> {
   // The new account keeps the language this device shows.
   return signIn("/auth/register", {
@@ -301,8 +326,13 @@ export function register(
     password,
     name,
     locale: currentLocale(),
+    ...codes,
   });
 }
+
+/** What admits a new account on an invitation-only instance: a beta
+ * invitation's code, or the code of the server invite being followed. */
+export type AdmissionCodes = { invitation?: string; server_invite?: string };
 
 /**
  * Opens a mailed confirmation link with the account's password; this tab
@@ -391,6 +421,107 @@ export async function changePassword(
     // Push is extra; the next start subscribes again.
   });
   return session.user as User;
+}
+
+/**
+ * Sets the first password of an account that signs in only through a
+ * provider. Like `changePassword`, every other session ends. The API wants
+ * a recent sign-in for this (`reauth_required`).
+ */
+export async function setPassword(password: string): Promise<User> {
+  const session = await api<SessionResponse>("/auth/password", {
+    method: "POST",
+    body: { password },
+  });
+  void syncPush().catch(() => {
+    // Push is extra; the next start subscribes again.
+  });
+  return session.user as User;
+}
+
+/** How long `startOidc` stays busy after leaving, should the page stay. */
+export const OIDC_LEAVING_MS = 20_000;
+
+/**
+ * Leaves for the provider's sign-in page. The page is left by a plain
+ * navigation: the shell's CSP allows no form post to another origin.
+ *
+ * The promise stays open while the page unloads, so the button that started
+ * it stays busy: a second click would start a second flow whose binding
+ * cookie replaces this one's. It settles when the browser brings the page
+ * back from its history, or after `OIDC_LEAVING_MS` if the page never left.
+ */
+export async function startOidc(
+  provider: string,
+  options: {
+    purpose: OidcStartBody["purpose"];
+    redirect?: string | undefined;
+    currentPassword?: string | undefined;
+    invitation?: string | undefined;
+  },
+): Promise<void> {
+  const body: OidcStartBody = { purpose: options.purpose };
+  if (options.redirect) body.redirect = options.redirect;
+  if (options.currentPassword !== undefined)
+    body.current_password = options.currentPassword;
+  if (options.invitation) body.invitation = options.invitation;
+  const { url } = await api<{ url: string }>(
+    `/auth/oidc/${encodeURIComponent(provider)}/start`,
+    { method: "POST", body },
+  );
+  window.location.assign(url);
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      window.removeEventListener("pageshow", back);
+      resolve();
+    };
+    const back = (event: PageTransitionEvent) => {
+      if (event.persisted) done();
+    };
+    const timer = setTimeout(done, OIDC_LEAVING_MS);
+    window.addEventListener("pageshow", back);
+  });
+}
+
+/** The first sign-in a name-step token stands for; does not use it up. */
+export function oidcPending(
+  token: string,
+  signal?: AbortSignal,
+): Promise<OidcPending> {
+  return api<OidcPending>("/auth/oidc/pending", {
+    method: "POST",
+    body: { token },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * Creates the account of a first provider sign-in with its chosen name;
+ * this tab is signed in afterwards, as after `login`.
+ */
+export function completeOidc(
+  token: string,
+  name: string,
+): Promise<OidcCompleteResponse> {
+  // The new account keeps the language this device shows.
+  return signInSession<OidcCompleteResponse>("/auth/oidc/complete", {
+    token,
+    name,
+    locale: currentLocale(),
+  });
+}
+
+/** How the signed-in account can sign in: password and providers. */
+export function signInMethods(signal?: AbortSignal): Promise<SignInMethods> {
+  return api<SignInMethods>("/auth/methods", signal ? { signal } : {});
+}
+
+/** Detaches a provider; the API refuses while the account has no password. */
+export function disconnectProvider(provider: string): Promise<SignInMethods> {
+  return api<SignInMethods>(`/auth/oidc/${encodeURIComponent(provider)}`, {
+    method: "DELETE",
+  });
 }
 
 /**
@@ -512,6 +643,6 @@ export function resetSessionForTests(): void {
   setCsrfToken(null);
   setSessionSink(receiveSession);
   setSessionScope(takeSessionStamp);
-  useSession.setState({ status: "unknown", user: null });
+  useSession.setState({ status: "unknown", user: null, operator: false });
   releaseUserScope(null);
 }

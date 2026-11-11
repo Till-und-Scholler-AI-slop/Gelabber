@@ -103,7 +103,7 @@ async fn creating_a_server_makes_the_caller_owner_with_a_chat_and_a_voice_room(p
     let permissions = server["permissions"].as_array().unwrap();
     assert_eq!(
         permissions.len(),
-        8,
+        9,
         "owner holds every flag: {permissions:?}"
     );
     assert_eq!(
@@ -704,7 +704,7 @@ async fn member_permission_flags_are_enforced_and_editable(pool: PgPool) {
         "canonical order, independent of input order"
     );
     assert_eq!(res.body["role"], "owner");
-    assert_eq!(res.body["permissions"].as_array().unwrap().len(), 8);
+    assert_eq!(res.body["permissions"].as_array().unwrap().len(), 9);
 
     let res = member
         .send(
@@ -742,6 +742,20 @@ async fn member_permission_flags_are_enforced_and_editable(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(res.body["fields"]["member_permissions"], "invalid");
+
+    // The v0.10 flag is a member flag like the others.
+    let res = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{id}"),
+            Some(json!({ "member_permissions": ["send_messages", "moderate_members"] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(
+        res.body["member_permissions"],
+        json!(["moderate_members", "send_messages"])
+    );
 
     // Empty set is allowed (read-only members); rename in the same patch.
     let res = owner

@@ -196,13 +196,17 @@ async fn revoke_invite(
 
 /// What the join page shows before the button is pressed. Unlike every
 /// other server read this does *not* require membership — that is the point
-/// of a link — but it also exposes nothing beyond name and size.
+/// of a link — but it also exposes nothing beyond name and size. A blocked
+/// server's link is dead for everyone, members included.
 async fn preview_invite(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Path(code): Path<String>,
 ) -> Result<Json<InvitePreview>, ApiError> {
     let invite = by_code(&state.db, &code).await?;
+    if is_blocked(&state.db, invite.server_id).await? {
+        return Err(ApiError::InviteInvalid);
+    }
     if moderation::is_banned(&state.db, invite.server_id, user.id).await? {
         return Err(ApiError::Banned);
     }
@@ -227,7 +231,7 @@ async fn preview_invite(
 }
 
 /// Adds the caller to the server. Idempotent: an existing member gets the
-/// server back without consuming a use.
+/// server back without consuming a use. Nobody joins a blocked server.
 async fn join(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -244,6 +248,9 @@ async fn join(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
+    if is_blocked(&mut *tx, invite.server_id).await? {
+        return Err(ApiError::InviteInvalid);
+    }
 
     let already: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM server_members WHERE server_id = $1 AND user_id = $2)",
@@ -276,6 +283,12 @@ async fn join(
             .bind(&invite.code)
             .execute(&mut *tx)
             .await?;
+        // In now, so a request to join through the directory is moot.
+        sqlx::query("DELETE FROM server_join_requests WHERE server_id = $1 AND user_id = $2")
+            .bind(invite.server_id)
+            .bind(user.id)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     if !already {
@@ -284,6 +297,19 @@ async fn join(
 
     let member: Membership = membership::load(&state.db, invite.server_id, user.id).await?;
     Ok(Json(member.into()))
+}
+
+/// Whether an operator blocked the server.
+async fn is_blocked<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    db: E,
+    server_id: Uuid,
+) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM servers WHERE id = $1 AND blocked_at IS NOT NULL)",
+    )
+    .bind(server_id)
+    .fetch_one(db)
+    .await?)
 }
 
 async fn by_code(db: &PgPool, code: &str) -> Result<Invite, ApiError> {

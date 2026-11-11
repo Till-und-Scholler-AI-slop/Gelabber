@@ -383,7 +383,7 @@ async fn kick_and_ban_are_admin_only_and_cannot_target_owner(pool: PgPool) {
         )
         .await;
     // Owner kicking the member is allowed — this is the control that
-    // manage_server works. The member-trying-to-kick-owner case is above.
+    // moderation works. The member-trying-to-kick-owner case is above.
     assert_eq!(self_kick.status, StatusCode::NO_CONTENT);
 
     let missing = owner
@@ -398,7 +398,7 @@ async fn kick_and_ban_are_admin_only_and_cannot_target_owner(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn manage_server_member_can_kick(pool: PgPool) {
+async fn moderate_members_member_can_kick(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
     let mut other = Client::new(pool);
     other.bootstrap().await;
@@ -417,7 +417,7 @@ async fn manage_server_member_can_kick(pool: PgPool) {
             Method::PATCH,
             &format!("/api/servers/{server_id}"),
             Some(json!({
-                "member_permissions": ["manage_server", "send_messages"]
+                "member_permissions": ["moderate_members", "send_messages"]
             })),
         )
         .await;
@@ -431,6 +431,52 @@ async fn manage_server_member_can_kick(pool: PgPool) {
         )
         .await;
     assert_eq!(kicked.status, StatusCode::NO_CONTENT, "{}", kicked.body);
+}
+
+/// v0.10: kick, ban and the ban list moved from manage_server to
+/// moderate_members.
+#[sqlx::test]
+async fn manage_server_alone_cannot_moderate(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let server_id = server["id"].as_str().unwrap();
+    let owner_id = me_id(&mut owner).await;
+
+    let granted = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{server_id}"),
+            Some(json!({ "member_permissions": ["manage_server", "send_messages"] })),
+        )
+        .await;
+    assert_eq!(granted.status, StatusCode::OK, "{}", granted.body);
+
+    for (method, path, body) in [
+        (
+            Method::POST,
+            format!("/api/servers/{server_id}/kick"),
+            Some(json!({ "user_id": owner_id })),
+        ),
+        (
+            Method::POST,
+            format!("/api/servers/{server_id}/ban"),
+            Some(json!({ "user_id": owner_id })),
+        ),
+        (Method::GET, format!("/api/servers/{server_id}/bans"), None),
+        (
+            Method::DELETE,
+            format!("/api/servers/{server_id}/bans/{owner_id}"),
+            None,
+        ),
+    ] {
+        let res = member.send(method.clone(), &path, body).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{method} {path}");
+        assert_eq!(
+            res.body["message"], "You need the moderate_members permission.",
+            "{method} {path}: {}",
+            res.body
+        );
+    }
 }
 
 async fn connect_ws(addr: std::net::SocketAddr, cookie: &str) -> Ws {

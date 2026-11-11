@@ -25,6 +25,7 @@ const server: ServerDetail = {
     channel("dev", "cat-text", "dev", "text"),
   ],
   members: [],
+  roles: [],
 };
 
 function category(id: string, name: string): Category {
@@ -44,6 +45,8 @@ function channel(
     name,
     kind,
     created_at: "2026-09-13T00:00:00Z",
+    limited: false,
+    role_ids: [],
   };
 }
 

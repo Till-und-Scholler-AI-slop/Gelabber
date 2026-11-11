@@ -1,8 +1,12 @@
 import { translate } from "../i18n/catalog.ts";
 import { voice } from "../i18n/catalogs/voice.ts";
 
-/** "Mia", "Mia und Lena", "Mia, Lena und Kim", "Mia, Lena und 2 weitere". */
-export function nameList(names: readonly string[]): string {
+/** "Mia", "Mia und Lena", "Mia, Lena und Kim", "Mia, Lena und 2 weitere".
+ * `dative` after "mit": "Mia, Lena und 2 weiteren". */
+export function nameList(
+  names: readonly string[],
+  { dative = false }: { dative?: boolean } = {},
+): string {
   if (names.length <= 1) return names[0] ?? "";
   if (names.length === 2)
     return translate(voice, "names.two", { a: names[0], b: names[1] });
@@ -12,7 +16,7 @@ export function nameList(names: readonly string[]): string {
       b: names[1],
       c: names[2],
     });
-  return translate(voice, "names.more", {
+  return translate(voice, dative ? "names.moreDative" : "names.more", {
     a: names[0],
     b: names[1],
     more: names.length - 2,
@@ -48,7 +52,9 @@ export function roomSummary(
   if (here)
     return others.length === 0
       ? translate(voice, "summary.onlyYou")
-      : translate(voice, "summary.youWith", { names: nameList(others) });
+      : translate(voice, "summary.youWith", {
+          names: nameList(others, { dative: true }),
+        });
   if (others.length === 0) return translate(voice, "summary.nobody");
   const there = translate(
     voice,
@@ -62,24 +68,21 @@ export function roomSummary(
   });
 }
 
-/** The stage's line while pictures run: how many are in the channel and
- * who is live, or how many cameras are on. "3 im Kanal · 2 Kameras",
- * "3 im Kanal · Jonas ist live". `live` names the others; `selfLive` adds
- * the viewer as "Du". */
+/** The header's facts while pictures run: how many are in the channel and
+ * how many Lives run, the viewer's included, or else how many cameras are
+ * on. "3 im Kanal · 1 Live", "3 im Kanal · 2 Kameras", "3 im Kanal". */
 export function stageFacts({
   people,
   cameras,
-  live,
-  selfLive,
+  lives,
 }: {
   people: number;
   cameras: number;
-  live: readonly string[];
-  selfLive: boolean;
+  lives: number;
 }): string {
   const count = translate(voice, "facts.people", { count: people });
-  if (live.length > 0 || selfLive)
-    return `${count} · ${liveSentence(selfLive ? [youName(), ...live] : live, selfLive)}`;
+  if (lives > 0)
+    return `${count} · ${translate(voice, "facts.live", { count: lives })}`;
   if (cameras === 0) return count;
   return `${count} · ${translate(voice, "facts.cameras", { count: cameras })}`;
 }

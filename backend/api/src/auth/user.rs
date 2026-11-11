@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection, PgPool};
 use uuid::Uuid;
 
 use crate::error::ApiError;
@@ -109,15 +109,32 @@ pub async fn card_visible(db: &PgPool, viewer: Uuid, target: Uuid) -> Result<boo
 #[derive(Debug, FromRow)]
 pub struct Credentials {
     pub id: Uuid,
-    pub password_hash: String,
+    /// `None`: the account signs in only through a provider (migration
+    /// 0033) until its owner sets a password.
+    pub password_hash: Option<String>,
     /// The owner opened a confirmation or reset link (migration 0021).
     pub email_verified: bool,
+    /// An operator disabled the account (migration 0032).
+    pub disabled: bool,
 }
 
 /// Inserts a new account. `email` must already be normalised (trimmed,
 /// lower-cased). A unique-index hit maps to `ApiError::EmailTaken`.
 pub async fn insert(
     db: &PgPool,
+    email: &str,
+    name: &str,
+    password_hash: &str,
+    locale: Locale,
+) -> Result<User, ApiError> {
+    let mut conn = db.acquire().await?;
+    insert_in(&mut conn, email, name, password_hash, locale).await
+}
+
+/// [`insert`] on the caller's connection, so registration can redeem its
+/// invitation in the same transaction (`operator::admission::redeem`).
+pub async fn insert_in(
+    conn: &mut PgConnection,
     email: &str,
     name: &str,
     password_hash: &str,
@@ -132,7 +149,38 @@ pub async fn insert(
     .bind(name)
     .bind(password_hash)
     .bind(locale)
-    .fetch_one(db)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| match &err {
+        // SQLSTATE 23505 = unique_violation.
+        sqlx::Error::Database(db_err) if db_err.code().as_deref() == Some("23505") => {
+            ApiError::EmailTaken
+        }
+        _ => err.into(),
+    })
+}
+
+/// Inserts an account created through a provider's first sign-in: no
+/// password, the address confirmed (the provider reported it verified).
+/// `email` must already be normalised. A unique-index hit maps to
+/// `ApiError::EmailTaken`.
+pub async fn insert_oidc(
+    conn: &mut PgConnection,
+    email: &str,
+    name: &str,
+    locale: Locale,
+) -> Result<User, ApiError> {
+    sqlx::query_as::<_, User>(
+        "INSERT INTO users (email, name, password_hash, email_verified_at, \
+             registration_pending, locale) \
+         VALUES ($1, $2, NULL, now(), false, $3) \
+         RETURNING id, email, name, avatar_url, created_at, bio, pronouns, status_text, \
+             accent_color, banner_color, banner_url, avatar_decoration, locale",
+    )
+    .bind(email)
+    .bind(name)
+    .bind(locale)
+    .fetch_one(&mut *conn)
     .await
     .map_err(|err| match &err {
         // SQLSTATE 23505 = unique_violation.
@@ -159,6 +207,19 @@ pub async fn insert_unverified(
     locale: Locale,
 ) -> Result<Option<Uuid>, ApiError> {
     let mut tx = db.begin().await?;
+    let id = insert_unverified_in(&mut tx, email, name, password_hash, locale).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// [`insert_unverified`] inside the caller's transaction.
+pub async fn insert_unverified_in(
+    conn: &mut PgConnection,
+    email: &str,
+    name: &str,
+    password_hash: &str,
+    locale: Locale,
+) -> Result<Option<Uuid>, ApiError> {
     let id: Option<Uuid> = sqlx::query_scalar(
         "INSERT INTO users (email, name, password_hash, registration_pending, locale) \
          VALUES ($1, $2, $3, true, $4) \
@@ -166,21 +227,21 @@ pub async fn insert_unverified(
          SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, \
              locale = EXCLUDED.locale, updated_at = now() \
          WHERE users.registration_pending AND users.email_verified_at IS NULL \
+             AND users.disabled_at IS NULL \
          RETURNING id",
     )
     .bind(email)
     .bind(name)
     .bind(password_hash)
     .bind(locale)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = id {
         sqlx::query("DELETE FROM account_tokens WHERE user_id = $1 AND purpose = 'verify_email'")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await?;
     }
-    tx.commit().await?;
     Ok(id)
 }
 
@@ -199,7 +260,8 @@ pub async fn credentials_by_email(
     email: &str,
 ) -> Result<Option<Credentials>, ApiError> {
     Ok(sqlx::query_as::<_, Credentials>(
-        "SELECT id, password_hash, email_verified_at IS NOT NULL AS email_verified \
+        "SELECT id, password_hash, email_verified_at IS NOT NULL AS email_verified, \
+             disabled_at IS NOT NULL AS disabled \
              FROM users WHERE lower(email) = $1",
     )
     .bind(email)
@@ -207,12 +269,26 @@ pub async fn credentials_by_email(
     .await?)
 }
 
-pub async fn password_hash_by_id(db: &PgPool, id: Uuid) -> Result<Option<String>, ApiError> {
+/// Whether an operator disabled the account; `false` for an unknown id.
+pub async fn is_disabled(db: &PgPool, id: Uuid) -> Result<bool, ApiError> {
     Ok(
-        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        sqlx::query_scalar::<_, bool>("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
-            .await?,
+            .await?
+            .unwrap_or(false),
+    )
+}
+
+/// The account's password hash; `None` for an unknown id and for an
+/// account without a password (migration 0033).
+pub async fn password_hash_by_id(db: &PgPool, id: Uuid) -> Result<Option<String>, ApiError> {
+    Ok(
+        sqlx::query_scalar::<_, Option<String>>("SELECT password_hash FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?
+            .flatten(),
     )
 }
 

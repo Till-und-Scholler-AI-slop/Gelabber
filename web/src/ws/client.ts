@@ -627,6 +627,8 @@ export class Gateway {
       case "ns":
       case "rd":
       case "lc":
+      case "jn":
+      case "jq":
         for (const listener of this.accountListeners) {
           if (!alive()) return;
           listener(frame);

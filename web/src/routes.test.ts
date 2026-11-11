@@ -1,11 +1,16 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { scopeGeneration } from "./auth/scope.ts";
 import { useSession } from "./auth/session.ts";
+import { directoryKeys } from "./discover/queries.ts";
+import { validateDiscoverSearch } from "./discover/search.ts";
+import { OPERATOR_PAGES } from "./operator/areas.ts";
 import { SETTINGS_AREAS } from "./pages/settingsAreas.ts";
 import { router, validateAuthSearch } from "./routes.tsx";
+import { queryClient, setQueryScope } from "./queryClient.ts";
 
 /** Runs a route's guard and returns what it threw, if anything. */
 function guard(routeId: string, params: Record<string, string> = {}) {
@@ -82,6 +87,37 @@ describe("router", () => {
     }
   });
 
+  it("hands a failed confirmation sign-in back to Sicherheit with its error", async () => {
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Ada", email: "ada@example.org" } as never,
+    });
+    const login = router.routesById["/auth/login"].options.beforeLoad;
+    const target = async (search: Record<string, unknown>) => {
+      try {
+        await login?.({ search: validateAuthSearch(search) } as never);
+      } catch (thrown) {
+        return (thrown as { options: { href?: string } }).options.href;
+      }
+      return undefined;
+    };
+    try {
+      expect(
+        await target({ oidc_error: "cancelled", redirect: "/settings/konto" }),
+      ).toBe("/settings/konto?oidc_error=cancelled");
+      expect(await target({ redirect: "/settings/konto" })).toBe(
+        "/settings/konto",
+      );
+      // Elsewhere a signed-in visitor still just goes on.
+      expect(
+        await target({ oidc_error: "cancelled", redirect: "/invite/x" }),
+      ).toBe("/invite/x");
+      expect(await target({ oidc_error: "expired" })).toBe("/");
+    } finally {
+      useSession.setState({ status: "anonymous", user: null });
+    }
+  });
+
   it("keeps only known auth search values", () => {
     expect(
       validateAuthSearch({
@@ -104,6 +140,49 @@ describe("router", () => {
     expect(validateAuthSearch({ email: "x".repeat(255) })).toEqual({});
   });
 
+  it("keeps an invitation code and a sign-in's admission refusal", () => {
+    expect(
+      validateAuthSearch({
+        invitation: "k7m2p9qrs4tx",
+        oidc_error: "invitation_invalid",
+      }),
+    ).toEqual({ invitation: "k7m2p9qrs4tx", oidc_error: "invitation_invalid" });
+    expect(validateAuthSearch({ oidc_error: "invitation_required" })).toEqual({
+      oidc_error: "invitation_required",
+    });
+    // The router parses an all-digit code as a number.
+    expect(validateAuthSearch({ invitation: 234567892345 })).toEqual({
+      invitation: "234567892345",
+    });
+    expect(
+      validateAuthSearch({
+        invitation: "<script>",
+        oidc_error: "registration_closed",
+      }),
+    ).toEqual({});
+    expect(validateAuthSearch({ invitation: "a".repeat(65) })).toEqual({});
+    expect(validateAuthSearch({ invitation: "" })).toEqual({});
+  });
+
+  it("keeps every known oidc_error and drops the rest", () => {
+    for (const code of [
+      "cancelled",
+      "expired",
+      "failed",
+      "email_unverified",
+      "account_unverified",
+      "identity_taken",
+      "insecure_transport",
+      "session_changed",
+      "account_disabled",
+    ])
+      expect(validateAuthSearch({ oidc_error: code })).toEqual({
+        oidc_error: code,
+      });
+    for (const code of ["registration_closed", "oidc_unavailable", "", 1])
+      expect(validateAuthSearch({ oidc_error: code })).toEqual({});
+  });
+
   it("draws the front door without the app header", () => {
     for (const id of [
       "/auth/login",
@@ -112,6 +191,7 @@ describe("router", () => {
       "/auth/reset-password",
       "/auth/verify-email",
       "/auth/invite/$code",
+      "/auth/sign-in/name",
     ] as const) {
       expect(router.routesById[id].parentRoute.options.staticData).toEqual({
         bare: true,
@@ -155,5 +235,134 @@ describe("settings routes", () => {
     expect(thrown).toMatchObject({
       options: { params: { area: "darstellung" }, replace: true },
     });
+  });
+});
+
+describe("operator routes", () => {
+  /** Runs an async guard and returns what it threw, if anything. */
+  async function guardAsync(
+    routeId: "/workspace/betrieb" | "/workspace/betrieb/$page",
+    params: Record<string, string> = {},
+  ) {
+    try {
+      await router.routesById[routeId].options.beforeLoad?.({
+        params,
+      } as never);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  }
+
+  const signIn = (operator: boolean) =>
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Lena", email: "lena@example.test" } as never,
+      operator,
+    });
+  afterEach(() =>
+    useSession.setState({ status: "anonymous", user: null, operator: false }),
+  );
+
+  it("gives every page of Betrieb its own address inside the workspace", async () => {
+    signIn(true);
+    for (const page of OPERATOR_PAGES) {
+      const matches = router.matchRoutes(`/betrieb/${page}`, {});
+      expect(matches.map((match) => match.routeId)).toEqual([
+        "__root__",
+        "/workspace",
+        "/workspace/betrieb/$page",
+      ]);
+      expect(
+        await guardAsync("/workspace/betrieb/$page", { page }),
+      ).toBeUndefined();
+    }
+  });
+
+  it("opens Server for /betrieb", async () => {
+    signIn(true);
+    const thrown = await guardAsync("/workspace/betrieb");
+    expect(isRedirect(thrown)).toBe(true);
+    expect(thrown).toMatchObject({
+      options: {
+        to: "/betrieb/$page",
+        params: { page: "server" },
+        replace: true,
+      },
+    });
+  });
+
+  it("is not found for anyone but an operator", async () => {
+    signIn(false);
+    expect(isNotFound(await guardAsync("/workspace/betrieb"))).toBe(true);
+    for (const page of OPERATOR_PAGES)
+      expect(
+        isNotFound(await guardAsync("/workspace/betrieb/$page", { page })),
+      ).toBe(true);
+  });
+
+  it("knows no other pages", async () => {
+    signIn(true);
+    expect(
+      isNotFound(
+        await guardAsync("/workspace/betrieb/$page", { page: "audit" }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("the directory route", () => {
+  const status = (enabled: boolean) =>
+    queryClient.setQueryData(directoryKeys.status("u1", scopeGeneration()), {
+      enabled,
+      languages: [],
+    });
+  async function guardDiscover() {
+    try {
+      await router.routesById["/workspace/discover"].options.beforeLoad?.(
+        {} as never,
+      );
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  }
+  beforeEach(() => {
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Lena", email: "lena@example.test" } as never,
+    });
+    setQueryScope("u1", scopeGeneration());
+  });
+  afterEach(() => {
+    queryClient.clear();
+    setQueryScope(null, 0);
+    useSession.setState({ status: "anonymous", user: null });
+  });
+
+  it("lives inside the workspace at /discover", () => {
+    expect(
+      router.matchRoutes("/discover", {}).map((match) => match.routeId),
+    ).toEqual(["__root__", "/workspace", "/workspace/discover"]);
+  });
+
+  it("is not found while the directory is off", async () => {
+    status(false);
+    expect(isNotFound(await guardDiscover())).toBe(true);
+  });
+
+  it("opens while the directory is on", async () => {
+    status(true);
+    expect(await guardDiscover()).toBeUndefined();
+  });
+
+  it("keeps a search and a language code from the address", () => {
+    expect(validateDiscoverSearch({ q: "  rust ", lang: "en" })).toEqual({
+      q: "rust",
+      lang: "en",
+    });
+    expect(validateDiscoverSearch({ q: 1984 })).toEqual({ q: "1984" });
+    expect(validateDiscoverSearch({ q: "   ", lang: "english" })).toEqual({});
+    expect(validateDiscoverSearch({ q: "x".repeat(150) }).q).toHaveLength(100);
   });
 });

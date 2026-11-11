@@ -7,7 +7,10 @@
 // camera line up under it (Raster). In Fokus one picture fills the stage
 // over a row of the others and the people; it is the view while someone
 // else is live, unless the user picked one in this call. Kino (K, Esc)
-// gives that picture the window but for the call bar. The overview keeps its Lives in a spotlight and
+// gives that picture the window but for the call bar. In a call of two or
+// more without pictures the people fill the stage as tiles of the same
+// grid; a phone whose tiles would be too small keeps the cards. The
+// overview keeps its Lives in a spotlight and
 // a filmstrip, and a camera in its owner's place. A Live is watched in the
 // room: outside it, the room only says who is live.
 
@@ -18,6 +21,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type RefObject,
 } from "react";
 
@@ -46,10 +50,12 @@ import { joinVoice, useVoice, toggleSourceWatch } from "./session.ts";
 import {
   EMPTY_LIVE_PEOPLE,
   EMPTY_OCCUPANCY,
+  EMPTY_WATCHES,
   useVoiceRoster,
 } from "./roster.ts";
 import { useSpeakingUsers } from "./speaking.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
+import { LiveWatchCount } from "./LiveWatchers.tsx";
 import { Participant } from "./Participant.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { QuickCallSettingsButton } from "./QuickCallSettings.tsx";
@@ -60,6 +66,8 @@ import {
   focusRects,
   kinoKey,
   kinoRects,
+  peopleStageFits,
+  personTile,
   rasterOrder,
   rasterRects,
   type Rect,
@@ -75,6 +83,7 @@ import {
 } from "./stageView.ts";
 import { useMediaSettings } from "./settings.ts";
 import { useWake } from "./useWake.ts";
+import { watchersOf } from "./watchers.ts";
 import "./room.css";
 
 type StageTile = {
@@ -98,6 +107,9 @@ export function VoiceRoom({
   channelId,
   channelName,
   overview = false,
+  title,
+  hint,
+  actions,
 }: {
   server: ServerDetail;
   channelId: string;
@@ -106,6 +118,12 @@ export function VoiceRoom({
    * call, then its people as compact cards and one free seat; no line
    * about them. The channel's page names the room itself. */
   overview?: boolean;
+  /** The channel page's header: the room draws it, since in the call it
+   * carries the room's facts, its view and Kino. `hint` (the Live pill)
+   * shows only outside this call; `actions` sit at its right end. */
+  title?: ReactNode;
+  hint?: ReactNode;
+  actions?: ReactNode;
 }) {
   const t = useT(texts);
   const allowed = can(server, "join_voice");
@@ -117,6 +135,9 @@ export function VoiceRoom({
   );
   const livePeople = useVoiceRoster(
     (s) => s.live[server.id]?.[channelId] ?? EMPTY_LIVE_PEOPLE,
+  );
+  const watches = useVoiceRoster(
+    (s) => s.watches[server.id]?.[channelId] ?? EMPTY_WATCHES,
   );
   const here =
     voice.status === "joined" &&
@@ -160,6 +181,10 @@ export function VoiceRoom({
   const openProfile = (memberId: string) =>
     setProfile({ serverId: server.id, memberId });
 
+  /** A name without "(du)". */
+  const plainName = (id: string) =>
+    members.get(id)?.name ??
+    (id === me ? (user?.name ?? t("names.you")) : t("people.member"));
   const nameOf = (id: string) =>
     id === me
       ? t("people.you", {
@@ -332,6 +357,19 @@ export function VoiceRoom({
   // camera in the row under it.
   const strip = ordered.filter((tile) => tile !== focus);
   const stripPeople = focus ? occupants.filter(([id]) => !cameras.has(id)) : [];
+  // The row says who watches the Live in front; a camera in front, nobody.
+  const watchingFocus = new Set(
+    focus?.kind === "live"
+      ? watchersOf({
+          owner: focus.userId,
+          channelId,
+          occupancy: Object.fromEntries(occupants),
+          watches,
+          me,
+          myWatches: voice.sourceSubscriptions,
+        }).watching
+      : [],
+  );
   const layout = !stageSize
     ? null
     : kino
@@ -392,8 +430,28 @@ export function VoiceRoom({
       : occupants.length === 0 && !overview
         ? FREE_SEATS_EMPTY
         : 1;
+  // In the call the header says who is there, or with pictures how many
+  // and what runs; a phone keeps that line at the top of the room.
+  const facts = !here
+    ? null
+    : staged
+      ? stageFacts({
+          people: occupants.length,
+          cameras: cameras.size,
+          lives: occupants.filter(([id]) => isLive(id)).length,
+        })
+      : roomSummary(others, { here });
   // Nobody else here: the space under the room asks for company.
   const askCompany = !overview && !staged && others.length === 0;
+  // No pictures, and company: the people fill the stage, in the grid the
+  // pictures use. Alone, the card and the invite stay.
+  const peopleStage = !overview && here && !staged && occupants.length >= 2;
+  const [peopleRef, peopleSize] = useBoxSize<HTMLDivElement>(peopleStage);
+  const peopleRects = peopleSize
+    ? rasterRects(occupants.length, peopleSize.width, peopleSize.height)
+    : [];
+  // A phone's tiles below the floor: the cards, with the page scrolling.
+  const peopleCards = narrow && !peopleStageFits(peopleRects);
 
   const person = (id: string, flags: { muted: boolean; deafened: boolean }) => {
     const camera = cameras.get(id);
@@ -415,14 +473,36 @@ export function VoiceRoom({
   };
   const flagsOf = new Map(occupants);
   const noFlags = { muted: false, deafened: false };
+  /** The people as cards: before joining, alone in the call, and on a
+   * phone whose stage would be too small. */
+  const cards = (
+    <ul className="voice-room-participants" aria-label={t("room.participants")}>
+      {occupants.map(([id, flags]) => {
+        const camera = cameras.get(id);
+        return (
+          <Participant
+            key={id}
+            {...person(id, flags)}
+            camera={camera && camera !== spotlight ? camera : null}
+          />
+        );
+      })}
+      {Array.from({ length: freeSeats }, (_, seat) => (
+        <li key={`seat-${seat}`} className="voice-room-seat" aria-hidden>
+          <span className="voice-room-seat-circle" />
+          <span>{t("room.freeSeat")}</span>
+        </li>
+      ))}
+    </ul>
+  );
 
-  return (
+  const room = (
     <section
       className="voice-room"
       aria-label={channelName}
       data-joined={here || undefined}
       data-page={!overview || undefined}
-      data-stage={staged || undefined}
+      data-stage={staged || (peopleStage ? "people" : undefined)}
       data-kino={kino || undefined}
       data-awake={(kino && awake) || undefined}
       onPointerMove={kino ? wake : undefined}
@@ -441,58 +521,10 @@ export function VoiceRoom({
             <span className="voice-room-live-badge">{t("live.badge")}</span>
           ) : null}
         </div>
-      ) : kino ? null : staged ? (
-        <div className="voice-stage-bar">
-          <p className="voice-stage-facts">
-            {stageFacts({
-              people: occupants.length,
-              cameras: cameras.size,
-              live: othersLive,
-              selfLive: here && voice.sharing,
-            })}
-          </p>
-          {narrow ? null : (
-            <ChipGroup
-              label={t("room.viewLabel")}
-              className="voice-stage-views"
-              value={view}
-              onChange={(next) => chooseView(roomKey, next)}
-              options={[
-                {
-                  value: "raster",
-                  label: (
-                    <>
-                      <GridIcon size={15} />
-                      {t("room.viewGrid")}
-                    </>
-                  ),
-                },
-                {
-                  value: "fokus",
-                  label: (
-                    <>
-                      <FocusIcon size={15} />
-                      {t("room.viewFocus")}
-                    </>
-                  ),
-                },
-              ]}
-            />
-          )}
-          {canKino ? (
-            <button
-              ref={kinoButton}
-              type="button"
-              className="voice-stage-kino"
-              aria-keyshortcuts="K"
-              title={t("room.cinemaTitle")}
-              onClick={() => enterKino(true)}
-            >
-              <TheaterIcon size={15} />
-              {t("room.cinema")}
-            </button>
-          ) : null}
-        </div>
+      ) : kino ? null : here ? (
+        narrow ? (
+          <p className="voice-room-summary">{facts}</p>
+        ) : null
       ) : (
         <p className="voice-room-summary">
           {roomSummary(others, { here, live: othersLive })}
@@ -522,6 +554,20 @@ export function VoiceRoom({
                   label={tile.name}
                   screen
                   live
+                  liveCaption={{
+                    name: nameOf(tile.userId),
+                    watchers: (
+                      <LiveWatchCount
+                        serverId={server.id}
+                        channelId={channelId}
+                        channelName={channelName}
+                        owner={tile.userId}
+                        ownerName={plainName(tile.userId)}
+                        own={tile.userId === me}
+                        members={server.members}
+                      />
+                    ),
+                  }}
                   spotlight={tile === focus}
                   pinned={pinned === tile.id}
                   onTogglePin={
@@ -551,6 +597,7 @@ export function VoiceRoom({
               key={id}
               {...person(id, flags)}
               camera={null}
+              strip={{ live: isLive(id), watching: watchingFocus.has(id) }}
               className="voice-stage-item is-strip"
               style={at(layout?.strip[strip.length + index])}
             />
@@ -637,28 +684,35 @@ export function VoiceRoom({
               ))}
           </ul>
         ) : null
+      ) : peopleStage ? (
+        <div ref={peopleRef} className="voice-people">
+          {peopleCards ? (
+            cards
+          ) : (
+            <ul
+              className="voice-stage"
+              aria-label={t("room.stage")}
+              data-view="people"
+              data-measured={peopleSize ? "" : undefined}
+            >
+              {occupants.map(([id, flags], index) => {
+                const rect = peopleRects[index];
+                return (
+                  <Participant
+                    key={id}
+                    {...person(id, flags)}
+                    camera={null}
+                    fill={personTile(rect?.height ?? 0)}
+                    className="voice-stage-item"
+                    style={at(rect)}
+                  />
+                );
+              })}
+            </ul>
+          )}
+        </div>
       ) : occupants.length > 0 || freeSeats > 0 ? (
-        <ul
-          className="voice-room-participants"
-          aria-label={t("room.participants")}
-        >
-          {occupants.map(([id, flags]) => {
-            const camera = cameras.get(id);
-            return (
-              <Participant
-                key={id}
-                {...person(id, flags)}
-                camera={camera && camera !== spotlight ? camera : null}
-              />
-            );
-          })}
-          {Array.from({ length: freeSeats }, (_, seat) => (
-            <li key={`seat-${seat}`} className="voice-room-seat" aria-hidden>
-              <span className="voice-room-seat-circle" />
-              <span>{t("room.freeSeat")}</span>
-            </li>
-          ))}
-        </ul>
+        cards
       ) : null}
       {!here && allowed && elsewhere ? (
         <p className="voice-room-muted voice-room-switch-note">
@@ -726,6 +780,63 @@ export function VoiceRoom({
         />
       ) : null}
     </section>
+  );
+  if (overview) return room;
+
+  return (
+    <>
+      <header className="lr-channel-header">
+        {title}
+        {here ? null : hint}
+        {facts && !narrow ? (
+          <p className="voice-header-facts">{facts}</p>
+        ) : null}
+        <span className="lr-channel-header-spacer" />
+        {staged && !narrow ? (
+          <ChipGroup
+            label={t("room.viewLabel")}
+            className="voice-stage-views"
+            value={view}
+            onChange={(next) => chooseView(roomKey, next)}
+            options={[
+              {
+                value: "raster",
+                label: (
+                  <>
+                    <GridIcon size={15} />
+                    {t("room.viewGrid")}
+                  </>
+                ),
+              },
+              {
+                value: "fokus",
+                label: (
+                  <>
+                    <FocusIcon size={15} />
+                    {t("room.viewFocus")}
+                  </>
+                ),
+              },
+            ]}
+          />
+        ) : null}
+        {canKino ? (
+          <button
+            ref={kinoButton}
+            type="button"
+            className="voice-stage-kino"
+            aria-keyshortcuts="K"
+            title={t("room.cinemaTitle")}
+            onClick={() => enterKino(true)}
+          >
+            <TheaterIcon size={15} />
+            {t("room.cinema")}
+          </button>
+        ) : null}
+        {actions}
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">{room}</div>
+    </>
   );
 }
 

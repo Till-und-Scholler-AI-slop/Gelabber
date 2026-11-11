@@ -3,7 +3,7 @@ import { useCallback, useState, type RefObject } from "react";
 import { ApiError } from "../api/client.ts";
 import { translate } from "../i18n/catalog.ts";
 import { auth } from "../i18n/catalogs/auth.ts";
-import { errorMessage, fieldMessages } from "./rules.ts";
+import { apiErrorMessage, errorMessage, fieldMessages } from "./rules.ts";
 import { useCooldown } from "./useCooldown.ts";
 
 export type FormErrors = {
@@ -81,7 +81,7 @@ export function useFormErrors(form?: RefObject<HTMLFormElement | null>) {
         setErrors({
           form: hasFieldErrors
             ? fieldSummary(fields)
-            : errorMessage(error.code),
+            : apiErrorMessage(error),
           fields,
         });
         if (hasFieldErrors) focusInvalid();

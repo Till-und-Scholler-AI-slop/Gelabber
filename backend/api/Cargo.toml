@@ -41,6 +41,9 @@ encoding_rs = "0.8.35"
 # Account mail (#195): SMTP submission to the operator's relay, rustls with
 # the same aws-lc-rs provider and platform verifier as reqwest.
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls", "rustls-platform-verifier", "aws-lc-rs"] }
+# OIDC id_token signatures (#518): RS256 and ES256 with the aws-lc-rs that
+# rustls already links, at its locked version.
+aws-lc-rs = { version = "1.18.1", default-features = false, features = ["aws-lc-sys"] }
 gelabber-shared.workspace = true
 
 [dev-dependencies]

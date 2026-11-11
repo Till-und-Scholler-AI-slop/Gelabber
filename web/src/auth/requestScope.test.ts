@@ -228,7 +228,11 @@ describe("controlled responses across session changes", () => {
     expect(calls.filter((call) => call.key === "PATCH /api/me")).toHaveLength(
       1,
     );
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
     expect(getCsrfToken()).toBe("csrf-out");
   });
 
@@ -266,6 +270,7 @@ describe("controlled responses across session changes", () => {
       expect(useSession.getState()).toEqual({
         status: "anonymous",
         user: null,
+        operator: false,
       });
       expect(getCsrfToken()).toBe("csrf-out");
       expect(queryScopeUser()).toBeNull();
@@ -292,6 +297,7 @@ describe("controlled responses across session changes", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(calls.map((call) => call.key)).toEqual(["POST /api/auth/login"]);
     expect(getCsrfToken()).toBe("csrf-a");

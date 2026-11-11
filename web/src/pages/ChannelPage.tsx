@@ -5,7 +5,7 @@ import { useParams } from "@tanstack/react-router";
 import { useEffect, useMemo, type ReactNode } from "react";
 
 import { useUserId } from "../auth/scope.ts";
-import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
+import { HashIcon, LockIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { LoadError } from "../components/LoadError.tsx";
 import { MemberPanel, MemberPanelToggle } from "../components/MemberPanel.tsx";
 import { MessagePane } from "../components/MessagePane.tsx";
@@ -14,12 +14,14 @@ import { Redirect } from "../components/Redirect.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
 import { MainSkeleton, SkeletonRows } from "../components/ui/Skeleton.tsx";
 import { useT } from "../i18n/catalog.ts";
+import { roles as rolesCatalog } from "../i18n/catalogs/roles.ts";
 import { servers } from "../i18n/catalogs/servers.ts";
 import { VoiceRoomPart } from "../voice/voiceRoomPart.ts";
 import { LiveHint } from "../voice/LiveHint.tsx";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
+import { membersWhoSee } from "../servers/roles.ts";
 import type { Channel, ServerDetail } from "../servers/types.ts";
 import { useTypingInput } from "../ws/useLive.ts";
 
@@ -29,6 +31,7 @@ export function ChannelPage() {
   });
   const { data: server, error, isFetching, refetch } = useServer(serverId);
   const t = useT(servers);
+  const tr = useT(rolesCatalog);
   const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
   const channel = server?.channels.find((c) => c.id === channelId);
@@ -55,16 +58,41 @@ export function ChannelPage() {
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;
 
   // On a phone the header is the only place that names the server.
+  const name = (
+    <div className="lr-channel-title">
+      <span className="lr-channel-title-server">{server.name}</span>
+      <span className="lr-channel-title-name">
+        <Icon size={18} />
+        <h1>{channel.name}</h1>
+        {channel.limited ? (
+          <span
+            className="lr-channel-title-lock"
+            role="img"
+            aria-label={tr("limitedLabel")}
+          >
+            <LockIcon size={14} />
+          </span>
+        ) : null}
+      </span>
+    </div>
+  );
+  const pill = <LiveHint server={server} variant="pill" />;
   const title = (
     <>
-      <div className="lr-channel-title">
-        <span className="lr-channel-title-server">{server.name}</span>
-        <span className="lr-channel-title-name">
-          <Icon size={18} />
-          <h1>{channel.name}</h1>
-        </span>
-      </div>
-      <LiveHint server={server} variant="pill" />
+      {name}
+      {pill}
+    </>
+  );
+  // The voice room's page before the room draws it: the plain header over
+  // what loads, or over why it did not.
+  const voiceFrame = (body: ReactNode) => (
+    <>
+      <header className="lr-channel-header">
+        {title}
+        <span className="lr-channel-header-spacer" />
+        <MemberPanelToggle />
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
     </>
   );
 
@@ -72,21 +100,18 @@ export function ChannelPage() {
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className="lr-channel-content flex min-w-0 flex-1 flex-col overflow-hidden">
         {channel.kind === "voice" ? (
-          <>
-            <header className="lr-channel-header">
-              {title}
-              <span className="lr-channel-header-spacer" />
-              <MemberPanelToggle />
-            </header>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <VoiceRoomPart.Component
-                server={server}
-                channelId={channel.id}
-                channelName={channel.name}
-                fallback={<SkeletonRows count={3} avatars />}
-              />
-            </div>
-          </>
+          // The room draws the header: in the call it holds the room's
+          // facts, its view and Kino.
+          <VoiceRoomPart.Component
+            server={server}
+            channelId={channel.id}
+            channelName={channel.name}
+            title={name}
+            hint={pill}
+            actions={<MemberPanelToggle />}
+            fallback={voiceFrame(<SkeletonRows count={3} avatars />)}
+            failedFrame={voiceFrame}
+          />
         ) : (
           <div className="relative min-h-0 flex-1">
             <div
@@ -128,6 +153,16 @@ function TextChat({
     () => server.members.map((m) => ({ id: m.user_id, name: m.name })),
     [server.members],
   );
+  // `@…` offers only who can read the channel; names in messages still
+  // resolve against every member.
+  const mentionable = useMemo(
+    () =>
+      membersWhoSee(server, channel).map((m) => ({
+        id: m.user_id,
+        name: m.name,
+      })),
+    [server, channel],
+  );
   return (
     <MessagePane
       key={channel.id}
@@ -141,6 +176,7 @@ function TextChat({
       canModerate={can(server, "manage_messages")}
       canMentionEveryone={can(server, "mention_everyone")}
       members={members}
+      mentionable={mentionable}
       notify={{
         scope: "channel",
         id: channel.id,

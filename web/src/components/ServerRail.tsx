@@ -2,11 +2,12 @@ import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useBadge } from "../messages/useBadge.ts";
 import { useServerMuted } from "../messages/notificationSettings.ts";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 
 import { useUserId } from "../auth/scope.ts";
+import { useDirectoryStatus } from "../discover/queries.ts";
 import { lastDmStillListed } from "../dms/open.ts";
 import { prefetchDms, useDms } from "../dms/queries.ts";
 import { lastDmId, useLastDm } from "../dms/lastDm.ts";
@@ -18,7 +19,7 @@ import {
 import { prefetchServer, useServers } from "../servers/queries.ts";
 import type { Server } from "../servers/types.ts";
 import { useVoiceRoster } from "../voice/roster.ts";
-import { ChatIcon, PlusIcon } from "./Icons.tsx";
+import { ChatIcon, CompassIcon, PlusIcon } from "./Icons.tsx";
 import { AddServerDialog } from "./ServerDialogs.tsx";
 import { ServerIconFace } from "./ServerIcon.tsx";
 import { tileInitials, tileTint } from "./initials.ts";
@@ -60,9 +61,35 @@ export function ServerRail({
         >
           <PlusIcon size={20} />
         </button>
+        <DiscoverTile />
       </div>
       <AddServerDialog open={adding} onClose={() => setAdding(false)} />
     </nav>
+  );
+}
+
+/** "Entdecken", under "Server hinzufügen": only while the instance runs a
+ * directory. */
+export function DiscoverTile() {
+  const t = useT(shell);
+  const { data: status } = useDirectoryStatus();
+  const active = useRouterState({
+    select: (state) => state.location.pathname === "/discover",
+  });
+  const drawer = useNavigationDrawer();
+  if (!status?.enabled) return null;
+  return (
+    <Link
+      to="/discover"
+      state={drawer.keepOpen}
+      replace={drawer.open}
+      title={t("rail.discover")}
+      aria-label={t("rail.discover")}
+      aria-current={active ? "page" : undefined}
+      className={["server-discover-tile", active ? "is-active" : ""].join(" ")}
+    >
+      <CompassIcon size={22} />
+    </Link>
   );
 }
 

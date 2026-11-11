@@ -36,6 +36,8 @@ const server: ServerDetail = {
       name: "Lounge",
       kind: "voice",
       created_at: "2026-10-01T00:00:00Z",
+      limited: false,
+      role_ids: [],
     },
     {
       id: "bar",
@@ -44,6 +46,8 @@ const server: ServerDetail = {
       name: "Bar",
       kind: "voice",
       created_at: "2026-10-01T00:00:00Z",
+      limited: false,
+      role_ids: [],
     },
     {
       id: "chat",
@@ -52,6 +56,8 @@ const server: ServerDetail = {
       name: "allgemein",
       kind: "text",
       created_at: "2026-10-01T00:00:00Z",
+      limited: false,
+      role_ids: [],
     },
   ],
   members: [
@@ -61,8 +67,10 @@ const server: ServerDetail = {
       avatar_url: "/avatars/ada.png",
       joined_at: "2026-10-01T00:00:00Z",
       role: "member",
+      role_ids: [],
     },
   ],
+  roles: [],
 };
 
 const start = (

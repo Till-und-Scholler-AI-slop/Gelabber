@@ -10,6 +10,7 @@ use chrono::Utc;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::auth::validate;
 use crate::error::ApiError;
 use crate::token;
 
@@ -109,7 +110,8 @@ pub async fn verify_email(db: &PgPool, raw: &str) -> Result<Option<Uuid>, ApiErr
 }
 
 /// Uses up a live reset token, sets the new hash, confirms the address (the
-/// link reached its inbox) and ends every session, all in one transaction.
+/// link reached its inbox), ends every session and disconnects provider
+/// accounts the inbox does not vouch for, all in one transaction.
 /// Returns the account and the removed session hashes, or `None` when the
 /// link is no longer valid.
 pub async fn reset_password(
@@ -132,21 +134,34 @@ pub async fn reset_password(
     let Some(user_id) = user_id else {
         return Ok(None);
     };
-    sqlx::query(
-        "UPDATE users SET password_hash = $2, \
-             email_verified_at = COALESCE(email_verified_at, now()), \
+    let (email, was_confirmed): (String, bool) = sqlx::query_as(
+        "UPDATE users u SET password_hash = $2, \
+             email_verified_at = COALESCE(u.email_verified_at, now()), \
              registration_pending = false, updated_at = now() \
-         WHERE id = $1",
+         FROM users old WHERE u.id = $1 AND old.id = u.id \
+         RETURNING u.email, old.email_verified_at IS NOT NULL",
     )
     .bind(user_id)
     .bind(password_hash)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
     // Other links of the account die with the old password.
     sqlx::query("DELETE FROM account_tokens WHERE user_id = $1")
         .bind(user_id)
         .execute(&mut *tx)
         .await?;
+    // The inbox owner gets the account back alone: a provider account
+    // connected under another address, or any connected before the address
+    // was confirmed, may be whoever knew or chose the old password.
+    sqlx::query(
+        "DELETE FROM user_identities \
+         WHERE user_id = $1 AND (NOT $2 OR email <> $3)",
+    )
+    .bind(user_id)
+    .bind(was_confirmed)
+    .bind(validate::canonical(&email))
+    .execute(&mut *tx)
+    .await?;
     let revoked =
         sqlx::query_scalar("DELETE FROM sessions WHERE user_id = $1 RETURNING token_hash")
             .bind(user_id)

@@ -3,9 +3,15 @@
 // field codes render through the same `fieldMessage` table, whose copy is in
 // the `auth` catalog (`error.*`, `fieldLabel.*`, `fieldError.*`).
 
-import type { ApiErrorCode, FieldCode, FieldErrors } from "../api/client.ts";
+import type {
+  ApiError,
+  ApiErrorCode,
+  FieldCode,
+  FieldErrors,
+} from "../api/client.ts";
 import { translate } from "../i18n/catalog.ts";
 import { auth } from "../i18n/catalogs/auth.ts";
+import { formatDate } from "../i18n/format.ts";
 import type { AvatarDecoration, ProfileCard, ProfilePatch } from "./types.ts";
 
 export const PASSWORD_MIN = 8;
@@ -305,7 +311,12 @@ type FieldName =
   | "attachment_ids"
   | "gif"
   | "q"
-  | "token";
+  | "token"
+  | "color"
+  | "permissions"
+  | "roles"
+  | "role_ids"
+  | "invitation";
 
 type LabelKey = Extract<keyof typeof auth.de, `fieldLabel.${string}`>;
 
@@ -339,6 +350,11 @@ const FIELD_LABEL: Record<FieldName, LabelKey> = {
   gif: "fieldLabel.gif",
   q: "fieldLabel.q",
   token: "fieldLabel.token",
+  color: "fieldLabel.color",
+  permissions: "fieldLabel.memberPermissions",
+  roles: "fieldLabel.roles",
+  role_ids: "fieldLabel.roleIds",
+  invitation: "fieldLabel.invitation",
 };
 
 /** Inline copy for a field code. Unknown fields fall back to generic text. */
@@ -349,6 +365,9 @@ export function fieldMessage(field: string, code: FieldCode): string {
   );
   switch (code) {
     case "required":
+      // The API's `{"invitation":"required"}` (invitation_required).
+      if (field === "invitation")
+        return translate(auth, "error.invitationRequired");
       return translate(auth, "fieldError.required", { label });
     case "too_short":
       return field === "password"
@@ -367,7 +386,12 @@ export function fieldMessage(field: string, code: FieldCode): string {
     case "mismatch":
       return translate(auth, "fieldError.mismatch");
     case "taken":
-      return translate(auth, "fieldError.taken");
+      // Only a role's name is taken by name; an address by email.
+      return field === "name"
+        ? translate(auth, "fieldError.roleNameTaken")
+        : translate(auth, "fieldError.taken");
+    case "too_many":
+      return translate(auth, "fieldError.tooManyRoles");
     case "wrong":
       return translate(auth, "fieldError.wrong");
     case "stale":
@@ -395,6 +419,10 @@ export function fieldMessage(field: string, code: FieldCode): string {
             : translate(auth, "fieldError.lineInvalid");
         case "content_type":
           return translate(auth, "fieldError.contentTypeInvalid");
+        case "role_ids":
+          return translate(auth, "fieldError.roleIdsInvalid");
+        case "invitation":
+          return translate(auth, "error.invitationInvalid");
         default:
           return translate(auth, "fieldError.invalid", { label });
       }
@@ -445,7 +473,101 @@ export function errorMessage(code: ApiErrorCode): string {
     case "bad_request":
     case "internal":
       return translate(auth, "error.internal");
+    case "invitation_required":
+      return translate(auth, "error.invitationRequired");
+    case "invitation_invalid":
+      return translate(auth, "error.invitationInvalid");
+    case "account_disabled":
+      return translate(auth, "error.accountDisabled");
+    case "server_blocked":
+      return translate(auth, "error.serverBlocked");
+    case "oidc_unavailable":
+      return translate(auth, "error.oidcUnavailable");
+    case "oidc_email_unverified":
+      return translate(auth, "error.oidcEmailUnverified");
+    case "oidc_account_unverified":
+      return translate(auth, "error.oidcAccountUnverified");
+    case "identity_taken":
+      return translate(auth, "error.identityTaken");
+    case "password_required":
+      return translate(auth, "error.passwordRequired");
+    case "reauth_required":
+      return translate(auth, "error.reauthRequired");
+    case "oidc_wrong_origin":
+      return translate(auth, "error.oidcWrongOrigin");
+    case "session_changed":
+      return translate(auth, "error.sessionChanged");
+    case "join_request_required":
+      return translate(auth, "error.joinRequestRequired");
+    case "join_request_declined":
+      return translate(auth, "error.joinRequestDeclined");
+    case "join_requests_full":
+      return translate(auth, "error.joinRequestsFull");
+    case "already_member":
+      return translate(auth, "error.alreadyMember");
   }
+}
+
+/**
+ * Why a provider sign-in came back without signing in: the
+ * `?oidc_error=` of `/login`, `/register` and `/settings/konto`.
+ */
+export const OIDC_ERRORS = [
+  "cancelled",
+  "expired",
+  "failed",
+  "email_unverified",
+  "account_unverified",
+  "identity_taken",
+  "insecure_transport",
+  "session_changed",
+  "invitation_required",
+  "invitation_invalid",
+  "account_disabled",
+] as const;
+
+export type OidcError = (typeof OIDC_ERRORS)[number];
+
+export function isOidcError(value: unknown): value is OidcError {
+  return (OIDC_ERRORS as readonly unknown[]).includes(value);
+}
+
+/** Copy for an `oidc_error`, in the interface's language. */
+export function oidcErrorMessage(code: OidcError): string {
+  switch (code) {
+    case "cancelled":
+      return translate(auth, "oidc.error.cancelled");
+    case "expired":
+      return translate(auth, "oidc.error.expired");
+    case "failed":
+      return translate(auth, "oidc.error.failed");
+    case "email_unverified":
+      return errorMessage("oidc_email_unverified");
+    case "account_unverified":
+      return errorMessage("oidc_account_unverified");
+    case "identity_taken":
+    case "insecure_transport":
+    case "session_changed":
+    case "invitation_required":
+    case "invitation_invalid":
+    case "account_disabled":
+      return errorMessage(code);
+  }
+}
+
+/**
+ * The copy of an API error, with what its body adds: a declined request to
+ * join names the day from which the person may ask again.
+ */
+export function apiErrorMessage(
+  error: Pick<ApiError, "code" | "retryAfter">,
+  now: number = Date.now(),
+): string {
+  if (error.code === "join_request_declined" && error.retryAfter) {
+    const date = formatDate(now + error.retryAfter * 1000);
+    return translate(auth, "error.joinRequestDeclinedUntil", { date });
+  }
+  return errorMessage(error.code);
 }
 
 /** Turns per-field codes into per-field messages. */

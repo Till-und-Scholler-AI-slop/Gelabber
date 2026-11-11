@@ -40,6 +40,10 @@ export const servers = defineCatalog(
     "channel.savedAs": "Wird gespeichert als #{name}",
     "channel.categoryLabel": "Kategorie",
     "channel.noCategory": "Ohne Kategorie",
+    "channel.accessLabel": "Zugriff",
+    "channel.accessHint":
+      "Nur diese Rollen sehen den Kanal. Mit „Alle Mitglieder“ sieht ihn jeder auf dem Server.",
+    "channel.accessNoRoles": "Rollen legst du in den Servereinstellungen an.",
 
     "invite.title": "Zu {server} einladen",
     "invite.newLink": "Neuer Link · {terms}",
@@ -112,6 +116,10 @@ export const servers = defineCatalog(
     "error.memberNotKicked": "Mitglied nicht entfernt.",
     "error.memberNotBanned": "Mitglied nicht gesperrt.",
     "error.memberNotUnbanned": "Mitglied nicht entsperrt.",
+    "error.roleNotCreated": "Rolle nicht erstellt.",
+    "error.roleNotSaved": "Rolle nicht gespeichert.",
+    "error.roleNotDeleted": "Rolle nicht gelöscht.",
+    "error.memberRolesNotSaved": "Rollen nicht gespeichert.",
   },
   {
     voiceHeading: "Voice channels",
@@ -145,6 +153,10 @@ export const servers = defineCatalog(
     "channel.savedAs": "Will be saved as #{name}",
     "channel.categoryLabel": "Category",
     "channel.noCategory": "No category",
+    "channel.accessLabel": "Access",
+    "channel.accessHint":
+      "Only these roles see the channel. With “All members” everyone on the server sees it.",
+    "channel.accessNoRoles": "You create roles in the server settings.",
 
     "invite.title": "Invite to {server}",
     "invite.newLink": "New link · {terms}",
@@ -208,5 +220,9 @@ export const servers = defineCatalog(
     "error.memberNotKicked": "Member not removed.",
     "error.memberNotBanned": "Member not banned.",
     "error.memberNotUnbanned": "Member not unbanned.",
+    "error.roleNotCreated": "Role not created.",
+    "error.roleNotSaved": "Role not saved.",
+    "error.roleNotDeleted": "Role not deleted.",
+    "error.memberRolesNotSaved": "Roles not saved.",
   },
 );

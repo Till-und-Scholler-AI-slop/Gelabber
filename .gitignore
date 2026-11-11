@@ -30,3 +30,6 @@ __pycache__/
 
 # Redis snapshot from local test runs
 dump.rdb
+
+# Operator texts for the public pages (deploy/compose/legal/README.md).
+deploy/compose/legal/*.html

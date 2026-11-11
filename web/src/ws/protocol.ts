@@ -12,7 +12,7 @@ export type Topic = {
 };
 
 /** Presence plane. SDP and ICE are not gateway ops. */
-export type SigType = "j" | "l" | "p" | "u" | "m" | "d" | "r";
+export type SigType = "j" | "l" | "p" | "u" | "m" | "d" | "r" | "w";
 export type TrackKind = "a" | "v" | "s" | "sa";
 
 export type VoiceEntry = {
@@ -31,6 +31,8 @@ export type SigClientFrame = {
   c: string;
   k?: TrackKind;
   on?: boolean;
+  /** `t: "w"`: the owner of the Live being watched. */
+  o?: string;
 };
 
 export type PresenceStatus = "o" | "i" | "x";
@@ -70,6 +72,8 @@ export type SigEvent = {
   snap?: VoiceEntry[];
   /** Existing occupant replay, not a new arrival. */
   replay?: boolean;
+  /** `t: "w"`: every owner whose Live `u` watches in `c`; `[]` is none. */
+  w?: string[];
 };
 
 export type ErrFrame = { op: "err"; e: string; s?: string; c?: string };
@@ -107,6 +111,17 @@ export type AccountFrame =
       /** The account's language changed on some device. */
       op: "lc";
       l: Locale;
+    }
+  | {
+      /** A join request was accepted: the account is now a member of `s`. */
+      op: "jn";
+      s: string;
+    }
+  | {
+      /** The pending join requests of server `s` changed; `n` are open. */
+      op: "jq";
+      s: string;
+      n: number;
     };
 
 /** A conversation's new read position, as `PUT …/read` answers it. */
@@ -167,7 +182,9 @@ export function decode(raw: string): ServerFrame | null {
     op === "dm" ||
     op === "ns" ||
     op === "rd" ||
-    op === "lc"
+    op === "lc" ||
+    op === "jn" ||
+    op === "jq"
   ) {
     return value as ServerFrame;
   }

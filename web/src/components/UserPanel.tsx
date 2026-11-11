@@ -14,6 +14,8 @@ import {
   useSession,
 } from "../auth/session.ts";
 import type { User } from "../auth/types.ts";
+import { QuickCallSettings } from "../voice/QuickCallSettings.tsx";
+import { useVoice } from "../voice/session.ts";
 import { usePresenceStore } from "../ws/live.ts";
 import type { PresenceStatus } from "../ws/protocol.ts";
 import { ChevronIcon, GearIcon } from "./Icons.tsx";
@@ -29,10 +31,12 @@ import { ownPresence, panelSubtitle } from "./userPresence.ts";
 import { useT } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
 import { common } from "../i18n/catalogs/common.ts";
+import { DEFAULT_OPERATOR_PAGE } from "../operator/areas.ts";
 
 export function UserPanel({ contextId }: { contextId?: string }) {
   const t = useT(shell);
   const user = useSession((state) => state.user);
+  const operator = useSession((state) => state.operator);
   const presence = usePresenceStore((state) =>
     user ? ownPresence(state.byServer, user.id, contextId) : "o",
   );
@@ -40,6 +44,7 @@ export function UserPanel({ contextId }: { contextId?: string }) {
   const menu = useMenuDetails();
   const profileButton = useRef<HTMLButtonElement>(null);
   const [statusOpen, setStatusOpen] = useState(false);
+  const inCall = useVoice((state) => state.status === "joined");
   if (!user) return null;
 
   return (
@@ -80,15 +85,19 @@ export function UserPanel({ contextId }: { contextId?: string }) {
             onDone={() => setStatusOpen(false)}
           />
         </Popover>
-        <Link
-          to="/settings/$area"
-          params={{ area: "darstellung" }}
-          className="shell-icon-button"
-          aria-label={t("userPanel.settings")}
-          title={t("userPanel.settings")}
-        >
-          <GearIcon size={21} />
-        </Link>
+        {inCall ? (
+          <CallSettingsGear />
+        ) : (
+          <Link
+            to="/settings/$area"
+            params={{ area: "darstellung" }}
+            className="shell-icon-button"
+            aria-label={t("userPanel.settings")}
+            title={t("userPanel.settings")}
+          >
+            <GearIcon size={21} />
+          </Link>
+        )}
         <details ref={menu} className="user-panel-menu">
           <summary
             className="shell-icon-button"
@@ -103,6 +112,14 @@ export function UserPanel({ contextId }: { contextId?: string }) {
             <Link to="/settings/$area" params={{ area: "darstellung" }}>
               {t("userPanel.settings")}
             </Link>
+            {operator ? (
+              <Link
+                to="/betrieb/$page"
+                params={{ page: DEFAULT_OPERATOR_PAGE }}
+              >
+                {t("userPanel.operator")}
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={async () => {
@@ -115,6 +132,40 @@ export function UserPanel({ contextId }: { contextId?: string }) {
         </details>
       </footer>
     </div>
+  );
+}
+
+/** The gear during a call: the call's quick settings, as the call bar's
+ * gear opened them. The app's settings stay in the chevron menu. */
+function CallSettingsGear() {
+  const t = useT(shell);
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        className="shell-icon-button"
+        aria-label={t("userPanel.callSettings")}
+        title={t("userPanel.callSettings")}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <GearIcon size={21} />
+      </button>
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        label={t("userPanel.callSettings")}
+        placement="top-start"
+        className="voice-quick-settings"
+      >
+        <QuickCallSettings onMore={() => setOpen(false)} />
+      </Popover>
+    </>
   );
 }
 

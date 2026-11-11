@@ -602,7 +602,7 @@ Cues are synthesised (no files): port `callSoundSynth.ts` (`renderCue(name, rate
 Desktop: cues play on the system default output (no sink selection).
 
 ## 11. Voice signalling used by this UI (gateway WebSocket, `op:"sig"`)
-Sent: `{op:"sig",t:"j",s,c}` join; `t:"l"` leave; `t:"m"|"d", on` mute/deafen; `t:"p"|"u", k:"v"|"s"|"sa"` publish/unpublish (`sessionState.ts:415-431`). Received in room: `j`, `l`, `m`(on), `p`/`u`(k). Media seat requests: `"j" {tk, v}` → router caps; `"w" {u,k,on}`; mediasoup requests `capabilities`, `closeProducer`, `closeTransport`, `restartIce`, `consumerReady`, `consumerFailed` (`mediasoupConnection.ts`). Full protocol belongs to the protocol spec.
+Sent: `{op:"sig",t:"j",s,c}` join; `t:"l"` leave; `t:"m"|"d", on` mute/deafen; `t:"p"|"u", k:"v"|"s"|"sa"` publish/unpublish (`sessionState.ts:415-431`); `t:"w", o, k:"s", on` watch a Live (#521). Received in room: `j`, `l`, `m`(on), `p`/`u`(k), `w`(the watcher's full set of owners). Media seat requests: `"j" {tk, v}` → router caps; `"w" {u,k,on}`; mediasoup requests `capabilities`, `closeProducer`, `closeTransport`, `restartIce`, `consumerReady`, `consumerFailed` (`mediasoupConnection.ts`). Full protocol belongs to the protocol spec.
 
 ---
 

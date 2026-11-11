@@ -36,6 +36,36 @@ export const auth = defineCatalog(
     "error.network": "Keine Verbindung zum Server.",
     "error.internal":
       "Da ist etwas schiefgelaufen. Bitte noch einmal versuchen.",
+    "error.invitationRequired": "Zum Registrieren brauchst du eine Einladung.",
+    "error.invitationInvalid":
+      "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+    "error.accountDisabled": "Dieses Konto ist gesperrt.",
+    "error.serverBlocked": "Dieser Server wurde vom Betreiber gesperrt.",
+    "error.oidcUnavailable":
+      "Die Anmeldung beim Anbieter ist gerade nicht erreichbar. Bitte später noch einmal versuchen.",
+    "error.oidcEmailUnverified":
+      "Dein Konto beim Anbieter hat keine bestätigte E-Mail-Adresse, damit kann Gelabber dich nicht anmelden.",
+    "error.oidcAccountUnverified":
+      "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde. Melde dich mit deinem Passwort an und verbinde den Anbieter dann unter Einstellungen → Sicherheit.",
+    "error.identityTaken":
+      "Dieses Konto beim Anbieter ist schon mit einem anderen Gelabber-Konto verbunden.",
+    "error.passwordRequired":
+      "Lege zuerst ein Passwort fest, sonst kannst du dich nicht mehr anmelden.",
+    "error.reauthRequired":
+      "Bitte bestätige zuerst, dass du es bist, und melde dich noch einmal an.",
+    "error.oidcWrongOrigin":
+      "Die Anmeldung über einen Anbieter geht nur unter der eingerichteten Adresse dieses Gelabber-Servers. Öffne Gelabber dort und versuche es noch einmal.",
+    "error.sessionChanged":
+      "Inzwischen ist hier ein anderes Konto angemeldet. Bitte noch einmal versuchen.",
+    "error.joinRequestRequired":
+      "Diesem Server trittst du nur auf Anfrage bei.",
+    "error.joinRequestDeclined":
+      "Deine Anfrage wurde nicht angenommen. Du kannst in ein paar Tagen wieder anfragen.",
+    "error.joinRequestsFull":
+      "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen.",
+    "error.alreadyMember": "Du bist schon Mitglied dieses Servers.",
+    "error.joinRequestDeclinedUntil":
+      "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {date} wieder anfragen.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -67,6 +97,10 @@ export const auth = defineCatalog(
     "fieldLabel.q": "Suche",
     "fieldLabel.token": "Link",
     "fieldLabel.other": "Eingabe",
+    "fieldLabel.color": "Farbe",
+    "fieldLabel.roles": "Rollen",
+    "fieldLabel.roleIds": "Zugriff",
+    "fieldLabel.invitation": "Einladungscode",
 
     // Field codes (auth/rules.ts `fieldMessage`).
     "fieldError.required": "{label} fehlt.",
@@ -94,6 +128,10 @@ export const auth = defineCatalog(
     "fieldError.lineInvalid": "Nur eine Zeile Text, keine Steuerzeichen.",
     "fieldError.contentTypeInvalid": "Dieser Dateityp ist nicht erlaubt.",
     "fieldError.invalid": "{label} ist ungültig.",
+    "fieldError.roleNameTaken": "Diesen Namen hat schon eine Rolle.",
+    "fieldError.tooManyRoles": "Ein Server hat höchstens 50 Rollen.",
+    "fieldError.roleIdsInvalid":
+      "Eine der Rollen gibt es nicht mehr. Lade die Seite neu.",
 
     // A rate limit with a known wait (auth/useFormErrors.ts).
     "form.rateLimited": {
@@ -115,6 +153,12 @@ export const auth = defineCatalog(
     // The auth frame.
     "layout.inviteBanner":
       "Einladung erhalten. Melde dich an oder registriere dich, um beizutreten.",
+
+    // The legal pages' links under the card (public/pages.ts).
+    "legal.label": "Rechtliches",
+    "legal.imprint": "Impressum",
+    "legal.privacy": "Datenschutz",
+    "legal.terms": "Nutzungsbedingungen",
 
     // Shared by the auth pages.
     "page.passwordHint": "Mindestens {min} Zeichen.",
@@ -154,6 +198,7 @@ export const auth = defineCatalog(
       "Bestätigungslink an <b>{email}</b> gesendet. Er gilt 24 Stunden.",
     "register.thenInvite": "Danach geht es weiter zur Einladung.",
     "register.resend": "Link erneut senden",
+    "register.invitationOnly": "Gelabber ist gerade nur mit Einladung offen.",
 
     // /forgot-password
     "forgot.title": "Passwort vergessen",
@@ -204,6 +249,30 @@ export const auth = defineCatalog(
     "routeError.bodyInCall":
       "Diese Seite konnte nicht angezeigt werden. Dein Anruf läuft weiter. Neu laden beendet ihn.",
     "routeError.reload": "Seite neu laden",
+
+    // Sign-in through a provider (components/ProviderButton.tsx) and the
+    // `?oidc_error=` it can come back with (auth/rules.ts).
+    "oidc.signInWith": "Mit {provider} anmelden",
+    // Google's own German wording for its "Sign in with Google" button.
+    "oidc.signInWithGoogle": "Über Google anmelden",
+    "oidc.redirecting": "Weiter zu {provider}…",
+    "oidc.or": "oder",
+    "oidc.error.cancelled": "Anmeldung abgebrochen.",
+    "oidc.error.expired":
+      "Die Anmeldung ist abgelaufen oder wurde in einem anderen Browser gestartet. Bitte noch einmal versuchen.",
+    "oidc.error.failed":
+      "Die Anmeldung beim Anbieter hat nicht geklappt. Bitte noch einmal versuchen.",
+
+    // /sign-in/name: a first sign-in through a provider picks its name
+    "signInName.title": "Anzeigenamen wählen",
+    "signInName.lead":
+      "Dein Konto ist gleich fertig. Wähle den Namen, den andere sehen.",
+    "signInName.signedInAs": "Angemeldet mit {provider} als <b>{email}</b>",
+    "signInName.nameLabel": "Anzeigename",
+    "signInName.submit": "Konto anlegen",
+    "signInName.submitting": "Konto wird angelegt…",
+    "signInName.expiredTitle": "Anmeldung abgelaufen",
+    "signInName.expired": "Melde dich noch einmal an, um dein Konto anzulegen.",
   },
   {
     "error.invalidCredentials": "Wrong email or password.",
@@ -231,6 +300,35 @@ export const auth = defineCatalog(
     "error.timeout": "The server isn’t responding. Please try again.",
     "error.network": "No connection to the server.",
     "error.internal": "Something went wrong. Please try again.",
+    "error.invitationRequired": "You need an invitation to register.",
+    "error.invitationInvalid":
+      "This invitation is unknown, expired or already used.",
+    "error.accountDisabled": "This account has been disabled.",
+    "error.serverBlocked": "This server has been blocked by the operator.",
+    "error.oidcUnavailable":
+      "Sign-in through the provider isn’t reachable right now. Please try again later.",
+    "error.oidcEmailUnverified":
+      "Your account with the provider has no confirmed email address, so Gelabber can’t sign you in.",
+    "error.oidcAccountUnverified":
+      "An account with this email address exists, but its address was never confirmed. Sign in with your password, then connect the provider under Settings → Security.",
+    "error.identityTaken":
+      "This provider account is already connected to another Gelabber account.",
+    "error.passwordRequired":
+      "Set a password first, or you won’t be able to sign in any more.",
+    "error.reauthRequired":
+      "Please confirm it’s you first by signing in again.",
+    "error.oidcWrongOrigin":
+      "Signing in through a provider only works at this Gelabber server’s configured address. Open Gelabber there and try again.",
+    "error.sessionChanged":
+      "Another account has signed in here in the meantime. Please try again.",
+    "error.joinRequestRequired": "This server can only be joined by request.",
+    "error.joinRequestDeclined":
+      "Your request was not accepted. You can ask again in a few days.",
+    "error.joinRequestsFull":
+      "Too many requests are open right now. Please try again later.",
+    "error.alreadyMember": "You are already a member of this server.",
+    "error.joinRequestDeclinedUntil":
+      "Your request was not accepted. You can ask again from {date}.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",
@@ -261,6 +359,10 @@ export const auth = defineCatalog(
     "fieldLabel.q": "Search",
     "fieldLabel.token": "Link",
     "fieldLabel.other": "Input",
+    "fieldLabel.color": "Colour",
+    "fieldLabel.roles": "Roles",
+    "fieldLabel.roleIds": "Access",
+    "fieldLabel.invitation": "Invitation code",
 
     "fieldError.required": "{label} is missing.",
     "fieldError.passwordTooShort": "At least {min} characters.",
@@ -287,6 +389,10 @@ export const auth = defineCatalog(
     "fieldError.lineInvalid": "Only one line of text, no control characters.",
     "fieldError.contentTypeInvalid": "This file type isn’t allowed.",
     "fieldError.invalid": "{label} is invalid.",
+    "fieldError.roleNameTaken": "A role already has this name.",
+    "fieldError.tooManyRoles": "A server has at most 50 roles.",
+    "fieldError.roleIdsInvalid":
+      "One of the roles no longer exists. Reload the page.",
 
     "form.rateLimited": {
       one: "Too many attempts. Please wait {count} second.",
@@ -303,6 +409,11 @@ export const auth = defineCatalog(
       "The server couldn’t confirm the sign-out. Please try again.",
 
     "layout.inviteBanner": "You’ve been invited. Sign in or register to join.",
+
+    "legal.label": "Legal",
+    "legal.imprint": "Imprint",
+    "legal.privacy": "Privacy",
+    "legal.terms": "Terms",
 
     "page.passwordHint": "At least {min} characters.",
     "page.sending": "Sending…",
@@ -338,6 +449,7 @@ export const auth = defineCatalog(
       "Confirmation link sent to <b>{email}</b>. It is valid for 24 hours.",
     "register.thenInvite": "After that, you’ll continue to the invite.",
     "register.resend": "Send link again",
+    "register.invitationOnly": "Gelabber is open by invitation only for now.",
 
     "forgot.title": "Forgot password",
     "forgot.lead": "You’ll get a link to set a new password.",
@@ -382,5 +494,25 @@ export const auth = defineCatalog(
     "routeError.bodyInCall":
       "This page couldn’t be shown. Your call is still running. Reloading ends it.",
     "routeError.reload": "Reload page",
+
+    "oidc.signInWith": "Sign in with {provider}",
+    "oidc.signInWithGoogle": "Sign in with Google",
+    "oidc.redirecting": "Continuing to {provider}…",
+    "oidc.or": "or",
+    "oidc.error.cancelled": "Sign-in cancelled.",
+    "oidc.error.expired":
+      "The sign-in expired or was started in another browser. Please try again.",
+    "oidc.error.failed":
+      "Signing in with the provider didn’t work. Please try again.",
+
+    "signInName.title": "Choose a display name",
+    "signInName.lead":
+      "Your account is almost ready. Choose the name others will see.",
+    "signInName.signedInAs": "Signed in with {provider} as <b>{email}</b>",
+    "signInName.nameLabel": "Display name",
+    "signInName.submit": "Create account",
+    "signInName.submitting": "Creating account…",
+    "signInName.expiredTitle": "Sign-in expired",
+    "signInName.expired": "Sign in again to create your account.",
   },
 );

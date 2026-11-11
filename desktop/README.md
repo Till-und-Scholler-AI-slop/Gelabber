@@ -93,6 +93,19 @@ English. Signed in, the tool sets the scene user's language with
 also when the scene fails; signed out, it starts the app in English
 (`gelabber_i18n::set`), as `shots.mjs` uses an English browser.
 
+The parity stack's API runs with this environment (each package adds its
+keys to this one block):
+
+```sh
+# lena is an operator, for the "Betrieb" scenes; registration stays open.
+API_OPERATOR_EMAILS=lena@example.test
+# Sign-in with Google is on, so the auth pages show its button; Google is
+# never contacted (say.mjs oidc-* writes the results into the database).
+OIDC_GOOGLE_CLIENT_ID=parity.apps.googleusercontent.com
+OIDC_GOOGLE_CLIENT_SECRET=parity
+APP_PUBLIC_URL=http://127.0.0.1:5180
+```
+
 Packages, built by `desktop-native.yml` after merge and for releases:
 
 ```sh

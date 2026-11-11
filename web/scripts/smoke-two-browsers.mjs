@@ -96,21 +96,27 @@ async function participant(name) {
   return { context, page };
 }
 
+/** Waits for a playing video whose caption includes `name`, or, with
+ * `LIVE`, for a playing Live on the stage (its caption has the LIVE badge). */
+const LIVE = "voice-live-caption";
 async function remoteVideo(page, name) {
   await page.waitForFunction(
-    (label) =>
+    ([label, live]) =>
       [...document.querySelectorAll("figure")].some((figure) => {
-        const caption = figure.querySelector("figcaption")?.textContent ?? "";
+        const element = figure.querySelector("figcaption");
+        const caption = element?.textContent ?? "";
         const video = figure.querySelector("video");
         return (
-          caption.includes(label) &&
+          (label === live
+            ? element?.classList.contains(live)
+            : caption.includes(label)) &&
           video?.srcObject
             ?.getVideoTracks()
             .some((track) => track.readyState === "live") &&
           video.videoWidth > 0
         );
       }),
-    name,
+    [name, LIVE],
     { timeout: 45_000 },
   );
 }
@@ -352,11 +358,13 @@ try {
   await a.page
     .getByRole("menuitem", { name: "Live gehen", exact: true })
     .click();
-  const liveTile = b.page.locator("figure").filter({ hasText: "— Live" });
+  const liveTile = b.page
+    .locator("figure")
+    .filter({ has: b.page.locator(`figcaption.${LIVE}`) });
   await liveTile
     .getByRole("button", { name: "Zuschauen", exact: true })
     .click();
-  await remoteVideo(b.page, "— Live");
+  await remoteVideo(b.page, LIVE);
   await b.page.waitForFunction(
     async () => {
       for (const pc of window.__smokePeers ?? []) {

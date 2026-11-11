@@ -956,3 +956,42 @@ async fn a_push_speaks_the_recipient_language(pool: PgPool) {
     assert_eq!(payload["title"], "Neue Nachricht von Bob");
     assert_eq!(payload["body"], "Nachricht gelöscht");
 }
+
+#[sqlx::test]
+async fn a_hidden_channel_pushes_nothing(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        server,
+        channel,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    // The channel is limited to a role Bob does not hold (#516).
+    let role = a
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/roles"),
+            Some(json!({"name": "Stammgäste", "color": "green"})),
+        )
+        .await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.body);
+    let r = a
+        .send(
+            Method::PATCH,
+            &format!("/api/channels/{channel}"),
+            Some(json!({"role_ids": [role.body["id"]]})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    let bob = b.user_id().to_owned();
+    post(&mut a, &channel, "@everyone Essen").await;
+    post(&mut a, &channel, &format!("<@{bob}> schau mal")).await;
+    post(&mut a, &dm, "marker").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
+}

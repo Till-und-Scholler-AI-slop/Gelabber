@@ -28,6 +28,7 @@ struct Call<'a> {
     kind: SigKind,
     track: Option<TrackKind>,
     on: Option<bool>,
+    owner: Option<Uuid>,
     sink: &'a mut Sink,
 }
 
@@ -39,7 +40,7 @@ pub async fn handle(
     frame: ClientFrame,
     sink: &mut Sink,
 ) -> Result<(), ApiError> {
-    let ClientFrame::Sig { s, c, t, k, on } = frame else {
+    let ClientFrame::Sig { s, c, t, k, on, o } = frame else {
         return send_err(sink, "bad_request", None, None).await;
     };
     let (Some(server_id), Some(channel_id), Some(kind)) = (s, c, t) else {
@@ -56,6 +57,7 @@ pub async fn handle(
         kind,
         track: k,
         on,
+        owner: o,
         sink,
     };
     if let Err(err) = membership::lock_server_conn(call.db, server_id, false).await {
@@ -67,6 +69,7 @@ pub async fn handle(
         SigKind::P | SigKind::U => publish(&mut call).await,
         SigKind::M | SigKind::D => mute_deafen(&mut call).await,
         SigKind::R => bad(&mut call).await,
+        SigKind::W => watch(&mut call).await,
     }
 }
 
@@ -185,6 +188,37 @@ async fn mute_deafen(call: &mut Call<'_>) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Watching needs only a seat in the room, like receiving a camera: the
+/// owner need not be live or present. The intent outlives a restarted Live,
+/// as the media service's grant does; that service still enforces it.
+async fn watch(call: &mut Call<'_>) -> Result<(), ApiError> {
+    if !require_room(call).await? {
+        return Ok(());
+    }
+    let (Some(owner), Some(on)) = (call.owner, call.on) else {
+        return bad(call).await;
+    };
+    if !matches!(call.track, None | Some(TrackKind::S)) || owner == call.user.id {
+        return bad(call).await;
+    }
+    let ok = call
+        .state
+        .gateway
+        .set_voice_watch(
+            call.conn,
+            call.user.id,
+            call.server_id,
+            call.channel_id,
+            owner,
+            on,
+        )
+        .await?;
+    if !ok {
+        return bad(call).await;
+    }
+    Ok(())
+}
+
 async fn bad(call: &mut Call<'_>) -> Result<(), ApiError> {
     send_err(
         call.sink,
@@ -200,6 +234,7 @@ async fn reject(call: &mut Call<'_>, err: ApiError) -> Result<(), ApiError> {
         ApiError::NotFound => "not_found",
         ApiError::Forbidden(_) => "forbidden",
         ApiError::BadRequest(_) => "bad_request",
+        ApiError::ServerBlocked => "server_blocked",
         other => return Err(other),
     };
     send_err(call.sink, code, Some(call.server_id), Some(call.channel_id)).await
@@ -214,6 +249,10 @@ async fn authorize_join(
     let member = membership::load(&mut *db, server_id, user_id).await?;
     member.require(Permission::JoinVoice)?;
     let channel = load_channel(db, server_id, channel_id).await?;
+    // A room the caller cannot see is as unknown as a missing one.
+    if !member.sees(&channel) {
+        return Err(ApiError::NotFound);
+    }
     if channel.kind != ChannelKind::Voice {
         return Err(ApiError::BadRequest(
             "Voice signaling is for voice channels.".into(),
@@ -236,10 +275,11 @@ async fn load_channel(
     server_id: Uuid,
     channel_id: Uuid,
 ) -> Result<Channel, ApiError> {
-    sqlx::query_as::<_, Channel>(
-        "SELECT id, server_id, category_id, name, kind, created_at \
-         FROM channels WHERE id = $1 AND server_id = $2",
-    )
+    sqlx::query_as::<_, Channel>(concat!(
+        "SELECT ",
+        crate::servers::channel::channel_columns!(),
+        " FROM channels c WHERE c.id = $1 AND c.server_id = $2"
+    ))
     .bind(channel_id)
     .bind(server_id)
     .fetch_optional(db)

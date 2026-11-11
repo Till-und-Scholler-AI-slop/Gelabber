@@ -15,6 +15,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import { useT } from "../i18n/catalog.ts";
@@ -71,6 +72,9 @@ type VoiceTileProps = {
   sourceAudioOn?: boolean;
   /** Watching this Live without being in the call: how to stop. */
   onStopWatching?: () => void;
+  /** A Live on the channel's stage: its caption is the LIVE badge, the
+   * owner's name and `watchers`, the count of who watches; no Live tag. */
+  liveCaption?: { name: string; watchers: ReactNode };
 };
 
 export function VoiceTile(props: VoiceTileProps) {
@@ -176,6 +180,7 @@ function VideoSurface({
   sourceAudioNotice,
   sourceAudioOn = false,
   onStopWatching,
+  liveCaption,
   onViewer,
   onExit,
   viewer = false,
@@ -458,11 +463,19 @@ function VideoSurface({
         </div>
       ) : null}
       {caption && !immersive ? (
-        <figcaption className="voice-video-caption">{label}</figcaption>
+        liveCaption ? (
+          <figcaption className="voice-video-caption voice-live-caption">
+            <span className="voice-live-caption-badge">{t("live.badge")}</span>
+            <span className="voice-live-caption-name">{liveCaption.name}</span>
+            {liveCaption.watchers}
+          </figcaption>
+        ) : (
+          <figcaption className="voice-video-caption">{label}</figcaption>
+        )
       ) : null}
-      {live || sourceAudioNotice ? (
+      {(live && !liveCaption) || sourceAudioNotice ? (
         <div className="voice-video-tags">
-          {live ? (
+          {live && !liveCaption ? (
             <span className="voice-video-live">{t("live.badge")}</span>
           ) : null}
           {sourceAudioNotice ? (

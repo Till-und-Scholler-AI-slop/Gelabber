@@ -4,7 +4,7 @@
 import { create } from "zustand";
 
 import { ApiError } from "../api/client.ts";
-import { errorMessage, fieldMessages } from "../auth/rules.ts";
+import { apiErrorMessage, errorMessage, fieldMessages } from "../auth/rules.ts";
 import { MediaError, mediaErrorMessage } from "../voice/media.ts";
 
 export type ToastAction = { label: string; onClick: () => void };
@@ -144,7 +144,7 @@ function toastText(error: unknown): string | null {
     const detail = Object.values(fieldMessages(error.fields)).filter(Boolean);
     if (detail.length > 0) return detail.join(" ");
   }
-  return errorMessage(error.code);
+  return apiErrorMessage(error);
 }
 
 /**

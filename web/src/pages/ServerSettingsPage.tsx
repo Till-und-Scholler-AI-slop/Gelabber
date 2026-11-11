@@ -1,8 +1,7 @@
-// `/s/$serverId/settings`: name, member permissions, invites, members,
-// bans, leave/delete. Open to every member; the editing sections need
-// `manage_server`, deletion the owner.
+// `/s/$serverId/settings`: name, roles, invites, the directory, members,
+// bans, leave/delete. Open to every member; `serverSettingsSections` says who sees
+// which section, deletion needs the owner.
 
-import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   useEffect,
@@ -16,7 +15,6 @@ import {
   type RefObject,
 } from "react";
 
-import { useUserId } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { ApiError } from "../api/client.ts";
 import {
@@ -43,19 +41,17 @@ import { Badge } from "../components/ui/Badge.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { CopyButton } from "../components/ui/CopyButton.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
-import { Switch } from "../components/ui/Switch.tsx";
 import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
+import {
+  useDirectoryStatus,
+  useJoinRequestCount,
+} from "../discover/queries.ts";
 import { inviteUrl } from "../servers/api.ts";
 import { copyText } from "../servers/clipboard.ts";
 import { inviteExpiry, inviteUses } from "../servers/inviteText.ts";
 import { useLastChannel } from "../servers/lastChannel.ts";
+import { can } from "../servers/permissions.ts";
 import {
-  PERMISSIONS,
-  can,
-  normalisePermissions,
-} from "../servers/permissions.ts";
-import {
-  readServer,
   useBans,
   useDeleteServer,
   useInvites,
@@ -67,9 +63,20 @@ import {
   useUpdateServer,
 } from "../servers/queries.ts";
 import { validateName } from "../servers/rules.ts";
-import type { Invite, Permission, ServerDetail } from "../servers/types.ts";
+import type { DirectoryLanguage } from "../discover/types.ts";
+import type { Invite, ServerDetail } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { sectionInView, type SectionJump } from "./sectionSpy.ts";
+import { JoinRequestQueue, ListingSettingsPanel } from "./ServerDirectory.tsx";
+import {
+  MemberRoleChips,
+  MemberRolePicker,
+  RolesEditor,
+} from "./ServerRoles.tsx";
+import {
+  serverSettingsSections,
+  type SectionId,
+} from "./serverSettingsSections.ts";
 import "./settings.css";
 
 export function ServerSettingsPage() {
@@ -90,37 +97,16 @@ export function ServerSettingsPage() {
   return <Settings key={server.id} server={server} />;
 }
 
-type SectionId =
-  | "allgemein"
-  | "rechte"
-  | "einladungen"
-  | "mitglieder"
-  | "sperren"
-  | "gefahrenzone";
-
 /** Each section's label; the ids stay German, they are URL fragments. */
 const SECTION_LABEL = {
   allgemein: "section.general",
-  rechte: "section.permissions",
+  rollen: "section.roles",
   einladungen: "section.invites",
   mitglieder: "section.members",
   sperren: "section.bans",
   gefahrenzone: "section.danger",
+  verzeichnis: "section.directory",
 } as const satisfies Record<SectionId, string>;
-
-/** The sections this member sees, in page order. */
-function serverSettingsSections(manage: boolean): SectionId[] {
-  return manage
-    ? [
-        "allgemein",
-        "rechte",
-        "einladungen",
-        "mitglieder",
-        "sperren",
-        "gefahrenzone",
-      ]
-    : ["mitglieder", "gefahrenzone"];
-}
 
 const sectionId = (id: SectionId) => `server-settings-${id}`;
 
@@ -208,11 +194,14 @@ function useCurrentSection(
 
 function Settings({ server }: { server: ServerDetail }) {
   const t = useT(serverSettings);
-  const manage = can(server, "manage_server");
-  const sections = serverSettingsSections(manage);
+  const { data: directory } = useDirectoryStatus();
+  const sections = serverSettingsSections(server, directory?.enabled ?? false);
+  const shows = (id: SectionId) => sections.includes(id);
   const scroller = useRef<HTMLDivElement>(null);
   const nav = useRef<HTMLElement>(null);
   const [current, jump] = useCurrentSection(sections, scroller, nav);
+  // Only read here: the queue in the section loads it, `jq` keeps it current.
+  const { data: requestCount } = useJoinRequestCount(server.id, false);
   return (
     <div className="settings-screen">
       <header className="lr-channel-header settings-header">
@@ -239,15 +228,32 @@ function Settings({ server }: { server: ServerDetail }) {
               }}
             >
               {t(SECTION_LABEL[id])}
+              {id === "verzeichnis" && requestCount ? (
+                <Badge tone="count">
+                  <span aria-hidden="true">{requestCount}</span>
+                  <span className="sr-only">
+                    {t("joinRequests.count", { count: requestCount })}
+                  </span>
+                </Badge>
+              ) : null}
             </a>
           ))}
         </nav>
         <div className="settings-area server-settings">
-          {manage ? <NameSection server={server} /> : null}
-          {manage ? <PermissionsSection server={server} /> : null}
-          {manage ? <InvitesSection server={server} /> : null}
-          <MembersSection server={server} />
-          {manage ? <BansSection server={server} /> : null}
+          {shows("allgemein") ? <NameSection server={server} /> : null}
+          {shows("rollen") ? <RolesSection server={server} /> : null}
+          {shows("einladungen") ? <InvitesSection server={server} /> : null}
+          {shows("verzeichnis") ? (
+            <DirectorySection
+              server={server}
+              languages={directory?.languages ?? []}
+            />
+          ) : null}
+          <MembersSection
+            server={server}
+            onManageRoles={() => jump("rollen")}
+          />
+          {shows("sperren") ? <BansSection server={server} /> : null}
           <DangerSection server={server} />
         </div>
       </div>
@@ -259,17 +265,21 @@ function Section({
   id,
   title,
   hint,
+  className,
   children,
 }: {
   id: SectionId;
   title?: string;
   hint?: string;
+  className?: string;
   children: ReactNode;
 }) {
   const t = useT(serverSettings);
   return (
     <section
-      className="server-settings-section"
+      className={["server-settings-section", className]
+        .filter(Boolean)
+        .join(" ")}
       aria-labelledby={sectionId(id)}
     >
       <header className="server-settings-section__heading">
@@ -437,52 +447,16 @@ function IconRow({ server }: { server: ServerDetail }) {
   );
 }
 
-/** Each switch saves at once (optimistic, rolled back on error). */
-function PermissionsSection({ server }: { server: ServerDetail }) {
+/** Roles: the list and the chosen role's panel; each change saves at once. */
+function RolesSection({ server }: { server: ServerDetail }) {
   const t = useT(serverSettings);
-  const tc = useT(common);
-  const client = useQueryClient();
-  const userId = useUserId();
-  const update = useUpdateServer(server.id);
-  const status = useInlineStatus();
-  const current = new Set<Permission>(server.member_permissions);
-
-  const toggle = (permission: Permission) => {
-    // Start from the cache, not from this render's props: a second click
-    // before the first PATCH returns must build on the first click's
-    // optimistic mask, or the later request would restore the flag.
-    const latest = (userId && readServer(client, userId, server.id)) || server;
-    const next = new Set<Permission>(latest.member_permissions);
-    if (next.has(permission)) next.delete(permission);
-    else next.add(permission);
-    update.mutate(
-      { member_permissions: normalisePermissions(next) },
-      {
-        onSuccess: () => status.show({ tone: "success", message: tc("saved") }),
-        onError: () => status.show({ tone: "error", message: tc("notSaved") }),
-      },
-    );
-  };
-
   return (
     <Section
-      id="rechte"
-      title={t("permissions.title")}
-      hint={t("permissions.hint")}
+      id="rollen"
+      hint={t("roles.hint")}
+      className="server-settings-section--roles"
     >
-      <div className="server-settings-list">
-        {PERMISSIONS.map((permission) => (
-          <Switch
-            key={permission.id}
-            className="settings-row"
-            label={t(`permission.${permission.key}.label`)}
-            description={t(`permission.${permission.key}.hint`)}
-            checked={current.has(permission.id)}
-            onChange={() => toggle(permission.id)}
-          />
-        ))}
-      </div>
-      <InlineStatus status={status.status} />
+      <RolesEditor server={server} />
     </Section>
   );
 }
@@ -601,13 +575,43 @@ function InviteRow({
   );
 }
 
-function MembersSection({ server }: { server: ServerDetail }) {
+/** The owner's listing, then the join requests for everyone who answers. */
+function DirectorySection({
+  server,
+  languages,
+}: {
+  server: ServerDetail;
+  languages: readonly DirectoryLanguage[];
+}) {
+  const t = useT(serverSettings);
+  const owner = server.role === "owner";
+  return (
+    <Section id="verzeichnis" hint={owner ? t("directory.hint") : undefined}>
+      {owner ? (
+        <ListingSettingsPanel server={server} languages={languages} />
+      ) : null}
+      <JoinRequestQueue server={server} />
+    </Section>
+  );
+}
+
+function MembersSection({
+  server,
+  onManageRoles,
+}: {
+  server: ServerDetail;
+  onManageRoles: () => void;
+}) {
   const t = useT(serverSettings);
   const byServer = usePresenceStore((s) => s.byServer);
+  const manage = can(server, "manage_server");
+  const moderate = can(server, "moderate_members");
+  const me = useSession((s) => s.user?.id);
   return (
     <Section
       id="mitglieder"
       title={t("members.title", { count: server.members.length })}
+      hint={manage ? t("members.hint") : undefined}
     >
       <ul className="server-settings-list">
         {server.members.map((member) => (
@@ -618,12 +622,26 @@ function MembersSection({ server }: { server: ServerDetail }) {
               status={presenceOf(byServer, server.id, member.user_id)}
             />
             <span className="server-settings-row__name">{member.name}</span>
-            <Badge tone={member.role === "owner" ? "accent" : "neutral"}>
-              {member.role === "owner"
-                ? t("members.owner")
-                : t("members.member")}
-            </Badge>
-            <MemberActionsMenu server={server} member={member} />
+            {member.role === "owner" ? (
+              <Badge tone="accent">{t("members.owner")}</Badge>
+            ) : (
+              <>
+                <MemberRoleChips server={server} member={member} />
+                {manage ? (
+                  <MemberRolePicker
+                    server={server}
+                    member={member}
+                    onManage={onManageRoles}
+                  />
+                ) : null}
+              </>
+            )}
+            {moderate && (member.role === "owner" || member.user_id === me) ? (
+              // No "…" here: keep its column, so the badge and chips line up.
+              <span className="server-settings-row__menu-slot" aria-hidden />
+            ) : (
+              <MemberActionsMenu server={server} member={member} />
+            )}
           </li>
         ))}
       </ul>

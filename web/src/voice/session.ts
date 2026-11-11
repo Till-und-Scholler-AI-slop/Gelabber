@@ -418,6 +418,9 @@ function onSig(event: SigEvent): void {
         if (voice.republishOnJoin) {
           voice.republishOnJoin = false;
           reannounceActive();
+        } else {
+          // A new seat holds no watches: the room learns ours again.
+          announceWatches();
         }
       }
       useVoice.setState({
@@ -1099,6 +1102,31 @@ function reannounceActive(): void {
     sendPub("s", true);
     if (hasLiveTrack(voice.screenStream, "audio")) sendPub("sa", true);
   }
+  announceWatches();
+}
+
+/** Tell the gateway whose Live we watch, so the room can count us (#521). */
+function sendWatch(owner: string, on: boolean): void {
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) return;
+  voice.deps?.gateway.send({
+    op: "sig",
+    t: "w",
+    s: state.serverId,
+    c: state.channelId,
+    o: owner,
+    k: "s",
+    on,
+  });
+}
+
+/** Every watch we hold, once the gateway seat stands. */
+function announceWatches(): void {
+  for (const [owner, kinds] of Object.entries(
+    useVoice.getState().sourceSubscriptions,
+  )) {
+    if (kinds?.s === true) sendWatch(owner, true);
+  }
 }
 
 function onTransportState(
@@ -1447,6 +1475,9 @@ export function toggleSourceWatch(userId: string, kind: "s"): void {
     void voice.seat
       .request("w", { u: userId, k: kind, on })
       .catch((error) => voice.deps?.onError?.(error));
+  // Before the join's ack there is no seat to hold it; the ack announces
+  // every watch (and a refusal then would read as a refused join).
+  if (!voice.awaitingJoin) sendWatch(userId, on);
   if (!on) {
     dropRemote(userId, kind);
     voice.receivedAudio.clearSourcePlayback(userId, kind);

@@ -1,9 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { voice as texts } from "../i18n/catalogs/voice.ts";
+import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
 import { compareNames } from "../i18n/format.ts";
 import { pageZoom } from "../interface/zoom.ts";
 import { can } from "../servers/permissions.ts";
@@ -28,6 +29,7 @@ import { UserVolumeControl } from "./UserVolumeControl.tsx";
 import { useCapabilities } from "../voice/capabilities.ts";
 import { useCallShortcuts } from "../voice/callShortcuts.ts";
 import { ConnectionStatus } from "../voice/ConnectionStatus.tsx";
+import { CallSound } from "../voice/QuickCallSettings.tsx";
 import { directionTotal } from "../voice/connectionSummary.ts";
 import {
   callQuality,
@@ -134,6 +136,7 @@ export function VoiceSessionControls() {
             <VoiceControls
               canLive={can(server, "go_live")}
               streamSound={streamSound}
+              server={server}
             />
             <LeaveButton />
           </div>
@@ -218,7 +221,8 @@ function CallAnnouncement({ voice }: { voice: VoiceState }) {
 }
 
 /** Where the call is and whether it carries: the connection's state in
- * words, and once connected, its quality as bars that open the details. */
+ * words beside its quality as bars, one button that opens the details, and
+ * the place below it, a link back to the channel. */
 function CallStatus({
   voice,
   server,
@@ -242,22 +246,17 @@ function CallStatus({
           : t("call.connecting");
   return (
     <div className="voice-session-head" data-connection={voice.connection}>
-      {voice.connection === "connected" ? (
-        <QualityBars />
-      ) : voice.connection === "failed" ? (
-        <WarningIcon size={16} className="voice-session-signal" />
-      ) : (
-        <SignalIcon size={16} className="voice-session-signal" />
-      )}
-      <Link
-        to="/s/$serverId/c/$channelId"
-        params={joined}
-        className="voice-session-link"
-        aria-label={`${state}: ${where}`}
-      >
-        <strong>{state}</strong>
-        <span>{where}</span>
-      </Link>
+      <div className="voice-session-where">
+        <ConnectionButton connection={voice.connection} state={state} />
+        <Link
+          to="/s/$serverId/c/$channelId"
+          params={joined}
+          className="voice-session-link"
+          aria-label={`${state}: ${where}`}
+        >
+          <span>{where}</span>
+        </Link>
+      </div>
       {voice.connection === "failed" ? (
         <Button
           onClick={() =>
@@ -275,40 +274,58 @@ function CallStatus({
   );
 }
 
-/** One to four bars from the latest measurement; pressing them shows the
- * connection at a glance, with the way to the full diagnostics. */
-function QualityBars() {
+/** The state word with one to four bars from the latest measurement, or
+ * the state's icon before it connects; pressing it shows the connection at
+ * a glance, with the volumes and the way to the full diagnostics. */
+function ConnectionButton({
+  connection,
+  state,
+}: {
+  connection: VoiceState["connection"];
+  state: string;
+}) {
   const t = useT(texts);
-  const sample = useVoiceDiagnostics((state) => state.latest?.voice ?? null);
-  const watch = useVoiceDiagnostics((state) => state.latest?.watch ?? null);
-  const openSettings = useMediaSettings((s) => s.openDialog);
+  const sample = useVoiceDiagnostics((s) => s.latest?.voice ?? null);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
-  const quality = callQuality(sample);
-  const label = quality ? callQualitySummary(quality) : t("quality.measuring");
+  // The last sample speaks only for a live connection: otherwise the button
+  // says the state it shows.
+  const quality = connection === "connected" ? callQuality(sample) : null;
+  const label =
+    connection !== "connected"
+      ? state
+      : quality
+        ? callQualitySummary(quality)
+        : t("quality.measuring");
   const tip = useTooltip({ label, disabled: open });
-  const sent = directionTotal([sample], "send");
-  const received = directionTotal([sample, watch], "recv");
-  const show = (section: "audio" | "diagnostics") => {
-    setOpen(false);
-    openSettings(section);
-  };
   return (
     <>
       <button
         {...tip.trigger}
         ref={anchor}
         type="button"
-        className="voice-quality-bars"
-        data-level={quality?.level ?? 0}
+        className="voice-session-status"
         aria-label={t("quality.showDetails", { summary: label })}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        {[1, 2, 3, 4].map((bar) => (
-          <span key={bar} aria-hidden="true" />
-        ))}
+        {connection === "connected" ? (
+          <span
+            className="voice-quality-bars"
+            data-level={quality?.level ?? 0}
+            aria-hidden="true"
+          >
+            {[1, 2, 3, 4].map((bar) => (
+              <span key={bar} />
+            ))}
+          </span>
+        ) : connection === "failed" ? (
+          <WarningIcon size={16} className="voice-session-signal" />
+        ) : (
+          <SignalIcon size={16} className="voice-session-signal" />
+        )}
+        <strong>{state}</strong>
       </button>
       {tip.tooltip}
       <Popover
@@ -319,37 +336,64 @@ function QualityBars() {
         placement="top-start"
         className="voice-connection-popover"
       >
-        <ConnectionStatus compact />
-        <dl className="connection-io">
-          <div>
-            <dt>
-              <span className="connection-dir" aria-hidden="true">
-                ↑
-              </span>
-              {t("quality.sending")}
-            </dt>
-            <dd>{sent === null ? "–" : formatBps(sent)}</dd>
-          </div>
-          <div>
-            <dt>
-              <span className="connection-dir" aria-hidden="true">
-                ↓
-              </span>
-              {t("quality.receiving")}
-            </dt>
-            <dd>{received === null ? "–" : formatBps(received)}</dd>
-          </div>
-        </dl>
-        <div className="connection-actions">
-          <Button size="sm" variant="ghost" onClick={() => show("audio")}>
-            {t("quality.settings")}
-          </Button>
-          {/* Focus starts on the way to the details (Popover.tsx). */}
-          <Button size="sm" autoFocus onClick={() => show("diagnostics")}>
-            {t("quality.allDetails")}
-          </Button>
-        </div>
+        <ConnectionDetails onDone={() => setOpen(false)} />
       </Popover>
+    </>
+  );
+}
+
+/** The "Verbindung" popover's content: the connection in short, what goes
+ * out and comes in, the call's volumes (the phone's way to them without the
+ * call bar's gear) and the ways to the settings and the diagnostics. */
+export function ConnectionDetails({ onDone }: { onDone: () => void }) {
+  const t = useT(texts);
+  const ts = useT(voiceSettings);
+  const volumeId = useId();
+  const sample = useVoiceDiagnostics((s) => s.latest?.voice ?? null);
+  const watch = useVoiceDiagnostics((s) => s.latest?.watch ?? null);
+  const openSettings = useMediaSettings((s) => s.openDialog);
+  const sent = directionTotal([sample], "send");
+  const received = directionTotal([sample, watch], "recv");
+  const show = (section: "audio" | "diagnostics") => {
+    onDone();
+    openSettings(section);
+  };
+  return (
+    <>
+      <ConnectionStatus compact />
+      <dl className="connection-io">
+        <div>
+          <dt>
+            <span className="connection-dir" aria-hidden="true">
+              ↑
+            </span>
+            {t("quality.sending")}
+          </dt>
+          <dd>{sent === null ? "–" : formatBps(sent)}</dd>
+        </div>
+        <div>
+          <dt>
+            <span className="connection-dir" aria-hidden="true">
+              ↓
+            </span>
+            {t("quality.receiving")}
+          </dt>
+          <dd>{received === null ? "–" : formatBps(received)}</dd>
+        </div>
+      </dl>
+      <section className="connection-volume" aria-labelledby={volumeId}>
+        <h3 id={volumeId}>{ts("quick.volume")}</h3>
+        <CallSound />
+      </section>
+      <div className="connection-actions">
+        <Button size="sm" variant="ghost" onClick={() => show("audio")}>
+          {t("quality.settings")}
+        </Button>
+        {/* Focus starts on the way to the details (Popover.tsx). */}
+        <Button size="sm" autoFocus onClick={() => show("diagnostics")}>
+          {t("quality.allDetails")}
+        </Button>
+      </div>
     </>
   );
 }

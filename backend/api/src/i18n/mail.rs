@@ -52,6 +52,28 @@ fn german(mail: &Mail, base: &str, instance: &str) -> (String, String) {
                  hat sich nichts geändert.\n"
             ),
         ),
+        Mail::BetaInvitation { link } => (
+            "Deine Einladung zu Gelabber".to_owned(),
+            format!(
+                "Hallo,\n\n\
+                 du bist eingeladen, auf {instance} ein Gelabber-Konto anzulegen. \
+                 Mit diesem Link kannst du dich registrieren:\n\n\
+                 {link}\n\n\
+                 Die Einladung gilt für ein Konto.\n\n\
+                 Hast du keine Einladung erwartet? Dann ignoriere diese Mail.\n"
+            ),
+        ),
+        Mail::ProviderConnected { provider_name } => (
+            format!("{provider_name} ist mit deinem Gelabber-Konto verbunden"),
+            format!(
+                "Hallo,\n\n\
+                 du kannst dich auf {instance} jetzt auch über {provider_name} bei \
+                 deinem Gelabber-Konto anmelden.\n\n\
+                 Anmeldung verwalten: {base}/settings/konto\n\n\
+                 Warst du das nicht? Dann melde dich an, trenne {provider_name} unter \
+                 Einstellungen → Sicherheit und ändere dein Passwort.\n"
+            ),
+        ),
     }
 }
 
@@ -94,6 +116,28 @@ fn english(mail: &Mail, base: &str, instance: &str) -> (String, String) {
                  has changed.\n"
             ),
         ),
+        Mail::BetaInvitation { link } => (
+            "Your invitation to Gelabber".to_owned(),
+            format!(
+                "Hi,\n\n\
+                 You are invited to create a Gelabber account on {instance}. \
+                 Use this link to register:\n\n\
+                 {link}\n\n\
+                 The invitation is good for one account.\n\n\
+                 Weren't expecting an invitation? Then ignore this email.\n"
+            ),
+        ),
+        Mail::ProviderConnected { provider_name } => (
+            format!("{provider_name} is now connected to your Gelabber account"),
+            format!(
+                "Hi,\n\n\
+                 You can now also sign in to your Gelabber account on {instance} \
+                 with {provider_name}.\n\n\
+                 Manage sign-in: {base}/settings/konto\n\n\
+                 Wasn't you? Then sign in, disconnect {provider_name} under \
+                 Settings → Security and change your password.\n"
+            ),
+        ),
     }
 }
 
@@ -104,7 +148,7 @@ mod tests {
     const BASE: &str = "https://chat.example.org";
     const INSTANCE: &str = "chat.example.org";
 
-    fn mails() -> [Mail; 3] {
+    fn mails() -> [Mail; 5] {
         [
             Mail::ConfirmEmail {
                 token: "abc".into(),
@@ -113,6 +157,12 @@ mod tests {
                 token: "abc".into(),
             },
             Mail::AlreadyRegistered,
+            Mail::BetaInvitation {
+                link: format!("{BASE}/register?invitation=abc"),
+            },
+            Mail::ProviderConnected {
+                provider_name: "Google".into(),
+            },
         ]
     }
 
@@ -146,7 +196,7 @@ mod tests {
 
     #[test]
     fn english_texts() {
-        let [confirm, reset, already] = mails();
+        let [confirm, reset, already, invitation, connected] = mails();
         assert_eq!(
             render(Locale::En, &confirm, BASE, INSTANCE),
             (
@@ -182,6 +232,30 @@ mod tests {
                  Sign in: https://chat.example.org/login\n\
                  Forgot password: https://chat.example.org/forgot-password\n\n\
                  Wasn't you? Then ignore this email; nothing about your account has changed.\n"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            render(Locale::En, &invitation, BASE, INSTANCE),
+            (
+                "Your invitation to Gelabber".to_owned(),
+                "Hi,\n\nYou are invited to create a Gelabber account on chat.example.org. \
+                 Use this link to register:\n\n\
+                 https://chat.example.org/register?invitation=abc\n\n\
+                 The invitation is good for one account.\n\n\
+                 Weren't expecting an invitation? Then ignore this email.\n"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            render(Locale::En, &connected, BASE, INSTANCE),
+            (
+                "Google is now connected to your Gelabber account".to_owned(),
+                "Hi,\n\nYou can now also sign in to your Gelabber account on chat.example.org \
+                 with Google.\n\n\
+                 Manage sign-in: https://chat.example.org/settings/konto\n\n\
+                 Wasn't you? Then sign in, disconnect Google under Settings → Security and \
+                 change your password.\n"
                     .to_owned()
             )
         );

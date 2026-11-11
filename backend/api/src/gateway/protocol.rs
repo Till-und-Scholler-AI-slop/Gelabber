@@ -170,6 +170,8 @@ pub enum SigKind {
     D,
     /// Occupancy snapshot after a server subscribe (`snap`).
     R,
+    /// Watch someone's Live (client: `o`, `on`; server: the full set `w`).
+    W,
 }
 
 impl SigKind {
@@ -182,6 +184,7 @@ impl SigKind {
             Self::M => "m",
             Self::D => "d",
             Self::R => "r",
+            Self::W => "w",
         }
     }
 }
@@ -259,6 +262,10 @@ pub struct SigEvent {
     /// Existing occupant replay sent only to the joining connection.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub replay: bool,
+    /// Watch (`t: "w"`): the complete, sorted set of owners whose Live the
+    /// user watches in this channel. `[]` means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w: Option<Vec<Uuid>>,
 }
 
 impl SigEvent {
@@ -273,6 +280,7 @@ impl SigEvent {
             m: None,
             d: None,
             replay: false,
+            w: None,
         }
     }
 
@@ -318,6 +326,16 @@ impl SigEvent {
     pub fn deafened(server_id: Uuid, channel_id: Uuid, user_id: Uuid, on: bool) -> Self {
         let mut event = Self::base(SigKind::D, server_id, channel_id, user_id);
         event.on = Some(on);
+        event
+    }
+
+    /// `owners` is sorted here, so every copy of a set reads the same.
+    pub fn watching(server_id: Uuid, channel_id: Uuid, user_id: Uuid, owners: Vec<Uuid>) -> Self {
+        let mut owners = owners;
+        owners.sort();
+        owners.dedup();
+        let mut event = Self::base(SigKind::W, server_id, channel_id, user_id);
+        event.w = Some(owners);
         event
     }
 }
@@ -405,6 +423,9 @@ pub enum ClientFrame {
         k: Option<TrackKind>,
         #[serde(default)]
         on: Option<bool>,
+        /// Watch (`t: "w"`): the owner of the Live.
+        #[serde(default)]
+        o: Option<Uuid>,
     },
     /// The page is in front (focused and visible) or not (#243): while one
     /// is, no Web Push goes to the account.
@@ -491,6 +512,9 @@ pub enum ServerFrame {
         /// See [`SigEvent::replay`]: clients stay quiet about these.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         replay: bool,
+        /// See [`SigEvent::w`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        w: Option<Vec<Uuid>>,
     },
     #[serde(rename = "err")]
     Err {
@@ -526,6 +550,14 @@ pub enum ServerFrame {
     /// socket of the account switches. Only to that account's own sockets.
     #[serde(rename = "lc")]
     Locale { l: Locale },
+    /// The account is now a member of server `s`: its request to join was
+    /// accepted (issue #520). Only to that account's own sockets.
+    #[serde(rename = "jn")]
+    Joined { s: Uuid },
+    /// Server `s` has `n` pending requests to join now (issue #520). Only to
+    /// the accounts that answer them.
+    #[serde(rename = "jq")]
+    JoinRequests { s: Uuid, n: i64 },
 }
 
 /// A conversation's new read position and what is still unread after it.
@@ -601,6 +633,7 @@ impl ServerFrame {
             d: event.d,
             snap: None,
             replay: event.replay,
+            w: event.w,
         }
     }
 
@@ -616,6 +649,7 @@ impl ServerFrame {
             d: None,
             snap: Some(snap),
             replay: false,
+            w: None,
         }
     }
 
@@ -681,6 +715,10 @@ pub enum UserFrame {
     Read { d: Vec<ReadSync> },
     #[serde(rename = "lc")]
     Locale { l: Locale },
+    #[serde(rename = "jn")]
+    Joined { s: Uuid },
+    #[serde(rename = "jq")]
+    JoinRequests { s: Uuid, n: i64 },
 }
 
 impl From<UserFrame> for ServerFrame {
@@ -689,6 +727,8 @@ impl From<UserFrame> for ServerFrame {
             UserFrame::NotificationSettings => Self::NotificationSettings,
             UserFrame::Read { d } => Self::Read { d },
             UserFrame::Locale { l } => Self::Locale { l },
+            UserFrame::Joined { s } => Self::Joined { s },
+            UserFrame::JoinRequests { s, n } => Self::JoinRequests { s, n },
         }
     }
 }
@@ -1006,6 +1046,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn watch_request_decodes_with_its_owner() {
+        let owner = Uuid::from_u128(4);
+        let frame: ClientFrame = serde_json::from_value(serde_json::json!({
+            "op": "sig", "t": "w", "s": Uuid::from_u128(1), "c": Uuid::from_u128(2),
+            "o": owner, "k": "s", "on": true,
+        }))
+        .unwrap();
+        let ClientFrame::Sig { t, o, k, on, .. } = frame else {
+            panic!("not a sig frame");
+        };
+        assert_eq!(
+            (t, o, k, on),
+            (
+                Some(SigKind::W),
+                Some(owner),
+                Some(TrackKind::S),
+                Some(true)
+            )
+        );
+    }
+
+    #[test]
+    fn watch_frame_carries_the_full_set_and_others_omit_it() {
+        let (s, c, u) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (a, b) = (Uuid::from_u128(5), Uuid::from_u128(4));
+        let json =
+            serde_json::to_value(ServerFrame::sig(SigEvent::watching(s, c, u, vec![a, b, a])))
+                .unwrap();
+        assert_eq!(json["t"], "w");
+        assert_eq!(json["w"], serde_json::json!([b, a]));
+        let json = ServerFrame::sig(SigEvent::watching(s, c, u, Vec::new()))
+            .to_json()
+            .unwrap();
+        assert!(json.contains(r#""w":[]"#), "{json}");
+        let json = ServerFrame::sig(SigEvent::join(s, c, u)).to_json().unwrap();
+        assert!(!json.contains(r#""w""#), "{json}");
+        // Redis carries the Lua-built frame; it decodes back with the set.
+        let raw = format!(r#"{{"t":"w","s":"{s}","c":"{c}","u":"{u}","w":["{b}"]}}"#);
+        let event: SigEvent = serde_json::from_str(&raw).unwrap();
+        assert_eq!(event.w, Some(vec![b]));
+    }
+
     /// The language frame survives Redis and reaches the socket as `lc`.
     #[test]
     fn locale_frame_wire_format() {
@@ -1022,5 +1105,30 @@ mod tests {
             super::ServerFrame::from(frame).to_json().unwrap(),
             r#"{"op":"lc","l":"en"}"#
         );
+    }
+
+    /// The directory's frames survive Redis and reach the socket as `jn`
+    /// and `jq`.
+    #[test]
+    fn join_frames_wire_format() {
+        let s = Uuid::from_u128(1);
+        for (frame, wire) in [
+            (
+                super::UserFrame::Joined { s },
+                r#"{"op":"jn","s":"00000000-0000-0000-0000-000000000001"}"#,
+            ),
+            (
+                super::UserFrame::JoinRequests { s, n: 3 },
+                r#"{"op":"jq","s":"00000000-0000-0000-0000-000000000001","n":3}"#,
+            ),
+        ] {
+            let raw = serde_json::to_string(&frame).unwrap();
+            assert_eq!(raw, wire);
+            assert_eq!(
+                serde_json::from_str::<super::UserFrame>(&raw).unwrap(),
+                frame
+            );
+            assert_eq!(super::ServerFrame::from(frame).to_json().unwrap(), wire);
+        }
     }
 }

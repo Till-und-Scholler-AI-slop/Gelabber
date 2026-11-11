@@ -1,6 +1,7 @@
 import {
   QueryClient,
   InfiniteQueryObserver,
+  QueryObserver,
   type InfiniteData,
 } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,7 +17,15 @@ import {
 import { encodeCursor, flattenPages } from "../messages/pages.ts";
 import type { Message, MessagePage } from "../messages/types.ts";
 import { Gateway, type SocketLike } from "./client.ts";
-import { READY_SPREAD_MS, attachRealtimeRecovery } from "./useRealtime.ts";
+import { getServer } from "../servers/api.ts";
+import { serverKeys } from "../servers/queries.ts";
+import type { ChatEvent } from "./protocol.ts";
+import {
+  READY_SPREAD_MS,
+  applyAccessChange,
+  attachRealtimeRecovery,
+  isAccessChange,
+} from "./useRealtime.ts";
 
 class Socket implements SocketLike {
   sent: string[] = [];
@@ -972,6 +981,52 @@ it("a canonical 404 for an open deleted history does not block recovery of survi
   });
 });
 
+it("a blocked server's cached detail error does not block gap recovery or resync", async () => {
+  const queryClient = client();
+  const { gateway: ws, socket } = gateway();
+  install((url) => {
+    if (url.pathname === "/api/servers/blocked")
+      return json({ error: "server_blocked" }, 403);
+    if (url.pathname === "/api/dms" || url.pathname === "/api/servers")
+      return json([]);
+    return json({ messages: rows(1), has_more: false });
+  });
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  const detail = {
+    queryKey: serverKeys.detail(stamp.userId, stamp.generation, "blocked"),
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      getServer("blocked", signal),
+    retry: false as const,
+  };
+  // Kept on screen, as the blocked notice keeps it.
+  const observer = new QueryObserver(queryClient, detail);
+  const off = observer.subscribe(() => undefined);
+  cleanups.push(() => {
+    off();
+    observer.destroy();
+  });
+  await vi.waitFor(() =>
+    expect(queryClient.getQueryState(detail.queryKey)?.error).toMatchObject({
+      code: "server_blocked",
+    }),
+  );
+  await observe(queryClient);
+  const resynced = vi.spyOn(ws, "completeResync");
+  cleanups.push(
+    attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+  );
+  socket.frame({ op: "gap", s: "server", c: "channel", ep: "epoch" });
+  socket.frame({ op: "ok", s: "server", c: "channel", ep: "epoch", n: 2 });
+  await vi.waitFor(() => expect(ws.cursorsSnapshot.get("c:channel")).toBe(2));
+  expect(ws.gapRecoveries()).toEqual([]);
+  socket.frame({ op: "resync" });
+  await vi.waitFor(() => expect(resynced).toHaveBeenCalled());
+  expect(queryClient.getQueryState(detail.queryKey)?.error).toMatchObject({
+    code: "server_blocked",
+  });
+});
+
 it("an off-screen history is only invalidated and reads its canonical snapshot when opened", async () => {
   const queryClient = client();
   const { gateway: ws, socket } = gateway();
@@ -1183,5 +1238,44 @@ it("navigation replacing a bridge while discovery is held retains its pending DM
     op: "s",
     s: "first-dm",
     c: "first-dm",
+  });
+});
+
+describe("server access changes", () => {
+  const event = (overrides: Partial<ChatEvent>): ChatEvent => ({
+    op: "e",
+    t: "e",
+    s: "s1",
+    n: 4,
+    d: { k: "a" },
+    ...overrides,
+  });
+
+  it('recognises {"k":"a"} on the server topic only', () => {
+    expect(isAccessChange(event({}))).toBe(true);
+    expect(isAccessChange(event({ c: "channel" }))).toBe(false);
+    expect(isAccessChange(event({ t: "d", i: "user-a" }))).toBe(false);
+    expect(isAccessChange(event({ d: { k: "b" } }))).toBe(false);
+    expect(isAccessChange(event({ d: null }))).toBe(false);
+    expect(isAccessChange(event({ d: undefined }))).toBe(false);
+  });
+
+  it("invalidates the server's detail and the server list, nothing else", () => {
+    const queryClient = client();
+    const detail = serverKeys.detail("user-a", 1, "s1");
+    const other = serverKeys.detail("user-a", 1, "s2");
+    const list = serverKeys.list("user-a", 1);
+    const history = messageKeys.channel("user-a", 1, "channel");
+    for (const key of [detail, other, list, history])
+      queryClient.setQueryData(key, {});
+
+    applyAccessChange(queryClient, "user-a", 1, "s1");
+
+    const stale = (key: readonly unknown[]) =>
+      queryClient.getQueryState(key)?.isInvalidated;
+    expect(stale(detail)).toBe(true);
+    expect(stale(list)).toBe(true);
+    expect(stale(other)).toBe(false);
+    expect(stale(history)).toBe(false);
   });
 });

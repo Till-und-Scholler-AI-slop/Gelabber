@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "landing": false,
+  "legal": {
+    "imprint": { "de": "/de/impressum", "en": "/en/imprint" },
+    "privacy": { "de": "/de/datenschutz", "en": "/en/privacy" },
+    "terms": { "de": "/de/nutzungsbedingungen", "en": "/en/terms" }
+  }
+}

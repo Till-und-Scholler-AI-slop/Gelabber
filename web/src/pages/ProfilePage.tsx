@@ -21,10 +21,8 @@ import {
   removesAvatarAtOnce,
   validateAvatarUrl,
   validateName,
-  validatePassword,
 } from "../auth/rules.ts";
 import {
-  changePassword,
   claimProfileWrite,
   logoutEverywhere,
   updateProfile,
@@ -41,13 +39,13 @@ import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
-import { PasswordField } from "../components/ui/PasswordField.tsx";
 import { useDebouncedValue } from "../components/useDebouncedValue.ts";
 import { T, translate, useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
 import { leaveVoice } from "../voice/session.ts";
 import { ProfileCardForm } from "./ProfileCardForm.tsx";
+import { SignInSection } from "./SignInSection.tsx";
 import "./settings.css";
 
 /** Settings area "Profil": name and picture. */
@@ -69,7 +67,7 @@ export function ProfileCardArea() {
 export function SecurityArea() {
   const user = useSession((state) => state.user);
   if (!user) return null;
-  return <AccountSecurity key={user.id} email={user.email} />;
+  return <AccountSecurity key={user.id} userId={user.id} email={user.email} />;
 }
 
 type Upload = { file: File; release: () => void };
@@ -298,39 +296,12 @@ function ProfileForm({ user }: { user: User }) {
   );
 }
 
-/** Password change and signing out every device (issue #188). */
-function AccountSecurity({ email }: { email: string }) {
+/**
+ * The sign-in methods (#518) and signing out every device (issue #188).
+ */
+function AccountSecurity({ userId, email }: { userId: string; email: string }) {
   const t = useT(settings);
   const navigate = useNavigate();
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [password, setPassword] = useState("");
-  const [changed, setChanged] = useState(false);
-  const { errors, clearField, setFields, fromError } = useFormErrors();
-
-  const mutation = useMutation({
-    mutationFn: () => changePassword(currentPassword, password),
-    onSuccess: () => {
-      setCurrentPassword("");
-      setPassword("");
-      setChanged(true);
-    },
-    onError: fromError,
-  });
-
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setChanged(false);
-    const fields: Record<string, string> = {};
-    if (currentPassword.length === 0)
-      fields.current_password = fieldMessage("current_password", "required");
-    const passwordCode = validatePassword(password);
-    if (passwordCode) fields.password = fieldMessage("password", passwordCode);
-    if (Object.keys(fields).length > 0) {
-      setFields(fields);
-      return;
-    }
-    mutation.mutate();
-  };
 
   const onLogoutEverywhere = async () => {
     if (
@@ -348,62 +319,17 @@ function AccountSecurity({ email }: { email: string }) {
 
   return (
     <>
-      <form onSubmit={onSubmit} noValidate className="settings-form">
-        <p className="settings-hint">
-          <T
-            catalog={settings}
-            k="security.signedInAs"
-            params={{ email }}
-            tags={{
-              b: (text) => <strong className="settings-strong">{text}</strong>,
-            }}
-          />
-        </p>
-        <PasswordField
-          id="current_password"
-          label={t("security.currentPassword")}
-          autoComplete="current-password"
-          value={currentPassword}
-          onChange={(event) => {
-            setCurrentPassword(event.target.value);
-            setChanged(false);
-            clearField("current_password");
+      <p className="settings-hint">
+        <T
+          catalog={settings}
+          k="security.signedInAs"
+          params={{ email }}
+          tags={{
+            b: (text) => <strong className="settings-strong">{text}</strong>,
           }}
-          error={errors.fields.current_password}
         />
-        <PasswordField
-          id="new_password"
-          label={t("security.newPassword")}
-          autoComplete="new-password"
-          value={password}
-          onChange={(event) => {
-            setPassword(event.target.value);
-            setChanged(false);
-            clearField("password");
-          }}
-          error={errors.fields.password}
-          hint={t("security.newPasswordHint")}
-        />
-        <FormError message={errors.form} />
-        <div className="settings-actions">
-          <SubmitButton
-            pending={mutation.isPending}
-            pendingLabel={t("security.changing")}
-          >
-            {t("security.change")}
-          </SubmitButton>
-          <InlineStatus
-            status={
-              changed
-                ? {
-                    tone: "success",
-                    message: t("security.changed"),
-                  }
-                : null
-            }
-          />
-        </div>
-      </form>
+      </p>
+      <SignInSection userId={userId} />
 
       <section
         className="settings-group settings-danger"

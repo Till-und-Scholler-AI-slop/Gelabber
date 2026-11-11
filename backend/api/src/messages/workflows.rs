@@ -70,7 +70,9 @@ pub(crate) struct ReadState {
 pub(crate) const UNREAD: &str = "WITH visible AS (
     SELECT c.id AS channel_id, c.server_id, sm.joined_at
     FROM channels c JOIN server_members sm ON sm.server_id=c.server_id AND sm.user_id=$1
-    WHERE c.kind='text'
+    -- A blocked server's channels count as gone.
+    JOIN servers sb ON sb.id=c.server_id AND sb.blocked_at IS NULL
+    WHERE c.kind='text' AND channel_visible_to(c.id, $1)
     UNION ALL
     SELECT c.id, c.server_id, cm.joined_at
     FROM channels c JOIN channel_members cm ON cm.channel_id=c.id AND cm.user_id=$1
@@ -163,7 +165,7 @@ async fn mark_read(
 ) -> Result<Json<ReadState>, ApiError> {
     let access = messaging_channel(&state.db, channel_id, user.id).await?;
     let mut tx = state.db.begin().await?;
-    if let super::MessagingChannel::Server { member } = &access {
+    if let super::MessagingChannel::Server { member, .. } = &access {
         membership::lock_server_conn(&mut tx, member.server.id, false).await?;
     }
     delivery::lock_channel(&mut tx, channel_id).await?;
@@ -304,7 +306,9 @@ async fn read_up_to_latest(
         "WITH visible AS (
             SELECT c.id AS channel_id, sm.joined_at
             FROM channels c JOIN server_members sm ON sm.server_id=c.server_id AND sm.user_id=$1
+            JOIN servers sb ON sb.id=c.server_id AND sb.blocked_at IS NULL
             WHERE c.kind='text' AND $4 AND ($2::uuid IS NULL OR c.server_id=$2)
+              AND channel_visible_to(c.id, $1)
             UNION ALL
             SELECT c.id, cm.joined_at
             FROM channels c JOIN channel_members cm ON cm.channel_id=c.id AND cm.user_id=$1

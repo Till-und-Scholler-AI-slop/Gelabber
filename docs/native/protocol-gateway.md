@@ -141,7 +141,8 @@ everything needed is re-sent on open.
 
 ### 1.5 Server-side close reasons (no close frame payload, no error frame unless noted)
 
-`backend/api/src/gateway/conn.rs:87-222`: session revoked/expired; session lock or
+`backend/api/src/gateway/conn.rs:87-222`: session revoked/expired (v0.10: also when
+an operator disables the account, after which the reconnect gets 401); session lock or
 ACL recheck failed; 30 s silence; outbound queue overflow; client Close; send
 timeout (1 s per write). The server sends `Message::Close(None)`. The client
 treats every close identically → reconnect (§1.4). A 401 on reconnect (logged
@@ -160,7 +161,7 @@ Web mirror: `web/src/ws/protocol.ts:25-44`. Unknown `op` or bad JSON →
 | `h` | `{"op":"h"}` | — | Liveness | `protocol.rs:374-375` |
 | `s` | `{"op":"s","s":"<uuid>"}`<br>`{"op":"s","s":"<uuid>","c":"<uuid>"}`<br>`{"op":"s","s":"<uuid>","c":"<uuid>","n":12,"ep":"<uuid>"}` | `s` server id (for a DM: the DM channel id); `c` channel id (optional, absent = server topic); `n` last applied seq (optional, u64); `ep` epoch of that seq (optional) | Activity | `protocol.rs:376-385`, `conn.rs:345-352,373-466` |
 | `u` | `{"op":"u","s":"<uuid>"}` / `{"op":"u","s":"<uuid>","c":"<uuid>"}` | same topic addressing; no reply | Activity | `protocol.rs:386-391` |
-| `sig` | `{"op":"sig","t":"j","s":"<srv>","c":"<voiceChan>"}`<br>`{"op":"sig","t":"l","s":…,"c":…}`<br>`{"op":"sig","t":"p","s":…,"c":…,"k":"a"}`<br>`{"op":"sig","t":"u","s":…,"c":…,"k":"s"}`<br>`{"op":"sig","t":"m","s":…,"c":…,"on":true}`<br>`{"op":"sig","t":"d","s":…,"c":…,"on":false}` | `t` ∈ `j l p u m d` (`r` is server-only → `bad_request`); `k` ∈ `a v s sa` required for `p`/`u`; `on` required for `m`/`d`. `s`,`c`,`t` missing → `bad_request` | Activity | `protocol.rs:392-406`, `signal.rs:34-71` |
+| `sig` | `{"op":"sig","t":"j","s":"<srv>","c":"<voiceChan>"}`<br>`{"op":"sig","t":"l","s":…,"c":…}`<br>`{"op":"sig","t":"p","s":…,"c":…,"k":"a"}`<br>`{"op":"sig","t":"u","s":…,"c":…,"k":"s"}`<br>`{"op":"sig","t":"m","s":…,"c":…,"on":true}`<br>`{"op":"sig","t":"d","s":…,"c":…,"on":false}`<br>`{"op":"sig","t":"w","s":…,"c":…,"o":"<owner>","k":"s","on":true}` | `t` ∈ `j l p u m d w` (`r` is server-only → `bad_request`); `k` ∈ `a v s sa` required for `p`/`u`; `on` required for `m`/`d`/`w`; `o` (owner of the watched Live) required for `w`, where `k` is `s` or absent. `s`,`c`,`t` missing → `bad_request` | Activity | `protocol.rs:392-406`, `signal.rs:34-71` |
 | `f` | `{"op":"f","on":true}` | page/app in front (focused+visible+not idle) → Web Push held back for the account. `on:true` **also counts as activity** (resets the idle timer, slides the session); `on:false` does not, and does not flip the socket to `i` | Focus | `protocol.rs:407-410`, `conn.rs:134-143` |
 | `p` | `{"op":"p"}` / `{"op":"p","st":"o"}` / `{"op":"p","st":"i"}` | absent `st` or `"o"` = active; `"i"` = this socket goes idle | Activity / Idle | `protocol.rs:411-416`, `conn.rs:362-365` |
 | `y` | `{"op":"y","s":"<srv-or-dm>","c":"<chan>","on":true}` | typing start/stop; for DMs `s == c == dmId` | Activity | `protocol.rs:417-418`, `conn.rs:366-369,468-510` |
@@ -190,13 +191,14 @@ the same way (so a presence snapshot keyed by the DM id arrives; ignore or store
 
 | # | Frame | Condition |
 |---|---|---|
-| 0 | `{"op":"err","e":"not_found","s":S,"c":C}` and **stop** | server gone / not a member / channel not in server / not a DM participant (unknown and foreign are indistinguishable) |
+| 0 | `{"op":"err","e":"not_found","s":S,"c":C}` and **stop** | server gone / not a member / channel not in server / channel limited to roles the user does not hold / not a DM participant (unknown, foreign and hidden are indistinguishable) |
+| 0' | `{"op":"err","e":"server_blocked","s":S,"c":C}` and **stop** | v0.10: the caller is a member, but an operator blocked S (REST answers `403 server_blocked`) |
 | 1 | zero or more `{"op":"e",…}` | resume replay: contiguous events `n+1 ..= head` |
 | 1' | `{"op":"gap","s":S,"c":C,"ep":E}` | resume impossible (see §2.3) — instead of 1 |
 | 2 | `{"op":"ok","s":S,"c":C,"n":HEAD,"ep":E}` | always (`c` omitted for server topic) |
 | 3 | buffered live `e` frames that arrived during catch-up with `n > HEAD` (dups dropped); or `{"op":"resync"}` if any of them carries another epoch | |
 | 4 | `{"op":"p","s":S,"snap":[{"u":U,"st":"o"},…]}` | always — presence snapshot of S |
-| 5 | `{"op":"sig","t":"r","s":S,"snap":[{"u":U,"c":C,"m":true,"s":true},…]}` | always — voice occupancy snapshot of S |
+| 5 | `{"op":"sig","t":"r","s":S,"snap":[{"u":U,"c":C,"m":true,"s":true},…]}` | always — voice occupancy snapshot of S, without seats in channels limited to roles the user does not hold |
 
 Note: subscribing both `{s}` and `{s,c}` of the same server yields steps 4–5 twice; that is expected.
 
@@ -265,15 +267,17 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `gap` | `{"op":"gap","s":"<uuid>",["ep":"<uuid>",]["c":"<uuid>"]}` | resume impossible / epoch changed → refetch via REST | `protocol.rs:461-468` |
 | `resync` | `{"op":"resync"}` | resubscribe everything, rediscover lists | `protocol.rs:430-431` |
 | `dm` | `{"op":"dm","c":"<dmChannelId>"}` | a DM involving this account appeared (new DM / first message); verify via REST then subscribe | `protocol.rs:432-433`, `delivery.rs:193-204` |
-| `sig` | `{"op":"sig","t":"j","s":"<srv>",["c":"<chan>",]["u":"<user>",]["k":"a",]["on":true,]["m":false,]["d":false,]["snap":[…]]}` | voice presence, see §5 | `protocol.rs:469-489` |
+| `sig` | `{"op":"sig","t":"j","s":"<srv>",["c":"<chan>",]["u":"<user>",]["k":"a",]["on":true,]["m":false,]["d":false,]["snap":[…],]["replay":true,]["w":["<owner>",…]]}` | voice presence, see §5 | `protocol.rs:469-489` |
 | `err` | `{"op":"err","e":"not_found",["s":"<uuid>",]["c":"<uuid>"]}` | see §3.1 | `protocol.rs:490-497` |
 | `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `x` offline | `protocol.rs:96-129,498-508,829-844` |
 | `y` | `{"op":"y","s":"<srv>","c":"<chan>","u":"<user>","on":true}` | typing; delivered only to sockets subscribed to channel topic `c` | `protocol.rs:509-511`, `hub/fanout.rs:206-221` |
 | `ns` | `{"op":"ns"}` | notification settings changed on some device → refetch them | `protocol.rs:512-515` |
 | `rd` | `{"op":"rd","d":[ReadSync,…]}` | read positions moved on another device | `protocol.rs:516-534` |
 | `lc` | `{"op":"lc","l":"en"}` | the account's language changed (`PUT /api/me/locale`) → switch to `l` (`de` \| `en`) and keep it as the device's cached language. Servers older than v0.10 never send it; older clients ignore it | `protocol.rs` (`ServerFrame::Locale`, `UserFrame::Locale`), `profile.rs` (`put_locale`) |
+| `jn` | `{"op":"jn","s":"<srv>"}` | v0.10: this account is now a member of server `s`, because its request to join was accepted (protocol-rest-auth §4.7) → refetch the server list and show "Du bist jetzt Mitglied von {name}." | `protocol.rs` (`ServerFrame::Joined`, `UserFrame::Joined`), `directory/requests.rs` (`accept`) |
+| `jq` | `{"op":"jq","s":"<srv>","n":3}` | v0.10: server `s` now has `n` pending requests to join. Only to the owner and the members holding `moderate_members`, after a new request, a withdrawal, an accept or a decline → set the queue's count badge and refetch the queue if it is open | `protocol.rs` (`ServerFrame::JoinRequests`, `UserFrame::JoinRequests`), `directory/requests.rs` (`publish_queue`) |
 
-`ns`, `rd`, `lc`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`).
+`ns`, `rd`, `lc`, `jn`, `jq`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`). `jn` and `jq` are best effort: they are not replayed, `n` is read after the change commits (two quick changes can both carry the final count), and a client that missed one catches up on its next REST read. Servers older than v0.10 never send them.
 
 ### 3.1 Error codes on `/ws`
 
@@ -285,6 +289,9 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `forbidden` | s, c | sig join without `join_voice` permission; sig `p` with `k:"s"`/`"sa"` without `go_live` | join abort, or Live refused (§7.3) | `signal.rs:198-232` |
 | `kicked` | s | this account was kicked from server `s` | leave server (§6.3) | `hub.rs:475-515`, `moderation.rs:83` |
 | `banned` | s | banned from server `s` | leave server (§6.3) | `moderation.rs:120` |
+| `server_blocked` | s, c? | v0.10: an operator blocked server `s`. Sent to every member's sockets when the block happens (with `s` only; voice seats in `s` are ended), and in reply to a subscribe, typing or sig on `s` while it stays blocked (with `c` when the frame named one) | leave voice on `s`, toast, leave the view like `kicked`, but keep the server in the list as blocked (§6.3) | `operator/servers.rs` (`block`), `conn.rs` (`subscribe`, typing), `signal.rs` (`reject`), `hub.rs` (`reconcile_access`) |
+
+A block that another API process made reaches this one's sockets through the access recheck, which then sends `server_blocked` instead of `not_found`. Unblocking sends nothing; the server's `blocked` flag is `false` again on the next `GET /api/servers`, and subscribing works again.
 
 Leaving a server voluntarily also sends `err` `not_found` with `s` (`servers/mod.rs:407`); deleting a server sends `err` `not_found` with `s` to every member's sockets (`servers/mod.rs:368`). The reason reaches the socket via `revoke_server` → `hub.rs:515` (`{"op":"err","e":<reason>,"s":S}`, never with `c`).
 
@@ -337,10 +344,11 @@ without orders compare `read_at`. Never move a cached read position backwards.
 | message deleted | channel | `d` | message id | omitted | yes | `messages/mod.rs:542-556` |
 | member kicked | server | `d` | kicked user id | `{"k":"k"}` | omitted | `servers/moderation.rs:256-276` |
 | member banned | server | `d` | banned user id | `{"k":"b"}` | omitted | same |
+| access changed: roles, role assignments, `member_permissions`, a channel's `role_ids` | server | `e` | omitted | `{"k":"a"}` | omitted | `servers/access.rs` |
 
 There are **no** gateway events for channel create/rename/delete, server
-rename, role/member changes other than kick/ban, profile changes, or member
-join. Those surfaces refresh via REST refetch on reconnect/gap (§6.4) or the
+rename, member changes other than kick, ban and access (`{"k":"a"}`: refetch
+the server detail and the server list), profile changes, or member join. Those surfaces refresh via REST refetch on reconnect/gap (§6.4) or the
 user's own mutations. (Gap: a native client cannot see another user's
 channel/server edits live; the web client cannot either.)
 
@@ -407,7 +415,8 @@ Client hardening (keep it): the web normalises lists defensively —
 | `u` | unpublish track | `s, c, k` | `s, c, u, k` |
 | `m` | mute flag | `s, c, on` | `s, c, u, on` |
 | `d` | deafen flag | `s, c, on` | `s, c, u, on` |
-| `r` | occupancy snapshot (server only) | — (→ `bad_request`) | `s, snap` |
+| `r` | occupancy snapshot (server only; seats in channels hidden from the user are left out) | — (→ `bad_request`) | `s, snap` |
+| `w` | watch someone's Live (#521) | `s, c, o, on, k?` | `s, c, u, w` |
 
 Track kinds `k` (`protocol.rs:187-222`): `a` microphone, `v` camera, `s` screen
 (= "Live"; several per channel), `sa` screen audio (requires `s` published by
@@ -419,24 +428,32 @@ the same seat; unpublishing `s` also removes `sa`).
 
 | Client sends | Checks | Server emits | Ref |
 |---|---|---|---|
-| `j` | member of `s` with `JoinVoice`; `c` is a voice channel of `s` | (a) to **this socket only**, before anything else: for each other occupant `{"op":"sig","t":"j","s","c","u":<other>[,"m":true][,"d":true]}` followed by one `{"op":"sig","t":"p",…,"k":<kind>}` per published kind; (b) to everyone in the server audience **and** this socket: `{"op":"sig","t":"j","s","c","u":<me>,"m":<bool>,"d":<bool>}` (explicit booleans; aggregated over all of the user's seats in that channel) | `signal.rs:73-92`, `leases.rs:216-294`, `leases.rs:64-98` |
+| `j` | member of `s` with `JoinVoice`; `c` is a voice channel of `s` | (a) to **this socket only**, before anything else: for each other occupant `{"op":"sig","t":"j","s","c","u":<other>[,"m":true][,"d":true]}` followed by one `{"op":"sig","t":"p",…,"k":<kind>}` per published kind and one `{"op":"sig","t":"w",…,"w":[…]}` with the owners they watch (also `[]`), all with `"replay":true`; (b) to everyone in the server audience **and** this socket: `{"op":"sig","t":"j","s","c","u":<me>,"m":<bool>,"d":<bool>}` (explicit booleans; aggregated over all of the user's seats in that channel) | `signal.rs:73-92`, `leases.rs:216-294`, `leases.rs:64-98` |
 | `j` while seated elsewhere on the same socket | — | old seat is dropped first (other channel gets `l` or flag/pub deltas) | `leases.rs:224-240` |
-| `l` | still `JoinVoice` member and `c` still a voice channel of `s` (else `forbidden`/`not_found`/`bad_request` with `s`,`c`); seat exists in that room on this socket, else `bad_request` | `l` if the user has no seat left in `c`; otherwise `m`, `d` and `u` deltas for kinds no other seat still publishes | `signal.rs:94-104`, `leases.rs:83-86` |
+| `l` | still `JoinVoice` member and `c` still a voice channel of `s` (else `forbidden`/`not_found`/`bad_request` with `s`,`c`); seat exists in that room on this socket, else `bad_request` | `l` if the user has no seat left in `c`; otherwise `m`, `d` and `u` deltas for kinds no other seat still publishes, then the recomputed `w` set | `signal.rs:94-104`, `leases.rs:83-86` |
 | `p` | seat in room; `s`/`sa` need `go_live` (`forbidden`); `sa` needs `s` (`bad_request`) | `p` (only if now published) | `signal.rs:131-162`, `leases.rs:403-464` |
 | `u` | seat in room | `u` for each kind no longer published by any of the user's seats (`s` also removes `sa`) | same |
 | `m on` | seat in room | `m` with aggregated `on` (AND over the user's seats) | `leases.rs:338-401` |
 | `d on=true` | seat in room | `d` then `m` (deafen implies mute) | same, `leases.rs:87-88` |
 | `d on=false` | seat in room | `d` only (mute unchanged) | same |
+| `w` | seat in room (same checks as `l`, so a room hidden by roles is `not_found`); `o` and `on` present, `k` is `s` or absent, `o` is not the sender, else `bad_request`; at most 64 owners per seat (the media `WATCH_LIMIT`), the 65th → `bad_request`. No `go_live` check, and the owner need not be live or in the room: the watch is an intent that outlives a restarted Live | `{"op":"sig","t":"w","s","c","u":<me>,"w":[…]}`: the complete, sorted union of owners over all of the user's seats in `c`; `[]` means none. Idempotent; a frame that changes nothing publishes nothing | `signal.rs` `watch`, `leases.rs` `set_voice_watch` |
 
 Audience for broadcast `sig`: sockets that subscribed any topic of server `s`, plus sockets holding a seat in `c` (`hub/fanout.rs:190-203`, `hub.rs:668-677`).
 
-**Wire quirk (verified):** the per-occupant replay frames sent to a joiner are
-built with `replay = true` in `SigEvent`, but `ServerFrame::sig` drops that
-field (`protocol.rs:583-595` has no `replay`), so **`replay` never appears on the
-wire**. The web type has `replay?` (`web/src/ws/protocol.ts:69-70`) and checks it
-(`web/src/voice/session.ts:404-405`) but it is always `undefined`. A native client
-must not depend on it; treat sig `j` frames that arrive between sending `j` and
-receiving your own `j` as existing occupants.
+The per-occupant replay frames sent to a joiner carry `"replay":true`
+(`ServerFrame::sig` copies it); live frames omit it. A client older than that
+field saw none, so it treated sig `j` frames that arrive between sending `j`
+and receiving its own `j` as existing occupants.
+
+Watch state (`t:"w"`) lives on the gateway seat (`SeatRecord.w`), next to the
+publications. The media service keeps its own grants and still enforces them;
+the gateway only announces the intent. A client drops a leaving user's watches
+on `l`. The snapshot `t:"r"` carries no watches. Clients that do not send `w`
+do not count as watchers; old clients ignore the frame (web: the
+`applyVoiceSig` default; native: `SigKind::Unknown`). A seat whose lease
+expires without a leave (its API process died) publishes nothing; while the
+same user keeps another seat in that channel, clients keep the expired seat's
+owners in that user's set until their next `w` or leave.
 
 Seats are 5 s leases renewed by the socket's 1 s security tick (`conn.rs:275-320`).
 If the gateway socket dies the seat expires ≤ 5 s later and others see `l`
@@ -455,6 +472,7 @@ If the gateway socket dies the seat expires ≤ 5 s later and others see `l`
 | `t:"d"` | patch `deafened = on===true`; if `on` also `muted = true` |
 | `t:"p"`, `k:"s"` | `live[s][c][u].s = true` (insertion order = "went live" order) |
 | `t:"u"`, `k:"s"` | remove `live[s][c][u]` |
+| `t:"w"` | replace `watches[s][u]` with `w ?? []`; `l` deletes it, `r` drops watchers no longer listed |
 | other `k` on `p/u` | ignored by the roster (call participants handle them, §7) |
 
 ---
@@ -527,6 +545,10 @@ Typing bar visual (`web/src/components/TypingBar.tsx:31-46`, `web/src/components
 1. If in voice on that server: `leaveVoice()` (sends sig `l`).
 2. Toast: banned → `"Du wurdest vom Server gesperrt."`; kicked → `"Du wurdest vom Server entfernt."`
 3. If currently viewing that server: navigate to `/` (home) and forget the server's cached data; otherwise just forget it.
+
+`err` `server_blocked` with `s` (v0.10) takes the same steps, except that the
+server stays in the server list, marked `blocked: true` (REST `ServerView`),
+and opens to the blocked notice instead of its channels.
 
 ### 6.4 Recovery after ready / gap / resync / dm
 

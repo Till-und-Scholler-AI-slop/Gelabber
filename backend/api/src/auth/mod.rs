@@ -19,6 +19,7 @@
 //! registration signs in at once and `409 email_taken` names a known
 //! address, as before.
 
+pub mod oidc;
 pub mod session;
 pub mod tokens;
 pub mod user;
@@ -33,12 +34,14 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::config::RegistrationMode;
 use crate::cookies::{self, CSRF_COOKIE, SESSION_COOKIE, SetCookie};
 use crate::error::{ApiError, FieldErrors};
 use crate::i18n::{self, Locale};
 use crate::json::Body;
 use crate::limits::{self, MailBudget};
 use crate::mail::{Mail, Mailer};
+use crate::operator;
 use crate::password;
 use crate::state::AppState;
 use crate::token;
@@ -50,6 +53,21 @@ use self::user::User;
 /// CSRF cookies outlive sessions on purpose: an anonymous visitor needs one
 /// to be allowed to log in at all.
 const CSRF_COOKIE_MAX_AGE_SECS: u64 = 365 * 24 * 3600;
+
+/// How recent a sign-in must be for a step that cannot ask for a password
+/// because the account has none, such as setting the first one
+/// (`403 reauth_required` otherwise).
+pub const REAUTH_WINDOW: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Refuses with `403 reauth_required` unless `current` was signed in less
+/// than [`REAUTH_WINDOW`] ago.
+pub fn recently_signed_in(current: &CurrentSession) -> Result<(), ApiError> {
+    let age = chrono::Utc::now() - current.created_at;
+    match chrono::Duration::from_std(REAUTH_WINDOW) {
+        Ok(window) if age < window => Ok(()),
+        _ => Err(ApiError::ReauthRequired),
+    }
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -66,10 +84,12 @@ pub fn router() -> Router<AppState> {
             "/api/auth/password-reset/confirm",
             post(confirm_password_reset),
         )
+        .route("/api/auth/registration", get(registration_status))
+        .merge(oidc::routes::router())
 }
 
 /// Request bodies with a password print it as `<redacted>`.
-struct Redacted;
+pub(crate) struct Redacted;
 
 impl std::fmt::Debug for Redacted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -89,6 +109,14 @@ pub struct RegisterBody {
     /// without that German (clients older than v0.10).
     #[serde(default)]
     pub locale: Option<String>,
+    /// A beta invitation's code (`operator::admission`); only an
+    /// invitation-only instance needs one.
+    #[serde(default)]
+    pub invitation: Option<String>,
+    /// The code of the server invite that led here, which admits a new
+    /// account on an invitation-only instance as well.
+    #[serde(default)]
+    pub server_invite: Option<String>,
 }
 
 impl std::fmt::Debug for RegisterBody {
@@ -98,6 +126,8 @@ impl std::fmt::Debug for RegisterBody {
             .field("password", &Redacted)
             .field("name", &self.name)
             .field("locale", &self.locale)
+            .field("invitation", &Redacted)
+            .field("server_invite", &Redacted)
             .finish()
     }
 }
@@ -185,6 +215,9 @@ impl std::fmt::Debug for ResetConfirmBody {
 pub struct SessionResponse {
     pub user: Option<User>,
     pub csrf_token: String,
+    /// Whether `user` is an instance operator (`operator::access`); the
+    /// clients offer the area "Betrieb" only then.
+    pub operator: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,6 +237,12 @@ pub struct VerificationSentResponse {
 #[derive(Debug, Serialize)]
 pub struct MailStatus {
     pub enabled: bool,
+}
+
+/// `GET /api/auth/registration`: whether registering needs an invitation.
+#[derive(Debug, Serialize)]
+pub struct RegistrationStatus {
+    pub mode: RegistrationMode,
 }
 
 async fn register(
@@ -235,10 +274,25 @@ async fn register(
         pw.expect("validated"),
         locale.expect("validated"),
     );
+    // Before any account lookup, so a refusal tells nothing about one.
+    let admitted = {
+        let mut conn = state.db.acquire().await?;
+        operator::admission::admit(
+            &state,
+            &mut conn,
+            &email,
+            body.invitation.as_deref(),
+            body.server_invite.as_deref(),
+        )
+        .await?
+    };
 
     let hash = password::hash(pw).await?;
     let Some(mailer) = state.mail.as_ref() else {
-        let user = user::insert(&state.db, &email, &name, &hash, locale).await?;
+        let mut tx = state.db.begin().await?;
+        let user = user::insert_in(&mut tx, &email, &name, &hash, locale).await?;
+        operator::admission::redeem(&mut tx, &admitted, user.id).await?;
+        tx.commit().await?;
         info!(user_id = %user.id, "user registered");
         return signed_in(&state, &headers, user, StatusCode::CREATED).await;
     };
@@ -247,9 +301,11 @@ async fn register(
     // address keeps its account untouched, whoever typed it; a pending one
     // now carries this registrant's credentials. Once the address had its
     // hourly mails nothing is written either: a takeover without a new
-    // link would leave the owner without a working one.
+    // link would leave the owner without a working one. Only a new or
+    // taken-over pending row uses up an invitation.
     if limits::mail_allowed(&state, MailBudget::Registration, &email) {
-        let outgoing = match user::insert_unverified(&state.db, &email, &name, &hash, locale).await
+        let outgoing = match register_unverified(&state, &email, &name, &hash, locale, &admitted)
+            .await
         {
             Ok(Some(user_id)) => {
                 info!(%user_id, "user registered, awaiting confirmation");
@@ -295,12 +351,33 @@ async fn register(
     Ok((StatusCode::ACCEPTED, cookies, Json(body)).into_response())
 }
 
+/// [`user::insert_unverified_in`] and, for a new or taken-over pending row,
+/// [`operator::admission::redeem`] in one transaction.
+async fn register_unverified(
+    state: &AppState,
+    email: &str,
+    name: &str,
+    hash: &str,
+    locale: Locale,
+    admitted: &operator::admission::Admitted,
+) -> Result<Option<uuid::Uuid>, ApiError> {
+    let mut tx = state.db.begin().await?;
+    let id = user::insert_unverified_in(&mut tx, email, name, hash, locale).await?;
+    if let Some(id) = id {
+        operator::admission::redeem(&mut tx, admitted, id).await?;
+    }
+    tx.commit().await?;
+    Ok(id)
+}
+
 /// An account mail before its link's token exists.
 #[derive(Debug, Clone, Copy)]
 enum Outgoing {
     Confirm,
     Reset,
     AlreadyRegistered,
+    /// A provider (its display name) was connected to the account (#518).
+    ProviderConnected(&'static str),
 }
 
 /// Sends a mail the caller reserved from `budget` ([`limits::mail_allowed`])
@@ -325,6 +402,9 @@ fn send_mail(
                 .await
                 .map(|token| Mail::ResetPassword { token }),
             Outgoing::AlreadyRegistered => Ok(Mail::AlreadyRegistered),
+            Outgoing::ProviderConnected(name) => Ok(Mail::ProviderConnected {
+                provider_name: name.to_owned(),
+            }),
         }
         .map_err(|err| ("token", format!("{err:?}")));
         // The account's language, read here too so the answer's timing
@@ -349,6 +429,34 @@ fn send_mail(
             Err((kind, err)) => {
                 limits::mail_unsent(&state, budget, &email);
                 warn!(%user_id, kind, error = %err, "account mail failed");
+            }
+        }
+    });
+}
+
+/// Sends `mail` to an address without an account (a beta invitation) in
+/// `locale`, after the response. The caller reserved it from `budget`
+/// ([`limits::mail_allowed`]); a mail that cannot be sent gives the
+/// reservation back. Does nothing without account mail.
+pub fn send_mail_to(
+    state: &AppState,
+    address: &str,
+    locale: Locale,
+    mail: Mail,
+    budget: MailBudget,
+) {
+    let Some(mailer) = state.mail.clone() else {
+        limits::mail_unsent(state, budget, address);
+        return;
+    };
+    let (state, address) = (state.clone(), address.to_owned());
+    tokio::spawn(async move {
+        let kind = mail.kind();
+        match mailer.send(&address, &mail, locale).await {
+            Ok(()) => info!(kind, "mail sent"),
+            Err(err) => {
+                limits::mail_unsent(&state, budget, &address);
+                warn!(kind, error = %err, "mail failed");
             }
         }
     });
@@ -388,7 +496,9 @@ async fn login(
     {
         found = user::credentials_by_email(&state.db, ascii).await?;
     }
-    let stored = found.as_ref().map(|c| c.password_hash.clone());
+    // An account without a password (migration 0033) runs against the
+    // dummy hash too and answers like a wrong password.
+    let stored = found.as_ref().and_then(|c| c.password_hash.clone());
     let ok = password::verify(body.password, stored).await?;
 
     let Some(credentials) = found.filter(|_| ok) else {
@@ -396,7 +506,11 @@ async fn login(
     };
     limits::login_succeeded(&state, &email);
     // Only after the password matched, so the answer tells nothing to
-    // someone who does not know it.
+    // someone who does not know it. A disabled account gets no new
+    // confirmation link either.
+    if credentials.disabled {
+        return Err(ApiError::AccountDisabled);
+    }
     if !credentials.email_verified
         && let Some(mailer) = state.mail.as_ref()
     {
@@ -421,12 +535,42 @@ async fn login(
 /// Issues a session + fresh CSRF token for `user` and builds the response.
 /// A session the browser already carries is revoked first: the cookie is
 /// about to be overwritten, so its row would otherwise linger until TTL.
+/// A disabled account is refused here (`403 account_disabled`), whichever
+/// path signed it in.
 async fn signed_in(
     state: &AppState,
     headers: &HeaderMap,
     user: User,
     status: StatusCode,
 ) -> Result<Response, ApiError> {
+    let (cookies, body) = signed_in_parts(state, headers, user).await?;
+    Ok((status, AppendHeaders(cookies), Json(body)).into_response())
+}
+
+/// The `Set-Cookie` headers (session, CSRF) and body of a sign-in.
+type SessionCookies = [(axum::http::HeaderName, axum::http::HeaderValue); 2];
+
+/// [`signed_in`] for a caller that answers in its own shape: a provider's
+/// callback redirects, and its JSON routes add fields to the body.
+async fn signed_in_parts(
+    state: &AppState,
+    headers: &HeaderMap,
+    user: User,
+) -> Result<(SessionCookies, SessionResponse), ApiError> {
+    // One read for both: a disabled account gets no session (#517), and
+    // the operator flag needs the confirmation while mail is on.
+    let (disabled, verified): (bool, bool) = sqlx::query_as(
+        "SELECT disabled_at IS NOT NULL, email_verified_at IS NOT NULL FROM users WHERE id = $1",
+    )
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::Internal(format!("user {} vanished mid-request", user.id)))?;
+    if disabled {
+        info!(user_id = %user.id, "sign-in refused, account disabled");
+        return Err(ApiError::AccountDisabled);
+    }
+    let operator = operator::access::is_operator(state, &user, verified);
     let previous = cookies::get(headers, SESSION_COOKIE);
     session::revoke_current(state, previous.as_deref()).await?;
     // Expired-row housekeeping is separate from the targeted logout.
@@ -436,17 +580,18 @@ async fn signed_in(
     let session_token = session::create(&state.db, user.id, state.session_idle).await?;
     let csrf_token = token::generate();
 
-    let cookies = AppendHeaders([
+    let cookies = [
         SetCookie::new(SESSION_COOKIE, session_token, state.session_ttl.as_secs())
             .secure(state.cookie_secure)
             .header(),
         csrf_cookie(state, &csrf_token).header(),
-    ]);
+    ];
     let body = SessionResponse {
         user: Some(user),
         csrf_token,
+        operator,
     };
-    Ok((status, cookies, Json(body)).into_response())
+    Ok((cookies, body))
 }
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
@@ -481,6 +626,10 @@ fn signed_out_cookies(
 /// account ends, this one included, and the caller gets a fresh one: a
 /// stolen cookie dies with the old password. Wrong guesses count against the
 /// account like failed logins, so a hijacked session cannot brute-force it.
+///
+/// An account without a password (it signs in through a provider) sets its
+/// first one without `current_password`, but only from a session signed in
+/// less than [`REAUTH_WINDOW`] ago (`403 reauth_required` otherwise).
 async fn change_password(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -488,28 +637,31 @@ async fn change_password(
     Body(body): Body<PasswordBody>,
 ) -> Result<Response, ApiError> {
     transport_allowed(&state, &headers)?;
+    let stored = user::password_hash_by_id(&state.db, current.user.id).await?;
     let mut errors = FieldErrors::new();
-    if body.current_password.is_empty() {
+    if stored.is_some() && body.current_password.is_empty() {
         errors.insert("current_password", "required");
     }
     let new_password = validate::password(&body.password, &mut errors);
     validate::finish(errors)?;
     let new_password = new_password.expect("validated");
 
-    let user = current.user;
-    let key = validate::canonical(&user.email);
-    limits::login_attempt(&state, &key)?;
-    let stored = user::password_hash_by_id(&state.db, user.id).await?;
-    let ok = body.current_password.chars().count() <= validate::PASSWORD_MAX
-        && password::verify(body.current_password, stored).await?;
-    if !ok {
-        return Err(ApiError::Validation(FieldErrors::from([(
-            "current_password",
-            "wrong",
-        )])));
+    if stored.is_some() {
+        let key = validate::canonical(&current.user.email);
+        limits::login_attempt(&state, &key)?;
+        let ok = body.current_password.chars().count() <= validate::PASSWORD_MAX
+            && password::verify(body.current_password, stored).await?;
+        if !ok {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "current_password",
+                "wrong",
+            )])));
+        }
+        limits::login_succeeded(&state, &key);
+    } else {
+        recently_signed_in(&current)?;
     }
-
-    limits::login_succeeded(&state, &key);
+    let user = current.user;
 
     let hash = password::hash(new_password).await?;
     let revoked = user::set_password_hash(&state.db, user.id, &hash).await?;
@@ -529,6 +681,14 @@ async fn logout_all(
     session::revoke_all(&state, current.user.id).await?;
     info!(user_id = %current.user.id, "signed out everywhere");
     Ok(signed_out(&state))
+}
+
+/// Whether registering needs an invitation (`API_REGISTRATION`); the
+/// clients show the invitation field then.
+async fn registration_status(State(state): State<AppState>) -> Json<RegistrationStatus> {
+    Json(RegistrationStatus {
+        mode: state.registration,
+    })
 }
 
 /// Whether this instance sends account mail; the web client offers "forgot
@@ -562,6 +722,8 @@ async fn verify_email(
     let user = session::reload(&state.db, user_id).await?;
     let key = validate::canonical(&user.email);
     limits::login_attempt(&state, &key)?;
+    // An account without a password has no pending registration to confirm
+    // (a provider's takeover clears it); `verify` then answers `wrong`.
     let stored = user::password_hash_by_id(&state.db, user_id).await?;
     let ok = body.password.chars().count() <= validate::PASSWORD_MAX
         && password::verify(body.password, stored).await?;
@@ -571,6 +733,10 @@ async fn verify_email(
         )])));
     }
     limits::login_succeeded(&state, &key);
+    // A disabled account stays unconfirmed and keeps its link (#517).
+    if user::is_disabled(&state.db, user_id).await? {
+        return Err(ApiError::AccountDisabled);
+    }
 
     // Re-registering a pending address in the meantime replaced the token,
     // so this one may be gone already.
@@ -637,11 +803,12 @@ async fn confirm_password_reset(
     let new_password = new_password.expect("validated");
 
     // A dead link costs no Argon2 run.
-    if tokens::peek(&state.db, &body.token, Purpose::ResetPassword)
+    let user_id = tokens::peek(&state.db, &body.token, Purpose::ResetPassword)
         .await?
-        .is_none()
-    {
-        return Err(ApiError::TokenInvalid);
+        .ok_or(ApiError::TokenInvalid)?;
+    // A disabled account keeps its password (#517).
+    if user::is_disabled(&state.db, user_id).await? {
+        return Err(ApiError::AccountDisabled);
     }
     let hash = password::hash(new_password).await?;
     let (user_id, revoked) = tokens::reset_password(&state.db, &body.token, &hash)
@@ -673,7 +840,7 @@ async fn current_session(
     State(state): State<AppState>,
     headers: HeaderMap,
     MaybeUser(user): MaybeUser,
-) -> Response {
+) -> Result<Response, ApiError> {
     let existing = cookies::get(&headers, CSRF_COOKIE).filter(|value| token::is_valid(value));
     let (csrf_token, set_cookie) = match existing {
         Some(value) => (value, None),
@@ -684,11 +851,19 @@ async fn current_session(
         }
     };
 
-    let body = Json(SessionResponse { user, csrf_token });
-    match set_cookie {
+    let operator = match &user {
+        Some(user) => operator::access::is_signed_in_operator(&state, user).await?,
+        None => false,
+    };
+    let body = Json(SessionResponse {
+        user,
+        csrf_token,
+        operator,
+    });
+    Ok(match set_cookie {
         Some(cookie) => (AppendHeaders([cookie.header()]), body).into_response(),
         None => body.into_response(),
-    }
+    })
 }
 
 fn csrf_cookie(state: &AppState, value: &str) -> SetCookie {

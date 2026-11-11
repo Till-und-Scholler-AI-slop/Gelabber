@@ -28,12 +28,19 @@ import {
   validateChannelName,
   validateName,
 } from "../servers/rules.ts";
+import { channelRequest } from "../servers/channelRequest.ts";
+import {
+  accessOf,
+  sameAccess,
+  type AccessSelection,
+} from "../servers/roles.ts";
 import type {
   Category,
   Channel,
   ChannelKind,
   ServerDetail,
 } from "../servers/types.ts";
+import { ChannelAccessField } from "./ChannelAccessField.tsx";
 import { Field } from "./Field.tsx";
 import { FormError } from "./FormError.tsx";
 import { HashIcon, LinkIcon, PlusIcon, SpeakerIcon } from "./Icons.tsx";
@@ -451,7 +458,15 @@ function ChannelForm({
   const editing = state.mode === "edit" ? state.channel : null;
   const [initialName] = useState(editing?.name ?? "");
   const [name, setName] = useState(initialName);
-  useReportDirty(onDirty, name !== initialName);
+  // "Alle Mitglieder" (`null`) unless the channel is limited.
+  const [initialAccess] = useState<AccessSelection>(
+    editing ? accessOf(editing) : null,
+  );
+  const [access, setAccess] = useState(initialAccess);
+  useReportDirty(
+    onDirty,
+    name !== initialName || !sameAccess(access, initialAccess),
+  );
   const [kind, setKind] = useState<ChannelKind>(
     state.mode === "edit" ? state.channel.kind : (state.kind ?? "text"),
   );
@@ -480,13 +495,18 @@ function ChannelForm({
       setFields({ name: fieldMessage("name", code) });
       return;
     }
-    if (editing) {
-      update.mutate({
-        id: editing.id,
-        patch: { name, category_id: parentId || null },
-      });
+    const request = channelRequest(editing, {
+      name,
+      kind,
+      categoryId: parentId,
+      initialAccess,
+      access,
+      roles: server.roles,
+    });
+    if (request.mode === "edit") {
+      update.mutate({ id: request.id, patch: request.patch });
     } else {
-      create.mutate({ name, kind, category_id: parentId || null });
+      create.mutate(request.input);
     }
     onClose();
   };
@@ -557,6 +577,7 @@ function ChannelForm({
           ))}
         </Select>
       </FormField>
+      <ChannelAccessField server={server} value={access} onChange={setAccess} />
       <FormError message={errors.form} />
       <div className="flex justify-end gap-2">
         <GhostButton onClick={onClose}>{tc("cancel")}</GhostButton>

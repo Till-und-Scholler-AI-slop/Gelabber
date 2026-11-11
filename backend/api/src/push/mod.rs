@@ -318,12 +318,15 @@ async fn deliver(
         }
         Some(server) if message.mention_everyone && everyone_may_push(state, server) => {
             let members: Vec<Uuid> = sqlx::query_scalar(
-                "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id<>$2
-                 LIMIT $3",
+                "SELECT m.user_id FROM server_members m
+                 JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
+                 WHERE m.server_id=$1 AND m.user_id<>$2
+                 AND channel_visible_to($4, m.user_id) LIMIT $3",
             )
             .bind(server)
             .bind(author)
             .bind(MAX_RECIPIENTS as i64 + 1)
+            .bind(message.channel_id)
             .fetch_all(&state.db)
             .await?;
             if members.len() > MAX_RECIPIENTS {
@@ -636,20 +639,23 @@ async fn send_recall(
     Ok(())
 }
 
-/// The users the message names who are still in the server: the names
-/// were resolved before the message was stored, and someone removed since
-/// gets no preview.
+/// The users the message names who are still in the server and still see
+/// its channel: the names were resolved before the message was stored, and
+/// someone removed since gets no preview.
 async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<Uuid>, ApiError> {
     if message.mentions.is_empty() {
         return Ok(Vec::new());
     }
     Ok(sqlx::query_scalar(
-        "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id=ANY($2)
-         AND user_id<>$3",
+        "SELECT m.user_id FROM server_members m
+         JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
+         WHERE m.server_id=$1 AND m.user_id=ANY($2)
+         AND m.user_id<>$3 AND channel_visible_to($4, m.user_id)",
     )
     .bind(server)
     .bind(&message.mentions)
     .bind(message.author.id)
+    .bind(message.channel_id)
     .fetch_all(&state.db)
     .await?)
 }

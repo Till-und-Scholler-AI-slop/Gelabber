@@ -2,17 +2,21 @@
 //! links (issue #4). Every route needs a session; every read goes through
 //! the caller's membership, so a foreign server id is a `404`.
 //!
-//! Permission model, on purpose coarse: the owner may do everything, members
-//! share one flag mask per server (`member_permissions`). Kick/ban need
-//! `manage_server`; deleting someone else's message needs `manage_messages`.
-//! No per-channel overwrites, no further roles in v1.
+//! Permission model, on purpose coarse: the owner may do everything; every
+//! other member holds the base role "Alle Mitglieder" (`member_permissions`)
+//! plus their custom roles (`roles`, v0.10), and their flags are the union.
+//! Kick/ban need `moderate_members`; deleting someone else's message needs
+//! `manage_messages`. No per-channel overwrites: a channel is only limited to
+//! roles or not.
 
+pub mod access;
 pub mod channel;
 pub mod icon;
 pub mod invite;
 pub mod membership;
 pub mod moderation;
 pub mod permissions;
+pub mod roles;
 pub mod validate;
 
 use axum::Router;
@@ -50,6 +54,7 @@ pub fn router() -> Router<AppState> {
         .merge(icon::router())
         .merge(invite::router())
         .merge(moderation::router())
+        .merge(roles::router())
 }
 
 /// The `servers` row as stored.
@@ -79,12 +84,17 @@ pub struct ServerView {
     pub permissions: Permissions,
     /// The mask every non-owner member holds (editable by `manage_server`).
     pub member_permissions: Permissions,
+    /// An operator blocked the server: it stays in the list so the client
+    /// can explain, and everything but leaving and deleting answers
+    /// `403 server_blocked`.
+    pub blocked: bool,
 }
 
 impl From<Membership> for ServerView {
     fn from(m: Membership) -> Self {
         let role = m.role();
         let permissions = m.permissions();
+        let blocked = m.blocked;
         Self {
             id: m.server.id,
             name: m.server.name,
@@ -94,6 +104,7 @@ impl From<Membership> for ServerView {
             role,
             permissions,
             member_permissions: m.server.member_permissions,
+            blocked,
         }
     }
 }
@@ -109,6 +120,8 @@ pub struct MemberRow {
     pub status_text: Option<String>,
     pub accent_color: Option<String>,
     pub avatar_decoration: Option<String>,
+    /// The member's custom roles, by position.
+    pub role_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -127,6 +140,8 @@ pub struct ServerDetail {
     pub categories: Vec<Category>,
     pub channels: Vec<Channel>,
     pub members: Vec<Member>,
+    /// The server's custom roles, by position. Every member sees them.
+    pub roles: Vec<roles::Role>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,24 +161,17 @@ async fn list_servers(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<ServerView>>, ApiError> {
-    let rows = sqlx::query_as::<_, ServerRow>(
-        "SELECT s.id, s.name, s.owner_id, s.member_permissions, s.icon_url, s.created_at \
-         FROM server_members m JOIN servers s ON s.id = m.server_id \
+    let rows = sqlx::query_as::<_, Membership>(concat!(
+        "SELECT ",
+        membership::membership_columns!(),
+        " FROM server_members m JOIN servers s ON s.id = m.server_id \
          WHERE m.user_id = $1 \
-         ORDER BY m.joined_at, s.id",
-    )
+         ORDER BY m.joined_at, s.id"
+    ))
     .bind(user.id)
     .fetch_all(&state.db)
     .await?;
-    let views = rows
-        .into_iter()
-        .map(|server| {
-            ServerView::from(Membership {
-                server,
-                user_id: user.id,
-            })
-        })
-        .collect();
+    let views = rows.into_iter().map(ServerView::from).collect();
     Ok(Json(views))
 }
 
@@ -220,14 +228,7 @@ async fn create_server(
     tx.commit().await?;
     info!(server_id = %server.id, owner_id = %user.id, "server created");
 
-    let detail = load_detail(
-        &state.db,
-        Membership {
-            server,
-            user_id: user.id,
-        },
-    )
-    .await?;
+    let detail = load_detail(&state.db, Membership::base(server, user.id)).await?;
     Ok((StatusCode::CREATED, Json(detail)).into_response())
 }
 
@@ -243,11 +244,13 @@ async fn get_server(
 async fn load_detail(db: &PgPool, member: Membership) -> Result<ServerDetail, ApiError> {
     let server_id = member.server.id;
     let owner_id = member.server.owner_id;
-    let (categories, channels, members) = tokio::try_join!(
+    let (categories, channels, members, roles) = tokio::try_join!(
         channel::list_categories(db, server_id),
         channel::list_channels(db, server_id),
         list_members(db, server_id),
+        roles::list(db, server_id),
     )?;
+    let (categories, channels) = visible_to(&member, categories, channels);
     let members = members
         .into_iter()
         .map(|user| Member {
@@ -264,13 +267,42 @@ async fn load_detail(db: &PgPool, member: Membership) -> Result<ServerDetail, Ap
         categories,
         channels,
         members,
+        roles,
     })
+}
+
+/// What of the server's layout the caller sees: the channels [`Membership::sees`]
+/// allows, and the categories minus those that hold channels, all of them
+/// hidden. Empty categories stay, so `manage_channels` holders can fill them.
+fn visible_to(
+    member: &Membership,
+    categories: Vec<Category>,
+    channels: Vec<Channel>,
+) -> (Vec<Category>, Vec<Channel>) {
+    let (channels, hidden): (Vec<Channel>, Vec<Channel>) = channels
+        .into_iter()
+        .partition(|channel| member.sees(channel));
+    let categories = categories
+        .into_iter()
+        .filter(|category| {
+            let holds = |list: &[Channel]| {
+                list.iter()
+                    .any(|channel| channel.category_id == Some(category.id))
+            };
+            holds(&channels) || !holds(&hidden)
+        })
+        .collect();
+    (categories, channels)
 }
 
 async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, ApiError> {
     Ok(sqlx::query_as::<_, MemberRow>(
         "SELECT m.user_id, u.name, u.avatar_url, m.joined_at, u.status_text, u.accent_color, \
-             u.avatar_decoration \
+             u.avatar_decoration, \
+             ARRAY(SELECT mr.role_id FROM server_member_roles mr \
+                     JOIN server_roles r ON r.id = mr.role_id \
+                    WHERE mr.server_id = m.server_id AND mr.user_id = m.user_id \
+                    ORDER BY r.position, r.id) AS role_ids \
          FROM server_members m JOIN users u ON u.id = m.user_id \
          WHERE m.server_id = $1 \
          ORDER BY m.joined_at, m.user_id",
@@ -294,12 +326,17 @@ async fn update_server(
     let name = body.name.and_then(|raw| validate::name(&raw, &mut errors));
     let member_permissions = body
         .member_permissions
-        .and_then(|names| validate::permissions(&names, &mut errors));
+        .and_then(|names| validate::permissions(&names, "member_permissions", &mut errors));
     validate::finish(errors)?;
     if name.is_none() && member_permissions.is_none() {
         return Ok(Json(member.into()));
     }
 
+    // Only the base role's flags change access; a rename alone does not.
+    let before = match member_permissions {
+        Some(_) => Some(access::snapshot(&mut tx, server_id).await?),
+        None => None,
+    };
     let server = sqlx::query_as::<_, ServerRow>(
         "UPDATE servers \
          SET name = COALESCE($2, name), \
@@ -317,49 +354,26 @@ async fn update_server(
     if let Some(flags) = member_permissions {
         info!(server_id = %server_id, member_permissions = %flags, "member permissions changed");
     }
-    let voice_reduced = member_permissions.is_some_and(|flags| {
-        member.server.member_permissions.bits()
-            & !flags.bits()
-            & (Permission::JoinVoice as i32 | Permission::GoLive as i32)
-            != 0
-    });
-    if voice_reduced {
-        let members: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT user_id FROM server_members WHERE server_id = $1 AND user_id <> $2",
-        )
-        .bind(server_id)
-        .bind(server.owner_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        state
-            .gateway
-            .revoke_voice_access(&members, server_id)
-            .await?;
+    if let Some(before) = &before {
+        let after = access::snapshot(&mut tx, server_id).await?;
+        access::after_change(&state, server_id, before, &after).await?;
     }
     tx.commit().await?;
-    if voice_reduced {
-        state
-            .gateway
-            .announce_recheck(Recheck::Server(server_id))
-            .await;
+    if before.is_some() {
+        access::announce(&state, server_id).await;
     }
-    Ok(Json(
-        Membership {
-            server,
-            user_id: user.id,
-        }
-        .into(),
-    ))
+    Ok(Json(Membership { server, ..member }.into()))
 }
 
-/// Owner only. Members, categories, channels and invites go with it.
+/// Owner only. Members, categories, channels and invites go with it. A
+/// blocked server can still be deleted.
 async fn delete_server(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
 ) -> Result<StatusCode, ApiError> {
     let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
-    let member = membership::load(&mut *tx, server_id, user.id).await?;
+    let member = membership::load_even_blocked(&mut *tx, server_id, user.id).await?;
     member.require_owner()?;
 
     let members: Vec<Uuid> =
@@ -388,14 +402,14 @@ async fn delete_server(
 }
 
 /// Members can leave; the owner cannot (there is no ownership transfer in
-/// v1 — delete the server instead).
+/// v1 — delete the server instead). A blocked server can still be left.
 async fn leave_server(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
 ) -> Result<StatusCode, ApiError> {
     let mut tx = membership::lock_server(&state.db, server_id, true).await?;
-    let member = membership::load(&mut *tx, server_id, user.id).await?;
+    let member = membership::load_even_blocked(&mut *tx, server_id, user.id).await?;
     if member.role() == Role::Owner {
         return Err(ApiError::Forbidden(
             "The owner cannot leave; delete the server instead.",
