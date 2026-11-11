@@ -129,6 +129,8 @@ type CookieState = {
   userId: string | null;
   /** A password change: the cookie changes, the signed-in account does not. */
   keepsAccount?: true;
+  /** Signed out because the account was deleted, for the other tabs' notice. */
+  ended?: "deleted";
 };
 let observedCookieState = "";
 let adoptedCookieGeneration = "";
@@ -157,6 +159,21 @@ function readCookieState(): CookieState | null {
     );
   }
   return value as CookieState;
+}
+
+/** Whether the shared cookie state says the browser's account was deleted
+ * (#519) and nobody has signed in since. */
+export function sharedAccountDeleted(): boolean {
+  try {
+    const state = readCookieState();
+    return (
+      state?.phase === "settled" &&
+      state.userId === null &&
+      state.ended === "deleted"
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function sessionCookieGeneration(): string {
@@ -483,6 +500,7 @@ async function performAuthApi<T>(
         user?.id ?? null,
         changing?.generation,
         logout ? undefined : changing?.keepsAccount,
+        deletion ? "deleted" : undefined,
       );
     } else if (
       changing &&
@@ -523,6 +541,7 @@ function settleCookieIdentity(
   userId: string | null,
   generation?: string,
   keepsAccount?: true,
+  ended?: "deleted",
 ): void {
   if (typeof window === "undefined") return;
   const previous = readCookieState();
@@ -537,6 +556,10 @@ function settleCookieIdentity(
     // Re-settling the same session keeps its mark for tabs that see it late.
     ...(keepsAccount || (same && previous.keepsAccount)
       ? { keepsAccount: true as const }
+      : {}),
+    // So does a deletion's sign-out, re-settled by another tab's 401.
+    ...(ended || (same && previous.ended === "deleted")
+      ? { ended: "deleted" as const }
       : {}),
   });
 }

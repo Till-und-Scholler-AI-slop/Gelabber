@@ -11,6 +11,7 @@ import { setLocale } from "../i18n/locale.ts";
 import { syncPush } from "../pwa/push.ts";
 import { scopeGeneration } from "./scope.ts";
 import {
+  accountDeletedElsewhere,
   accountDeletedHere,
   changePassword,
   checkSession,
@@ -815,9 +816,46 @@ describe("password change across tabs", () => {
     expect(JSON.parse(storage.get(FENCE)!)).toMatchObject({
       phase: "settled",
       userId: null,
+      ended: "deleted",
     });
     expect(JSON.parse(storage.get(FENCE)!)).not.toHaveProperty("keepsAccount");
     expect(useSession.getState().status).toBe("anonymous");
+  });
+
+  it("another tab's account deletion is told apart from an expired session", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/servers": () =>
+        json(401, { error: "unauthenticated", message: "Sign in." }),
+    });
+    await login("ada@example.com", "password123");
+    expect(accountDeletedElsewhere()).toBe(false);
+
+    storage.set(
+      FENCE,
+      JSON.stringify({
+        generation: "g-deleted",
+        phase: "settled",
+        userId: null,
+        ended: "deleted",
+      }),
+    );
+    synchronizeSharedSession();
+    expect(accountDeletedElsewhere()).toBe(true);
+    expect(accountDeletedHere()).toBe(false);
+
+    // This tab's own 401 settles the same sign-out and keeps the reason.
+    await expect(api("/servers")).rejects.toMatchObject({
+      code: "unauthenticated",
+    });
+    expect(accountDeletedElsewhere()).toBe(true);
+
+    // A plain logout elsewhere says nothing of a deletion.
+    storage.set(
+      FENCE,
+      JSON.stringify({ generation: "g-out", phase: "settled", userId: null }),
+    );
+    expect(accountDeletedElsewhere()).toBe(false);
   });
 
   it("a write's csrf re-bootstrap after another tab's password change keeps the mark", async () => {

@@ -10,6 +10,7 @@ import {
   setSessionScope,
   setSessionSink,
   setSessionReconciler,
+  sharedAccountDeleted,
   synchronizeSharedSession,
   type SessionSinkOptions,
 } from "../api/client.ts";
@@ -128,6 +129,11 @@ let deletedHere = false;
 /** Whether this tab's own account deletion ended the session (#519). */
 export function accountDeletedHere(): boolean {
   return deletedHere;
+}
+
+/** Whether another tab of this browser deleted the account (#519). */
+export function accountDeletedElsewhere(): boolean {
+  return sharedAccountDeleted();
 }
 
 /**
