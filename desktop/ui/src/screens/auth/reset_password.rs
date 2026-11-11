@@ -1,6 +1,7 @@
 //! `/reset-password#token=…` (pages/ResetPasswordPage.tsx).
 
 use egui::Ui;
+use gelabber_i18n::auth;
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -40,8 +41,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         match result {
             Ok(session) => {
                 app.session.adopt(&session);
-                app.toasts
-                    .notify("Passwort geändert. Andere Geräte sind abgemeldet.");
+                app.toasts.notify(auth::reset_done());
                 app.nav.replace("/");
                 return;
             }
@@ -51,16 +51,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     if s.dead_link {
         layout::frame(ui, app, "reset-dead", |ui, app| {
-            layout::focused_heading(ui, "Link abgelaufen");
-            result_lines(
-                ui,
-                &[(
-                    "Dieser Link ist abgelaufen oder wurde schon benutzt.",
-                    false,
-                )],
-            );
+            layout::focused_heading(ui, auth::page_link_expired());
+            result_lines(ui, &[(auth::page_link_used(), false)]);
             ui.add_space(space::S6);
-            if layout::action_link(ui, "Neuen Link anfordern") {
+            if layout::action_link(ui, auth::reset_request_new()) {
                 app.nav.navigate("/forgot-password");
             }
         });
@@ -68,12 +62,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     let pending = s.request.is_some();
     layout::frame(ui, app, "reset-password", |ui, app| {
-        layout::heading(ui, "Neues Passwort");
-        layout::lead(ui, "Danach bist du auf allen anderen Geräten abgemeldet.");
+        layout::heading(ui, auth::reset_title());
+        layout::lead(ui, auth::reset_lead());
         ui.add_space(space::S6);
-        let hint = format!("Mindestens {PASSWORD_MIN} Zeichen.");
+        let hint = auth::field_error_password_too_short(PASSWORD_MIN);
         let password = TextField::new("password", &mut s.password)
-            .label("Neues Passwort")
+            .label(auth::reset_password_label())
             .password()
             .autofocus(true)
             .error(s.errors.field("password"))
@@ -87,8 +81,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         let cooldown = s.errors.cooldown();
         if (submit_after(
             ui,
-            "Passwort speichern",
-            "Wird gespeichert…",
+            auth::reset_submit(),
+            auth::reset_submitting(),
             pending,
             cooldown,
         ) || password.submitted)

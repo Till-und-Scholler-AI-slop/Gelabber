@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use egui::{Color32, Id, Key, Modifiers, Rect, Sense, Ui, Vec2};
 use gelabber_client::Client;
+use gelabber_i18n::app as texts;
 use parking_lot::Mutex;
 
 use crate::app::GelabberApp;
@@ -36,9 +37,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// The whole of the request that asks whether Gelabber answers.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Under the field until something went wrong.
-pub const GUIDANCE: &str = "Die Adresse bekommst du von der Person, die den Server betreibt.";
-
 /// Why a server cannot be used: in words for people at the field, and what
 /// the system said, for a muted line under it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,30 +57,15 @@ impl Failure {
     fn connect(error: &std::io::Error) -> Self {
         use std::io::ErrorKind;
         let message = match error.kind() {
-            ErrorKind::ConnectionRefused => REFUSED,
-            ErrorKind::TimedOut | ErrorKind::WouldBlock => TIMED_OUT,
-            ErrorKind::NetworkUnreachable | ErrorKind::NetworkDown => OFFLINE,
-            ErrorKind::HostUnreachable => HOST_UNREACHABLE,
-            _ => UNREACHABLE,
+            ErrorKind::ConnectionRefused => texts::setup_error_refused(),
+            ErrorKind::TimedOut | ErrorKind::WouldBlock => texts::setup_error_timed_out(),
+            ErrorKind::NetworkUnreachable | ErrorKind::NetworkDown => texts::setup_error_offline(),
+            ErrorKind::HostUnreachable => texts::setup_error_host_unreachable(),
+            _ => texts::setup_error_unreachable(),
         };
         Self::new(message, Some(error.to_string()))
     }
 }
-
-const REFUSED: &str = "Server antwortet nicht – stimmen Adresse und Port?";
-const TIMED_OUT: &str = "Keine Antwort vom Server – läuft er und stimmt die Adresse?";
-const OFFLINE: &str = "Kein Netzwerk – ist dein Computer online?";
-const HOST_UNREACHABLE: &str =
-    "Der Server ist von hier aus nicht erreichbar – bist du im richtigen Netz?";
-const UNREACHABLE: &str = "Der Server ist nicht erreichbar.";
-const NOT_GELABBER: &str = "Unter dieser Adresse läuft kein Gelabber-Server.";
-const SERVER_TROUBLE: &str = "Der Server hat gerade ein Problem – versuch es gleich noch einmal.";
-const TLS: &str = "Keine sichere Verbindung zum Server möglich.";
-const TLS_CERTIFICATE: &str =
-    "Keine sichere Verbindung zum Server möglich – sein Zertifikat wird nicht anerkannt.";
-const EMPTY: &str = "Gib die Adresse deines Gelabber-Servers ein.";
-const NO_ADDRESS: &str =
-    "Die Adresse beginnt mit https:// oder http://, zum Beispiel https://gelabber.example.org.";
 
 /// The reachability check of an address, on its own thread: the origin to
 /// use, or why not.
@@ -274,7 +257,10 @@ impl Launcher {
             }
             Err(e) => {
                 if let Stage::Setup(setup) = &mut self.stage {
-                    setup.error = Some(Failure::new(UNREACHABLE, Some(e.to_string())));
+                    setup.error = Some(Failure::new(
+                        texts::setup_error_unreachable(),
+                        Some(e.to_string()),
+                    ));
                 }
             }
         }
@@ -323,7 +309,10 @@ fn start_probe(ctx: &egui::Context, origin: String, gelabber: bool) -> Probe {
             repaint.request_repaint();
         });
     if let Err(e) = spawned {
-        *probe.lock() = Some(Err(Failure::new(UNREACHABLE, Some(e.to_string()))));
+        *probe.lock() = Some(Err(Failure::new(
+            texts::setup_error_unreachable(),
+            Some(e.to_string()),
+        )));
     }
     probe
 }
@@ -333,11 +322,12 @@ fn start_probe(ctx: &egui::Context, origin: String, gelabber: bool) -> Probe {
 pub fn server_origin(input: &str) -> Result<String, Failure> {
     let input = input.trim();
     if input.is_empty() {
-        return Err(Failure::new(EMPTY, None));
+        return Err(Failure::new(texts::setup_error_empty(), None));
     }
-    let url = url::Url::parse(input).map_err(|_| Failure::new(NO_ADDRESS, None))?;
+    let url =
+        url::Url::parse(input).map_err(|_| Failure::new(texts::setup_error_no_address(), None))?;
     if !matches!(url.scheme(), "https" | "http") || url.host().is_none() {
-        return Err(Failure::new(NO_ADDRESS, None));
+        return Err(Failure::new(texts::setup_error_no_address(), None));
     }
     Ok(url.origin().ascii_serialization())
 }
@@ -360,14 +350,13 @@ fn host_of(origin: &str) -> String {
 /// `check_reachable` of the Tauri app: something has to accept a TCP
 /// connection at the origin.
 fn check_reachable(origin: &str) -> Result<(), Failure> {
-    let url = url::Url::parse(origin).map_err(|_| Failure::new(NO_ADDRESS, None))?;
-    let host = url.host_str().ok_or(Failure::new(NO_ADDRESS, None))?;
-    let not_found = |detail: Option<String>| {
-        Failure::new(
-            format!("{host} wurde nicht gefunden – ist die Adresse richtig geschrieben?"),
-            detail,
-        )
-    };
+    let url =
+        url::Url::parse(origin).map_err(|_| Failure::new(texts::setup_error_no_address(), None))?;
+    let host = url
+        .host_str()
+        .ok_or(Failure::new(texts::setup_error_no_address(), None))?;
+    let not_found =
+        |detail: Option<String>| Failure::new(texts::setup_error_not_found(host), detail);
     let addrs = url
         .socket_addrs(|| None)
         .map_err(|e| not_found(Some(e.to_string())))?;
@@ -395,7 +384,7 @@ fn redirect_allowed(first: &reqwest::Url, to: &reqwest::Url) -> bool {
 /// server answers signed out. A redirect from http to https on the same host
 /// is followed, and its origin is the one to use; another one is named.
 fn check_gelabber(origin: &str) -> Result<String, Failure> {
-    let failed = |e: String| Failure::new(UNREACHABLE, Some(e));
+    let failed = |e: String| Failure::new(texts::setup_error_unreachable(), Some(e));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -426,7 +415,7 @@ fn check_gelabber(origin: &str) -> Result<String, Failure> {
             .map_err(|e| request_failure(&e))?;
         let status = response.status();
         let landed = response.url().origin().ascii_serialization();
-        let detail = Some(format!("HTTP {status}"));
+        let detail = Some(format!("HTTP {status}")); // i18n-ok
         if status.is_redirection() {
             let to = response
                 .headers()
@@ -435,17 +424,14 @@ fn check_gelabber(origin: &str) -> Result<String, Failure> {
                 .and_then(|l| response.url().join(l).ok());
             return Err(match to {
                 Some(to) => Failure::new(
-                    format!(
-                        "Der Server leitet auf {} weiter. Gib diese Adresse ein, wenn du ihr vertraust.",
-                        to.origin().ascii_serialization()
-                    ),
+                    texts::setup_error_redirect(&to.origin().ascii_serialization()),
                     detail,
                 ),
-                None => Failure::new(NOT_GELABBER, detail),
+                None => Failure::new(texts::setup_error_not_gelabber(), detail),
             });
         }
         if status.is_server_error() {
-            return Err(Failure::new(SERVER_TROUBLE, detail));
+            return Err(Failure::new(texts::setup_error_server_trouble(), detail));
         }
         let body = response.bytes().await.map_err(|e| request_failure(&e))?;
         let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default();
@@ -455,13 +441,13 @@ fn check_gelabber(origin: &str) -> Result<String, Failure> {
             return if json["error"] == "rate_limited" {
                 Ok(landed)
             } else {
-                Err(Failure::new(SERVER_TROUBLE, detail))
+                Err(Failure::new(texts::setup_error_server_trouble(), detail))
             };
         }
         if status.is_success() && json["enabled"].is_boolean() {
             Ok(landed)
         } else {
-            Err(Failure::new(NOT_GELABBER, detail))
+            Err(Failure::new(texts::setup_error_not_gelabber(), detail))
         }
     })
 }
@@ -490,15 +476,15 @@ fn request_failure(error: &reqwest::Error) -> Failure {
 fn classify(causes: &[String], fallback: String, timeout: bool, connect: bool) -> Failure {
     let lower = causes.join(" ").to_lowercase();
     let message = if lower.contains("certificate") {
-        TLS_CERTIFICATE
+        texts::setup_error_tls_certificate()
     } else if lower.contains("tls") || lower.contains("handshake") || lower.contains("ssl") {
-        TLS
+        texts::setup_error_tls()
     } else if timeout {
-        TIMED_OUT
+        texts::setup_error_timed_out()
     } else if connect {
-        REFUSED
+        texts::setup_error_refused()
     } else {
-        NOT_GELABBER
+        texts::setup_error_not_gelabber()
     };
     Failure::new(message, Some(causes.last().cloned().unwrap_or(fallback)))
 }
@@ -591,22 +577,19 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
         layout::heading(
             ui,
             if switching {
-                "Server wechseln"
+                texts::setup_title_switch()
             } else {
-                "Server verbinden"
+                texts::setup_title_connect()
             },
         );
-        layout::lead(
-            ui,
-            "Mit welchem Gelabber-Server soll sich die App verbinden?",
-        );
+        layout::lead(ui, texts::setup_lead());
         ui.add_space(space::S6);
 
         let error = setup.error.clone();
         let field = TextField::new("server", &mut setup.address)
-            .label("Serveradresse")
+            .label(texts::setup_address_label())
             .placeholder("https://gelabber.example.org")
-            .hint(Some(GUIDANCE))
+            .hint(Some(texts::setup_guidance()))
             .error(error.as_ref().map(|e| e.message.as_str()))
             .alert(true)
             .autofocus(true)
@@ -614,7 +597,7 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
         if let Some(detail) = error.as_ref().and_then(|e| e.detail.as_deref()) {
             // What the system said, for whoever runs the server.
             ui.add_space(space::S1);
-            let line = format!("Details: {detail}");
+            let line = texts::setup_details(detail);
             let width = ui.available_width();
             let block = Block::wrapped(ui, &line, text::META, theme.c.muted, width);
             let size = Vec2::new(width, layout_unit(block.height()));
@@ -630,18 +613,22 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
         }
 
         ui.add_space(space::S5);
-        if submit(ui, "Verbinden", "Verbinde…", checking) {
+        if submit(
+            ui,
+            texts::setup_connect(),
+            texts::setup_connecting(),
+            checking,
+        ) {
             action = Some(Action::Connect);
         }
         if let Some(current) = &setup.current {
             // The way back is quieter than "Verbinden".
             ui.add_space(space::S2);
-            let lead = if setup.retry {
-                "Erneut verbinden mit "
+            let label = if setup.retry {
+                texts::setup_reconnect_to(&host_of(current))
             } else {
-                "Zurück zu "
+                texts::setup_back_to(&host_of(current))
             };
-            let label = format!("{lead}{}", host_of(current));
             if ui
                 .add(Button::new(&label).ghost().fill().disabled(checking))
                 .clicked()
@@ -669,7 +656,12 @@ fn updates_section(ui: &mut Ui, view: &SetupView) {
     crate::widgets::rule_h(ui.painter(), c.border, rule.x_range(), rule.top());
     ui.add_space(space::S5);
 
-    let title = Block::single(ui, "Updates", text::UI.weight(600.0), c.text);
+    let title = Block::single(
+        ui,
+        texts::setup_updates_title(),
+        text::UI.weight(600.0),
+        c.text,
+    );
     layout::show_block(ui, &title);
     ui.add_space(space::S1);
     let line = view.status();
@@ -688,17 +680,17 @@ fn updates_section(ui: &mut Ui, view: &SetupView) {
     ui.add_space(space::S3);
 
     if view.can_install() || view.installing() {
-        let button = Button::new("Jetzt installieren")
+        let button = Button::new(texts::setup_install_now())
             .fill()
-            .pending(view.installing().then_some("Wird installiert…"));
+            .pending(view.installing().then_some(texts::setup_installing()));
         if ui.add(button).clicked() {
             update::ask(&ctx, SetupAsk::Install);
         }
     } else {
-        let button = Button::new("Nach Updates suchen")
+        let button = Button::new(texts::setup_check_updates())
             .ghost()
             .fill()
-            .pending(view.checking.then_some("Suche läuft…"));
+            .pending(view.checking.then_some(texts::setup_checking_updates()));
         if ui.add(button).clicked() {
             update::ask(&ctx, SetupAsk::CheckNow);
         }
@@ -708,14 +700,14 @@ fn updates_section(ui: &mut Ui, view: &SetupView) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Failure, Launcher, NO_ADDRESS, NOT_GELABBER, REFUSED, SERVER_TROUBLE, TIMED_OUT, TLS,
-        TLS_CERTIFICATE, check_gelabber, classify, host_of, redirect_allowed, request_failure,
+        Failure, Launcher, check_gelabber, classify, host_of, redirect_allowed, request_failure,
         server_origin,
     };
     use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
     use crate::platform::paths::testing::TempConfig;
     use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT, Queryable};
+    use gelabber_i18n::app as texts;
 
     fn host(api: &FakeApi) -> String {
         api.origin.trim_start_matches("http://").to_owned()
@@ -791,7 +783,7 @@ mod tests {
         wait_for(&mut harness, "the setup", |h| h.state().in_setup());
         let retry = format!("Erneut verbinden mit 127.0.0.1:{port}");
         wait_for_label(&mut harness, &retry);
-        let error = harness.get_by_label(REFUSED);
+        let error = harness.get_by_label(texts::setup_error_refused());
         assert_eq!(error.accesskit_node().role(), Role::Alert);
         assert!(harness.query_by_label_contains("Details: ").is_some());
         assert!(harness.query_by_label_contains("Zurück zu").is_none());
@@ -815,7 +807,7 @@ mod tests {
         harness
             .get_by_role_and_label(Role::Button, "Verbinden")
             .click();
-        wait_for_label(&mut harness, NOT_GELABBER);
+        wait_for_label(&mut harness, texts::setup_error_not_gelabber());
         assert!(harness.state().in_setup());
         assert!(
             harness
@@ -927,7 +919,12 @@ mod tests {
         // Under a path, so one fake server answers each way.
         let at = |prefix: &str| check_gelabber(&format!("{origin}/{prefix}"));
         assert_eq!(at("limited"), Ok(origin.clone()));
-        let trouble = |status: &str| Err(Failure::new(SERVER_TROUBLE, Some(status.into())));
+        let trouble = |status: &str| {
+            Err(Failure::new(
+                texts::setup_error_server_trouble(),
+                Some(status.into()),
+            ))
+        };
         assert_eq!(at("proxy"), trouble("HTTP 429 Too Many Requests"));
         assert_eq!(at("broken"), trouble("HTTP 502 Bad Gateway"));
     }
@@ -994,7 +991,7 @@ mod tests {
             false,
             true,
         );
-        assert_eq!(tls.message, TLS_CERTIFICATE);
+        assert_eq!(tls.message, texts::setup_error_tls_certificate());
         assert_eq!(
             tls.detail.as_deref(),
             Some("invalid peer certificate: UnknownIssuer")
@@ -1008,24 +1005,27 @@ mod tests {
             false,
             true,
         );
-        assert_eq!(handshake.message, TLS);
+        assert_eq!(handshake.message, texts::setup_error_tls());
         let slow = classify(
             &causes(&["operation timed out"]),
             String::new(),
             true,
             false,
         );
-        assert_eq!(slow.message, TIMED_OUT);
+        assert_eq!(slow.message, texts::setup_error_timed_out());
         let refused = classify(
             &causes(&["tcp connect error", "Connection refused (os error 111)"]),
             String::new(),
             false,
             true,
         );
-        assert_eq!(refused.message, REFUSED);
+        assert_eq!(refused.message, texts::setup_error_refused());
         assert_eq!(
             classify(&[], "error decoding response".into(), false, false),
-            Failure::new(NOT_GELABBER, Some("error decoding response".into()))
+            Failure::new(
+                texts::setup_error_not_gelabber(),
+                Some("error decoding response".into())
+            )
         );
 
         // A real refused request at a URL full of TLS words.
@@ -1044,7 +1044,10 @@ mod tests {
             )))
             .unwrap_err();
         assert!(error.to_string().contains("ssl/tls"), "{error}");
-        assert_eq!(request_failure(&error).message, REFUSED);
+        assert_eq!(
+            request_failure(&error).message,
+            texts::setup_error_refused()
+        );
     }
 
     #[test]
@@ -1064,11 +1067,11 @@ mod tests {
         );
         assert_eq!(
             server_origin("file:///etc/passwd").unwrap_err().message,
-            NO_ADDRESS
+            texts::setup_error_no_address()
         );
         assert_eq!(
             server_origin("chat.example.org").unwrap_err().message,
-            NO_ADDRESS
+            texts::setup_error_no_address()
         );
         assert!(server_origin("  ").is_err());
         assert_eq!(host_of("http://127.0.0.1:5180"), "127.0.0.1:5180");

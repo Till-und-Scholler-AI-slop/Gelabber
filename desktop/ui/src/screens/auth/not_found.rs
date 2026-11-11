@@ -2,6 +2,7 @@
 //! the plain app header (AppShell's `.app-header`) over the notice card.
 
 use egui::{Id, Rect, Ui, Vec2, pos2};
+use gelabber_i18n::auth;
 
 use super::layout;
 use crate::app::AppCtx;
@@ -52,10 +53,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let top = header.bottom() + 1.0 + space::S10;
     let left = screen.center().x - width / 2.0;
     layout::card_at(ui, app, pos2(left, top), width, |ui, app| {
-        layout::heading(ui, "Seite nicht gefunden");
-        layout::lead(ui, "Diese Adresse gibt es in Gelabber nicht.");
+        layout::heading(ui, auth::not_found_title());
+        layout::lead(ui, auth::not_found_body());
         ui.add_space(space::S6);
-        if layout::link_line(ui, "Zur Startseite") {
+        if layout::link_line(ui, auth::not_found_home()) {
             app.nav.navigate("/");
         }
     });

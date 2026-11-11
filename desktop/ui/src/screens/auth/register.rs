@@ -1,6 +1,7 @@
 //! `/register` (pages/RegisterPage.tsx) and its "Postfach prüfen" step.
 
 use egui::Ui;
+use gelabber_i18n::auth;
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -62,8 +63,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         if invited {
             invite_banner(ui);
         }
-        layout::heading(ui, "Konto anlegen");
-        if layout::lead_with_link(ui, "Schon registriert?", "Anmelden") {
+        layout::heading(ui, auth::register_title());
+        if layout::lead_with_link(ui, auth::register_have_account(), auth::register_sign_in()) {
             app.nav.navigate(&with_query(
                 "/login",
                 &[("redirect", redirect.as_deref().unwrap_or(""))],
@@ -71,27 +72,27 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         ui.add_space(space::S6);
         let name = TextField::new("name", &mut s.name)
-            .label("Name")
+            .label(auth::field_label_name())
             .autofocus(true)
             .char_limit(64)
             .error(s.errors.field("name"))
-            .hint(Some("Für andere sichtbar."))
+            .hint(Some(auth::register_name_hint()))
             .show(ui);
         if name.response.changed() {
             s.errors.clear_field("name");
         }
         ui.add_space(space::S5);
         let email = TextField::new("email", &mut s.email)
-            .label("E-Mail-Adresse")
+            .label(auth::field_label_email())
             .error(s.errors.field("email"))
             .show(ui);
         if email.response.changed() {
             s.errors.clear_field("email");
         }
         ui.add_space(space::S5);
-        let hint = format!("Mindestens {PASSWORD_MIN} Zeichen.");
+        let hint = auth::field_error_password_too_short(PASSWORD_MIN);
         let password = TextField::new("password", &mut s.password)
-            .label("Passwort")
+            .label(auth::field_label_password())
             .password()
             .error(s.errors.field("password"))
             .hint(Some(&hint))
@@ -104,8 +105,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         let cooldown = s.errors.cooldown();
         let clicked = submit_after(
             ui,
-            "Registrieren",
-            "Konto wird angelegt…",
+            auth::register_submit(),
+            auth::register_submitting(),
             pending,
             cooldown,
         );
@@ -157,7 +158,7 @@ fn mail_sent(ui: &mut Ui, app: &mut AppCtx, s: &mut State, redirect: Option<&str
                 let failure = Failure::from_api(&error);
                 if failure.code == "email_unverified" {
                     s.resend_until = Some(ui.input(|i| i.time) + RESEND_COOLDOWN_S);
-                    s.status = Some(("Neuer Link gesendet.".into(), StatusTone::Success));
+                    s.status = Some((auth::page_new_link_sent().into(), StatusTone::Success));
                 } else {
                     s.status = Some((error_message(&failure.code).into(), StatusTone::Error));
                 }
@@ -168,35 +169,24 @@ fn mail_sent(ui: &mut Ui, app: &mut AppCtx, s: &mut State, redirect: Option<&str
     let seconds = seconds_left(ui, s.resend_until);
     let pending = s.resend.is_some();
     layout::frame(ui, app, "register-mail", |ui, app| {
-        layout::focused_heading(ui, "Postfach prüfen");
-        result_with_strong(
-            ui,
-            "Bestätigungslink an ",
-            &email,
-            " gesendet. Er gilt 24 Stunden.",
-        );
+        layout::focused_heading(ui, auth::page_check_inbox());
+        result_with_strong(ui, auth::register_mail_sent(), &email);
         if is_invite_redirect(redirect) {
-            result_lines(ui, &[("Danach geht es weiter zur Einladung.", false)]);
+            result_lines(ui, &[(auth::register_then_invite(), false)]);
         }
-        result_lines(
-            ui,
-            &[(
-                "Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut.",
-                true,
-            )],
-        );
+        result_lines(ui, &[(auth::page_no_mail(), true)]);
         ui.add_space(space::S6);
         let label = if seconds > 0 {
-            format!("Erneut senden ({seconds} s)")
+            auth::page_resend_in(seconds)
         } else {
-            "Link erneut senden".to_owned()
+            auth::register_resend().to_owned()
         };
         let resend = ui.add(
             crate::widgets::Button::new(&label)
                 .large()
                 .fill()
                 .disabled(seconds > 0)
-                .pending(pending.then_some("Wird gesendet…")),
+                .pending(pending.then_some(auth::page_sending())),
         );
         if resend.clicked() {
             // Signing in to an unconfirmed account sends a fresh link.
@@ -215,13 +205,13 @@ fn mail_sent(ui: &mut Ui, app: &mut AppCtx, s: &mut State, redirect: Option<&str
         ));
         // The status line is always mounted: both gaps of the column stay.
         ui.add_space(space::S2);
-        if wide_button(ui, "Andere Adresse verwenden", true) {
+        if wide_button(ui, auth::page_other_address(), true) {
             s.mailed_to = None;
             s.status = None;
             ui.memory_mut(|m| m.request_focus(field_id("email")));
         }
         ui.add_space(space::S6);
-        if layout::link_line(ui, "Zur Anmeldung") {
+        if layout::link_line(ui, auth::page_to_sign_in()) {
             app.nav.navigate(&with_query(
                 "/login",
                 &[("redirect", redirect.unwrap_or(""))],

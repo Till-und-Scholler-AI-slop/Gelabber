@@ -8,6 +8,8 @@ use egui::{
     pos2,
 };
 
+use gelabber_i18n::auth;
+
 use crate::app::AppCtx;
 use crate::images::{self, ImageState};
 use crate::text::{self, Block, Rich, TextStyle};
@@ -117,7 +119,7 @@ pub fn page(
             let measured = 40.0 + space::S6 + card_rect.height();
             if (measured - column_h).abs() > 0.01 {
                 ctx.data_mut(|d| d.insert_temp(height_id, measured));
-                ctx.request_discard("auth column height");
+                ctx.request_discard("auth column height"); // i18n-ok
             }
         });
     brand_clicked
@@ -338,7 +340,7 @@ pub fn placeholder(ui: &mut Ui) {
     let theme = Theme::of(&ctx);
     let screen = ctx.content_rect();
     let word = Block::single(ui, "Gelabber", BRAND, theme.c.text);
-    let status = Block::single(ui, "Verbinde…", text::UI, theme.c.muted);
+    let status = Block::single(ui, auth::layout_connecting(), text::UI, theme.c.muted);
     let total = 48.0 + 12.0 + word.height() + 12.0 + status.height();
     let top = screen.center().y - total / 2.0;
     if let Some(icon) = images::bundled(&ctx, "icon-192", ICON) {

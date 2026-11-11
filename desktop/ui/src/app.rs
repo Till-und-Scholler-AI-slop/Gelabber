@@ -681,7 +681,7 @@ fn skip_link(ui: &mut Ui) -> SkipLink {
     // A jump no page took up (a screen without content) does not linger.
     ui.ctx().data_mut(|d| d.remove_temp::<bool>(skip_target()));
     let focused = ui.memory(|m| m.has_focus(id));
-    let label = "Zum Inhalt springen";
+    let label = gelabber_i18n::app::skip_link();
     let style = crate::text::TextStyle::new(16.0, 400.0, 1.5);
     let block = crate::text::Block::single(ui, label, style, egui::Color32::PLACEHOLDER);
     // padding 12px 18px at left 12px, top 12px.
@@ -748,7 +748,7 @@ impl SkipLink {
         crate::widgets::focus_ring(&painter, self.rect, theme.radius.md, &theme);
         let block = crate::text::Block::single(
             ui,
-            "Zum Inhalt springen",
+            gelabber_i18n::app::skip_link(),
             crate::text::TextStyle::new(16.0, 400.0, 1.5),
             theme.c.accent_ink,
         );
@@ -786,9 +786,9 @@ fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
     // "Überall abmelden" left for /login at once; until the server confirms,
     // the other devices are still signed in, and the retry repeats it.
     let message = if client.http().unconfirmed_sign_out_everywhere() {
-        "Die Abmeldung auf allen Geräten konnte nicht bestätigt werden. Bitte versuche es erneut."
+        gelabber_i18n::auth::session_logout_everywhere_unconfirmed()
     } else {
-        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut."
+        gelabber_i18n::auth::session_logout_unconfirmed()
     };
     let screen = ui.ctx().content_rect();
     // margin 12px 16px, padding 12px 16px, the 3px warning bar on the left.
@@ -829,9 +829,9 @@ fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
             );
             let retry = ui.put(
                 button,
-                crate::widgets::Button::new("Erneut abmelden")
+                crate::widgets::Button::new(gelabber_i18n::app::recovery_sign_out_again())
                     .small()
-                    .pending(pending.then_some("Wird abgemeldet…")),
+                    .pending(pending.then_some(gelabber_i18n::app::recovery_signing_out())),
             );
             if retry.clicked() && !pending {
                 client.logout();

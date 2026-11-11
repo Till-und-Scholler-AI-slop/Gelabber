@@ -40,6 +40,9 @@ mod system;
 pub mod common;
 pub mod language;
 
+pub mod app;
+pub mod auth;
+
 pub use system::detect_system;
 
 /// A namespace's static entries: key, German, English.
@@ -47,7 +50,12 @@ pub type Entries = &'static [(&'static str, &'static str, &'static str)];
 
 /// Every namespace's static entries, for the catalog tests. A new
 /// namespace module adds its line here.
-pub const NAMESPACES: &[(&str, Entries)] = &[("common", common::ALL), ("language", language::ALL)];
+pub const NAMESPACES: &[(&str, Entries)] = &[
+    ("common", common::ALL),
+    ("language", language::ALL),
+    ("app", app::ALL),
+    ("auth", auth::ALL),
+];
 
 /// A language of the interface.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

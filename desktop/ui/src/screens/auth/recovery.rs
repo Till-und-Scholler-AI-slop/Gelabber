@@ -2,6 +2,7 @@
 //! session check failed; retries count down, and one button retries now.
 
 use egui::Ui;
+use gelabber_i18n::app;
 
 use super::layout;
 use crate::app::AppCtx;
@@ -19,16 +20,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     }
     layout::frame(ui, app, "session-recovery", |ui, app| {
         let theme = Theme::of(ui.ctx());
-        layout::heading(ui, "Server antwortet nicht");
-        layout::lead(
-            ui,
-            "Gelabber ist nicht erreichbar. Möglicherweise startet der Server neu.",
-        );
+        layout::heading(ui, app::recovery_no_answer());
+        layout::lead(ui, app::recovery_no_answer_lead());
         ui.add_space(space::S3);
         let status = if checking {
-            "Wird geprüft…".to_owned()
+            app::recovery_checking().to_owned()
         } else if seconds > 0 {
-            format!("Neuer Versuch in {seconds} s")
+            app::recovery_retry_in(seconds)
         } else {
             String::new()
         };
@@ -40,11 +38,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         block.paint(ui.painter(), rect.min);
         ui.add_space(space::S6);
         let retry = ui.add(
-            Button::new("Jetzt erneut versuchen")
+            Button::new(app::recovery_retry_now())
                 .primary()
                 .large()
                 .fill()
-                .pending(checking.then_some("Wird geprüft…")),
+                .pending(checking.then_some(app::recovery_checking())),
         );
         if retry.clicked() {
             app.session.check(app.client);

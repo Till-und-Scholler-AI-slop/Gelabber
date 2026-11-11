@@ -2,6 +2,7 @@
 //! the account's password.
 
 use egui::Ui;
+use gelabber_i18n::auth;
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -39,7 +40,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         match result {
             Ok(session) => {
                 app.session.adopt(&session);
-                app.toasts.notify("E-Mail-Adresse bestätigt.");
+                app.toasts.notify(auth::verify_done());
                 app.nav.replace("/");
                 return;
             }
@@ -49,19 +50,16 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     if s.dead_link {
         layout::frame(ui, app, "verify-dead", |ui, app| {
-            layout::focused_heading(ui, "Link abgelaufen");
+            layout::focused_heading(ui, auth::page_link_expired());
             result_lines(
                 ui,
                 &[
-                    (
-                        "Dieser Link ist abgelaufen oder wurde schon benutzt.",
-                        false,
-                    ),
-                    ("Melde dich an, um einen neuen zu erhalten.", true),
+                    (auth::page_link_used(), false),
+                    (auth::verify_sign_in_for_new(), true),
                 ],
             );
             ui.add_space(space::S6);
-            if layout::action_link(ui, "Zur Anmeldung") {
+            if layout::action_link(ui, auth::page_to_sign_in()) {
                 app.nav.navigate("/login");
             }
         });
@@ -69,11 +67,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     let pending = s.request.is_some();
     layout::frame(ui, app, "verify-email", |ui, app| {
-        layout::heading(ui, "E-Mail-Adresse bestätigen");
-        layout::lead(ui, "Gib zur Bestätigung dein Passwort ein.");
+        layout::heading(ui, auth::verify_title());
+        layout::lead(ui, auth::verify_lead());
         ui.add_space(space::S6);
         let password = TextField::new("password", &mut s.password)
-            .label("Passwort")
+            .label(auth::field_label_password())
             .password()
             .autofocus(true)
             .error(s.errors.field("password"))
@@ -84,8 +82,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         ui.add_space(space::S5);
         form_error(ui, &s.errors);
         let cooldown = s.errors.cooldown();
-        if (submit_after(ui, "Bestätigen", "Wird bestätigt…", pending, cooldown)
-            || password.submitted)
+        if (submit_after(
+            ui,
+            auth::verify_submit(),
+            auth::verify_submitting(),
+            pending,
+            cooldown,
+        ) || password.submitted)
             && !pending
             && cooldown == 0
         {
@@ -108,7 +111,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         let style = text::META.size(13.0);
         let block = text::Rich::new(style)
             .push(
-                "Passwort vergessen?",
+                auth::page_forgot_password(),
                 style.weight(500.0),
                 theme.c.accent_text,
             )
@@ -121,7 +124,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             top_left,
             0,
             style.weight(500.0),
-            "Passwort vergessen?",
+            auth::page_forgot_password(),
         ) {
             app.nav.navigate("/forgot-password");
         }
