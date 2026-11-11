@@ -136,12 +136,39 @@ if ! mkdir -p "$OUT" 2>/dev/null; then
     exit 0
 fi
 
+# A plain address for a mailto: link, with nothing like ?bcc= after it.
+is_email() {
+    printf '%s' "$1" | grep -Eq '^[^@ ?#/:]+@[^@ ?#/:]+$'
+}
+
+is_http_url() {
+    case "$1" in
+    [Hh][Tt][Tt][Pp]://?* | [Hh][Tt][Tt][Pp][Ss]://?*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+# checked NAME VALUE TEST WHAT: sets $checked to the cleaned VALUE if TEST
+# accepts it, else to empty with a warning, so a link never gets an unusable
+# target.
+checked() {
+    checked=$(clean "$2")
+    if [ -n "$checked" ] && ! "$3" "$checked"; then
+        log "warning: $1 is not $4; it is not used $SEE"
+        checked=
+    fi
+}
+
 # Values.
 name=$(clean "${GELABBER_OPERATOR_NAME:-}")
 street=$(clean "${GELABBER_OPERATOR_STREET:-}")
 city=$(clean "${GELABBER_OPERATOR_CITY:-}")
-email=$(clean "${GELABBER_OPERATOR_EMAIL:-}")
-contact=$(clean "${GELABBER_CONTACT_EMAIL:-}")
+checked GELABBER_OPERATOR_EMAIL "${GELABBER_OPERATOR_EMAIL:-}" \
+    is_email "an email address"
+email=$checked
+checked GELABBER_CONTACT_EMAIL "${GELABBER_CONTACT_EMAIL:-}" \
+    is_email "an email address"
+contact=$checked
 set_value GELABBER_OPERATOR_NAME "$name"
 set_value GELABBER_OPERATOR_STREET "$street"
 set_value GELABBER_OPERATOR_CITY "$city"
@@ -152,17 +179,22 @@ set_value GELABBER_CONTACT_EMAIL "$contact"
 responsible=$(clean "${GELABBER_CONTENT_RESPONSIBLE:-}")
 [ -n "$responsible" ] || responsible="$name, $street, $city"
 set_value GELABBER_CONTENT_RESPONSIBLE "$responsible"
-report=$(clean "${GELABBER_REPORT_EMAIL:-}")
-set_value GELABBER_REPORT_EMAIL "${report:-$email}"
+checked GELABBER_REPORT_EMAIL "${GELABBER_REPORT_EMAIL:-}" \
+    is_email "an email address"
+set_value GELABBER_REPORT_EMAIL "${checked:-$email}"
 
-source_url=$(clean "${GELABBER_SOURCE_URL:-}")
+checked GELABBER_SOURCE_URL "${GELABBER_SOURCE_URL:-}" \
+    is_http_url "an http(s):// URL"
 set_value GELABBER_SOURCE_URL \
-    "${source_url:-https://github.com/Till-und-Scholler-AI-slop/Gelabber}"
-guide_url=$(clean "${GELABBER_OPERATOR_GUIDE_URL:-}")
+    "${checked:-https://github.com/Till-und-Scholler-AI-slop/Gelabber}"
+checked GELABBER_OPERATOR_GUIDE_URL "${GELABBER_OPERATOR_GUIDE_URL:-}" \
+    is_http_url "an http(s):// URL"
 set_value GELABBER_OPERATOR_GUIDE_URL \
-    "${guide_url:-https://github.com/Till-und-Scholler-AI-slop/Gelabber/blob/main/deploy/README.md}"
+    "${checked:-https://github.com/Till-und-Scholler-AI-slop/Gelabber/blob/main/deploy/README.md}"
 
-public_url=$(clean "${APP_PUBLIC_URL:-}")
+checked APP_PUBLIC_URL "${APP_PUBLIC_URL:-}" \
+    is_http_url "an http(s):// URL"
+public_url=$checked
 while [ "${public_url%/}" != "$public_url" ]; do public_url=${public_url%/}; done
 set_value APP_PUBLIC_URL "$public_url"
 
@@ -175,7 +207,7 @@ case "$invite" in
 "") ;;
 [Hh][Tt][Tt][Pp][Ss]://?*) invite_url=$invite ;;
 *)
-    if printf '%s' "$invite" | grep -Eq '^[^@ ?#/:]+@[^@ ?#/:]+$'; then
+    if is_email "$invite"; then
         invite_email=$invite
     else
         log "warning: GELABBER_INVITE_REQUEST is neither an https:// URL nor an email address $SEE"
@@ -225,37 +257,43 @@ for page in $LEGAL_PAGES; do
         published="$published $page"
     fi
 done
-for page in $LEGAL_PAGES; do
-    case " $published " in
-    *" $page "*) on=1 ;;
-    *) on= ;;
-    esac
-    set_value "PAGE_$(echo "$page" | tr 'a-z' 'A-Z')" "$on"
-done
 
 # The legal pages. The operator's text in one language only is shown under
-# both, with a notice in the other.
-for page in $published; do
-    ok=1
-    for lang in de en; do
-        other=$(other_lang "$lang")
-        text=
-        set_value FRAGMENT_LANG "$lang"
-        set_value ONLY_OTHER_LANGUAGE ""
-        if has_text "$LEGAL/$page.$lang.html"; then
-            text="$LEGAL/$page.$lang.html"
-        elif has_text "$LEGAL/$page.$other.html"; then
-            text="$LEGAL/$page.$other.html"
-            set_value FRAGMENT_LANG "$other"
-            set_value ONLY_OTHER_LANGUAGE 1
-        fi
-        render "$lang" "$(slug "$lang" "$page")" "$text" || ok=
+# both, with a notice in the other. A page that cannot be written is dropped
+# and the others rendered again, so none links to it.
+while :; do
+    for page in $LEGAL_PAGES; do
+        case " $published " in
+        *" $page "*) on=1 ;;
+        *) on= ;;
+        esac
+        set_value "PAGE_$(echo "$page" | tr 'a-z' 'A-Z')" "$on"
     done
-    if [ -z "$ok" ]; then
-        rm -f "$OUT/de/$(slug de "$page").html" "$OUT/en/$(slug en "$page").html"
-        log "warning: cannot write the $page page to $OUT; it is not published $SEE"
-        published=$(printf '%s' " $published " | sed "s/ $page / /")
-    fi
+    dropped=
+    for page in $published; do
+        ok=1
+        for lang in de en; do
+            other=$(other_lang "$lang")
+            text=
+            set_value FRAGMENT_LANG "$lang"
+            set_value ONLY_OTHER_LANGUAGE ""
+            if has_text "$LEGAL/$page.$lang.html"; then
+                text="$LEGAL/$page.$lang.html"
+            elif has_text "$LEGAL/$page.$other.html"; then
+                text="$LEGAL/$page.$other.html"
+                set_value FRAGMENT_LANG "$other"
+                set_value ONLY_OTHER_LANGUAGE 1
+            fi
+            render "$lang" "$(slug "$lang" "$page")" "$text" || ok=
+        done
+        if [ -z "$ok" ]; then
+            rm -f "$OUT/de/$(slug de "$page").html" "$OUT/en/$(slug en "$page").html"
+            log "warning: cannot write the $page page to $OUT; it is not published $SEE"
+            published=$(printf '%s' " $published " | sed "s/ $page / /")
+            dropped=1
+        fi
+    done
+    [ -n "$dropped" ] || break
 done
 
 if [ "$landing" = true ]; then

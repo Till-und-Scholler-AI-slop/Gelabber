@@ -363,6 +363,8 @@ Values, all empty by default (commented in `.env.example`):
 | `GELABBER_OPERATOR_GUIDE_URL` | "Read the operator guide" | this file on GitHub |
 | `APP_PUBLIC_URL` | the same value as for account mail; absolute canonical and language links, and the sitemap | those links and the sitemap are left out |
 
+An email value that is not a plain address (`name@host`, nothing after it), or a URL value that does not start with `http://` or `https://`, is treated as empty, and the log warns.
+
 Text files in `deploy/compose/legal/`, mounted read-only into `web` (details in `legal/README.md`; `.gitignore` keeps them out of commits):
 
 - `privacy.de.html`, `privacy.en.html`: Datenschutz / Privacy.

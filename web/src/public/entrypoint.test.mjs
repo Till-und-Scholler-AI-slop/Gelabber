@@ -289,6 +289,84 @@ describe.skipIf(process.platform === "win32")("public pages at start", () => {
     expect(wrong.log).toMatch(/GELABBER_INVITE_REQUEST is neither/);
   });
 
+  it("uses no link value that is not an address or an http(s) URL", () => {
+    const result = publish({
+      ...OPERATOR,
+      GELABBER_LANDING: "true",
+      GELABBER_CONTACT_EMAIL: "x@y.de?bcc=evil@z",
+      GELABBER_REPORT_EMAIL: "melden@example.org?cc=a@b",
+      GELABBER_SOURCE_URL: "javascript:alert(1)",
+      GELABBER_OPERATOR_GUIDE_URL: "http://guide.example.org/",
+      APP_PUBLIC_URL: "gelabber.example.org",
+    });
+    const landing = result.read("en/index.html");
+    expect(landing).not.toContain("javascript:");
+    expect(landing).toContain(
+      'href="https://github.com/Till-und-Scholler-AI-slop/Gelabber"',
+    );
+    expect(landing).toContain('href="http://guide.example.org/"');
+    // The contact address is neither the invite target nor "Write to".
+    expect(landing).not.toContain("mailto:");
+    expect(landing).not.toContain("Request an invite");
+    expect(landing).not.toContain('rel="canonical"');
+    expect(result.read("sitemap.xml")).toBeNull();
+    const imprint = result.read("en/imprint.html");
+    expect(imprint).not.toContain("?cc=");
+    expect(imprint.match(/mailto:kontakt@example\.org/g)).toHaveLength(2);
+    for (const name of [
+      "GELABBER_CONTACT_EMAIL is not an email address",
+      "GELABBER_REPORT_EMAIL is not an email address",
+      "GELABBER_SOURCE_URL is not an http(s):// URL",
+      "APP_PUBLIC_URL is not an http(s):// URL",
+    ])
+      expect(result.log).toContain(name);
+    expect(result.log).not.toContain("GELABBER_OPERATOR_GUIDE_URL");
+
+    const operator = publish({
+      ...OPERATOR,
+      GELABBER_OPERATOR_EMAIL: "kontakt@example.org?bcc=a@b",
+    });
+    expect(operator.files).toEqual([]);
+    expect(operator.log).toMatch(
+      /the imprint page is not published: missing GELABBER_OPERATOR_EMAIL /,
+    );
+  });
+
+  it("links no legal page that could not be written", () => {
+    // A broken privacy template makes its render fail after the flags are set.
+    const broken = mkdtempSync(join(root, "broken-templates-"));
+    for (const lang of ["de", "en"]) {
+      mkdirSync(join(broken, lang));
+      for (const file of readdirSync(join(templates, lang)))
+        writeFileSync(
+          join(broken, lang, file),
+          readFileSync(join(templates, lang, file)),
+        );
+    }
+    writeFileSync(join(broken, "en", "privacy.html"), "<!--end:X-->\n");
+    const result = publish(
+      { ...OPERATOR, GELABBER_LANDING: "true", GELABBER_PUBLIC_TEMPLATES: broken },
+      { "privacy.en.html": "<p>p</p>", "terms.en.html": "<p>t</p>" },
+    );
+    expect(result.log).toMatch(/cannot write the privacy page/);
+    expect(result.files).toEqual([
+      "de/impressum.html",
+      "de/index.html",
+      "de/nutzungsbedingungen.html",
+      "en/imprint.html",
+      "en/index.html",
+      "en/terms.html",
+    ]);
+    for (const file of result.files) {
+      expect(result.read(file)).not.toContain("/de/datenschutz");
+      expect(result.read(file)).not.toContain("/en/privacy");
+    }
+    expect(result.read("de/index.html")).toContain(
+      '<a href="/de/nutzungsbedingungen">',
+    );
+    expect(Object.keys(result.json.legal)).toEqual(["imprint", "terms"]);
+  });
+
   it("describes what it published in public-pages.json, robots.txt and sitemap.xml", () => {
     const result = publish(
       {
