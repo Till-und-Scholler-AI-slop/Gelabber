@@ -1,13 +1,14 @@
 // Einstellungen → Sicherheit: the section "Anmeldung" with the password and
-// one row per sign-in provider (#518), and "Angemeldete Geräte" with one row
-// per signed-in device and signing out every device (#519).
+// one row per sign-in provider (#518), "Angemeldete Geräte" with one row
+// per signed-in device and signing out every device, and "Kontodaten" with
+// the data export and deleting the account (#519).
 
 import {
   useMutation,
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   useEffect,
   useId,
@@ -17,6 +18,21 @@ import {
   type ReactNode,
 } from "react";
 
+import {
+  deleteAndLeave,
+  deletionRefusal,
+  ownedServers,
+  type DeleteConfirmation,
+  type OwnedServer,
+} from "../account/deletion.ts";
+import {
+  EXPORT_DOWNLOAD_URL,
+  exportKey,
+  exportRequestError,
+  exportRow,
+  requestExport,
+  useExport,
+} from "../account/export.ts";
 import { ApiError } from "../api/client.ts";
 import {
   errorMessage,
@@ -56,12 +72,14 @@ import {
 import type { AuthProvider, SignInMethods } from "../auth/types.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { confirmAction } from "../components/confirm.ts";
+import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { LoadError } from "../components/LoadError.tsx";
 import { GhostButton, Modal } from "../components/Modal.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { Badge } from "../components/ui/Badge.tsx";
+import { buttonClass } from "../components/ui/buttonClass.ts";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { PasswordField } from "../components/ui/PasswordField.tsx";
 import { SkeletonRows } from "../components/ui/Skeleton.tsx";
@@ -74,6 +92,7 @@ import { account } from "../i18n/catalogs/account.ts";
 import { auth } from "../i18n/catalogs/auth.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
+import { useServer, useServers } from "../servers/queries.ts";
 import { leaveVoice } from "../voice/session.ts";
 import "./settings.css";
 
@@ -100,6 +119,7 @@ function AccountSecurity({ userId, email }: { userId: string; email: string }) {
       </p>
       <SignInSection userId={userId} />
       <DevicesSection userId={userId} />
+      <AccountDataSection userId={userId} />
     </>
   );
 }
@@ -850,4 +870,386 @@ function failureMessage(error: unknown): string | null {
   if (error instanceof ApiError) return errorMessage(error.code);
   if (error instanceof DOMException && error.name === "AbortError") return null;
   return errorMessage("internal");
+}
+
+/** The section "Kontodaten": the data export and deleting the account. */
+export function AccountDataSection({ userId }: { userId: string }) {
+  const t = useT(account);
+  return (
+    <section
+      className="settings-group settings-action-section"
+      aria-labelledby="account-data-heading"
+    >
+      <h3 id="account-data-heading" className="settings-group-title">
+        {t("data.title")}
+      </h3>
+      <ul className="settings-action-list">
+        <ExportRow userId={userId} />
+        <DeleteAccountRow userId={userId} />
+      </ul>
+    </section>
+  );
+}
+
+/** "Daten exportieren": its hint and button follow the export's state. */
+function ExportRow({ userId }: { userId: string }) {
+  const t = useT(account);
+  const queryClient = useQueryClient();
+  const query = useExport(userId);
+  const { status, show } = useInlineStatus();
+
+  const request = useMutation({
+    mutationFn: requestExport,
+    onSuccess: (next) => queryClient.setQueryData(exportKey(userId), next),
+    onError: (error) => {
+      // Another tab asked already: show that one being built.
+      if (error instanceof ApiError && error.code === "export_pending")
+        void queryClient.invalidateQueries({ queryKey: exportKey(userId) });
+      const message = exportRequestError(error);
+      if (message) show({ tone: "error", message });
+    },
+  });
+
+  if (!query.data) {
+    return (
+      <li className="settings-action-list__state">
+        {query.isError ? (
+          <LoadError
+            message={t("export.loadFailed")}
+            pending={query.isFetching}
+            onRetry={() => void query.refetch()}
+          />
+        ) : (
+          <SkeletonRows count={1} />
+        )}
+      </li>
+    );
+  }
+
+  const row = exportRow(query.data);
+  return (
+    <ActionRow
+      title={t("export.title")}
+      hint={row.hint}
+      status={status}
+      action={(describedBy) =>
+        row.action === "download" ? (
+          <a
+            href={EXPORT_DOWNLOAD_URL}
+            className={buttonClass({ variant: "primary", size: "sm" })}
+            aria-describedby={describedBy}
+          >
+            {t("export.download")}
+          </a>
+        ) : row.action === "building" ? (
+          <Button size="sm" disabled aria-describedby={describedBy}>
+            {t("export.building")}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            aria-describedby={describedBy}
+            pending={request.isPending}
+            pendingLabel={t("export.building")}
+            onClick={() => {
+              show(null);
+              request.mutate();
+            }}
+          >
+            {row.action === "retry" ? t("export.retry") : t("export.request")}
+          </Button>
+        )
+      }
+    />
+  );
+}
+
+function DeleteAccountRow({ userId }: { userId: string }) {
+  const t = useT(account);
+  const [open, setOpen] = useState(false);
+  return (
+    <ActionRow
+      title={t("delete.title")}
+      hint={t("delete.hint")}
+      status={null}
+      action={(describedBy) => (
+        <Button
+          size="sm"
+          variant="danger-outline"
+          aria-describedby={describedBy}
+          onClick={() => setOpen(true)}
+        >
+          {t("delete.title")}
+        </Button>
+      )}
+    >
+      <DeleteAccountDialog
+        userId={userId}
+        open={open}
+        onClose={() => setOpen(false)}
+      />
+    </ActionRow>
+  );
+}
+
+/**
+ * "Konto löschen". While the account owns servers (by the server list, or
+ * by the API's `409 owns_servers`, which outranks it) the dialog lists them
+ * with a way to their settings. Otherwise it asks for the password, or for
+ * the address of an account without one; that path may first want a fresh
+ * sign-in through the provider.
+ */
+export function DeleteAccountDialog({
+  userId,
+  open,
+  onClose,
+  initialOwned = null,
+  initialReauth = false,
+}: {
+  userId: string;
+  open: boolean;
+  onClose: () => void;
+  /** Opens with these servers in the way (for tests and previews). */
+  initialOwned?: OwnedServer[] | null;
+  /** Opens on the "confirm it is you" step (for tests and previews). */
+  initialReauth?: boolean;
+}) {
+  const listed = ownedServers(useServers().data);
+  const methods = useSignInMethods(userId).data;
+  // Until the methods are known, ask for the password as before sign-in.
+  const hasPassword = methods?.password ?? true;
+  const provider = methods ? signInProvider(methods) : null;
+  const [refused, setRefused] = useState<OwnedServer[] | null>(initialOwned);
+
+  const close = () => {
+    setRefused(null);
+    onClose();
+  };
+
+  const owned = refused ?? (listed.length > 0 ? listed : null);
+  if (owned) {
+    return <OwnedServersDialog servers={owned} open={open} onClose={close} />;
+  }
+  return (
+    <ConfirmDeleteDialog
+      hasPassword={hasPassword}
+      provider={provider}
+      open={open}
+      onClose={close}
+      onOwned={setRefused}
+      initialReauth={initialReauth}
+    />
+  );
+}
+
+function OwnedServersDialog({
+  servers,
+  open,
+  onClose,
+}: {
+  servers: OwnedServer[];
+  open: boolean;
+  onClose: () => void;
+}) {
+  const t = useT(account);
+  const tc = useT(common);
+  const leadId = useId();
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t("delete.title")}
+      describedBy={leadId}
+    >
+      <div className="settings-form">
+        <p id={leadId} className="settings-hint">
+          {t("delete.owned.lead")}
+        </p>
+        <ul className="settings-action-list">
+          {servers.map((server) => (
+            <OwnedServerRow key={server.id} server={server} />
+          ))}
+        </ul>
+        <div className="settings-dialog-actions">
+          <Button onClick={onClose}>{tc("close")}</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** A server in the way: its name, its members, and its settings. */
+function OwnedServerRow({ server }: { server: OwnedServer }) {
+  const t = useT(account);
+  // The list has no member count; the server's own detail does.
+  const detail = useServer(
+    server.member_count === undefined ? server.id : undefined,
+  ).data;
+  const count = server.member_count ?? detail?.members.length;
+  return (
+    <ActionRow
+      title={server.name}
+      hint={count === undefined ? "" : t("delete.owned.members", { count })}
+      status={null}
+      action={(describedBy) => (
+        <Link
+          to="/s/$serverId/settings"
+          params={{ serverId: server.id }}
+          hash="server-settings-gefahrenzone"
+          className={buttonClass({ size: "sm" })}
+          aria-describedby={describedBy}
+        >
+          {t("delete.owned.settings")}
+        </Link>
+      )}
+    />
+  );
+}
+
+function ConfirmDeleteDialog({
+  hasPassword,
+  provider,
+  open,
+  onClose,
+  onOwned,
+  initialReauth,
+}: {
+  hasPassword: boolean;
+  provider: AuthProvider | null;
+  open: boolean;
+  onClose: () => void;
+  onOwned: (servers: OwnedServer[]) => void;
+  initialReauth: boolean;
+}) {
+  const t = useT(account);
+  const tc = useT(common);
+  const ts = useT(settings);
+  const ta = useT(auth);
+  const navigate = useNavigate();
+  const form = useRef<HTMLFormElement>(null);
+  const leadId = useId();
+  const [value, setValue] = useState("");
+  const [reauth, setReauth] = useState(initialReauth);
+  const { errors, clear, clearField, setFields, fromError } =
+    useFormErrors(form);
+  const field = hasPassword ? "password" : "email";
+
+  const close = () => {
+    setValue("");
+    setReauth(false);
+    clear();
+    onClose();
+  };
+
+  const remove = useMutation({
+    mutationFn: (confirmation: DeleteConfirmation) =>
+      deleteAndLeave(confirmation, navigate),
+    onError: (error) => {
+      const refusal = deletionRefusal(error);
+      switch (refusal.kind) {
+        case "owned":
+          clear();
+          onOwned(refusal.servers);
+          return;
+        case "reauth":
+          clear();
+          setReauth(true);
+          return;
+        case "emailWrong":
+          setFields({ email: t("delete.emailWrong") });
+          return;
+        case "other":
+          fromError(error);
+      }
+    },
+  });
+
+  const confirm = useMutation({
+    mutationFn: (id: string) =>
+      startOidc(id, { purpose: "sign_in", redirect: SECURITY_PATH }),
+    onError: fromError,
+  });
+
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (value.trim().length === 0) {
+      setFields({ [field]: fieldMessage(field, "required") });
+      return;
+    }
+    remove.mutate(hasPassword ? { password: value } : { email: value.trim() });
+  };
+
+  const onChange = (next: string) => {
+    setValue(next);
+    clearField(field);
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={close}
+      title={t("delete.confirm.title")}
+      describedBy={leadId}
+      dirty={value !== ""}
+    >
+      <form ref={form} onSubmit={onSubmit} noValidate className="settings-form">
+        <p id={leadId} className="settings-hint">
+          {t("delete.confirm.lead")}
+        </p>
+        <p className="settings-hint">{t("delete.confirm.exportHint")}</p>
+        {hasPassword ? (
+          <PasswordField
+            id="delete_password"
+            label={t("delete.password")}
+            autoComplete="current-password"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            error={errors.fields.password}
+          />
+        ) : (
+          <Field
+            id="delete_email"
+            label={t("delete.email")}
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            error={errors.fields.email}
+            hint={t("delete.emailHint")}
+          />
+        )}
+        {reauth ? (
+          <div role="alert" className="settings-row-note">
+            <p>{errorMessage("reauth_required")}</p>
+            {provider ? (
+              <Button
+                size="sm"
+                className="settings-signin-reauth"
+                pending={confirm.isPending}
+                pendingLabel={ta("oidc.redirecting", {
+                  provider: provider.name,
+                })}
+                onClick={() => confirm.mutate(provider.id)}
+              >
+                {ts("security.signIn.reauth", { provider: provider.name })}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        <FormError message={errors.form} />
+        <div className="settings-dialog-actions">
+          <GhostButton onClick={close}>{tc("cancel")}</GhostButton>
+          <Button
+            type="submit"
+            variant="danger"
+            pending={remove.isPending}
+            pendingLabel={t("delete.deleting")}
+          >
+            {t("delete.title")}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
 }

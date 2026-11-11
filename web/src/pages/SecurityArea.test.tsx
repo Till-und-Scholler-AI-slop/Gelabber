@@ -11,13 +11,39 @@ const fixture = vi.hoisted(() => ({ search: {} as Record<string, unknown> }));
 vi.mock("@tanstack/react-router", () => ({
   useSearch: () => fixture.search,
   useNavigate: () => () => Promise.resolve(),
+  Link: ({
+    children,
+    to,
+    params,
+    hash,
+    className,
+  }: {
+    children: ReactNode;
+    to: string;
+    params?: Record<string, string>;
+    hash?: string;
+    className?: string;
+  }) => (
+    <a
+      href={`${Object.entries(params ?? {}).reduce(
+        (path, [key, value]) => path.replace(`$${key}`, value),
+        to,
+      )}${hash ? `#${hash}` : ""}`}
+      className={className}
+    >
+      {children}
+    </a>
+  ),
 }));
 
+import { exportKey, type ExportStatus } from "../account/export.ts";
 import { sessionsKey } from "../auth/devices.ts";
 import { signInMethodsKey } from "../auth/signInMethods.ts";
 import {
+  AccountDataSection,
   ChangePasswordDialog,
   ConnectProviderDialog,
+  DeleteAccountDialog,
   DevicesSection,
   SetPasswordDialog,
   SignInSection,
@@ -335,5 +361,205 @@ describe("Sicherheit → Angemeldete Geräte", () => {
     expect(button(row(html, "Sign out everywhere")).label).toBe(
       "Sign out on all devices",
     );
+  });
+});
+
+describe("Sicherheit → Kontodaten", () => {
+  const data = (status?: ExportStatus) =>
+    wrap(<AccountDataSection userId={USER} />, undefined, (client) => {
+      if (status) client.setQueryData(exportKey(USER), status);
+    });
+  const exportRowOf = (html: string) => row(html, "Daten exportieren");
+
+  it("titles the section, the export first, then Konto löschen", () => {
+    const html = data({ export: null, mail: true });
+    expect(html).toMatch(
+      /<h3 id="account-data-heading" class="settings-group-title">Kontodaten<\/h3>/,
+    );
+    const titles = [
+      ...html.matchAll(/class="settings-action-row__title">([^<]+)/g),
+    ].map((m) => m[1]);
+    expect(titles).toEqual(["Daten exportieren", "Konto löschen"]);
+    const remove = row(html, "Konto löschen");
+    expect(remove).toContain(
+      "Endgültig. Server, die dir gehören, übergibst oder löschst du vorher.",
+    );
+    expect(remove).toContain("ui-button--danger-outline");
+    expect(button(remove)).toEqual({ label: "Konto löschen", disabled: false });
+  });
+
+  it("offers a first export", () => {
+    const html = exportRowOf(data({ export: null, mail: true }));
+    expect(html).toContain(
+      "Deine Nachrichten, Dateien und Kontodaten als Archiv. Du bekommst eine E-Mail, sobald es bereitsteht.",
+    );
+    expect(button(html)).toEqual({
+      label: "Export anfordern",
+      disabled: false,
+    });
+  });
+
+  it("disables the button while the archive is built", () => {
+    const html = exportRowOf(
+      data({
+        export: {
+          state: "running",
+          requested_at: "2026-11-10T18:00:00Z",
+          finished_at: null,
+          expires_at: null,
+          size_bytes: null,
+        },
+        mail: false,
+      }),
+    );
+    expect(html).toContain("Wird erstellt. Das kann eine Weile dauern.");
+    expect(button(html)).toEqual({ label: "Wird erstellt…", disabled: true });
+  });
+
+  it("links the ready archive as the primary action", () => {
+    const html = exportRowOf(
+      data({
+        export: {
+          state: "ready",
+          requested_at: "2026-11-10T18:00:00Z",
+          finished_at: "2026-11-10T18:05:00Z",
+          expires_at: "2026-11-17T12:00:00Z",
+          size_bytes: 2_621_440,
+        },
+        mail: true,
+      }),
+    );
+    expect(html).toContain("Bereit bis 17. November 2026, 2,5 MB.");
+    expect(html).toMatch(
+      /<a href="\/api\/me\/export\/download" class="ui-button ui-button--primary ui-button--sm"[^>]*>Herunterladen<\/a>/,
+    );
+  });
+
+  it("offers to ask again after a failure", () => {
+    const html = exportRowOf(
+      data({
+        export: {
+          state: "failed",
+          requested_at: "2026-11-10T18:00:00Z",
+          finished_at: "2026-11-10T18:05:00Z",
+          expires_at: null,
+          size_bytes: null,
+        },
+        mail: true,
+      }),
+    );
+    expect(html).toContain("Der Export ist fehlgeschlagen.");
+    expect(button(html).label).toBe("Erneut anfordern");
+  });
+
+  it("waits for the export state, Konto löschen ready", () => {
+    const html = data();
+    expect(html).toContain("ui-skeleton");
+    expect(html).not.toContain(">Daten exportieren<");
+    expect(button(row(html, "Konto löschen")).label).toBe("Konto löschen");
+  });
+
+  it("speaks English with the interface", () => {
+    setLocale("en", { persist: false });
+    const html = data({ export: null, mail: false });
+    expect(html).toContain(">Account data</h3>");
+    const exported = row(html, "Export data");
+    expect(exported).toContain(
+      "Your messages, files and account data as an archive. You can download it here as soon as it is ready.",
+    );
+    expect(button(exported).label).toBe("Request export");
+    expect(button(row(html, "Delete account")).label).toBe("Delete account");
+  });
+});
+
+describe("the dialog Konto löschen", () => {
+  const SERVER_ID = "00000000-0000-0000-0000-0000000000b1";
+
+  const dialog = (
+    methods: SignInMethods,
+    prepare?: (client: QueryClient) => void,
+    initialOwned?: { id: string; name: string; member_count?: number }[],
+  ) =>
+    wrap(
+      <DeleteAccountDialog
+        userId={USER}
+        open
+        onClose={() => {}}
+        initialOwned={initialOwned ?? null}
+      />,
+      methods,
+      prepare,
+    );
+
+  it("asks for the password when no server is in the way", () => {
+    const html = dialog({ password: true, providers: [] });
+    expect(html).toContain(">Konto endgültig löschen?</h2>");
+    expect(html).toContain(
+      "Deine Nachrichten, Dateien, Direktnachrichten und Reaktionen werden gelöscht. Du verlässt alle Server. Das lässt sich nicht rückgängig machen.",
+    );
+    expect(html).toContain(
+      "Exportiere deine Daten vorher, wenn du sie behalten willst.",
+    );
+    expect(html).toMatch(/for="delete_password"[^>]*>Passwort/);
+    expect(html).toMatch(
+      /autoComplete="current-password"|autocomplete="current-password"/,
+    );
+    expect(html).toMatch(/<button type="button"[^>]*>Abbrechen<\/button>/);
+    expect(html).toMatch(
+      /<button type="submit" class="ui-button ui-button--danger[^"]*"[^>]*>Konto löschen<\/button>/,
+    );
+  });
+
+  it("asks an account without a password for its address", () => {
+    const html = dialog({ password: false, providers: [CONNECTED] });
+    expect(html).not.toContain('for="delete_password"');
+    expect(html).toMatch(/for="delete_email"[^>]*>E-Mail-Adresse/);
+    expect(html).toContain('type="email"');
+    expect(html).toContain(
+      "Dein Konto hat kein Passwort. Gib zur Bestätigung seine E-Mail-Adresse ein.",
+    );
+  });
+
+  it("offers a fresh sign-in through the provider after reauth_required", () => {
+    const html = wrap(
+      <DeleteAccountDialog
+        userId={USER}
+        open
+        onClose={() => {}}
+        initialReauth
+      />,
+      { password: false, providers: [CONNECTED] },
+    );
+    expect(html).toContain(
+      "Bitte bestätige zuerst, dass du es bist, und melde dich noch einmal an.",
+    );
+    expect(html).toMatch(/<button type="button"[^>]*>Mit Google bestätigen/);
+  });
+
+  it("lists the servers in the way, each with a way to its settings", () => {
+    // As from the server list, which has no member count.
+    const html = dialog({ password: true, providers: [] }, undefined, [
+      { id: SERVER_ID, name: "Wohnzimmer" },
+    ]);
+    expect(html).toContain(">Konto löschen</h2>");
+    expect(html).toContain(
+      "Dir gehören noch diese Server. Übergib sie an ein anderes Mitglied oder lösche sie, bevor du dein Konto löschst.",
+    );
+    const owned = row(html, "Wohnzimmer");
+    expect(owned).not.toContain("Mitglied");
+    expect(owned).toContain(
+      `<a href="/s/${SERVER_ID}/settings#server-settings-gefahrenzone" class="ui-button ui-button--secondary ui-button--sm"`,
+    );
+    expect(owned).toContain(">Servereinstellungen</a>");
+    expect(html).not.toContain('for="delete_password"');
+    expect(html).toMatch(/<button type="button"[^>]*>Schließen<\/button>/);
+  });
+
+  it("shows the servers of a 409 owns_servers the same way", () => {
+    const html = dialog({ password: true, providers: [] }, undefined, [
+      { id: "s9", name: "Werkstatt", member_count: 1 },
+    ]);
+    expect(html).toContain(">Konto löschen</h2>");
+    expect(row(html, "Werkstatt")).toContain("1 Mitglied");
   });
 });
