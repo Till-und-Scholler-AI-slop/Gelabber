@@ -406,7 +406,7 @@ a {
 .legal-notice {
   margin-top: var(--lr-space-8);
   padding: 10px var(--lr-space-3);
-  border-left: 3px solid var(--lr-accent);
+  border: 1px solid color-mix(in srgb, var(--lr-accent) 45%, var(--lr-border));
   border-radius: var(--lr-radius-sm);
   background: color-mix(in srgb, var(--lr-accent) 14%, var(--lr-panel));
 }
