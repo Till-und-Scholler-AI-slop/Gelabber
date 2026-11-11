@@ -176,6 +176,10 @@
 .operator-table .is-details {
   max-width: 320px;
 }
+/* An expanded report grows tall: its other cells stay on the first line. */
+.operator-table--reports tbody tr:has(.is-details [aria-expanded="true"]) > * {
+  vertical-align: top;
+}
 .operator-server {
   display: inline-flex;
   align-items: center;
