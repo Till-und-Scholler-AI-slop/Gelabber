@@ -82,7 +82,7 @@ pub async fn public_profile(
     Ok(sqlx::query_as::<_, PublicProfile>(concat!(
         "SELECT u.id, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, u.status_text, \
                 u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration \
-         FROM users u WHERE u.id = $2 AND ",
+         FROM users u WHERE u.id = $2 AND u.deleted_at IS NULL AND ",
         card_visible_to_viewer!()
     ))
     .bind(viewer)
@@ -95,7 +95,7 @@ pub async fn public_profile(
 /// [`public_profile`]. Gates banner downloads, which only the card shows.
 pub async fn card_visible(db: &PgPool, viewer: Uuid, target: Uuid) -> Result<bool, ApiError> {
     Ok(sqlx::query_scalar::<_, bool>(concat!(
-        "SELECT EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND ",
+        "SELECT EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.deleted_at IS NULL AND ",
         card_visible_to_viewer!(),
         ")"
     ))
@@ -227,7 +227,7 @@ pub async fn insert_unverified_in(
          SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, \
              locale = EXCLUDED.locale, updated_at = now() \
          WHERE users.registration_pending AND users.email_verified_at IS NULL \
-             AND users.disabled_at IS NULL \
+             AND users.disabled_at IS NULL AND users.deleted_at IS NULL \
          RETURNING id",
     )
     .bind(email)
@@ -245,16 +245,20 @@ pub async fn insert_unverified_in(
     Ok(id)
 }
 
-/// The account behind `email` and whether its address is confirmed.
+/// The account behind `email` and whether its address is confirmed. An
+/// account under deletion (migration 0034) has none.
 pub async fn verified_by_email(db: &PgPool, email: &str) -> Result<Option<(Uuid, bool)>, ApiError> {
     Ok(sqlx::query_as(
-        "SELECT id, email_verified_at IS NOT NULL FROM users WHERE lower(email) = $1",
+        "SELECT id, email_verified_at IS NOT NULL FROM users \
+         WHERE lower(email) = $1 AND deleted_at IS NULL",
     )
     .bind(email)
     .fetch_optional(db)
     .await?)
 }
 
+/// An account under deletion has none, so it signs in like an unknown
+/// address.
 pub async fn credentials_by_email(
     db: &PgPool,
     email: &str,
@@ -262,7 +266,7 @@ pub async fn credentials_by_email(
     Ok(sqlx::query_as::<_, Credentials>(
         "SELECT id, password_hash, email_verified_at IS NOT NULL AS email_verified, \
              disabled_at IS NOT NULL AS disabled \
-             FROM users WHERE lower(email) = $1",
+             FROM users WHERE lower(email) = $1 AND deleted_at IS NULL",
     )
     .bind(email)
     .fetch_optional(db)
@@ -320,11 +324,12 @@ pub async fn set_password_hash(
     Ok(revoked)
 }
 
+/// `None` for an unknown id and for an account under deletion.
 pub async fn by_id(db: &PgPool, id: Uuid) -> Result<Option<User>, ApiError> {
     Ok(sqlx::query_as::<_, User>(
         "SELECT id, email, name, avatar_url, created_at, bio, pronouns, status_text, \
              accent_color, banner_color, banner_url, avatar_decoration, locale \
-         FROM users WHERE id = $1",
+         FROM users WHERE id = $1 AND deleted_at IS NULL",
     )
     .bind(id)
     .fetch_optional(db)
