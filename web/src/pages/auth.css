@@ -64,8 +64,11 @@
   letter-spacing: -0.03em;
   overflow-wrap: anywhere;
 }
+/* A heading focused on arrival shows no ring, nor the ring's page-coloured
+   gap (index.css). */
 .lr-auth-card h1:focus {
   outline: none;
+  box-shadow: none;
 }
 @media (max-width: 480px) {
   .lr-auth-card {
