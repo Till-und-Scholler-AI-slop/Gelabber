@@ -39,7 +39,8 @@ impl Location {
             })
             .collect();
         Self {
-            route: Route::parse(path),
+            // With its query: `/discover` keeps its search in the route.
+            route: Route::parse(rest),
             path: path.to_owned(),
             query,
             fragment: fragment.to_owned(),
@@ -854,6 +855,7 @@ pub fn is_workspace(route: &Route) -> bool {
             | Route::Dms
             | Route::Dm(_)
             | Route::Profile
+            | Route::Discover(_)
     )
 }
 
@@ -1048,5 +1050,23 @@ mod tests {
             client.with_state(|s| s.detail(home).is_some()),
             "the loaded server was thrown away"
         );
+    }
+    /// The directory's search lives in the address, and the page is for
+    /// signed-in people only.
+    #[test]
+    fn discover_keeps_its_search_in_the_location() {
+        let l = Location::parse("/discover?q=rust&lang=en");
+        assert_eq!(
+            l.route,
+            Route::Discover(crate::route::DiscoverSearch::new(Some("rust"), Some("en")))
+        );
+        assert_eq!(l.href(), "/discover?q=rust&lang=en");
+        assert!(is_workspace(&l.route));
+        let mut nav = Nav::new("/discover");
+        nav.navigate_route(&Route::Discover(crate::route::DiscoverSearch::new(
+            Some("film"),
+            None,
+        )));
+        assert_eq!(nav.location().query("q"), Some("film"));
     }
 }
