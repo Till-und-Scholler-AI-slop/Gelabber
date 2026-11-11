@@ -335,7 +335,7 @@ Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As
 
 ## Sign-in with Google
 
-People can sign in with their Google account next to email and password ("Mit Google anmelden" on the sign-in and register pages, and in the desktop app). It is off until both Google values are set; email and password stay available to everyone either way. Gelabber talks to Google through OpenID Connect directly, with no SDK, script or tracking from Google in the pages.
+People can sign in with their Google account next to email and password ("Über Google anmelden" on the sign-in and register pages, and in the desktop app). It is off until both Google values are set; email and password stay available to everyone either way. Gelabber talks to Google through OpenID Connect directly, with no SDK, script or tracking from Google in the pages.
 
 **In the Google Cloud console** (a project of your own):
 

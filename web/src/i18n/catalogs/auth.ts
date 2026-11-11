@@ -238,6 +238,8 @@ export const auth = defineCatalog(
     // Sign-in through a provider (components/ProviderButton.tsx) and the
     // `?oidc_error=` it can come back with (auth/rules.ts).
     "oidc.signInWith": "Mit {provider} anmelden",
+    // Google's own German wording for its "Sign in with Google" button.
+    "oidc.signInWithGoogle": "Über Google anmelden",
     "oidc.redirecting": "Weiter zu {provider}…",
     "oidc.or": "oder",
     "oidc.error.cancelled": "Anmeldung abgebrochen.",
@@ -466,6 +468,7 @@ export const auth = defineCatalog(
     "routeError.reload": "Reload page",
 
     "oidc.signInWith": "Sign in with {provider}",
+    "oidc.signInWithGoogle": "Sign in with Google",
     "oidc.redirecting": "Continuing to {provider}…",
     "oidc.or": "or",
     "oidc.error.cancelled": "Sign-in cancelled.",

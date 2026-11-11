@@ -276,7 +276,7 @@ describe("in English", () => {
 describe("sign-in through a provider", () => {
   const GOOGLE = { id: "google", name: "Google" };
   const BUTTON =
-    /<button type="button" class="ui-button ui-button--secondary ui-button--lg auth-provider"><span class="auth-provider__mark" aria-hidden="true">G<\/span>Mit Google anmelden<\/button>/;
+    /<button type="button" class="ui-button ui-button--secondary ui-button--lg auth-provider auth-provider--google auth-provider--light"><svg class="auth-provider__logo" viewBox="0 0 48 48" width="20" height="20" aria-hidden="true" focusable="false">(<path fill="#[0-9A-F]{6}" d="[^"]+"><\/path>){4}<\/svg>Über Google anmelden<\/button>/;
   const DIVIDER = '<p class="auth-divider">oder</p>';
 
   afterEach(() => setLocale("de", { persist: false }));
@@ -301,6 +301,16 @@ describe("sign-in through a provider", () => {
       expect(html.indexOf("auth-provider")).toBeLessThan(html.indexOf(DIVIDER));
       expect(html.indexOf(DIVIDER)).toBeLessThan(html.indexOf("<form"));
     }
+  });
+
+  it("draws Google's standard colour G, and a neutral initial for others", () => {
+    fixture.providers = [GOOGLE, { id: "acme", name: "acme" }];
+    const html = render(<LoginPage />);
+    for (const colour of ["#EA4335", "#4285F4", "#FBBC05", "#34A853"])
+      expect(html).toContain(`fill="${colour}"`);
+    expect(html).toMatch(
+      /<button type="button" class="ui-button ui-button--secondary ui-button--lg auth-provider"><span class="auth-provider__mark" aria-hidden="true">A<\/span>Mit acme anmelden<\/button>/,
+    );
   });
 
   it("speaks English too", () => {

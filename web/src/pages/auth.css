@@ -167,6 +167,40 @@
   border-radius: 50%;
   font: 700 11px / 1 var(--lr-font);
 }
+/* Google's button keeps Google's colours and font on every theme: its light
+   theme on light pages, its dark theme on dark ones (components/pageTone.ts). */
+.auth-provider--google.ui-button--secondary {
+  gap: 10px;
+  padding-inline: 12px;
+  font:
+    500 14px / 20px "Google Sans",
+    Roboto,
+    var(--lr-font);
+  letter-spacing: 0.25px;
+}
+.auth-provider--google.auth-provider--light {
+  border-color: #747775;
+  background: #ffffff;
+  color: #1f1f1f;
+}
+.auth-provider--google.auth-provider--light:hover:not(:disabled) {
+  background: color-mix(in srgb, #1f1f1f 8%, #ffffff);
+}
+.auth-provider--google.auth-provider--dark {
+  border-color: #8e918f;
+  background: #131314;
+  color: #e3e3e3;
+}
+.auth-provider--google.auth-provider--dark:hover:not(:disabled) {
+  background: color-mix(in srgb, #e3e3e3 8%, #131314);
+}
+.auth-provider--google:disabled:not([aria-busy="true"]) {
+  opacity: 0.6;
+}
+.auth-provider__logo {
+  width: 20px;
+  height: 20px;
+}
 .auth-divider {
   display: flex;
   align-items: center;
