@@ -4,6 +4,7 @@
 
 use egui::{Id, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use gelabber_client::{ApiError, Invite, Server};
+use gelabber_i18n::{common, server_settings as texts};
 use uuid::Uuid;
 
 use crate::app::AppCtx;
@@ -14,28 +15,28 @@ use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
 use crate::widgets::{Button, InlineStatus, Modal, StatusTone};
 
-const EXPIRY: [(&str, Option<u32>); 4] = [
-    ("1 Stunde", Some(1)),
-    ("24 Stunden", Some(24)),
-    ("7 Tage", Some(168)),
-    ("Nie", None),
+const EXPIRY: [(fn() -> &'static str, Option<u32>); 4] = [
+    (texts::terms_expiry_hour, Some(1)),
+    (texts::terms_expiry_day, Some(24)),
+    (texts::terms_expiry_week, Some(168)),
+    (texts::terms_expiry_never, None),
 ];
-const USES: [(&str, Option<u32>); 4] = [
-    ("1", Some(1)),
-    ("5", Some(5)),
-    ("25", Some(25)),
-    ("Unbegrenzt", None),
+const USES: [(fn() -> &'static str, Option<u32>); 4] = [
+    (|| "1", Some(1)),
+    (|| "5", Some(5)),
+    (|| "25", Some(25)),
+    (texts::terms_uses_unlimited, None),
 ];
 
 /// `termsSummary`: "gültig 7 Tage · unbegrenzt nutzbar".
 fn summary(expiry: usize, uses: usize) -> String {
     let e = match EXPIRY[expiry].1 {
-        None => "unbegrenzt gültig".to_owned(),
-        Some(_) => format!("gültig {}", EXPIRY[expiry].0),
+        None => texts::terms_valid_forever().to_owned(),
+        Some(_) => texts::terms_valid_for(EXPIRY[expiry].0()),
     };
     let u = match USES[uses].1 {
-        None => "unbegrenzt nutzbar".to_owned(),
-        Some(n) => format!("{n}-mal nutzbar"),
+        None => texts::terms_uses_unlimited_summary().to_owned(),
+        Some(n) => texts::terms_uses_limited(n),
     };
     format!("{e} · {u}")
 }
@@ -97,7 +98,7 @@ impl Dialog {
                         if !self.handed_out {
                             Self::revoke(app, old.code);
                         }
-                        let text = format!("Neuer Link · {}", summary(self.expiry, self.uses));
+                        let text = texts::invite_new_link(&summary(self.expiry, self.uses));
                         self.status.line = Some((text, StatusTone::Neutral, ctx.input(|i| i.time)));
                     }
                     self.handed_out = false;
@@ -114,20 +115,17 @@ impl Dialog {
         }
         let theme = Theme::of(ctx);
         let c = theme.c;
-        let title = format!("Zu {} einladen", server.name);
+        let title = texts::invite_title(&server.name);
         let mut close = false;
         let out = Modal::new(("invite", self.server), &title).show(
             ctx,
             |ui| {
                 let width = ui.available_width();
                 if self.current.is_none() && self.creating.is_none() {
-                    let msg = format!(
-                        "Der Einladungslink konnte nicht erstellt werden. {}",
-                        self.error.clone().unwrap_or_default()
-                    );
+                    let msg = texts::invite_create_failed(&self.error.clone().unwrap_or_default());
                     controls::paragraph(ui, &msg, text::BODY, c.text, width);
                     ui.add_space(12.0);
-                    if ui.add(Button::new("Erneut versuchen").small()).clicked() {
+                    if ui.add(Button::new(common::try_again()).small()).clicked() {
                         self.make(app);
                     }
                     return;
@@ -138,12 +136,12 @@ impl Dialog {
                     .map(|(i, ..)| app.client.http().invite_link(&i.code))
                     .unwrap_or_default();
                 let shown = if self.creating.is_some() {
-                    "Link wird erstellt…".to_owned()
+                    texts::invite_making().to_owned()
                 } else {
                     link.clone()
                 };
                 controls::row(ui, 8.0, 37.0, |ui| {
-                    let copy_label = "Link kopieren";
+                    let copy_label = texts::invite_copy();
                     let bw = Block::single(ui, copy_label, text::UI.weight(600.0), c.text).width()
                         + 34.0
                         + 24.0;
@@ -176,7 +174,7 @@ impl Dialog {
                     if copy.clicked() {
                         if self.creating.is_some() {
                             self.status
-                                .show(ui, "Link wird erstellt…", StatusTone::Neutral);
+                                .show(ui, texts::invite_making(), StatusTone::Neutral);
                         } else if !link.is_empty() {
                             ui.ctx().copy_text(link.clone());
                             self.handed_out = true;
@@ -185,7 +183,7 @@ impl Dialog {
                                 .as_ref()
                                 .map(|(_, e, u)| summary(*e, *u))
                                 .unwrap_or_default();
-                            self.status.success(ui, format!("Link kopiert · {sum}"));
+                            self.status.success(ui, texts::invite_copied(&sum));
                         }
                     }
                 });
@@ -209,7 +207,7 @@ impl Dialog {
                     ui.add_space(12.0);
                     controls::paragraph(
                         ui,
-                        "Der neue Link konnte nicht erstellt werden. Der bisherige gilt weiter.",
+                        texts::invite_replace_failed(),
                         text::META,
                         c.danger,
                         width,
@@ -219,7 +217,7 @@ impl Dialog {
                 let top = ui.cursor().min;
                 crate::widgets::rule_h(ui.painter(), c.border, top.x..=top.x + width, top.y);
                 ui.add_space(13.0);
-                let label = "Ablauf & Limit ändern";
+                let label = texts::invite_terms_editor();
                 let lb = Block::single(ui, label, text::UI, c.muted);
                 let r = Rect::from_min_size(ui.cursor().min, vec2(lb.width() + 4.0 + 14.0, 32.0));
                 let resp = ui.interact(
@@ -260,11 +258,12 @@ impl Dialog {
                 if self.open_terms {
                     let mut changed = false;
                     for (caps, opts, which) in [
-                        ("LÄUFT AB NACH", EXPIRY.map(|e| e.0), 0),
-                        ("WIE OFT NUTZBAR", USES.map(|u| u.0), 1),
+                        (texts::invite_expires_after(), EXPIRY.map(|e| e.0()), 0),
+                        (texts::invite_uses_label(), USES.map(|u| u.0()), 1),
                     ] {
+                        let caps = caps.to_uppercase();
                         ui.add_space(8.0 + 8.0);
-                        controls::paint(ui, ui.cursor().min, caps, text::CAPS, c.muted);
+                        controls::paint(ui, ui.cursor().min, &caps, text::CAPS, c.muted);
                         ui.add_space(text::CAPS.line_px() + 8.0);
                         let sel = if which == 0 { self.expiry } else { self.uses };
                         if let Some(i) =

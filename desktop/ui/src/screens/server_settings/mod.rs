@@ -12,6 +12,7 @@ use gelabber_client::{
     ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, ServerDetail,
     ServerPatch,
 };
+use gelabber_i18n::{common, server_settings as texts};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
@@ -32,59 +33,57 @@ use crate::widgets::{
 };
 
 /// `PERMISSIONS` of servers/permissions.ts.
-const PERMISSIONS: [(Permission, &str, &str); 8] = [
+const PERMISSIONS: [(Permission, fn() -> &'static str, fn() -> &'static str); 8] = [
     (
         Permission::ManageServer,
-        "Server verwalten",
-        "Umbenennen, Rechte ändern, Einladungen, Kick und Ban.",
+        texts::permission_manage_server_label,
+        texts::permission_manage_server_hint,
     ),
     (
         Permission::ManageChannels,
-        "Kanäle verwalten",
-        "Kategorien und Kanäle anlegen, umbenennen, löschen.",
+        texts::permission_manage_channels_label,
+        texts::permission_manage_channels_hint,
     ),
     (
         Permission::ManageMessages,
-        "Nachrichten löschen",
-        "Fremde Nachrichten im Chat löschen.",
+        texts::permission_manage_messages_label,
+        texts::permission_manage_messages_hint,
     ),
     (
         Permission::MentionEveryone,
-        "@everyone und @here",
-        "Alle Mitglieder auf einmal erwähnen und benachrichtigen.",
+        texts::permission_mention_everyone_label,
+        texts::permission_mention_everyone_hint,
     ),
     (
         Permission::SendMessages,
-        "Nachrichten schreiben",
-        "In Textkanälen schreiben.",
+        texts::permission_send_messages_label,
+        texts::permission_send_messages_hint,
     ),
     (
         Permission::SendFiles,
-        "Dateien senden",
-        "Anhänge hochladen.",
+        texts::permission_send_files_label,
+        texts::permission_send_files_hint,
     ),
     (
         Permission::JoinVoice,
-        "Sprachkanälen beitreten",
-        "In Sprachkanälen reden, zuhören und die Kamera zeigen.",
+        texts::permission_join_voice_label,
+        texts::permission_join_voice_hint,
     ),
     (
         Permission::GoLive,
-        "Live gehen",
-        "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen.",
+        texts::permission_go_live_label,
+        texts::permission_go_live_hint,
     ),
 ];
 
-const SECTIONS: [(&str, &str); 6] = [
-    ("allgemein", "Allgemein"),
-    ("rechte", "Rechte"),
-    ("einladungen", "Einladungen"),
-    ("mitglieder", "Mitglieder"),
-    ("sperren", "Sperren"),
-    ("gefahrenzone", "Gefahrenzone"),
+const SECTIONS: [(&str, fn() -> &'static str); 6] = [
+    ("allgemein", texts::section_general),
+    ("rechte", texts::section_permissions),
+    ("einladungen", texts::section_invites),
+    ("mitglieder", texts::section_members),
+    ("sperren", texts::section_bans),
+    ("gefahrenzone", texts::section_danger),
 ];
-
-const NOT_SAVED: &str = "Nicht gespeichert – erneut versuchen";
 
 type Load<T> = Option<Pending<Result<T, ApiError>>>;
 
@@ -205,7 +204,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let c = &theme.c;
     let detail = app.client.with_state(|s| s.detail(server).cloned());
     let Some(detail) = detail else {
-        controls::header(ui, rect, "Servereinstellungen", None);
+        controls::header(ui, rect, texts::title(), None);
         let failed = app
             .client
             .with_state(|s| matches!(s.op(&format!("server:{server}")), Some(OpState::Failed(_))));
@@ -214,7 +213,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         }
         return;
     };
-    controls::header(ui, rect, "Servereinstellungen", Some(&detail.server.name));
+    controls::header(ui, rect, texts::title(), Some(&detail.server.name));
     let shared = state(&ctx);
     let mut s = shared.lock();
     // Each visit starts afresh, as the web's page mounts: lists, drafts and
@@ -241,7 +240,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let mut x = nav.left() + 32.0;
     let ids: Vec<(&'static str, &'static str)> = SECTIONS
         .iter()
-        .copied()
+        .map(|(id, label)| (*id, label()))
         .filter(|(id, _)| manage || matches!(*id, "mitglieder" | "gefahrenzone"))
         .collect();
     let mut links = Vec::with_capacity(ids.len());
@@ -299,48 +298,54 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
             section(
                 &mut col,
                 "allgemein",
-                "Allgemein",
-                Some("Ein neues Bild gilt sofort, den Namen übernimmst du mit Speichern."),
+                texts::section_general(),
+                Some(texts::general_hint()),
                 st,
             );
             general(&mut col, app, st, &detail);
             section(
                 &mut col,
                 "rechte",
-                "Rechte für Mitglieder",
-                Some("Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort."),
+                texts::permissions_title(),
+                Some(texts::permissions_hint()),
                 st,
             );
             permissions(&mut col, app, st, &detail);
             section(
                 &mut col,
                 "einladungen",
-                "Einladungen",
-                Some("Alle aktiven Links. Jedes Mitglied kann Links erstellen."),
+                texts::section_invites(),
+                Some(texts::invites_hint()),
                 st,
             );
             invites(&mut col, app, st, &detail);
         }
-        let title = format!("Mitglieder ({})", detail.members.len());
+        let title = texts::members_title(detail.members.len());
         section(&mut col, "mitglieder", &title, None, st);
         members(&mut col, app, st, &detail, manage);
         if manage {
             section(
                 &mut col,
                 "sperren",
-                "Gesperrte Konten",
-                Some("Gesperrte User können auch mit einem Einladungslink nicht wieder beitreten."),
+                texts::bans_title(),
+                Some(texts::bans_hint()),
                 st,
             );
             bans(&mut col, app, st);
         }
         let owner = detail.server.role == Role::Owner;
         let hint = if owner {
-            "Löscht Kanäle, Kategorien, Nachrichten, Einladungen und Mitgliedschaften endgültig."
+            texts::danger_owner_hint()
         } else {
-            "Wieder beitreten kannst du nur mit einem neuen Einladungslink."
+            texts::danger_member_hint()
         };
-        section(&mut col, "gefahrenzone", "Gefahrenzone", Some(hint), st);
+        section(
+            &mut col,
+            "gefahrenzone",
+            texts::section_danger(),
+            Some(hint),
+            st,
+        );
         danger(&mut col, app, &detail);
         let used = col.min_rect();
         st.content_height = used.bottom() + 48.0 - content_top;
@@ -435,7 +440,7 @@ fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) {
         vec2(rect.width() - 48.0, 200.0),
     );
     controls::place(ui, UiBuilder::new().max_rect(area), |ui| {
-        let msg = "Die Servereinstellungen konnten nicht geladen werden.";
+        let msg = texts::load_failed();
         let block = Block::wrapped(ui, msg, text::BODY, c.text, area.width() - 30.0);
         let h = 20.0 + block.height() + 12.0 + 32.0;
         let r = Rect::from_min_size(area.min, vec2(area.width(), h));
@@ -454,7 +459,7 @@ fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) {
             vec2(200.0, 32.0),
         );
         controls::place(ui, UiBuilder::new().max_rect(br), |ui| {
-            if ui.add(Button::new("Erneut versuchen").small()).clicked() {
+            if ui.add(Button::new(common::try_again()).small()).clicked() {
                 app.client.refresh_server(server);
             }
         });
@@ -491,22 +496,25 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
     }
     if let Some(r) = poll(&mut s.revoke) {
         match r {
-            Ok(()) => s.invites_status.success(ui, "Link widerrufen."),
+            Ok(()) => s.invites_status.success(ui, texts::invites_revoked()),
             // useRevokeInvite: a toast, not the section's status.
-            Err(e) => app.toasts.failure("Einladung nicht widerrufen.", None, &e),
+            Err(e) => app
+                .toasts
+                .failure(texts::error_invite_not_revoked(), None, &e),
         }
         reload_invites(app, s, id);
     }
     if let Some(r) = poll(&mut s.unban) {
         if let Err(e) = r {
-            app.toasts.failure("Mitglied nicht entsperrt.", None, &e);
+            app.toasts
+                .failure(texts::error_member_not_unbanned(), None, &e);
         }
         reload_bans(app, s, id);
     }
     if let Some(r) = poll(&mut s.icon) {
         match r {
             Ok(_) => {
-                s.icon_status.success(ui, "Gespeichert.");
+                s.icon_status.success(ui, common::saved());
                 app.client.refresh_server(id);
                 app.client.refresh_servers();
             }
@@ -523,11 +531,11 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
             if s.saving_name {
                 s.saving_name = false;
                 s.name = None;
-                s.name_status.success(ui, "Gespeichert.");
+                s.name_status.success(ui, common::saved());
             }
             if s.saving_permissions {
                 s.saving_permissions = false;
-                s.permissions_status.success(ui, "Gespeichert.");
+                s.permissions_status.success(ui, common::saved());
             }
         }
         Some(OpState::Failed(e)) => {
@@ -540,7 +548,7 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
             if s.saving_permissions {
                 s.saving_permissions = false;
                 s.permissions = None;
-                s.permissions_status.error(ui, NOT_SAVED);
+                s.permissions_status.error(ui, common::not_saved());
             }
         }
         _ => {}
@@ -562,7 +570,9 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
     if let Some(r) = poll(&mut s.ban) {
         match r {
             Ok(()) => app.client.refresh_server(id),
-            Err(e) => app.toasts.failure("Mitglied nicht gesperrt.", None, &e),
+            Err(e) => app
+                .toasts
+                .failure(texts::error_member_not_banned(), None, &e),
         }
         reload_bans(app, s, id);
     }
@@ -703,10 +713,10 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         ui.spacing_mut().item_spacing.x = 8.0;
         if ui
             .add(
-                Button::new("Bild hochladen")
+                Button::new(texts::icon_upload())
                     .small()
                     .disabled(busy && s.icon_removing)
-                    .pending((busy && !s.icon_removing).then_some("Lädt hoch…")),
+                    .pending((busy && !s.icon_removing).then_some(texts::icon_uploading())),
             )
             .clicked()
             && !busy
@@ -714,18 +724,18 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         {
             s.picking = Some(controls::pick_file(
                 ui.ctx(),
-                "Serverbild auswählen",
+                texts::icon_pick_label(),
                 &controls::IMAGE_FILTER,
             ));
         }
         if detail.server.icon_url.is_some()
             && ui
                 .add(
-                    Button::new("Entfernen")
+                    Button::new(common::remove())
                         .small()
                         .ghost()
                         .disabled(busy && !s.icon_removing)
-                        .pending((busy && s.icon_removing).then_some("Entfernt…")),
+                        .pending((busy && s.icon_removing).then_some(texts::icon_removing())),
                 )
                 .clicked()
             && !busy
@@ -746,7 +756,7 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         let mut name = s.name.clone().unwrap_or_else(|| detail.server.name.clone());
         // Not the add-server dialog's "server-name", which can draw over it.
         let field = TextField::new(("server-settings", "server-name"), &mut name)
-            .label("Servername")
+            .label(texts::general_name_label())
             .char_limit(100)
             .error(s.name_errors.field("name"))
             .show(ui);
@@ -761,10 +771,10 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         controls::row(ui, 12.0, 36.0, |ui| {
             submit |= ui
                 .add(
-                    Button::new("Speichern")
+                    Button::new(common::save())
                         .primary()
                         .disabled(!dirty)
-                        .pending(s.saving_name.then_some("Speichert…")),
+                        .pending(s.saving_name.then_some(texts::general_saving())),
                 )
                 .clicked();
             let status = s.name_status.current(ui);
@@ -773,7 +783,7 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                 controls::paint(
                     ui,
                     pos2(ui.cursor().min.x, ui.max_rect().center().y - 9.0),
-                    "Keine Änderungen.",
+                    texts::general_unchanged(),
                     controls::HINT,
                     Theme::of(ui.ctx()).c.muted,
                 );
@@ -831,9 +841,9 @@ fn permissions(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDeta
         .clone()
         .unwrap_or_else(|| detail.server.member_permissions.clone());
     list_top(ui);
-    for (perm, label, desc) in PERMISSIONS {
+    for (i, (perm, label, desc)) in PERMISSIONS.into_iter().enumerate() {
         let mut on = current.contains(&perm);
-        if controls::switch_row(ui, ("perm", label), label, Some(desc), &mut on, false) {
+        if controls::switch_row(ui, ("perm", i), label(), Some(desc()), &mut on, false) {
             let next: Vec<Permission> = Permission::ALL
                 .iter()
                 .copied()
@@ -880,38 +890,29 @@ fn hint(ui: &mut Ui, s: &str) {
 /// `"läuft in 6 Tagen ab"` (servers/inviteText.ts).
 fn expiry(at: Option<&chrono::DateTime<chrono::Utc>>, now_ms: f64) -> String {
     let Some(at) = at else {
-        return "läuft nie ab".into();
+        return texts::expiry_never().into();
     };
     let left = at.timestamp_millis() as f64 - now_ms;
     if left <= 0.0 {
-        return "abgelaufen".into();
+        return texts::expiry_expired().into();
     }
     let minutes = (left / 60_000.0).ceil() as i64;
     if minutes < 60 {
-        return format!(
-            "läuft in {minutes} {} ab",
-            if minutes == 1 { "Minute" } else { "Minuten" }
-        );
+        return texts::expiry_in_minutes(minutes);
     }
     let hours = (minutes as f64 / 60.0).round() as i64;
     if hours < 48 {
-        return format!(
-            "läuft in {hours} {} ab",
-            if hours == 1 { "Stunde" } else { "Stunden" }
-        );
+        return texts::expiry_in_hours(hours);
     }
     let days = (hours as f64 / 24.0).round() as i64;
-    format!(
-        "läuft in {days} {} ab",
-        if days == 1 { "Tag" } else { "Tagen" }
-    )
+    texts::expiry_in_days(days)
 }
 
 fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     controls::row(ui, 12.0, 36.0, |ui| {
-        if ui.add(Button::new("Neuen Link erstellen")).clicked() {
+        if ui.add(Button::new(texts::invites_create())).clicked() {
             s.inviting = Some(invite::Dialog::new(app, detail.server.id));
         }
         if let Some((m, t)) = s.invites_status.current(ui) {
@@ -920,15 +921,15 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
     });
     ui.add_space(14.0);
     match &s.invites {
-        None => hint(ui, "Lade Einladungen…"),
+        None => hint(ui, texts::invites_loading()),
         Some(Err(_)) => {
-            hint(ui, "Die Einladungen konnten nicht geladen werden.");
+            hint(ui, texts::invites_load_failed());
             ui.add_space(8.0);
-            if ui.add(Button::new("Erneut versuchen").small()).clicked() {
+            if ui.add(Button::new(common::try_again()).small()).clicked() {
                 reload_invites(app, s, detail.server.id);
             }
         }
-        Some(Ok(list)) if list.is_empty() => hint(ui, "Keine aktiven Einladungen."),
+        Some(Ok(list)) if list.is_empty() => hint(ui, texts::invites_empty()),
         Some(Ok(list)) => {
             let list = list.clone();
             let now = ui.input(|i| i.time);
@@ -945,13 +946,12 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                     },
                     code_style,
                 );
-                let uses = format!(
-                    "{}/{} benutzt · {}",
-                    inv.uses,
-                    inv.max_uses
+                let uses = texts::expiry_uses(
+                    &inv.uses.to_string(),
+                    &inv.max_uses
                         .map(|m| m.to_string())
                         .unwrap_or_else(|| "∞".into()),
-                    expiry(inv.expires_at.as_ref(), s.opened_at)
+                    &expiry(inv.expires_at.as_ref(), s.opened_at),
                 );
                 let hb = Block::single(ui, &uses, controls::HINT, c.muted);
                 let total = mono.height() + 2.0 + hb.height();
@@ -959,10 +959,16 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                 mono.paint(ui.painter(), pos2(rect.left(), y));
                 hb.paint(ui.painter(), pos2(rect.left(), y + mono.height() + 2.0));
                 // Actions right: Kopieren, Widerrufen.
-                let revoke_w = Block::single(ui, "Widerrufen", text::UI, c.text).width() + 26.0;
+                let revoke_w =
+                    Block::single(ui, texts::invites_revoke(), text::UI, c.text).width() + 26.0;
                 let copied = s.copied.get(&inv.code).is_some_and(|t| now - t < 1.5);
-                let copy_label = if copied { "Kopiert" } else { "Kopieren" };
-                let copy_w = Block::single(ui, "Kopieren", text::UI, c.text).width() + 26.0 + 24.0;
+                let copy_label = if copied {
+                    common::copied()
+                } else {
+                    common::copy()
+                };
+                let copy_w =
+                    Block::single(ui, common::copy(), text::UI, c.text).width() + 26.0 + 24.0;
                 let actions = Rect::from_min_size(
                     pos2(
                         rect.right() - revoke_w - 8.0 - copy_w,
@@ -991,17 +997,15 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                                 s.copied.insert(inv.code.clone(), now);
                                 s.invites_status.clear();
                             } else {
-                                s.invites_status.error(
-                                    ui,
-                                    format!("Kopieren ging nicht. Der Code ist {}.", inv.code),
-                                );
+                                s.invites_status
+                                    .error(ui, texts::invites_copy_failed(&inv.code));
                             }
                             ui.ctx()
                                 .request_repaint_after(std::time::Duration::from_millis(1500));
                         }
                         if ui
                             .add(
-                                Button::new("Widerrufen")
+                                Button::new(texts::invites_revoke())
                                     .small()
                                     .variant(ButtonVariant::DangerOutline),
                             )
@@ -1011,11 +1015,9 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                                 ui.ctx(),
                                 Confirm::danger(
                                     &format!("revoke:{}", inv.code),
-                                    "Link widerrufen?",
-                                    Some(
-                                        "Der Link funktioniert danach nicht mehr. Bestehende Mitglieder bleiben.",
-                                    ),
-                                    "Widerrufen",
+                                    texts::invites_revoke_title(),
+                                    Some(texts::invites_revoke_message()),
+                                    texts::invites_revoke(),
                                 ),
                             );
                         }
@@ -1053,7 +1055,11 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
         let allowed = manage && m.role != Role::Owner && Some(m.user_id) != me_id;
         let menu_w = if allowed { 32.0 + 12.0 } else { 0.0 };
         let owner = m.role == Role::Owner;
-        let label = if owner { "Inhaber" } else { "Mitglied" };
+        let label = if owner {
+            texts::members_owner()
+        } else {
+            texts::members_member()
+        };
         let badge_w = Block::single(ui, &label.to_uppercase(), text::CAPS, c.text).width() + 12.0;
         let name_w = rect.width() - 32.0 - 12.0 - 12.0 - badge_w - menu_w;
         let nb = Block::single(ui, &m.name, text::UI, c.text);
@@ -1082,7 +1088,7 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
                 vec2(32.0, 32.0),
             );
             let resp = ui.add(
-                IconButton::new(Icon::More, &format!("Aktionen für {}", m.name))
+                IconButton::new(Icon::More, &texts::moderation_menu_label(&m.name))
                     .size(32.0)
                     .icon_size(18.0)
                     .pressed(false)
@@ -1103,8 +1109,8 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
                     .show(ui.ctx(), |ui| {
                         use crate::screens::shell::overlays::profile::member_menu_item;
                         ui.spacing_mut().item_spacing.y = 0.0;
-                        let kick = member_menu_item(ui, "Vom Server entfernen", false).clicked();
-                        let ban = member_menu_item(ui, "Sperren", true).clicked();
+                        let kick = member_menu_item(ui, texts::moderation_kick(), false).clicked();
+                        let ban = member_menu_item(ui, texts::moderation_ban(), true).clicked();
                         (kick, ban)
                     });
                 match shown {
@@ -1115,11 +1121,9 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
                             ui.ctx(),
                             Confirm::danger(
                                 &format!("kick:{}", m.user_id),
-                                format!("{} vom Server entfernen?", m.name),
-                                Some(
-                                    "Mit einem neuen Einladungslink ist ein erneuter Beitritt möglich.",
-                                ),
-                                "Entfernen",
+                                texts::moderation_kick_title(&m.name),
+                                Some(texts::moderation_kick_message()),
+                                common::remove(),
                             ),
                         );
                     }
@@ -1130,11 +1134,9 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
                             ui.ctx(),
                             Confirm::danger(
                                 &format!("ban:{}", m.user_id),
-                                format!("{} sperren?", m.name),
-                                Some(
-                                    "Sie können nicht wieder beitreten, auch nicht mit einem Einladungslink.",
-                                ),
-                                "Sperren",
+                                texts::moderation_ban_title(&m.name),
+                                Some(texts::moderation_ban_message()),
+                                texts::moderation_ban(),
                             ),
                         );
                     }
@@ -1150,17 +1152,17 @@ fn bans(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     match &s.bans {
-        None => hint(ui, "Lade Sperren…"),
+        None => hint(ui, texts::bans_loading()),
         Some(Err(_)) => {
-            hint(ui, "Die Sperren konnten nicht geladen werden.");
+            hint(ui, texts::bans_load_failed());
             ui.add_space(8.0);
-            if ui.add(Button::new("Erneut versuchen").small()).clicked()
+            if ui.add(Button::new(common::try_again()).small()).clicked()
                 && let Some(id) = s.server
             {
                 reload_bans(app, s, id);
             }
         }
-        Some(Ok(list)) if list.is_empty() => hint(ui, "Niemand ist gesperrt."),
+        Some(Ok(list)) if list.is_empty() => hint(ui, texts::bans_empty()),
         Some(Ok(list)) => {
             let list = list.clone();
             list_top(ui);
@@ -1177,23 +1179,20 @@ fn bans(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                     ui.painter(),
                     pos2(av.right() + 12.0, rect.top() + (55.0 - nb.height()) / 2.0),
                 );
-                let bw = Block::single(ui, "Entsperren", text::UI, c.text).width() + 26.0;
+                let bw = Block::single(ui, texts::bans_unban(), text::UI, c.text).width() + 26.0;
                 let br = Rect::from_min_size(
                     pos2(rect.right() - bw, rect.center().y - 16.5),
                     vec2(bw, 32.0),
                 );
                 controls::place(ui, UiBuilder::new().max_rect(br), |ui| {
-                    if ui.add(Button::new("Entsperren").small()).clicked() {
+                    if ui.add(Button::new(texts::bans_unban()).small()).clicked() {
                         controls::ask(
                             ui.ctx(),
                             Confirm {
                                 key: format!("unban:{}", b.user_id),
-                                title: format!("{} wieder zulassen?", b.name),
-                                message: Some(
-                                    "Ein Beitritt per Einladungslink ist dann wieder möglich."
-                                        .into(),
-                                ),
-                                label: "Entsperren".into(),
+                                title: texts::bans_unban_title(&b.name),
+                                message: Some(texts::bans_unban_message().into()),
+                                label: texts::bans_unban().into(),
                                 neutral: true,
                             },
                         );
@@ -1207,9 +1206,9 @@ fn bans(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
 fn danger(ui: &mut Ui, _app: &mut AppCtx, detail: &ServerDetail) {
     let owner = detail.server.role == Role::Owner;
     let label = if owner {
-        "Server löschen"
+        texts::danger_delete()
     } else {
-        "Server verlassen"
+        texts::danger_leave()
     };
     if ui
         .add(Button::new(label).variant(ButtonVariant::DangerOutline))
@@ -1219,16 +1218,16 @@ fn danger(ui: &mut Ui, _app: &mut AppCtx, detail: &ServerDetail) {
         let confirm = if owner {
             Confirm::danger(
                 &format!("drop-server:{}", detail.server.id),
-                format!("Server „{name}“ endgültig löschen?"),
-                Some("Kanäle, Nachrichten, Einladungen und Mitgliedschaften werden gelöscht."),
-                "Server löschen",
+                texts::danger_delete_title(name),
+                Some(texts::danger_delete_message()),
+                texts::danger_delete(),
             )
         } else {
             Confirm::danger(
                 &format!("drop-server:{}", detail.server.id),
-                format!("Server „{name}“ verlassen?"),
+                texts::danger_leave_title(name),
                 None,
-                "Verlassen",
+                texts::danger_leave_confirm(),
             )
         };
         controls::ask(ui.ctx(), confirm);
@@ -1238,6 +1237,20 @@ fn danger(ui: &mut Ui, _app: &mut AppCtx, detail: &ServerDetail) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invite_expiry_words_in_english() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let now = 1_000_000_000_000.0;
+        let at = |ms: f64| chrono::DateTime::from_timestamp_millis((now + ms) as i64).unwrap();
+        assert_eq!(expiry(None, now), "never expires");
+        assert_eq!(expiry(Some(&at(-1.0)), now), "expired");
+        assert_eq!(
+            expiry(Some(&at(6.0 * 86_400_000.0)), now),
+            "expires in 6 days"
+        );
+        assert_eq!(expiry(Some(&at(3_600_000.0)), now), "expires in 1 hour");
+    }
 
     #[test]
     fn invite_expiry_words() {
