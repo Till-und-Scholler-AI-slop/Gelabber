@@ -5,6 +5,7 @@
 
 import {
   useInfiniteQuery,
+  useIsMutating,
   useMutation,
   useQuery,
   useQueryClient,
@@ -88,15 +89,30 @@ export type FeedbackSend = {
   context: FeedbackContext;
 };
 
-/** "Senden": the image goes up first, then the entry is created. */
-export function useSendFeedback() {
+/** Every send of the dialog, so a dialog opened again sees one in flight. */
+const SEND_FEEDBACK_KEY = ["feedback", "send"] as const;
+
+/** A send is under way, from this dialog or one closed since. */
+export function useFeedbackSending(): boolean {
+  return useIsMutating({ mutationKey: SEND_FEEDBACK_KEY }) > 0;
+}
+
+/**
+ * "Senden": the image goes up first, then the entry is created. `onSent`
+ * runs here, not per call, so it runs even when the dialog that sent has
+ * gone meanwhile; and only while the same person is signed in.
+ */
+export function useSendFeedback(onSent?: () => void) {
   const client = useQueryClient();
   return useMutation({
+    mutationKey: SEND_FEEDBACK_KEY,
     mutationFn: ({ kind, text, image, context }: FeedbackSend) =>
       remote.sendFeedback({ kind, text: text.trim(), context }, image),
     onMutate: () => takeStamp(),
     onSuccess: (_entry, _input, stamp) => {
-      if (stampHolds(stamp)) refreshFeedback(client, stamp);
+      if (!stampHolds(stamp)) return;
+      refreshFeedback(client, stamp);
+      onSent?.();
     },
   });
 }
@@ -146,25 +162,31 @@ function patchEntry(
 }
 
 /**
- * The entry's replies are seen: `POST /api/feedback/{id}/read`, then the
- * status is read again for the dot. The cached list forgets the entry's
- * "Neu" marks, so the next visit shows none; the page on screen keeps its
- * own (see `FeedbackArea`).
+ * The entry's replies up to message `through` are seen:
+ * `POST /api/feedback/{id}/read`, then the status is read again for the
+ * dot. The cached list forgets those "Neu" marks, so the next visit shows
+ * none; the page on screen keeps its own (see `FeedbackArea`). A reply
+ * after `through` stays new, on the server and here.
  */
 export async function markFeedbackRead(
   client: QueryClient,
   stamp: { userId: string; generation: number },
   id: string,
+  through: string,
 ): Promise<void> {
-  await remote.readFeedback(id);
+  await remote.readFeedback(id, through);
   if (!stampHolds(stamp)) return;
-  patchEntry(client, stamp, id, (entry) => ({
-    ...entry,
-    unread: false,
-    messages: entry.messages.map((message) =>
-      message.new ? { ...message, new: false } : message,
-    ),
-  }));
+  patchEntry(client, stamp, id, (entry) => {
+    const seen = entry.messages.findIndex((message) => message.id === through);
+    const messages = entry.messages.map((message, index) =>
+      message.new && index <= seen ? { ...message, new: false } : message,
+    );
+    return {
+      ...entry,
+      unread: messages.some((message) => message.new),
+      messages,
+    };
+  });
   void client.invalidateQueries({
     queryKey: feedbackKeys.status(stamp.userId, stamp.generation),
   });

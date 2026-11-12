@@ -4,6 +4,8 @@ import {
   EMPTY_DRAFT,
   clearFeedbackDraft,
   closeFeedbackDialog,
+  dropStaleFeedbackDialog,
+  feedbackDialogOpen,
   openFeedbackDialog,
   setFeedbackImage,
   updateFeedbackDraft,
@@ -43,6 +45,28 @@ describe("the draft", () => {
     useFeedbackDialog.setState({ generation: -1 });
     openFeedbackDialog();
     expect(useFeedbackDialog.getState().draft).toEqual(EMPTY_DRAFT);
+  });
+
+  it("is not open for the next account when a session ends while open", () => {
+    openFeedbackDialog();
+    updateFeedbackDraft({ text: "Von Lena" });
+    // Lena's session ends with the dialog open; Tom signs in.
+    useFeedbackDialog.setState({ generation: -1 });
+    expect(feedbackDialogOpen(useFeedbackDialog.getState())).toBe(false);
+    dropStaleFeedbackDialog();
+    const state = useFeedbackDialog.getState();
+    expect(state.open).toBe(false);
+    expect(state.draft).toEqual(EMPTY_DRAFT);
+    openFeedbackDialog();
+    expect(feedbackDialogOpen(useFeedbackDialog.getState())).toBe(true);
+  });
+
+  it("keeps the draft of the same sign-in", () => {
+    openFeedbackDialog();
+    updateFeedbackDraft({ text: "Noch offen" });
+    dropStaleFeedbackDialog();
+    expect(useFeedbackDialog.getState().open).toBe(true);
+    expect(useFeedbackDialog.getState().draft.text).toBe("Noch offen");
   });
 
   it("lets a second image replace the first", () => {

@@ -62,6 +62,8 @@ export function sendFieldErrors(error: unknown): Record<string, string> | null {
   if (text === "required") fields.text = translate(feedback, "text.required");
   else if (text === "too_long")
     fields.text = translate(feedback, "text.tooLong");
+  else if (text === "too_many")
+    fields.text = translate(feedback, "thread.full");
   else if (text) fields.text = fieldMessage("text", text);
   if (error.fields.image) fields.image = translate(feedback, "image.invalid");
   return Object.keys(fields).length > 0 ? fields : null;

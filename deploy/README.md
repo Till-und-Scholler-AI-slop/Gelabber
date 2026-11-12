@@ -431,13 +431,13 @@ What is left out when something is missing: a page that is not published has no 
 - account mail is on;
 - `API_OPERATOR_EMAILS` names at least one address.
 
-The web container cannot ask the API, so it learns the last two from `GELABBER_ACCOUNT_MAIL` and `GELABBER_FEEDBACK_OPERATORS`, which `compose.yaml` derives from `SMTP_HOST` and `API_OPERATOR_EMAILS` (only the flags, never the addresses). After changing either key, apply it with `docker compose up -d api web`. A web container run without the bundled compose file shows no form.
+The web container cannot ask the API, so it learns the last two from `GELABBER_ACCOUNT_MAIL` and `GELABBER_FEEDBACK_OPERATORS`, which `compose.yaml` derives from `SMTP_HOST` and `API_OPERATOR_EMAILS` (only the flags, never the addresses). A flag is on as soon as its key is not empty, even when the API finds no usable value in it (a blank `SMTP_HOST`, an `API_OPERATOR_EMAILS` of only commas); the form is then published but its posts end in a 404, so leave an unused key empty. After changing either key, apply it with `docker compose up -d api web`. A web container run without the bundled compose file shows no form.
 
-How the form works: it posts to `/api/public/feedback`, which refuses posts from other sites and counts 5 posts per client address and hour. The visitor gets a mail with a confirmation link, valid 24 hours; only opening it delivers the entry to the operators, and the confirmation page thanks them. Opening the link again lands on the same page and changes nothing. Entries nobody confirmed are deleted after the 24 hours. The mail never quotes the visitor's text, because anyone can make the form mail any address.
+How the form works: it posts to `/api/public/feedback`, which refuses posts from other sites and counts 5 posts per client address and hour. The visitor gets a mail with a confirmation link, valid 24 hours; only opening it delivers the entry to the operators, and the confirmation page thanks them. Opening the link again within the 24 hours lands on the same page and changes nothing. Entries nobody confirmed are deleted after the 24 hours. The mail never quotes the visitor's text, because anyone can make the form mail any address.
 
 The confirmation token sits in the link's query string (`/api/public/feedback/confirm?token=…`), because a page without script cannot read it from after `#` as the other account mails do. The API logs only the path, but a proxy that logs query strings logs the token. It is used for nothing but confirming that one entry, and only within its 24 hours.
 
-Apply a changed value with `docker compose up -d web`. The pages are built only at start, so after editing a text file run `docker compose restart web`. Check the result with `docker compose logs web | grep public-pages`: every page that is left out has one line naming the reason (the missing values or files), and the last line lists the published legal pages.
+Apply a changed value with `docker compose up -d web`. The pages are built only at start, so after editing a text file run `docker compose restart web`. Check the result with `docker compose logs web | grep public-pages`: every page that is left out has one line naming the reason (the missing values or files), and the last line lists the published legal pages and, when it is on, the feedback form.
 
 ## Betrieb
 
@@ -491,7 +491,7 @@ People tell the operators of the instance what they notice, and operators answer
 - **Operators** read them under Betrieb → "Feedback", next to Meldungen: filter open or done entries and by kind, open one (sender, time, kind, text, image, technical details, thread), reply, mark it done or open it again, or delete it as spam. The sidebar counts the open entries.
 - **Visitors without an account** use the public form at `/de/feedback` and `/en/feedback` (see "Public pages"). Their entry reaches the operators only once they confirmed their address.
 
-There is no switch: feedback is on whenever `API_OPERATOR_EMAILS` names at least one address, and off (no menu item, no settings area, `404` from `/api/feedback*` and `/api/operator/feedback*`) while it names none. An address listed before its account exists already turns it on, so people can send feedback that nobody can read yet; register the operator accounts first, as for Betrieb.
+There is no switch: feedback is on whenever `API_OPERATOR_EMAILS` names at least one address, and off (no menu item, no settings area, `404` from `/api/feedback*`, except `GET /api/feedback/status`, which answers `enabled: false`, and from `/api/operator/feedback*`) while it names none. An address listed before its account exists already turns it on, so people can send feedback that nobody can read yet; register the operator accounts first, as for Betrieb.
 
 **What is sent along** with an entry from the apps, shown in the dialog before sending: the app (web or desktop), the operating system, the app version, the interface language and the page path without query or fragment. Nothing else: no logs, no diagnostics, no browser details. The public form sends only the kind, the text, the address and the form's language.
 
@@ -507,7 +507,7 @@ There is no switch: feedback is on whenever `API_OPERATOR_EMAILS` names at least
 | `mail_feedback` | 5 per hour | address | confirmation mails of the public form |
 | `mail_notice` | 30 per hour | address | operator notices and "there is an answer" mails |
 
-Refusals are counted in `gelabber_rate_limited_total{bucket=…}` under these names. At most 1,000 visitor entries wait for their confirmation at once; past that the form answers with its error page and the API logs `feedback: too many pending entries`. Operator replies have no bucket of their own.
+Refusals are counted in `gelabber_rate_limited_total{bucket=…}` under these names. At most 1,000 visitor entries wait for their confirmation at once; past that the form answers with its error page and the API logs `feedback: too many pending entries`. An unconfirmed entry waits its full 24 hours, so someone posting from many addresses (200 IPv6 /64s are enough) can fill that limit: the form then refuses everyone until the entries run out, and your relay sends up to 1,000 confirmation mails a day to addresses the poster picked. If the log line shows up, block the sources at your proxy or empty the queue with `DELETE FROM feedback WHERE status = 'pending';` (with your `POSTGRES_USER` and `POSTGRES_DB`, as for the audit rows under "Betrieb"). Operator replies have no bucket of their own.
 
 **Mails**, while account mail is on (see "Account mail"):
 

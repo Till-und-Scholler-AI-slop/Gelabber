@@ -34,10 +34,12 @@ function useReadOnSight(entries: readonly FeedbackEntry[]) {
   useEffect(() => {
     const stamp = takeStamp();
     if (!stamp) return;
-    for (const id of entriesToRead(entries, asked.current)) {
+    for (const { id, through } of entriesToRead(entries, asked.current)) {
       asked.current.add(id);
       // A failed call is tried again with the next list it shows up in.
-      markFeedbackRead(client, stamp, id).catch(() => asked.current.delete(id));
+      markFeedbackRead(client, stamp, id, through).catch(() =>
+        asked.current.delete(id),
+      );
     }
   }, [client, entries]);
 }

@@ -40,20 +40,21 @@ pub fn new_entry(state: &AppState, feedback_id: Uuid) {
     }
     let state = state.clone();
     tokio::spawn(async move {
-        if let Err(err) = notice(&state, feedback_id, false).await {
+        if let Err(err) = notice(&state, feedback_id, None).await {
             warn!(%feedback_id, kind = "feedback_notice", error = ?err, "feedback mail failed");
         }
     });
 }
 
-/// The sender replied in the thread of `feedback_id`.
-pub fn person_reply(state: &AppState, feedback_id: Uuid) {
+/// The sender replied `text` in the thread of `feedback_id`. The notice
+/// quotes that reply, not whichever is newest when the task runs.
+pub fn person_reply(state: &AppState, feedback_id: Uuid, text: String) {
     if state.mail.is_none() {
         return;
     }
     let state = state.clone();
     tokio::spawn(async move {
-        if let Err(err) = notice(&state, feedback_id, true).await {
+        if let Err(err) = notice(&state, feedback_id, Some(text)).await {
             warn!(%feedback_id, kind = "feedback_notice", error = ?err, "feedback mail failed");
         }
     });
@@ -81,9 +82,13 @@ struct NoticeRow {
     sender_email: Option<String>,
 }
 
-/// Mails every operator about the entry, or with `reply` about its
-/// sender's latest reply.
-async fn notice(state: &AppState, feedback_id: Uuid, reply: bool) -> Result<(), ApiError> {
+/// Mails every operator about the entry, or with `reply` about that reply
+/// of its sender.
+async fn notice(
+    state: &AppState,
+    feedback_id: Uuid,
+    reply: Option<String>,
+) -> Result<(), ApiError> {
     let Some(mailer) = state.mail.clone() else {
         return Ok(());
     };
@@ -114,24 +119,11 @@ async fn notice(state: &AppState, feedback_id: Uuid, reply: bool) -> Result<(), 
         // The sender's account is gone: nobody is left to name.
         _ => return Ok(()),
     };
-    let text = if reply {
-        let latest: Option<String> = sqlx::query_scalar(
-            "SELECT body FROM feedback_messages WHERE feedback_id = $1 AND author_kind = 'person' \
-             ORDER BY created_at DESC, id DESC LIMIT 1",
-        )
-        .bind(feedback_id)
-        .fetch_optional(&state.db)
-        .await?;
-        let Some(latest) = latest else {
-            return Ok(());
-        };
-        latest
-    } else {
-        row.body
-    };
+    let is_reply = reply.is_some();
+    let text = reply.unwrap_or(row.body);
     let mail = Mail::FeedbackNotice {
         kind,
-        reply,
+        reply: is_reply,
         sender,
         excerpt: excerpt(&text),
         link: format!(

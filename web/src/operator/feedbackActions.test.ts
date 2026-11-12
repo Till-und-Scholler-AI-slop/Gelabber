@@ -38,6 +38,7 @@ import {
   setFeedbackDone,
   technicalDetails,
 } from "./feedbackActions.ts";
+import { mailPendingRefetch } from "./feedbackMail.ts";
 import type { FeedbackSender, OperatorFeedback } from "./types.ts";
 
 const account: FeedbackSender = {
@@ -102,13 +103,35 @@ describe("feedback senders", () => {
     expect(
       authorName({ sender: visitor }, { from: "person", author: null }),
     ).toBe("Besucher");
-    // An operator's or a sender's account that is gone.
+    // An operator's or a sender's account that is gone, still told apart.
     expect(
       authorName({ sender: account }, { from: "operator", author: null }),
-    ).toBe("Gelöschtes Konto");
+    ).toBe("Betreiber (gelöschtes Konto)");
     expect(
       authorName({ sender: deleted }, { from: "person", author: null }),
     ).toBe("Gelöschtes Konto");
+  });
+});
+
+describe("a reply's mail state", () => {
+  const now = Date.parse("2026-11-12T12:00:00Z");
+  const reply = (mail: "pending" | "sent" | null, secondsAgo: number) => ({
+    messages: [
+      {
+        mail,
+        created_at: new Date(now - secondsAgo * 1000).toISOString(),
+      } as OperatorFeedback["messages"][number],
+    ],
+  });
+
+  it("is asked again every few seconds while a fresh mail is pending", () => {
+    expect(mailPendingRefetch([reply(null, 5), reply("pending", 5)], now)).toBe(
+      3000,
+    );
+    expect(mailPendingRefetch([reply("sent", 5)], now)).toBe(false);
+    // Left pending by a restart: not asked about forever.
+    expect(mailPendingRefetch([reply("pending", 600)], now)).toBe(false);
+    expect(mailPendingRefetch([], now)).toBe(false);
   });
 });
 

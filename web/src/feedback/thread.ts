@@ -39,12 +39,16 @@ export function rememberNew(
   return fresh.length === 0 ? marks : new Set([...marks, ...fresh]);
 }
 
-/** The entries with unread replies not yet marked read in this visit. */
+/** The entries with unread replies not yet marked read in this visit,
+ * each with its newest message on screen (`through` of the read call). */
 export function entriesToRead(
   entries: readonly FeedbackEntry[],
   asked: ReadonlySet<string>,
-): string[] {
-  return entries
-    .filter((entry) => entry.unread && !asked.has(entry.id))
-    .map((entry) => entry.id);
+): { id: string; through: string }[] {
+  return entries.flatMap((entry) => {
+    const last = entry.messages.at(-1);
+    return entry.unread && last && !asked.has(entry.id)
+      ? [{ id: entry.id, through: last.id }]
+      : [];
+  });
 }

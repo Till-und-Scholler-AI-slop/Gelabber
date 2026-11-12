@@ -120,6 +120,16 @@ describe("sending", () => {
     expect(queryClient.getQueryState(status)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(list)?.isInvalidated).toBe(true);
   });
+
+  it("finishes the send after the dialog that sent it is gone", async () => {
+    const queryClient = new QueryClient();
+    const onSent = vi.fn();
+    remote.sendFeedback.mockResolvedValue({ id: "entry" });
+    // A static render keeps no observer: as a dialog closed mid-send.
+    const send = hookOf(queryClient, () => useSendFeedback(onSent));
+    await send.mutateAsync({ kind: "idea", text: "Ja", image: null, context });
+    expect(onSent).toHaveBeenCalledOnce();
+  });
 });
 
 const entry = (id: string, overrides: Partial<FeedbackEntry> = {}) =>
@@ -187,8 +197,8 @@ describe("reading", () => {
       }),
     ]);
     remote.readFeedback.mockResolvedValue(null);
-    await markFeedbackRead(queryClient, stamp, "a");
-    expect(remote.readFeedback).toHaveBeenCalledWith("a");
+    await markFeedbackRead(queryClient, stamp, "a", "m1");
+    expect(remote.readFeedback).toHaveBeenCalledWith("a", "m1");
     expect(queryClient.getQueryState(status)?.isInvalidated).toBe(true);
     const list = feedbackKeys.list(stamp.userId, stamp.generation);
     expect(queryClient.getQueryState(list)?.isInvalidated).toBe(false);
@@ -196,6 +206,29 @@ describe("reading", () => {
     expect(entries()[0]).toMatchObject({
       unread: false,
       messages: [{ id: "m1", new: false }],
+    });
+  });
+
+  it("keeps a reply after the one read through new", async () => {
+    const queryClient = new QueryClient();
+    const reply = (id: string) => ({
+      id,
+      from: "operators" as const,
+      text: "Antwort",
+      created_at: "2026-11-03T11:00:00Z",
+      new: true,
+    });
+    const entries = cachedList(queryClient, [
+      entry("a", { unread: true, messages: [reply("m1"), reply("m2")] }),
+    ]);
+    remote.readFeedback.mockResolvedValue(null);
+    await markFeedbackRead(queryClient, stamp, "a", "m1");
+    expect(entries()[0]).toMatchObject({
+      unread: true,
+      messages: [
+        { id: "m1", new: false },
+        { id: "m2", new: true },
+      ],
     });
   });
 });

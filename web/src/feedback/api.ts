@@ -37,9 +37,10 @@ export const replyFeedback = (id: string, text: string) =>
     body: { text },
   });
 
-/** The entry's operator replies are seen: its `unread` clears. */
-export const readFeedback = (id: string) =>
-  api<null>(`/feedback/${id}/read`, { method: "POST" });
+/** The entry's operator replies up to message `through`, the newest one
+ * on screen, are seen. A reply that came later keeps the entry unread. */
+export const readFeedback = (id: string, through: string) =>
+  api<null>(`/feedback/${id}/read`, { method: "POST", body: { through } });
 
 /** Uploads the image when there is one, then creates the entry. */
 export async function sendFeedback(

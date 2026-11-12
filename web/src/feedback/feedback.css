@@ -87,6 +87,9 @@
   color: var(--lr-text);
   overflow-wrap: anywhere;
 }
+.feedback-context code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
 
 /* "Feedback geben" in the user menu, and the dot on the menu's chevron. */
 .user-panel-menu > nav > button.user-panel-feedback {

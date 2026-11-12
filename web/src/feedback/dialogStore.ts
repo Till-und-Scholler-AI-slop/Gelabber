@@ -51,6 +51,23 @@ export function openFeedbackDialog(): void {
   useFeedbackDialog.setState({ open: true, draft: EMPTY_DRAFT, generation });
 }
 
+/** The dialog is open, for the identity signed in now. */
+export function feedbackDialogOpen(state: FeedbackDialogState): boolean {
+  return state.open && state.generation === scopeGeneration();
+}
+
+/**
+ * Drops what an earlier sign-in left: a dialog open when its session ended,
+ * and its draft. The next account's dialog then starts closed and empty.
+ */
+export function dropStaleFeedbackDialog(): void {
+  const generation = scopeGeneration();
+  const state = useFeedbackDialog.getState();
+  if (state.generation === generation) return;
+  release(state.draft);
+  useFeedbackDialog.setState({ open: false, draft: EMPTY_DRAFT, generation });
+}
+
 /** Closes the dialog; the draft stays. */
 export function closeFeedbackDialog(): void {
   useFeedbackDialog.setState({ open: false });

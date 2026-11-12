@@ -895,9 +895,10 @@ async fn the_answer_mail_goes_once_per_unread_stretch(pool: PgPool) {
     let tom = registered(&plain, "tom@example.test", "Tom").await;
     let ada = registered(&plain, "ada@example.test", "Ada").await;
     let kai = registered(&plain, "kai@example.test", "Kai").await;
+    let ida = registered(&plain, "ida@example.test", "Ida").await;
     sqlx::query(
         "UPDATE users SET email_verified_at = now() \
-         WHERE email IN ('tom@example.test', 'kai@example.test')",
+         WHERE email IN ('tom@example.test', 'kai@example.test', 'ida@example.test')",
     )
     .execute(&pool)
     .await
@@ -907,6 +908,20 @@ async fn the_answer_mail_goes_once_per_unread_stretch(pool: PgPool) {
         .await
         .unwrap();
     sqlx::query("UPDATE users SET disabled_at = now() WHERE email = 'kai@example.test'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Ida's account is under deletion: the purge lock held here stands for
+    // a purge still running, so her row stays as the notices meet it.
+    let mut purging = pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtext('account-purge'), hashtext(id::text)) \
+         FROM users WHERE email = 'ida@example.test'",
+    )
+    .execute(&mut *purging)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET deleted_at = now() WHERE email = 'ida@example.test'")
         .execute(&pool)
         .await
         .unwrap();
@@ -936,12 +951,14 @@ async fn the_answer_mail_goes_once_per_unread_stretch(pool: PgPool) {
     reply_as(&mut lena, toms, "Erledigt").await;
     mails(&mailer, 2).await;
 
-    // Unconfirmed (Ada) and disabled (Kai) accounts get nothing.
-    for user in [uid(&ada), uid(&kai)] {
+    // Unconfirmed (Ada), disabled (Kai) and deleted (Ida) accounts get
+    // nothing.
+    for user in [uid(&ada), uid(&kai), uid(&ida)] {
         let id = account_entry(&pool, Some(user), "problem", "open", 0).await;
         reply_as(&mut lena, id, "Danke").await;
     }
     mails(&mailer, 2).await;
+    purging.rollback().await.unwrap();
 }
 
 #[sqlx::test]
@@ -976,6 +993,41 @@ async fn a_reply_to_a_visitor_goes_out_by_mail(pool: PgPool) {
         .send(Method::GET, &format!("/api/operator/feedback/{id}"), None)
         .await;
     assert_eq!(res.body["messages"][0]["mail"], "sent", "{}", res.body);
+}
+
+#[sqlx::test]
+async fn a_reply_to_a_german_visitor_is_german(pool: PgPool) {
+    let plain = state_with(pool.clone(), true);
+    let lena = registered(&plain, LENA, "Lena").await;
+    let (_state, mailer, mut lena) = with_mail(&pool, &lena).await;
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO feedback (kind, visitor_email, visitor_locale, client, locale, body) \
+         VALUES ('problem', 'besuch@example.test', 'de', 'form', 'de', 'Kaputt') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let message = reply_as(&mut lena, id, "Behoben.").await;
+    let sent = mails(&mailer, 1).await;
+    assert_eq!(sent[0].to, "besuch@example.test");
+    assert_eq!(sent[0].subject, "Antwort auf dein Feedback an Gelabber");
+    assert!(
+        sent[0]
+            .body
+            .contains("(Problem) geantwortet:\n\n> Behoben.\n\n"),
+        "{}",
+        sent[0].body
+    );
+    assert!(
+        sent[0]
+            .body
+            .ends_with("\n\nhttps://chat.example.org/de/feedback\n"),
+        "{}",
+        sent[0].body
+    );
+    let message = message["id"].as_str().unwrap();
+    assert_eq!(settled_mail_state(&pool, message).await, "sent");
 }
 
 #[sqlx::test]

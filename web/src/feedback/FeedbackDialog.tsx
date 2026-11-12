@@ -4,6 +4,7 @@
 
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
+  useEffect,
   useId,
   useRef,
   useState,
@@ -24,7 +25,7 @@ import { fieldDescription } from "../components/ui/fieldDescription.ts";
 import { FormField } from "../components/ui/FormField.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
 import { Textarea } from "../components/ui/Textarea.tsx";
-import { T, useT } from "../i18n/catalog.ts";
+import { T, translate, useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { feedback } from "../i18n/catalogs/feedback.ts";
 import { language } from "../i18n/catalogs/language.ts";
@@ -33,11 +34,17 @@ import { currentPath, feedbackContext } from "./context.ts";
 import {
   clearFeedbackDraft,
   closeFeedbackDialog,
+  dropStaleFeedbackDialog,
+  feedbackDialogOpen,
   setFeedbackImage,
   updateFeedbackDraft,
   useFeedbackDialog,
 } from "./dialogStore.ts";
-import { useFeedbackStatus, useSendFeedback } from "./queries.ts";
+import {
+  useFeedbackSending,
+  useFeedbackStatus,
+  useSendFeedback,
+} from "./queries.ts";
 import {
   COUNTER_LIVE_BELOW,
   IMAGE_TYPES,
@@ -52,8 +59,10 @@ import "./feedback.css";
 
 export function FeedbackDialog() {
   const t = useT(feedback);
-  const open = useFeedbackDialog((state) => state.open);
+  const open = useFeedbackDialog(feedbackDialogOpen);
   const descriptionId = useId();
+  // Mounted for each account (AppShell keys it by user).
+  useEffect(dropStaleFeedbackDialog, []);
   return (
     <Modal
       open={open}
@@ -83,14 +92,34 @@ function FeedbackForm({ descriptionId }: { descriptionId: string }) {
   // The page the dialog was opened on, fixed while it is open.
   const [path] = useState(currentPath);
   const context = feedbackContext(path, locale);
-  const send = useSendFeedback();
-  const pending = send.isPending;
+  const send = useSendFeedback(() => {
+    closeFeedbackDialog();
+    clearFeedbackDraft();
+    notify(translate(feedback, "toast.sent"), {
+      action: {
+        label: translate(feedback, "toast.view"),
+        onClick: () =>
+          void navigate({
+            to: "/settings/$area",
+            params: { area: "feedback" },
+          }),
+      },
+    });
+  });
+  // A send from before a close and reopen still counts.
+  const sending = useFeedbackSending();
+  const pending = send.isPending || sending;
+
+  /** An image refusal, shown under the button and said by the status line. */
+  const refuseImage = (message: string) => {
+    setImageNote(message);
+    setFields({ image: message });
+  };
 
   const attach = (file: File) => {
     const problem = imageProblem(file);
     if (problem) {
-      setImageNote("");
-      setFields({ image: t(`image.${problem}`) });
+      refuseImage(t(`image.${problem}`));
       return;
     }
     clearField("image");
@@ -120,23 +149,10 @@ function FeedbackForm({ descriptionId }: { descriptionId: string }) {
         context,
       },
       {
-        onSuccess: () => {
-          closeFeedbackDialog();
-          clearFeedbackDraft();
-          setImageNote("");
-          notify(t("toast.sent"), {
-            action: {
-              label: t("toast.view"),
-              onClick: () =>
-                void navigate({
-                  to: "/settings/$area",
-                  params: { area: "feedback" },
-                }),
-            },
-          });
-        },
+        // Success is the hook's (above); an error only shows while open.
         onError: (error) => {
           const fields = sendFieldErrors(error);
+          if (fields?.image) setImageNote(fields.image);
           if (fields) setFields(fields);
           else fromError(error);
         },
@@ -147,6 +163,10 @@ function FeedbackForm({ descriptionId }: { descriptionId: string }) {
   const left = charactersLeft(draft.text);
   const textError = errors.fields.text;
   const imageError = errors.fields.image;
+  // A refused context field has no control here: the form says it.
+  const otherError = Object.entries(errors.fields).find(
+    ([field]) => field !== "text" && field !== "image",
+  )?.[1];
   const counterId = "feedback-text-counter";
   const imageHint = t("image.hint");
 
@@ -286,7 +306,7 @@ function FeedbackForm({ descriptionId }: { descriptionId: string }) {
         </p>
       </div>
       <SentAlong context={context} />
-      <FormError message={errors.form} />
+      <FormError message={errors.form ?? otherError ?? null} />
       <div className="feedback-form__actions">
         <GhostButton onClick={closeFeedbackDialog}>{tc("cancel")}</GhostButton>
         <SubmitButton

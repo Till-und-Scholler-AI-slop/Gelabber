@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({
   status: undefined as { enabled: boolean; unread: number } | undefined,
   pending: false,
+  sending: false,
   api: vi.fn(),
   dialog: {
     open: true,
+    generation: 0,
     draft: {
       kind: "idea" as "idea" | "problem" | "praise",
       text: "",
@@ -27,6 +29,7 @@ vi.mock("./dialogStore.ts", async (importOriginal) => ({
 vi.mock("./queries.ts", () => ({
   useFeedbackStatus: () => ({ data: fixture.status }),
   useSendFeedback: () => ({ isPending: fixture.pending, mutate: vi.fn() }),
+  useFeedbackSending: () => fixture.sending,
 }));
 vi.mock("../api/client.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/client.ts")>()),
@@ -74,7 +77,7 @@ const context = {
 };
 
 function reset() {
-  fixture.dialog = { open: true, draft: { ...EMPTY_DRAFT } };
+  fixture.dialog = { open: true, generation: 0, draft: { ...EMPTY_DRAFT } };
 }
 
 describe("the dialog", () => {
@@ -253,6 +256,10 @@ describe("the dialog's rules", () => {
     });
     expect(sendFieldErrors(refused({ text: "too_long" }))).toEqual({
       text: "Höchstens 4.000 Zeichen.",
+    });
+    // A reply to a thread of 200 messages.
+    expect(sendFieldErrors(refused({ text: "too_many" }))).toEqual({
+      text: "Dieser Verlauf ist voll (200 Nachrichten).",
     });
     expect(sendFieldErrors(refused({ image: "invalid" }))).toEqual({
       image: "Das Bild ließ sich nicht verwenden. Versuch ein anderes.",

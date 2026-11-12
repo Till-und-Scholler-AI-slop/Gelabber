@@ -112,9 +112,14 @@ pub fn kind(raw: Option<&str>, errors: &mut FieldErrors) -> Option<Kind> {
 }
 
 /// The trimmed text of an entry, a reply or the form: 1 to [`TEXT_MAX`]
-/// characters, no control characters but line breaks and tabs.
+/// characters, no control characters but line breaks and tabs. Line breaks
+/// become `\n` first: a form sends them as CRLF, while `maxlength` counts one.
 pub fn text(raw: Option<&str>, errors: &mut FieldErrors) -> Option<String> {
-    let value = raw.unwrap_or_default().trim();
+    let normalized = raw
+        .unwrap_or_default()
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let value = normalized.trim();
     if value.is_empty() {
         errors.insert("text", "required");
         None
@@ -524,6 +529,10 @@ mod tests {
             check(Some(&format!("{longest}x"))),
             (None, Some("too_long"))
         );
+        // A form's CRLF counts as one character, as `maxlength` counts it.
+        assert_eq!(check(Some("a\r\nb\rc\n")), (Some("a\nb\nc".into()), None));
+        let lines = format!("{}\r\n", "x".repeat(99)).repeat(TEXT_MAX / 100);
+        assert_eq!(check(Some(&lines)).1, None);
         assert_eq!(check(Some("a\u{0}b")), (None, Some("invalid")));
         assert_eq!(check(Some("a\u{1b}b")), (None, Some("invalid")));
     }
