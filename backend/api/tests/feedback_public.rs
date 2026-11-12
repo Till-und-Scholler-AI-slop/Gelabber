@@ -611,11 +611,12 @@ async fn the_sweeper_deletes_run_out_pending_entries_and_clears_run_out_hashes(p
 #[sqlx::test]
 async fn too_many_pending_entries_refuse_the_form(pool: PgPool) {
     let (state, mailer) = form_state(pool.clone());
+    // Made outside the ceilings' windows, so that only the cap refuses.
     sqlx::query(
         "INSERT INTO feedback (kind, visitor_email, visitor_locale, client, locale, body, \
-                               status, confirm_hash, confirm_expires_at) \
+                               status, confirm_hash, confirm_expires_at, created_at) \
          SELECT 'idea', 'v' || n || '@example.org', 'de', 'form', 'de', 'x', 'pending', \
-                sha256(n::text::bytea), now() + interval '1 hour' \
+                sha256(n::text::bytea), now() + interval '1 hour', now() - interval '2 days' \
          FROM generate_series(1, $1) AS n",
     )
     .bind(gelabber_api::limits::FEEDBACK_PENDING_MAX)
@@ -649,4 +650,167 @@ async fn too_many_pending_entries_refuse_the_form(pool: PgPool) {
     }
     assert_eq!(rows(&pool).await, 5);
     mails(&mailer, 5).await;
+}
+
+/// Inserts `count` form entries in `status` made `age` ago, their links
+/// running out 24 hours after that, as the form's own would.
+async fn form_rows(pool: &PgPool, count: i64, status: &str, age: &str) {
+    sqlx::query(
+        "INSERT INTO feedback (kind, visitor_email, visitor_locale, client, locale, body, \
+                               status, confirm_hash, confirm_expires_at, created_at) \
+         SELECT 'idea', 'old' || n || '@example.org', 'de', 'form', 'de', 'x', $2, \
+                sha256(($2 || $3 || n)::bytea), \
+                now() - $3::interval + interval '24 hours', now() - $3::interval \
+         FROM generate_series(1, $1) AS n",
+    )
+    .bind(count)
+    .bind(status)
+    .bind(age)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Posts a valid form for `email` from its own client address.
+async fn post_as(state: &AppState, n: usize, email: &str) -> (StatusCode, Option<String>, Value) {
+    let ip = format!("2001:db8:{n:x}::1");
+    post_from(state, valid("en", email), &ip, None).await
+}
+
+#[sqlx::test]
+async fn the_21st_post_of_the_hour_over_all_visitors_is_refused(pool: PgPool) {
+    let (state, mailer) = form_state(pool.clone());
+    let ceiling = gelabber_api::limits::FEEDBACK_FORM_PER_HOUR as usize;
+    for n in 0..ceiling {
+        see_other(
+            post_as(&state, n, &format!("p{n}@example.org")).await,
+            "/en/feedback/sent",
+        )
+        .await;
+    }
+    mails(&mailer, ceiling).await;
+    see_other(
+        post_as(&state, ceiling, "late@example.org").await,
+        "/en/feedback/error",
+    )
+    .await;
+    assert_eq!(rows(&pool).await, ceiling as i64);
+    mails(&mailer, ceiling).await;
+
+    // The refused post gave its mail back: an hour later, its address gets
+    // all five.
+    sqlx::query(
+        "UPDATE feedback SET created_at = created_at - interval '61 minutes', \
+                             confirm_expires_at = confirm_expires_at - interval '61 minutes'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for n in 0..5 {
+        see_other(
+            post_as(&state, 100 + n, "late@example.org").await,
+            "/en/feedback/sent",
+        )
+        .await;
+    }
+    let sent = mails(&mailer, ceiling + 5).await;
+    assert!(
+        sent[ceiling..]
+            .iter()
+            .all(|mail| mail.to == "late@example.org")
+    );
+}
+
+#[sqlx::test]
+async fn the_daily_ceiling_refuses_until_the_oldest_post_is_a_day_old(pool: PgPool) {
+    let (state, mailer) = form_state(pool.clone());
+    let day = gelabber_api::limits::FEEDBACK_FORM_PER_DAY;
+    // Spread over the day, far from the hour's ceiling; confirmed ones count
+    // as pending ones do.
+    form_rows(&pool, day / 2, "pending", "20 hours").await;
+    form_rows(&pool, day / 2, "open", "2 hours").await;
+    see_other(
+        post_as(&state, 0, "ada@example.org").await,
+        "/en/feedback/error",
+    )
+    .await;
+    assert_eq!(rows(&pool).await, day);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(mailer.outbox().is_empty());
+
+    // Five hours later the older half is more than a day old.
+    sqlx::query(
+        "UPDATE feedback SET created_at = created_at - interval '5 hours', \
+                             confirm_expires_at = confirm_expires_at - interval '5 hours'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    see_other(
+        post_as(&state, 1, "ada@example.org").await,
+        "/en/feedback/sent",
+    )
+    .await;
+    assert_eq!(rows(&pool).await, day + 1);
+    mails(&mailer, 1).await;
+}
+
+#[sqlx::test]
+async fn confirmed_entries_count_against_the_hour(pool: PgPool) {
+    let (state, mailer) = form_state(pool.clone());
+    let hour = gelabber_api::limits::FEEDBACK_FORM_PER_HOUR;
+    form_rows(&pool, hour, "open", "10 minutes").await;
+    see_other(
+        post_as(&state, 0, "ada@example.org").await,
+        "/en/feedback/error",
+    )
+    .await;
+    assert_eq!(rows(&pool).await, hour);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(mailer.outbox().is_empty());
+}
+
+#[sqlx::test]
+async fn honeypot_invalid_and_signed_in_posts_do_not_count_against_the_ceilings(pool: PgPool) {
+    let (state, mailer) = form_state(pool.clone());
+    let hour = gelabber_api::limits::FEEDBACK_FORM_PER_HOUR as usize;
+    // Entries from the apps are not the form's.
+    sqlx::query(
+        "INSERT INTO feedback (kind, client, os, app_version, page, locale, body) \
+         SELECT 'idea', 'web', 'linux', '0.10.0', '/', 'de', 'x' \
+         FROM generate_series(1, $1)",
+    )
+    .bind(hour as i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for n in 0..hour {
+        let ip = format!("2001:db8:{n:x}::1");
+        let honeypot = form(&[
+            ("lang", "en"),
+            ("kind", "idea"),
+            ("text", "Kauf jetzt"),
+            ("email", "bot@example.org"),
+            ("website", "https://spam.example"),
+        ]);
+        see_other(
+            post_from(&state, honeypot, &ip, None).await,
+            "/en/feedback/sent",
+        )
+        .await;
+        see_other(
+            post_from(&state, valid("en", "not an address"), &ip, None).await,
+            "/en/feedback/error",
+        )
+        .await;
+    }
+    for n in 0..hour {
+        see_other(
+            post_as(&state, 1000 + n, &format!("p{n}@example.org")).await,
+            "/en/feedback/sent",
+        )
+        .await;
+    }
+    assert_eq!(rows(&pool).await, 2 * hour as i64);
+    mails(&mailer, hour).await;
 }

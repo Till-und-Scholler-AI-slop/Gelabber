@@ -75,7 +75,13 @@ pub const FEEDBACK_NOTICES_PER_HOUR: u32 = 30;
 pub const FEEDBACK_PUBLIC_PER_HOUR: u32 = 5;
 /// Visitor entries waiting for their confirmation; while this many are
 /// pending, the public form takes no more.
-pub const FEEDBACK_PENDING_MAX: i64 = 1000;
+pub const FEEDBACK_PENDING_MAX: i64 = 200;
+/// Posts the public form accepts per hour over all visitors (each one a
+/// stored entry and a confirmation mail), counted from `feedback`.
+pub const FEEDBACK_FORM_PER_HOUR: i64 = 20;
+/// Posts the public form accepts per 24 hours over all visitors, counted
+/// the same way: at most this many confirmation mails a day.
+pub const FEEDBACK_FORM_PER_DAY: i64 = 100;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 pub(crate) const HOUR: Duration = Duration::from_secs(3600);

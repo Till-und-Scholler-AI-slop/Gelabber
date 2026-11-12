@@ -5,7 +5,8 @@
 //! These routes live outside the CSRF layer, which a plain HTML form cannot
 //! pass. They refuse `cross-site` and `same-site` posts themselves, count
 //! posts per client address (`feedback_public`) and mails per address
-//! (`MailBudget::Feedback`), and lean on the confirmation for the rest.
+//! (`MailBudget::Feedback`), cap the posts they accept per hour and day
+//! over all visitors, and lean on the confirmation for the rest.
 //! Every answer but the off-state `404` and the cross-site `403` is a
 //! `303 See Other` to a static page in the form's language.
 //!
@@ -26,6 +27,7 @@ use axum::http::{HeaderMap, HeaderName};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
+use sqlx::PgConnection;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -34,7 +36,10 @@ use crate::auth::oidc::routes::Peer;
 use crate::auth::{self, validate};
 use crate::error::{ApiError, FieldErrors};
 use crate::i18n::Locale;
-use crate::limits::{self, FEEDBACK_PENDING_MAX, FEEDBACK_PUBLIC_PER_HOUR, HOUR, MailBudget};
+use crate::limits::{
+    self, FEEDBACK_FORM_PER_DAY, FEEDBACK_FORM_PER_HOUR, FEEDBACK_PENDING_MAX,
+    FEEDBACK_PUBLIC_PER_HOUR, HOUR, MailBudget,
+};
 use crate::mail::Mail;
 use crate::state::AppState;
 use crate::token;
@@ -163,13 +168,21 @@ async fn submit(
     if !limits::mail_allowed(&state, MailBudget::Feedback, &email) {
         return Ok(to(locale, Page::Sent));
     }
-    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM feedback WHERE status = 'pending'")
-        .fetch_one(&state.db)
-        .await
-        .inspect_err(|_| limits::mail_unsent(&state, MailBudget::Feedback, &email))?;
-    if pending >= FEEDBACK_PENDING_MAX {
+    let unsent = |_: &sqlx::Error| limits::mail_unsent(&state, MailBudget::Feedback, &email);
+    let mut tx = state.db.begin().await.inspect_err(unsent)?;
+    if let Some(full) = full(&mut tx).await.inspect_err(unsent)? {
         limits::mail_unsent(&state, MailBudget::Feedback, &email);
-        warn!("feedback: too many pending entries");
+        match full {
+            Full::Pending => warn!("feedback: too many pending entries"),
+            Full::Hour => {
+                state.metrics.rate_limited("feedback_form_hour");
+                info!("feedback form: hourly ceiling reached");
+            }
+            Full::Day => {
+                state.metrics.rate_limited("feedback_form_day");
+                info!("feedback form: daily ceiling reached");
+            }
+        }
         return Ok(to(locale, Page::Error));
     }
 
@@ -186,9 +199,10 @@ async fn submit(
     .bind(&text)
     .bind(token::hash(&token))
     .bind(CONFIRM_HOURS)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await
-    .inspect_err(|_| limits::mail_unsent(&state, MailBudget::Feedback, &email))?;
+    .inspect_err(unsent)?;
+    tx.commit().await.inspect_err(unsent)?;
 
     let base = state
         .mail
@@ -205,6 +219,46 @@ async fn submit(
     );
     info!(feedback_id = %id, kind = kind.as_str(), "feedback form: entry pending");
     Ok(to(locale, Page::Sent))
+}
+
+/// Why the form takes no post right now.
+#[derive(Debug, Clone, Copy)]
+enum Full {
+    Pending,
+    Hour,
+    Day,
+}
+
+// The ceilings count rows: the sweeper deletes a pending entry only once its
+// link ran out, so every post accepted in the last 24 hours is still a row.
+const _: () = assert!(CONFIRM_HOURS >= 24);
+
+/// Checks the pending cap and the instance-wide ceilings inside `tx`, under
+/// a lock that one post at a time holds until it commits, so that two posts
+/// (also of two API processes) cannot both take the last place.
+async fn full(tx: &mut PgConnection) -> Result<Option<Full>, sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('feedback_form'), 0)")
+        .execute(&mut *tx)
+        .await?;
+    // Every pending entry and every form entry younger than its link still
+    // has `confirm_expires_at`, which `feedback_confirm_idx` covers.
+    let (pending, hour, day): (i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE status = 'pending'), \
+                count(*) FILTER (WHERE client = 'form' AND created_at > now() - interval '1 hour'), \
+                count(*) FILTER (WHERE client = 'form' AND created_at > now() - interval '24 hours') \
+         FROM feedback WHERE confirm_expires_at IS NOT NULL",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    Ok(if pending >= FEEDBACK_PENDING_MAX {
+        Some(Full::Pending)
+    } else if hour >= FEEDBACK_FORM_PER_HOUR {
+        Some(Full::Hour)
+    } else if day >= FEEDBACK_FORM_PER_DAY {
+        Some(Full::Day)
+    } else {
+        None
+    })
 }
 
 #[derive(Debug, Default, Deserialize)]
