@@ -466,6 +466,35 @@ mod tests {
         assert!(toasts.borrow().texts().is_empty());
     }
 
+    /// `notify(…, {action})`: the action's button closes the toast and
+    /// hands its address to the app; a toast with an action is its own.
+    #[test]
+    fn an_action_opens_its_page_and_closes_the_toast() {
+        use egui_kittest::kittest::Queryable as _;
+        let toasts = std::cell::RefCell::new(Toasts::default());
+        let opened = std::cell::RefCell::new(None);
+        toasts.borrow_mut().notify("Danke!");
+        toasts
+            .borrow_mut()
+            .notify_action("Danke!", "Ansehen", "/settings/feedback");
+        assert_eq!(toasts.borrow().texts(), ["Danke!", "Danke!"]);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(800.0, 400.0))
+            .with_step_dt(0.1)
+            .build_ui(|ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), Theme::dark());
+                if let Some(href) = toasts.borrow_mut().show(ui, true) {
+                    *opened.borrow_mut() = Some(href);
+                }
+            });
+        harness.run_steps(2);
+        harness.get_by_label("Ansehen").click();
+        harness.run_steps(2);
+        assert_eq!(opened.borrow().as_deref(), Some("/settings/feedback"));
+        assert_eq!(toasts.borrow().texts(), ["Danke!"]);
+    }
+
     #[test]
     fn duplicates_and_a_fourth_error_are_dropped() {
         let mut t = Toasts::default();

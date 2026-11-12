@@ -257,7 +257,7 @@ fn icon_id(icon: Icon) -> Id {
 }
 
 /// What an item of the user menu does.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuItem {
     Profile,
     Settings,
@@ -831,12 +831,79 @@ mod tests {
 
     /// The stand-in API with Lena's workspace, Lena an operator or not.
     fn operator_api(operator: bool) -> FakeApi {
+        feedback_api(operator, false)
+    }
+
+    /// As [`operator_api`], on an instance that takes feedback or not.
+    fn feedback_api(operator: bool, feedback: bool) -> FakeApi {
         FakeApi::start(true, move |method, path, _| match (method, path) {
             ("GET", "/auth/session") => Some(Reply::json(serde_json::json!({
                 "user": crate::app::testkit::lena(), "csrf_token": "csrf", "operator": operator
             }))),
+            ("GET", "/feedback/status") if feedback => Some(Reply::json(
+                serde_json::json!({"enabled": true, "unread": 0}),
+            )),
             _ => crate::app::testkit::workspace(method, path),
         })
+    }
+
+    /// The items in the web's order: "Feedback geben" follows
+    /// "Einstellungen" while the instance takes feedback, then "Betrieb"
+    /// for operators; "Server wechseln …" is the app's own.
+    #[test]
+    fn the_menu_keeps_the_web_order() {
+        use super::MenuItem::*;
+        let order = |operator, feedback| -> Vec<super::MenuItem> {
+            super::menu_items(operator, feedback)
+                .into_iter()
+                .map(|(item, _)| item)
+                .collect()
+        };
+        assert_eq!(
+            order(false, false),
+            [Profile, Settings, SwitchServer, SignOut]
+        );
+        assert_eq!(
+            order(false, true),
+            [Profile, Settings, Feedback, SwitchServer, SignOut]
+        );
+        assert_eq!(
+            order(true, false),
+            [Profile, Settings, Operator, SwitchServer, SignOut]
+        );
+        assert_eq!(
+            order(true, true),
+            [Profile, Settings, Feedback, Operator, SwitchServer, SignOut]
+        );
+    }
+
+    /// Drawn: "Feedback geben" sits between "Einstellungen" and "Betrieb".
+    #[test]
+    fn feedback_sits_between_the_settings_and_betrieb() {
+        use crate::app::testkit::HOME;
+
+        let _config = TempConfig::new("menu-feedback");
+        let api = feedback_api(true, true);
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for(&mut harness, "the status", |_| {
+            api.saw("GET /feedback/status")
+        });
+        harness.run_steps(5);
+        open_menu(&mut harness);
+        wait_for_label(&mut harness, "Feedback geben");
+        let wanted = [
+            "Profil bearbeiten",
+            "Einstellungen",
+            "Feedback geben",
+            "Betrieb",
+            "Abmelden",
+        ];
+        let labels: Vec<String> = harness
+            .query_all_by_role(Role::Button)
+            .filter_map(|n| n.accesskit_node().label())
+            .filter(|l| wanted.contains(&l.as_str()))
+            .collect();
+        assert!(labels.ends_with(&wanted.map(String::from)), "{labels:?}");
     }
 
     /// "Betrieb" is in the menu for operators only, after "Einstellungen",

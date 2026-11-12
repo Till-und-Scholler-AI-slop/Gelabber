@@ -42,6 +42,8 @@ pub(super) struct Attached {
     content_type: &'static str,
     /// Decoded for the thumbnail only; `None` if it does not decode here.
     preview: Option<ColorImage>,
+    /// The image's own size in pixels, which the thumbnail never exceeds.
+    natural: egui::Vec2,
     texture: Option<egui::TextureHandle>,
 }
 
@@ -129,7 +131,7 @@ impl Dialog {
 }
 
 /// `sniff` of the API: PNG, JPEG or WebP by their first bytes.
-fn sniff(bytes: &[u8]) -> Option<&'static str> {
+pub(super) fn sniff(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
@@ -173,9 +175,19 @@ fn read(source: Source) -> Result<Attached, Refused> {
         }
     };
     let content_type = check(&bytes, bytes.len() as u64)?;
-    let preview = image::load_from_memory(&bytes).ok().map(|img| {
-        // Twice the largest size it shows at, for sharp edges.
-        let small = img.thumbnail(1024, (THUMB_MAX_H * 2.0) as u32).to_rgba8();
+    let decoded = image::load_from_memory(&bytes).ok();
+    let natural = decoded.as_ref().map_or(egui::Vec2::ZERO, |img| {
+        vec2(img.width() as f32, img.height() as f32)
+    });
+    let preview = decoded.map(|img| {
+        // At most twice the largest size it shows at, for sharp edges.
+        let (w, h) = (1024, (THUMB_MAX_H * 2.0) as u32);
+        let small = if img.width() > w || img.height() > h {
+            img.thumbnail(w, h)
+        } else {
+            img
+        }
+        .to_rgba8();
         let size = [small.width() as usize, small.height() as usize];
         ColorImage::from_rgba_unmultiplied(size, small.as_raw())
     });
@@ -183,6 +195,7 @@ fn read(source: Source) -> Result<Attached, Refused> {
         bytes,
         content_type,
         preview,
+        natural,
         texture: None,
     })
 }
@@ -584,13 +597,13 @@ fn thumbnail(ui: &mut Ui, image: &mut Attached, pending: bool) -> bool {
         ));
     }
     let shown = match &image.texture {
-        Some(texture) => {
-            let size = texture.size_vec2();
+        Some(_) if image.natural.x > 0.0 && image.natural.y > 0.0 => {
+            let size = image.natural;
             let scale = (THUMB_MAX_H / size.y).min(max_w / size.x).min(1.0);
             size * scale
         }
         // It does not decode here: the box keeps the remove button.
-        None => vec2(120.0, 80.0),
+        _ => vec2(120.0, 80.0),
     };
     let (rect, response) = ui.allocate_exact_size(shown + vec2(2.0, 2.0), Sense::hover());
     crate::widgets::announce(&response, egui::Role::Image, texts::image_alt());
@@ -726,13 +739,29 @@ fn sent_along(ui: &mut Ui, d: &mut Dialog) {
     y += summary.height();
     if open {
         y += space::S2;
-        for (dt, dd) in dts.iter().zip(&dds) {
+        for (i, ((dt, dd), (term, value))) in dts.iter().zip(&dds).zip(rows).enumerate() {
+            let at = pos2(left + dt_w + space::S3, y);
             dt.paint(&painter, pos2(left, y));
-            dd.paint(&painter, pos2(left + dt_w + space::S3, y));
+            dd.paint(&painter, at);
+            // The `<dl>` is read out: each term and its value.
+            for (j, (block, s, min)) in [(dt, term, pos2(left, y)), (dd, value, at)]
+                .into_iter()
+                .enumerate()
+            {
+                let id = egui::Id::unique(("feedback-sent-along-row", i, j));
+                let node = ui.interact(Rect::from_min_size(min, block.size()), id, Sense::hover());
+                crate::widgets::announce(&node, egui::Role::Label, s);
+            }
             y += dt.height().max(dd.height()) + space::S1;
         }
         y += space::S2 - space::S1;
         nothing.paint(&painter, pos2(left, y));
+        let node = ui.interact(
+            Rect::from_min_size(pos2(left, y), nothing.size()),
+            egui::Id::unique("feedback-sent-along-end"),
+            Sense::hover(),
+        );
+        crate::widgets::announce(&node, egui::Role::Label, texts::context_nothing_else());
     }
 }
 

@@ -5,6 +5,8 @@
 //! and after the person's own changes; there is no gateway frame for it.
 
 pub mod dialog;
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -74,7 +76,9 @@ fn follow_account(s: &mut State, account: Option<Uuid>) {
 
 /// Takes a finished read, and reads when nothing is known yet, when the
 /// last read is five minutes old (`refetchInterval`) or on `focused`
-/// (`refetchOnWindowFocus`).
+/// (`refetchOnWindowFocus`). No timer of its own, as the directory's
+/// status has none: an idle app stays idle, and the next frame after the
+/// five minutes reads again.
 fn poll_status(ctx: &egui::Context, app: &AppCtx, s: &mut State, focused: bool) {
     let status = &mut s.status;
     if let Some(result) = poll(&mut status.request) {
@@ -103,12 +107,6 @@ fn poll_status(ctx: &egui::Context, app: &AppCtx, s: &mut State, focused: bool) 
             http.feedback_status().await
         }));
         ctx.request_repaint();
-    }
-    // The interval runs while the app idles, as the web's timer does.
-    if status.request.is_none()
-        && let Some(at) = status.read_at
-    {
-        ctx.request_repaint_after(STALE.saturating_sub(at.elapsed()));
     }
 }
 
