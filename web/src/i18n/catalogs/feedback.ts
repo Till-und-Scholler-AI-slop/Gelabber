@@ -1,7 +1,7 @@
 import { defineCatalog } from "../catalog.ts";
 
 // Feedback to the instance's operators (web/src/feedback, v0.10): the
-// "Feedback geben" dialog. System names (Linux, macOS, …) and the version
+// "Feedback geben" dialog and Einstellungen → Feedback. System names (Linux, macOS, …) and the version
 // are the same in every language and come from elsewhere.
 export const feedback = defineCatalog(
   "feedback",
@@ -47,6 +47,24 @@ export const feedback = defineCatalog(
     sending: "Wird gesendet…",
     "toast.sent": "Danke! Dein Feedback ist angekommen.",
     "toast.view": "Ansehen",
+    "context.desktopApp": "Desktop-App",
+    "area.give": "Feedback geben",
+    "area.loadFailed": "Feedback konnte nicht geladen werden.",
+    "area.empty": "Du hast noch kein Feedback geschickt.",
+    "area.emptyHint":
+      "Ideen, Probleme und Lob gehen direkt an die Betreiber dieser Instanz.",
+    "area.more": "Mehr laden",
+    "status.open": "Offen",
+    "status.done": "Erledigt",
+    "thread.sentAlong": "Mitgeschickt",
+    "thread.you": "Du",
+    "thread.operators": "Betreiber",
+    "thread.new": "Neu",
+    "thread.doneNote":
+      "Die Betreiber haben das als erledigt markiert. Wenn du antwortest, ist es wieder offen.",
+    "thread.reply": "Antworten",
+    "thread.replyLabel": "Deine Antwort",
+    "thread.replySent": "Antwort gesendet.",
   },
   {
     "dialog.title": "Give feedback",
@@ -89,5 +107,23 @@ export const feedback = defineCatalog(
     sending: "Sending…",
     "toast.sent": "Thanks! Your feedback has arrived.",
     "toast.view": "View",
+    "context.desktopApp": "Desktop app",
+    "area.give": "Give feedback",
+    "area.loadFailed": "Feedback could not be loaded.",
+    "area.empty": "You haven't sent any feedback yet.",
+    "area.emptyHint":
+      "Ideas, problems and praise go straight to the operators of this instance.",
+    "area.more": "Load more",
+    "status.open": "Open",
+    "status.done": "Done",
+    "thread.sentAlong": "Sent along",
+    "thread.you": "You",
+    "thread.operators": "Operators",
+    "thread.new": "New",
+    "thread.doneNote":
+      "The operators marked this as done. Replying opens it again.",
+    "thread.reply": "Reply",
+    "thread.replyLabel": "Your reply",
+    "thread.replySent": "Reply sent.",
   },
 );

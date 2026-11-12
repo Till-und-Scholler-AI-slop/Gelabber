@@ -103,3 +103,115 @@
   right: 2px;
   margin: 0;
 }
+
+/* Einstellungen → Feedback: the entries as small threads. */
+.feedback-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-4);
+}
+.feedback-area__actions {
+  display: flex;
+}
+.feedback-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-1);
+}
+.feedback-entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-3);
+}
+.feedback-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--lr-space-3);
+  padding: var(--lr-space-4);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-surface);
+}
+.feedback-entry__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2);
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}
+.feedback-entry__text,
+.feedback-message__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.feedback-entry__image {
+  display: inline-flex;
+  padding: 0;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  overflow: hidden;
+  background: var(--lr-bg);
+  cursor: zoom-in;
+}
+.feedback-entry__image img {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+}
+.feedback-entry__context {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.feedback-entry__context > summary {
+  cursor: pointer;
+}
+.feedback-entry__context > p {
+  margin-top: var(--lr-space-1);
+  overflow-wrap: anywhere;
+}
+.feedback-thread {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: var(--lr-space-2);
+  margin: 0;
+  padding: 0 0 0 var(--lr-space-3);
+  border-left: 2px solid var(--lr-border);
+  list-style: none;
+}
+.feedback-message__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2);
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}
+.feedback-message__meta strong {
+  color: var(--lr-text);
+  font-weight: 600;
+}
+.feedback-reply,
+.feedback-reply__form {
+  align-self: stretch;
+}
+.feedback-reply__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-3);
+}
+.feedback-reply__text {
+  resize: vertical;
+}
+.feedback-reply__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--lr-space-2);
+}
+.feedback-more {
+  display: flex;
+  justify-content: center;
+}

@@ -7,6 +7,8 @@ const stamp = { userId: "tom", generation: 3 };
 const remote = vi.hoisted(() => ({
   feedbackStatus: vi.fn(),
   sendFeedback: vi.fn(),
+  readFeedback: vi.fn(),
+  replyFeedback: vi.fn(),
 }));
 const queryOptions = vi.hoisted(() => ({ last: null as unknown }));
 
@@ -36,9 +38,13 @@ import {
   STATUS_REFETCH_MS,
   ensureFeedbackStatus,
   feedbackKeys,
+  markFeedbackRead,
+  nextFeedbackOffset,
   useFeedbackStatus,
+  useReplyFeedback,
   useSendFeedback,
 } from "./queries.ts";
+import type { FeedbackEntry, FeedbackPage } from "./types.ts";
 
 /** The hook's result, taken from one render under `queryClient`. */
 function hookOf<T>(queryClient: QueryClient, useHook: () => T): T {
@@ -112,6 +118,114 @@ describe("sending", () => {
       image,
     );
     expect(queryClient.getQueryState(status)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(list)?.isInvalidated).toBe(true);
+  });
+});
+
+const entry = (id: string, overrides: Partial<FeedbackEntry> = {}) =>
+  ({
+    id,
+    kind: "idea",
+    status: "open",
+    text: "Mehr Emojis",
+    created_at: "2026-11-03T10:00:00Z",
+    last_activity_at: "2026-11-03T10:00:00Z",
+    image: null,
+    context: { ...context, page: "/" },
+    unread: false,
+    messages: [],
+    ...overrides,
+  }) satisfies FeedbackEntry;
+
+const cachedList = (queryClient: QueryClient, entries: FeedbackEntry[]) => {
+  const list = feedbackKeys.list(stamp.userId, stamp.generation);
+  queryClient.setQueryData(list, {
+    pages: [{ entries, total: entries.length }],
+    pageParams: [0],
+  });
+  return () =>
+    queryClient.getQueryData<{ pages: FeedbackPage[] }>(list)!.pages[0]!
+      .entries;
+};
+
+describe("the list", () => {
+  it("pages by 20 until every entry is loaded", () => {
+    const page = (count: number, total: number): FeedbackPage => ({
+      entries: Array.from({ length: count }, (_, index) => entry(`${index}`)),
+      total,
+    });
+    const first = page(20, 45);
+    expect(nextFeedbackOffset(first, [first])).toBe(20);
+    const second = page(20, 45);
+    const third = page(5, 45);
+    expect(nextFeedbackOffset(second, [first, second])).toBe(40);
+    expect(nextFeedbackOffset(third, [first, second, third])).toBeUndefined();
+    // An empty page ends it even when the total moved meanwhile.
+    expect(nextFeedbackOffset(page(0, 50), [first, page(0, 50)])).toBe(
+      undefined,
+    );
+  });
+});
+
+describe("reading", () => {
+  it("marks the entry read, then reads the status again, not the list", async () => {
+    const queryClient = new QueryClient();
+    const status = feedbackKeys.status(stamp.userId, stamp.generation);
+    queryClient.setQueryData(status, { enabled: true, unread: 1 });
+    const entries = cachedList(queryClient, [
+      entry("a", {
+        unread: true,
+        messages: [
+          {
+            id: "m1",
+            from: "operators",
+            text: "Gute Idee!",
+            created_at: "2026-11-03T11:00:00Z",
+            new: true,
+          },
+        ],
+      }),
+    ]);
+    remote.readFeedback.mockResolvedValue(null);
+    await markFeedbackRead(queryClient, stamp, "a");
+    expect(remote.readFeedback).toHaveBeenCalledWith("a");
+    expect(queryClient.getQueryState(status)?.isInvalidated).toBe(true);
+    const list = feedbackKeys.list(stamp.userId, stamp.generation);
+    expect(queryClient.getQueryState(list)?.isInvalidated).toBe(false);
+    // The next visit starts without the marks.
+    expect(entries()[0]).toMatchObject({
+      unread: false,
+      messages: [{ id: "m1", new: false }],
+    });
+  });
+});
+
+describe("replying", () => {
+  it("appends the reply, opens the entry and reads both again", async () => {
+    const queryClient = new QueryClient();
+    const status = feedbackKeys.status(stamp.userId, stamp.generation);
+    queryClient.setQueryData(status, { enabled: true, unread: 0 });
+    const entries = cachedList(queryClient, [entry("a", { status: "done" })]);
+    const message = {
+      id: "m9",
+      from: "you" as const,
+      text: "Noch da",
+      created_at: "2026-11-05T09:00:00Z",
+      new: false,
+    };
+    remote.replyFeedback.mockResolvedValue(message);
+    await hookOf(queryClient, useReplyFeedback).mutateAsync({
+      id: "a",
+      text: "  Noch da \n",
+    });
+    expect(remote.replyFeedback).toHaveBeenCalledWith("a", "Noch da");
+    expect(entries()[0]).toMatchObject({
+      status: "open",
+      last_activity_at: "2026-11-05T09:00:00Z",
+      messages: [message],
+    });
+    expect(queryClient.getQueryState(status)?.isInvalidated).toBe(true);
+    const list = feedbackKeys.list(stamp.userId, stamp.generation);
     expect(queryClient.getQueryState(list)?.isInvalidated).toBe(true);
   });
 });

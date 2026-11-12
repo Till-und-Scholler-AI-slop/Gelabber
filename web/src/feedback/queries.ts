@@ -4,9 +4,11 @@
 // window focus, every five minutes and after the person's own changes.
 
 import {
+  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
   type QueryClient,
 } from "@tanstack/react-query";
 
@@ -17,7 +19,14 @@ import {
   useUserId,
 } from "../auth/scope.ts";
 import * as remote from "./api.ts";
-import type { FeedbackContext, FeedbackKind, FeedbackStatus } from "./types.ts";
+import type {
+  FeedbackContext,
+  FeedbackEntry,
+  FeedbackKind,
+  FeedbackMessage,
+  FeedbackPage,
+  FeedbackStatus,
+} from "./types.ts";
 
 export const feedbackKeys = {
   all: (userId: string, generation: number) =>
@@ -88,6 +97,97 @@ export function useSendFeedback() {
     onMutate: () => takeStamp(),
     onSuccess: (_entry, _input, stamp) => {
       if (stampHolds(stamp)) refreshFeedback(client, stamp);
+    },
+  });
+}
+
+/** The offset of the next page of 20, or undefined once all are loaded. */
+export function nextFeedbackOffset(
+  last: FeedbackPage,
+  pages: FeedbackPage[],
+): number | undefined {
+  const loaded = pages.reduce((sum, page) => sum + page.entries.length, 0);
+  return last.entries.length > 0 && loaded < last.total ? loaded : undefined;
+}
+
+/** Einstellungen → Feedback: the person's entries, newest activity first. */
+export function useFeedbackList() {
+  const userId = useUserId();
+  const generation = scopeGeneration();
+  return useInfiniteQuery({
+    queryKey: feedbackKeys.list(userId, generation),
+    queryFn: ({ pageParam, signal }) => remote.listFeedback(pageParam, signal),
+    initialPageParam: 0,
+    getNextPageParam: nextFeedbackOffset,
+    enabled: userId.length > 0,
+  });
+}
+
+/** Rewrites one entry in the cached list. */
+function patchEntry(
+  client: QueryClient,
+  stamp: { userId: string; generation: number },
+  id: string,
+  update: (entry: FeedbackEntry) => FeedbackEntry,
+): void {
+  client.setQueryData<InfiniteData<FeedbackPage, number>>(
+    feedbackKeys.list(stamp.userId, stamp.generation),
+    (data) =>
+      data && {
+        ...data,
+        pages: data.pages.map((page) => ({
+          ...page,
+          entries: page.entries.map((entry) =>
+            entry.id === id ? update(entry) : entry,
+          ),
+        })),
+      },
+  );
+}
+
+/**
+ * The entry's replies are seen: `POST /api/feedback/{id}/read`, then the
+ * status is read again for the dot. The cached list forgets the entry's
+ * "Neu" marks, so the next visit shows none; the page on screen keeps its
+ * own (see `FeedbackArea`).
+ */
+export async function markFeedbackRead(
+  client: QueryClient,
+  stamp: { userId: string; generation: number },
+  id: string,
+): Promise<void> {
+  await remote.readFeedback(id);
+  if (!stampHolds(stamp)) return;
+  patchEntry(client, stamp, id, (entry) => ({
+    ...entry,
+    unread: false,
+    messages: entry.messages.map((message) =>
+      message.new ? { ...message, new: false } : message,
+    ),
+  }));
+  void client.invalidateQueries({
+    queryKey: feedbackKeys.status(stamp.userId, stamp.generation),
+  });
+}
+
+/** A person's reply in a thread. It opens a done entry again. */
+export function useReplyFeedback() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, text }: { id: string; text: string }) =>
+      remote.replyFeedback(id, text.trim()),
+    onMutate: () => takeStamp(),
+    onSuccess: (message: FeedbackMessage, { id }, stamp) => {
+      if (!stampHolds(stamp)) return;
+      patchEntry(client, stamp, id, (entry) => ({
+        ...entry,
+        status: "open",
+        last_activity_at: message.created_at,
+        messages: entry.messages.some((known) => known.id === message.id)
+          ? entry.messages
+          : [...entry.messages, message],
+      }));
+      refreshFeedback(client, stamp);
     },
   });
 }
