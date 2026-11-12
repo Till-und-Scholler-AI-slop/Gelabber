@@ -9,6 +9,7 @@
 //! switch on the code.
 
 pub mod account;
+pub mod feedback;
 pub mod mail;
 pub mod push;
 pub mod servers;

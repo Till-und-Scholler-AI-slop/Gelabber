@@ -65,6 +65,11 @@ pub const FEEDBACK_PER_HOUR: u32 = 5;
 /// A person's replies to their feedback per account and hour (handler
 /// bucket `feedback_reply`).
 pub const FEEDBACK_REPLIES_PER_HOUR: u32 = 30;
+/// Feedback notices per address and hour (mail budget `mail_notice`): the
+/// operators' mails about new entries and replies, and the sender's "there
+/// is an answer". Above [`MAIL_PER_ADDRESS_PER_HOUR`], since an operator
+/// hears about every entry of the instance.
+pub const FEEDBACK_NOTICES_PER_HOUR: u32 = 30;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 pub(crate) const HOUR: Duration = Duration::from_secs(3600);
@@ -532,6 +537,11 @@ pub enum MailBudget {
     /// Beta invitations an operator mails (`operator::invitations`), kept
     /// apart so they never use up the invitee's confirmation mails.
     Invitation,
+    /// Confirmation links of the public feedback form (#542), kept apart
+    /// so the form cannot use up a stranger's registration mails.
+    Feedback,
+    /// Feedback notices to operators and senders (#542).
+    Notice,
 }
 
 impl MailBudget {
@@ -540,6 +550,18 @@ impl MailBudget {
             Self::Registration => "mail",
             Self::Reset => "mail_reset",
             Self::Invitation => "mail_invite",
+            Self::Feedback => "mail_feedback",
+            Self::Notice => "mail_notice",
+        }
+    }
+
+    /// Mails per address and hour this budget allows.
+    pub fn per_hour(self) -> u32 {
+        match self {
+            Self::Registration | Self::Reset | Self::Invitation | Self::Feedback => {
+                MAIL_PER_ADDRESS_PER_HOUR
+            }
+            Self::Notice => FEEDBACK_NOTICES_PER_HOUR,
         }
     }
 }
@@ -551,7 +573,7 @@ pub fn mail_allowed(state: &AppState, budget: MailBudget, email: &str) -> bool {
     let bucket = budget.bucket();
     let allowed = state
         .limiter
-        .hit(bucket, &account_key(email), MAIL_PER_ADDRESS_PER_HOUR, HOUR)
+        .hit(bucket, &account_key(email), budget.per_hour(), HOUR)
         .is_ok();
     if !allowed {
         state.metrics.rate_limited(bucket);
@@ -576,6 +598,8 @@ fn is_per_account(key: &str) -> bool {
         || key.starts_with("mail:")
         || key.starts_with("mail_reset:")
         || key.starts_with("mail_invite:")
+        || key.starts_with("mail_feedback:")
+        || key.starts_with("mail_notice:")
 }
 
 /// The client address the rate limits are keyed by, with IPv6 grouped per
@@ -844,6 +868,36 @@ mod tests {
         assert!(limiter.blocked("login", "victim", 2).is_some());
         assert!(limiter.hit("mail", "victim", 1, HOUR).is_err());
         assert!(limiter.hit("mail_reset", "victim", 1, HOUR).is_err());
+    }
+
+    #[test]
+    fn feedback_mail_budgets_are_spared_by_eviction() {
+        for bucket in [MailBudget::Feedback.bucket(), MailBudget::Notice.bucket()] {
+            assert!(is_per_account(&format!("{bucket}:victim")), "{bucket}");
+        }
+        let limiter = Limiter::with_caps(8, 64);
+        limiter.hit("mail_feedback", "victim", 1, HOUR).unwrap();
+        limiter.hit("mail_notice", "victim", 1, HOUR).unwrap();
+        for i in 0..640 {
+            limiter.hit("up", &i.to_string(), 5, HOUR).unwrap();
+        }
+        assert!(limiter.hit("mail_feedback", "victim", 1, HOUR).is_err());
+        assert!(limiter.hit("mail_notice", "victim", 1, HOUR).is_err());
+    }
+
+    #[test]
+    fn mail_budgets_allow_their_hourly_count() {
+        for budget in [
+            MailBudget::Registration,
+            MailBudget::Reset,
+            MailBudget::Invitation,
+            MailBudget::Feedback,
+        ] {
+            assert_eq!(budget.per_hour(), MAIL_PER_ADDRESS_PER_HOUR, "{budget:?}");
+        }
+        assert_eq!(MailBudget::Notice.per_hour(), 30);
+        assert_eq!(MailBudget::Feedback.bucket(), "mail_feedback");
+        assert_eq!(MailBudget::Notice.bucket(), "mail_notice");
     }
 
     #[test]
