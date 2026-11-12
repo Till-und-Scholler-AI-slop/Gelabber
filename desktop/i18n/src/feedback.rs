@@ -26,8 +26,10 @@ crate::strings! {
     image_attach = "Bild anhängen" | "Attach image";
     image_remove = "Bild entfernen" | "Remove image";
     image_alt = "Angehängtes Bild" | "Attached image";
-    image_hint = "PNG, JPEG oder WebP, höchstens 5 MB. Du kannst ein Bild auch einfügen."
-        | "PNG, JPEG or WebP, up to 5 MB. You can also paste one.";
+    /// The web's hint ends on pasting; the app takes no image from the
+    /// clipboard but one dropped on the window (the owner's wording).
+    image_hint = "PNG, JPEG oder WebP, höchstens 5 MB. Du kannst ein Bild auch hierher ziehen."
+        | "PNG, JPEG or WebP, at most 5 MB. You can also drop one here.";
     image_attached = "Bild angehängt." | "Image attached.";
     image_replaced = "Bild ersetzt." | "Image replaced.";
     image_wrong_type = "Nur PNG, JPEG oder WebP." | "Only PNG, JPEG or WebP.";
@@ -66,6 +68,11 @@ crate::strings! {
     thread_reply = "Antworten" | "Reply";
     thread_reply_label = "Deine Antwort" | "Your reply";
     thread_reply_sent = "Antwort gesendet." | "Reply sent.";
+    /// A reply refused with `text: too_many` (`thread.full`).
+    thread_full = "Dieser Verlauf ist voll (200 Nachrichten)." | "This thread is full (200 messages).";
+    /// A reply to an entry the operators deleted meanwhile (the web's
+    /// `toasts.feedbackGone` of the operator catalog).
+    entry_gone = "Dieses Feedback gibt es nicht mehr." | "That feedback no longer exists.";
 }
 
 /// `text.left`: the counter under the text from 3,600 characters on.

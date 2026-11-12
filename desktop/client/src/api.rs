@@ -1036,10 +1036,17 @@ impl Http {
         .await
     }
 
-    /// The entry's operator replies are seen: its `unread` clears.
-    pub async fn read_feedback(&self, id: Uuid) -> Result<()> {
-        self.send_empty(Method::POST, &format!("/feedback/{id}/read"))
-            .await
+    /// The entry's operator replies up to message `through`, the newest
+    /// one on screen, are seen (`readFeedback`): a reply that came after it
+    /// keeps the entry unread. `422 through: invalid` when `through` is no
+    /// message of the entry.
+    pub async fn read_feedback(&self, id: Uuid, through: Uuid) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/feedback/{id}/read"),
+            &json!({ "through": through }),
+        )
+        .await
     }
 
     /// The URL of an entry's image, for [`Http::bytes`].
@@ -1544,7 +1551,7 @@ mod tests {
             assert_eq!(http.create_feedback(&body).await.unwrap().id, id);
             let reply = http.reply_feedback(id, "Firefox.").await.unwrap();
             assert_eq!(reply.from, FeedbackAuthor::You);
-            http.read_feedback(id).await.unwrap();
+            http.read_feedback(id, Uuid::from_u128(6)).await.unwrap();
         });
         assert_eq!(
             http.feedback_image_url(id),
@@ -1565,7 +1572,10 @@ mod tests {
                 format!("POST /api/feedback/{i}/messages"),
                 r#"{"text":"Firefox."}"#.to_owned(),
             ),
-            (format!("POST /api/feedback/{i}/read"), String::new()),
+            (
+                format!("POST /api/feedback/{i}/read"),
+                r#"{"through":"00000000-0000-0000-0000-000000000006"}"#.to_owned(),
+            ),
         ];
         let seen = seen.lock();
         assert_eq!(seen.len(), expected.len(), "{seen:?}");

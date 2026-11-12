@@ -1,8 +1,9 @@
 //! Einstellungen → Feedback (feedback/FeedbackArea.tsx, FeedbackThread.tsx,
 //! thread.ts, feedback.css; #542): every entry the person sent, as small
 //! threads with the operators' replies, and "Feedback geben" above them.
-//! Entries with unread replies are marked read once shown; their "Neu"
-//! marks stay until the person leaves the area.
+//! Entries with unread replies are marked read once shown, through their
+//! newest message on screen; their "Neu" marks stay until the person
+//! leaves the area.
 
 use std::collections::{HashMap, HashSet};
 
@@ -52,7 +53,11 @@ pub struct State {
     marks: HashSet<Uuid>,
     /// Entries whose read call went out in this visit (`entriesToRead`).
     asked: HashSet<Uuid>,
-    reads: Vec<(Uuid, Answer<()>)>,
+    /// Read calls on their way: the entry and the message read through.
+    reads: Vec<(Uuid, Uuid, Answer<()>)>,
+    /// Entries whose read call failed: asked again with the next list they
+    /// show up in, not on the next frame.
+    retry: HashSet<Uuid>,
     /// "Mitgeschickt" opened.
     context_open: HashSet<Uuid>,
     replies: HashMap<Uuid, ReplyForm>,
@@ -131,8 +136,29 @@ fn kind_label(kind: FeedbackKind) -> &'static str {
     }
 }
 
-/// `sendFieldErrors` for a reply: the text's codes under the field, the
-/// rest for the form.
+/// `entriesToRead`: the entries with unread replies not yet marked read in
+/// this visit, each with its newest message on screen (`through`).
+fn entries_to_read(entries: &[FeedbackEntry], asked: &HashSet<Uuid>) -> Vec<(Uuid, Uuid)> {
+    entries
+        .iter()
+        .filter(|entry| entry.unread && !asked.contains(&entry.id))
+        .filter_map(|entry| Some((entry.id, entry.messages.last()?.id)))
+        .collect()
+}
+
+/// `markFeedbackRead`'s patch: the replies up to `through` are no longer
+/// new; one after it stays new, and so does the entry.
+fn mark_read(entry: &mut FeedbackEntry, through: Uuid) {
+    if let Some(seen) = entry.messages.iter().position(|m| m.id == through) {
+        for message in &mut entry.messages[..=seen] {
+            message.new = false;
+        }
+    }
+    entry.unread = entry.messages.iter().any(|m| m.new);
+}
+
+/// `sendFieldErrors` for a reply: the text's codes under the field (a full
+/// thread among them), the rest for the form.
 fn reply_errors(errors: &mut FormErrors, error: &ApiError) {
     let failure = Failure::from_api(error);
     if failure.code == "validation_failed"
@@ -141,6 +167,7 @@ fn reply_errors(errors: &mut FormErrors, error: &ApiError) {
         let message = match code.as_str() {
             "required" => texts::text_required().to_owned(),
             "too_long" => texts::text_too_long().to_owned(),
+            "too_many" => texts::thread_full().to_owned(),
             code => field_message("text", code),
         };
         errors.set_fields(vec![("text", message)]);
@@ -160,7 +187,7 @@ fn ask(app: &AppCtx, s: &mut State, first: bool) {
 }
 
 /// Takes what finished: pages, read calls and replies.
-fn take(ctx: &egui::Context, app: &AppCtx, s: &mut State) {
+fn take(ctx: &egui::Context, app: &mut AppCtx, s: &mut State) {
     if let Some((first, pending)) = &s.request
         && let Some(result) = pending.take()
     {
@@ -184,6 +211,10 @@ fn take(ctx: &egui::Context, app: &AppCtx, s: &mut State) {
                         s.marks.insert(message.id);
                     }
                 }
+                // A failed read call goes again with this list.
+                for id in s.retry.drain() {
+                    s.asked.remove(&id);
+                }
             }
             Err(error) => {
                 tracing::warn!("feedback list: {error}");
@@ -191,36 +222,41 @@ fn take(ctx: &egui::Context, app: &AppCtx, s: &mut State) {
             }
         }
     }
-    // `useReadOnSight`: each entry with unread replies, once a visit.
-    for entry in &s.entries {
-        if entry.unread && !s.asked.contains(&entry.id) {
-            s.asked.insert(entry.id);
-            let http = app.client.http().clone();
-            let id = entry.id;
-            s.reads.push((
-                id,
-                Pending::spawn(app.client, async move { http.read_feedback(id).await }),
-            ));
-        }
+    // `useReadOnSight`: each entry with unread replies, once a visit,
+    // through the newest message the page shows of it.
+    for (id, through) in entries_to_read(&s.entries, &s.asked) {
+        s.asked.insert(id);
+        let http = app.client.http().clone();
+        s.reads.push((
+            id,
+            through,
+            Pending::spawn(
+                app.client,
+                async move { http.read_feedback(id, through).await },
+            ),
+        ));
     }
     let mut read = false;
-    s.reads.retain_mut(|(id, pending)| match pending.take() {
-        None => true,
-        Some(Ok(())) => {
-            if let Some(entry) = s.entries.iter_mut().find(|e| e.id == *id) {
-                entry.unread = false;
+    s.reads
+        .retain_mut(|(id, through, pending)| match pending.take() {
+            None => true,
+            Some(Ok(())) => {
+                if let Some(entry) = s.entries.iter_mut().find(|e| e.id == *id) {
+                    mark_read(entry, *through);
+                }
+                read = true;
+                false
             }
-            read = true;
-            false
-        }
-        Some(Err(error)) => {
-            // Tried again with the next list it shows up in.
-            tracing::warn!("feedback read: {error}");
-            s.asked.remove(id);
-            false
-        }
-    });
+            Some(Err(error)) => {
+                // Tried again with the next list it shows up in (a `422
+                // through: invalid` or a `400` too, as the web's catch does).
+                tracing::warn!("feedback read: {error}");
+                s.retry.insert(*id);
+                false
+            }
+        });
     let mut replied = false;
+    let mut gone = Vec::new();
     for (id, form) in &mut s.replies {
         if let Some(result) = poll(&mut form.sending) {
             match result {
@@ -240,9 +276,20 @@ fn take(ctx: &egui::Context, app: &AppCtx, s: &mut State) {
                     }
                     replied = true;
                 }
+                // The operators deleted the entry meanwhile: the toast
+                // says so and the list is read again without it.
+                Err(error) if error.code() == "not_found" => gone.push(*id),
                 Err(error) => reply_errors(&mut form.errors, &error),
             }
         }
+    }
+    if !gone.is_empty() {
+        for id in &gone {
+            s.replies.remove(id);
+        }
+        app.toasts.error(texts::entry_gone());
+        ask(app, s, true);
+        replied = true;
     }
     if read || replied {
         crate::screens::feedback::refresh(ctx);
@@ -856,6 +903,9 @@ mod tests {
         let posts = posts.lock().clone();
         assert_eq!(posts.len(), 1, "{posts:?}");
         assert_eq!(posts[0].0, format!("/feedback/{OPEN}/read"));
+        // Through the newest message on screen: a reply after it stays new.
+        let body: Value = serde_json::from_str(&posts[0].1).expect("json");
+        assert_eq!(body, json!({"through": REPLY}));
         // The mark stays for the visit.
         assert!(harness.query_by_label("Neu").is_some());
         // "Mitgeschickt" opens on the line of what went along.
@@ -969,6 +1019,134 @@ mod tests {
             .expect("the reply");
         let body: Value = serde_json::from_str(&sent.1).expect("json");
         assert_eq!(body["text"], "Firefox.");
+    }
+
+    /// `markFeedbackRead`: the replies up to `through` are read; one after
+    /// it keeps its mark and the entry unread.
+    #[test]
+    fn a_read_call_reads_through_the_message_it_names() {
+        let page: FeedbackPage = serde_json::from_value(entries()).expect("page");
+        let mut entry = page.entries[0].clone();
+        let later = FeedbackMessage {
+            id: Uuid::from_u128(0xa9),
+            ..entry.messages[0].clone()
+        };
+        entry.messages.push(later);
+        let asked = HashSet::new();
+        assert_eq!(
+            entries_to_read(std::slice::from_ref(&entry), &asked),
+            [(entry.id, Uuid::from_u128(0xa9))]
+        );
+        let first = entry.messages[0].id;
+        mark_read(&mut entry, first);
+        assert!(!entry.messages[0].new);
+        assert!(entry.messages[1].new);
+        assert!(entry.unread);
+        mark_read(&mut entry, Uuid::from_u128(0xa9));
+        assert!(!entry.unread);
+        // Without a message there is nothing to name: no call.
+        entry.unread = true;
+        entry.messages.clear();
+        assert!(entries_to_read(&[entry], &asked).is_empty());
+    }
+
+    /// A refused read call (`422 through: invalid`) is not repeated every
+    /// frame: it goes again with the next list.
+    #[test]
+    fn a_refused_read_call_waits_for_the_next_list() {
+        let _config = TempConfig::new("feedback-area-read-refused");
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = reads.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/feedback/status") => Some(Reply::json(json!({"enabled": true, "unread": 1}))),
+            ("GET", "/feedback") => Some(Reply::json(entries())),
+            ("POST", p) if p.ends_with("/read") => {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Some(Reply::status(
+                    422,
+                    json!({"error": "validation_failed", "message": "x",
+                           "fields": {"through": "invalid"}}),
+                ))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, "/settings/feedback");
+        wait_for(&mut harness, "the read call", |_| {
+            reads.load(Ordering::SeqCst) > 0
+        });
+        for _ in 0..30 {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert!(harness.query_by_label("Neu").is_some());
+    }
+
+    /// A reply to a full thread says so under the field; one to an entry
+    /// the operators deleted says so in a toast and reads the list again.
+    #[test]
+    fn a_full_thread_and_a_gone_entry_are_said() {
+        let _config = TempConfig::new("feedback-area-refused");
+        let lists = Arc::new(AtomicUsize::new(0));
+        let counted = lists.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/feedback/status") => Some(Reply::json(json!({"enabled": true, "unread": 0}))),
+            ("GET", "/feedback") => {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Some(Reply::json(entries()))
+            }
+            ("POST", p) if p == format!("/feedback/{OPEN}/messages") => Some(Reply::status(
+                422,
+                json!({"error": "validation_failed", "message": "x",
+                       "fields": {"text": "too_many"}}),
+            )),
+            ("POST", p) if p == format!("/feedback/{DONE}/messages") => {
+                Some(Reply::error(404, "not_found"))
+            }
+            ("POST", _) => Some(Reply::status(204, Value::Null)),
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, "/settings/feedback");
+        wait_for_label(&mut harness, "Erledigt");
+        let write = |harness: &mut egui_kittest::Harness<'_, crate::Launcher>, nth: usize| {
+            harness
+                .query_all_by_role_and_label(Role::Button, "Antworten")
+                .nth(nth)
+                .expect("Antworten")
+                .click();
+            wait_for_label(harness, "Deine Antwort");
+            harness
+                .query_all_by_label("Deine Antwort")
+                .find(|n| n.accesskit_node().role() == Role::MultilineTextInput)
+                .expect("the field")
+                .focus();
+            harness.step();
+            harness
+                .query_all_by_label("Deine Antwort")
+                .find(|n| n.accesskit_node().role() == Role::MultilineTextInput)
+                .expect("the field")
+                .type_text("Noch etwas.");
+            harness.run_steps(2);
+            harness
+                .get_by_role_and_label(Role::Button, "Senden")
+                .click();
+        };
+        write(&mut harness, 0);
+        wait_for_label(&mut harness, "Dieser Verlauf ist voll (200 Nachrichten).");
+        harness
+            .get_by_role_and_label(Role::Button, "Abbrechen")
+            .click();
+        wait_for(&mut harness, "the form closes", |h| {
+            h.query_by_label("Deine Antwort").is_none()
+        });
+        let before = lists.load(Ordering::SeqCst);
+        // The done entry's "Antworten" is the second.
+        write(&mut harness, 1);
+        wait_for_label(&mut harness, "Dieses Feedback gibt es nicht mehr.");
+        wait_for(&mut harness, "the list read again", |_| {
+            lists.load(Ordering::SeqCst) > before
+        });
+        assert!(harness.query_by_label("Deine Antwort").is_none());
     }
 
     /// An instance without feedback: no nav row, and the address falls
