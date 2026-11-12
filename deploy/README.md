@@ -431,13 +431,13 @@ What is left out when something is missing: a page that is not published has no 
 - account mail is on;
 - `API_OPERATOR_EMAILS` names at least one address.
 
-The web container cannot ask the API, so it learns the last two from `GELABBER_ACCOUNT_MAIL` and `GELABBER_FEEDBACK_OPERATORS`, which `compose.yaml` derives from `SMTP_HOST` and `API_OPERATOR_EMAILS` (only the flags, never the addresses). After changing either key, apply it with `docker compose up -d api web`. A web container run without the bundled compose file shows no form.
+The web container cannot ask the API, so it learns the last two from `GELABBER_ACCOUNT_MAIL` and `GELABBER_FEEDBACK_OPERATORS`, which `compose.yaml` derives from `SMTP_HOST` and `API_OPERATOR_EMAILS` (only the flags, never the addresses). A flag is on as soon as its key is not empty, even when the API finds no usable value in it (a blank `SMTP_HOST`, an `API_OPERATOR_EMAILS` of only commas); the form is then published but its posts end in a 404, so leave an unused key empty. After changing either key, apply it with `docker compose up -d api web`. A web container run without the bundled compose file shows no form.
 
-How the form works: it posts to `/api/public/feedback`, which refuses posts from other sites and counts 5 posts per client address and hour. The visitor gets a mail with a confirmation link, valid 24 hours; only opening it delivers the entry to the operators, and the confirmation page thanks them. Opening the link again lands on the same page and changes nothing. Entries nobody confirmed are deleted after the 24 hours. The mail never quotes the visitor's text, because anyone can make the form mail any address.
+How the form works: it posts to `/api/public/feedback`, which refuses posts from other sites and counts 5 posts per client address and hour. The visitor gets a mail with a confirmation link, valid 24 hours; only opening it delivers the entry to the operators, and the confirmation page thanks them. Opening the link again within the 24 hours lands on the same page and changes nothing. Entries nobody confirmed are deleted after the 24 hours. The mail never quotes the visitor's text, because anyone can make the form mail any address.
 
 The confirmation token sits in the link's query string (`/api/public/feedback/confirm?token=…`), because a page without script cannot read it from after `#` as the other account mails do. The API logs only the path, but a proxy that logs query strings logs the token. It is used for nothing but confirming that one entry, and only within its 24 hours.
 
-Apply a changed value with `docker compose up -d web`. The pages are built only at start, so after editing a text file run `docker compose restart web`. Check the result with `docker compose logs web | grep public-pages`: every page that is left out has one line naming the reason (the missing values or files), and the last line lists the published legal pages.
+Apply a changed value with `docker compose up -d web`. The pages are built only at start, so after editing a text file run `docker compose restart web`. Check the result with `docker compose logs web | grep public-pages`: every page that is left out has one line naming the reason (the missing values or files), and the last line lists the published legal pages and, when it is on, the feedback form.
 
 ## Betrieb
 
