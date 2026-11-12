@@ -388,7 +388,7 @@ Checks, in this order:
 
 Success: `202 {"csrf_token"}` with the cookies of a logout. At that moment the account is marked deleted and every session ends (sockets and media tickets close); its sign-in tokens, server memberships (with their roles), the invites it created and its data export are removed; members of its servers get `{"k":"x"}` (protocol-gateway §4.2). From then on it cannot sign in (`401 invalid_credentials`), a password reset sends nothing, `GET /api/users/{id}` and `POST /api/dms` with its id answer `404`, and the address cannot be registered again until the purge is done. A second request answers `401`.
 
-In the background a worker then deletes its messages (replies to them render as `{id, deleted: true}`, mentions as an unknown user), its DM channels with both sides' messages (the peer gets `{"op":"dm","c":<channel>}`, its rediscovery reloads `/api/dms` without the channel, and the channel's routes answer `404`), its files, avatar and banner, the reactions it gave, and last the account row. Bans it issued stay with `banned_by: null` (§4.3). With account mail on, the address gets a "your account was deleted" mail in the account's language when the purge is done.
+In the background a worker then deletes its messages (replies to them render as `{id, deleted: true}`, mentions as an unknown user), its DM channels with both sides' messages (the peer gets `{"op":"dm","c":<channel>}`, its rediscovery reloads `/api/dms` without the channel, and the channel's routes answer `404`), its files, avatar and banner, the reactions it gave, and last the account row. Bans it issued stay with `banned_by: null` (§4.3). Its feedback stays for the operators without its images and without a link to the account; replies it wrote as an operator stay as operator replies without an author. With account mail on, the address gets a "your account was deleted" mail in the account's language when the purge is done.
 
 **Exporting.** `ExportView`: `{state: "pending"|"running"|"ready"|"failed", requested_at: ts, finished_at: ts|null, expires_at: ts|null, size_bytes: int|null}`.
 
@@ -417,6 +417,8 @@ messages/servers/<server-id>/<channel-id>.json
 messages/dms/<channel-id>.json
 reactions.json                              [ {message_id, channel_id, emoji} ]
 files/<attachment-id>/<file name>           every file the person sent with a message
+feedback.json                               the person's feedback with the replies to it (below)
+feedback/<feedback-id>.<ext>                the image of a feedback entry; ext png | jpg | webp from the stored type
 ```
 
 A channel file:
@@ -431,6 +433,17 @@ A channel file:
 - Only messages the person wrote, in `(created_at, id)` order, also in servers they have left.
 - `<file name>` is the attachment's name made safe as one path part: path separators, characters Windows forbids (`<>:"/\|?*`) and control characters become `_`, it is cut to 200 bytes, leading and trailing dots and spaces go, a Windows device name (`CON`, `COM1`, …) gets a leading `_`, and an empty name becomes `file`. `path` is `null` when the object was gone while the archive was built.
 - Push endpoints and keys, the password hash, session tokens and other people's messages are never part of it.
+
+`feedback.json` (v0.10, #542), the person's entries in `(created_at, id)` order:
+
+```json
+[ { "id", "kind": "idea"|"problem"|"praise", "status": "open"|"done", "created_at", "text",
+    "context": { "client", "os", "app_version", "locale", "page" },
+    "image": "feedback/<id>.<ext>" | null,
+    "messages": [ { "from": "you"|"operators", "text", "created_at" } ] } ]
+```
+
+Operator replies are included without the operator's name. `image` is `null` without an image, or when the object was gone while the archive was built.
 
 ---
 
