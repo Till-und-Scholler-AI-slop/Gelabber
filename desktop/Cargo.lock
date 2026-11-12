@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "eframe",
  "gelabber-client",
@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-call"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "futures-util",
  "gelabber-client",
@@ -1791,7 +1791,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-client"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "aws-lc-rs",
  "base64 0.23.1",
@@ -1815,14 +1815,14 @@ dependencies = [
 
 [[package]]
 name = "gelabber-i18n"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "gelabber-media-core"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "cmake",
  "mediasoup",
@@ -1833,7 +1833,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-parity"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "eframe",
  "egui",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "gelabber-ui"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
