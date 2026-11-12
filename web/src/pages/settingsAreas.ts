@@ -27,6 +27,12 @@ export const SETTINGS_AREAS = [
     scope: "account",
     group: "konto",
   },
+  // Only while the instance takes feedback (`GET /api/feedback/status`).
+  {
+    id: "feedback",
+    scope: "account",
+    group: "konto",
+  },
   {
     id: "darstellung",
     group: "app",
@@ -79,14 +85,18 @@ export function settingsArea(id: SettingsArea): SettingsAreaInfo {
 
 /**
  * The areas listed in the navigation. "App" is only offered where Gelabber
- * can still be installed, or while it is the open area.
+ * can still be installed, or while it is the open area. "Feedback" only
+ * while the instance takes feedback.
  */
 export function visibleSettingsAreas(
   installable: boolean,
-  current?: SettingsArea,
+  current: SettingsArea | undefined,
+  feedback: boolean,
 ): SettingsAreaInfo[] {
   return SETTINGS_AREAS.filter(
-    (area) => area.id !== "app" || installable || current === "app",
+    (area) =>
+      (area.id !== "app" || installable || current === "app") &&
+      (area.id !== "feedback" || feedback),
   );
 }
 
