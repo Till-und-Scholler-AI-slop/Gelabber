@@ -329,6 +329,8 @@ What changes with mail on:
 - "Passwort vergessen?" on the sign-in page mails a reset link (valid one hour, once) if the address has an account; the answer is the same either way. Setting the new password confirms the address, ends every session of the account on every device and signs this browser in. It also disconnects a Google account connected under another address, and any connected while the address was unconfirmed, since whoever knew or chose the old password may have connected it; the owner connects their own again under Sicherheit. Changing the password in the settings makes open reset links invalid.
 - At most 5 mails per address and hour; further requests are answered as usual and nothing is sent (`gelabber_rate_limited_total{bucket="mail"}`). The links carry their token after `#`, so it does not reach proxy logs, and only its SHA-256 is stored.
 
+Feedback adds four mails (a visitor's confirmation, operator notices, and the two "reply to your feedback" mails); see "Feedback" for who gets which.
+
 Accounts that existed before migration 0021 count as confirmed. Accounts registered later while mail was off are unconfirmed: once mail is turned on, their owners confirm once at their next sign-in. Without mail, registration signs in at once and answers `409` for a known address, as before.
 
 Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As with every migration, an older API binary does not start against the migrated database; roll back with the backed-up snapshot pair as described below.
@@ -389,6 +391,7 @@ An instance can publish a landing page and the legal pages Impressum, Datenschut
 | Impressum | `/de/impressum` | `/en/imprint` |
 | Datenschutz | `/de/datenschutz` | `/en/privacy` |
 | Nutzungsbedingungen | `/de/nutzungsbedingungen` | `/en/terms` |
+| Feedback | `/de/feedback` | `/en/feedback` |
 
 Values, all empty by default (commented in `.env.example`):
 
@@ -418,15 +421,27 @@ They are UTF-8 HTML fragments (headings from `h2`, paragraphs, lists, links), in
 What is left out when something is missing: a page that is not published has no file, so its addresses show the app's not-found page and no link to it appears, neither on the public pages nor under the sign-in card. Placeholders are never shown. The landing page can be on without an Impressum (outside Germany one may not be needed); the log then warns.
 
 - **Who sees the landing page:** `/` serves it only to visitors without a session cookie and without a query string, in German when the browser's first language is German, otherwise in English. Signed-in people get the app as before.
-- **Search engines:** `/robots.txt` allows only `/`, `/de/`, `/en/` and the published legal pages while the landing page is on, and points to `/sitemap.xml` when `APP_PUBLIC_URL` is set. With the landing page off it answers `Disallow: /`.
+- **Search engines:** `/robots.txt` allows only `/`, `/de/`, `/en/` and the published legal pages while the landing page is on, and points to `/sitemap.xml` when `APP_PUBLIC_URL` is set. It disallows `/de/feedback` and `/en/feedback`, which the sitemap does not list either. With the landing page off it answers `Disallow: /`.
 - **`/public-pages.json`** says which pages are published; the sign-in pages and the desktop app read it for their links.
 - **Proxies:** the bundled Caddy and `Caddyfile.homelab` already hand these paths to `web`; a proxy of your own needs no change either, as long as it sends everything that is not `/api`, `/ws` or `/media` to `web`.
+
+**The feedback form** (`/de/feedback`, `/en/feedback`) lets visitors without an account send feedback to the operators (see "Feedback"). It is static HTML without script like the other pages, and it is published only when all three hold:
+
+- the landing page is on (`GELABBER_LANDING=true`); the landing page's footer and the legal pages' side navigation link the form;
+- account mail is on;
+- `API_OPERATOR_EMAILS` names at least one address.
+
+The web container cannot ask the API, so it learns the last two from `GELABBER_ACCOUNT_MAIL` and `GELABBER_FEEDBACK_OPERATORS`, which `compose.yaml` derives from `SMTP_HOST` and `API_OPERATOR_EMAILS` (only the flags, never the addresses). After changing either key, apply it with `docker compose up -d api web`. A web container run without the bundled compose file shows no form.
+
+How the form works: it posts to `/api/public/feedback`, which refuses posts from other sites and counts 5 posts per client address and hour. The visitor gets a mail with a confirmation link, valid 24 hours; only opening it delivers the entry to the operators, and the confirmation page thanks them. Opening the link again lands on the same page and changes nothing. Entries nobody confirmed are deleted after the 24 hours. The mail never quotes the visitor's text, because anyone can make the form mail any address.
+
+The confirmation token sits in the link's query string (`/api/public/feedback/confirm?token=…`), because a page without script cannot read it from after `#` as the other account mails do. The API logs only the path, but a proxy that logs query strings logs the token. It is used for nothing but confirming that one entry, and only within its 24 hours.
 
 Apply a changed value with `docker compose up -d web`. The pages are built only at start, so after editing a text file run `docker compose restart web`. Check the result with `docker compose logs web | grep public-pages`: every page that is left out has one line naming the reason (the missing values or files), and the last line lists the published legal pages.
 
 ## Betrieb
 
-"Betrieb" is the operator area of the web app (`/betrieb`): beta invitations, accounts, servers, reports and usage of this instance. Only operators see it; other accounts get `404` from `/api/operator/*`, as if it did not exist. The native app has no operator pages; its user menu opens them in the browser.
+"Betrieb" is the operator area of the web app (`/betrieb`): beta invitations, accounts, servers, reports, feedback and usage of this instance. Only operators see it; other accounts get `404` from `/api/operator/*`, as if it did not exist. The native app has no operator pages; its user menu opens them in the browser.
 
 **Operators** are named in `.env`, never in the app:
 
@@ -449,22 +464,65 @@ The page shows the mode but cannot change it; change `.env` and recreate the API
 
 **Blocking a server** (Server, or Meldungen) closes it for everyone, its owner included: every request answers `403 server_blocked`, members in voice are removed, open sockets get `{"op":"err","e":"server_blocked"}`, and its invite links answer as invalid. It stays in its members' server list with a notice; members can still leave it and the owner can still delete it. Its open reports are closed as actioned. Unblocking restores access; nothing was deleted. **Delisting** only removes a server from the directory and closes its open reports; its members notice nothing, and only an operator can let it be listed again.
 
+**Feedback** from people and visitors is read and answered under "Feedback"; see the section "Feedback".
+
 **Reports** come from members of a server and, while the directory is on, from anyone who can see its listing (`POST /api/servers/{id}/reports`, at most 10 per account and hour; see "Verzeichnis"). Owners never see them; operators close them under "Meldungen".
 
-**Audit:** every operator request that succeeds writes a row to `operator_audit`, reads included (`*.list` with the search in `detail`). Opening the area writes none, and neither does disabling an account that is disabled already. Any other request that changes nothing, such as blocking a server twice, writes a row with `"changed": false` in `detail`. Rows are never purged, and there is no page for them. Read them with SQL (with your `POSTGRES_USER` and `POSTGRES_DB`):
+**Audit:** every operator request that succeeds writes a row to `operator_audit`, reads included (`*.list` with the search in `detail`). Opening the area writes none, nor does loading a feedback image, nor disabling an account that is disabled already. Any other request that changes nothing, such as blocking a server twice, writes a row with `"changed": false` in `detail`. Rows are never purged, and there is no page for them. Read them with SQL (with your `POSTGRES_USER` and `POSTGRES_DB`):
 
 ```sh
 docker compose exec postgres psql -U gelabber gelabber -c "
   SELECT created_at, operator_email, action, target_user, target_server,
-         target_report, target_invitation, detail
+         target_report, target_invitation, target_feedback, detail
   FROM operator_audit ORDER BY created_at DESC LIMIT 50"
 ```
 
-The actions are `invitations.list|create|revoke`, `accounts.list|disable|enable`, `servers.list|delist|relist|block|unblock`, `reports.list|resolve` and `usage.read`. The targets carry no foreign keys, so a row outlives the account, server or report it names. Each row is also logged by the API.
+The actions are `invitations.list|create|revoke`, `accounts.list|disable|enable`, `servers.list|delist|relist|block|unblock`, `reports.list|resolve`, `feedback.list|read|reply|done|reopen|delete` and `usage.read`. The targets carry no foreign keys, so a row outlives the account, server, report or feedback it names. Each row is also logged by the API.
 
 **Usage** (Auslastung) shows numbers from the database, from Redis (who is in voice and live) and from this one API process (open sockets). Media-server numbers (rooms, peers, forwarded bytes) are not there: they stay in Grafana, on the dashboard under "Metrics" (SFU rooms, SFU peers, Forwarded RTP).
 
 Migration 0032 adds the columns and tables for this. As with every migration, an older API binary does not start against the migrated database.
+
+## Feedback
+
+People tell the operators of the instance what they notice, and operators answer:
+
+- **Signed-in people** pick "Feedback geben" in the user menu of the web or desktop app: an idea, a problem or praise, a text of up to 4,000 characters and one optional image. Under Einstellungen → Feedback they read their entries as small threads, see the operators' replies (an unread reply puts a dot on the user menu and on the entry) and answer. Replies read "Betreiber" / "Operators", never an operator's name.
+- **Operators** read them under Betrieb → "Feedback", next to Meldungen: filter open or done entries and by kind, open one (sender, time, kind, text, image, technical details, thread), reply, mark it done or open it again, or delete it as spam. The sidebar counts the open entries.
+- **Visitors without an account** use the public form at `/de/feedback` and `/en/feedback` (see "Public pages"). Their entry reaches the operators only once they confirmed their address.
+
+There is no switch: feedback is on whenever `API_OPERATOR_EMAILS` names at least one address, and off (no menu item, no settings area, `404` from `/api/feedback*` and `/api/operator/feedback*`) while it names none. An address listed before its account exists already turns it on, so people can send feedback that nobody can read yet; register the operator accounts first, as for Betrieb.
+
+**What is sent along** with an entry from the apps, shown in the dialog before sending: the app (web or desktop), the operating system, the app version, the interface language and the page path without query or fragment. Nothing else: no logs, no diagnostics, no browser details. The public form sends only the kind, the text, the address and the form's language.
+
+**Images:** one PNG, JPEG or WebP of at most 5 MB per entry, none on replies or in the public form. They are stored in the bucket under `feedback/{user}/` and delivered like attachments, so `ATTACHMENT_DELIVERY` applies, and they count against the daily upload quota (`API_UPLOAD_QUOTA_BYTES_PER_DAY`) and the `up` bucket. Loading an image writes no audit row.
+
+**Limits:**
+
+| Bucket | Limit | Per | Counts |
+|---|---|---|---|
+| `feedback` | 5 per hour | account | new entries from the apps |
+| `feedback_reply` | 30 per hour | account | a person's replies |
+| `feedback_public` | 5 per hour | client address (IPv6 per /64) | posts of the public form |
+| `mail_feedback` | 5 per hour | address | confirmation mails of the public form |
+| `mail_notice` | 30 per hour | address | operator notices and "there is an answer" mails |
+
+Refusals are counted in `gelabber_rate_limited_total{bucket=…}` under these names. At most 1,000 visitor entries wait for their confirmation at once; past that the form answers with its error page and the API logs `feedback: too many pending entries`. Operator replies have no bucket of their own.
+
+**Mails**, while account mail is on (see "Account mail"):
+
+| Mail | To | When |
+|---|---|---|
+| Confirmation | the visitor | after posting the form; the link is valid 24 hours |
+| New feedback / new reply to feedback | every operator whose account has confirmed its address and is not disabled | an entry arrives (from a visitor: once confirmed), or its sender replies |
+| Reply to your feedback | the sender's account | the first operator reply the person has not read yet |
+| Reply to your feedback (with the text) | the visitor | every operator reply |
+
+Operator notices quote the first three lines of the text (at most 300 characters) and link the entry in Betrieb. The "there is an answer" mail to an account does not quote the reply; it points to Einstellungen → Feedback, and further replies send no mail until the person has read them. Replies to a visitor go out by mail, quoting the reply; the visitor cannot answer by mail and is pointed to the form. With account mail off, operators can still reply to accounts, but not to visitors, and nobody gets mail.
+
+**Deleting** an entry under Betrieb removes its text, image and thread for good. **Audit:** the actions `feedback.list|read|reply|done|reopen|delete` (see "Betrieb"); a reply records its length and whether it went out by mail, a delete the kind, the client, whether there was an image and the number of messages, never the text or an address.
+
+Migration 0036 adds the `feedback` and `feedback_messages` tables and `operator_audit.target_feedback`.
 
 ## Verzeichnis
 
@@ -502,7 +560,7 @@ Under Einstellungen → Sicherheit people see their signed-in devices, export th
 
 **Signed-in devices.** Each session records a client (desktop app, Firefox, Chrome, Edge, Safari, another browser) and an operating system, read from the `User-Agent` of the request that signed in. Only these two codes are stored, never the `User-Agent` itself. Sessions from before the upgrade show as an unknown device until their next renewal fills them in. Signing out one device ends its sockets, media tickets and push notifications at once, as "Überall abmelden" does for all of them.
 
-**Data export.** A request queues an archive (a ZIP) that the API builds in the background: the account's details and settings, its profile images, every message it wrote (in servers and DMs, also in servers it has left), the files it sent and the reactions it gave. Other people's messages, push keys, the password hash and session tokens are not part of it.
+**Data export.** A request queues an archive (a ZIP) that the API builds in the background: the account's details and settings, its profile images, every message it wrote (in servers and DMs, also in servers it has left), the files it sent, the reactions it gave, and the feedback it sent with the replies to it (`feedback.json`, with its images under `feedback/`; replies read "operators", without names). Other people's messages, push keys, the password hash and session tokens are not part of it.
 
 - One request per 24 hours; a failed export can be requested again at once, and a new request replaces the previous archive. With account mail on, the person gets a mail when the archive is ready; without it, the page shows when it is ready.
 - The archive is stored in the bucket under `exports/{user}/` and downloaded only by its signed-in account (like an attachment, so `ATTACHMENT_DELIVERY` applies). It is kept for `API_EXPORT_RETENTION_HOURS` (default `168`, 7 days; 1 to 720, other values stop the API at start), then deleted within seconds. Change it in `.env` and recreate the API (`docker compose up -d --no-deps --force-recreate api`); archives that are ready already keep their expiry.
@@ -514,11 +572,11 @@ What happens and when:
 
 - **At once**, in one transaction: the account is marked deleted, every session ends (sockets, voice and media tickets close), and its sign-in tokens, server memberships with their roles, the invite links it created and its data export are removed. Other members see it leave their servers. Its pending requests to join listed servers are removed at once too, so they leave the moderators' queues (a declined request stays until the purge, and a moderator can no longer accept an account under deletion). From then on nobody can sign in to it, a password reset sends nothing, and its profile and DMs cannot be opened.
 - **Within seconds**, a background worker purges the rest: its messages in every server and DM (500 per batch; replies to them show the original as deleted, mentions read "@Unbekannt"), its DM channels including the other person's messages there (that person's DM list drops the conversation), the files it uploaded, its avatar and banner, the reactions it gave, its connected Google account, settings and read state, and finally the account row. Their objects in MinIO are deleted through the same cleanup queue as deleted attachments (a file still being uploaded is held until its upload window has passed). With account mail on, the address then gets a confirmation in the account's language. Only after the purge can the address register again.
-- **What stays:** bans the person issued (the issuer becomes empty), reports they filed and the beta invitation they used (without the link to their account), and the rows of `operator_audit` (no foreign keys). Servers they own cannot exist at that point.
+- **What stays:** bans the person issued (the issuer becomes empty), reports they filed and the beta invitation they used (without the link to their account), the feedback they sent and its threads (without the link to their account; its images are deleted), and the rows of `operator_audit` (no foreign keys). Servers they own cannot exist at that point.
 
 The logs record `account deleted, purge queued` and `account purged` with the user id, never the address. A purge that fails is logged (`account purge failed, will retry`) and retried on the next pass. Deleted data is still in backups made before the purge until those backups rotate out, and recent message bodies can stay in a channel's Redis replay log until it rolls over.
 
-Migration 0034 adds the device columns of `sessions`, `users.deleted_at` and `account_exports`, and makes `server_bans.banned_by` nullable (`ON DELETE SET NULL`), so a ban outlives the account that issued it. As with every migration, an older API binary does not start against the migrated database.
+Migration 0034 adds the device columns of `sessions`, `users.deleted_at` and `account_exports`, and makes `server_bans.banned_by` nullable (`ON DELETE SET NULL`), so a ban outlives the account that issued it. Migration 0036 adds the feedback tables, whose sender and author columns are set to empty in the same way when an account is purged. As with every migration, an older API binary does not start against the migrated database.
 
 ## Backup
 
