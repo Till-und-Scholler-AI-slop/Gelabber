@@ -5,9 +5,11 @@ mod common;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
 use gelabber_api::image_size::fixtures;
+use gelabber_api::mail::{Mailer, Sent};
 use gelabber_api::{AppState, Config};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -53,6 +55,15 @@ async fn signed_in(state: &AppState, email: &str) -> Client {
     let res = client.register(email, PASSWORD, "Ada").await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
     client
+}
+
+/// `client`'s session, against another state of the same database.
+fn moved(client: &Client, state: &AppState) -> Client {
+    let mut moved = Client::from_state(state.clone());
+    moved.jar = client.jar.clone();
+    moved.csrf = client.csrf.clone();
+    moved.user_id = client.user_id.clone();
+    moved
 }
 
 fn context() -> Value {
@@ -717,4 +728,109 @@ async fn the_image_is_served_to_its_owner_only(pool: PgPool) {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// Mails go out in the background; wait until `count` have been taken,
+/// then a little longer so that one too many would show.
+async fn mails(mailer: &Mailer, count: usize) -> Vec<Sent> {
+    for _ in 0..200 {
+        if mailer.outbox().len() >= count {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let sent = mailer.outbox();
+    assert_eq!(sent.len(), count, "{sent:?}");
+    sent
+}
+
+#[sqlx::test]
+async fn operator_notices_go_to_confirmed_enabled_operators_in_their_language(pool: PgPool) {
+    // Accounts made while mail was off, then confirmed or not by hand.
+    let plain = feedback_state(pool.clone());
+    let mut tom = Client::from_state(plain.clone());
+    tom.bootstrap().await;
+    let res = tom.register("tom@example.test", PASSWORD, "Tom").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    for email in [
+        "lena@example.test",
+        "max@example.test",
+        "ute@example.test",
+        "kai@example.test",
+    ] {
+        signed_in(&plain, email).await;
+    }
+    sqlx::query(
+        "UPDATE users SET email_verified_at = now() \
+         WHERE email IN ('tom@example.test', 'lena@example.test', 'max@example.test', \
+                         'kai@example.test')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET locale = 'en' WHERE email = 'lena@example.test'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE email = 'max@example.test'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut state = feedback_state(pool.clone());
+    // Kai is confirmed but no operator; Ute is an operator, unconfirmed.
+    state.operators = Arc::new(HashSet::from([
+        "lena@example.test".to_owned(),
+        "max@example.test".to_owned(),
+        "ute@example.test".to_owned(),
+    ]));
+    let mailer = Mailer::memory(&url::Url::parse("https://chat.example.org/").unwrap());
+    state.mail = Some(mailer.clone());
+    let mut tom = moved(&tom, &state);
+
+    let created = create(
+        &mut tom,
+        json!({
+            "kind": "problem",
+            "text": "Eins\nZwei\nDrei\nVier",
+            "context": context(),
+        }),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap();
+    let sent = mails(&mailer, 1).await;
+    assert_eq!(sent[0].to, "lena@example.test");
+    assert_eq!(sent[0].subject, "New feedback: Problem");
+    assert!(
+        sent[0]
+            .body
+            .contains("From: Tom (tom@example.test)\n\n> Eins\n> Zwei\n> Drei…\n\n"),
+        "{}",
+        sent[0].body
+    );
+    assert!(
+        sent[0].body.contains(&format!(
+            "https://chat.example.org/betrieb/feedback?entry={id}\n"
+        )),
+        "{}",
+        sent[0].body
+    );
+
+    let res = tom
+        .send(
+            Method::POST,
+            &format!("/api/feedback/{id}/messages"),
+            Some(json!({ "text": "Noch etwas" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let sent = mails(&mailer, 2).await;
+    assert_eq!(sent[1].to, "lena@example.test");
+    assert_eq!(sent[1].subject, "New reply to feedback: Problem");
+    assert!(
+        sent[1].body.contains("\n\n> Noch etwas\n\n"),
+        "{}",
+        sent[1].body
+    );
 }

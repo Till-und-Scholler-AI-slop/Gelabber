@@ -6,12 +6,14 @@ mod common;
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{Method, StatusCode};
 use chrono::{DateTime, Utc};
 use gelabber_api::AppState;
 use gelabber_api::image_size::fixtures;
+use gelabber_api::mail::{Mailer, Sent};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -815,4 +817,173 @@ async fn pending_entries_are_invisible(pool: PgPool) {
         .map(|row| row.0)
         .collect();
     assert_eq!(actions, vec!["feedback.list", "feedback.list"]);
+}
+
+/// `client`'s session, against another state of the same database.
+fn moved(client: &Client, state: &AppState) -> Client {
+    let mut moved = Client::from_state(state.clone());
+    moved.jar = client.jar.clone();
+    moved.csrf = client.csrf.clone();
+    moved.user_id = client.user_id.clone();
+    moved
+}
+
+/// Mails go out in the background; wait until `count` have been taken,
+/// then a little longer so that one too many would show.
+async fn mails(mailer: &Mailer, count: usize) -> Vec<Sent> {
+    for _ in 0..200 {
+        if mailer.outbox().len() >= count {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let sent = mailer.outbox();
+    assert_eq!(sent.len(), count, "{sent:?}");
+    sent
+}
+
+/// The `mail_state` of a message once it left `pending`.
+async fn settled_mail_state(pool: &PgPool, message: &str) -> String {
+    let id: Uuid = message.parse().unwrap();
+    for _ in 0..200 {
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT mail_state FROM feedback_messages WHERE id = $1")
+                .bind(id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        match state.as_deref() {
+            Some("pending") => tokio::time::sleep(Duration::from_millis(10)).await,
+            _ => return state.unwrap_or_default(),
+        }
+    }
+    panic!("mail_state stayed pending");
+}
+
+async fn reply_as(lena: &mut Client, id: Uuid, text: &str) -> Value {
+    let res = lena
+        .send(
+            Method::POST,
+            &format!("/api/operator/feedback/{id}/messages"),
+            Some(json!({ "text": text })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    res.body
+}
+
+/// The operators' state with account mail on, and Lena's session there.
+/// Lena's address is confirmed, as an operator's must be while mail is on.
+async fn with_mail(pool: &PgPool, lena: &Client) -> (AppState, Mailer, Client) {
+    sqlx::query("UPDATE users SET email_verified_at = now() WHERE email = $1")
+        .bind(LENA)
+        .execute(pool)
+        .await
+        .unwrap();
+    let mut state = state_with(pool.clone(), true);
+    let mailer = Mailer::memory(&url::Url::parse("https://chat.example.org/").unwrap());
+    state.mail = Some(mailer.clone());
+    let lena = moved(lena, &state);
+    (state, mailer, lena)
+}
+
+#[sqlx::test]
+async fn the_answer_mail_goes_once_per_unread_stretch(pool: PgPool) {
+    let plain = state_with(pool.clone(), true);
+    let lena = registered(&plain, LENA, "Lena").await;
+    let tom = registered(&plain, "tom@example.test", "Tom").await;
+    let ada = registered(&plain, "ada@example.test", "Ada").await;
+    let kai = registered(&plain, "kai@example.test", "Kai").await;
+    sqlx::query(
+        "UPDATE users SET email_verified_at = now() \
+         WHERE email IN ('tom@example.test', 'kai@example.test')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET locale = 'en' WHERE email = 'tom@example.test'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE email = 'kai@example.test'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (state, mailer, mut lena) = with_mail(&pool, &lena).await;
+
+    let toms = account_entry(&pool, Some(uid(&tom)), "idea", "open", 0).await;
+    reply_as(&mut lena, toms, "Danke").await;
+    reply_as(&mut lena, toms, "Und noch etwas").await;
+    let sent = mails(&mailer, 1).await;
+    assert_eq!(sent[0].to, "tom@example.test");
+    assert_eq!(sent[0].subject, "Reply to your feedback");
+    assert!(
+        sent[0]
+            .body
+            .contains("\n\nhttps://chat.example.org/settings/feedback\n\n"),
+        "{}",
+        sent[0].body
+    );
+    assert!(!sent[0].body.contains("Danke"), "{}", sent[0].body);
+
+    // Once Tom has read it, the next reply mails again.
+    let mut tom = moved(&tom, &state);
+    let res = tom
+        .send(Method::POST, &format!("/api/feedback/{toms}/read"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    reply_as(&mut lena, toms, "Erledigt").await;
+    mails(&mailer, 2).await;
+
+    // Unconfirmed (Ada) and disabled (Kai) accounts get nothing.
+    for user in [uid(&ada), uid(&kai)] {
+        let id = account_entry(&pool, Some(user), "problem", "open", 0).await;
+        reply_as(&mut lena, id, "Danke").await;
+    }
+    mails(&mailer, 2).await;
+}
+
+#[sqlx::test]
+async fn a_reply_to_a_visitor_goes_out_by_mail(pool: PgPool) {
+    let plain = state_with(pool.clone(), true);
+    let lena = registered(&plain, LENA, "Lena").await;
+    let (_state, mailer, mut lena) = with_mail(&pool, &lena).await;
+    let id = visitor_entry(&pool).await;
+
+    let message = reply_as(&mut lena, id, "Thanks!\nWe fixed it.").await;
+    assert_eq!(message["mail"], "pending");
+    let sent = mails(&mailer, 1).await;
+    assert_eq!(sent[0].to, "visitor@example.test");
+    assert_eq!(sent[0].subject, "Reply to your feedback to Gelabber");
+    assert!(
+        sent[0]
+            .body
+            .contains("(Praise):\n\n> Thanks!\n> We fixed it.\n\n"),
+        "{}",
+        sent[0].body
+    );
+    assert!(
+        sent[0]
+            .body
+            .ends_with("\n\nhttps://chat.example.org/en/feedback\n"),
+        "{}",
+        sent[0].body
+    );
+    let message = message["id"].as_str().unwrap();
+    assert_eq!(settled_mail_state(&pool, message).await, "sent");
+    let res = lena
+        .send(Method::GET, &format!("/api/operator/feedback/{id}"), None)
+        .await;
+    assert_eq!(res.body["messages"][0]["mail"], "sent", "{}", res.body);
+}
+
+#[sqlx::test]
+async fn without_mail_a_reply_to_a_visitor_fails_at_once(pool: PgPool) {
+    let state = state_with(pool.clone(), true);
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let id = visitor_entry(&pool).await;
+    let message = reply_as(&mut lena, id, "Thanks").await;
+    let message = message["id"].as_str().unwrap();
+    assert_eq!(settled_mail_state(&pool, message).await, "failed");
 }
