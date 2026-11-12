@@ -206,6 +206,7 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | `feedback` | user | 5 / hour → `429 rate_limited` | `POST /api/feedback`; `POST /api/feedback/images` is refused while it is full (v0.10, §3.5) |
 | `feedback_reply` | user | 30 / hour → `429 rate_limited` | `POST /api/feedback/{id}/messages` (v0.10, §3.5) |
 | `feedback_public` | client IP (IPv6 /64) | 5 / hour → error page | `POST /api/public/feedback`, the static form (v0.10, web only) |
+| `feedback_form_hour`, `feedback_form_day` | instance, Postgres | 20 / hour and 100 / 24 hours of accepted posts → error page | `POST /api/public/feedback` (v0.10, web only) |
 | `mail_feedback`, `mail_notice` | address | 5 / hour, 30 / hour (silently not sent) | confirmation mails of the public form; feedback notices and "there is an answer" mails (v0.10) |
 
 A native client must not send `X-Forwarded-For` (the API trusts the last entry).
