@@ -7,7 +7,8 @@ export const feedback = defineCatalog(
   "feedback",
   {
     "dialog.title": "Feedback geben",
-    "dialog.description": "Sag den Betreibern dieser Instanz, was dir auffällt.",
+    "dialog.description":
+      "Sag den Betreibern dieser Instanz, was dir auffällt.",
     "dialog.unread":
       "Es gibt eine neue Antwort auf dein Feedback. <link>Ansehen</link>",
     "kind.label": "Worum geht es?",
@@ -49,7 +50,8 @@ export const feedback = defineCatalog(
   },
   {
     "dialog.title": "Give feedback",
-    "dialog.description": "Tell the operators of this instance what you notice.",
+    "dialog.description":
+      "Tell the operators of this instance what you notice.",
     "dialog.unread": "There is a new reply to your feedback. <link>View</link>",
     "kind.label": "What is it about?",
     "kind.idea": "Idea",

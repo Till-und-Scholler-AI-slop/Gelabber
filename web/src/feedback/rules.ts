@@ -52,9 +52,7 @@ export function clipboardImage(
  * A failed send in the dialog's words, under its fields: the text, the
  * image (a 413 is the size). Null when it is no field's: the form says it.
  */
-export function sendFieldErrors(
-  error: unknown,
-): Record<string, string> | null {
+export function sendFieldErrors(error: unknown): Record<string, string> | null {
   if (!(error instanceof ApiError)) return null;
   if (error.status === 413)
     return { image: translate(feedback, "image.tooLarge") };
