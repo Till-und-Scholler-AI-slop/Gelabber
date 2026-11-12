@@ -185,7 +185,7 @@ Not-found semantics: a server/channel/message the caller cannot see is `404`, ne
 
 ### 1.6 Rate limits (`backend/api/src/limits.rs`)
 
-All on non-safe methods unless noted; windows are in-process per API node. Values are the defaults (`limits.rs:34-56`); each is overridable by env (`API_RATE_AUTH_PER_MIN`, `API_RATE_API_PER_MIN`, `API_RATE_MSG_PER_MIN`, `API_RATE_UPLOAD_PER_HOUR`, `API_RATE_GIF_PER_MIN`, `API_RATE_GIF_MEDIA_PER_MIN`, `API_RATE_PREVIEW_PER_MIN`; `config.rs:40-65, 770-800`), and `0` disables a bucket. The gate matches by path shape (`limits.rs:330-335`): `up` = any `POST …/attachments` or `PUT /api/me/avatar|banner|/api/servers/*/icon`; `msg` = any `POST …/messages`. Logout, logout-all and `/auth/password` are **not** in the `auth` bucket; they count against `api`.
+All on non-safe methods unless noted; windows are in-process per API node. Values are the defaults (`limits.rs:34-56`); each is overridable by env (`API_RATE_AUTH_PER_MIN`, `API_RATE_API_PER_MIN`, `API_RATE_MSG_PER_MIN`, `API_RATE_UPLOAD_PER_HOUR`, `API_RATE_GIF_PER_MIN`, `API_RATE_GIF_MEDIA_PER_MIN`, `API_RATE_PREVIEW_PER_MIN`; `config.rs:40-65, 770-800`), and `0` disables a bucket. The gate matches by path shape (`limits.rs:330-335`): `up` = any `POST …/attachments` or `PUT /api/me/avatar|banner|/api/servers/*/icon`, and (v0.10) `POST /api/feedback/images`; `msg` = any `POST …/messages`. Logout, logout-all and `/auth/password` are **not** in the `auth` bucket; they count against `api`.
 
 | Bucket | Key | Limit | Routes |
 |---|---|---|---|
@@ -193,8 +193,8 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | `login` (failures) | account e-mail | 10 failures / 15 min → 429 | login, change-password, verify-email wrong password; v0.10: `DELETE /api/me` wrong password |
 | `api` | `u:{user_id}` if cookie is a live session, else IP | 180 / min | every other mutation |
 | `msg` | same | 60 / min (plus `api`) | `POST …/messages` |
-| `up` | same | 60 / hour (plus `api`) | `POST …/attachments`, `PUT /api/me/avatar`, `PUT /api/me/banner`, `PUT /api/servers/{id}/icon` |
-| upload bytes | user, Postgres | 1 GiB / day → `429 quota_exceeded` | presign, avatar, banner, icon |
+| `up` | same | 60 / hour (plus `api`) | `POST …/attachments`, `PUT /api/me/avatar`, `PUT /api/me/banner`, `PUT /api/servers/{id}/icon`, `POST /api/feedback/images` (v0.10) |
+| upload bytes | user, Postgres | 1 GiB / day → `429 quota_exceeded` | presign, avatar, banner, icon, feedback images (v0.10) |
 | `read_bulk` | user | 20 / min | `PUT /api/servers/{id}/read`, `PUT /api/messages/read-all` (`messages/workflows.rs:363-378`) |
 | `gif` | user | 30 / min, **also on GET** | `/api/gifs/trending`, `/api/gifs/search`, GIF sends |
 | `gif_media` | user | 240 / min, GET | `/api/gifs/media` |
@@ -203,6 +203,10 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | `mail_invite` | invited address | 5 / hour (silently not sent; the invitation is still created) | `POST /api/operator/invitations` with `send_mail` (v0.10) |
 | `dir_join` | user | 10 / hour → `429 rate_limited`, shared by both routes | `POST /api/directory/listings/{id}/join` and `/request` (v0.10, §4.7) |
 | `dir_search` | user | 60 / min → `429 rate_limited`, **also on GET** | `GET /api/directory/listings` (v0.10, §4.7) |
+| `feedback` | user | 5 / hour → `429 rate_limited` | `POST /api/feedback`; `POST /api/feedback/images` is refused while it is full (v0.10, §3.5) |
+| `feedback_reply` | user | 30 / hour → `429 rate_limited` | `POST /api/feedback/{id}/messages` (v0.10, §3.5) |
+| `feedback_public` | client IP (IPv6 /64) | 5 / hour → error page | `POST /api/public/feedback`, the static form (v0.10, web only) |
+| `mail_feedback`, `mail_notice` | address | 5 / hour, 30 / hour (silently not sent) | confirmation mails of the public form; feedback notices and "there is an answer" mails (v0.10) |
 
 A native client must not send `X-Forwarded-For` (the API trusts the last entry).
 
@@ -444,6 +448,47 @@ A channel file:
 ```
 
 Operator replies are included without the operator's name. `image` is `null` without an image, or when the object was gone while the archive was built.
+
+### 3.5 Feedback (v0.10, #542, `backend/api/src/feedback/person.rs`)
+
+People send feedback (an idea, a problem or praise, a text and one optional image) to the operators of the instance and read the replies as small threads. The feature is on while `API_OPERATOR_EMAILS` names at least one address. Every route needs a session (`401`). While the feature is off, every route but the status route answers `404 not_found` as an unknown route would, before the session is checked. Mutations pass the CSRF check (§1.4). Entries from the public form that nobody confirmed yet belong to nobody here. The operator routes (`/api/operator/feedback*`) and the public form (`/api/public/feedback*`) are web-only.
+
+**Shapes.**
+
+```json
+Entry   { "id", "kind": "idea"|"problem"|"praise", "status": "open"|"done", "text",
+          "created_at", "last_activity_at",
+          "image": { "url": "/api/feedback/<id>/image", "content_type": "image/png"|"image/jpeg"|"image/webp", "size": int } | null,
+          "context": { "client": "web"|"desktop"|"form", "os": string|null, "app_version": string|null,
+                       "locale": "de"|"en", "page": string|null },
+          "unread": bool,
+          "messages": [Message] }
+Message { "id", "from": "you"|"operators", "text", "created_at", "new": bool }
+```
+
+- `unread` is true while the entry holds an operator reply the person has not read; `new` marks those replies. Operators stay unnamed: their replies read "Betreiber" / "Operators".
+- `messages` are in thread order (`created_at`, `id`). `context.os`, `app_version` and `page` are `null` only for `client: "form"`, which signed-in people never see.
+- A person's reply on a `done` entry opens it again; an operator's reply leaves it done.
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/feedback/status` | — | `200 {"enabled": bool, "unread": int}`; `unread` counts the caller's entries with `unread: true`. While the feature is off `{"enabled": false, "unread": 0}`, never `404` | `401` |
+| `POST /api/feedback/images` | the raw image bytes (any `Content-Type`), at most 5 MiB | `201 {"image": uuid}` | `404` off; `413` over 5 MiB (plain text, §17; clients check the size first); `422 image: invalid` (not PNG, JPEG or WebP by its bytes, or declaring more than 8192 px on a side); `429 rate_limited` (`up`, or the `feedback` bucket is already full, so a doomed entry costs no quota); `429 quota_exceeded` |
+| `POST /api/feedback` | `{"kind", "text", "image": uuid?, "context": {"client": "web"\|"desktop", "os", "app_version", "locale", "page"}}` | `201 Entry` (`messages: []`) | `404` off; `422` with field codes below; `429 rate_limited` (`feedback`) |
+| `GET /api/feedback?offset=` | `offset` ≥ 0, default 0 | `200 {"entries": [Entry], "total": int}`, 20 per page, latest activity first (`last_activity_at DESC, id DESC`) | `404` off; `422 offset: invalid` |
+| `POST /api/feedback/{id}/messages` | `{"text"}` | `201 Message` (`from: "you"`, `new: false`) | `404` off, unknown, someone else's; `422 text: required\|too_long\|invalid`, `text: too_many` once the thread holds 200 messages; `429 rate_limited` (`feedback_reply`) |
+| `POST /api/feedback/{id}/read` | `{"through": <id of the entry's newest message on screen>}`, or no body | `204` | `404` off, unknown, someone else's; `422 through: invalid` (no uuid, or no message of this entry); `400 bad_request` (a body that is no JSON object) |
+| `GET /api/feedback/{id}/image` | — | the image, as `ATTACHMENT_DELIVERY` says (§9.2): redirect mode `307` to MinIO with `Vary: Cookie` and `Cache-Control: private, max-age=<rest of the signed link's window>`; proxy mode `200`/`206` with `Content-Type` of the image, `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, max-age=31536000, immutable` (the URL never changes its content) | `404` off, unknown, someone else's, or no image; `416` |
+
+**Field codes of `POST /api/feedback`.** Every bad field is named at once: `kind: invalid` (not `idea`, `problem` or `praise`); `text: required` (empty after trimming), `too_long` (over 4,000 characters, counted as Unicode scalar values after trimming) or `invalid` (a control character other than line feed, carriage return or tab); `image: invalid` (no uuid, not an image the caller staged, or used or expired already); `client: invalid` (not `web` or `desktop`); `os: invalid` (not one of `linux`, `windows`, `macos`, `android`, `ios`, `other`); `app_version: invalid` (not `^[0-9A-Za-z.+-]{1,32}$`); `locale: invalid` (not `de` or `en`); `page: invalid` (must start with `/` but not `//`, at most 300 characters, no `?`, `#`, whitespace or control character: clients strip query and fragment). The text is stored trimmed.
+
+**Sending with an image.** Upload the image only when the person presses "Senden", right before `POST /api/feedback`: a staged image that no entry claims within 10 minutes is deleted, and its id is then `image: invalid`. The upload counts against `up` and the daily upload quota; use the attachment upload timeout, not the default request timeout. A failed `POST /api/feedback` leaves the staged image to expire.
+
+**Reading.** Once the list has rendered, the client calls `POST /api/feedback/{id}/read` for each entry with `unread: true`, with `through` set to the id of that entry's last message in the list it shows, then reads the status again for the dot. Replies up to `through` count as read; an operator reply that arrived after the list was loaded keeps the entry unread, so it shows as new on the next load. A call without a body marks every reply read (clients before this field). The "Neu" marks stay on screen for the rest of the visit.
+
+**Mail.** With account mail on, the first operator reply the person has not read sends a mail pointing to Einstellungen → Feedback; further replies send none until the person has read them (`Notice` budget, 30 per address and hour).
+
+**Polling.** The web reads the status on start, on window focus, every 5 minutes and after its read calls; the dot on the user menu shows while `unread > 0`.
 
 ---
 
@@ -971,6 +1016,12 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 | GET, POST | /api/me/export | yes (v0.10) | 3.4 |
 | GET | /api/me/export/download | link (v0.10) | 3.4 |
 | POST | /api/servers/{id}/transfer | yes (v0.10) | 4.2 |
+| GET | /api/feedback/status | yes (v0.10) | 3.5 |
+| GET, POST | /api/feedback | yes (v0.10) | 3.5 |
+| POST | /api/feedback/images | yes (v0.10) | 3.5 |
+| POST | /api/feedback/{id}/messages, /api/feedback/{id}/read | yes (v0.10) | 3.5 |
+| GET | /api/feedback/{id}/image | link (v0.10) | 3.5 |
+| POST, GET | /api/public/feedback, /api/public/feedback/confirm | static form (v0.10, outside CSRF) | 3.5 |
 | GET | /health, /ready, /metrics | no | — |
 | GET | /ws (upgrade) | yes | gateway spec |
 

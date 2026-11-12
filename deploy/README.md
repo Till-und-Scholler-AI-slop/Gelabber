@@ -491,7 +491,7 @@ People tell the operators of the instance what they notice, and operators answer
 - **Operators** read them under Betrieb → "Feedback", next to Meldungen: filter open or done entries and by kind, open one (sender, time, kind, text, image, technical details, thread), reply, mark it done or open it again, or delete it as spam. The sidebar counts the open entries.
 - **Visitors without an account** use the public form at `/de/feedback` and `/en/feedback` (see "Public pages"). Their entry reaches the operators only once they confirmed their address.
 
-There is no switch: feedback is on whenever `API_OPERATOR_EMAILS` names at least one address, and off (no menu item, no settings area, `404` from `/api/feedback*` and `/api/operator/feedback*`) while it names none. An address listed before its account exists already turns it on, so people can send feedback that nobody can read yet; register the operator accounts first, as for Betrieb.
+There is no switch: feedback is on whenever `API_OPERATOR_EMAILS` names at least one address, and off (no menu item, no settings area, `404` from `/api/feedback*`, except `GET /api/feedback/status`, which answers `enabled: false`, and from `/api/operator/feedback*`) while it names none. An address listed before its account exists already turns it on, so people can send feedback that nobody can read yet; register the operator accounts first, as for Betrieb.
 
 **What is sent along** with an entry from the apps, shown in the dialog before sending: the app (web or desktop), the operating system, the app version, the interface language and the page path without query or fragment. Nothing else: no logs, no diagnostics, no browser details. The public form sends only the kind, the text, the address and the form's language.
 
@@ -507,7 +507,7 @@ There is no switch: feedback is on whenever `API_OPERATOR_EMAILS` names at least
 | `mail_feedback` | 5 per hour | address | confirmation mails of the public form |
 | `mail_notice` | 30 per hour | address | operator notices and "there is an answer" mails |
 
-Refusals are counted in `gelabber_rate_limited_total{bucket=…}` under these names. At most 1,000 visitor entries wait for their confirmation at once; past that the form answers with its error page and the API logs `feedback: too many pending entries`. Operator replies have no bucket of their own.
+Refusals are counted in `gelabber_rate_limited_total{bucket=…}` under these names. At most 1,000 visitor entries wait for their confirmation at once; past that the form answers with its error page and the API logs `feedback: too many pending entries`. An unconfirmed entry waits its full 24 hours, so someone posting from many addresses (200 IPv6 /64s are enough) can fill that limit: the form then refuses everyone until the entries run out, and your relay sends up to 1,000 confirmation mails a day to addresses the poster picked. If the log line shows up, block the sources at your proxy or empty the queue with `DELETE FROM feedback WHERE status = 'pending';` (with your `POSTGRES_USER` and `POSTGRES_DB`, as for the audit rows under "Betrieb"). Operator replies have no bucket of their own.
 
 **Mails**, while account mail is on (see "Account mail"):
 
