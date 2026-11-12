@@ -60,6 +60,11 @@ pub const DIRECTORY_JOIN_PER_HOUR: u32 = 10;
 /// Directory searches per account and minute (handler bucket `dir_search`,
 /// also on GET): far above the debounced search box and its paging.
 pub const DIRECTORY_SEARCH_PER_MIN: u32 = 60;
+/// Feedback entries per account and hour (handler bucket `feedback`).
+pub const FEEDBACK_PER_HOUR: u32 = 5;
+/// A person's replies to their feedback per account and hour (handler
+/// bucket `feedback_reply`).
+pub const FEEDBACK_REPLIES_PER_HOUR: u32 = 30;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 pub(crate) const HOUR: Duration = Duration::from_secs(3600);
@@ -346,10 +351,7 @@ pub async fn gate(
             MINUTE,
         )
     } else {
-        let upload = (request.method() == Method::POST && path.ends_with("/attachments"))
-            || (request.method() == Method::PUT
-                && (matches!(path, "/api/me/avatar" | "/api/me/banner")
-                    || (path.starts_with("/api/servers/") && path.ends_with("/icon"))));
+        let upload = is_upload(request.method(), path);
         let message = request.method() == Method::POST && path.ends_with("/messages");
         let raw = cookies::get(request.headers(), SESSION_COOKIE)
             .filter(|raw| crate::token::is_valid(raw));
@@ -434,6 +436,15 @@ fn session_buckets(
         state.limits.api_per_min,
         MINUTE,
     )
+}
+
+/// Requests that store a file and count in the `up` bucket.
+fn is_upload(method: &Method, path: &str) -> bool {
+    (*method == Method::POST && path.ends_with("/attachments"))
+        || (*method == Method::PUT
+            && (matches!(path, "/api/me/avatar" | "/api/me/banner")
+                || (path.starts_with("/api/servers/") && path.ends_with("/icon"))))
+        || (*method == Method::POST && path == "/api/feedback/images")
 }
 
 /// Routes an anonymous caller uses to sign in or to make the API send mail;
@@ -732,6 +743,27 @@ mod tests {
         }
         for path in ["/api/auth/logout", "/api/auth/oidcx", "/api/servers"] {
             assert!(!is_auth_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn uploads_count_in_the_up_bucket() {
+        for (method, path) in [
+            (Method::POST, "/api/channels/x/attachments"),
+            (Method::PUT, "/api/me/avatar"),
+            (Method::PUT, "/api/me/banner"),
+            (Method::PUT, "/api/servers/x/icon"),
+            (Method::POST, "/api/feedback/images"),
+        ] {
+            assert!(is_upload(&method, path), "{method} {path}");
+        }
+        for (method, path) in [
+            (Method::POST, "/api/feedback"),
+            (Method::PUT, "/api/feedback/images"),
+            (Method::POST, "/api/feedback/x/messages"),
+            (Method::POST, "/api/me/avatar"),
+        ] {
+            assert!(!is_upload(&method, path), "{method} {path}");
         }
     }
 

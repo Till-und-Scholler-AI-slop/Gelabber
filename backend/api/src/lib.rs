@@ -8,6 +8,7 @@ pub mod csrf;
 pub mod directory;
 pub mod dms;
 pub mod error;
+pub mod feedback;
 pub mod gateway;
 pub mod gifs;
 pub mod health;
@@ -73,6 +74,7 @@ pub fn app(state: AppState) -> Router {
         .merge(operator::router())
         .merge(directory::router())
         .merge(account::router())
+        .merge(feedback::router())
         // CSRF runs first: a refused cross-site post must not use up the
         // visitor's address window (the outer layer runs first).
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate))

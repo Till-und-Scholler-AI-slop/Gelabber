@@ -61,13 +61,6 @@ pub struct NewReport {
     pub snapshot: Option<serde_json::Value>,
 }
 
-/// Text a person typed: no control characters but line breaks and tabs.
-/// Postgres refuses NUL, which would otherwise answer 500.
-fn has_control(text: &str) -> bool {
-    text.chars()
-        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-}
-
 /// The reason and the trimmed details, or the field errors.
 fn checked(report: &NewReport) -> Result<(&'static str, String), ApiError> {
     let mut errors = FieldErrors::new();
@@ -81,7 +74,7 @@ fn checked(report: &NewReport) -> Result<(&'static str, String), ApiError> {
     let details = report.details.as_deref().unwrap_or_default().trim();
     if details.chars().count() > DETAILS_MAX {
         errors.insert("details", "too_long");
-    } else if has_control(details) {
+    } else if validate::has_control(details) {
         errors.insert("details", "invalid");
     } else if details.is_empty() && reason == Some("other") {
         errors.insert("details", "required");
@@ -449,7 +442,7 @@ fn resolution(body: &ResolveBody) -> Result<(&'static str, Option<String>), ApiE
     if let Some(note) = note {
         if note.chars().count() > NOTE_MAX {
             errors.insert("note", "too_long");
-        } else if has_control(note) {
+        } else if validate::has_control(note) {
             errors.insert("note", "invalid");
         }
     }
