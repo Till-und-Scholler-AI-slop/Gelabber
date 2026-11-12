@@ -266,6 +266,33 @@ async fn answers_go_to_the_pages_of_the_form_language(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn a_full_text_with_line_breaks_or_of_any_script_is_taken(pool: PgPool) {
+    let (state, _) = form_state(pool.clone());
+    // `maxlength` counts a line break once; the form sends it as CRLF.
+    let line = "x".repeat(99);
+    let lines = vec![line.as_str(); 40].join("\r\n") + "y";
+    assert_eq!(lines.replace("\r\n", "\n").chars().count(), 4000);
+    // A three-byte character is nine bytes on the wire.
+    let euros = "€".repeat(4000);
+    for (text, email) in [(&lines, "ada@example.org"), (&euros, "ben@example.org")] {
+        let body = form(&[
+            ("lang", "de"),
+            ("kind", "idea"),
+            ("text", text),
+            ("email", email),
+            ("website", ""),
+        ]);
+        see_other(post(&state, body).await, "/de/feedback/gesendet").await;
+    }
+    let stored: Vec<String> =
+        sqlx::query_scalar("SELECT body FROM feedback ORDER BY visitor_email")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, [lines.replace("\r\n", "\n"), euros]);
+}
+
+#[sqlx::test]
 async fn the_honeypot_stores_and_sends_nothing(pool: PgPool) {
     let (state, mailer) = form_state(pool.clone());
     let body = form(&[
