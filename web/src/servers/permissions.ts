@@ -1,58 +1,26 @@
-// The six coarse flags of issue #4, in the API's canonical order, with the
-// copy the settings page shows. Mirrors `backend/api/src/servers/permissions.rs`.
+// The nine coarse flags (issue #4, `moderate_members` since v0.10), in the
+// API's canonical order, with the key of the copy the settings page shows
+// (`serverSettings` `permission.<key>.label` / `.hint`). Mirrors
+// `backend/api/src/servers/permissions.rs`.
 
 import type { Permission, Server } from "./types.ts";
 
-export const PERMISSIONS: ReadonlyArray<{
-  id: Permission;
-  label: string;
-  hint: string;
-}> = [
-  {
-    id: "manage_server",
-    label: "Server verwalten",
-    hint: "Umbenennen, Rechte ändern, Einladungen, Kick und Ban.",
-  },
-  {
-    id: "manage_channels",
-    label: "Kanäle verwalten",
-    hint: "Kategorien und Kanäle anlegen, umbenennen, löschen.",
-  },
-  {
-    id: "manage_messages",
-    label: "Nachrichten löschen",
-    hint: "Fremde Nachrichten im Chat löschen.",
-  },
-  {
-    id: "mention_everyone",
-    label: "@everyone und @here",
-    hint: "Alle Mitglieder auf einmal erwähnen und benachrichtigen.",
-  },
-  {
-    id: "send_messages",
-    label: "Nachrichten schreiben",
-    hint: "In Textkanälen schreiben.",
-  },
-  {
-    id: "send_files",
-    label: "Dateien senden",
-    hint: "Anhänge hochladen.",
-  },
-  {
-    id: "join_voice",
-    label: "Sprachkanälen beitreten",
-    hint: "In Sprachkanälen reden, zuhören und die Kamera zeigen.",
-  },
-  {
-    id: "go_live",
-    label: "Live gehen",
-    hint: "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen.",
-  },
-];
+export const PERMISSIONS = [
+  { id: "manage_server", key: "manageServer" },
+  { id: "moderate_members", key: "moderateMembers" },
+  { id: "manage_channels", key: "manageChannels" },
+  { id: "manage_messages", key: "manageMessages" },
+  { id: "mention_everyone", key: "mentionEveryone" },
+  { id: "send_messages", key: "sendMessages" },
+  { id: "send_files", key: "sendFiles" },
+  { id: "join_voice", key: "joinVoice" },
+  { id: "go_live", key: "goLive" },
+] as const satisfies ReadonlyArray<{ id: Permission; key: string }>;
 
 export const ALL_PERMISSIONS: Permission[] = PERMISSIONS.map((p) => p.id);
 
-/** Does the signed-in user hold `permission` in `server`? Owner: always. */
+/** Does the signed-in user hold `permission` in `server`? Owner: always.
+ * `permissions` is already the union of "Alle Mitglieder" and the roles. */
 export function can(
   server: Pick<Server, "role" | "permissions"> | undefined,
   permission: Permission,

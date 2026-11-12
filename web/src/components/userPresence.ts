@@ -1,10 +1,11 @@
 import type { PresenceStatus } from "../ws/protocol.ts";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
-export const PRESENCE_LABEL: Record<PresenceStatus, string> = {
-  o: "Online",
-  i: "Abwesend",
-  x: "Offline",
-};
+/** "Online", "Abwesend" or "Offline", in the language shown now. */
+export function presenceLabel(presence: PresenceStatus): string {
+  return translate(shell, `presence.${presence}`);
+}
 
 /**
  * Your own presence: as the server in view sees it, else as any server
@@ -28,6 +29,6 @@ export function panelSubtitle(
   statusText: string | null | undefined,
 ): string {
   return statusText
-    ? `${PRESENCE_LABEL[presence]} · ${statusText}`
-    : PRESENCE_LABEL[presence];
+    ? `${presenceLabel(presence)} · ${statusText}`
+    : presenceLabel(presence);
 }

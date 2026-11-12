@@ -23,6 +23,8 @@ import { refreshReplyTarget } from "./replyTarget.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import { isPendingId } from "../servers/queries.ts";
 import type { GifPick } from "../gifs/api.ts";
@@ -445,13 +447,9 @@ export async function sendMessageAttempt(
     ? usePendingMessages.getState().attempts[input.attemptId]
     : undefined;
   if (input.attemptId && (!attempt || attempt.status === "sending"))
-    throw new Error(
-      "Dieser Sendeversuch läuft bereits oder ist nicht mehr vorhanden.",
-    );
+    throw new Error(translate(chat, "send.running"));
   if (attempt?.status === "uncertain")
-    throw new Error(
-      "Speicherstatus unbekannt. Bitte zuerst den Nachrichtenverlauf prüfen.",
-    );
+    throw new Error(translate(chat, "send.uncertain"));
   if (!attempt) {
     const stamp = takeStamp();
     if (!stamp || stamp.userId !== author.id)
@@ -487,7 +485,7 @@ export async function sendMessageAttempt(
   }
   requireAttempt(attempt);
   if (attempt.channelId !== channelId)
-    throw new Error("Falscher Kanal für den Sendeversuch.");
+    throw new Error(translate(chat, "send.wrongChannel"));
   attempt = { ...attempt, status: "sending", error: undefined };
   saveAttempt(attempt);
   try {
@@ -583,11 +581,11 @@ export async function sendMessageAttempt(
           error.status === 0 ||
           error.status === 408 ||
           error.status >= 500);
-      const labels = {
-        presign: "Dateifreigabe",
-        upload: "Dateiübertragung",
-        bind: "Nachricht speichern",
-      };
+      const failed = {
+        presign: "send.presignFailed",
+        upload: "send.uploadFailed",
+        bind: "send.bindFailed",
+      } as const;
       // The bind may have gone through: these ids may be taken already, so
       // a retry or a draft taken back uploads the files again.
       if (uncertain) for (const file of attempt.files) arrived.delete(file);
@@ -602,7 +600,7 @@ export async function sendMessageAttempt(
         uploadedIds: rejected ? [] : attempt.uploadedIds,
         status: uncertain ? "uncertain" : "failed",
         error: [
-          `${labels[attempt.stage]} fehlgeschlagen.`,
+          translate(chat, failed[attempt.stage]),
           ...(rejected ?? []),
         ].join(" "),
       });
@@ -775,7 +773,7 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
         queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
         exact: true,
       });
-      notifyError(error, "Änderung nicht gespeichert.");
+      notifyError(error, translate(chat, "row.editFailed"));
     },
     onSuccess: (
       message: Message,
@@ -956,6 +954,33 @@ export function applyMessageDeleted(
   refreshReplyTarget(channelId, messageId, null);
 }
 
+/**
+ * A member's account was deleted (#519): their messages leave every cached
+ * history of these channels, as if each had been deleted on its own, so
+ * replies to them read as deleted. Only histories already loaded change.
+ */
+export function dropAuthorMessages(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelIds: readonly string[],
+  authorId: string,
+): void {
+  for (const channelId of channelIds) {
+    const cached = client.getQueryData<Cache>(
+      messageKeys.channel(userId, generation, channelId),
+    );
+    if (!cached) continue;
+    const ids = cached.pages.flatMap((page) =>
+      page.messages
+        .filter((message) => message.author.id === authorId)
+        .map((message) => message.id),
+    );
+    for (const id of ids)
+      applyMessageDeleted(client, userId, generation, channelId, id);
+  }
+}
+
 export function applyChannelEvent(
   client: QueryClient,
   userId: string,
@@ -1075,7 +1100,7 @@ export function deleteMessageOptions(client: QueryClient, channelId: string) {
         queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
         exact: true,
       });
-      notifyError(error, "Nachricht nicht gelöscht.");
+      notifyError(error, translate(chat, "delete.failed"));
     },
   };
 }

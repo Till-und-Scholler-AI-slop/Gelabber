@@ -1,6 +1,11 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
+import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
+import { compareNames } from "../i18n/format.ts";
 import { pageZoom } from "../interface/zoom.ts";
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
@@ -24,6 +29,7 @@ import { UserVolumeControl } from "./UserVolumeControl.tsx";
 import { useCapabilities } from "../voice/capabilities.ts";
 import { useCallShortcuts } from "../voice/callShortcuts.ts";
 import { ConnectionStatus } from "../voice/ConnectionStatus.tsx";
+import { CallSound } from "../voice/QuickCallSettings.tsx";
 import { directionTotal } from "../voice/connectionSummary.ts";
 import {
   callQuality,
@@ -49,6 +55,8 @@ import "../voice/room.css";
  * route: one bar at the bottom edge, after the sidebar on wide workspaces
  * and across the screen on phones and pages without a sidebar. */
 export function VoiceSessionControls() {
+  const t = useT(texts);
+  const tc = useT(common);
   const dockRef = useRef<HTMLElement>(null);
   const session = useVoice();
   const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
@@ -110,7 +118,7 @@ export function VoiceSessionControls() {
       {announcement}
       <section
         ref={dockRef}
-        aria-label="Aktive Medien"
+        aria-label={t("dock.label")}
         data-state={presence.state}
         inert={!visible}
         className="voice-session-dock"
@@ -128,6 +136,7 @@ export function VoiceSessionControls() {
             <VoiceControls
               canLive={can(server, "go_live")}
               streamSound={streamSound}
+              server={server}
             />
             <LeaveButton />
           </div>
@@ -137,7 +146,7 @@ export function VoiceSessionControls() {
             <div className="voice-session-head" data-connection="failed">
               <WarningIcon size={16} className="voice-session-signal" />
               <span className="voice-session-link">
-                <strong>Verbindung verloren</strong>
+                <strong>{t("call.lost")}</strong>
                 <span>{lost.channelName}</span>
               </span>
             </div>
@@ -150,10 +159,10 @@ export function VoiceSessionControls() {
                 })
               }
             >
-              Erneut versuchen
+              {tc("tryAgain")}
             </Button>
             <IconButton
-              label="Schließen"
+              label={tc("close")}
               icon={<CloseIcon size={16} />}
               onClick={() => dismissLostCall()}
             />
@@ -162,13 +171,13 @@ export function VoiceSessionControls() {
         {joined && pushToTalk && touch ? <HoldToTalk /> : null}
         {voice.playbackBlocked && !voice.deafened ? (
           <div role="status" className="voice-session-playback">
-            <span>Der Browser blockiert den Ton.</span>
+            <span>{t("dock.playbackBlocked")}</span>
             <button
               type="button"
               onClick={() => retryPlayback()}
               className="voice-control voice-room-primary"
             >
-              Ton starten
+              {t("dock.startPlayback")}
             </button>
           </div>
         ) : notice ? (
@@ -176,7 +185,7 @@ export function VoiceSessionControls() {
             <WarningIcon size={15} />
             <span>{notice.text}</span>
             <IconButton
-              label="Hinweis schließen"
+              label={t("dock.dismissNotice")}
               size="xs"
               icon={<CloseIcon size={14} />}
               onClick={() =>
@@ -212,7 +221,8 @@ function CallAnnouncement({ voice }: { voice: VoiceState }) {
 }
 
 /** Where the call is and whether it carries: the connection's state in
- * words, and once connected, its quality as bars that open the details. */
+ * words beside its quality as bars, one button that opens the details, and
+ * the place below it, a link back to the channel. */
 function CallStatus({
   voice,
   server,
@@ -222,34 +232,31 @@ function CallStatus({
   server: ServerDetail | undefined;
   joined: { serverId: string; channelId: string };
 }) {
-  const channel = voice.channelName ?? "Sprachkanal";
+  const t = useT(texts);
+  const tc = useT(common);
+  const channel = voice.channelName ?? t("call.voiceChannel");
   const where = server?.name ? `${channel} · ${server.name}` : channel;
   const state =
     voice.connection === "connected"
-      ? "Verbunden"
+      ? t("call.connected")
       : voice.connection === "reconnecting"
-        ? "Verbindung wird wiederhergestellt …"
+        ? t("call.reconnecting")
         : voice.connection === "failed"
-          ? "Verbindung verloren"
-          : "Verbinde …";
+          ? t("call.lost")
+          : t("call.connecting");
   return (
     <div className="voice-session-head" data-connection={voice.connection}>
-      {voice.connection === "connected" ? (
-        <QualityBars />
-      ) : voice.connection === "failed" ? (
-        <WarningIcon size={16} className="voice-session-signal" />
-      ) : (
-        <SignalIcon size={16} className="voice-session-signal" />
-      )}
-      <Link
-        to="/s/$serverId/c/$channelId"
-        params={joined}
-        className="voice-session-link"
-        aria-label={`${state}: ${where}`}
-      >
-        <strong>{state}</strong>
-        <span>{where}</span>
-      </Link>
+      <div className="voice-session-where">
+        <ConnectionButton connection={voice.connection} state={state} />
+        <Link
+          to="/s/$serverId/c/$channelId"
+          params={joined}
+          className="voice-session-link"
+          aria-label={`${state}: ${where}`}
+        >
+          <span>{where}</span>
+        </Link>
+      </div>
       {voice.connection === "failed" ? (
         <Button
           onClick={() =>
@@ -260,89 +267,133 @@ function CallStatus({
             })
           }
         >
-          Erneut versuchen
+          {tc("tryAgain")}
         </Button>
       ) : null}
     </div>
   );
 }
 
-/** One to four bars from the latest measurement; pressing them shows the
- * connection at a glance, with the way to the full diagnostics. */
-function QualityBars() {
-  const sample = useVoiceDiagnostics((state) => state.latest?.voice ?? null);
-  const watch = useVoiceDiagnostics((state) => state.latest?.watch ?? null);
-  const openSettings = useMediaSettings((s) => s.openDialog);
+/** The state word with one to four bars from the latest measurement, or
+ * the state's icon before it connects; pressing it shows the connection at
+ * a glance, with the volumes and the way to the full diagnostics. */
+function ConnectionButton({
+  connection,
+  state,
+}: {
+  connection: VoiceState["connection"];
+  state: string;
+}) {
+  const t = useT(texts);
+  const sample = useVoiceDiagnostics((s) => s.latest?.voice ?? null);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
-  const quality = callQuality(sample);
-  const label = quality
-    ? callQualitySummary(quality)
-    : "Verbindung: wird gemessen …";
+  // The last sample speaks only for a live connection: otherwise the button
+  // says the state it shows.
+  const quality = connection === "connected" ? callQuality(sample) : null;
+  const label =
+    connection !== "connected"
+      ? state
+      : quality
+        ? callQualitySummary(quality)
+        : t("quality.measuring");
   const tip = useTooltip({ label, disabled: open });
-  const sent = directionTotal([sample], "send");
-  const received = directionTotal([sample, watch], "recv");
-  const show = (section: "audio" | "diagnostics") => {
-    setOpen(false);
-    openSettings(section);
-  };
   return (
     <>
       <button
         {...tip.trigger}
         ref={anchor}
         type="button"
-        className="voice-quality-bars"
-        data-level={quality?.level ?? 0}
-        aria-label={`${label} – Details anzeigen`}
+        className="voice-session-status"
+        aria-label={t("quality.showDetails", { summary: label })}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        {[1, 2, 3, 4].map((bar) => (
-          <span key={bar} aria-hidden="true" />
-        ))}
+        {connection === "connected" ? (
+          <span
+            className="voice-quality-bars"
+            data-level={quality?.level ?? 0}
+            aria-hidden="true"
+          >
+            {[1, 2, 3, 4].map((bar) => (
+              <span key={bar} />
+            ))}
+          </span>
+        ) : connection === "failed" ? (
+          <WarningIcon size={16} className="voice-session-signal" />
+        ) : (
+          <SignalIcon size={16} className="voice-session-signal" />
+        )}
+        <strong>{state}</strong>
       </button>
       {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Verbindung"
+        label={t("quality.popoverLabel")}
         placement="top-start"
         className="voice-connection-popover"
       >
-        <ConnectionStatus compact />
-        <dl className="connection-io">
-          <div>
-            <dt>
-              <span className="connection-dir" aria-hidden="true">
-                ↑
-              </span>
-              Du sendest
-            </dt>
-            <dd>{sent === null ? "–" : formatBps(sent)}</dd>
-          </div>
-          <div>
-            <dt>
-              <span className="connection-dir" aria-hidden="true">
-                ↓
-              </span>
-              Du empfängst
-            </dt>
-            <dd>{received === null ? "–" : formatBps(received)}</dd>
-          </div>
-        </dl>
-        <div className="connection-actions">
-          <Button size="sm" variant="ghost" onClick={() => show("audio")}>
-            Einstellungen
-          </Button>
-          {/* Focus starts on the way to the details (Popover.tsx). */}
-          <Button size="sm" autoFocus onClick={() => show("diagnostics")}>
-            Alle Details
-          </Button>
-        </div>
+        <ConnectionDetails onDone={() => setOpen(false)} />
       </Popover>
+    </>
+  );
+}
+
+/** The "Verbindung" popover's content: the connection in short, what goes
+ * out and comes in, the call's volumes (the phone's way to them without the
+ * call bar's gear) and the ways to the settings and the diagnostics. */
+export function ConnectionDetails({ onDone }: { onDone: () => void }) {
+  const t = useT(texts);
+  const ts = useT(voiceSettings);
+  const volumeId = useId();
+  const sample = useVoiceDiagnostics((s) => s.latest?.voice ?? null);
+  const watch = useVoiceDiagnostics((s) => s.latest?.watch ?? null);
+  const openSettings = useMediaSettings((s) => s.openDialog);
+  const sent = directionTotal([sample], "send");
+  const received = directionTotal([sample, watch], "recv");
+  const show = (section: "audio" | "diagnostics") => {
+    onDone();
+    openSettings(section);
+  };
+  return (
+    <>
+      <ConnectionStatus compact />
+      <dl className="connection-io">
+        <div>
+          <dt>
+            <span className="connection-dir" aria-hidden="true">
+              ↑
+            </span>
+            {t("quality.sending")}
+          </dt>
+          <dd>{sent === null ? "–" : formatBps(sent)}</dd>
+        </div>
+        <div>
+          <dt>
+            <span className="connection-dir" aria-hidden="true">
+              ↓
+            </span>
+            {t("quality.receiving")}
+          </dt>
+          <dd>{received === null ? "–" : formatBps(received)}</dd>
+        </div>
+      </dl>
+      <section className="connection-volume" aria-labelledby={volumeId}>
+        <h3 id={volumeId}>{ts("quick.volume")}</h3>
+        <CallSound />
+      </section>
+      <div className="connection-actions">
+        <Button size="sm" variant="ghost" onClick={() => show("audio")}>
+          {t("quality.settings")}
+        </Button>
+        {/* Focus starts on the way to the details (Popover.tsx). */}
+        <Button size="sm" autoFocus onClick={() => show("diagnostics")}>
+          {t("quality.allDetails")}
+        </Button>
+      </div>
     </>
   );
 }
@@ -361,6 +412,7 @@ function CallPeople({
   serverId: string;
   channelId: string;
 }) {
+  const t = useT(texts);
   const voice = useVoice();
   const self = useUserId();
   const [open, setOpen] = useState(false);
@@ -381,12 +433,12 @@ function CallPeople({
           : flags.muted || flags.deafened;
       return {
         id,
-        name: members.get(id)?.name ?? "Jemand",
+        name: members.get(id)?.name ?? t("people.someone"),
         url: members.get(id)?.avatar_url ?? null,
         speaking: speaking[id] === true && !silenced,
       };
     })
-    .sort((a, b) => a.name.localeCompare(b.name, "de"));
+    .sort((a, b) => compareNames(a.name, b.name));
   const names = people.map((person) => person.name).join(", ");
   const tip = useTooltip({ label: names, disabled: open });
   if (people.length === 0) return null;
@@ -395,7 +447,7 @@ function CallPeople({
     ...people.filter((person) => !person.speaking),
   ]
     .slice(0, SHOWN_PEOPLE)
-    .sort((a, b) => a.name.localeCompare(b.name, "de"));
+    .sort((a, b) => compareNames(a.name, b.name));
   const more = people.length - shown.length;
   return (
     <>
@@ -404,7 +456,7 @@ function CallPeople({
         ref={anchor}
         type="button"
         className="voice-session-people"
-        aria-label={`Im Anruf: ${names}`}
+        aria-label={t("people.label", { names })}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
@@ -429,7 +481,7 @@ function CallPeople({
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Im Anruf"
+        label={t("people.title")}
         placement="top-start"
         className="voice-call-people"
       >
@@ -444,10 +496,11 @@ function CallPeople({
                   className={person.speaking ? "is-speaking" : ""}
                 />
                 <strong>
-                  {person.name}
-                  {person.id === self ? " (du)" : ""}
+                  {person.id === self
+                    ? t("people.you", { name: person.name })
+                    : person.name}
                 </strong>
-                {person.speaking ? <small>spricht</small> : null}
+                {person.speaking ? <small>{t("people.speaking")}</small> : null}
               </div>
               {person.id !== self ? (
                 <UserVolumeControl userId={person.id} name={person.name} />
@@ -461,18 +514,19 @@ function CallPeople({
 }
 
 function LeaveButton() {
-  const tip = useTooltip({ label: "Verlassen" });
+  const t = useT(texts);
+  const tip = useTooltip({ label: t("call.leave") });
   return (
     <>
       <button
         {...tip.trigger}
         type="button"
         onClick={() => leaveVoice()}
-        aria-label="Verlassen"
+        aria-label={t("call.leave")}
         className="voice-control voice-control-compact voice-control-leave"
       >
         <HangUpIcon size={18} />
-        <span className="voice-control-text">Verlassen</span>
+        <span className="voice-control-text">{t("call.leave")}</span>
       </button>
       {tip.tooltip}
     </>

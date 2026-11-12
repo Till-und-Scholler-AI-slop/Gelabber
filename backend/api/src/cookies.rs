@@ -1,6 +1,7 @@
 //! Minimal cookie helpers: read one cookie out of the request and build a
-//! `Set-Cookie` value. Both cookies this API issues are `HttpOnly` and
-//! `SameSite=Lax` on `Path=/`; `Secure` follows `API_COOKIE_SECURE`.
+//! `Set-Cookie` value. Every cookie this API issues is `HttpOnly` and
+//! `SameSite=Lax`, on `Path=/` unless [`SetCookie::path`] narrows it;
+//! `Secure` follows `API_COOKIE_SECURE`.
 
 use axum::http::header::{COOKIE, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue};
@@ -46,6 +47,7 @@ pub struct SetCookie {
     value: String,
     max_age_secs: u64,
     secure: bool,
+    path: &'static str,
 }
 
 impl SetCookie {
@@ -55,6 +57,7 @@ impl SetCookie {
             value: value.into(),
             max_age_secs,
             secure: false,
+            path: "/",
         }
     }
 
@@ -68,10 +71,17 @@ impl SetCookie {
         self
     }
 
+    /// Sends the cookie only to requests under `path` (default `/`). A
+    /// cookie is cleared only with the path it was set with.
+    pub fn path(mut self, path: &'static str) -> Self {
+        self.path = path;
+        self
+    }
+
     pub fn header_value(&self) -> HeaderValue {
         let mut out = format!(
-            "{}={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax",
-            self.name, self.value, self.max_age_secs
+            "{}={}; Path={}; Max-Age={}; HttpOnly; SameSite=Lax",
+            self.name, self.value, self.path, self.max_age_secs
         );
         if self.secure {
             out.push_str("; Secure");
@@ -143,6 +153,26 @@ mod tests {
         ] {
             assert!(!is_loopback_host(host), "{host}");
         }
+    }
+
+    #[test]
+    fn path_narrows_the_cookie() {
+        let value = SetCookie::new("gelabber_oidc", "bind", 1800)
+            .path("/api/auth/oidc")
+            .secure(true)
+            .header_value();
+        assert_eq!(
+            value.to_str().unwrap(),
+            "gelabber_oidc=bind; Path=/api/auth/oidc; Max-Age=1800; HttpOnly; SameSite=Lax; Secure"
+        );
+
+        let cleared = SetCookie::clear("gelabber_oidc")
+            .path("/api/auth/oidc")
+            .header_value();
+        assert_eq!(
+            cleared.to_str().unwrap(),
+            "gelabber_oidc=; Path=/api/auth/oidc; Max-Age=0; HttpOnly; SameSite=Lax"
+        );
     }
 
     #[test]

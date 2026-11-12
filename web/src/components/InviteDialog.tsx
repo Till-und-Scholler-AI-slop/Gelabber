@@ -8,6 +8,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client.ts";
 import { useUserId } from "../auth/scope.ts";
 import { errorMessage } from "../auth/rules.ts";
+import { translate, useT } from "../i18n/catalog.ts";
+import { servers } from "../i18n/catalogs/servers.ts";
 import { inviteUrl } from "../servers/api.ts";
 import { canShare, copyText, share } from "../servers/clipboard.ts";
 import {
@@ -16,10 +18,10 @@ import {
 } from "../servers/invitePrompt.ts";
 import {
   DEFAULT_INVITE_TERMS,
-  EXPIRY_OPTIONS,
-  USES_OPTIONS,
+  expiryOptions,
   inviteInput,
   termsSummary,
+  usesOptions,
   type InviteTerms,
 } from "../servers/inviteTerms.ts";
 import { useCreateInvite, useRevokeInvite } from "../servers/queries.ts";
@@ -46,8 +48,13 @@ export function InviteDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const t = useT(servers);
   return (
-    <Modal open={open} onClose={onClose} title={`Zu ${server.name} einladen`}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t("invite.title", { server: server.name })}
+    >
       {open ? <InviteLinkPanel server={server} /> : null}
     </Modal>
   );
@@ -96,6 +103,7 @@ export function InvitePromptHost() {
  * revokes a link nobody took (inviteSession.ts).
  */
 export function InviteLinkPanel({ server }: { server: InviteServer }) {
+  const t = useT(servers);
   const create = useCreateInvite(server.id);
   const revoke = useRevokeInvite(server.id);
   // `terms` is what the chips ask for; `current` the link on screen and the
@@ -127,7 +135,9 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
         if (replaced)
           show({
             tone: "neutral",
-            message: `Neuer Link · ${termsSummary(next)}`,
+            message: translate(servers, "invite.newLink", {
+              terms: termsSummary(next),
+            }),
           });
       },
       // Shown from `create.error`; the chips go back to the link shown.
@@ -160,19 +170,22 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
 
   const copy = async (): Promise<boolean> => {
     if (making) {
-      show({ tone: "neutral", message: "Link wird erstellt…" });
+      show({ tone: "neutral", message: t("invite.making") });
       return false;
     }
     if (!link) return false;
     // Taken from the start: the dialog may close before the copy settles.
     session.current?.handOut();
     if (await copyText(link)) {
-      show({ tone: "success", message: `Link kopiert · ${summary}` });
+      show({
+        tone: "success",
+        message: t("invite.copied", { terms: summary }),
+      });
       return true;
     }
     show({
       tone: "error",
-      message: "Kopieren fehlgeschlagen. Kopiere den Link manuell.",
+      message: t("invite.copyFailed"),
     });
     return false;
   };
@@ -180,9 +193,11 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
   if (!invite && create.isError) {
     return (
       <LoadError
-        message={`Der Einladungslink konnte nicht erstellt werden. ${errorMessage(
-          create.error instanceof ApiError ? create.error.code : "internal",
-        )}`}
+        message={t("invite.createFailed", {
+          reason: errorMessage(
+            create.error instanceof ApiError ? create.error.code : "internal",
+          ),
+        })}
         pending={create.isPending}
         onRetry={() => session.current?.request(terms, false)}
       />
@@ -194,8 +209,8 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
       <div className="invite-panel__link">
         <input
           readOnly
-          value={making ? "Link wird erstellt…" : link}
-          aria-label="Einladungslink"
+          value={making ? t("invite.making") : link}
+          aria-label={t("invite.linkLabel")}
           aria-busy={making || undefined}
           onFocus={(event) => event.currentTarget.select()}
           onCopy={() => session.current?.handOut()}
@@ -208,7 +223,7 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
           announce={false}
           initialFocus
         >
-          Link kopieren
+          {t("invite.copy")}
         </CopyButton>
       </div>
       <div className="invite-panel__status">
@@ -224,37 +239,37 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
             // not revoke the link being shared.
             session.current?.handOut();
             void share({
-              title: `Einladung zu ${server.name}`,
-              text: `Tritt ${server.name} auf Gelabber bei:`,
+              title: t("invite.shareTitle", { server: server.name }),
+              text: t("invite.shareText", { server: server.name }),
               url: link,
             });
           }}
         >
-          Teilen…
+          {t("invite.share")}
         </Button>
       ) : null}
       {create.isError && invite ? (
         <p role="alert" className="ui-field-error">
-          Der neue Link konnte nicht erstellt werden. Der bisherige gilt weiter.
+          {t("invite.replaceFailed")}
         </p>
       ) : null}
       <details className="invite-panel__terms-editor">
         <summary>
-          Ablauf &amp; Limit ändern
+          {t("invite.termsEditor")}
           <ChevronIcon size={14} />
         </summary>
         <div className="invite-panel__chips">
-          <span className="invite-panel__caps">Läuft ab nach</span>
+          <span className="invite-panel__caps">{t("invite.expiresAfter")}</span>
           <ChipGroup
-            label="Läuft ab nach"
-            options={EXPIRY_OPTIONS}
+            label={t("invite.expiresAfter")}
+            options={expiryOptions()}
             value={terms.expiry}
             onChange={(expiry) => changeTerms({ ...terms, expiry })}
           />
-          <span className="invite-panel__caps">Wie oft nutzbar</span>
+          <span className="invite-panel__caps">{t("invite.usesLabel")}</span>
           <ChipGroup
-            label="Wie oft nutzbar"
-            options={USES_OPTIONS}
+            label={t("invite.usesLabel")}
+            options={usesOptions()}
             value={terms.uses}
             onChange={(uses) => changeTerms({ ...terms, uses })}
           />

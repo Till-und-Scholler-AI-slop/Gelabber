@@ -1,5 +1,6 @@
-//! Kick, ban, unban (issue #15). Admin is `manage_server`. A ban row
-//! survives membership, so an invite cannot bring the user back.
+//! Kick, ban, unban (issue #15). They need `moderate_members` (v0.10; before,
+//! `manage_server`). A ban row survives membership, so an invite cannot bring
+//! the user back.
 
 use axum::Router;
 use axum::extract::State;
@@ -43,7 +44,9 @@ pub struct Ban {
     pub user_id: Uuid,
     pub name: String,
     pub avatar_url: Option<String>,
-    pub banned_by: Uuid,
+    /// `None` once the account that issued the ban was deleted; the ban
+    /// stays (migration 0034).
+    pub banned_by: Option<Uuid>,
     pub banned_at: DateTime<Utc>,
 }
 
@@ -65,7 +68,7 @@ async fn kick_member(
 ) -> Result<StatusCode, ApiError> {
     let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
     let actor = membership::load(&mut *tx, server_id, user.id).await?;
-    actor.require(Permission::ManageServer)?;
+    actor.require(Permission::ModerateMembers)?;
     let target_id = parse_target(&body.user_id)?;
     guard_target(&actor, user.id, target_id)?;
 
@@ -97,7 +100,7 @@ async fn ban_member(
 ) -> Result<StatusCode, ApiError> {
     let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
     let actor = membership::load(&mut *tx, server_id, user.id).await?;
-    actor.require(Permission::ManageServer)?;
+    actor.require(Permission::ModerateMembers)?;
     let target_id = parse_target(&body.user_id)?;
     guard_target(&actor, user.id, target_id)?;
     ensure_user_exists(&mut tx, target_id).await?;
@@ -123,6 +126,12 @@ async fn ban_member(
         .bind(target_id)
         .execute(&mut *tx)
         .await?;
+    // A banned person's request to join, pending or declined, goes too.
+    sqlx::query("DELETE FROM server_join_requests WHERE server_id = $1 AND user_id = $2")
+        .bind(server_id)
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?;
     info!(server_id = %server_id, user_id = %target_id, "member banned");
     after_removal(&state, &mut tx, server_id, target_id, "banned").await?;
     tx.commit().await?;
@@ -139,7 +148,7 @@ async fn list_bans(
     Id(server_id): Id,
 ) -> Result<Json<Vec<Ban>>, ApiError> {
     let member = membership::load(&state.db, server_id, user.id).await?;
-    member.require(Permission::ManageServer)?;
+    member.require(Permission::ModerateMembers)?;
     let rows = sqlx::query_as::<_, Ban>(
         "SELECT b.user_id, u.name, u.avatar_url, b.banned_by, b.banned_at \
          FROM server_bans b JOIN users u ON u.id = b.user_id \
@@ -158,7 +167,7 @@ async fn unban_member(
     Ids(server_id, target_id): Ids,
 ) -> Result<StatusCode, ApiError> {
     let member = membership::load(&state.db, server_id, user.id).await?;
-    member.require(Permission::ManageServer)?;
+    member.require(Permission::ModerateMembers)?;
 
     let deleted = sqlx::query("DELETE FROM server_bans WHERE server_id = $1 AND user_id = $2")
         .bind(server_id)
@@ -220,7 +229,7 @@ pub(super) async fn after_removal(
 }
 
 /// The server's channels, whose voice and subscriptions a removal revokes.
-pub(super) async fn channel_ids(
+pub(crate) async fn channel_ids(
     db: &mut sqlx::PgConnection,
     server_id: Uuid,
 ) -> Result<Vec<Uuid>, ApiError> {
@@ -236,7 +245,7 @@ pub(super) async fn channel_ids(
 /// loaded, so a server delete reads them once, rotates every member's media
 /// generation in one pipeline, scans the socket table once and cleans up
 /// presence once per member instead of once per socket (#294).
-pub(super) async fn after_removal_with(
+pub(crate) async fn after_removal_with(
     state: &AppState,
     server_id: Uuid,
     user_ids: &[Uuid],
@@ -260,16 +269,20 @@ pub(super) async fn after_removal_with(
             "presence cleanup after removal failed"
         );
     }
-    if !matches!(reason, "kicked" | "banned") {
-        return Ok(());
-    }
+    // Members see a kick, a ban and a deleted account (`x`) leave the list.
+    let kind = match reason {
+        "kicked" => "k",
+        "banned" => "b",
+        "deleted" => "x",
+        _ => return Ok(()),
+    };
     for user_id in user_ids {
         if let Err(err) = publish_server(
             state,
             server_id,
             EventKind::D,
             Some(*user_id),
-            Some(serde_json::json!({ "k": if reason == "banned" { "b" } else { "k" } })),
+            Some(serde_json::json!({ "k": kind })),
         )
         .await
         {

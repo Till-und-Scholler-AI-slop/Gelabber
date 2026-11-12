@@ -7,22 +7,34 @@ import {
   resetSharedSessionForTests,
   synchronizeSharedSession,
 } from "../api/client.ts";
+import { setLocale } from "../i18n/locale.ts";
 import { syncPush } from "../pwa/push.ts";
 import { scopeGeneration } from "./scope.ts";
 import {
+  accountDeletedElsewhere,
+  accountDeletedHere,
   changePassword,
   checkSession,
   claimProfileWrite,
+  completeOidc,
+  deleteAccount,
+  disconnectProvider,
   ensureSession,
   login,
   logout,
   logoutEverywhere,
+  loggedOutOnPurpose,
+  OIDC_LEAVING_MS,
+  oidcPending,
   register,
   requestPasswordReset,
   resetPassword,
   resetSessionForTests,
   retrySession,
   sessionRetryDelay,
+  setPassword,
+  signInMethods,
+  startOidc,
   updateProfile,
   uploadAvatar,
   useProfileWrites,
@@ -42,6 +54,7 @@ const ada: User = {
   name: "Ada",
   avatar_url: null,
   created_at: "2026-09-13T00:00:00Z",
+  locale: "de",
 };
 
 function json(status: number, body: unknown): Response {
@@ -82,11 +95,37 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(getCsrfToken()).toBe("c1");
 
     await ensureSession();
     expect(calls).toHaveLength(1);
+  });
+
+  it("keeps the operator flag next to the user", async () => {
+    fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: ada, csrf_token: "c1", operator: true }),
+      "PATCH /api/me": () => json(200, { ...ada, name: "Ada L." }),
+      "POST /api/auth/logout": () => json(200, { csrf_token: "c2" }),
+    });
+
+    await ensureSession();
+    expect(useSession.getState().operator).toBe(true);
+    // A profile write answers with the user alone; the flag stays.
+    await updateProfile({ name: "Ada L." });
+    expect(useSession.getState().operator).toBe(true);
+    await logout();
+    expect(useSession.getState().operator).toBe(false);
+  });
+
+  it("knows no operator when the session does not say so", async () => {
+    fakeApi({
+      "GET /api/auth/session": () => json(200, { user: ada, csrf_token: "c1" }),
+    });
+    await ensureSession();
+    expect(useSession.getState().operator).toBe(false);
   });
 
   it("keeps an unreachable session unresolved and retries authoritatively", async () => {
@@ -197,6 +236,7 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(getCsrfToken()).toBe("c2");
   });
@@ -213,7 +253,11 @@ describe("session store", () => {
     await expect(login("ada@example.com", "nope")).rejects.toMatchObject({
       code: "invalid_credentials",
     });
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
   });
 
   it("register signs in like login", async () => {
@@ -223,6 +267,48 @@ describe("session store", () => {
     });
     await register("ada@example.com", "password123", "Ada");
     expect(useSession.getState().status).toBe("authenticated");
+  });
+
+  it("register asks for the language this device shows", async () => {
+    let body: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        body = JSON.parse(String(init?.body));
+        return Promise.resolve(
+          json(201, { user: { ...ada, locale: "en" }, csrf_token: "c3" }),
+        );
+      }),
+    );
+    setLocale("en", { persist: false });
+    try {
+      await register("ada@example.com", "password123", "Ada");
+    } finally {
+      setLocale("de", { persist: false });
+    }
+    expect(body).toMatchObject({ name: "Ada", locale: "en" });
+  });
+
+  it("register sends the admission codes it is given, and none otherwise", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(json(201, { user: ada, csrf_token: "c3" }));
+      }),
+    );
+    await register("ada@example.com", "password123", "Ada", {
+      invitation: "k7m2p9qrs4tx",
+      server_invite: "abcdefghjkmn",
+    });
+    await register("ada@example.com", "password123", "Ada");
+    expect(bodies[0]).toMatchObject({
+      invitation: "k7m2p9qrs4tx",
+      server_invite: "abcdefghjkmn",
+    });
+    expect(bodies[1]).not.toHaveProperty("invitation");
+    expect(bodies[1]).not.toHaveProperty("server_invite");
   });
 
   it("register with account mail stays signed out until the link is opened", async () => {
@@ -238,13 +324,18 @@ describe("session store", () => {
 
     const user = await register("ada@example.com", "password123", "Ada");
     expect(user).toBeNull();
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
     expect(getCsrfToken()).toBe("c3");
 
     expect(await verifyEmail("f".repeat(64), "password123")).toEqual(ada);
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(getCsrfToken()).toBe("c4");
   });
@@ -279,7 +370,11 @@ describe("session store", () => {
     await login("ada@example.com", "password123");
 
     const done = logout();
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
 
     release?.();
     await done;
@@ -294,11 +389,57 @@ describe("session store", () => {
     await login("ada@example.com", "password123");
 
     const done = logoutEverywhere();
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
     await done;
     expect(calls).toContain("POST /api/auth/logout-all");
     expect(getCsrfToken()).toBe("c5");
     expect(useSessionProblems.getState().logout).toBeNull();
+  });
+
+  it("deleteAccount signs this tab out once the server deleted it", async () => {
+    const calls = fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "DELETE /api/me": () => json(202, { csrf_token: "c7" }),
+    });
+    await login("ada@example.com", "password123");
+
+    await deleteAccount({ password: "password123" });
+    expect(calls).toContain("DELETE /api/me");
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
+    expect(getCsrfToken()).toBe("c7");
+    expect(loggedOutOnPurpose()).toBe(true);
+    expect(accountDeletedHere()).toBe(true);
+  });
+
+  it("deleteAccount leaves the tab signed in when it is refused", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "DELETE /api/me": () =>
+        json(409, {
+          error: "owns_servers",
+          message: "Transfer or delete your servers first.",
+          servers: [{ id: "s1", name: "Wohnzimmer", member_count: 5 }],
+        }),
+    });
+    await login("ada@example.com", "password123");
+
+    await expect(
+      deleteAccount({ password: "password123" }),
+    ).rejects.toMatchObject({
+      code: "owns_servers",
+      body: { servers: [{ id: "s1", name: "Wohnzimmer", member_count: 5 }] },
+    });
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(loggedOutOnPurpose()).toBe(false);
+    expect(accountDeletedHere()).toBe(false);
   });
 
   it("changePassword keeps the account signed in with the new token", async () => {
@@ -316,6 +457,7 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(getCsrfToken()).toBe("c6");
     // The change ended every session, and with them this browser's push row.
@@ -448,12 +590,17 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(scopeGeneration()).toBe(generation);
 
     user = null;
     await checkSession();
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
   });
 
   it("a 401 from any request flips the tab to anonymous", async () => {
@@ -468,7 +615,11 @@ describe("session store", () => {
     await expect(updateProfile({ name: "X" })).rejects.toMatchObject({
       code: "unauthenticated",
     });
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
   });
 
   it("a csrf re-bootstrap without a user flips the tab to anonymous", async () => {
@@ -489,7 +640,11 @@ describe("session store", () => {
     await expect(updateProfile({ name: "X" })).rejects.toMatchObject({
       name: "AbortError",
     });
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
     expect(getCsrfToken()).toBe("c9");
     expect(calls.filter((call) => call === "PATCH /api/me")).toHaveLength(1);
   });
@@ -514,6 +669,7 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: { ...renamed, name: "X" },
+      operator: false,
     });
   });
 
@@ -622,8 +778,84 @@ describe("password change across tabs", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(scopeGeneration()).toBe(generation);
+  });
+
+  it("a refused account deletion leaves this tab signed in for its next request", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "DELETE /api/me": () =>
+        json(422, {
+          error: "validation_failed",
+          message: "Some fields are invalid.",
+          fields: { password: "wrong" },
+        }),
+      "GET /api/servers": () => json(200, []),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+
+    await expect(deleteAccount({ password: "nope" })).rejects.toMatchObject({
+      code: "validation_failed",
+    });
+    await expect(api("/servers")).resolves.toEqual([]);
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(scopeGeneration()).toBe(generation);
+  });
+
+  it("an account deletion settles the shared cookie state as signed out", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "DELETE /api/me": () => json(202, { csrf_token: "c7" }),
+    });
+    await login("ada@example.com", "password123");
+
+    await deleteAccount({ email: "ada@example.com" });
+    expect(JSON.parse(storage.get(FENCE)!)).toMatchObject({
+      phase: "settled",
+      userId: null,
+      ended: "deleted",
+    });
+    expect(JSON.parse(storage.get(FENCE)!)).not.toHaveProperty("keepsAccount");
+    expect(useSession.getState().status).toBe("anonymous");
+  });
+
+  it("another tab's account deletion is told apart from an expired session", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/servers": () =>
+        json(401, { error: "unauthenticated", message: "Sign in." }),
+    });
+    await login("ada@example.com", "password123");
+    expect(accountDeletedElsewhere()).toBe(false);
+
+    storage.set(
+      FENCE,
+      JSON.stringify({
+        generation: "g-deleted",
+        phase: "settled",
+        userId: null,
+        ended: "deleted",
+      }),
+    );
+    synchronizeSharedSession();
+    expect(accountDeletedElsewhere()).toBe(true);
+    expect(accountDeletedHere()).toBe(false);
+
+    // This tab's own 401 settles the same sign-out and keeps the reason.
+    await expect(api("/servers")).rejects.toMatchObject({
+      code: "unauthenticated",
+    });
+    expect(accountDeletedElsewhere()).toBe(true);
+
+    // A plain logout elsewhere says nothing of a deletion.
+    storage.set(
+      FENCE,
+      JSON.stringify({ generation: "g-out", phase: "settled", userId: null }),
+    );
+    expect(accountDeletedElsewhere()).toBe(false);
   });
 
   it("a write's csrf re-bootstrap after another tab's password change keeps the mark", async () => {
@@ -709,6 +941,7 @@ describe("password change across tabs", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(scopeGeneration()).toBe(generation);
 
@@ -749,5 +982,212 @@ describe("profile write slot", () => {
     expect(claimProfileWrite()).toBeNull();
     next?.();
     expect(useProfileWrites.getState().pending).toBe(0);
+  });
+});
+
+describe("sign-in through a provider", () => {
+  /** A page that can be left; its storage holds nothing. */
+  function stubPage(assign: (url: string) => void) {
+    const listeners = new Set<(event: { persisted: boolean }) => void>();
+    vi.stubGlobal("window", {
+      location: { assign },
+      localStorage: { getItem: () => null },
+      addEventListener: (
+        _: string,
+        f: (event: { persisted: boolean }) => void,
+      ) => listeners.add(f),
+      removeEventListener: (
+        _: string,
+        f: (event: { persisted: boolean }) => void,
+      ) => listeners.delete(f),
+    });
+    return {
+      /** The browser brings the page back from its history. */
+      back: () => listeners.forEach((f) => f({ persisted: true })),
+    };
+  }
+
+  /** Whether `promise` has settled once pending work has run. */
+  async function settled(promise: Promise<unknown>): Promise<boolean> {
+    let done = false;
+    void promise.then(
+      () => (done = true),
+      () => (done = true),
+    );
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    return done;
+  }
+
+  beforeEach(() => resetSessionForTests());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("startOidc asks for the provider's address and goes there", async () => {
+    const assign = vi.fn();
+    stubPage(assign);
+    const bodies: unknown[] = [];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push(`${init?.method} ${String(input)}`);
+        bodies.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(
+          json(200, { url: "https://accounts.example.test/auth?state=s" }),
+        );
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      const first = startOidc("google", {
+        purpose: "sign_in",
+        redirect: "/invite/abc123",
+        invitation: "k7m2p9qrs4tx",
+      });
+      await vi.advanceTimersByTimeAsync(OIDC_LEAVING_MS);
+      await first;
+      const second = startOidc("google", {
+        purpose: "link",
+        currentPassword: "pw",
+      });
+      await vi.advanceTimersByTimeAsync(OIDC_LEAVING_MS);
+      await second;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(calls).toEqual([
+      "POST /api/auth/oidc/google/start",
+      "POST /api/auth/oidc/google/start",
+    ]);
+    expect(bodies).toEqual([
+      {
+        purpose: "sign_in",
+        redirect: "/invite/abc123",
+        invitation: "k7m2p9qrs4tx",
+      },
+      { purpose: "link", current_password: "pw" },
+    ]);
+    expect(assign).toHaveBeenCalledTimes(2);
+    expect(assign).toHaveBeenCalledWith(
+      "https://accounts.example.test/auth?state=s",
+    );
+  });
+
+  it("startOidc stays busy while the page leaves", async () => {
+    const assign = vi.fn();
+    const page = stubPage(assign);
+    fakeApi({
+      "POST /api/auth/oidc/google/start": () =>
+        json(200, { url: "https://accounts.example.test/auth?state=s" }),
+    });
+    vi.useFakeTimers();
+    try {
+      const leaving = startOidc("google", { purpose: "sign_in" });
+      expect(await settled(leaving)).toBe(false);
+      expect(assign).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(OIDC_LEAVING_MS - 1);
+      expect(await settled(leaving)).toBe(false);
+      // Back from the provider through the history: usable again at once.
+      page.back();
+      expect(await settled(leaving)).toBe(true);
+
+      const stuck = startOidc("google", { purpose: "sign_in" });
+      expect(await settled(stuck)).toBe(false);
+      await vi.advanceTimersByTimeAsync(OIDC_LEAVING_MS);
+      expect(await settled(stuck)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("startOidc stays on the page when the API refuses", async () => {
+    const assign = vi.fn();
+    stubPage(assign);
+    fakeApi({
+      "POST /api/auth/oidc/google/start": () =>
+        json(409, { error: "oidc_wrong_origin", message: "wrong origin" }),
+    });
+    await expect(
+      startOidc("google", { purpose: "sign_in" }),
+    ).rejects.toMatchObject({ code: "oidc_wrong_origin", status: 409 });
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("oidcPending peeks at the name step", async () => {
+    const pending = {
+      provider: { id: "google", name: "Google" },
+      email: "lena@example.test",
+      name: null,
+    };
+    const calls = fakeApi({
+      "POST /api/auth/oidc/pending": () => json(200, pending),
+    });
+    await expect(oidcPending("ab".repeat(32))).resolves.toEqual(pending);
+    expect(calls).toEqual(["POST /api/auth/oidc/pending"]);
+    expect(useSession.getState().status).toBe("unknown");
+  });
+
+  it("completeOidc signs in like login and keeps the redirect", async () => {
+    let body: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        expect(`${init?.method} ${String(input)}`).toBe(
+          "POST /api/auth/oidc/complete",
+        );
+        body = JSON.parse(String(init?.body));
+        return Promise.resolve(
+          json(201, {
+            user: ada,
+            csrf_token: "c9",
+            redirect: "/invite/abc123",
+          }),
+        );
+      }),
+    );
+
+    const answer = await completeOidc("ab".repeat(32), "Ada");
+
+    expect(answer.redirect).toBe("/invite/abc123");
+    expect(body).toEqual({ token: "ab".repeat(32), name: "Ada", locale: "de" });
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+      operator: false,
+    });
+    expect(getCsrfToken()).toBe("c9");
+  });
+
+  it("lists, disconnects and sets a first password", async () => {
+    const methods = {
+      password: true,
+      providers: [
+        {
+          id: "google",
+          name: "Google",
+          configured: true,
+          connected: null,
+        },
+      ],
+    };
+    const calls = fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/auth/methods": () => json(200, methods),
+      "DELETE /api/auth/oidc/google": () => json(200, methods),
+      "POST /api/auth/password": () =>
+        json(200, { user: ada, csrf_token: "c7" }),
+    });
+    await login("ada@example.com", "password123");
+    await expect(signInMethods()).resolves.toEqual(methods);
+    await expect(disconnectProvider("google")).resolves.toEqual(methods);
+    await expect(setPassword("battery staple")).resolves.toEqual(ada);
+    expect(calls).toEqual([
+      "POST /api/auth/login",
+      "GET /api/auth/methods",
+      "DELETE /api/auth/oidc/google",
+      "POST /api/auth/password",
+    ]);
+    expect(getCsrfToken()).toBe("c7");
   });
 });

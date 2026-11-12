@@ -1,6 +1,7 @@
 import {
   QueryClient,
   InfiniteQueryObserver,
+  QueryObserver,
   type InfiniteData,
 } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,7 +17,18 @@ import {
 import { encodeCursor, flattenPages } from "../messages/pages.ts";
 import type { Message, MessagePage } from "../messages/types.ts";
 import { Gateway, type SocketLike } from "./client.ts";
-import { READY_SPREAD_MS, attachRealtimeRecovery } from "./useRealtime.ts";
+import { getServer } from "../servers/api.ts";
+import { serverKeys } from "../servers/queries.ts";
+import type { ChatEvent } from "./protocol.ts";
+import {
+  READY_SPREAD_MS,
+  applyAccessChange,
+  applyAccountDeleted,
+  applyGatewayEvent,
+  attachRealtimeRecovery,
+  isAccessChange,
+  isOwnerChange,
+} from "./useRealtime.ts";
 
 class Socket implements SocketLike {
   sent: string[] = [];
@@ -972,6 +984,52 @@ it("a canonical 404 for an open deleted history does not block recovery of survi
   });
 });
 
+it("a blocked server's cached detail error does not block gap recovery or resync", async () => {
+  const queryClient = client();
+  const { gateway: ws, socket } = gateway();
+  install((url) => {
+    if (url.pathname === "/api/servers/blocked")
+      return json({ error: "server_blocked" }, 403);
+    if (url.pathname === "/api/dms" || url.pathname === "/api/servers")
+      return json([]);
+    return json({ messages: rows(1), has_more: false });
+  });
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  const detail = {
+    queryKey: serverKeys.detail(stamp.userId, stamp.generation, "blocked"),
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      getServer("blocked", signal),
+    retry: false as const,
+  };
+  // Kept on screen, as the blocked notice keeps it.
+  const observer = new QueryObserver(queryClient, detail);
+  const off = observer.subscribe(() => undefined);
+  cleanups.push(() => {
+    off();
+    observer.destroy();
+  });
+  await vi.waitFor(() =>
+    expect(queryClient.getQueryState(detail.queryKey)?.error).toMatchObject({
+      code: "server_blocked",
+    }),
+  );
+  await observe(queryClient);
+  const resynced = vi.spyOn(ws, "completeResync");
+  cleanups.push(
+    attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+  );
+  socket.frame({ op: "gap", s: "server", c: "channel", ep: "epoch" });
+  socket.frame({ op: "ok", s: "server", c: "channel", ep: "epoch", n: 2 });
+  await vi.waitFor(() => expect(ws.cursorsSnapshot.get("c:channel")).toBe(2));
+  expect(ws.gapRecoveries()).toEqual([]);
+  socket.frame({ op: "resync" });
+  await vi.waitFor(() => expect(resynced).toHaveBeenCalled());
+  expect(queryClient.getQueryState(detail.queryKey)?.error).toMatchObject({
+    code: "server_blocked",
+  });
+});
+
 it("an off-screen history is only invalidated and reads its canonical snapshot when opened", async () => {
   const queryClient = client();
   const { gateway: ws, socket } = gateway();
@@ -1183,5 +1241,161 @@ it("navigation replacing a bridge while discovery is held retains its pending DM
     op: "s",
     s: "first-dm",
     c: "first-dm",
+  });
+});
+
+describe("server access changes", () => {
+  const event = (overrides: Partial<ChatEvent>): ChatEvent => ({
+    op: "e",
+    t: "e",
+    s: "s1",
+    n: 4,
+    d: { k: "a" },
+    ...overrides,
+  });
+
+  it('recognises {"k":"a"} on the server topic only', () => {
+    expect(isAccessChange(event({}))).toBe(true);
+    expect(isAccessChange(event({ c: "channel" }))).toBe(false);
+    expect(isAccessChange(event({ t: "d", i: "user-a" }))).toBe(false);
+    expect(isAccessChange(event({ d: { k: "b" } }))).toBe(false);
+    expect(isAccessChange(event({ d: null }))).toBe(false);
+    expect(isAccessChange(event({ d: undefined }))).toBe(false);
+  });
+
+  it("invalidates the server's detail and the server list, nothing else", () => {
+    const queryClient = client();
+    const detail = serverKeys.detail("user-a", 1, "s1");
+    const other = serverKeys.detail("user-a", 1, "s2");
+    const list = serverKeys.list("user-a", 1);
+    const history = messageKeys.channel("user-a", 1, "channel");
+    for (const key of [detail, other, list, history])
+      queryClient.setQueryData(key, {});
+
+    applyAccessChange(queryClient, "user-a", 1, "s1");
+
+    const stale = (key: readonly unknown[]) =>
+      queryClient.getQueryState(key)?.isInvalidated;
+    expect(stale(detail)).toBe(true);
+    expect(stale(list)).toBe(true);
+    expect(stale(other)).toBe(false);
+    expect(stale(history)).toBe(false);
+  });
+});
+
+describe("a member's account deleted, and ownership moved (#519)", () => {
+  const event = (overrides: Partial<ChatEvent>): ChatEvent => ({
+    op: "e",
+    t: "e",
+    s: "s1",
+    n: 5,
+    d: { k: "o", owner_id: "user-b" },
+    ...overrides,
+  });
+
+  it('recognises {"k":"o"} on the server topic only', () => {
+    expect(isOwnerChange(event({}))).toBe(true);
+    expect(isOwnerChange(event({ c: "channel" }))).toBe(false);
+    expect(isOwnerChange(event({ d: { k: "a" } }))).toBe(false);
+    expect(isOwnerChange(event({ t: "d", i: "user-b" }))).toBe(false);
+    expect(isOwnerChange(event({ d: null }))).toBe(false);
+    expect(isAccessChange(event({}))).toBe(false);
+  });
+
+  it('removes the member and their cached messages on {"k":"x"}', () => {
+    const queryClient = client();
+    const member = (user_id: string) => ({ user_id, name: user_id });
+    queryClient.setQueryData(serverKeys.detail("user-a", 1, "s1"), {
+      id: "s1",
+      channels: [{ id: "channel" }, { id: "quiet" }],
+      members: [member("user-a"), member("gone"), member("user-c")],
+    });
+    const [first, second, third] = rows(3);
+    const pages = (messages: Message[]) => ({
+      pages: [{ messages, has_more: false }],
+      pageParams: [undefined],
+    });
+    const byGone = (message: Message): Message => ({
+      ...message,
+      author: { id: "gone", name: "Gone", avatar_url: null },
+    });
+    queryClient.setQueryData(
+      messageKeys.channel("user-a", 1, "channel"),
+      pages([byGone(first!), second!, byGone(third!)]),
+    );
+    const elsewhere = { ...byGone(first!), id: "elsewhere" };
+    queryClient.setQueryData(
+      messageKeys.channel("user-a", 1, "other-server-channel"),
+      pages([elsewhere]),
+    );
+
+    applyAccountDeleted(queryClient, "user-a", 1, "s1", "gone");
+
+    const detail = queryClient.getQueryData<{
+      members: { user_id: string }[];
+    }>(serverKeys.detail("user-a", 1, "s1"));
+    expect(detail?.members.map((m) => m.user_id)).toEqual(["user-a", "user-c"]);
+    const left = (channel: string) =>
+      queryClient
+        .getQueryData<InfiniteData<MessagePage>>(
+          messageKeys.channel("user-a", 1, channel),
+        )!
+        .pages.flatMap((page) => page.messages.map((m) => m.id));
+    expect(left("channel")).toEqual([second!.id]);
+    // Only the server's own channels are touched.
+    expect(left("other-server-channel")).toEqual(["elsewhere"]);
+  });
+
+  it('the bridge reloads the server and the list on {"k":"o"}', () => {
+    const queryClient = client();
+    const detail = serverKeys.detail("user-a", 1, "s1");
+    const other = serverKeys.detail("user-a", 1, "s2");
+    const list = serverKeys.list("user-a", 1);
+    for (const key of [detail, other, list]) queryClient.setQueryData(key, {});
+
+    expect(applyGatewayEvent(queryClient, "user-a", 1, event({}))).toBeNull();
+
+    const stale = (key: readonly unknown[]) =>
+      queryClient.getQueryState(key)?.isInvalidated;
+    expect(stale(detail)).toBe(true);
+    expect(stale(list)).toBe(true);
+    expect(stale(other)).toBe(false);
+  });
+
+  it('the bridge drops a deleted member on {"k":"x"}, never this account', () => {
+    const queryClient = client();
+    const member = (user_id: string) => ({ user_id, name: user_id });
+    const detail = serverKeys.detail("user-a", 1, "s1");
+    queryClient.setQueryData(detail, {
+      id: "s1",
+      channels: [],
+      members: [member("user-a"), member("gone")],
+    });
+    const deleted = (i: string) => event({ t: "d", i, d: { k: "x" } });
+
+    expect(applyGatewayEvent(queryClient, "user-a", 1, deleted("gone"))).toBe(
+      null,
+    );
+    // This account's own deletion leaves nothing to leave.
+    expect(applyGatewayEvent(queryClient, "user-a", 1, deleted("user-a"))).toBe(
+      null,
+    );
+    const members = queryClient
+      .getQueryData<{ members: { user_id: string }[] }>(detail)
+      ?.members.map((m) => m.user_id);
+    expect(members).toEqual(["user-a"]);
+  });
+
+  it("the bridge says how this account was removed", () => {
+    const queryClient = client();
+    const removed = (k?: string) =>
+      applyGatewayEvent(
+        queryClient,
+        "user-a",
+        1,
+        event({ t: "d", i: "user-a", d: k ? { k } : null }),
+      );
+    expect(removed("b")).toBe("banned");
+    expect(removed("k")).toBe("kicked");
   });
 });

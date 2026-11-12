@@ -1,0 +1,495 @@
+/* The operator area "Betrieb": its sidebar reuses the settings sidebar's
+   rows; the pages share one frame. */
+.operator-nav-count {
+  margin-left: auto;
+  background: var(--lr-danger-bg);
+  color: var(--lr-on-danger);
+}
+
+.operator-screen {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+/* The look of the conversation header line (.lr-channel-header), which
+   would lay the phone's drawer button over the page title. */
+.operator-header {
+  flex-shrink: 0;
+  height: var(--lr-header-height);
+  border-bottom: 1px solid var(--lr-border);
+  background: var(--lr-bg);
+}
+.operator-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The reference's measure: a 900 px table at 40 px from the sidebar. */
+.operator-page {
+  max-width: 980px;
+  padding: 27px 40px 40px;
+}
+.operator-page-head h1 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+  color: var(--lr-text);
+}
+.operator-page-head p {
+  margin-top: 4px;
+  font-size: 14px;
+  color: var(--lr-muted);
+}
+/* Phones have the top bar with the drawer button instead. */
+@media (max-width: 800px) {
+  .operator-header {
+    display: none;
+  }
+  .operator-page {
+    padding: 20px 16px 32px;
+  }
+}
+
+/* Search and filter chips above a table. */
+.operator-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-5);
+}
+.operator-search {
+  position: relative;
+  flex: 0 1 280px;
+  min-width: 200px;
+}
+.operator-search svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  translate: 0 -50%;
+  color: var(--lr-muted);
+  pointer-events: none;
+}
+.operator-search .ui-field {
+  width: 100%;
+  padding-left: 38px;
+}
+
+/* The tables: caps headers, one rule per row, numbers right-aligned. */
+.operator-table {
+  width: 100%;
+  margin-top: var(--lr-space-6);
+  border-collapse: collapse;
+  font: var(--lr-type-ui);
+  color: var(--lr-text);
+}
+.operator-table thead th {
+  padding: 0 var(--lr-space-3) var(--lr-space-3) 0;
+  border-bottom: 1px solid var(--lr-border);
+  color: var(--lr-muted);
+  font: var(--lr-type-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  white-space: nowrap;
+}
+.operator-table tbody th,
+.operator-table td {
+  height: 52px;
+  padding: var(--lr-space-2) var(--lr-space-3) var(--lr-space-2) 0;
+  border-bottom: 1px solid var(--lr-border);
+  text-align: left;
+  vertical-align: middle;
+  font-weight: 400;
+}
+.operator-table .is-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.operator-table .is-menu {
+  padding-right: 0;
+}
+/* Fixed columns, so a filter or a badge does not move them: the widths of
+   the reference's Server table (900 px), and the same measure for the lists
+   that filter. */
+.operator-table--servers,
+.operator-table--accounts,
+.operator-table--reports {
+  table-layout: fixed;
+}
+.operator-table--servers thead th:nth-child(1) {
+  width: 23.8%;
+}
+.operator-table--servers thead th:nth-child(2) {
+  width: 14.4%;
+}
+.operator-table--servers thead th:nth-child(3) {
+  width: 11.1%;
+}
+.operator-table--servers thead th:nth-child(4) {
+  width: 12.2%;
+}
+.operator-table--servers thead th:nth-child(5) {
+  width: 15.6%;
+}
+.operator-table--servers thead th:nth-child(6) {
+  width: 15.3%;
+}
+.operator-table--accounts thead th:nth-child(1) {
+  width: 23.8%;
+}
+.operator-table--accounts thead th:nth-child(2) {
+  width: 28%;
+}
+.operator-table--accounts thead th:nth-child(3) {
+  width: 13%;
+}
+.operator-table--accounts thead th:nth-child(4) {
+  width: 11.2%;
+}
+.operator-table--accounts thead th:nth-child(5) {
+  width: 16.4%;
+}
+.operator-table--reports thead th:nth-child(1) {
+  width: 20%;
+}
+.operator-table--reports thead th:nth-child(2) {
+  width: 14%;
+}
+.operator-table--reports thead th:nth-child(3) {
+  width: 30%;
+}
+.operator-table--reports thead th:nth-child(4) {
+  width: 14%;
+}
+.operator-table--reports thead th:nth-child(5) {
+  width: 14.4%;
+}
+.operator-table thead th.is-menu {
+  width: 7.6%;
+}
+.operator-table .is-details {
+  max-width: 320px;
+}
+/* An expanded report grows tall: its other cells stay on the first line. */
+.operator-table--reports tbody tr:has(.is-details [aria-expanded="true"]) > * {
+  vertical-align: top;
+}
+.operator-server {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.operator-server-name {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.operator-tile {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-tile, var(--lr-surface));
+  color: var(--lr-text);
+  font: 600 11px / 1 var(--lr-font);
+}
+.operator-count {
+  background: var(--lr-danger-bg);
+  color: var(--lr-on-danger);
+}
+.operator-details {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.operator-details.is-open {
+  display: block;
+}
+.operator-more {
+  margin-top: 2px;
+  color: var(--lr-accent-text);
+  font: var(--lr-type-meta);
+  cursor: pointer;
+}
+.operator-more:hover {
+  text-decoration: underline;
+}
+/* The listing as it was reported: a ruled aside, not a card. */
+.operator-snapshot {
+  margin-top: var(--lr-space-2);
+  padding-left: var(--lr-space-3);
+  border-left: 2px solid var(--lr-border);
+  font: var(--lr-type-meta);
+  overflow-wrap: anywhere;
+}
+.operator-snapshot-title {
+  color: var(--lr-muted);
+}
+/* Labels in one column, so the values line up. */
+.operator-snapshot dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--lr-space-2);
+  margin-top: var(--lr-space-1);
+}
+.operator-snapshot dl > div {
+  display: contents;
+}
+.operator-snapshot dt {
+  color: var(--lr-muted);
+}
+.operator-snapshot dt::after {
+  content: ":";
+}
+.operator-snapshot dd {
+  min-width: 0;
+  color: var(--lr-text);
+}
+.operator-snapshot-text {
+  white-space: pre-line;
+}
+.operator-snapshot-toggle {
+  display: block;
+}
+/* A closed report's outcome, under its filing time. */
+.operator-resolution {
+  margin-top: 2px;
+  font: var(--lr-type-meta);
+  overflow-wrap: anywhere;
+}
+.operator-muted {
+  color: var(--lr-muted);
+}
+.operator-empty {
+  margin-top: var(--lr-space-6);
+  color: var(--lr-muted);
+  font: var(--lr-type-body);
+}
+.operator-footnote {
+  margin-top: var(--lr-space-5);
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.operator-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-4);
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.operator-pager > span {
+  margin-right: auto;
+}
+.operator-table + .ui-load-error,
+.operator-toolbar + .ui-load-error,
+.operator-toolbar + .ui-skeleton {
+  margin-top: var(--lr-space-5);
+}
+
+/* Konten and Beta-Einladungen: a person, an address, a link. */
+.operator-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.operator-table .is-email {
+  overflow-wrap: anywhere;
+}
+.operator-table .is-link {
+  max-width: 260px;
+}
+.operator-link {
+  display: block;
+  overflow: hidden;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One line above the content: the registration mode. */
+.operator-notice {
+  margin-top: var(--lr-space-5);
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+}
+.operator-notice strong {
+  font-weight: 600;
+}
+
+/* The invitation form and the link it made. */
+.operator-form {
+  max-width: 640px;
+  margin-top: var(--lr-space-6);
+}
+.operator-form h2,
+.operator-stats h2 {
+  color: var(--lr-text);
+  font: var(--lr-type-title-sm);
+}
+.operator-form form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-4);
+  margin-top: var(--lr-space-4);
+}
+.operator-form-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--lr-space-4);
+}
+.operator-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-3);
+}
+.operator-form-actions {
+  display: flex;
+}
+.operator-created {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-5);
+}
+.operator-created-link {
+  display: flex;
+  gap: var(--lr-space-2);
+}
+.operator-created-link .ui-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Auslastung: labelled numbers in groups. */
+.operator-stats {
+  margin-top: var(--lr-space-6);
+}
+.operator-stats dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--lr-space-3);
+  margin-top: var(--lr-space-3);
+}
+.operator-stat {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  gap: var(--lr-space-1);
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+}
+.operator-stat dd {
+  color: var(--lr-text);
+  font: var(--lr-type-title);
+  font-variant-numeric: tabular-nums;
+}
+.operator-stat dt {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+
+/* Phones: every row becomes a card, each cell labelled by its column. */
+@media (max-width: 640px) {
+  .operator-search {
+    flex-basis: 100%;
+  }
+  .operator-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .operator-table,
+  .operator-table tbody {
+    display: block;
+  }
+  .operator-table tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--lr-space-1) var(--lr-space-3);
+    margin-bottom: var(--lr-space-2);
+    padding: var(--lr-space-3);
+    border: 1px solid var(--lr-border);
+    border-radius: var(--lr-radius);
+    background: var(--lr-panel);
+  }
+  .operator-table tbody th,
+  .operator-table td {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lr-space-3);
+    height: auto;
+    padding: 0;
+    border: 0;
+    text-align: right;
+  }
+  .operator-table td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    color: var(--lr-muted);
+    font: var(--lr-type-meta);
+    text-align: left;
+  }
+  .operator-table tbody th.is-title {
+    grid-column: 1;
+    grid-row: 1;
+    justify-content: flex-start;
+    margin-bottom: var(--lr-space-1);
+  }
+  .operator-table td.is-menu {
+    grid-column: 2;
+    grid-row: 1;
+    width: auto;
+  }
+  .operator-table .is-details {
+    display: block;
+    max-width: none;
+    text-align: left;
+  }
+  .operator-table .is-details::before {
+    display: block;
+    margin-bottom: 2px;
+  }
+}
+
+@media (max-width: 640px) {
+  .operator-form-fields {
+    grid-template-columns: 1fr;
+  }
+  .operator-created-link {
+    flex-direction: column;
+  }
+  .operator-table .is-link {
+    max-width: none;
+    min-width: 0;
+  }
+}

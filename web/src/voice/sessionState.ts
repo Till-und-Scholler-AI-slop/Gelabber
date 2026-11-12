@@ -5,6 +5,8 @@
 import type { MicProcessor } from "./audioProcessing.ts";
 import { prioritizeSender } from "./mediaPriority.ts";
 import { useSession } from "../auth/store.ts";
+import { translate } from "../i18n/catalog.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import type { Gateway } from "../ws/client.ts";
 import type { TrackKind } from "../ws/protocol.ts";
@@ -439,12 +441,9 @@ export function sendPub(kind: TrackKind, on: boolean): void {
   });
 }
 
-const STREAM_TOAST =
-  "Der Stream konnte nicht verbunden werden. Der Sprachkanal bleibt aktiv.";
-
 export function reportStreamOnce(detail?: string): void {
   logVoice("warn", "stream", { detail });
   if (voice.streamReported) return;
   voice.streamReported = true;
-  voice.deps?.onError?.(new Error(STREAM_TOAST));
+  voice.deps?.onError?.(new Error(translate(texts, "error.streamFailed")));
 }

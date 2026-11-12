@@ -1,0 +1,254 @@
+/* Server settings, roles (v0.10): the editor, the chips and the picker. */
+
+/* The editor is wider than the reading measure: list, gap, panel. */
+.server-settings-section.server-settings-section--roles {
+  max-width: none;
+}
+.roles-editor {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 40px;
+  align-items: start;
+}
+@container (max-width: 640px) {
+  .roles-editor {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+.roles-editor__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.roles-editor__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.roles-editor__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: var(--lr-radius-md);
+  /* The reference's list type: larger than --lr-type-ui, regular weight. */
+  font: 400 15px / 1.35 var(--lr-font);
+  text-align: left;
+  color: var(--lr-text);
+  cursor: pointer;
+}
+.roles-editor__row:hover {
+  background: var(--lr-hover);
+}
+/* The chosen role, filled like the selected nav row. */
+.roles-editor__row[aria-current="true"] {
+  background: var(--lr-selected);
+  font-weight: 600;
+}
+.roles-editor__row:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+.roles-editor__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.roles-editor__lock {
+  color: var(--lr-muted);
+}
+.roles-editor__count {
+  min-width: 1.5em;
+  font: var(--lr-type-meta);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--lr-muted);
+}
+/* An outline button, as in the reference: no fill until hovered. */
+.ui-button.roles-editor__new {
+  width: 100%;
+  background: transparent;
+}
+.ui-button.roles-editor__new:hover:not(:disabled) {
+  background: var(--lr-hover);
+}
+.roles-editor__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.roles-editor__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-height: 32px;
+}
+.roles-editor__header h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: var(--lr-type-title-sm);
+}
+.roles-editor__text {
+  font: var(--lr-type-body);
+  color: var(--lr-muted);
+}
+.roles-editor__name-form {
+  max-width: 320px;
+}
+.roles-editor__label {
+  margin-bottom: 8px;
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+.roles-editor__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+/* A colour swatch is a radio: the chosen one gets a ring. */
+.role-swatch {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--lr-border);
+  cursor: pointer;
+}
+.role-swatch:checked {
+  box-shadow:
+    0 0 0 2px var(--lr-bg),
+    0 0 0 4px var(--lr-text);
+}
+.role-swatch:focus-visible {
+  outline: 2px solid var(--lr-accent);
+  outline-offset: 5px;
+}
+.roles-editor__permissions {
+  border-top: 1px solid var(--lr-border);
+}
+.roles-permission {
+  min-height: 42px;
+  padding-block: 4px;
+  border-bottom: 1px solid var(--lr-border);
+}
+.roles-permission .ui-choice-text small {
+  line-height: 1.4;
+}
+.roles-permission__note {
+  flex-shrink: 0;
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}
+
+/* A member's roles on their row. */
+.role-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-surface);
+  font: var(--lr-type-meta);
+  color: var(--lr-text);
+}
+.ui-icon-button.role-picker-button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  border: 1px dashed var(--lr-border-strong);
+  border-radius: 50%;
+  color: var(--lr-muted);
+}
+.ui-icon-button.role-picker-button[aria-expanded="true"] {
+  border-style: solid;
+  border-color: var(--lr-accent);
+  color: var(--lr-text);
+}
+.role-picker {
+  min-width: 216px;
+}
+/* Anchored (not the sheet): the reference's width and its smaller boxes. */
+.ui-popover.role-picker {
+  width: 232px;
+  padding: 12px;
+}
+.ui-popover.role-picker .ui-check {
+  width: 16px;
+  height: 16px;
+}
+.ui-popover.role-picker .ui-check::before {
+  width: 10px;
+  height: 10px;
+}
+.role-picker .ui-choice-text {
+  font: var(--lr-type-body);
+}
+.role-picker__title {
+  padding: 4px 4px 6px;
+  font: var(--lr-type-meta);
+  font-weight: 600;
+  color: var(--lr-text);
+}
+/* The bottom sheet shows the label as its own title. */
+.ui-sheet .role-picker__title {
+  display: none;
+}
+.role-picker__list {
+  display: flex;
+  flex-direction: column;
+}
+.role-picker__row {
+  padding-inline: 4px;
+}
+.role-picker__role {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.role-picker__empty {
+  padding: 4px;
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}
+.role-picker__divider {
+  margin: 8px 0 4px;
+  border: 0;
+  border-top: 1px solid var(--lr-border);
+}
+.role-picker__manage {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 4px;
+  border-radius: var(--lr-radius-sm);
+  font: var(--lr-type-meta);
+  text-align: left;
+  color: var(--lr-muted);
+  cursor: pointer;
+}
+.role-picker__manage:hover {
+  color: var(--lr-text);
+}
+@media (pointer: coarse) {
+  .role-picker__manage {
+    min-height: 44px;
+  }
+}

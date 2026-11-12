@@ -25,13 +25,28 @@ vi.mock("../servers/queries.ts", () => ({
   useBanMember: () => ({ isPending: fixture.banPending, mutate: fixture.ban }),
 }));
 vi.mock("./confirm.ts", () => ({ confirmAction: fixture.confirm }));
+// `handlers()` calls the component outside a render: useT without React.
+vi.mock("../i18n/catalog.ts", async (original) => {
+  const actual = await original<typeof import("../i18n/catalog.ts")>();
+  return {
+    ...actual,
+    useT:
+      (catalog: Parameters<typeof actual.translate>[0]) =>
+      (key: string, params?: Record<string, string>) =>
+        (actual.translate as (...args: unknown[]) => string)(
+          catalog,
+          key,
+          params,
+        ),
+  };
+});
 
 import { MemberActions } from "./MemberActions.tsx";
 
 const server: Pick<Server, "id" | "role" | "permissions"> = {
   id: "s",
   role: "member",
-  permissions: ["manage_server"],
+  permissions: ["moderate_members"],
 };
 const member = (overrides: Partial<Member> = {}): Member => ({
   user_id: "jonas",
@@ -39,6 +54,7 @@ const member = (overrides: Partial<Member> = {}): Member => ({
   avatar_url: null,
   joined_at: "2026-01-01T00:00:00Z",
   role: "member",
+  role_ids: [],
   ...overrides,
 });
 /** The attribute React writes for a disabled button. */
@@ -121,11 +137,21 @@ describe("member actions", () => {
     expect(button(html, "Sperren")).toContain(DISABLED);
   });
 
-  it("shows nothing for the owner, oneself or without manage_server", () => {
+  it("shows nothing for the owner, oneself or without moderate_members", () => {
     const render = (s: typeof server, m: Member) =>
       renderToStaticMarkup(<MemberActions server={s} member={m} />);
     expect(render(server, member({ role: "owner" }))).toBe("");
     expect(render(server, member({ user_id: "self" }))).toBe("");
     expect(render({ ...server, permissions: [] }, member())).toBe("");
+  });
+
+  it("needs moderate_members, not manage_server, since v0.10", () => {
+    const render = (s: typeof server) =>
+      renderToStaticMarkup(<MemberActions server={s} member={member()} />);
+    expect(render({ ...server, permissions: ["manage_server"] })).toBe("");
+    expect(render(server)).toContain("Moderation");
+    expect(render({ ...server, role: "owner", permissions: [] })).toContain(
+      "Moderation",
+    );
   });
 });

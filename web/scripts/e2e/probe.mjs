@@ -794,8 +794,13 @@ export async function sample({ deadlineEpochMs } = {}) {
   }
   state.samplePhase = "native-video-observation";
   const videos = [...document.querySelectorAll("figure video")].map((video) => {
-    const caption =
-      video.closest("figure").querySelector("figcaption")?.textContent ?? "";
+    const figcaption = video.closest("figure").querySelector("figcaption");
+    const caption = figcaption?.textContent ?? "";
+    // The stage's Live caption has the LIVE badge; the overview's reads
+    // "{name} — Live".
+    const live =
+      Boolean(figcaption?.classList?.contains("voice-live-caption")) ||
+      caption.includes("— Live");
     let pixels = null;
     if (video.readyState >= 2 && video.videoWidth) {
       const canvas = document.createElement("canvas");
@@ -833,7 +838,7 @@ export async function sample({ deadlineEpochMs } = {}) {
     const callbackFrames = rendered.presented || rendered.callbacks;
     const hasQuality = Number.isSafeInteger(qualityFrames) && qualityFrames > 0;
     return {
-      kind: caption.includes("— Live") ? "live" : "camera",
+      kind: live ? "live" : "camera",
       width: video.videoWidth,
       height: video.videoHeight,
       paused: video.paused,

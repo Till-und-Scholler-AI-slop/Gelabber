@@ -19,8 +19,13 @@ import { installHintUseful, useInstallation } from "../pwa/install.ts";
 import { startPlace, useLastPlace } from "../servers/lastPlace.ts";
 import { useServers } from "../servers/queries.ts";
 import "./welcome.css";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
+import { common } from "../i18n/catalogs/common.ts";
 
 export function WorkspaceIndexPage() {
+  const t = useT(shell);
+  const tc = useT(common);
   const user = useSession((state) => state.user);
   const userId = useUserId();
   const remembered = useLastPlace((state) => state.byUser[userId]);
@@ -56,40 +61,42 @@ export function WorkspaceIndexPage() {
   return (
     <section className="welcome">
       <h1 className="welcome__title">
-        {user ? `Willkommen, ${user.name}` : "Willkommen"}
+        {user
+          ? t("welcome.titleNamed", { name: user.name })
+          : t("welcome.title")}
       </h1>
       {isError ? (
         // Its own element, mounted with the failure: a role added to an
         // existing node together with its text is not reliably announced.
         <div className="welcome__error">
           <p key="error" role="alert">
-            Die Server konnten nicht geladen werden.
+            {t("welcome.loadFailed")}
           </p>
           <Button
             size="sm"
             pending={isFetching}
-            pendingLabel="Wird geladen…"
+            pendingLabel={tc("loading")}
             onClick={() => void refetch()}
           >
-            Erneut versuchen
+            {tc("tryAgain")}
           </Button>
         </div>
       ) : null}
       <div className="welcome__choices">
         <article className="welcome-card">
-          <h2>Eigenen Server erstellen</h2>
-          <p>Mit #allgemein und einem Sprachkanal.</p>
+          <h2>{t("welcome.create.title")}</h2>
+          <p>{t("welcome.create.lead")}</p>
           <Button
             variant="primary"
             size="lg"
             className="welcome-card__action"
             onClick={() => setCreating(true)}
           >
-            Server erstellen
+            {t("welcome.create.action")}
           </Button>
         </article>
         <article className="welcome-card">
-          <h2>Server beitreten</h2>
+          <h2>{t("welcome.join.title")}</h2>
           <JoinServerForm inline />
         </article>
       </div>
@@ -100,7 +107,7 @@ export function WorkspaceIndexPage() {
             params={{ area: "profil" }}
             className="welcome__next-link"
           >
-            Profilbild festlegen ›
+            {t("welcome.setAvatar")}
           </Link>
         ) : null}
         {installHint ? <InstallDisclosure /> : null}

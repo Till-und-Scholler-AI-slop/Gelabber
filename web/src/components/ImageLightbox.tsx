@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
 import { DownloadLink } from "./Attachments.tsx";
 import { CloseIcon } from "./Icons.tsx";
 
@@ -28,6 +30,7 @@ export function ImageLightbox({
   onClose: () => void;
   fallbackFocus?: () => void;
 }) {
+  const t = useT(common);
   const fallback = useRef(fallbackFocus);
   useEffect(() => {
     fallback.current = fallbackFocus;
@@ -76,7 +79,7 @@ export function ImageLightbox({
         <button
           ref={close}
           type="button"
-          aria-label="Schließen"
+          aria-label={t("close")}
           onClick={onClose}
         >
           <CloseIcon size={18} />

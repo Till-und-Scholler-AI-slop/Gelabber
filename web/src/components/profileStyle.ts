@@ -7,12 +7,23 @@ import type {
   PublicProfile,
 } from "../auth/types.ts";
 import type { CardPerson } from "./ProfileCard.tsx";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
+/** Each decoration's name, read in the language shown at that moment. */
 export const DECORATION_LABEL: Record<AvatarDecoration, string> = {
-  ring: "Ring",
-  glow: "Leuchten",
-  rainbow: "Regenbogen",
-  stars: "Sterne",
+  get ring() {
+    return translate(shell, "decoration.ring");
+  },
+  get glow() {
+    return translate(shell, "decoration.glow");
+  },
+  get rainbow() {
+    return translate(shell, "decoration.rainbow");
+  },
+  get stars() {
+    return translate(shell, "decoration.stars");
+  },
 };
 
 export function isDecoration(value: unknown): value is AvatarDecoration {

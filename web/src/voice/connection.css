@@ -256,6 +256,18 @@
   gap: 8px;
   margin-top: 14px;
 }
+/* The call's volumes under the totals, where the phone reaches them. */
+.connection-volume {
+  margin-top: 14px;
+}
+.connection-volume > h3 {
+  color: var(--lr-subtle);
+  font: var(--lr-type-caps);
+  text-transform: uppercase;
+}
+.connection-volume > .voice-quick {
+  padding: 10px 0 0;
+}
 
 /* The diagnostics tab. */
 .voice-diagnostics {

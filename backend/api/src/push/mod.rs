@@ -270,6 +270,7 @@ struct Target {
     p256dh: String,
     auth: String,
     hide_content: bool,
+    locale: Locale,
 }
 
 /// After a message is stored: push it in the background, unless
@@ -317,12 +318,15 @@ async fn deliver(
         }
         Some(server) if message.mention_everyone && everyone_may_push(state, server) => {
             let members: Vec<Uuid> = sqlx::query_scalar(
-                "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id<>$2
-                 LIMIT $3",
+                "SELECT m.user_id FROM server_members m
+                 JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
+                 WHERE m.server_id=$1 AND m.user_id<>$2
+                 AND channel_visible_to($4, m.user_id) LIMIT $3",
             )
             .bind(server)
             .bind(author)
             .bind(MAX_RECIPIENTS as i64 + 1)
+            .bind(message.channel_id)
             .fetch_all(&state.db)
             .await?;
             if members.len() > MAX_RECIPIENTS {
@@ -340,7 +344,7 @@ async fn deliver(
     // to "nothing"; the channel's own level wins over its server's.
     let targets: Vec<Target> = sqlx::query_as(
         "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
-                u.notifications_hide_content AS hide_content
+                u.notifications_hide_content AS hide_content, u.locale
          FROM push_subscriptions p
          JOIN sessions s ON s.token_hash=p.session_hash AND s.expires_at>now()
          JOIN users u ON u.id=p.user_id
@@ -385,7 +389,7 @@ async fn deliver(
             .into_iter()
             .filter(|target| !in_front.contains(&target.user_id))
             .filter_map(|target| {
-                let locale = Locale::of_recipient(target.user_id);
+                let locale = target.locale;
                 let (title, body) = if target.hide_content {
                     (
                         i18n::new_message_from(locale, &message.author.name),
@@ -572,7 +576,7 @@ async fn take_receipts(state: &AppState, message: Uuid) -> Result<Vec<Target>, A
             DELETE FROM push_receipts WHERE message_id=$1 RETURNING endpoint, sent_at
          )
          SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
-                u.notifications_hide_content AS hide_content
+                u.notifications_hide_content AS hide_content, u.locale
          FROM taken t
          JOIN push_subscriptions p ON p.endpoint=t.endpoint
          JOIN users u ON u.id=p.user_id
@@ -597,7 +601,7 @@ async fn send_recall(
     }
     let (place, path) = heading(state, message, server).await?;
     let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
-        let locale = Locale::of_recipient(target.user_id);
+        let locale = target.locale;
         let title = if target.hide_content {
             i18n::new_message_from(locale, &message.author.name)
         } else {
@@ -635,20 +639,23 @@ async fn send_recall(
     Ok(())
 }
 
-/// The users the message names who are still in the server: the names
-/// were resolved before the message was stored, and someone removed since
-/// gets no preview.
+/// The users the message names who are still in the server and still see
+/// its channel: the names were resolved before the message was stored, and
+/// someone removed since gets no preview.
 async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<Uuid>, ApiError> {
     if message.mentions.is_empty() {
         return Ok(Vec::new());
     }
     Ok(sqlx::query_scalar(
-        "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id=ANY($2)
-         AND user_id<>$3",
+        "SELECT m.user_id FROM server_members m
+         JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
+         WHERE m.server_id=$1 AND m.user_id=ANY($2)
+         AND m.user_id<>$3 AND channel_visible_to($4, m.user_id)",
     )
     .bind(server)
     .bind(&message.mentions)
     .bind(message.author.id)
+    .bind(message.channel_id)
     .fetch_all(&state.db)
     .await?)
 }

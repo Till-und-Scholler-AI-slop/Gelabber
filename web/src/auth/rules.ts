@@ -1,8 +1,17 @@
 // Client-side mirror of `backend/api/src/auth/validate.rs`, so obvious mistakes are
 // shown inline before a round-trip. The server stays the authority; its
-// field codes render through the same `fieldMessage` table.
+// field codes render through the same `fieldMessage` table, whose copy is in
+// the `auth` catalog (`error.*`, `fieldLabel.*`, `fieldError.*`).
 
-import type { ApiErrorCode, FieldCode, FieldErrors } from "../api/client.ts";
+import type {
+  ApiError,
+  ApiErrorCode,
+  FieldCode,
+  FieldErrors,
+} from "../api/client.ts";
+import { translate } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
+import { formatDate } from "../i18n/format.ts";
 import type { AvatarDecoration, ProfileCard, ProfilePatch } from "./types.ts";
 
 export const PASSWORD_MIN = 8;
@@ -302,145 +311,270 @@ type FieldName =
   | "attachment_ids"
   | "gif"
   | "q"
-  | "token";
+  | "token"
+  | "color"
+  | "permissions"
+  | "roles"
+  | "role_ids"
+  | "invitation";
 
-const FIELD_LABEL: Record<FieldName, string> = {
-  email: "E-Mail-Adresse",
-  password: "Passwort",
-  current_password: "Aktuelles Passwort",
-  name: "Name",
-  avatar_url: "Avatar-URL",
-  bio: "Über mich",
-  pronouns: "Pronomen",
-  status_text: "Status",
-  accent_color: "Akzentfarbe",
-  banner_color: "Bannerfarbe",
-  banner_url: "Banner",
-  avatar_decoration: "Avatar-Rahmen",
-  kind: "Kanaltyp",
-  category_id: "Kategorie",
-  member_permissions: "Rechte",
-  max_uses: "Maximale Nutzungen",
-  expires_in_hours: "Gültigkeit",
-  content: "Nachricht",
-  before: "Cursor",
-  after: "Cursor",
-  limit: "Anzahl",
-  user_id: "Nutzer",
-  filename: "Dateiname",
-  content_type: "Dateityp",
-  size: "Datei",
-  attachment_ids: "Anhang",
-  gif: "GIF",
-  q: "Suche",
-  token: "Link",
+type LabelKey = Extract<keyof typeof auth.de, `fieldLabel.${string}`>;
+
+const FIELD_LABEL: Record<FieldName, LabelKey> = {
+  email: "fieldLabel.email",
+  password: "fieldLabel.password",
+  current_password: "fieldLabel.currentPassword",
+  name: "fieldLabel.name",
+  avatar_url: "fieldLabel.avatarUrl",
+  bio: "fieldLabel.bio",
+  pronouns: "fieldLabel.pronouns",
+  status_text: "fieldLabel.statusText",
+  accent_color: "fieldLabel.accentColor",
+  banner_color: "fieldLabel.bannerColor",
+  banner_url: "fieldLabel.bannerUrl",
+  avatar_decoration: "fieldLabel.avatarDecoration",
+  kind: "fieldLabel.kind",
+  category_id: "fieldLabel.categoryId",
+  member_permissions: "fieldLabel.memberPermissions",
+  max_uses: "fieldLabel.maxUses",
+  expires_in_hours: "fieldLabel.expiresInHours",
+  content: "fieldLabel.content",
+  before: "fieldLabel.cursor",
+  after: "fieldLabel.cursor",
+  limit: "fieldLabel.limit",
+  user_id: "fieldLabel.userId",
+  filename: "fieldLabel.filename",
+  content_type: "fieldLabel.contentType",
+  size: "fieldLabel.size",
+  attachment_ids: "fieldLabel.attachmentIds",
+  gif: "fieldLabel.gif",
+  q: "fieldLabel.q",
+  token: "fieldLabel.token",
+  color: "fieldLabel.color",
+  permissions: "fieldLabel.memberPermissions",
+  roles: "fieldLabel.roles",
+  role_ids: "fieldLabel.roleIds",
+  invitation: "fieldLabel.invitation",
 };
 
-/** German inline copy for a field code. Unknown fields fall back to generic text. */
+/** Inline copy for a field code. Unknown fields fall back to generic text. */
 export function fieldMessage(field: string, code: FieldCode): string {
-  const label = (FIELD_LABEL as Record<string, string>)[field] ?? "Eingabe";
+  const label = translate(
+    auth,
+    (FIELD_LABEL as Record<string, LabelKey>)[field] ?? "fieldLabel.other",
+  );
   switch (code) {
     case "required":
-      return `${label} fehlt.`;
+      // The API's `{"invitation":"required"}` (invitation_required).
+      if (field === "invitation")
+        return translate(auth, "error.invitationRequired");
+      return translate(auth, "fieldError.required", { label });
     case "too_short":
       return field === "password"
-        ? `Mindestens ${PASSWORD_MIN} Zeichen.`
-        : `${label} ist zu kurz.`;
+        ? translate(auth, "fieldError.passwordTooShort", { min: PASSWORD_MIN })
+        : translate(auth, "fieldError.tooShort", { label });
     case "too_long":
       return field === "size"
-        ? "Die Datei ist zu groß (max. 25 MB)."
+        ? translate(auth, "fieldError.fileTooLarge")
         : field === "attachment_ids"
-          ? "Höchstens 10 Dateien pro Nachricht."
+          ? translate(auth, "fieldError.tooManyFiles")
           : field.startsWith("attachment_ids.")
-            ? "Das Bild hat zu viele Pixel (max. 16384 px pro Seite, 64 Megapixel)."
-            : `${label} ist zu lang.`;
+            ? translate(auth, "fieldError.tooManyPixels")
+            : translate(auth, "fieldError.tooLong", { label });
     case "too_large":
-      return "Alle Dateien zusammen sind zu groß (max. 100 MB).";
+      return translate(auth, "fieldError.tooLarge");
     case "mismatch":
-      return "Der Inhalt der Datei passt nicht zu ihrem Typ.";
+      return translate(auth, "fieldError.mismatch");
     case "taken":
-      return "Diese E-Mail-Adresse ist schon registriert.";
+      // Only a role's name is taken by name; an address by email.
+      return field === "name"
+        ? translate(auth, "fieldError.roleNameTaken")
+        : translate(auth, "fieldError.taken");
+    case "too_many":
+      return translate(auth, "fieldError.tooManyRoles");
     case "wrong":
-      return "Das Passwort stimmt nicht.";
+      return translate(auth, "fieldError.wrong");
     case "stale":
-      return "Dein Bild wurde inzwischen woanders geändert. Lade die Seite neu.";
+      return translate(auth, "fieldError.stale");
     case "exclusive":
-      return "Ein GIF wird ohne Text und Anhang gesendet.";
+      return translate(auth, "fieldError.exclusive");
     case "unavailable":
-      return "GIFs sind auf diesem Server nicht eingerichtet.";
+      return translate(auth, "fieldError.unavailable");
     case "not_editable":
-      return "Ein GIF lässt sich nicht bearbeiten.";
+      return translate(auth, "fieldError.notEditable");
     case "invalid":
       switch (field) {
         case "email":
-          return "Das sieht nicht wie eine E-Mail-Adresse aus.";
+          return translate(auth, "fieldError.emailInvalid");
         case "avatar_url":
-          return "Bitte eine vollständige https-URL angeben.";
+          return translate(auth, "fieldError.avatarUrlInvalid");
         case "accent_color":
         case "banner_color":
-          return "Bitte eine Farbe im Format #rrggbb wählen.";
+          return translate(auth, "fieldError.colorInvalid");
         case "bio":
         case "pronouns":
         case "status_text":
           return field === "bio"
-            ? "Nur Text und Zeilenumbrüche, keine Steuerzeichen."
-            : "Nur eine Zeile Text, keine Steuerzeichen.";
+            ? translate(auth, "fieldError.bioInvalid")
+            : translate(auth, "fieldError.lineInvalid");
         case "content_type":
-          return "Dieser Dateityp ist nicht erlaubt.";
+          return translate(auth, "fieldError.contentTypeInvalid");
+        case "role_ids":
+          return translate(auth, "fieldError.roleIdsInvalid");
+        case "invitation":
+          return translate(auth, "error.invitationInvalid");
         default:
-          return `${label} ist ungültig.`;
+          return translate(auth, "fieldError.invalid", { label });
       }
   }
 }
 
-/** German copy for a form-level error code. */
+/** Copy for a form-level error code, in the interface's language. */
 export function errorMessage(code: ApiErrorCode): string {
   switch (code) {
     case "invalid_credentials":
-      return "E-Mail oder Passwort ist falsch.";
+      return translate(auth, "error.invalidCredentials");
     case "theme_conflict":
-      return "Auf einem anderen Gerät geändert. Bitte erneut versuchen.";
+      return translate(auth, "error.themeConflict");
     case "email_taken":
-      return "Diese E-Mail-Adresse ist schon registriert.";
+      return translate(auth, "error.emailTaken");
     case "email_unverified":
-      return "Bitte bestätige zuerst deine E-Mail-Adresse. Wir haben dir gerade einen neuen Link geschickt.";
+      return translate(auth, "error.emailUnverified");
     case "token_invalid":
-      return "Dieser Link ist abgelaufen oder wurde schon benutzt.";
+      return translate(auth, "error.tokenInvalid");
     case "unauthenticated":
-      return "Bitte melde dich erneut an.";
+      return translate(auth, "error.unauthenticated");
     case "csrf_invalid":
-      return "Sicherheits-Token abgelaufen. Bitte noch einmal versuchen.";
+      return translate(auth, "error.csrfInvalid");
     case "insecure_transport":
-      return "Anmelden geht nur über eine verschlüsselte Verbindung. Öffne Gelabber mit https:// (oder auf diesem Rechner über http://localhost).";
+      return translate(auth, "error.insecureTransport");
     case "forbidden":
-      return "Dafür fehlt dir die Berechtigung.";
+      return translate(auth, "error.forbidden");
     case "not_found":
-      return "Das gibt es nicht (mehr).";
+      return translate(auth, "error.notFound");
     case "invite_invalid":
-      return "Diese Einladung ist abgelaufen oder aufgebraucht.";
+      return translate(auth, "error.inviteInvalid");
     case "banned":
-      return "Du bist auf diesem Server gesperrt.";
+      return translate(auth, "error.banned");
     case "rate_limited":
-      return "Zu viele Anfragen. Bitte kurz warten und noch einmal versuchen.";
+      return translate(auth, "error.rateLimited");
     case "quota_exceeded":
-      return "Tageslimit für Uploads erreicht.";
+      return translate(auth, "error.quotaExceeded");
     case "upstream_unavailable":
-      return "Der GIF-Dienst antwortet gerade nicht. Bitte gleich noch einmal versuchen.";
+      return translate(auth, "error.upstreamUnavailable");
     case "upstream_quota":
-      return "Dieser Server hat sein GIF-Kontingent gerade aufgebraucht. Bitte später noch einmal versuchen.";
+      return translate(auth, "error.upstreamQuota");
     case "validation_failed":
-      return "Bitte die markierten Felder prüfen.";
+      return translate(auth, "error.validationFailed");
     case "timeout":
-      return "Der Server antwortet nicht. Bitte noch einmal versuchen.";
+      return translate(auth, "error.timeout");
     case "network":
-      return "Keine Verbindung zum Server.";
+      return translate(auth, "error.network");
     case "bad_request":
     case "internal":
-      return "Da ist etwas schiefgelaufen. Bitte noch einmal versuchen.";
+      return translate(auth, "error.internal");
+    case "invitation_required":
+      return translate(auth, "error.invitationRequired");
+    case "invitation_invalid":
+      return translate(auth, "error.invitationInvalid");
+    case "account_disabled":
+      return translate(auth, "error.accountDisabled");
+    case "server_blocked":
+      return translate(auth, "error.serverBlocked");
+    case "oidc_unavailable":
+      return translate(auth, "error.oidcUnavailable");
+    case "oidc_email_unverified":
+      return translate(auth, "error.oidcEmailUnverified");
+    case "oidc_account_unverified":
+      return translate(auth, "error.oidcAccountUnverified");
+    case "identity_taken":
+      return translate(auth, "error.identityTaken");
+    case "password_required":
+      return translate(auth, "error.passwordRequired");
+    case "reauth_required":
+      return translate(auth, "error.reauthRequired");
+    case "oidc_wrong_origin":
+      return translate(auth, "error.oidcWrongOrigin");
+    case "session_changed":
+      return translate(auth, "error.sessionChanged");
+    case "join_request_required":
+      return translate(auth, "error.joinRequestRequired");
+    case "join_request_declined":
+      return translate(auth, "error.joinRequestDeclined");
+    case "join_requests_full":
+      return translate(auth, "error.joinRequestsFull");
+    case "already_member":
+      return translate(auth, "error.alreadyMember");
+    case "owns_servers":
+      return translate(auth, "error.ownsServers");
+    case "export_pending":
+      return translate(auth, "error.exportPending");
   }
 }
 
-/** Turns per-field codes into per-field German messages. */
+/**
+ * Why a provider sign-in came back without signing in: the
+ * `?oidc_error=` of `/login`, `/register` and `/settings/konto`.
+ */
+export const OIDC_ERRORS = [
+  "cancelled",
+  "expired",
+  "failed",
+  "email_unverified",
+  "account_unverified",
+  "identity_taken",
+  "insecure_transport",
+  "session_changed",
+  "invitation_required",
+  "invitation_invalid",
+  "account_disabled",
+] as const;
+
+export type OidcError = (typeof OIDC_ERRORS)[number];
+
+export function isOidcError(value: unknown): value is OidcError {
+  return (OIDC_ERRORS as readonly unknown[]).includes(value);
+}
+
+/** Copy for an `oidc_error`, in the interface's language. */
+export function oidcErrorMessage(code: OidcError): string {
+  switch (code) {
+    case "cancelled":
+      return translate(auth, "oidc.error.cancelled");
+    case "expired":
+      return translate(auth, "oidc.error.expired");
+    case "failed":
+      return translate(auth, "oidc.error.failed");
+    case "email_unverified":
+      return errorMessage("oidc_email_unverified");
+    case "account_unverified":
+      return errorMessage("oidc_account_unverified");
+    case "identity_taken":
+    case "insecure_transport":
+    case "session_changed":
+    case "invitation_required":
+    case "invitation_invalid":
+    case "account_disabled":
+      return errorMessage(code);
+  }
+}
+
+/**
+ * The copy of an API error, with what its body adds: a declined request to
+ * join names the day from which the person may ask again.
+ */
+export function apiErrorMessage(
+  error: Pick<ApiError, "code" | "retryAfter">,
+  now: number = Date.now(),
+): string {
+  if (error.code === "join_request_declined" && error.retryAfter) {
+    const date = formatDate(now + error.retryAfter * 1000);
+    return translate(auth, "error.joinRequestDeclinedUntil", { date });
+  }
+  return errorMessage(error.code);
+}
+
+/** Turns per-field codes into per-field messages. */
 export function fieldMessages(fields: FieldErrors): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [field, code] of Object.entries(fields)) {

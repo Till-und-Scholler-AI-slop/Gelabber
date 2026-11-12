@@ -7,12 +7,8 @@ import {
 } from "../ws/connectionNotice.ts";
 import { CheckIcon } from "./Icons.tsx";
 import "./connection.css";
-
-const TEXT: Record<Exclude<Notice, null>, string> = {
-  offline: "Keine Verbindung – dein Gerät ist offline",
-  reconnecting: "Keine Verbindung – wird wiederhergestellt…",
-  restored: "Verbindung wiederhergestellt",
-};
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 function useConnectionNotice(): Notice {
   const [notice, setNotice] = useState<Notice>(null);
@@ -41,6 +37,7 @@ function useConnectionNotice(): Notice {
  * reader hears each change.
  */
 export function ConnectionNotice() {
+  const t = useT(shell);
   const notice = useConnectionNotice();
   return (
     <div role="status" className="gel-connection">
@@ -54,7 +51,7 @@ export function ConnectionNotice() {
           ) : (
             <span className="gel-connection__dot" aria-hidden="true" />
           )}
-          {TEXT[notice]}
+          {t(`connection.${notice}`)}
         </p>
       ) : null}
     </div>

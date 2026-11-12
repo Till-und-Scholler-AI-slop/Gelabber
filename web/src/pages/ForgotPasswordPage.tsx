@@ -14,8 +14,11 @@ import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
+import { T, useT } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 
 export function ForgotPasswordPage() {
+  const t = useT(auth);
   const search = useSearch({ from: "/auth/forgot-password" });
   const signedIn = useSession((state) => state.user?.email);
   const [email, setEmail] = useState(search.email ?? signedIn ?? "");
@@ -56,14 +59,12 @@ export function ForgotPasswordPage() {
 
   return (
     <section className="lr-auth-card">
-      <h1>Passwort vergessen</h1>
-      <p className="auth-lead">
-        Du erhältst einen Link, um ein neues Passwort festzulegen.
-      </p>
+      <h1>{t("forgot.title")}</h1>
+      <p className="auth-lead">{t("forgot.lead")}</p>
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <Field
           id="email"
-          label="E-Mail-Adresse"
+          label={t("fieldLabel.email")}
           type="email"
           autoComplete="email"
           inputMode="email"
@@ -79,15 +80,15 @@ export function ForgotPasswordPage() {
         <SubmitButton
           size="lg"
           pending={mutation.isPending}
-          pendingLabel="Wird gesendet…"
+          pendingLabel={t("page.sending")}
           cooldown={cooldown}
         >
-          Link schicken
+          {t("forgot.submit")}
         </SubmitButton>
       </form>
       <p className="auth-footer">
         <Link to="/login" className="auth-link">
-          Zurück zur Anmeldung
+          {t("page.backToSignIn")}
         </Link>
       </p>
     </section>
@@ -101,6 +102,7 @@ function ResetMailSent({
   email: string;
   onOtherAddress: () => void;
 }) {
+  const t = useT(auth);
   const heading = useFocusOnMount<HTMLHeadingElement>();
   // The first mail just went out.
   const { seconds, start } = useCooldown(RESEND_COOLDOWN_S);
@@ -109,7 +111,7 @@ function ResetMailSent({
     mutationFn: () => requestPasswordReset(email),
     onSuccess: () => {
       start(RESEND_COOLDOWN_S);
-      show({ tone: "success", message: "Neuer Link gesendet." });
+      show({ tone: "success", message: t("page.newLinkSent") });
     },
     onError: (error) => {
       if (
@@ -130,35 +132,37 @@ function ResetMailSent({
   return (
     <section className="lr-auth-card">
       <h1 ref={heading} tabIndex={-1}>
-        Postfach prüfen
+        {t("page.checkInbox")}
       </h1>
       <div className="auth-result">
         <p>
-          Falls zu <strong>{email}</strong> ein Konto existiert, wurde ein Link
-          gesendet. Er gilt eine Stunde.
+          <T
+            catalog={auth}
+            k="forgot.mailSent"
+            params={{ email }}
+            tags={{ b: (text) => <strong>{text}</strong> }}
+          />
         </p>
-        <p className="auth-quiet">
-          Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut.
-        </p>
+        <p className="auth-quiet">{t("page.noMail")}</p>
       </div>
       <div className="auth-actions">
         <Button
           size="lg"
           disabled={seconds > 0}
           pending={resend.isPending}
-          pendingLabel="Wird gesendet…"
+          pendingLabel={t("page.sending")}
           onClick={() => resend.mutate()}
         >
-          {seconds > 0 ? `Erneut senden (${seconds} s)` : "Erneut senden"}
+          {seconds > 0 ? t("page.resendIn", { seconds }) : t("forgot.resend")}
         </Button>
         <InlineStatus status={status} />
         <Button variant="ghost" size="lg" onClick={onOtherAddress}>
-          Andere Adresse verwenden
+          {t("page.otherAddress")}
         </Button>
       </div>
       <p className="auth-footer">
         <Link to="/login" className="auth-link">
-          Zurück zur Anmeldung
+          {t("page.backToSignIn")}
         </Link>
       </p>
     </section>

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { setLocale } from "../i18n/locale.ts";
 import { resetUserVolumesForTests } from "../voice/userVolume.ts";
 import {
   LocallyMutedIcon,
@@ -11,6 +12,7 @@ import {
 
 afterEach(() => {
   resetUserVolumesForTests();
+  setLocale("de", { persist: false });
 });
 
 describe("per-user volume control", () => {
@@ -48,5 +50,20 @@ describe("per-user volume control", () => {
     expect(renderToStaticMarkup(<LocallyMutedMark />)).toContain(
       "Lokal stummgeschaltet",
     );
+  });
+
+  it("speaks English, with the percent sign attached", () => {
+    setLocale("en", { persist: false });
+    const html = renderToStaticMarkup(
+      <UserVolumeView
+        userId="u-bob"
+        name="Bob"
+        level={{ volume: 1.4, muted: true }}
+      />,
+    );
+    expect(html).toContain('aria-label="Volume of Bob"');
+    expect(html).toContain('aria-valuetext="140%"');
+    expect(html).toContain("Mute for me");
+    expect(html).toMatch(/<button[^>]*>Reset/);
   });
 });

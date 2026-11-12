@@ -596,8 +596,16 @@ export async function confirmDialog(actor, label) {
     .click();
 }
 // "Live gehen" is the call bar's Live control: a menu where a Live can carry
-// sound, a single toggle elsewhere. "Live beenden" is its stop entry.
+// sound, a single toggle elsewhere. While live it opens the list of who
+// watches, which holds the button "Live beenden".
 const LIVE_ENTRIES = new Set(["Live gehen", "Live beenden"]);
+/** A Live's tile on the channel page's stage, where Lives are watched: its
+ * caption has the LIVE badge. */
+export function liveTiles(page) {
+  return page
+    .locator("figure")
+    .filter({ has: page.locator("figcaption.voice-live-caption") });
+}
 // Scenarios say "Beitreten" for the voice room's join control, which reads
 // so, or "Hierher wechseln" from another call. Only the room's: the Live
 // hint and the live toast offer their own "Zuschauen" from elsewhere.
@@ -618,11 +626,18 @@ export async function click(actor, name) {
     const control = actor.page
       .getByRole("button", { name: "Live gehen", exact: true })
       .first();
-    if ((await control.getAttribute("aria-haspopup")) !== "menu") {
-      await control.click();
+    const popup = await control.getAttribute("aria-haspopup");
+    await control.click();
+    if (popup === "dialog") {
+      // Live: the press lists who watches; "Live gehen" only opens it.
+      if (name === "Live beenden")
+        await actor.page
+          .locator(".voice-watchers")
+          .getByRole("button", { name, exact: true })
+          .click();
       return;
     }
-    await control.click();
+    if (popup !== "menu") return;
     await actor.page.getByRole("menuitem", { name, exact: true }).click();
     return;
   }

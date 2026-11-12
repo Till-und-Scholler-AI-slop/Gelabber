@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   EMPTY_LIVE,
   EMPTY_OCCUPANCY,
+  EMPTY_WATCHES,
   VOICE_ICON_SLOT_PX,
   applyLiveStart,
   applyVoiceJoin,
@@ -168,5 +169,105 @@ describe("voice roster", () => {
       useVoiceRoster.getState().byServer.missing ?? EMPTY_OCCUPANCY,
     );
     expect(live).toBe(useVoiceRoster.getState().live.missing ?? EMPTY_LIVE);
+  });
+
+  it("replaces someone's watches with the set a w frame carries", () => {
+    const watches = () =>
+      useVoiceRoster.getState().watches.s1?.voice ?? EMPTY_WATCHES;
+    const w = (u: string, owners?: string[]) =>
+      applyVoiceSig({ op: "sig", t: "w", s: "s1", c: "voice", u, w: owners });
+    w("u2", ["u1"]);
+    w("u3", ["u1", "u4"]);
+    expect(watches()).toEqual({ u2: ["u1"], u3: ["u1", "u4"] });
+    w("u3", ["u4"]);
+    expect(watches().u3).toEqual(["u4"]);
+    w("u2", []);
+    expect(watches().u2).toEqual([]);
+    // A frame without a set means none.
+    w("u3");
+    expect(watches().u3).toEqual([]);
+    // The same set again keeps the state.
+    const before = useVoiceRoster.getState();
+    w("u3", []);
+    expect(useVoiceRoster.getState()).toBe(before);
+  });
+
+  it("drops a watcher's set when they leave or a snapshot lacks them", () => {
+    applyVoiceJoin("s1", "u2", "voice");
+    applyVoiceJoin("s1", "u3", "voice");
+    applyVoiceSig({
+      op: "sig",
+      t: "w",
+      s: "s1",
+      c: "voice",
+      u: "u2",
+      w: ["u1"],
+    });
+    applyVoiceSig({
+      op: "sig",
+      t: "w",
+      s: "s1",
+      c: "voice",
+      u: "u3",
+      w: ["u1"],
+    });
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "voice", u: "u2" });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({
+      voice: { u3: ["u1"] },
+    });
+    applyVoiceSig({
+      op: "sig",
+      t: "w",
+      s: "s1",
+      c: "voice",
+      u: "u5",
+      w: ["u1"],
+    });
+    applyVoiceSig({
+      op: "sig",
+      t: "r",
+      s: "s1",
+      snap: [{ u: "u3", c: "voice" }],
+    });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({
+      voice: { u3: ["u1"] },
+    });
+    resetVoiceRoster();
+    expect(useVoiceRoster.getState().watches).toEqual({});
+  });
+
+  it("keeps watches when the leave is of a seat in another channel", () => {
+    applyVoiceJoin("s1", "u2", "b");
+    applyVoiceSig({ op: "sig", t: "w", s: "s1", c: "b", u: "u2", w: ["u1"] });
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "a", u: "u2" });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({
+      b: { u2: ["u1"] },
+    });
+  });
+
+  it("keeps each room's watches apart for one person's seats in two rooms", () => {
+    const w = (c: string, owners: string[]) =>
+      applyVoiceSig({ op: "sig", t: "w", s: "s1", c, u: "x", w: owners });
+    applyVoiceJoin("s1", "x", "one");
+    w("one", ["a"]);
+    // Another device's seat in a second room watches someone else there.
+    applyVoiceJoin("s1", "x", "two");
+    w("two", ["b"]);
+    expect(useVoiceRoster.getState().watches.s1).toEqual({
+      one: { x: ["a"] },
+      two: { x: ["b"] },
+    });
+    // That seat leaves: only its room's set goes.
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "two", u: "x" });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({ one: { x: ["a"] } });
+  });
+
+  it("drops the old room's watches on a move whose leave comes last", () => {
+    applyVoiceJoin("s1", "x", "one");
+    applyVoiceSig({ op: "sig", t: "w", s: "s1", c: "one", u: "x", w: ["a"] });
+    applyVoiceSig({ op: "sig", t: "j", s: "s1", c: "two", u: "x" });
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "one", u: "x" });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({});
+    expect(useVoiceRoster.getState().byServer.s1?.x?.channelId).toBe("two");
   });
 });

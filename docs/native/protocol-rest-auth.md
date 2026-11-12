@@ -71,8 +71,9 @@ Response handling (`client.ts:591-604, 646-671`):
 
 | Cookie | Value | Attributes | Set by | Cleared by |
 |---|---|---|---|---|
-| `gelabber_session` | 64 lower-case hex chars (32 random bytes, `token.rs:9-13`). Server stores only SHA-256. | `Path=/; Max-Age=<session_ttl secs>; HttpOnly; SameSite=Lax` + `; Secure` when `API_COOKIE_SECURE=true` | login, register (no mail), change-password, verify-email, password-reset confirm | logout, logout-all, register-with-mail (`Max-Age=0`, empty value) |
+| `gelabber_session` | 64 lower-case hex chars (32 random bytes, `token.rs:9-13`). Server stores only SHA-256. | `Path=/; Max-Age=<session_ttl secs>; HttpOnly; SameSite=Lax` + `; Secure` when `API_COOKIE_SECURE=true` | login, register (no mail), change-password, verify-email, password-reset confirm; v0.10: the web callback, `oidc/complete` and `oidc/desktop/exchange` (§2.3) | logout, logout-all, register-with-mail (`Max-Age=0`, empty value) |
 | `gelabber_csrf` | 64 hex chars | `Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax` (+`Secure`) | `GET /api/auth/session` when the browser has none or an invalid one; **rotated** by every sign-in/sign-out response above | never cleared, only replaced |
+| `gelabber_oidc` (v0.10) | 64 hex chars; the server stores only its SHA-256 in the flow | `Path=/api/auth/oidc; Max-Age=1800; HttpOnly; SameSite=Lax` (+`Secure`) | `POST /api/auth/oidc/{provider}/start` without `desktop` (§2.3) | every web callback answer except the redirect to the name step, and `oidc/complete` of a web result (`Max-Age=0`, same path) |
 
 Exact header text: `gelabber_session=<tok>; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax[; Secure]` (`cookies.rs:71-80`); a clear is `gelabber_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax[; Secure]` (`cookies.rs:62-64`, test `cookies.rs:149-155`). The CSRF cookie `Max-Age` is `365*24*3600 = 31536000` (`auth/mod.rs:51`). The "valid" check for an existing CSRF cookie is `len == 64 && all ASCII hex digits` (upper-case accepted; `token.rs:16-20`). Cookie parsing on the server: first occurrence of the name in any `Cookie` header wins; exact name match (`cookies.rs:13-24`).
 
@@ -112,7 +113,8 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `error` | string code (table below) | always |
 | `message` | English fallback string | always |
 | `fields` | object `{field: field_code}` | only when non-empty (`skip_serializing_if = BTreeMap::is_empty`) |
-| `retry_after` | integer seconds | only for `rate_limited` and `upstream_quota`; the same value is also sent as `Retry-After` header |
+| `retry_after` | integer seconds | only for `rate_limited` and `upstream_quota`, where the same value is also sent as `Retry-After` header; and (v0.10) for `join_request_declined`, in the body only |
+| `servers` | `[{id, name, member_count}]` | only for `owns_servers` (v0.10, §3.4) |
 
 | `error` | HTTP | `message` (server, English) | German UI text (`web/src/auth/rules.ts:369-413`) |
 |---|---|---|---|
@@ -135,6 +137,24 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `upstream_unavailable` | 502 | The GIF service did not answer. Try again in a moment. | Der GIF-Dienst antwortet gerade nicht. Bitte gleich noch einmal versuchen. |
 | `upstream_quota` | 503 | This server has used up its GIF requests for now. Try again later. | Dieser Server hat sein GIF-Kontingent gerade aufgebraucht. Bitte später noch einmal versuchen. |
 | `internal` | 500 | Something went wrong on our side. | Da ist etwas schiefgelaufen. Bitte noch einmal versuchen. |
+| `account_disabled` | 403 | This account has been disabled. | v0.10: catalog `auth` `error.accountDisabled` |
+| `invitation_required` | 403 | Registration needs an invitation. (also `fields.invitation = "required"`) | v0.10: `auth` `error.invitationRequired` |
+| `invitation_invalid` | 410 | This invitation is unknown, expired or already used. (also `fields.invitation = "invalid"`) | v0.10: `auth` `error.invitationInvalid` |
+| `server_blocked` | 403 | This server has been blocked by the operator. | v0.10: `auth` `error.serverBlocked` |
+| `oidc_unavailable` | 502 | The sign-in provider did not answer. Try again in a moment. | v0.10: `auth` `error.oidcUnavailable` |
+| `oidc_email_unverified` | 403 | The provider has not verified this e-mail address. | v0.10: `auth` `error.oidcEmailUnverified` |
+| `oidc_account_unverified` | 409 | An account with this address exists but was never confirmed. Sign in with its password and connect the provider there. | v0.10: `auth` `error.oidcAccountUnverified` |
+| `identity_taken` | 409 | This provider account is already connected to an account. | v0.10: `auth` `error.identityTaken` |
+| `password_required` | 409 | Set a password before disconnecting the last sign-in method. | v0.10: `auth` `error.passwordRequired` |
+| `reauth_required` | 403 | Sign in again to confirm it is you. | v0.10: `auth` `error.reauthRequired` |
+| `oidc_wrong_origin` | 409 | Open this instance at its public address to sign in. | v0.10: `auth` `error.oidcWrongOrigin` |
+| `session_changed` | 409 | You signed in to another account meanwhile. Try again. | v0.10: `auth` `error.sessionChanged` |
+| `join_request_required` | 409 | This server takes requests to join. | v0.10: `auth` `error.joinRequestRequired` |
+| `join_request_declined` | 409 | Your request to join was not accepted. You can ask again later. (also `retry_after`: seconds until the cooldown ends) | v0.10: `auth` `error.joinRequestDeclined`, or `error.joinRequestDeclinedUntil` with the date |
+| `join_requests_full` | 409 | Too many open requests to join. Try again later. | v0.10: `auth` `error.joinRequestsFull` |
+| `already_member` | 409 | You are already a member of this server. | v0.10: `auth` `error.alreadyMember` |
+| `owns_servers` | 409 | Transfer or delete your servers first. (also `servers: [{id, name, member_count}]`, §3.4) | v0.10: the delete-account dialog lists the servers |
+| `export_pending` | 409 | Your data export is still being built. | v0.10: standard inline error |
 | client-only `network` | 0 | Network error. | Keine Verbindung zum Server. |
 | client-only `timeout` | 0 | Request timed out. | Der Server antwortet nicht. Bitte noch einmal versuchen. |
 
@@ -169,8 +189,8 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 
 | Bucket | Key | Limit | Routes |
 |---|---|---|---|
-| `auth` | client IP (IPv6 /64; last `X-Forwarded-For` entry, else peer) | 20 / min | POST `/api/auth/login`, `/register`, `/verify-email`, `/password-reset`, `/password-reset/confirm` (`limits.rs:422-431`) |
-| `login` (failures) | account e-mail | 10 failures / 15 min → 429 | login, change-password, verify-email wrong password |
+| `auth` | client IP (IPv6 /64; last `X-Forwarded-For` entry, else peer) | 20 / min | POST `/api/auth/login`, `/register`, `/verify-email`, `/password-reset`, `/password-reset/confirm` (`limits.rs:422-431`); v0.10: every non-GET under `/api/auth/oidc/` (start, pending, complete, desktop exchange, and `DELETE /api/auth/oidc/{provider}`), and the GET callback, which counts itself (`limits::anonymous_hit`) |
+| `login` (failures) | account e-mail | 10 failures / 15 min → 429 | login, change-password, verify-email wrong password; v0.10: `DELETE /api/me` wrong password |
 | `api` | `u:{user_id}` if cookie is a live session, else IP | 180 / min | every other mutation |
 | `msg` | same | 60 / min (plus `api`) | `POST …/messages` |
 | `up` | same | 60 / hour (plus `api`) | `POST …/attachments`, `PUT /api/me/avatar`, `PUT /api/me/banner`, `PUT /api/servers/{id}/icon` |
@@ -179,6 +199,10 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | `gif` | user | 30 / min, **also on GET** | `/api/gifs/trending`, `/api/gifs/search`, GIF sends |
 | `gif_media` | user | 240 / min, GET | `/api/gifs/media` |
 | account mail | address | 5 / hour (silently not sent) | register, login of unverified, password-reset |
+| `report` | user | 10 / hour → `429 rate_limited` | `POST /api/servers/{id}/reports` (v0.10) |
+| `mail_invite` | invited address | 5 / hour (silently not sent; the invitation is still created) | `POST /api/operator/invitations` with `send_mail` (v0.10) |
+| `dir_join` | user | 10 / hour → `429 rate_limited`, shared by both routes | `POST /api/directory/listings/{id}/join` and `/request` (v0.10, §4.7) |
+| `dir_search` | user | 60 / min → `429 rate_limited`, **also on GET** | `GET /api/directory/listings` (v0.10, §4.7) |
 
 A native client must not send `X-Forwarded-For` (the API trusts the last entry).
 
@@ -199,7 +223,7 @@ Source: `web/src/auth/session.ts`, `web/src/api/client.ts`, backend `auth/mod.rs
 1. **App start** (`session.ts:189-233`): `GET /api/auth/session`. Store `csrf_token`. If `user` non-null → `authenticated` (and load workspace); else `anonymous` → login screen.
 2. **Check failed** (network, timeout, 5xx): stay `unknown`, show `Deine Sitzung konnte nicht geprüft werden. Prüfe deine Verbindung und versuche es erneut.` (`session.ts:221`) and retry automatically after `SESSION_RETRY_MS = [2000, 5000, 15000, 30000]` ms (index = `min(max(failures,1),4) - 1`, i.e. capped at 30 s; `session.ts:44-49`) and immediately on "online"/window visible (`session.ts:44-105`). Recovery notice copy (`components/SessionRecoveryNotice.tsx:70-106`): h1 `Server antwortet nicht` (online) / `Keine Verbindung zu Gelabber` (offline); lead `Gelabber ist nicht erreichbar. Möglicherweise startet der Server neu.` / `Dein Gerät ist offline. Sobald es wieder verbunden ist, geht es weiter.`; visible status `Wird geprüft…` while checking, else `Neuer Versuch in ${seconds} s` (live countdown) or nothing at 0; screen-reader status `Neuer Versuch in ${planned} Sekunden`; primary large button `Jetzt erneut versuchen` (pending label `Wird geprüft…`) that retries at once.
 3. **Login** (`session.ts:248-269`): `POST /api/auth/login {email, password}` → `SessionResponse`; adopt `user` and the rotated `csrf_token`; drop every cache of a different previous user.
-4. **Register** (`session.ts:275-281`): `POST /api/auth/register {email, password, name}`. `201` = signed in (like login). `202` with `verification_sent: true` and `user: null` = account mail is on, nobody signed in; show "Postfach prüfen" screen (`pages/RegisterPage.tsx:165-222`).
+4. **Register** (`session.ts:275-281`): `POST /api/auth/register {email, password, name, locale}`; `locale` is the language the device shows (`de` \| `en`, from v0.10). `201` = signed in (like login). `202` with `verification_sent: true` and `user: null` = account mail is on, nobody signed in; show "Postfach prüfen" screen (`pages/RegisterPage.tsx:165-222`). From v0.10 the body may also carry `invitation` and `server_invite` (invitation-only instances, see §2.2 and `GET /api/auth/registration`).
 5. **Logout** (`session.ts:317-352`): optimistic — switch to `anonymous` first, then `POST /api/auth/logout` (no body). On failure show `Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.` and remember the user id to retry. `logout-all` identical with `POST /api/auth/logout-all`.
 6. **Any 401 `unauthenticated`** on a normal request → switch to `anonymous` (`client.ts:478-484`). Login page then may show `Sitzung abgelaufen. Melde dich erneut an.` (`pages/LoginPage.tsx:70-74`, reason `expired`).
 7. **Change password** (`session.ts:358-367`): `POST /api/auth/password {current_password, password}` → `SessionResponse` with a fresh session cookie for this client; all other sessions of the account (and their `/ws` sockets and media tickets) are revoked. Caches stay (same account).
@@ -209,21 +233,22 @@ Browser-only machinery that a native client does **not** need: the `localStorage
 
 ### 2.2 Auth endpoints
 
-`SessionResponse` (`auth/mod.rs:178-182`): `{ "user": User | null, "csrf_token": string }`.
+`SessionResponse` (`auth/mod.rs:178-182`): `{ "user": User | null, "csrf_token": string, "operator": bool }`. `operator` (v0.10) is `true` when the signed-in account is an instance operator (`API_OPERATOR_EMAILS`; with account mail on, only once its address is confirmed); the clients then offer "Betrieb" (§4.6). Servers older than v0.10 omit it: read a missing key as `false`. The `202` register answer has no `operator`.
 `User` (`auth/user.rs:11-38`, flattened card): see §3.1.
 
 | Method & path | Web caller | Request | Success | Errors |
 |---|---|---|---|---|
 | `GET /api/auth/session` | `session.ts:210`, CSRF retry `client.ts:528` | — (cookies) | `200 SessionResponse`. Sets `gelabber_csrf` only when the request had no valid (64-hex) one (`auth/mod.rs:555-575`). Never 401. | — |
+| `GET /api/auth/registration` | v0.10 register page | — (no session needed) | `200 {"mode": "open" \| "invitation"}` (`API_REGISTRATION`). `invitation`: a new account needs a beta invitation or the invite code of a server that is not blocked | — (`404` from servers older than v0.10: treat as `open`) |
 | `GET /api/auth/mail` | `auth/mail.ts:20` (login page, `staleTime: Infinity`, no retry) | — | `200 {"enabled": bool}` — login page (`pages/LoginPage.tsx:136-148`): `true` → link `Passwort vergessen?` to the forgot-password screen (prefilled with the typed e-mail); `false` → plain text `Passwort vergessen? Frag die Person, die diesen Gelabber-Server betreibt.`; unknown/failed → nothing | — |
-| `POST /api/auth/register` | `session.ts:280` | `{email, password, name}` all strings, default `""` (`auth/mod.rs:79-87`) | no mail: `201 SessionResponse` + both cookies. Mail on: `202 {"user":null,"csrf_token":…,"verification_sent":true}`, session cookie cleared, CSRF rotated — identical answer whether the address existed or not | `422` fields `email` required/too_long/invalid, `name` required/too_long/invalid, `password` required/too_short/too_long; `409 email_taken` (no mail only); `403 insecure_transport`; `429` |
-| `POST /api/auth/login` | `session.ts:268` | `{email, password}` | `200 SessionResponse` + cookies | `422` email codes / `password: required`; `401 invalid_credentials` (also for unknown e-mail and for password > 128 chars); `403 email_unverified` (mail on, after correct password; a new link is mailed); `429` (`login_blocked` or `auth` bucket); `403 insecure_transport` |
+| `POST /api/auth/register` | `session.ts:280` | `{email, password, name}` all strings, default `""` (`auth/mod.rs:79-87`); optional `locale` (`"de"` \| `"en"`); optional `invitation` (beta invitation code) and `server_invite` (a server invite code, e.g. from an `/invite/{code}` redirect), both ignored while registration is `open`. In `invitation` mode a valid beta invitation is used up by the new account (with mail on: only by a new or taken-over pending registration, never by a confirmed address); a server invite admits without being used up, and joining still takes `POST /api/invites/{code}/join`. Without `locale` the `Accept-Language` header decides (first range by `q` whose primary subtag is `de` or `en`; only other languages → `en`), without a usable header `de` (clients older than v0.10). Taking over a pending registration (mail on) overwrites its `locale` like its name and password; a confirmed account keeps its own | no mail: `201 SessionResponse` + both cookies. Mail on: `202 {"user":null,"csrf_token":…,"verification_sent":true}`, session cookie cleared, CSRF rotated — identical answer whether the address existed or not | `422` fields `email` required/too_long/invalid, `name` required/too_long/invalid, `password` required/too_short/too_long, `locale` invalid (present but not `de`/`en`); `403 invitation_required` (invitation mode, no code); `410 invitation_invalid` (unknown, used, revoked, expired or for another address; a server invite that is expired, used up or of a blocked server) — both after the `422` checks and before any account lookup; `409 email_taken` (no mail only); `403 insecure_transport`; `429` |
+| `POST /api/auth/login` | `session.ts:268` | `{email, password}` | `200 SessionResponse` + cookies | `422` email codes / `password: required`; `401 invalid_credentials` (also for unknown e-mail and for password > 128 chars); `403 account_disabled` (v0.10: an operator disabled the account; only after the correct password, before `email_unverified`, no mail is sent); `403 email_unverified` (mail on, after correct password; a new link is mailed); `429` (`login_blocked` or `auth` bucket); `403 insecure_transport` |
 | `POST /api/auth/logout` | `session.ts:335` | none | `200 {"csrf_token": string}`; clears session cookie, rotates CSRF. Works without a session. | `403 csrf_invalid` |
 | `POST /api/auth/logout-all` | `session.ts:323` | none | `200 {"csrf_token"}`; every session of the account deleted, sockets closed | `401` without session |
-| `POST /api/auth/password` | `session.ts:362` | `{current_password, password}` | `200 SessionResponse` + new cookies | `422 current_password: required\|wrong`, `password` register rules; `401`; `429`; `403 insecure_transport` |
-| `POST /api/auth/verify-email` | `session.ts:291` (route `/verify-email#token=<64hex>`, token parsed by `/(?:^#\|&)token=([0-9a-f]{64})(?:&\|$)/i` and lower-cased, `auth/mail.ts:27-33`) | `{token, password}` | `200 SessionResponse` + cookies | checked in this order (`auth/mod.rs:447-480`): `403 insecure_transport`; `410 token_invalid` (unknown/used/expired token — checked **before** the password); `422 password: required`; `429` (login lockout of the account); `422 password: wrong` (> 128 chars also `wrong`); `410` again if the token was replaced meanwhile |
+| `POST /api/auth/password` | `session.ts:362` | `{current_password, password}`; v0.10: an account without a password (§2.3) sets its first one with `{password}` alone, and any `current_password` is ignored | `200 SessionResponse` + new cookies | `422 current_password: required\|wrong` (only for an account that has a password), `password` register rules; `401`; `429`; `403 insecure_transport`; `403 reauth_required` (v0.10: no password yet and the session was signed in 10 minutes ago or more, `REAUTH_WINDOW`) |
+| `POST /api/auth/verify-email` | `session.ts:291` (route `/verify-email#token=<64hex>`, token parsed by `/(?:^#\|&)token=([0-9a-f]{64})(?:&\|$)/i` and lower-cased, `auth/mail.ts:27-33`) | `{token, password}` | `200 SessionResponse` + cookies | checked in this order (`auth/mod.rs:447-480`): `403 insecure_transport`; `410 token_invalid` (unknown/used/expired token — checked **before** the password); `422 password: required`; `429` (login lockout of the account); `422 password: wrong` (> 128 chars also `wrong`); `410` again if the token was replaced meanwhile; `403 account_disabled` (v0.10: the address is confirmed and the token used, but nobody is signed in) |
 | `POST /api/auth/password-reset` | `session.ts:310` | `{email}` | `202 {}` always (unknown address too); a link is mailed only for an existing account and within 5 mails/h | `404 not_found` when instance has no mail (checked first); `422 email …`; `429` auth bucket. **No** transport check. |
-| `POST /api/auth/password-reset/confirm` | `session.ts:302` (route `/reset-password#token=<64hex>`, `mail.rs:193`) | `{token, password}` | `200 SessionResponse` + cookies; all other sessions revoked, address counts as confirmed | `403 insecure_transport`; `422 token: required` and/or `password required\|too_short\|too_long`; `410 token_invalid`; `429` auth bucket |
+| `POST /api/auth/password-reset/confirm` | `session.ts:302` (route `/reset-password#token=<64hex>`, `mail.rs:193`) | `{token, password}` | `200 SessionResponse` + cookies; all other sessions revoked, address counts as confirmed | `403 insecure_transport`; `422 token: required` and/or `password required\|too_short\|too_long`; `410 token_invalid`; `403 account_disabled` (v0.10: after the token check, before anything is written; the password stays unchanged); `429` auth bucket |
 
 Validation constants (`auth/validate.rs`; web mirror `web/src/auth/rules.ts:8-16`):
 
@@ -235,7 +260,58 @@ Validation constants (`auth/validate.rs`; web mirror `web/src/auth/rules.ts:8-16
 
 `transport_allowed` (`auth/mod.rs:543-552`): routes register, login, password, verify-email, password-reset/confirm answer `403 insecure_transport` when **both** `API_COOKIE_SECURE` and `API_ALLOW_PLAIN_HTTP` are false **and** the request has a `Host` header that is not loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`, any port, case-insensitive; `cookies.rs:26-41`). No `Host` header → allowed. The check runs **before** body validation (an empty login on a LAN IP answers 403, not 422). `logout`, `logout-all`, `session`, `mail` and `password-reset` (request) have no transport check.
 
-Check order in `login` (`auth/mod.rs:273-320`): transport → `422` (email rules, `password: required`) → `429` login lockout for the address → password > 128 chars = `401 invalid_credentials` (counts as a failure) → Argon2 verify (unknown address runs against a dummy hash; failure counts) → `403 email_unverified` (mail on only; mails a new link if within 5/h) → `200`. In `register`: transport → `422` → (no mail) insert → `409 email_taken` or `201`. A previous session cookie the request carried is revoked on every sign-in (`signed_in`, `auth/mod.rs:325-351`).
+Check order in `login` (`auth/mod.rs:273-320`): transport → `422` (email rules, `password: required`) → `429` login lockout for the address → password > 128 chars = `401 invalid_credentials` (counts as a failure) → Argon2 verify (unknown address runs against a dummy hash; failure counts) → `403 account_disabled` (v0.10) → `403 email_unverified` (mail on only; mails a new link if within 5/h) → `200`. In `register`: transport → `422` → `403 invitation_required` / `410 invitation_invalid` (v0.10, invitation mode only) → (no mail) insert → `409 email_taken` or `201`. Every sign-in ends in `signed_in`, which refuses a disabled account with `403 account_disabled`; a disabled account's sessions are deleted, so its old cookie answers like no session (`user: null`, `401`). A previous session cookie the request carried is revoked on every sign-in (`signed_in`, `auth/mod.rs:325-351`).
+
+### 2.3 Sign-in through a provider (v0.10, `backend/api/src/auth/oidc/`)
+
+OpenID Connect with Google as the only provider (`id` `google`, `name` `Google`). Off unless the operator sets `OIDC_GOOGLE_CLIENT_ID` and `OIDC_GOOGLE_CLIENT_SECRET` (deploy/README.md, "Sign-in with Google"). The provider's redirect URI is `{APP_PUBLIC_URL}/api/auth/oidc/{provider}/callback`. Every session issued here goes through `signed_in` (§2.2), so `403 account_disabled` and the revocation of the previous session cookie apply. Servers older than v0.10 answer `404` (or `405`) on all of these routes; treat that as "no providers".
+
+An account may have no password (created through a provider). Its password login answers `401 invalid_credentials` with the usual timing, `verify-email` answers `422 password: wrong`, a password reset mail sets a first password, and `POST /api/auth/password` sets one without `current_password` from a session younger than 10 minutes (§2.2). A password reset also disconnects every provider account whose last address is not the account's, and all of them when the account's address was not confirmed before the reset: whoever knew or chose the old password may have connected them.
+
+| Method & path | Auth | Request | Success | Errors |
+|---|---|---|---|---|
+| `GET /api/auth/providers` | none | — | `200 {"providers":[{"id":"google","name":"Google"}]}`; `[]` while off | — |
+| `POST /api/auth/oidc/{provider}/start` | CSRF; `link` needs a session | `{"purpose":"sign_in"\|"link", "redirect"?: string, "current_password"?: string, "invitation"?: string, "desktop"?: {"port": int, "state": string, "challenge": string}}` | `200 {"url": "<authorization URL>"}`; open it in the system browser (web: `window.location.assign`). Without `desktop` also sets `gelabber_oidc` (§1.3) | `404 not_found` (unknown provider or off); `403 insecure_transport`; `422` `purpose` required\|invalid, `invitation` invalid, `desktop.port` invalid (1024..=65535), `desktop.state` invalid (43..=128 of `[A-Za-z0-9._~-]`), `desktop.challenge` invalid (43 base64url chars); `401 unauthenticated` (`link` without session); `409 identity_taken` (`link`: this account already has this provider); `422 current_password: required\|wrong` (`link`, account has a password; counted like a failed login, `429` lockout); `409 oidc_wrong_origin` (no `desktop` and `Host` is not `APP_PUBLIC_URL`'s host and port); `502 oidc_unavailable` (discovery failed); `429` |
+| `GET /api/auth/oidc/{provider}/callback` | none (the provider redirects the browser here) | `?code=&state=` or `?error=&state=` | every outcome of the flow, errors included, is a `303` with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, see below | `429` JSON with `Retry-After` (the `auth` bucket, counted before the flow is looked at); `500` on a server fault |
+| `POST /api/auth/oidc/pending` | CSRF | `{"token": "<64 hex>"}` | `200 {"provider":{"id","name"},"email": string,"name": string\|null}`; does not use the token up | `410 token_invalid` (unknown, expired, not a name-step result, provider off) |
+| `POST /api/auth/oidc/complete` | CSRF; web: `gelabber_oidc`; desktop: `verifier` | `{"token", "name", "verifier"?: string, "locale"?: "de"\|"en"}` | `201` (also when an existing account was joined or signed in meanwhile): `SessionResponse` plus `"redirect": string\|null`, cookies | `403 insecure_transport`; `410 token_invalid` (also a missing or wrong binding); `422` `name` rules, `locale` invalid; `403 invitation_required` / `410 invitation_invalid` (the result stays usable until it expires); `403 oidc_email_unverified`; `409 oidc_account_unverified`; `403 account_disabled`; `429` |
+| `POST /api/auth/oidc/desktop/exchange` | CSRF; `link` needs the session that started it | `{"code": "<64 hex>", "verifier": "<43 chars>"}` | `200`, by `result`: `{"result":"signed_in", …SessionResponse}` + cookies; `{"result":"needs_name","provider":{…},"email","name"}` (call `complete` with the same code as `token` and the verifier, within 30 min); `{"result":"linked", …methods body}` | `403 insecure_transport`; `410 token_invalid` (unknown or expired code, wrong verifier: a wrong verifier does not use the code up); `409 session_changed` (link); `403 oidc_email_unverified`; `409 oidc_account_unverified`; `409 identity_taken`; `403 invitation_required` / `410 invitation_invalid`; `403 account_disabled`; `429` |
+| `GET /api/auth/methods` | session | — | `200 {"password": bool, "providers":[{"id","name","configured": bool,"connected": {"email": string,"since": ts}\|null}]}`: configured providers in config order, then providers still connected after the operator turned them off (`configured: false`). `since` is when it was connected | `401` |
+| `DELETE /api/auth/oidc/{provider}` | session, CSRF | — | `200` methods body; the identity is gone, every session stays | `401`; `404 not_found` (not connected); `409 password_required` (no password); `429` |
+
+`redirect` follows the web `safeRedirect` rule (a path starting with `/`, not `//` or `/\`, no control characters, at most 2048 chars); anything else is dropped. A `redirect` of the form `/invite/{code}` also carries a server invite for the admission gate, like `server_invite` at registration.
+
+**Callback destinations (web flow).** The flow is single use, and its `gelabber_oidc` cookie must match:
+
+- Signed in: session and CSRF cookies set, `gelabber_oidc` cleared, `Location: {redirect or /}`.
+- New account: `Location: /sign-in/name#token=<64 hex>` (a result valid 30 min; `pending`, then `complete`).
+- Link done: `Location: /settings/konto?connected={provider}`.
+- Sign-in error: `/login?oidc_error={code}`; refused by the admission gate: `/register?oidc_error=invitation_required|invitation_invalid` with `invitation` kept. Both keep the flow's `redirect`. Link error: `/settings/konto?oidc_error={code}`.
+- Codes: `cancelled` (the person declined at the provider), `expired` (unknown, used or expired state, or a missing or foreign `gelabber_oidc`), `failed` (provider error, token exchange or `id_token` check failed, provider turned off meanwhile), `email_unverified`, `account_unverified`, `identity_taken`, `invitation_required`, `invitation_invalid`, `account_disabled`, `insecure_transport`, `session_changed`.
+
+**Desktop flow** (no cookie; the app proves with PKCE that it started the flow):
+
+1. Bind a listener on `127.0.0.1:0` (never `localhost` or `0.0.0.0`). Make a verifier (32 random bytes, base64url without padding, 43 chars), its `S256` challenge, and a `state` of 43..=128 URL-safe chars.
+2. `POST …/start` with `desktop: {port, state, challenge}`, then open `url` in the system browser.
+3. The callback redirects the browser to `http://127.0.0.1:{port}/callback?state={state}&code={64 hex}` (a result valid 5 min), or `…&error={code}` with the codes above. A flow lost before that (unknown state) has no port to go to; the app times out. Accept only `GET /callback` with the matching `state`.
+4. `POST …/desktop/exchange {code, verifier}`. A link needs the session that started it, else `409 session_changed`.
+
+**Which account a sign-in opens** (`auth/oidc/link.rs`), in this order: a known provider identity signs its account in; without an address the provider marks verified → `oidc_email_unverified`, nothing created; a confirmed account with the address gets the identity (with account mail on, a `provider_connected` mail); an unconfirmed pending registration is taken over at `complete` (its password, tokens and sessions dropped); an account never confirmed (registered while mail was off) → `oidc_account_unverified`; otherwise a new account after the admission gate (`API_REGISTRATION`). A disabled account is refused with `account_disabled` and never taken over. A link attaches the identity to the signed-in account (no-op when already there) and confirms its address when the provider's verified address is the account's own.
+
+### 2.4 Signed-in devices (v0.10, `backend/api/src/auth/devices.rs`, `auth/device.rs`)
+
+Every session records the device it was issued to, parsed from the `User-Agent` of the request that receives the session cookie (in `signed_in`: login, register, password change, verify-email, password reset, and a provider sign-in, where the desktop app's own `exchange`/`complete` request counts, not the system browser). Only the two codes are stored; the raw `User-Agent` is never stored or logged. A session from before v0.10 has `unknown`/`other` until its next renewal (§2.2, `session::touch`) fills them from that request; a known device is never overwritten.
+
+- **Native app:** `User-Agent: Gelabber-Desktop/{version} ({os})`, `{os}` one of `linux`, `windows`, `macos` (compile-time target) → `desktop` and that OS. Without the parenthesis (apps older than v0.10) → `desktop` / `other`.
+- **Browsers**, first match wins: `Edg/` → `edge`; `Firefox/` → `firefox`; `Chrome/` or `Chromium/` → `chrome`; `Safari/` without `Chrome` → `safari`; any other `Mozilla/…` → `browser`; anything else (or no header) → `unknown` / `other`.
+- **OS of a browser**, first match wins: `Android` → `android`; `iPhone`/`iPad`/`iPod` → `ios`; `Windows` → `windows`; `Mac OS X`/`Macintosh` → `macos`; `Linux`/`X11` → `linux`; else `other`.
+
+`DeviceSession`: `{id: uuid, client: "desktop"|"firefox"|"chrome"|"edge"|"safari"|"browser"|"unknown", os: "linux"|"windows"|"macos"|"android"|"ios"|"other", created_at: ts, last_used_at: ts, current: bool}`. `last_used_at` moves with the sliding expiry, so it is accurate to one renewal step (idle/12, at most an hour); clients show day-level words only, and "just now" for `current`.
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/auth/sessions` | — | `200 {"sessions": DeviceSession[]}`: live sessions (`expires_at > now`) of the account, the caller's own first, then `last_used_at` DESC, `id`; at most 50 | `401` |
+| `DELETE /api/auth/sessions/{id}` | — (CSRF) | another session of the account: `204`; its sockets close and its media tickets end, its push subscriptions go with it. The caller's own session: the same as `POST /api/auth/logout`, `200 {"csrf_token"}` with the session cookie cleared and CSRF rotated | `401`; `403 csrf_invalid`; `404 not_found` for an unknown or expired id, another account's session, or an id that is not a UUID |
 
 ---
 
@@ -259,10 +335,11 @@ Check order in `login` (`auth/mod.rs:273-320`): transport → `422` (email rules
 | `banner_color` | nullable string | `#rrggbb` lower-case |
 | `banner_url` | nullable string | only `/api/banners/{user}/{file}` |
 | `avatar_decoration` | nullable string | `ring` \| `glow` \| `rainbow` \| `stars` |
+| `locale` | string | `de` \| `en` (migration 0030, v0.10): the account's language for both clients, push and mail. Missing from servers older than v0.10 |
 
 All card keys are always present (serialised `null` when unset). Key order on the wire: as listed.
 
-`PublicProfile` (`auth/user.rs:42-51`): same as `User` without `email`.
+`PublicProfile` (`auth/user.rs:42-51`): same as `User` without `email` and `locale`; member lists do not carry `locale` either.
 
 ### 3.2 Endpoints
 
@@ -275,6 +352,7 @@ All card keys are always present (serialised `null` when unset). Key order on th
 | `PUT /api/me/banner` | `session.ts:455` | raw bytes, web 960×320 WebP/JPEG | `200 User` with new `banner_url` | as avatar, max 960×320, body ≤ 1 MiB |
 | `GET /api/avatars/{user}/{file}` | `<img src>` | cookie | `200` image bytes; `Content-Type` sniffed (`image/png|jpeg|webp`), `Cache-Control: private, max-age=31536000, immutable`, `X-Content-Type-Options: nosniff` (`avatars.rs:327-363`) | `401` without session; `404` unknown/oversized. Any signed-in user may load any avatar. |
 | `GET /api/banners/{user}/{file}` | `<img src>` | cookie | same headers | `404` unless the card is visible to the viewer (same rule as `/api/users/{id}`) |
+| `PUT /api/me/locale` | `pages/AppearanceSettings.tsx` (Sprache) | `{"locale":"en"}` | `200 {"locale":"en"}`; every socket of the account gets `{"op":"lc","l":"en"}` (protocol-gateway §3). Push titles and account mail follow from the next one on | `422 validation_failed` with `fields.locale` `required` (missing or `null`) \| `invalid`; `401 unauthenticated` (also if the row vanished); `403 csrf_invalid` |
 
 ### 3.3 Account themes (`backend/api/src/themes.rs`; web `web/src/theme/account.ts:119-240`, `web/src/theme/model.ts:23-30`)
 
@@ -297,6 +375,62 @@ Keys are **camelCase** here (only place in the API). `deny_unknown_fields` on ev
 | `PUT /api/me/themes` | full `ThemeDocument` with the `revision` last read; body ≤ 64 KiB (`themes.rs:128`) | `200 ThemeDocument` with `revision` = old + 1 | `400 bad_request` invalid document, unknown key, or body > 64 KiB (the JSON extractor maps the length-limit rejection to the envelope, not a plain 413); `409 theme_conflict` when the stored revision ≠ sent revision (or a row exists and sent revision is 0) |
 
 Web flow: on sign-in `GET`; if `revision === 0` the device's current local choice is imported via a `PUT` (`account.ts:133-140`). Each change is applied locally first, then `PUT`. While a locally cached change is still pending at load, the status line is `Noch nicht synchronisiert.` (`account.ts:93`). On `409` the UI state is `conflict` with `Auf einem anderen Gerät geändert. Deine Änderung bleibt erhalten. Erneut anwenden übernimmt sie auf den aktuellen Stand.`; "retry" does `GET` then re-applies the pending operation and `PUT`s (`account.ts:180-233`). Other failures: `Noch nicht synchronisiert. Deine Änderung ist hier gespeichert.`; load failure: `Themes konnten nicht geladen werden. Bitte erneut versuchen.`; malformed server document: `Unbekanntes Theme-Format vom Server.` / `Unbekanntes Theme-Format.`; deleting the active custom theme falls back to `active: "dark"`.
+
+### 3.4 Deleting the account and exporting its data (v0.10, `backend/api/src/account/`)
+
+**Deleting.** `DELETE /api/me` (CSRF). Body `{"password": string}`, or for an account without a password (§2.3) `{"email": string}` (the account's own address, compared like a login address).
+
+Checks, in this order:
+
+1. `401` without a session.
+2. Account with a password: `422 password: required` when empty; `429` while the account's login lockout holds; `422 password: wrong` (also > 128 chars), counted like a failed login. Account without one: `403 reauth_required` unless the session was signed in less than 10 minutes ago (`REAUTH_WINDOW`; the client offers to confirm with the provider again), then `422 email: required` or `email: wrong`.
+3. `409 owns_servers` while the account owns any server, blocked ones included, with `servers: [{id, name, member_count}]` in the envelope (§1.5). The person transfers (§4.2 `POST /api/servers/{id}/transfer`) or deletes each one first.
+
+Success: `202 {"csrf_token"}` with the cookies of a logout. At that moment the account is marked deleted and every session ends (sockets and media tickets close); its sign-in tokens, server memberships (with their roles), the invites it created and its data export are removed; members of its servers get `{"k":"x"}` (protocol-gateway §4.2). From then on it cannot sign in (`401 invalid_credentials`), a password reset sends nothing, `GET /api/users/{id}` and `POST /api/dms` with its id answer `404`, and the address cannot be registered again until the purge is done. A second request answers `401`.
+
+In the background a worker then deletes its messages (replies to them render as `{id, deleted: true}`, mentions as an unknown user), its DM channels with both sides' messages (the peer gets `{"op":"dm","c":<channel>}`, its rediscovery reloads `/api/dms` without the channel, and the channel's routes answer `404`), its files, avatar and banner, the reactions it gave, and last the account row. Bans it issued stay with `banned_by: null` (§4.3). With account mail on, the address gets a "your account was deleted" mail in the account's language when the purge is done.
+
+**Exporting.** `ExportView`: `{state: "pending"|"running"|"ready"|"failed", requested_at: ts, finished_at: ts|null, expires_at: ts|null, size_bytes: int|null}`.
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/me/export` | — | `200 {"export": ExportView \| null, "mail": bool}`; `mail` as `GET /api/auth/mail`. A ready export past `expires_at` shows as `null` | `401` |
+| `POST /api/me/export` | none (CSRF) | `202 {"export": ExportView, "mail": bool}` with `state: "pending"`; replaces a `failed` export, a ready one requested 24 h ago or more, and one past `expires_at` (its archive is deleted) | `401`; `409 export_pending` (one is `pending` or `running`); `429 rate_limited` with `retry_after`/`Retry-After` = seconds until 24 h after the ready export's `requested_at` |
+| `GET /api/me/export/download` | — | the ready archive, `application/zip`, `Content-Disposition: attachment; filename="gelabber-export-YYYY-MM-DD.zip"` (UTC date of `finished_at`). Redirect mode: `307` to MinIO, `Vary: Cookie`, `Cache-Control: private, no-store`; proxy mode: `200`/`206` stream as an attachment download (§9.2) | `401`; `404` (none ready, or past `expires_at`); `416` |
+
+While an export is `pending` or `running`, clients poll `GET /api/me/export` (the web every 10 s while the page is visible). A build that fails is retried a minute later and is `failed` after its third attempt. An archive larger than `API_EXPORT_MAX_BYTES` (default 10 GiB) is `failed` at once. A ready archive is kept `API_EXPORT_RETENTION_HOURS` (default 168) and then deleted. With account mail on, the account gets a mail when it is ready that links to `/settings/konto` (no token: the download needs the session). A native client streams the download to the file the person picked rather than holding it in memory.
+
+**Archive layout.** Stored (uncompressed) ZIP entries. JSON is UTF-8 and pretty-printed; times are RFC 3339 UTC.
+
+```
+README.txt                                  short explanation, in the account's language
+account.json                                { id, email, name, created_at, email_verified_at, bio, pronouns,
+                                              status_text, accent_color, banner_color, avatar_decoration,
+                                              notifications_hide_content, locale,
+                                              themes: <account theme document | null>,
+                                              notification_settings: [ {scope_kind, scope_id, level, muted, muted_until, updated_at} ],
+                                              sessions: [ {client, os, created_at, last_used_at} ],   live sessions only
+                                              servers: [ {id, name, owner: bool, joined_at} ],
+                                              invites: [ {code, server_id, created_at, expires_at, max_uses, uses} ] }
+profile/avatar.<ext>, profile/banner.<ext>  uploaded images only; ext png | jpg | webp | gif | bin from the stored type
+messages/servers/<server-id>/<channel-id>.json
+messages/dms/<channel-id>.json
+reactions.json                              [ {message_id, channel_id, emoji} ]
+files/<attachment-id>/<file name>           every file the person sent with a message
+```
+
+A channel file:
+
+```json
+{ "channel": { "id", "name", "kind", "server": {"id","name"} | null, "peer": {"id","name"} | null },
+  "messages": [ { "id", "created_at", "edited_at", "content", "reply_to", "gif",
+                  "system_kind", "system_params",
+                  "attachments": [ {"id","filename","content_type","size_bytes","path": "files/<id>/<file name>" | null} ] } ] }
+```
+
+- Only messages the person wrote, in `(created_at, id)` order, also in servers they have left.
+- `<file name>` is the attachment's name made safe as one path part: path separators, characters Windows forbids (`<>:"/\|?*`) and control characters become `_`, it is cut to 200 bytes, leading and trailing dots and spaces go, a Windows device name (`CON`, `COM1`, …) gets a leading `_`, and an empty name becomes `file`. `path` is `null` when the object was gone while the archive was built.
+- Push endpoints and keys, the password hash, session tokens and other people's messages are never part of it.
 
 ---
 
@@ -331,6 +465,7 @@ German labels (`web/src/servers/permissions.ts:6-51`):
 | `role` | `"owner"` \| `"member"` |
 | `permissions` | Permission[] — caller's effective set (all eight for owner) |
 | `member_permissions` | Permission[] — mask every non-owner holds |
+| `blocked` | bool (v0.10) — an operator blocked the server (§4.5). Missing from servers older than v0.10: read as `false` |
 
 `Category` (`servers/channel.rs:80-86`): `{id, server_id, name, created_at}`.
 `Channel` (`servers/channel.rs:88-96`): `{id, server_id: uuid (nullable; null only for DM channels), category_id: nullable uuid, name, kind: "text"|"voice"|"dm", created_at}`.
@@ -350,7 +485,7 @@ New server content (`servers/mod.rs:194-213`): category `Textkanäle` with text 
 | `GET /api/servers/{id}` | `getServer` (21) | — | `200 ServerDetail` | `404` non-member |
 | `PATCH /api/servers/{id}` | `updateServer` (27) | `{name?, member_permissions?: Permission[]}` (null/absent = unchanged; `[]` = no permissions) | `200 ServerView` | `manage_server`; `422 name …`, `member_permissions: invalid` (unknown name) |
 | `DELETE /api/servers/{id}` | `deleteServer` (37) | — | `204` | owner only (`403 Only the server owner can do this.`) |
-| `POST /api/servers/{id}/leave` | `leaveServer` (40) | none | `204` | owner → `403 The owner cannot leave; delete the server instead.` |
+| `POST /api/servers/{id}/leave` | `leaveServer` (40) | none | `204` | owner → `403 The owner cannot leave; delete the server instead.` (from v0.10 the owner can also transfer it first, see `/transfer` below) |
 | `PUT /api/servers/{id}/icon` | `uploadServerIcon` (31) | raw image ≤ 512 KiB, ≤ 256×256, PNG/JPEG/WebP (web: 256×256 WebP via the avatar preparer) | `200 ServerView` | `manage_server`; `400`; `429` up bucket |
 | `DELETE /api/servers/{id}/icon` | `removeServerIcon` (34) | none | `200 ServerView` | `manage_server` |
 | `GET /api/server-icons/{server}/{file}` | `<img>` (`components/ServerIcon.tsx:18`) | cookie | image, same headers as avatars | `401`; any signed-in user |
@@ -360,12 +495,13 @@ New server content (`servers/mod.rs:194-213`): category `Textkanäle` with text 
 | `POST /api/servers/{id}/channels` | `createChannel` (55) | `{name, kind: "text"\|"voice", category_id: uuid-string \| ""}` (web always sends `category_id`, `""` for none; absent/null also = none; `kind` absent = text) | `201 Channel` | `manage_channels`; `422 kind: invalid` (incl. `"dm"`), `name required/too_long/invalid`, `category_id: invalid` (unparseable or other server) |
 | `PATCH /api/channels/{id}` | `updateChannel` (65) | `{name?, category_id?}`; `category_id: ""` detaches, absent/null = unchanged | `200 Channel` | `manage_channels` |
 | `DELETE /api/channels/{id}` | `deleteChannel` (76) | — | `204`; voice occupants and tickets are revoked | `manage_channels` |
+| `POST /api/servers/{id}/transfer` | v0.10, Servereinstellungen → Gefahrenzone | `{user_id: string}` | `200 ServerView` as the caller now sees it (`role: "member"`, keeping the base role and the roles they held); members get `{"k":"o","owner_id"}` (protocol-gateway §4.2) | owner only (`403 forbidden`, checked before the body); `404` caller not a member; `403 server_blocked`; `422 user_id: required` (missing, `null` or blank) \| `invalid` (not a UUID, or the caller's own id); `404` target not a current member (unknown, outsider, banned), under account deletion or disabled by an operator |
 
 Text-channel name normalisation (server, `servers/validate.rs:30-62`; web preview `slugifyChannelName`, `web/src/servers/rules.ts:20-45`): after trim/length check, lower-case; whitespace, `_` and `-` runs → one `-`; `#` removed; no leading/trailing `-`; empty result → `name: invalid`. Voice names are kept as typed (trimmed).
 
 ### 4.3 Members, moderation (`servers/moderation.rs`)
 
-`Ban`: `{user_id, name, avatar_url: nullable, banned_by: uuid, banned_at: ts}`, ordered by `banned_at`, user_id.
+`Ban`: `{user_id, name, avatar_url: nullable, banned_by: nullable uuid, banned_at: ts}`, ordered by `banned_at`, user_id. `banned_by` is `null` once the account that issued the ban was deleted (v0.10); the ban stays.
 
 | Method & path | Web fn | Request | Success | Errors |
 |---|---|---|---|---|
@@ -391,7 +527,82 @@ Code: 12 chars from `abcdefghjkmnpqrstuvwxyz23456789` (`backend/shared/src/ticke
 | `GET /api/invites/{code}` | `previewInvite` (88) | — (needs session) | `200 InvitePreview` | `401` (anonymous → web sends to login with redirect back), `403 banned`, `410 invite_invalid` (only for non-members), `404` |
 | `POST /api/invites/{code}/join` | `joinInvite` (91) | none | `200 ServerView` (also when already a member; then `uses` is not incremented) | `403 banned`, `410 invite_invalid`, `404` |
 
+From v0.10 both invite routes answer `410 invite_invalid` for an invite of a blocked server (§4.5), to members as well; the preview checks this before `banned`.
+
 Web invite terms (`web/src/servers/inviteTerms.ts:6-56`): expiry options `1 Stunde` (1 h), `24 Stunden` (24), `7 Tage` (168), `Nie` (omit); uses `1`, `5`, `25`, `Unbegrenzt` (omit); default 7 Tage / Unbegrenzt; summary text `gültig 7 Tage · unbegrenzt nutzbar` (pattern `gültig ${label}` or `unbegrenzt gültig`, then `${n}-mal nutzbar` or `unbegrenzt nutzbar`).
+
+### 4.5 Blocked servers and reports (v0.10, `operator/servers.rs`, `operator/reports.rs`)
+
+An instance operator can block a server. While it is blocked:
+
+- `GET /api/servers` still lists it, with `blocked: true`, so the client can explain the block; the server opens to a notice ("Dieser Server wurde vom Betreiber gesperrt."), with "Server verlassen" for members and "Server löschen" for the owner.
+- Every other route of the server, its channels and messages answers `403 server_blocked` for every member, the owner included: `GET /api/servers/{id}`, message history and writes, media tickets (§11), invites, bans, notification settings and the rest. Only `POST /api/servers/{id}/leave` and `DELETE /api/servers/{id}` work as before.
+- `GET /api/invites/{code}` and `POST /api/invites/{code}/join` of its invites answer `410 invite_invalid`, to members too.
+- `GET /api/messages/unread` and the read-all routes leave its channels out.
+- Open sockets get `{"op":"err","e":"server_blocked","s":S}` and lose their voice seat in it (protocol-gateway §3.1).
+
+Unblocking restores everything; the client sees it on its next `GET /api/servers`. No event announces it.
+
+Reporting a server:
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `POST /api/servers/{id}/reports` | `{"reason": "spam" \| "harassment" \| "sexual" \| "illegal" \| "other", "details"?: string}`; `details` trimmed, ≤ 1000 chars, line breaks and tabs allowed, required for `other` | `201 {"id", "created_at"}`; when the caller already has an open report of this server: `200` with that one | `404` neither a member nor able to see its listing (or unknown/unparseable id); `403 server_blocked` (members); `429 rate_limited` (`report`, 10 per hour per account, counted before validation); `422` fields `reason: invalid`, `details: too_long \| invalid \| required` |
+
+Members can report, and while the directory is on (§4.7) so can anyone who can see the server's listing; that is how "Melden" on a listing reports. When the caller can see the listing, members included, the report stores a snapshot of it (`name`, `icon_url`, `description`, `language`, `join_mode` at that moment), so later edits cannot hide what was reported. Reports are read only by operators; owners never see them. `GET /api/operator/reports` and the resolve answer (§4.6) return that snapshot as the report's `snapshot`, or `null` when the report has none.
+
+### 4.6 Operator area "Betrieb" (v0.10, web only)
+
+`/api/operator/*` serves the web pages under `/betrieb`. A client without a session gets `401`, an account that is not an operator `404` on every one of these routes. The native app has no operator pages: for an operator (`SessionResponse.operator`) its user menu entry "Betrieb" opens `<instance origin>/betrieb/<page>` in the system browser, with `page` one of `einladungen`, `konten`, `server`, `meldungen`, `auslastung`.
+
+| Method & path | Request | Success |
+|---|---|---|
+| `GET /api/operator` | — | `200 {"registration": "open" \| "invitation", "mail": bool, "open_reports": int}` |
+| `GET /api/operator/invitations` | `?status=open\|used\|all&offset=` | `200 {"invitations": Invitation[], "total": int}` (50 per page) |
+| `POST /api/operator/invitations` | `{"email"?, "note"?, "expires_in_days"?: 1\|7\|30\|null, "send_mail"?: bool}` | `201 Invitation` |
+| `DELETE /api/operator/invitations/{id}` | — | `204` |
+| `GET /api/operator/accounts` | `?q=&filter=all\|disabled\|pending&offset=` | `200 {"accounts": Account[], "total": int}` |
+| `POST /api/operator/accounts/{id}/disable` | `{"reason"?: string}` (send `{}` without one) | `200 Account`; the account's sessions, sockets and media tickets end |
+| `POST /api/operator/accounts/{id}/enable` | — | `200 Account` |
+| `GET /api/operator/servers` | `?q=&filter=all\|listed\|reported\|blocked&offset=` | `200 {"servers": ServerAdmin[], "total": int}` |
+| `POST /api/operator/servers/{id}/delist`, `/relist`, `/block`, `/unblock` | delist `{"reason"?}` (send `{}` without one), block `{"reason"}` (1..=500, required); relist and unblock none | `200 ServerAdmin` |
+| `GET /api/operator/reports` | `?status=open\|closed&offset=` | `200 {"reports": Report[], "total": int}` |
+| `POST /api/operator/reports/{id}/resolve` | `{"status": "dismissed" \| "actioned", "note"?}` | `200 Report` |
+| `GET /api/operator/usage` | — | `200` counts of accounts, servers, messages, storage and live use |
+
+The shapes and every error are in `backend/api/src/operator/` and issue #517. An account under deletion (§3.4) is in neither the account list nor the usage counts, and disabling or enabling it answers `404`. Every successful call writes a row of the operator audit (deploy/README.md, "Betrieb"), except `GET /api/operator` and disabling an account that is disabled already. A call that changes nothing else records `"changed": false` in the row's `detail`.
+
+### 4.7 Directory "Entdecken" (v0.10, `backend/api/src/directory/`)
+
+Off unless the instance sets `API_DIRECTORY=true` (deploy/README.md, "Verzeichnis"). Signed-in only: every route answers `401` without a session, also while the directory is off. While it is off, `GET /api/directory` answers `{"enabled": false, "languages": []}`, and every `/api/directory/listings*` route and `/api/servers/{id}/listing` answer `404`; the queue routes keep working.
+
+A listing is **visible** to the caller while the owner has it `listed`, the server is neither delisted nor blocked by an operator (§4.5, §4.6), and the caller is not banned from it. A listing the caller cannot see answers `404` on every route, like an unknown id.
+
+Shapes:
+
+- `Language`: `{"code": "de", "name": "Deutsch", "listings": 3}`; `name` is the endonym and is not translated; `listings` counts the listings visible to the caller. The codes, in this order: `de`, `en`, `es`, `fr`, `it`, `nl`, `pl`, `pt`, `tr`, `uk`.
+- `Listing`: exactly `{"server_id", "name", "icon_url": string|null, "description", "language", "member_count": int, "join_mode": "open"|"request", "member": bool, "request": null|"pending"|"declined", "retry_at": ts|null}`. `member` and `request` are the caller's own; `request` is `"declined"` only while its 7-day cooldown lasts, and `retry_at` is then when that cooldown ends (otherwise `null`). `icon_url` loads through `GET /api/server-icons/…`, which any signed-in account may read.
+- `ListingSettings`: `{"listed": bool, "description": string, "language": string|null, "join_mode": "open"|"request", "delisted": bool, "listed_at": string|null}`. Without a saved form: `listed: false`, `description: ""`, `language: null`, `join_mode: "request"`, `listed_at: null`. `delisted` says an operator took the server out; the operator's reason is not shown.
+- `JoinRequest`: `{"user_id", "name", "avatar_url": string|null, "message", "created_at"}`.
+
+| Method & path | Who | Request | Success | Errors |
+|---|---|---|---|---|
+| `GET /api/directory` | any account | — | `200 {"enabled": bool, "languages": Language[]}`; all ten languages, also those with `listings: 0` | — |
+| `GET /api/directory/listings` | any account | `?q=&language=&offset=`: `q` trimmed, ≤ 100 chars, no control characters, blank = no search, matches name or description case-insensitively with `%` and `_` literal; `language` a code from the list, empty = all; `offset` a multiple of 30 from 0 to 990 | `200 {"listings": Listing[], "next_offset": int\|null}`, 30 per page, ordered by `member_count` descending, then first listed, then server id; `next_offset` is `null` on the last page | `422` fields `q: too_long \| invalid`, `language: invalid`, `offset: invalid`; `429 rate_limited` (`dir_search`, after validation) |
+| `POST /api/directory/listings/{id}/join` | any account | none | `200 ServerView` (§4.1, as `POST /api/invites/{code}/join`); also when already a member | `404` not visible; `409 join_request_required` (join mode `request`, not a member); `429 rate_limited` (`dir_join`, counted first; a member's repeat neither counts nor is refused) |
+| `POST /api/directory/listings/{id}/request` | any account | `{"message"?: string}`: trimmed, one line, ≤ 300 chars; absent = empty | `201 {"request": "pending"}` new; `200 {"request": "pending"}` when one is pending already (its message is kept) | in this order: `422` field `message: too_long \| invalid` (before the limit); `429 rate_limited` (`dir_join`); `404` not visible; `409 already_member`; `409 join_request_declined` with `retry_after` while the cooldown lasts; `409 join_requests_full` when the caller has 10 pending requests or the server 100 |
+| `DELETE /api/directory/listings/{id}/request` | the requester | — | `204` | `404` no pending request. No visibility check, so it works after a delist |
+| `GET /api/servers/{id}/listing` | any member | — | `200 ListingSettings` | `404` not a member; `403 server_blocked` |
+| `PUT /api/servers/{id}/listing` | owner | `{"listed": bool, "description": string, "language": string, "join_mode": "open"\|"request"}`, all four required; `description` trimmed, one line, ≤ 300 chars, not empty while `listed` | `200 ListingSettings`; while delisted the save succeeds and the listing stays hidden (`delisted: true`) | `404` not a member; `403 forbidden` not the owner; `403 server_blocked`; `422` fields `listed: required`, `description: required \| too_long \| invalid`, `language: required \| invalid`, `join_mode: required \| invalid` |
+| `GET /api/servers/{id}/join-requests` | owner, `moderate_members` | — | `200 JoinRequest[]`, pending only, oldest first, at most 100 | `404` not a member; `403 forbidden`; `403 server_blocked` |
+| `POST /api/servers/{id}/join-requests/{user_id}/accept` | owner, `moderate_members` | none | `204`; the requester becomes a member (`jn` to them), or only loses the request if they are a member already | `404` no pending request, or the requester was banned meanwhile (the request is deleted); `403 forbidden`; `403 server_blocked` |
+| `POST /api/servers/{id}/join-requests/{user_id}/decline` | owner, `moderate_members` | none | `204`; the requester sees `request: "declined"` for 7 days | `404` no pending request; `403 forbidden`; `403 server_blocked` |
+
+- The queue routes work whatever the listing, the delist or `API_DIRECTORY` say, so pending requests can always be answered.
+- After every new request (`201`), withdrawal, accept and decline, the owner and every member holding `moderate_members` get `jq` with the new pending count; an accepted requester gets `jn` (protocol-gateway §3). Both are best effort; the next REST read catches up.
+- Joining by invite, joining through the directory and a ban each delete the person's request for that server; these send no `jq`.
+- The join mode governs only the directory: invites work as before. Switching the mode or unlisting keeps the pending requests.
+- Reporting a listing uses `POST /api/servers/{id}/reports` (§4.5).
 
 ---
 
@@ -579,7 +790,7 @@ Limits (`attachments/validate.rs:7-35`; web `messages/rules.ts:7-14`): file ≤ 
 ## 11. Media ticket (REST part only) (`backend/api/src/media.rs:33-90`; web `voice/media.ts:195-199`)
 
 `POST /api/channels/{id}/media-ticket`, no body → `200 {ticket: string (12 chars of the invite alphabet), expires_in: int seconds (default 30, capped by session expiry), media_path: "/media/ws", ice_servers: [{urls: string[], username?: string, credential?: string}]}`.
-Errors, in check order (`media.rs:45-67`): `404` unknown/DM/non-member channel; `401` session gone; `403 forbidden` (`message: "You need the join_voice permission."`) — checked **before** the channel kind, so a text channel without `join_voice` also answers 403; `400 bad_request` for a text channel. The 400 body's `message` is the generic `Request body could not be read.` — the "Media tickets are for voice channels." text is only logged (`BadRequest(detail)` never reaches the wire, `error.rs:133, 184`). `ice_servers[].username`/`credential` are omitted (not `null`) when absent (`shared/src/ice.rs:16-22`); `expires_in` default from `MEDIA_TICKET_TTL_SECS` = 30 (`config.rs:89`). The ticket is the only credential the media socket uses (web builds `ws(s)://<host>/media/ws`, `voice/media.ts:191-194`).
+Errors, in check order (`media.rs:45-67`): `404` unknown/DM/non-member channel; `401` session gone; `403 forbidden` (`message: "You need the join_voice permission."`) — checked **before** the channel kind, so a text channel without `join_voice` also answers 403; `400 bad_request` for a text channel; v0.10: `403 server_blocked` for a channel of a blocked server (§4.5). The 400 body's `message` is the generic `Request body could not be read.` — the "Media tickets are for voice channels." text is only logged (`BadRequest(detail)` never reaches the wire, `error.rs:133, 184`). `ice_servers[].username`/`credential` are omitted (not `null`) when absent (`shared/src/ice.rs:16-22`); `expires_in` default from `MEDIA_TICKET_TTL_SECS` = 30 (`config.rs:89`). The ticket is the only credential the media socket uses (web builds `ws(s)://<host>/media/ws`, `voice/media.ts:191-194`).
 
 ---
 
@@ -646,7 +857,8 @@ Everything below works with today's backend; no bearer auth exists yet (planned 
 | Item | Status |
 |---|---|
 | `Origin` header | Not checked on REST at all. On the `/ws` upgrade it is optional: absent → allowed; present → must be `http(s)://` + the request's `Host` (default ports ignored), `null` and non-ASCII refused, and with `API_COOKIE_SECURE=true` an `http://` origin is refused unless loopback (`gateway/mod.rs:75-117`). tokio-tungstenite sends no `Origin` by default — leave it out. |
-| `Referer`, `Sec-Fetch-*`, `User-Agent`, `Accept` | ignored by the API |
+| `Referer`, `Sec-Fetch-*`, `Accept` | ignored by the API |
+| `User-Agent` | from v0.10 names the device in the account's device list (§2.4); send `Gelabber-Desktop/{version} ({os})` |
 | CSRF token format | the check only compares cookie and header; a client could set its own pair, but should use the server-issued token so `/api/auth/session` does not replace the cookie |
 | `Accept-Language` | only affects Klipy locale |
 
@@ -684,6 +896,7 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 |---|---|---|---|
 | GET | /api/auth/session | yes | 2 |
 | GET | /api/auth/mail | yes | 2 |
+| GET | /api/auth/registration | yes (v0.10) | 2 |
 | POST | /api/auth/register, /login, /logout, /logout-all, /password, /verify-email, /password-reset, /password-reset/confirm | yes | 2 |
 | GET, PATCH | /api/me | PATCH only | 3 |
 | GET | /api/users/{id} | yes | 3 |
@@ -725,6 +938,25 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 | POST | /api/channels/{id}/media-ticket | yes | 11 |
 | GET | /api/gifs, /api/gifs/trending, /api/gifs/search, /api/gifs/media | yes | 12 |
 | GET | /api/push/key; POST, DELETE /api/push/subscriptions | browser | 13 |
+| POST | /api/servers/{id}/reports | yes (v0.10) | 4.5 |
+| GET, POST, DELETE | /api/operator, /api/operator/* | operator pages only (v0.10) | 4.6 |
+| GET | /api/auth/providers, /api/auth/methods | yes (v0.10) | 2.3 |
+| POST | /api/auth/oidc/{provider}/start, /api/auth/oidc/pending, /api/auth/oidc/complete | yes (v0.10) | 2.3 |
+| GET | /api/auth/oidc/{provider}/callback | browser redirect (v0.10) | 2.3 |
+| POST | /api/auth/oidc/desktop/exchange | native only (v0.10) | 2.3 |
+| DELETE | /api/auth/oidc/{provider} | yes (v0.10) | 2.3 |
+| GET | /api/directory, /api/directory/listings | yes (v0.10) | 4.7 |
+| POST | /api/directory/listings/{id}/join | yes (v0.10) | 4.7 |
+| POST, DELETE | /api/directory/listings/{id}/request | yes (v0.10) | 4.7 |
+| GET, PUT | /api/servers/{id}/listing | yes (v0.10) | 4.7 |
+| GET | /api/servers/{id}/join-requests | yes (v0.10) | 4.7 |
+| POST | /api/servers/{id}/join-requests/{user_id}/accept, /decline | yes (v0.10) | 4.7 |
+| GET | /api/auth/sessions | yes (v0.10) | 2.4 |
+| DELETE | /api/auth/sessions/{id} | yes (v0.10) | 2.4 |
+| DELETE | /api/me | yes (v0.10) | 3.4 |
+| GET, POST | /api/me/export | yes (v0.10) | 3.4 |
+| GET | /api/me/export/download | link (v0.10) | 3.4 |
+| POST | /api/servers/{id}/transfer | yes (v0.10) | 4.2 |
 | GET | /health, /ready, /metrics | no | — |
 | GET | /ws (upgrade) | yes | gateway spec |
 
@@ -733,5 +965,5 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 - `transport_allowed` passes when the request has no `Host` header (`auth/mod.rs:547-550`). Over HTTP/2, hyper may expose the authority without a `Host` header, which would let plain-HTTP sign-in through. Not verified; do not rely on it.
 - Plain-text (non-envelope) error bodies: 413 from `DefaultBodyLimit` on raw-byte routes and axum's default 404/405 for unknown routes and methods. The client must map them by status code. Routes that take a JSON `Body<T>` turn an over-limit body into the envelope `400 bad_request` instead (`json.rs:28-40`, `BytesRejection`), e.g. `PUT /api/me/themes` > 64 KiB.
 - `ApiError::BadRequest(detail)` and `Forbidden(msg)` differ: a 400's `message` is always the generic `Request body could not be read.` (detail logged only), a 403 `forbidden` carries its per-call English text. The UI never shows `message`; it maps `error` to German.
-- Bearer auth, per-device session lists and `/ws` versioning do not exist yet (`docs/v0.9-plan.md:97-100, 324-329`). Cookie mode is the only option today.
+- Bearer auth and `/ws` versioning do not exist yet (`docs/v0.9-plan.md:97-100, 324-329`). Cookie mode is the only option today. Per-device session lists exist from v0.10 (§2.4).
 - Live gateway frames (`/ws`, `read`, `ns`, message `C/E/D` events whose delta is the same `Message` JSON) are covered by the gateway protocol spec, not here.

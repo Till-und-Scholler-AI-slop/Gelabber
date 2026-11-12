@@ -13,6 +13,8 @@ import { MemberPanel } from "../components/MemberPanel.tsx";
 import { formatFull } from "../components/messageTime.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { SkeletonRows } from "../components/ui/Skeleton.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { servers } from "../i18n/catalogs/servers.ts";
 import { listMessages } from "../messages/api.ts";
 import { useHasDraft } from "../messages/drafts.ts";
 import type { MentionMember } from "../messages/mentions.ts";
@@ -39,6 +41,7 @@ const UNREAD_SHOWN = 5;
 
 /** The front door uses the same live room and session as channel pages. */
 export function CommunityOverview({ server }: { server: ServerDetail }) {
+  const t = useT(servers);
   const userId = useUserId();
   const byUser = useLastChannel((s) => s.byUser);
   const voice = useVoice();
@@ -55,10 +58,10 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
 
   return (
     <div className="community-overview-layout">
-      <section className="community-overview" aria-label="Übersicht">
+      <section className="community-overview" aria-label={t("overview.label")}>
         <div className="community-overview__bar">
           <ChatIcon size={18} />
-          Übersicht
+          {t("overview.label")}
         </div>
         <div className="community-overview__body">
           <header className="community-overview__head">
@@ -66,9 +69,9 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
             <p>{overviewLine(server, roster, voice, userId)}</p>
             {server.members.length === 1 ? (
               <div className="community-overview__alone">
-                <p>Noch keine weiteren Mitglieder.</p>
+                <p>{t("overview.alone")}</p>
                 <Button size="sm" onClick={() => setInviting(true)}>
-                  Einladen
+                  {t("overview.invite")}
                 </Button>
                 <InviteDialog
                   server={server}
@@ -90,10 +93,10 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
             <div className="community-overview__no-room">
               <h2>
                 <SpeakerIcon size={18} />
-                Kein Sprachkanal
+                {t("overview.noRoom")}
               </h2>
               {can(server, "manage_channels") ? (
-                <p>Erstelle einen Sprachkanal in der Seitenleiste.</p>
+                <p>{t("overview.noRoomHint")}</p>
               ) : null}
             </div>
           )}
@@ -110,6 +113,7 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
 /** What is new in the text channels, newest first: one row per channel
  * with its latest message. Read and empty channels are the sidebar's. */
 function UnreadChannels({ server }: { server: ServerDetail }) {
+  const t = useT(servers);
   const badges = useBadges();
   const { data } = useReadState();
   const heading = useId();
@@ -128,7 +132,7 @@ function UnreadChannels({ server }: { server: ServerDetail }) {
   return (
     <section className="overview-unread" aria-labelledby={heading}>
       <h2 id={heading} className="overview-unread__title">
-        Ungelesen
+        {t("overview.unread")}
       </h2>
       <ul className="overview-unread__list">
         {channels.map((channel) => (
@@ -156,6 +160,7 @@ function UnreadRow({
   latestOrder: number | null;
   members: readonly MentionMember[];
 }) {
+  const t = useT(servers);
   const userId = useUserId();
   const generation = scopeGeneration();
   const draft = useHasDraft(userId, channel.id);
@@ -189,9 +194,9 @@ function UnreadRow({
       <span className="overview-unread__name">
         <span>{channel.name}</span>
         {draft ? (
-          <span className="channel-row-draft" title="Entwurf">
+          <span className="channel-row-draft" title={t("overview.draft")}>
             <PencilIcon size={13} />
-            <span className="sr-only">Entwurf</span>
+            <span className="sr-only">{t("overview.draft")}</span>
           </span>
         ) : null}
       </span>

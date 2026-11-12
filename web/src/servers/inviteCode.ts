@@ -1,6 +1,10 @@
 // What someone pastes into "Einladungslink oder Code": a full link, a link
 // without "https://", a bare `/invite/<code>` path or just the code.
 
+import { translate } from "../i18n/catalog.ts";
+import { servers } from "../i18n/catalogs/servers.ts";
+import { formatRelative } from "../i18n/format.ts";
+
 /** Same shape as the API's codes: 12 characters, nothing confusable. */
 const CODE = /^[abcdefghjkmnpqrstuvwxyz23456789]{12}$/;
 
@@ -43,11 +47,11 @@ export function parseInvite(input: string, origin: string): ParsedInvite {
 export function inviteInputMessage(error: InviteInputError): string {
   switch (error) {
     case "empty":
-      return "Bitte einen Einladungslink oder Code eingeben.";
+      return translate(servers, "join.error.empty");
     case "foreign":
-      return "Dieser Link gehört zu einem anderen Gelabber-Server.";
+      return translate(servers, "join.error.foreign");
     case "invalid":
-      return "Das sieht nicht wie ein Einladungslink aus.";
+      return translate(servers, "join.error.invalid");
   }
 }
 
@@ -65,9 +69,12 @@ export function inviteExpiry(
   if (!expiresAt) return null;
   const left = Date.parse(expiresAt) - now;
   if (Number.isNaN(left)) return null;
-  if (left <= 0) return "abgelaufen";
-  const format = new Intl.RelativeTimeFormat("de", { numeric: "auto" });
+  if (left <= 0) return translate(servers, "expiry.expired");
   const [unit, size] =
     UNITS.find(([, ms]) => left >= ms) ?? UNITS[UNITS.length - 1];
-  return `läuft ${format.format(Math.max(1, Math.round(left / size)), unit)} ab`;
+  return translate(servers, "expiry.in", {
+    when: formatRelative(Math.max(1, Math.round(left / size)), unit, {
+      numeric: "auto",
+    }),
+  });
 }

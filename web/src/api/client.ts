@@ -17,7 +17,8 @@ export type FieldCode =
   | "unavailable"
   | "not_editable"
   | "too_large"
-  | "mismatch";
+  | "mismatch"
+  | "too_many";
 
 export type FieldErrors = Partial<Record<string, FieldCode>>;
 
@@ -42,13 +43,34 @@ export type ApiErrorCode =
   | "upstream_quota"
   | "internal"
   | "network"
-  | "timeout";
+  | "timeout"
+  | "invitation_required"
+  | "invitation_invalid"
+  | "account_disabled"
+  | "server_blocked"
+  | "oidc_unavailable"
+  | "oidc_email_unverified"
+  | "oidc_account_unverified"
+  | "identity_taken"
+  | "password_required"
+  | "reauth_required"
+  | "oidc_wrong_origin"
+  | "session_changed"
+  | "join_request_required"
+  | "join_request_declined"
+  | "join_requests_full"
+  | "already_member"
+  | "owns_servers"
+  | "export_pending";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly status: number;
   readonly fields: FieldErrors;
   readonly retryAfter: number | null;
+  /** The whole error body, for codes that carry more than a message (such
+   * as `owns_servers` with its `servers`). */
+  readonly body: Readonly<Record<string, unknown>>;
 
   constructor(
     code: ApiErrorCode,
@@ -56,6 +78,7 @@ export class ApiError extends Error {
     message: string,
     fields: FieldErrors = {},
     retryAfter: number | null = null,
+    body: Readonly<Record<string, unknown>> = {},
   ) {
     super(message);
     this.name = "ApiError";
@@ -63,6 +86,7 @@ export class ApiError extends Error {
     this.status = status;
     this.fields = fields;
     this.retryAfter = retryAfter;
+    this.body = body;
   }
 }
 
@@ -88,6 +112,8 @@ export type SessionSinkOptions = {
   shared?: boolean;
   /** Shared cookie state changed; its authoritative identity is still loading. */
   invalidate?: boolean;
+  /** The session payload's `operator` flag, when the value came with one. */
+  operator?: boolean;
 };
 export type SessionSink = (user: unknown, options?: SessionSinkOptions) => void;
 
@@ -107,6 +133,8 @@ type CookieState = {
   userId: string | null;
   /** A password change: the cookie changes, the signed-in account does not. */
   keepsAccount?: true;
+  /** Signed out because the account was deleted, for the other tabs' notice. */
+  ended?: "deleted";
 };
 let observedCookieState = "";
 let adoptedCookieGeneration = "";
@@ -135,6 +163,21 @@ function readCookieState(): CookieState | null {
     );
   }
   return value as CookieState;
+}
+
+/** Whether the shared cookie state says the browser's account was deleted
+ * (#519) and nobody has signed in since. */
+export function sharedAccountDeleted(): boolean {
+  try {
+    const state = readCookieState();
+    return (
+      state?.phase === "settled" &&
+      state.userId === null &&
+      state.ended === "deleted"
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function sessionCookieGeneration(): string {
@@ -255,13 +298,20 @@ function withSessionCookieLock<T>(
 /** Tests: the lock itself, to see which actions it runs. */
 export const withSessionCookieLockForTests = withSessionCookieLock;
 
-function changesAuthCookies(path: string): boolean {
+function changesAuthCookies(path: string, method?: Method): boolean {
   return (
     path === "/auth/session" ||
     isSignInPath(path) ||
     path === "/auth/password" ||
-    isLogoutPath(path)
+    isLogoutPath(path) ||
+    isAccountDeletion(path, method)
   );
+}
+
+/** `DELETE /me` (#519): a deleted account's every session ends, this
+ * browser's cookie with them, as on a logout. */
+function isAccountDeletion(path: string, method?: Method): boolean {
+  return path === "/me" && method === "DELETE";
 }
 
 /**
@@ -273,7 +323,8 @@ function isSignInPath(path: string): boolean {
     path === "/auth/login" ||
     path === "/auth/register" ||
     path === "/auth/verify-email" ||
-    path === "/auth/password-reset/confirm"
+    path === "/auth/password-reset/confirm" ||
+    path === "/auth/oidc/complete"
   );
 }
 
@@ -364,6 +415,24 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "upstream_unavailable",
   "upstream_quota",
   "internal",
+  "invitation_required",
+  "invitation_invalid",
+  "account_disabled",
+  "server_blocked",
+  "oidc_unavailable",
+  "oidc_email_unverified",
+  "oidc_account_unverified",
+  "identity_taken",
+  "password_required",
+  "reauth_required",
+  "oidc_wrong_origin",
+  "session_changed",
+  "owns_servers",
+  "export_pending",
+  "join_request_required",
+  "join_request_declined",
+  "join_requests_full",
+  "already_member",
 ]);
 
 function toErrorCode(raw: string | undefined): ApiErrorCode {
@@ -382,7 +451,7 @@ export async function api<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const stamp = options.scope ?? sessionScope();
-  if (changesAuthCookies(path)) {
+  if (changesAuthCookies(path, options.method)) {
     return withSessionCookieLock(
       () => performAuthApi<T>(path, options, stamp),
       options.signal,
@@ -411,6 +480,7 @@ async function performAuthApi<T>(
 ): Promise<T> {
   requireAuthRequest(options, stamp);
   const explicit = path !== "/auth/session";
+  const deletion = isAccountDeletion(path, options.method);
   const previous = readCookieState();
   let changing: CookieState | null = null;
   if (explicit && typeof window !== "undefined") {
@@ -418,7 +488,10 @@ async function performAuthApi<T>(
       generation: randomUuid(),
       phase: "changing",
       userId: previous?.userId ?? stamp.userId,
-      ...(path === "/auth/password" ? { keepsAccount: true as const } : {}),
+      // Until it is done, a deletion may still be refused (wrong password).
+      ...(path === "/auth/password" || deletion
+        ? { keepsAccount: true as const }
+        : {}),
     };
     publishCookieState(changing);
   }
@@ -428,17 +501,18 @@ async function performAuthApi<T>(
     // Even a superseded response has already changed the browser's cookies.
     // Publish its actual identity before allowing the next auth intent to send.
     const valid = response.ok && isSessionPayload(payload);
-    const logout = response.ok && isLogoutPath(path);
+    const logout = response.ok && (isLogoutPath(path) || deletion);
     const user = logout ? null : valid ? payload.user : undefined;
     if (user !== undefined) {
       settleCookieIdentity(
         user?.id ?? null,
         changing?.generation,
-        changing?.keepsAccount,
+        logout ? undefined : changing?.keepsAccount,
+        deletion ? "deleted" : undefined,
       );
     } else if (
       changing &&
-      path === "/auth/password" &&
+      (path === "/auth/password" || deletion) &&
       previous?.phase === "settled" &&
       // Without Web Locks another tab may have published since.
       readCookieState()?.generation === changing.generation &&
@@ -460,6 +534,7 @@ async function performAuthApi<T>(
       sessionSink?.(user, {
         // A password change keeps the account, and with it its caches.
         force: explicit && !logout && path !== "/auth/password",
+        operator: operatorFlag(payload),
       });
     }
     return payload as T;
@@ -474,6 +549,7 @@ function settleCookieIdentity(
   userId: string | null,
   generation?: string,
   keepsAccount?: true,
+  ended?: "deleted",
 ): void {
   if (typeof window === "undefined") return;
   const previous = readCookieState();
@@ -489,6 +565,10 @@ function settleCookieIdentity(
     ...(keepsAccount || (same && previous.keepsAccount)
       ? { keepsAccount: true as const }
       : {}),
+    // So does a deletion's sign-out, re-settled by another tab's 401.
+    ...(ended || (same && previous.ended === "deleted")
+      ? { ended: "deleted" as const }
+      : {}),
   });
 }
 
@@ -500,6 +580,7 @@ function throwResponseError(response: Response, payload: unknown): never {
     body.message ?? `Request failed with status ${response.status}`,
     body.fields ?? {},
     typeof body.retry_after === "number" ? body.retry_after : null,
+    body,
   );
 }
 
@@ -550,7 +631,7 @@ async function requestWithCsrfRetry(
   const refresh = () => retryWithSession(path, options, stamp, first);
   // Auth already holds this lock. Other mutations keep bootstrap+retry in
   // one critical section so another tab cannot switch cookies between them.
-  return changesAuthCookies(path)
+  return changesAuthCookies(path, options.method)
     ? refresh()
     : withSessionCookieLock(refresh, options.signal);
 }
@@ -561,7 +642,7 @@ async function retryWithSession(
   stamp: SessionStamp,
   first: Response,
 ): Promise<Response> {
-  const auth = changesAuthCookies(path);
+  const auth = changesAuthCookies(path, options.method);
   const requireIntent = () =>
     auth
       ? requireAuthRequest(options, stamp)
@@ -585,7 +666,7 @@ async function retryWithSession(
     // new identity must never inherit the old mutation's intent.
     rememberCsrf(payload);
     settleCookieIdentity(actualId);
-    sessionSink?.(payload.user);
+    sessionSink?.(payload.user, { operator: operatorFlag(payload) });
   }
   // Credentials express an explicit sign-in intent, independent of whichever
   // account owns the shared cookie. An anonymous logout also revokes a sign-in
@@ -628,6 +709,16 @@ function isSessionPayload(payload: unknown): payload is {
       typeof user.email === "string" &&
       "name" in user &&
       typeof user.name === "string")
+  );
+}
+
+/** `operator` of a session payload (v0.10); older servers send none. */
+function operatorFlag(payload: unknown): boolean {
+  return (
+    payload !== null &&
+    typeof payload === "object" &&
+    "operator" in payload &&
+    payload.operator === true
   );
 }
 

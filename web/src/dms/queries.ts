@@ -23,6 +23,8 @@ import {
 import { notifyError } from "../components/toasts.ts";
 import * as remote from "./api.ts";
 import type { DirectMessage } from "./types.ts";
+import { translate } from "../i18n/catalog.ts";
+import { dms } from "../i18n/catalogs/dms.ts";
 
 export const dmKeys = {
   all: (userId: string, generation: number) =>
@@ -127,7 +129,7 @@ export function useOpenDm() {
     onSuccess: (dm, _userId, stamp) => cacheOpenedDm(client, stamp, dm),
     onError: (error, _userId, stamp) => {
       if (!stampHolds(stamp)) return;
-      notifyError(error, "Unterhaltung nicht geöffnet.");
+      notifyError(error, translate(dms, "open.failed"));
     },
   });
 }

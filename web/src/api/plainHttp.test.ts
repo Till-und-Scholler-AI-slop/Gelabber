@@ -102,6 +102,7 @@ describe("plain-http origin without Web Locks", () => {
     expect(session.useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(client.getCsrfToken()).toBe("c1");
     expect(warn).toHaveBeenCalledTimes(1);

@@ -20,6 +20,7 @@ use super::protocol::{
     VoiceEntry, plan_catch_up,
 };
 use crate::error::ApiError;
+use crate::servers::permissions::Permission;
 
 mod event_log;
 mod fanout;
@@ -94,6 +95,8 @@ pub(super) struct VoiceSeat {
     pub(super) pubs: HashSet<TrackKind>,
     pub(super) muted: bool,
     pub(super) deafened: bool,
+    /// Owners whose Live this seat watches (`sig t:"w"`).
+    pub(super) watches: HashSet<Uuid>,
 }
 
 pub(super) struct Socket {
@@ -331,8 +334,10 @@ impl ConnTable {
     }
 
     /// Wake local sockets that `target` may concern for an immediate check.
-    fn recheck_local(sockets: &HashMap<ConnId, Socket>, target: &Recheck) {
-        for socket in sockets.values() {
+    /// A server-wide change may change which voice rooms a member sees, so
+    /// the next roster pass sends that server's roster again.
+    fn recheck_local(sockets: &mut HashMap<ConnId, Socket>, target: &Recheck) {
+        for socket in sockets.values_mut() {
             let wanted = match target {
                 Recheck::User(user_id) => socket.user_id == *user_id,
                 Recheck::Server(server_id) => {
@@ -353,9 +358,17 @@ impl ConnTable {
                     .is_some_and(|(session, _)| session == key),
             };
             if wanted {
+                if let Recheck::Server(server_id) = target {
+                    socket.voice_rosters.remove(server_id);
+                }
                 socket.recheck.notify_one();
             }
         }
+    }
+
+    /// Sockets open on this API process (`GET /api/operator/usage`).
+    pub async fn socket_count(&self) -> usize {
+        self.inner.sockets.read().await.len()
     }
 }
 
@@ -815,16 +828,20 @@ impl Gateway {
             })
             .chain(rooms.iter().map(|(cid, _)| *cid))
             .collect();
-        // DMs are channel rows too.
+        // DMs are channel rows too. A channel limited to roles the user does
+        // not hold counts as gone.
         let existing: HashSet<Uuid> = if wanted.is_empty() {
             HashSet::new()
         } else {
-            sqlx::query_scalar("SELECT id FROM channels WHERE id = ANY($1)")
-                .bind(&wanted)
-                .fetch_all(&mut *db)
-                .await?
-                .into_iter()
-                .collect()
+            sqlx::query_scalar(
+                "SELECT id FROM channels WHERE id = ANY($1) AND channel_visible_to(id, $2)",
+            )
+            .bind(&wanted)
+            .bind(user_id)
+            .fetch_all(&mut *db)
+            .await?
+            .into_iter()
+            .collect()
         };
         for (sid, revision) in access {
             let current = revisions.get(&sid).copied();
@@ -842,10 +859,26 @@ impl Gateway {
                         cids.push(*cid);
                     }
                 }
-                self.clear_server_access(id, sid, &cids, "not_found").await;
+                // A block reaches sockets of another API process only here.
+                let blocked: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM servers WHERE id = $1 AND blocked_at IS NOT NULL)",
+                )
+                .bind(sid)
+                .fetch_one(&mut *db)
+                .await?;
+                let reason = if blocked {
+                    "server_blocked"
+                } else {
+                    "not_found"
+                };
+                self.clear_server_access(id, sid, &cids, reason).await;
             } else {
                 let current = current.expect("checked");
-                if revision.1 & !current.1 & 48 != 0 {
+                if revision.1
+                    & !current.1
+                    & (Permission::JoinVoice as i32 | Permission::GoLive as i32)
+                    != 0
+                {
                     self.clear_voice_access(id, sid).await?;
                 }
                 // Refresh only: a removal that cleared the server after the
@@ -874,7 +907,7 @@ impl Gateway {
             let member = crate::servers::membership::load(&mut *db, sid, user_id).await;
             let allowed = match member {
                 Ok(member) => member.can(crate::servers::permissions::Permission::JoinVoice),
-                Err(ApiError::NotFound) => false,
+                Err(ApiError::NotFound | ApiError::ServerBlocked) => false,
                 Err(err) => return Err(err),
             };
             if !allowed || !existing.contains(&cid) {
@@ -1174,6 +1207,25 @@ impl Gateway {
     /// Fan-out a live signaling frame. No seq, no replay list.
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.voice.publish_sig(event).await
+    }
+
+    pub async fn set_voice_watch(
+        &self,
+        id: ConnId,
+        user_id: Uuid,
+        server_id: Uuid,
+        channel_id: Uuid,
+        owner: Uuid,
+        on: bool,
+    ) -> Result<bool, ApiError> {
+        self.voice
+            .set_voice_watch(id, user_id, server_id, channel_id, owner, on)
+            .await
+    }
+
+    /// Every server with a voice index in Redis, from any API process.
+    pub async fn voice_servers(&self) -> Result<Vec<Uuid>, ApiError> {
+        self.voice.voice_servers().await
     }
 }
 

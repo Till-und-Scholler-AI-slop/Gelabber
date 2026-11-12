@@ -13,19 +13,29 @@ import { LazyPartFailed } from "./LazyPartFailed.tsx";
 
 export type LazyPart<P extends object> = {
   /** Shows the part, or `fallback` until its chunk is there. */
-  Component: ComponentType<P & { fallback?: ReactNode }>;
+  Component: ComponentType<P & LazyPartFrame>;
   /** Starts loading the chunk; settles once it is there or has failed. */
   preload: () => Promise<void>;
   /** Tests: whether the chunk is loaded. */
   loaded: () => boolean;
 };
 
+type LazyPartFrame = {
+  fallback?: ReactNode;
+  /** Puts the failure note where the part would be, so what the part
+   * would have drawn around it (a header) stays on screen. */
+  failedFrame?: (failure: ReactNode) => ReactNode;
+};
+
 const parts: LazyPart<never>[] = [];
 
-/** `failure` is the sentence shown when the chunk cannot be loaded. */
+/**
+ * `failure` is the sentence shown when the chunk cannot be loaded; a
+ * function gives it in the language shown at that moment.
+ */
 export function lazyPart<P extends object>(
   load: () => Promise<ComponentType<P>>,
-  failure: string,
+  failure: string | (() => string),
 ): LazyPart<P> {
   let ready: ComponentType<P> | null = null;
   let pending: Promise<ComponentType<P>> | null = null;
@@ -40,8 +50,9 @@ export function lazyPart<P extends object>(
 
   function Component({
     fallback = null,
+    failedFrame = (failure) => failure,
     ...props
-  }: P & { fallback?: ReactNode }) {
+  }: P & LazyPartFrame) {
     const [state, setState] = useState<{
       ready: ComponentType<P> | null;
       failed: boolean;
@@ -65,7 +76,12 @@ export function lazyPart<P extends object>(
       const Ready = state.ready;
       return <Ready {...(props as P)} />;
     }
-    if (state.failed) return <LazyPartFailed failure={failure} />;
+    if (state.failed)
+      return failedFrame(
+        <LazyPartFailed
+          failure={typeof failure === "function" ? failure() : failure}
+        />,
+      );
     return fallback;
   }
   Component.displayName = "LazyPart";

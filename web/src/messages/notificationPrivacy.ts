@@ -1,7 +1,8 @@
 // One switch for the whole account (issue #268): notifications say only who
 // wrote, not what or where, so a locked screen shows nothing more. The server
-// sends Web Push that way (`new_message_from` in backend/api/src/i18n.rs); this
-// module gives the page's own notifications the same text.
+// sends Web Push that way (`new_message_from` in
+// backend/api/src/i18n/push.rs); this module gives the page's own
+// notifications the same text.
 import {
   useQuery,
   useQueryClient,
@@ -17,6 +18,8 @@ import {
   useUserId,
   type ScopeStamp,
 } from "../auth/scope.ts";
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 
 export type NotificationPrivacy = { hide_content: boolean };
 
@@ -114,7 +117,12 @@ export function messageNotificationText(
   return notificationText(
     hidesContent(client.getQueryState<NotificationPrivacy>(privacyKey(stamp))),
     {
-      title: `${message.author}${message.mentioned ? " hat dich erwähnt" : ""} · ${message.label}`,
+      title: message.mentioned
+        ? translate(chat, "notify.mentionedTitle", {
+            author: message.author,
+            label: message.label,
+          })
+        : `${message.author} · ${message.label}`,
       body: message.preview,
       author: message.author,
     },
@@ -127,5 +135,8 @@ export function notificationText(
   shown: { title: string; body: string; author: string },
 ): { title: string; body: string } {
   if (!hide) return { title: shown.title, body: shown.body };
-  return { title: `Neue Nachricht von ${shown.author}`, body: "" };
+  return {
+    title: translate(chat, "notify.newMessageFrom", { author: shown.author }),
+    body: "",
+  };
 }

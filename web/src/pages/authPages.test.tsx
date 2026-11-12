@@ -1,11 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
+import type { PublicPages } from "../public/pages.ts";
 
 const fixture = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
   mail: undefined as boolean | undefined,
+  links: [] as string[],
+  registration: undefined as "open" | "invitation" | undefined,
+  providers: [] as { id: string; name: string }[],
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -21,27 +27,39 @@ vi.mock("@tanstack/react-router", () => ({
     to: string;
     search?: Record<string, string>;
     className?: string;
-  }) => (
-    <a
-      href={`${to}${search && Object.keys(search).length ? `?${new URLSearchParams(search)}` : ""}`}
-      className={className}
-    >
-      {children}
-    </a>
-  ),
+  }) => {
+    fixture.links.push(to);
+    return (
+      <a
+        href={`${to}${search && Object.keys(search).length ? `?${new URLSearchParams(search)}` : ""}`}
+        className={className}
+      >
+        {children}
+      </a>
+    );
+  },
 }));
 vi.mock("../auth/mail.ts", () => ({
   useAccountMailStatus: () => fixture.mail,
 }));
+vi.mock("../auth/providers.ts", () => ({
+  useAuthProviders: () => fixture.providers,
+}));
+vi.mock("../auth/registration.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../auth/registration.ts")>()),
+  useRegistrationMode: () => fixture.registration,
+}));
 
+import { AuthFrame } from "./AuthLayout.tsx";
 import { LoginPage } from "./LoginPage.tsx";
 import { MailSent, RegisterPage } from "./RegisterPage.tsx";
 
-function render(page: ReactNode): string {
+function render(page: ReactNode, publicPages?: PublicPages): string {
+  const client = new QueryClient();
+  if (publicPages)
+    client.setQueryData(["instance", "public-pages"], publicPages);
   return renderToStaticMarkup(
-    <QueryClientProvider client={new QueryClient()}>
-      {page}
-    </QueryClientProvider>,
+    <QueryClientProvider client={client}>{page}</QueryClientProvider>,
   );
 }
 
@@ -50,6 +68,9 @@ const INVITE_BANNER = "Einladung erhalten.";
 beforeEach(() => {
   fixture.search = {};
   fixture.mail = undefined;
+  fixture.links = [];
+  fixture.registration = undefined;
+  fixture.providers = [];
 });
 
 describe("login page", () => {
@@ -79,6 +100,15 @@ describe("login page", () => {
       '<p role="status" class="auth-banner">Sitzung abgelaufen. Melde dich erneut an.</p>',
     );
     expect(html).not.toContain(INVITE_BANNER);
+  });
+
+  it("says the account was deleted, in the same place", () => {
+    fixture.search = { reason: "deleted" };
+    const html = render(<LoginPage />);
+    expect(html).toContain(
+      '<p role="status" class="auth-banner">Dein Konto wurde gelöscht.</p>',
+    );
+    expect(html).not.toContain("Sitzung abgelaufen");
   });
 
   it("offers a way back into a forgotten password, mail or not", () => {
@@ -117,6 +147,88 @@ describe("register page", () => {
   });
 });
 
+describe("register page on an invitation-only instance", () => {
+  const FIELD = /<label[^>]*for="invitation"[^>]*>Einladungscode<\/label>/;
+  const ONLY =
+    '<p role="status" class="auth-banner">Gelabber ist gerade nur mit Einladung offen.</p>';
+
+  it("asks for a code and says why", () => {
+    fixture.registration = "invitation";
+    const html = render(<RegisterPage />);
+    expect(html).toMatch(FIELD);
+    expect(html).toContain(ONLY);
+    expect(html).toMatch(/<input[^>]*id="invitation"[^>]*value=""/);
+    // The code field comes after the password, before the submit button.
+    expect(html.indexOf('id="invitation"')).toBeGreaterThan(
+      html.indexOf('id="password"'),
+    );
+  });
+
+  it("pre-fills the field from the link, open instance or not", () => {
+    for (const mode of ["open", "invitation", undefined] as const) {
+      fixture.registration = mode;
+      fixture.search = { invitation: "k7m2p9qrs4tx" };
+      const html = render(<RegisterPage />);
+      expect(html).toMatch(FIELD);
+      expect(html).toMatch(
+        /<input[^>]*id="invitation"[^>]*value="k7m2p9qrs4tx"/,
+      );
+      expect(html).not.toContain(ONLY);
+    }
+  });
+
+  it("lets a server invite admit without a code field", () => {
+    fixture.registration = "invitation";
+    fixture.search = { redirect: "/invite/k7xm2pqrstuv" };
+    const html = render(<RegisterPage />);
+    expect(html).toContain(INVITE_BANNER);
+    expect(html).not.toMatch(FIELD);
+    expect(html).not.toContain(ONLY);
+  });
+
+  it("shows no field on an open instance or before the mode is known", () => {
+    for (const mode of ["open", undefined] as const) {
+      fixture.registration = mode;
+      const html = render(<RegisterPage />);
+      expect(html).not.toContain('id="invitation"');
+      expect(html).not.toContain("nur mit Einladung");
+    }
+  });
+
+  it("says why a sign-in was refused, with the code field", () => {
+    fixture.search = { oidc_error: "invitation_required" };
+    let html = render(<RegisterPage />);
+    expect(html).toContain(
+      '<p role="status" class="ui-form-error">Zum Registrieren brauchst du eine Einladung.</p>',
+    );
+    expect(html).toMatch(FIELD);
+    fixture.registration = "invitation";
+    fixture.search = { oidc_error: "invitation_invalid", invitation: "abc" };
+    html = render(<RegisterPage />);
+    expect(html).toContain(
+      '<p role="status" class="ui-form-error">Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.</p>',
+    );
+    expect(html).not.toContain(ONLY);
+    expect(html).toMatch(/<input[^>]*id="invitation"[^>]*value="abc"/);
+  });
+
+  it("speaks English too", () => {
+    setLocale("en", { persist: false });
+    try {
+      fixture.registration = "invitation";
+      const html = render(<RegisterPage />);
+      expect(html).toMatch(/>Invitation code<\/label>/);
+      expect(html).toContain("Gelabber is open by invitation only for now.");
+      fixture.search = { oidc_error: "invitation_invalid" };
+      expect(render(<RegisterPage />)).toContain(
+        "This invitation is unknown, expired or already used.",
+      );
+    } finally {
+      setLocale("de", { persist: false });
+    }
+  });
+});
+
 describe("mail sent", () => {
   const props = {
     email: "neu@example.org",
@@ -142,5 +254,188 @@ describe("mail sent", () => {
     );
     expect(html).toContain(">Andere Adresse verwenden</button>");
     expect(html).toContain('role="status"');
+  });
+});
+
+describe("in English", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("signs in and registers in English", () => {
+    setLocale("en", { persist: false });
+    fixture.mail = false;
+    const login = render(<LoginPage />);
+    expect(login).toContain("<h1>Sign in</h1>");
+    expect(login).toContain("No account yet?");
+    expect(login).toContain("Ask the person who runs this Gelabber server.");
+    expect(login).not.toContain("Anmelden");
+    const register = render(<RegisterPage />);
+    expect(register).toContain("<h1>Create account</h1>");
+    expect(register).toContain("At least 8 characters.");
+  });
+
+  it("names the address in bold in the mail-sent text", () => {
+    setLocale("en", { persist: false });
+    const html = render(
+      <MailSent
+        email="new@example.org"
+        password="secret-secret"
+        redirect={undefined}
+        onOtherAddress={() => {}}
+      />,
+    );
+    expect(html).toContain(
+      "Confirmation link sent to <strong>new@example.org</strong>. It is valid for 24 hours.",
+    );
+    expect(html).toMatch(/>Send again \(60 s\)<\/button>/);
+  });
+});
+
+describe("legal links under the card", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  const ALL: PublicPages = {
+    landing: false,
+    legal: {
+      terms: { de: "/de/nutzungsbedingungen", en: "/en/terms" },
+      imprint: { de: "/de/impressum", en: "/en/imprint" },
+      privacy: { de: "/de/datenschutz", en: "/en/privacy" },
+    },
+  };
+  const frame = (pages?: PublicPages) =>
+    render(
+      <AuthFrame>
+        <section className="lr-auth-card">Karte</section>
+      </AuthFrame>,
+      pages,
+    );
+
+  it("lists the published pages after the card, in the reference's order", () => {
+    const html = frame(ALL);
+    expect(html).toContain(
+      '<section class="lr-auth-card">Karte</section><nav class="auth-legal" aria-label="Rechtliches">' +
+        '<a href="/de/impressum">Impressum</a>' +
+        '<a href="/de/datenschutz">Datenschutz</a>' +
+        '<a href="/de/nutzungsbedingungen">Nutzungsbedingungen</a></nav></div>',
+    );
+  });
+
+  it("names and links them in the UI language", () => {
+    setLocale("en", { persist: false });
+    const html = frame(ALL);
+    expect(html).toContain(
+      '<nav class="auth-legal" aria-label="Legal">' +
+        '<a href="/en/imprint">Imprint</a>' +
+        '<a href="/en/privacy">Privacy</a>' +
+        '<a href="/en/terms">Terms</a></nav>',
+    );
+  });
+
+  it("shows exactly the published pages", () => {
+    const html = frame({
+      landing: false,
+      legal: { privacy: { de: "/de/datenschutz" } },
+    });
+    expect(html).toContain(
+      '<nav class="auth-legal" aria-label="Rechtliches"><a href="/de/datenschutz">Datenschutz</a></nav>',
+    );
+    setLocale("en", { persist: false });
+    expect(
+      frame({ landing: false, legal: { privacy: { de: "/de/datenschutz" } } }),
+    ).toContain('<a href="/de/datenschutz">Privacy</a>');
+  });
+
+  it("draws no row without a published page", () => {
+    expect(frame()).not.toContain("<nav");
+    expect(frame({ landing: true, legal: {} })).not.toContain("<nav");
+  });
+
+  it("makes the brand a plain link only while the landing page is on", () => {
+    // The mocked router Link draws the same anchor, and notes where it led.
+    const brand = '<a href="/" class="auth-brand">';
+    expect(frame(ALL)).toContain(brand);
+    expect(fixture.links).toEqual(["/"]);
+    fixture.links = [];
+    expect(frame({ ...ALL, landing: true })).toContain(brand);
+    expect(fixture.links).toEqual([]);
+  });
+});
+
+describe("sign-in through a provider", () => {
+  const GOOGLE = { id: "google", name: "Google" };
+  const BUTTON =
+    /<button type="button" class="ui-button ui-button--secondary ui-button--lg auth-provider auth-provider--google auth-provider--light"><svg class="auth-provider__logo" viewBox="0 0 48 48" width="20" height="20" aria-hidden="true" focusable="false">(<path fill="#[0-9A-F]{6}" d="[^"]+"><\/path>){4}<\/svg>Über Google anmelden<\/button>/;
+  const DIVIDER = '<p class="auth-divider">oder</p>';
+
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("shows nothing new while no provider is configured", () => {
+    for (const page of [<LoginPage />, <RegisterPage />]) {
+      const html = render(page);
+      expect(html).not.toContain("auth-provider");
+      expect(html).not.toContain(DIVIDER);
+    }
+  });
+
+  it("puts a button per provider and the divider above the form", () => {
+    fixture.providers = [GOOGLE];
+    for (const page of [<LoginPage />, <RegisterPage />]) {
+      const html = render(page);
+      expect(html).toMatch(BUTTON);
+      expect(html).toContain(DIVIDER);
+      expect(html.indexOf("auth-lead")).toBeLessThan(
+        html.indexOf("auth-provider"),
+      );
+      expect(html.indexOf("auth-provider")).toBeLessThan(html.indexOf(DIVIDER));
+      expect(html.indexOf(DIVIDER)).toBeLessThan(html.indexOf("<form"));
+    }
+  });
+
+  it("draws Google's standard colour G, and a neutral initial for others", () => {
+    fixture.providers = [GOOGLE, { id: "acme", name: "acme" }];
+    const html = render(<LoginPage />);
+    for (const colour of ["#EA4335", "#4285F4", "#FBBC05", "#34A853"])
+      expect(html).toContain(`fill="${colour}"`);
+    expect(html).toMatch(
+      /<button type="button" class="ui-button ui-button--secondary ui-button--lg auth-provider"><span class="auth-provider__mark" aria-hidden="true">A<\/span>Mit acme anmelden<\/button>/,
+    );
+  });
+
+  it("speaks English too", () => {
+    setLocale("en", { persist: false });
+    fixture.providers = [GOOGLE];
+    const html = render(<LoginPage />);
+    expect(html).toContain("Sign in with Google</button>");
+    expect(html).toContain('<p class="auth-divider">or</p>');
+  });
+
+  it("says why a provider sign-in came back to the login page", () => {
+    fixture.search = { oidc_error: "cancelled" };
+    let html = render(<LoginPage />);
+    expect(html).toContain(
+      '<p role="status" class="ui-form-error">Anmeldung abgebrochen.</p>',
+    );
+    expect(html).not.toContain('role="alert"');
+    // In the form, where a failed sign-in would say why.
+    expect(html.indexOf("<form")).toBeLessThan(html.indexOf("ui-form-error"));
+    expect(html.indexOf("ui-form-error")).toBeLessThan(
+      html.indexOf('type="submit"'),
+    );
+    fixture.search = { oidc_error: "account_unverified" };
+    html = render(<LoginPage />);
+    expect(html).toContain("dessen Adresse nie bestätigt wurde");
+    setLocale("en", { persist: false });
+    fixture.search = { oidc_error: "expired" };
+    expect(render(<LoginPage />)).toContain(
+      "The sign-in expired or was started in another browser.",
+    );
+  });
+
+  it("shows a sign-in's other refusals on the register page without the code field", () => {
+    fixture.search = { oidc_error: "failed" };
+    const html = render(<RegisterPage />);
+    expect(html).toContain(
+      '<p role="status" class="ui-form-error">Die Anmeldung beim Anbieter hat nicht geklappt. Bitte noch einmal versuchen.</p>',
+    );
+    expect(html).not.toContain('id="invitation"');
   });
 });

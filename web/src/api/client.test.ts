@@ -117,6 +117,57 @@ describe("api client", () => {
     });
   });
 
+  // The bodies as backend/api/src/error.rs sends them for the directory.
+  it.each([
+    {
+      path: "join",
+      body: {
+        error: "join_request_required",
+        message: "This server takes requests to join.",
+      },
+      retryAfter: null,
+    },
+    {
+      path: "request",
+      body: {
+        error: "join_request_declined",
+        message:
+          "Your request to join was not accepted. You can ask again later.",
+        retry_after: 259_200,
+      },
+      retryAfter: 259_200,
+    },
+    {
+      path: "request",
+      body: {
+        error: "join_requests_full",
+        message: "Too many open requests to join. Try again later.",
+      },
+      retryAfter: null,
+    },
+    {
+      path: "request",
+      body: {
+        error: "already_member",
+        message: "You are already a member of this server.",
+      },
+      retryAfter: null,
+    },
+  ])(
+    "passes the directory's $body.error through with its retry_after",
+    async ({ path, body, retryAfter }) => {
+      install(() => jsonResponse(409, body));
+      const error = (await api(`/directory/listings/s1/${path}`, {
+        method: "POST",
+        body: {},
+      }).catch((e: unknown) => e)) as ApiError;
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error.code).toBe(body.error);
+      expect(error.status).toBe(409);
+      expect(error.retryAfter).toBe(retryAfter);
+    },
+  );
+
   it("maps unknown codes and empty bodies to internal", async () => {
     install(() => new Response("", { status: 502 }));
     const error = (await api("/me").catch((e: unknown) => e)) as ApiError;

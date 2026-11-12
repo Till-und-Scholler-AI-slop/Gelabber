@@ -3,6 +3,9 @@
 // Office apps put a picture of the selection next to its text: on paste, text
 // wins then.
 
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+
 type ClipboardFiles = {
   getData?(format: string): string;
   files?: ArrayLike<File> | null;
@@ -70,7 +73,8 @@ function named(file: File, now: Date): File {
     .replace(/[-:]/g, "")
     .replace("T", "-");
   const ext = EXT[file.type] ?? "bin";
-  return new File([file], `Bild-${stamp}.${ext}`, {
+  const name = translate(chat, "composer.pastedImageName", { stamp });
+  return new File([file], `${name}.${ext}`, {
     type: file.type,
     lastModified: file.lastModified,
   });

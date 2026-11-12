@@ -3,8 +3,11 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "../components/ui/Button.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import {
+  keptKeyLabel,
   PTT_RELEASE_DELAY_MAX,
   pushToTalkCode,
   pushToTalkKeyLabel,
@@ -14,18 +17,22 @@ import {
 import { useMediaSettings } from "./settings.ts";
 import { SettingRow, Slider } from "./settingsLayout.tsx";
 
-const MODES: Record<VoiceInputMode, { label: string; hint: string }> = {
+const MODES = {
   activity: {
-    label: "Sprachaktivierung",
-    hint: "Das Mikrofon sendet, sobald du sprichst.",
+    label: "ptt.activity",
+    hint: "ptt.activityHint",
   },
   ptt: {
-    label: "Push-to-Talk",
-    hint: "Das Mikrofon sendet nur, solange du die Taste hältst.",
+    label: "ptt.ptt",
+    hint: "ptt.pttHint",
   },
-};
+} as const satisfies Record<
+  VoiceInputMode,
+  { label: keyof typeof voiceSettings.de; hint: keyof typeof voiceSettings.de }
+>;
 
 export function PushToTalkSettings() {
+  const t = useT(voiceSettings);
   const voiceInput = useMediaSettings((s) => s.voiceInput);
   const pttKey = useMediaSettings((s) => s.pttKey);
   const pttKeyLabel = useMediaSettings((s) => s.pttKeyLabel);
@@ -50,15 +57,15 @@ export function PushToTalkSettings() {
       if (!code) return;
       const label =
         event.key.length === 1 && event.key !== " "
-          ? event.key.toUpperCase()
-          : pushToTalkKeyLabel(code);
+          ? keptKeyLabel(event.key.toUpperCase())
+          : "";
       take(code, label);
     };
     const onMouse = (event: MouseEvent) => {
       const code = pushToTalkMouseCode(event.button);
       if (!code) return;
       event.preventDefault();
-      take(code, pushToTalkKeyLabel(code));
+      take(code, "");
     };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("mousedown", onMouse, true);
@@ -70,20 +77,20 @@ export function PushToTalkSettings() {
 
   return (
     <>
-      <SettingRow label="Senden">
+      <SettingRow label={t("ptt.send")}>
         <ChipGroup<VoiceInputMode>
-          label="Sprachübertragung"
+          label={t("ptt.modeLabel")}
           options={(Object.keys(MODES) as VoiceInputMode[]).map((mode) => ({
             value: mode,
-            label: MODES[mode].label,
+            label: t(MODES[mode].label),
           }))}
           value={voiceInput}
           onChange={(mode) => patch({ voiceInput: mode })}
         />
-        <p className="media-hint">{MODES[voiceInput].hint}</p>
+        <p className="media-hint">{t(MODES[voiceInput].hint)}</p>
       </SettingRow>
       {voiceInput === "ptt" && (
-        <SettingRow label="Taste" htmlFor="ptt-key">
+        <SettingRow label={t("ptt.key")} htmlFor="ptt-key">
           <Button
             id="ptt-key"
             size="sm"
@@ -92,20 +99,18 @@ export function PushToTalkSettings() {
             onClick={() => setRecording((on) => !on)}
           >
             {recording
-              ? "Taste oder Maustaste drücken … (Esc bricht ab)"
+              ? t("ptt.recording")
               : pttKey
                 ? pttKeyLabel || pushToTalkKeyLabel(pttKey)
-                : "Taste festlegen"}
+                : t("ptt.setKey")}
           </Button>
           <p role="status" className="media-hint">
-            {!pttKey
-              ? "Ohne Taste bleibt dein Mikrofon im Gespräch stumm."
-              : "Im Browser wirkt die Taste nur, solange Gelabber im Vordergrund ist. Die Desktop-App hört sie auch im Hintergrund."}
+            {!pttKey ? t("ptt.noKeyHint") : t("ptt.keyHint")}
           </p>
         </SettingRow>
       )}
       {voiceInput === "ptt" && (
-        <SettingRow label="Nachlaufzeit" htmlFor="ptt-release-delay">
+        <SettingRow label={t("ptt.releaseDelay")} htmlFor="ptt-release-delay">
           <Slider
             id="ptt-release-delay"
             min={0}
@@ -114,7 +119,7 @@ export function PushToTalkSettings() {
             value={releaseDelay}
             suffix={`${releaseDelay} ms`}
             onChange={(value) => patch({ pttReleaseDelay: value })}
-            hint="So lange sendet das Mikrofon nach dem Loslassen weiter."
+            hint={t("ptt.releaseDelayHint")}
           />
         </SettingRow>
       )}

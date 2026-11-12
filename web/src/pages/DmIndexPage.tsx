@@ -21,8 +21,11 @@ import {
   shouldOpenLastDm,
 } from "../dms/open.ts";
 import { forgetDm, useDm, useDms } from "../dms/queries.ts";
+import { useT } from "../i18n/catalog.ts";
+import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
 
 export function DmIndexPage() {
+  const t = useT(dmsCatalog);
   const client = useQueryClient();
   const userId = useUserId();
   const { data: dms, isPending, isError, isFetching, refetch } = useDms();
@@ -58,7 +61,7 @@ export function DmIndexPage() {
     return (
       <div className="p-6">
         <LoadError
-          message="Die Direktnachrichten konnten nicht geladen werden."
+          message={t("index.loadFailed")}
           pending={isFetching}
           onRetry={() => void refetch()}
         />
@@ -72,7 +75,7 @@ export function DmIndexPage() {
         variant={dms && dms.length > 0 ? "secondary" : "primary"}
         onClick={() => setWriting(true)}
       >
-        Neue Nachricht
+        {t("newMessage")}
       </Button>
       <NewMessageDialog open={writing} onClose={() => setWriting(false)} />
     </>
@@ -82,9 +85,9 @@ export function DmIndexPage() {
     return (
       <div className="dm-index">
         {drawer ? (
-          <nav aria-label="Unterhaltungen" className="dm-index-list">
+          <nav aria-label={t("list.label")} className="dm-index-list">
             <div className="dm-index-list-heading">
-              <h1>Nachrichten</h1>
+              <h1>{t("sidebar.title")}</h1>
               {start}
             </div>
             {dms.map((dm) => (
@@ -93,7 +96,7 @@ export function DmIndexPage() {
           </nav>
         ) : (
           <div className="dm-index-hint">
-            <p>Wähle eine Unterhaltung.</p>
+            <p>{t("index.pick")}</p>
             {start}
           </div>
         )}
@@ -103,7 +106,7 @@ export function DmIndexPage() {
   return (
     <div className="dm-index">
       <div className="dm-index-hint">
-        <h1>Keine Unterhaltungen</h1>
+        <h1>{t("index.empty")}</h1>
         {start}
       </div>
     </div>

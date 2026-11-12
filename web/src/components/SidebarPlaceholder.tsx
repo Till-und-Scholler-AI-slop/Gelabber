@@ -1,4 +1,7 @@
 import { UserPanel } from "./UserPanel.tsx";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
+import { common } from "../i18n/catalogs/common.ts";
 
 export type SidebarFailure = {
   message: string;
@@ -11,14 +14,19 @@ export type SidebarFailure = {
  * both, so the status region already exists when the failure text arrives:
  * screen readers announce a change in a live region, not a new one. Not
  * every page beside it reports the failure (a cached DM thread does not).
+ * No hooks of its own (tests call it as a function): the page around it
+ * renders again when the language changes.
  */
 export function SidebarPlaceholder({ failure }: { failure?: SidebarFailure }) {
   return (
     <aside
       className="channel-sidebar"
-      aria-label={failure ? "Navigation" : "Navigation wird geladen"}
+      aria-label={translate(
+        shell,
+        failure ? "sidebar.label" : "sidebar.loadingLabel",
+      )}
     >
-      <div className="sidebar-brand">Gelabber</div>
+      <div className="sidebar-brand">Gelabber{/* i18n-ok */}</div>
       {failure ? null : (
         <div className="sidebar-skeleton" aria-hidden>
           {[0, 1, 2, 3].map((index) => (
@@ -38,7 +46,7 @@ export function SidebarPlaceholder({ failure }: { failure?: SidebarFailure }) {
               disabled={failure.pending}
               onClick={failure.onRetry}
             >
-              {failure.pending ? "Wird geladen…" : "Erneut versuchen"}
+              {translate(common, failure.pending ? "loading" : "tryAgain")}
             </button>
           </>
         ) : null}

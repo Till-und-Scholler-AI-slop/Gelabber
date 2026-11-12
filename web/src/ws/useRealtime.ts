@@ -16,13 +16,24 @@ import { listServers } from "../servers/api.ts";
 import { serverKeys } from "../servers/queries.ts";
 import {
   applyChannelEvent,
+  dropAuthorMessages,
   messageKeys,
   messageQueryOptions,
 } from "../messages/queries.ts";
-import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
+import {
+  applyMemberRemoved,
+  forgetServer,
+  markServerBlocked,
+  refetchOnAccessChange,
+} from "../servers/queries.ts";
+import type { Server, ServerDetail } from "../servers/types.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
+import type { ChatEvent } from "./protocol.ts";
 import { shouldLeaveView } from "./leaveView.ts";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 
 /** Kick/ban closes both planes before the sidebar that hosts voice unmounts. */
 function dropVoice(serverId: string): void {
@@ -30,6 +41,98 @@ function dropVoice(serverId: string): void {
   if (voice.status === "joined" && voice.serverId === serverId) {
     leaveVoice();
   }
+}
+
+/**
+ * `{"op":"err","e":"server_blocked","s":…}`: an operator blocked the server.
+ * Like a kick it ends voice and leaves the server's view, but the server
+ * stays in the list, marked, so its tile opens the blocked notice. Every
+ * later subscribe to it meets the same error; once the list says blocked,
+ * only voice is dropped again, without another toast or navigation.
+ * Returns whether the block is news.
+ */
+export function applyServerBlocked(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  serverId: string,
+): boolean {
+  dropVoice(serverId);
+  const listed = client
+    .getQueryData<Server[]>(serverKeys.list(userId, generation))
+    ?.find((server) => server.id === serverId);
+  if (listed?.blocked) return false;
+  markServerBlocked(client, userId, generation, serverId);
+  return true;
+}
+
+/** The server-topic event "access changed" (`t: "e"`, no `c`,
+ * `d: {"k": "a"}`): roles, rights or a channel's access changed. */
+export function isAccessChange(event: ChatEvent): boolean {
+  return (
+    event.t === "e" &&
+    !event.c &&
+    event.d !== null &&
+    typeof event.d === "object" &&
+    "k" in event.d &&
+    event.d.k === "a"
+  );
+}
+
+/** Reads the server's detail and the server list again, after the caller's
+ * own role or server writes of it have settled: the caller's rights and the
+ * channels they see may have changed. An open channel that is gone sends
+ * `ChannelPage` back to the server. */
+export function applyAccessChange(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  serverId: string,
+): void {
+  refetchOnAccessChange(client, userId, generation, serverId);
+}
+
+/** The server-topic event "ownership moved" (`t: "e"`, no `c`,
+ * `d: {"k": "o", "owner_id": …}`, #519). */
+export function isOwnerChange(event: ChatEvent): boolean {
+  return (
+    event.t === "e" &&
+    !event.c &&
+    event.d !== null &&
+    typeof event.d === "object" &&
+    "k" in event.d &&
+    event.d.k === "o"
+  );
+}
+
+/** Why a member left (`t: "d"`, `d: {"k": …}`): "k" kick, "b" ban, "x"
+ * their account was deleted (#519); nothing for leaving on their own. */
+function removalKind(event: ChatEvent): string | null {
+  return event.d !== null &&
+    typeof event.d === "object" &&
+    "k" in event.d &&
+    typeof event.d.k === "string"
+    ? event.d.k
+    : null;
+}
+
+/**
+ * A member's account was deleted (#519): they leave the member list, and
+ * their messages leave the cached histories of the server's channels.
+ */
+export function applyAccountDeleted(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  serverId: string,
+  deletedId: string,
+): void {
+  applyMemberRemoved(client, userId, generation, serverId, deletedId);
+  const detail = client.getQueryData<ServerDetail>(
+    serverKeys.detail(userId, generation, serverId),
+  );
+  const channels = (detail?.channels ?? []).map((channel) => channel.id);
+  dropAuthorMessages(client, userId, generation, channels, deletedId);
 }
 
 /** Upper bound of the random wait before a reconnect refetches. */
@@ -145,8 +248,9 @@ export function attachRealtimeRecovery(
           ),
         ]);
         if (!alive() || attempt !== version) return;
-        // Removed channels/DMs are authoritative absence, not an outage that
-        // should prevent every remaining topic from recovering forever.
+        // Removed channels/DMs and blocked servers are authoritative absence,
+        // not an outage that should prevent every remaining topic from
+        // recovering forever.
         for (const query of client.getQueryCache().findAll(filters)) {
           if (skipped(query)) continue;
           // Not read in this round: an old error is not this round's outcome.
@@ -157,7 +261,7 @@ export function attachRealtimeRecovery(
           const error = query.state.error;
           if (
             !(error instanceof ApiError) ||
-            !["not_found", "forbidden"].includes(error.code)
+            !["not_found", "forbidden", "server_blocked"].includes(error.code)
           )
             throw error;
           const key = query.queryKey;
@@ -306,6 +410,45 @@ export function attachRealtimeRecovery(
   };
 }
 
+/**
+ * One gateway event into the cache, as the bridge applies it. Answers
+ * whether this account was removed from the event's server, and how.
+ */
+export function applyGatewayEvent(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  event: ChatEvent,
+): "kicked" | "banned" | null {
+  if (event.c) {
+    applyChannelEvent(client, userId, generation, event);
+    return null;
+  }
+  // After an ownership move, the new owner's rights and the old owner's
+  // role changed too.
+  if (isAccessChange(event) || isOwnerChange(event)) {
+    applyAccessChange(client, userId, generation, event.s);
+    return null;
+  }
+  if (event.t !== "d" || !event.i) return null;
+  const kind = removalKind(event);
+  // This account's own deletion ends its sessions; nothing to leave.
+  if (kind === "x") {
+    if (event.i !== userId)
+      applyAccountDeleted(client, userId, generation, event.s, event.i);
+    return null;
+  }
+  const result = applyMemberRemoved(
+    client,
+    userId,
+    generation,
+    event.s,
+    event.i,
+  );
+  if (result !== "self") return null;
+  return kind === "b" ? "banned" : "kicked";
+}
+
 export function useRealtimeBridge(
   viewingServerId?: string,
   onSelfRemoved?: (serverId: string) => void,
@@ -324,9 +467,10 @@ export function useRealtimeBridge(
       dropVoice(serverId);
       onSelfRemoved?.(serverId);
       notify(
-        reason === "banned"
-          ? "Du wurdest vom Server gesperrt."
-          : "Du wurdest vom Server entfernt.",
+        translate(
+          shell,
+          reason === "banned" ? "removed.banned" : "removed.kicked",
+        ),
       );
       if (shouldLeaveView(viewingServerId, serverId)) {
         forgetServer(client, userId, serverId, { keepDetail: true });
@@ -345,31 +489,20 @@ export function useRealtimeBridge(
       : () => undefined;
     const offEvent = gateway.onEvent((event) => {
       if (!userId || !alive()) return;
-      if (event.c) {
-        applyChannelEvent(client, userId, generation, event);
-        return;
-      }
-      if (event.t === "d" && event.i) {
-        const result = applyMemberRemoved(
-          client,
-          userId,
-          generation,
-          event.s,
-          event.i,
-        );
-        if (result === "self") {
-          const banned =
-            event.d !== null &&
-            typeof event.d === "object" &&
-            "k" in event.d &&
-            event.d.k === "b";
-          leave(banned ? "banned" : "kicked", event.s);
-        }
-      }
+      const removed = applyGatewayEvent(client, userId, generation, event);
+      if (removed) leave(removed, event.s);
     });
     const offErr = gateway.onErr((err) => {
       if ((err.e === "kicked" || err.e === "banned") && err.s) {
         leave(err.e, err.s);
+      }
+      if (err.e === "server_blocked" && err.s && userId && alive()) {
+        const serverId = err.s;
+        if (!applyServerBlocked(client, userId, generation, serverId)) return;
+        onSelfRemoved?.(serverId);
+        notify(translate(auth, "error.serverBlocked"));
+        if (shouldLeaveView(viewingServerId, serverId))
+          void navigate({ to: "/", replace: true });
       }
     });
     return () => {

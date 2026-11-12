@@ -70,6 +70,61 @@ pub enum ApiError {
     UpstreamQuota { retry_after: u64 },
     /// 500: anything unexpected. The string is logged, not returned.
     Internal(String),
+    /// 403: an operator disabled the account (`users.disabled_at`). Only
+    /// answered to someone who proved the password or held a mailed link.
+    AccountDisabled,
+    /// 403: registration on an invitation-only instance without a beta
+    /// invitation or a server invite (`operator::admission`).
+    InvitationRequired,
+    /// 410: the registration's invitation code is unknown, used, revoked,
+    /// expired, for another address, or a blocked server's invite.
+    InvitationInvalid,
+    /// 403: an operator blocked the server (`servers.blocked_at`). Members
+    /// still see it in their list; only leaving and deleting it work.
+    ServerBlocked,
+    /// 502: a sign-in provider (discovery, keys or token endpoint) failed or
+    /// answered something unusable. The string is logged, not returned.
+    OidcUnavailable(String),
+    /// 403: the provider did not report the address as verified, so the
+    /// sign-in neither joins nor creates an account.
+    OidcEmailUnverified,
+    /// 409: an account with the provider's address exists but was never
+    /// confirmed; its owner signs in with the password and connects there.
+    OidcAccountUnverified,
+    /// 409: the provider account is already connected to another account,
+    /// or this account already has one from that provider.
+    IdentityTaken,
+    /// 409: disconnecting the last way to sign in; set a password first.
+    PasswordRequired,
+    /// 403: the step needs a sign-in less than `auth::REAUTH_WINDOW` old.
+    ReauthRequired,
+    /// 409: a web sign-in started at a host other than `APP_PUBLIC_URL`.
+    OidcWrongOrigin,
+    /// 409: the signed-in account changed while connecting a provider.
+    SessionChanged,
+    /// 409: the listed server takes requests to join, not direct joins.
+    JoinRequestRequired,
+    /// 409: the server declined the caller's last request to join, and the
+    /// cooldown has `retry_after` seconds left.
+    JoinRequestDeclined { retry_after: u64 },
+    /// 409: the caller or the server has as many pending requests to join as
+    /// the directory allows.
+    JoinRequestsFull,
+    /// 409: a request to join a server the caller is a member of.
+    AlreadyMember,
+    /// 409: deleting an account that still owns servers; the body lists
+    /// them (`servers`) so the client can point at each one.
+    OwnsServers(Vec<OwnedServer>),
+    /// 409: a data export is already queued or being built.
+    ExportPending,
+}
+
+/// A server that keeps an account from being deleted (`owns_servers`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::FromRow)]
+pub struct OwnedServer {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub member_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -80,6 +135,8 @@ pub struct ErrorBody {
     pub fields: FieldErrors,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub servers: Option<Vec<OwnedServer>>,
 }
 
 impl ApiError {
@@ -104,6 +161,24 @@ impl ApiError {
             Self::Upstream(_) => "upstream_unavailable",
             Self::UpstreamQuota { .. } => "upstream_quota",
             Self::Internal(_) => "internal",
+            Self::AccountDisabled => "account_disabled",
+            Self::InvitationRequired => "invitation_required",
+            Self::InvitationInvalid => "invitation_invalid",
+            Self::ServerBlocked => "server_blocked",
+            Self::OidcUnavailable(_) => "oidc_unavailable",
+            Self::OidcEmailUnverified => "oidc_email_unverified",
+            Self::OidcAccountUnverified => "oidc_account_unverified",
+            Self::IdentityTaken => "identity_taken",
+            Self::PasswordRequired => "password_required",
+            Self::ReauthRequired => "reauth_required",
+            Self::OidcWrongOrigin => "oidc_wrong_origin",
+            Self::SessionChanged => "session_changed",
+            Self::JoinRequestRequired => "join_request_required",
+            Self::JoinRequestDeclined { .. } => "join_request_declined",
+            Self::JoinRequestsFull => "join_requests_full",
+            Self::AlreadyMember => "already_member",
+            Self::OwnsServers(_) => "owns_servers",
+            Self::ExportPending => "export_pending",
         }
     }
 
@@ -124,6 +199,24 @@ impl ApiError {
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::UpstreamQuota { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::AccountDisabled => StatusCode::FORBIDDEN,
+            Self::InvitationRequired => StatusCode::FORBIDDEN,
+            Self::InvitationInvalid => StatusCode::GONE,
+            Self::ServerBlocked => StatusCode::FORBIDDEN,
+            Self::OidcUnavailable(_) => StatusCode::BAD_GATEWAY,
+            Self::OidcEmailUnverified => StatusCode::FORBIDDEN,
+            Self::OidcAccountUnverified => StatusCode::CONFLICT,
+            Self::IdentityTaken => StatusCode::CONFLICT,
+            Self::PasswordRequired => StatusCode::CONFLICT,
+            Self::ReauthRequired => StatusCode::FORBIDDEN,
+            Self::OidcWrongOrigin => StatusCode::CONFLICT,
+            Self::SessionChanged => StatusCode::CONFLICT,
+            Self::JoinRequestRequired
+            | Self::JoinRequestDeclined { .. }
+            | Self::JoinRequestsFull
+            | Self::AlreadyMember => StatusCode::CONFLICT,
+            Self::OwnsServers(_) => StatusCode::CONFLICT,
+            Self::ExportPending => StatusCode::CONFLICT,
         }
     }
 
@@ -152,6 +245,32 @@ impl ApiError {
                 "This server has used up its GIF requests for now. Try again later."
             }
             Self::Internal(_) => "Something went wrong on our side.",
+            Self::AccountDisabled => "This account has been disabled.",
+            Self::InvitationRequired => "Registration needs an invitation.",
+            Self::InvitationInvalid => "This invitation is unknown, expired or already used.",
+            Self::ServerBlocked => "This server has been blocked by the operator.",
+            Self::OidcUnavailable(_) => {
+                "The sign-in provider did not answer. Try again in a moment."
+            }
+            Self::OidcEmailUnverified => "The provider has not verified this e-mail address.",
+            Self::OidcAccountUnverified => {
+                "An account with this address exists but was never confirmed. Sign in with its password and connect the provider there."
+            }
+            Self::IdentityTaken => "This provider account is already connected to an account.",
+            Self::PasswordRequired => {
+                "Set a password before disconnecting the last sign-in method."
+            }
+            Self::ReauthRequired => "Sign in again to confirm it is you.",
+            Self::OidcWrongOrigin => "Open this instance at its public address to sign in.",
+            Self::SessionChanged => "You signed in to another account meanwhile. Try again.",
+            Self::JoinRequestRequired => "This server takes requests to join.",
+            Self::JoinRequestDeclined { .. } => {
+                "Your request to join was not accepted. You can ask again later."
+            }
+            Self::JoinRequestsFull => "Too many open requests to join. Try again later.",
+            Self::AlreadyMember => "You are already a member of this server.",
+            Self::OwnsServers(_) => "Transfer or delete your servers first.",
+            Self::ExportPending => "Your data export is still being built.",
         }
     }
 
@@ -159,12 +278,18 @@ impl ApiError {
         let fields = match self {
             Self::Validation(fields) => fields.clone(),
             Self::EmailTaken => BTreeMap::from([("email", "taken")]),
+            Self::InvitationRequired => BTreeMap::from([("invitation", "required")]),
+            Self::InvitationInvalid => BTreeMap::from([("invitation", "invalid")]),
             _ => BTreeMap::new(),
         };
         let retry_after = match self {
-            Self::RateLimited { retry_after } | Self::UpstreamQuota { retry_after } => {
-                Some(*retry_after)
-            }
+            Self::RateLimited { retry_after }
+            | Self::UpstreamQuota { retry_after }
+            | Self::JoinRequestDeclined { retry_after } => Some(*retry_after),
+            _ => None,
+        };
+        let servers = match self {
+            Self::OwnsServers(servers) => Some(servers.clone()),
             _ => None,
         };
         ErrorBody {
@@ -172,6 +297,7 @@ impl ApiError {
             message: self.message(),
             fields,
             retry_after,
+            servers,
         }
     }
 }
@@ -182,6 +308,9 @@ impl IntoResponse for ApiError {
             Self::Internal(detail) => error!(error = %detail, "request failed"),
             Self::Upstream(detail) => tracing::warn!(error = %detail, "upstream failed"),
             Self::BadRequest(detail) => tracing::debug!(error = %detail, "bad request"),
+            Self::OidcUnavailable(detail) => {
+                tracing::warn!(error = %detail, "oidc provider failed")
+            }
             _ => {}
         }
         let retry_after = match &self {
@@ -241,5 +370,153 @@ mod tests {
         assert_eq!(json["error"], "rate_limited");
         assert_eq!(json["retry_after"], 12);
         assert_eq!(err.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn account_disabled_is_403_without_fields() {
+        let err = ApiError::AccountDisabled;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "account_disabled");
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn invitation_errors_name_the_invitation_field() {
+        let err = ApiError::InvitationRequired;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "invitation_required");
+        assert_eq!(json["fields"]["invitation"], "required");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+
+        let err = ApiError::InvitationInvalid;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "invitation_invalid");
+        assert_eq!(json["fields"]["invitation"], "invalid");
+        assert_eq!(err.status(), StatusCode::GONE);
+    }
+
+    #[test]
+    fn oidc_errors_have_their_codes_and_statuses() {
+        let cases = [
+            (
+                ApiError::OidcUnavailable("discovery: timeout".into()),
+                "oidc_unavailable",
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                ApiError::OidcEmailUnverified,
+                "oidc_email_unverified",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                ApiError::OidcAccountUnverified,
+                "oidc_account_unverified",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::IdentityTaken,
+                "identity_taken",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::PasswordRequired,
+                "password_required",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::ReauthRequired,
+                "reauth_required",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                ApiError::OidcWrongOrigin,
+                "oidc_wrong_origin",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::SessionChanged,
+                "session_changed",
+                StatusCode::CONFLICT,
+            ),
+        ];
+        for (err, code, status) in cases {
+            let json = serde_json::to_value(err.body()).unwrap();
+            assert_eq!(json["error"], code);
+            assert!(json.get("fields").is_none(), "{code}");
+            assert_eq!(err.status(), status, "{code}");
+        }
+    }
+
+    #[test]
+    fn oidc_unavailable_body_hides_detail() {
+        let err = ApiError::OidcUnavailable("token endpoint said invalid_grant".into());
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert!(!json.to_string().contains("invalid_grant"));
+    }
+
+    #[test]
+    fn owns_servers_body_carries_the_servers() {
+        let id = uuid::Uuid::new_v4();
+        let err = ApiError::OwnsServers(vec![OwnedServer {
+            id,
+            name: "Wohnzimmer".into(),
+            member_count: 5,
+        }]);
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "owns_servers");
+        assert_eq!(json["message"], "Transfer or delete your servers first.");
+        assert_eq!(
+            json["servers"],
+            serde_json::json!([{ "id": id, "name": "Wohnzimmer", "member_count": 5 }])
+        );
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::CONFLICT);
+        let other = serde_json::to_value(ApiError::NotFound.body()).unwrap();
+        assert!(other.get("servers").is_none());
+    }
+
+    #[test]
+    fn export_pending_is_409() {
+        let err = ApiError::ExportPending;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "export_pending");
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn server_blocked_is_403_without_fields() {
+        let err = ApiError::ServerBlocked;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "server_blocked");
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn join_errors_are_409_and_the_decline_carries_retry_after() {
+        for (err, code) in [
+            (ApiError::JoinRequestRequired, "join_request_required"),
+            (
+                ApiError::JoinRequestDeclined { retry_after: 3600 },
+                "join_request_declined",
+            ),
+            (ApiError::JoinRequestsFull, "join_requests_full"),
+            (ApiError::AlreadyMember, "already_member"),
+        ] {
+            let json = serde_json::to_value(err.body()).unwrap();
+            assert_eq!(json["error"], code);
+            assert!(json.get("fields").is_none());
+            assert_eq!(err.status(), StatusCode::CONFLICT, "{code}");
+        }
+        let json = serde_json::to_value(ApiError::JoinRequestDeclined { retry_after: 3600 }.body())
+            .unwrap();
+        assert_eq!(json["retry_after"], 3600);
+        let json = serde_json::to_value(ApiError::AlreadyMember.body()).unwrap();
+        assert!(json.get("retry_after").is_none());
+        // Not a rate limit: no Retry-After header.
+        let response = ApiError::JoinRequestDeclined { retry_after: 60 }.into_response();
+        assert!(response.headers().get(RETRY_AFTER).is_none());
     }
 }

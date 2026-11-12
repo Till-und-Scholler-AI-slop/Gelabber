@@ -744,8 +744,14 @@ pub(crate) async fn attach_previews(
 /// Text channel (via server membership) or 1:1 DM (via channel_members).
 /// Voice is not a message resource.
 pub(crate) enum MessagingChannel {
-    Server { member: Membership },
-    Dm { channel: channel::Channel },
+    /// The caller is a member who sees the channel ([`Membership::sees`]).
+    Server {
+        member: Membership,
+        channel: channel::Channel,
+    },
+    Dm {
+        channel: channel::Channel,
+    },
 }
 
 impl MessagingChannel {
@@ -798,7 +804,19 @@ pub(crate) async fn messaging_channel(
     }
     let server_id = channel.server_id.ok_or(ApiError::NotFound)?;
     let member = membership::load(db, server_id, user_id).await?;
-    Ok(MessagingChannel::Server { member })
+    server_channel(member, channel)
+}
+
+/// A server text channel the caller is a member of: a `404` unless they see it.
+fn server_channel(
+    member: Membership,
+    channel: channel::Channel,
+) -> Result<MessagingChannel, ApiError> {
+    if member.sees(&channel) {
+        Ok(MessagingChannel::Server { member, channel })
+    } else {
+        Err(ApiError::NotFound)
+    }
 }
 
 /// The writer step of every message write: share-lock the server row (kick,
@@ -824,9 +842,8 @@ pub(crate) async fn lock_access(
         return Err(ApiError::NotFound);
     }
     if let Some(server) = channel.server_id {
-        return Ok(MessagingChannel::Server {
-            member: membership::load(&mut *tx, server, user_id).await?,
-        });
+        let member = membership::load(&mut *tx, server, user_id).await?;
+        return server_channel(member, channel);
     }
     let participant: Option<Uuid> = sqlx::query_scalar(
         "SELECT user_id FROM channel_members WHERE channel_id=$1 AND user_id=$2 FOR SHARE",

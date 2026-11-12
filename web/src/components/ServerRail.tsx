@@ -2,11 +2,12 @@ import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useBadge } from "../messages/useBadge.ts";
 import { useServerMuted } from "../messages/notificationSettings.ts";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 
 import { useUserId } from "../auth/scope.ts";
+import { useDirectoryStatus } from "../discover/queries.ts";
 import { lastDmStillListed } from "../dms/open.ts";
 import { prefetchDms, useDms } from "../dms/queries.ts";
 import { lastDmId, useLastDm } from "../dms/lastDm.ts";
@@ -18,7 +19,7 @@ import {
 import { prefetchServer, useServers } from "../servers/queries.ts";
 import type { Server } from "../servers/types.ts";
 import { useVoiceRoster } from "../voice/roster.ts";
-import { ChatIcon, PlusIcon } from "./Icons.tsx";
+import { ChatIcon, CompassIcon, PlusIcon } from "./Icons.tsx";
 import { AddServerDialog } from "./ServerDialogs.tsx";
 import { ServerIconFace } from "./ServerIcon.tsx";
 import { tileInitials, tileTint } from "./initials.ts";
@@ -27,6 +28,8 @@ import { NotificationRowMenu } from "./RowMenu.tsx";
 import { LIST_ROW, ROW_ITEM, listStop, moveWithinList } from "./rowKeys.ts";
 import { useRowMenu } from "./rowMenuTrigger.ts";
 import { TIP_GRACE_MS, TIP_WARM_MS, tipDelay } from "./tooltipTiming.ts";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 const TILE_PX = 60;
 
@@ -37,10 +40,11 @@ export function ServerRail({
   activeId: string | undefined;
   dmActive: boolean;
 }) {
+  const t = useT(shell);
   const { data: servers, isPending } = useServers();
   const [adding, setAdding] = useState(false);
   return (
-    <nav aria-label="Server" className="server-rail">
+    <nav aria-label={t("rail.label")} className="server-rail">
       <HomeTile active={dmActive} />
       {isPending ? (
         <RailPlaceholder />
@@ -51,15 +55,41 @@ export function ServerRail({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          title="Server hinzufügen"
-          aria-label="Server hinzufügen"
+          title={t("rail.addServer")}
+          aria-label={t("rail.addServer")}
           className="server-create-button"
         >
           <PlusIcon size={20} />
         </button>
+        <DiscoverTile />
       </div>
       <AddServerDialog open={adding} onClose={() => setAdding(false)} />
     </nav>
+  );
+}
+
+/** "Entdecken", under "Server hinzufügen": only while the instance runs a
+ * directory. */
+export function DiscoverTile() {
+  const t = useT(shell);
+  const { data: status } = useDirectoryStatus();
+  const active = useRouterState({
+    select: (state) => state.location.pathname === "/discover",
+  });
+  const drawer = useNavigationDrawer();
+  if (!status?.enabled) return null;
+  return (
+    <Link
+      to="/discover"
+      state={drawer.keepOpen}
+      replace={drawer.open}
+      title={t("rail.discover")}
+      aria-label={t("rail.discover")}
+      aria-current={active ? "page" : undefined}
+      className={["server-discover-tile", active ? "is-active" : ""].join(" ")}
+    >
+      <CompassIcon size={22} />
+    </Link>
   );
 }
 
@@ -77,6 +107,7 @@ function RailPlaceholder() {
 }
 
 function HomeTile({ active }: { active: boolean }) {
+  const t = useT(shell);
   const unreadId = useId();
   const client = useQueryClient();
   const userId = useUserId();
@@ -95,8 +126,8 @@ function HomeTile({ active }: { active: boolean }) {
         params={openId ? { channelId: openId } : undefined}
         state={drawer.keepOpen}
         replace={drawer.open}
-        title="Direktnachrichten"
-        aria-label="Direktnachrichten"
+        title={t("rail.dms")}
+        aria-label={t("rail.dms")}
         aria-describedby={unreadId}
         aria-current={active ? "page" : undefined}
         onMouseEnter={() => {
@@ -120,7 +151,7 @@ function HomeTile({ active }: { active: boolean }) {
           target={{
             scope: "channel",
             id: "dms",
-            name: "Direktnachrichten",
+            name: t("rail.dms"),
             allDms: true,
           }}
           anchor={menu.anchor}
@@ -276,6 +307,7 @@ function ServerTile({
   ) => void;
   onTipEnd: () => void;
 }) {
+  const t = useT(shell);
   const unreadId = useId();
   const client = useQueryClient();
   const userId = useUserId();
@@ -292,11 +324,13 @@ function ServerTile({
   const drawer = useNavigationDrawer();
   const summary =
     badge.count > 0
-      ? `${badge.count > 99 ? "Mehr als 99" : badge.count} ${badge.count === 1 ? "Erwähnung" : "Erwähnungen"}`
+      ? badge.count > 99
+        ? t("rail.mentionsOver99")
+        : t("rail.mentions", { count: badge.count })
       : badge.dot
-        ? "Ungelesene Nachrichten"
+        ? t("rail.unread")
         : muted
-          ? "Stummgeschaltet"
+          ? t("serverMenu.muted")
           : null;
   // Its menu (mark read, mute, notifications) takes the tooltip's place;
   // the tooltip also ends when the finger leaves.

@@ -3,6 +3,8 @@
 // signing in that points to Settings → App.
 
 import { ERROR_MS, notify } from "../components/toasts.ts";
+import { translate } from "../i18n/catalog.ts";
+import { pwa } from "../i18n/catalogs/pwa.ts";
 
 export type DesktopPlatform = "windows" | "linux";
 
@@ -64,8 +66,13 @@ export function offerDesktopApp(
     return false;
   }
   notify(
-    `Gelabber gibt es auch als Desktop-App für ${DESKTOP_PLATFORM_LABEL[platform]}.`,
-    { action: { label: "Ansehen", onClick: open }, duration: ERROR_MS },
+    translate(pwa, "offer.text", {
+      platform: DESKTOP_PLATFORM_LABEL[platform],
+    }),
+    {
+      action: { label: translate(pwa, "offer.view"), onClick: open },
+      duration: ERROR_MS,
+    },
   );
   return true;
 }

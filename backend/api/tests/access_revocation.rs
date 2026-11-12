@@ -861,6 +861,135 @@ async fn permission_extension_keeps_voice_but_reduction_revokes_it(pool: PgPool)
     );
 }
 
+/// A custom role's flags, a member's roles.
+async fn role(owner: &mut Client, sid: Uuid, name: &str, permissions: Value) -> Uuid {
+    let res = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{sid}/roles"),
+            Some(json!({"name": name, "color": "blue", "permissions": permissions})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    res.body["id"].as_str().unwrap().parse().unwrap()
+}
+async fn set_roles(owner: &mut Client, sid: Uuid, user: &str, roles: Value) {
+    let res = owner
+        .send(
+            Method::PUT,
+            &format!("/api/servers/{sid}/members/{user}/roles"),
+            Some(json!({"role_ids": roles})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
+/// v0.10: the same as above when the voice flags come from a custom role.
+#[sqlx::test]
+async fn role_permission_extension_keeps_voice_but_reduction_revokes_it(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut owner = register(&state, "owner").await;
+    let mut member = register(&state, "member").await;
+    let (sid, _, voice, code) = server(&mut owner, "Roles").await;
+    join(&mut member, &code).await;
+    assert_eq!(
+        owner
+            .send(
+                Method::PATCH,
+                &format!("/api/servers/{sid}"),
+                Some(json!({"member_permissions":["send_messages"]}))
+            )
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let rid = role(&mut owner, sid, "Voice", json!(["join_voice", "go_live"])).await;
+    set_roles(&mut owner, sid, member.user_id(), json!([rid])).await;
+    let mut ws = connect(addr, &member).await;
+    voice_join(&mut ws, sid, voice).await;
+    let old = claim(&mut member, voice).await;
+    let key = member_authority_key(sid, member.user_id().parse().unwrap());
+
+    let res = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/roles/{rid}"),
+            Some(json!({"permissions":["join_voice","go_live","manage_channels"]})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    send(
+        &mut ws,
+        json!({"op":"sig","t":"m","s":sid,"c":voice,"on":true}),
+    )
+    .await;
+    until(&mut ws, |f| f["op"] == "sig" && f["t"] == "m").await;
+    assert_eq!(
+        redis_get(key.clone()).await.as_deref(),
+        old["auth"]["member"].as_str()
+    );
+
+    let res = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/roles/{rid}"),
+            Some(json!({"permissions":["join_voice"]})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
+    assert_ne!(
+        redis_get(key).await.as_deref(),
+        old["auth"]["member"].as_str()
+    );
+}
+
+/// v0.10: losing the role a voice room is limited to leaves the seat at once,
+/// although the voice flags stay.
+#[sqlx::test]
+async fn losing_sight_of_a_voice_room_leaves_it(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut owner = register(&state, "owner").await;
+    let mut member = register(&state, "member").await;
+    let mut other = register(&state, "other").await;
+    let (sid, _, voice, code) = server(&mut owner, "Hidden").await;
+    join(&mut member, &code).await;
+    join(&mut other, &code).await;
+    let rid = role(&mut owner, sid, "Stammgäste", json!([])).await;
+    sqlx::query("UPDATE channels SET limited = true WHERE id = $1")
+        .bind(voice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO channel_roles (server_id, channel_id, role_id) VALUES ($1, $2, $3)")
+        .bind(sid)
+        .bind(voice)
+        .bind(rid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    set_roles(&mut owner, sid, member.user_id(), json!([rid])).await;
+    let mut ws = connect(addr, &member).await;
+    voice_join(&mut ws, sid, voice).await;
+    let old = claim(&mut member, voice).await;
+    let key = member_authority_key(sid, member.user_id().parse().unwrap());
+
+    // Someone else's change leaves the seat alone.
+    set_roles(&mut owner, sid, other.user_id(), json!([rid])).await;
+    assert_eq!(state.gateway.voice_snapshot(sid).await.unwrap().len(), 1);
+    assert_eq!(
+        redis_get(key.clone()).await.as_deref(),
+        old["auth"]["member"].as_str()
+    );
+
+    set_roles(&mut owner, sid, member.user_id(), json!([])).await;
+    assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
+    assert_ne!(
+        redis_get(key).await.as_deref(),
+        old["auth"]["member"].as_str()
+    );
+}
+
 #[sqlx::test]
 async fn go_live_with_one_pool_connection_keeps_bootstrap_responsive(pool: PgPool) {
     let small = sqlx::postgres::PgPoolOptions::new()

@@ -2,6 +2,9 @@ import { useState, type ReactNode } from "react";
 
 import { safeColor } from "../auth/rules.ts";
 import type { ProfileCard as CardFields } from "../auth/types.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { members } from "../i18n/catalogs/members.ts";
 import type { PresenceStatus } from "../ws/protocol.ts";
 import { Avatar } from "./Avatar.tsx";
 import { AvatarFrame } from "./AvatarFrame.tsx";
@@ -12,12 +15,6 @@ import "./profileCard.css";
 export type CardPerson = CardFields & {
   name: string;
   avatar_url: string | null;
-};
-
-const PRESENCE: Record<PresenceStatus, string> = {
-  o: "Online",
-  i: "Abwesend",
-  x: "Offline",
 };
 
 /**
@@ -34,6 +31,13 @@ export function ProfileCardView({
   presence?: PresenceStatus | undefined;
   children?: ReactNode;
 }) {
+  const t = useT(members);
+  const tc = useT(common);
+  const presenceLabel: Record<PresenceStatus, string> = {
+    o: tc("online"),
+    i: t("card.away"),
+    x: tc("offline"),
+  };
   const banner = bannerOf(person);
   const [failedBanner, setFailedBanner] = useState<string | null>(null);
   const image = banner && "image" in banner ? banner.image : null;
@@ -80,7 +84,7 @@ export function ProfileCardView({
             <p className="profile-card__pronouns">{person.pronouns}</p>
           ) : null}
           {presence ? (
-            <p className="profile-card__presence">{PRESENCE[presence]}</p>
+            <p className="profile-card__presence">{presenceLabel[presence]}</p>
           ) : null}
         </div>
         {person.status_text ? (
@@ -88,7 +92,7 @@ export function ProfileCardView({
         ) : null}
         {person.bio ? (
           <section className="profile-card__about">
-            <h4>Über mich</h4>
+            <h4>{t("card.about")}</h4>
             <p>{person.bio}</p>
           </section>
         ) : null}

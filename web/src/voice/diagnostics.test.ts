@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import packageJson from "../../package.json" with { type: "json" };
 
 import { resetSessionForTests, useSession } from "../auth/session.ts";
+import { useLocale } from "../i18n/locale.ts";
 import { APP_VERSION } from "../version.ts";
 import {
   DIAGNOSTIC_LIMITS,
@@ -16,6 +17,8 @@ import {
   defaultCaps,
   diagnosticsPolling,
   diffCounter,
+  formatBps,
+  formatRatio,
   installDiagnosticsLogoutReset,
   noteDiagnosticEvent,
   reduceConnection,
@@ -816,6 +819,7 @@ describe("voice diagnostics", () => {
         name: "Ada",
         avatar_url: null,
         created_at: "2026-01-01T00:00:00.000Z",
+        locale: "de",
       },
     });
     useSession.setState({ status: "anonymous", user: null });
@@ -1005,5 +1009,24 @@ describe("call quality", () => {
     expect(callQualitySummary(callQuality(snapshot(90, [null]))!)).toBe(
       "Verbindung: gut · 90 ms",
     );
+  });
+
+  it("says it in English, with English numbers", () => {
+    useLocale.setState({ locale: "en" });
+    try {
+      const good = callQuality(snapshot(38, [0]))!;
+      expect(callQualitySummary(good)).toBe(
+        "Connection: good · 38 ms · 0% loss",
+      );
+      const lossy = callQuality(snapshot(120, [0.03], "turn"))!;
+      expect(callQualityVerdict(lossy)).toBe(
+        "Connection fair. Connected through a relay server, some loss (3%).",
+      );
+      expect(formatRatio(0.0125)).toBe("1.3%");
+      expect(formatBps(1_500_000)).toBe("1.5 Mbit/s");
+      expect(formatBps(null)).toBe("unknown");
+    } finally {
+      useLocale.setState({ locale: "de" });
+    }
   });
 });

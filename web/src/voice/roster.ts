@@ -25,17 +25,29 @@ export type LiveMap = Record<string, LivePeople>;
 export const EMPTY_OCCUPANCY: Record<string, VoiceFlags> = Object.freeze({});
 export const EMPTY_LIVE: LiveMap = Object.freeze({});
 export const EMPTY_LIVE_PEOPLE: LivePeople = Object.freeze({});
+/** watcherId → the owners whose Live they watch, for one channel. */
+export const EMPTY_WATCHES: Record<string, readonly string[]> = Object.freeze(
+  {},
+);
 
 export const VOICE_ICON_SLOT_PX = 32;
+
+/** channelId → watcherId → the owners whose Live they watch there. */
+export type ChannelWatches = Record<string, Record<string, readonly string[]>>;
 
 type RosterState = {
   byServer: Record<string, Record<string, VoiceFlags>>;
   live: Record<string, LiveMap>;
+  /** serverId → channelId → watcherId → the owners whose Live they watch
+   * there (`sig t:"w"`). Per channel: the gateway sends each room's set,
+   * and one person's seats can sit in two rooms. */
+  watches: Record<string, ChannelWatches>;
 };
 
 export const useVoiceRoster = create<RosterState>(() => ({
   byServer: {},
   live: {},
+  watches: {},
 }));
 
 export function applyVoiceJoin(
@@ -94,11 +106,23 @@ export function applyVoiceLeave(
       if (channel && nextLive[channel]?.[userId])
         nextLive = withoutLive(nextLive, channel, userId);
     }
+    // Nobody watches from a channel they left; the watches of a seat in
+    // another channel stay, as that room's own `w` frames set them.
+    const watches = state.watches[serverId] ?? EMPTY_CHANNEL_WATCHES;
+    const nextWatches = withoutWatcher(watches, userId, channelId);
+    const watchesChanged = nextWatches !== watches;
     if (elsewhere)
-      return nextLive === lives
+      return nextLive === lives && !watchesChanged
         ? state
-        : { live: { ...state.live, [serverId]: nextLive } };
-    if ((!current || !(userId in current)) && nextLive === lives) {
+        : {
+            live: { ...state.live, [serverId]: nextLive },
+            watches: { ...state.watches, [serverId]: nextWatches },
+          };
+    if (
+      (!current || !(userId in current)) &&
+      nextLive === lives &&
+      !watchesChanged
+    ) {
       return state;
     }
     const nextOccupancy = current ? { ...current } : {};
@@ -106,8 +130,35 @@ export function applyVoiceLeave(
     return {
       byServer: { ...state.byServer, [serverId]: nextOccupancy },
       live: { ...state.live, [serverId]: nextLive },
+      watches: watchesChanged
+        ? { ...state.watches, [serverId]: nextWatches }
+        : state.watches,
     };
   });
+}
+
+const EMPTY_CHANNEL_WATCHES: ChannelWatches = Object.freeze({});
+
+/** `watches` without what `userId` watches in `channelId`, or anywhere when
+ * no channel is named. */
+function withoutWatcher(
+  watches: ChannelWatches,
+  userId: string,
+  channelId: string | undefined,
+): ChannelWatches {
+  let next = watches;
+  for (const channel of channelId === undefined
+    ? Object.keys(watches)
+    : [channelId]) {
+    const people = next[channel];
+    if (!people || !(userId in people)) continue;
+    const rest = { ...people };
+    delete rest[userId];
+    next = { ...next };
+    if (Object.keys(rest).length === 0) delete next[channel];
+    else next[channel] = rest;
+  }
+  return next;
 }
 
 /** `live` without `userId` in `channelId`, or only without its `kind`. */
@@ -215,6 +266,38 @@ function patchFlags(
   });
 }
 
+/** `userId` now watches exactly the Lives of `owners` in `channelId`: the
+ * gateway's full set for that room. */
+export function applyVoiceWatches(
+  serverId: string,
+  channelId: string,
+  userId: string,
+  owners: readonly string[],
+): void {
+  useVoiceRoster.setState((state) => {
+    const server = state.watches[serverId] ?? EMPTY_CHANNEL_WATCHES;
+    const current = server[channelId] ?? EMPTY_WATCHES;
+    const prev = current[userId];
+    if (
+      prev &&
+      prev.length === owners.length &&
+      prev.every((owner, i) => owner === owners[i])
+    ) {
+      return state;
+    }
+    return {
+      ...state,
+      watches: {
+        ...state.watches,
+        [serverId]: {
+          ...server,
+          [channelId]: { ...current, [userId]: [...owners] },
+        },
+      },
+    };
+  });
+}
+
 export function applyVoiceSnap(serverId: string, entries: VoiceEntry[]): void {
   const next: Record<string, VoiceFlags> = {};
   const live: Record<string, LivePeople> = {};
@@ -226,10 +309,24 @@ export function applyVoiceSnap(serverId: string, entries: VoiceEntry[]): void {
     };
     if (entry.s) live[entry.c] = { ...live[entry.c], [entry.u]: { s: true } };
   }
-  useVoiceRoster.setState((state) => ({
-    byServer: { ...state.byServer, [serverId]: next },
-    live: { ...state.live, [serverId]: live },
-  }));
+  useVoiceRoster.setState((state) => {
+    // The snapshot carries no watches: keep those of people still in a call.
+    const watches: ChannelWatches = {};
+    for (const [channel, people] of Object.entries(
+      state.watches[serverId] ?? EMPTY_CHANNEL_WATCHES,
+    )) {
+      const kept: Record<string, readonly string[]> = {};
+      for (const [userId, owners] of Object.entries(people)) {
+        if (userId in next) kept[userId] = owners;
+      }
+      if (Object.keys(kept).length > 0) watches[channel] = kept;
+    }
+    return {
+      byServer: { ...state.byServer, [serverId]: next },
+      live: { ...state.live, [serverId]: live },
+      watches: { ...state.watches, [serverId]: watches },
+    };
+  });
 }
 
 export function applyVoiceSig(event: SigEvent): void {
@@ -262,6 +359,9 @@ export function applyVoiceSig(event: SigEvent): void {
     case "u":
       if (event.k === "s") applyLiveEnd(event.s, channelId, userId, event.k);
       return;
+    case "w":
+      applyVoiceWatches(event.s, channelId, userId, event.w ?? []);
+      return;
     default:
       return;
   }
@@ -290,5 +390,5 @@ export function isLiveIn(live: LiveMap, userId: string): boolean {
 }
 
 export function resetVoiceRoster(): void {
-  useVoiceRoster.setState({ byServer: {}, live: {} });
+  useVoiceRoster.setState({ byServer: {}, live: {}, watches: {} });
 }

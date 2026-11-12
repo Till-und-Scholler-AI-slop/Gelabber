@@ -39,6 +39,7 @@ test("source identity reorder delivers authoritative Consumer messages without n
       CheckFailure,
       check: (ok, code) => assert.ok(ok, code),
       click: async () => {},
+      liveTiles: (page) => page.locator("figure"),
       snapshot: async () => ({ heldVideoTracks: state.heldTracks.length }),
       observe: async () => {},
       until: async (read, accepts) => {
@@ -117,6 +118,7 @@ test("exact SDP scenario preserves failed bounded camera warmup and never inject
       CheckFailure,
       check() {},
       click: async () => {},
+      liveTiles: (page) => page.locator("figure"),
       snapshot: async () => ({}),
       observe: async () => {},
       until: async (_probe, _accept, code, deadline) => {

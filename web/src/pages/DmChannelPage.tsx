@@ -19,8 +19,12 @@ import type { DirectMessage } from "../dms/types.ts";
 import type { Member } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { useTypingInput } from "../ws/useLive.ts";
+import { notify } from "../components/toasts.ts";
+import { translate, useT } from "../i18n/catalog.ts";
+import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
 
 export function DmChannelPage() {
+  const t = useT(dmsCatalog);
   const { channelId } = useParams({ from: "/workspace/d/$channelId" });
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -43,6 +47,8 @@ export function DmChannelPage() {
     // Same as a vanished server: drop the list row + last-DM, leave, then
     // drop the detail so this still-mounted query does not refetch.
     if (!userId) return;
+    // Say why the conversation closed: its peer deleted their account (#519).
+    notify(translate(dmsCatalog, "conversation.gone"));
     forgetDm(client, userId, channelId, { keepDetail: true });
     forgetLast(userId, channelId);
     void navigate({ to: "/d", replace: true }).then(() =>
@@ -56,7 +62,7 @@ export function DmChannelPage() {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center text-lr-muted">
         <LoadError
-          message="Diese Unterhaltung konnte nicht geladen werden."
+          message={t("conversation.loadFailed")}
           pending={isFetching}
           onRetry={() => void refetch()}
         />
@@ -69,6 +75,7 @@ export function DmChannelPage() {
 }
 
 function DmChat({ dm }: { dm: DirectMessage }) {
+  const t = useT(dmsCatalog);
   const typing = useTypingInput(dm.id, dm.id, true);
   const members = [peerMember(dm)];
   const status = usePresenceStore((s) =>
@@ -99,7 +106,7 @@ function DmChat({ dm }: { dm: DirectMessage }) {
                   type="button"
                   className="dm-peer-button"
                   aria-haspopup="dialog"
-                  title={`Profil von ${dm.peer.name}`}
+                  title={t("conversation.profileOf", { name: dm.peer.name })}
                   onClick={() => setProfileOpen(true)}
                 >
                   <PresenceAvatar
@@ -148,5 +155,6 @@ function peerMember(dm: DirectMessage): Member {
     avatar_url: dm.peer.avatar_url,
     joined_at: dm.created_at,
     role: "member",
+    role_ids: [],
   };
 }

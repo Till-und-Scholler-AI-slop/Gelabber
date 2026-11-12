@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use uuid::Uuid;
 
 use gelabber_shared::ice::{self, IceServer};
 
-use crate::config::Config;
+use crate::config::{Config, RegistrationMode};
 use crate::gateway::{ConnTable, EventLog, Gateway, VoiceRoster};
 use crate::gifs::Gifs;
 use crate::limits::{Limiter, Limits};
@@ -73,6 +74,26 @@ pub struct AppState {
     pub previews: Option<LinkPreviews>,
     /// Account mail (#195); `None` without `SMTP_HOST`.
     pub mail: Option<crate::mail::Mailer>,
+    /// `APP_PUBLIC_URL`, for links the API hands out (`Config::public_url`).
+    pub public_url: Option<url::Url>,
+    /// `API_OPERATOR_EMAILS`, canonical (`operator::access`).
+    pub operators: Arc<HashSet<String>>,
+    /// `API_REGISTRATION`.
+    pub registration: RegistrationMode,
+    /// Sign-in through OpenID Connect; `None` while it is off.
+    pub oidc: Option<Arc<crate::auth::oidc::Oidc>>,
+    /// `API_DIRECTORY`: the server directory is on (`directory`).
+    pub directory: bool,
+    /// Wakes the purge of deleted accounts (`account::deletion`).
+    pub(crate) account_purge: Arc<tokio::sync::Notify>,
+    pub(crate) purge_worker_started: Arc<AtomicBool>,
+    /// `API_EXPORT_RETENTION_HOURS`.
+    pub export_retention: Duration,
+    /// `API_EXPORT_MAX_BYTES`.
+    pub export_max_bytes: u64,
+    /// Wakes the data export worker (`account::export`).
+    pub(crate) account_export: Arc<tokio::sync::Notify>,
+    pub(crate) export_worker_started: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -82,6 +103,7 @@ pub enum StateError {
     Store(String),
     Http(String),
     Mail(String),
+    Oidc(String),
 }
 
 impl fmt::Display for StateError {
@@ -92,6 +114,7 @@ impl fmt::Display for StateError {
             Self::Store(err) => write!(f, "invalid object store: {err}"),
             Self::Http(err) => write!(f, "http client: {err}"),
             Self::Mail(err) => write!(f, "mail: {err}"),
+            Self::Oidc(err) => write!(f, "sign-in provider: {err}"),
         }
     }
 }
@@ -142,6 +165,13 @@ impl AppState {
             .map(crate::mail::Mailer::new)
             .transpose()
             .map_err(StateError::Mail)?;
+        let oidc = config
+            .oidc
+            .as_ref()
+            .map(crate::auth::oidc::Oidc::new)
+            .transpose()
+            .map_err(StateError::Oidc)?
+            .map(Arc::new);
         let gateway = Gateway::new(
             redis.clone(),
             config.ws_replay,
@@ -180,6 +210,17 @@ impl AppState {
             push,
             previews: config.previews.as_ref().map(LinkPreviews::new),
             mail,
+            public_url: config.public_url.clone(),
+            operators: Arc::new(config.operators.clone()),
+            registration: config.registration,
+            oidc,
+            directory: config.directory,
+            account_purge: Arc::new(tokio::sync::Notify::new()),
+            purge_worker_started: Arc::new(AtomicBool::new(false)),
+            export_retention: config.export_retention,
+            export_max_bytes: config.export_max_bytes,
+            account_export: Arc::new(tokio::sync::Notify::new()),
+            export_worker_started: Arc::new(AtomicBool::new(false)),
         })
     }
 

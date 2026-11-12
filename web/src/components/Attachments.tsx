@@ -23,7 +23,9 @@ import {
 } from "../messages/rules.ts";
 import type { Attachment } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
-import { DOWNLOAD_STARTED, useDownload } from "./download.ts";
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { useDownload } from "./download.ts";
 import { CheckIcon, PaperclipIcon } from "./Icons.tsx";
 import { imageFit, knownImageSize, rememberImageSize } from "./imageBox.ts";
 import { reloadMedia } from "./mediaReload.ts";
@@ -70,23 +72,29 @@ export function DownloadLink({
   href: string;
   filename: string;
 }) {
+  const t = useT(chat);
   const { started, link } = useDownload();
   return (
     <a href={href} download={filename} {...link}>
       {started ? (
-        <span role="status">{DOWNLOAD_STARTED}</span>
+        <span role="status">{t("attachment.downloadStarted")}</span>
       ) : (
-        "Herunterladen"
+        t("attachment.download")
       )}
     </a>
   );
 }
 
 function UploadState({ attachment }: { attachment: Attachment }) {
+  const t = useT(chat);
   if (!attachment.upload || attachment.upload === "done") return null;
   return (
     <span className="lr-attachment-upload" role="status">
-      {attachment.upload === "uploading" ? "Wird hochgeladen…" : "Wartet"}
+      {t(
+        attachment.upload === "uploading"
+          ? "attachment.uploading"
+          : "attachment.waiting",
+      )}
     </span>
   );
 }
@@ -100,6 +108,7 @@ function AttachmentImage({
   attachment: Attachment;
   fit: boolean;
 }) {
+  const t = useT(chat);
   const openImage = useContext(OpenImage);
   const [failed, setFailed] = useState(false);
   // A new key mounts a new <img>, which asks the API again.
@@ -142,7 +151,7 @@ function AttachmentImage({
           download: attachmentDownloadUrl(attachment.id),
         });
       }}
-      aria-label={`${attachment.filename} vergrößern`}
+      aria-label={t("attachment.enlargeLabel", { name: attachment.filename })}
       className={sized ? "lr-attachment-image is-sized" : "lr-attachment-image"}
     >
       <img
@@ -182,15 +191,16 @@ export function AttachmentImageFailed({
   attachment: Attachment;
   onRetry: () => void;
 }) {
+  const t = useT(chat);
   return (
     <div className="lr-attachment-image is-failed" role="group">
       <p className="lr-attachment-image-error">
         <PaperclipIcon size={15} />
         <span className="lr-attachment-image-name">{attachment.filename}</span>
-        <span role="status">Bild konnte nicht geladen werden.</span>
+        <span role="status">{t("attachment.imageFailed")}</span>
         <span className="lr-attachment-image-actions">
           <button type="button" onClick={onRetry}>
-            Erneut laden
+            {t("attachment.reload")}
           </button>
           {isPendingId(attachment.id) ? null : (
             <DownloadLink
@@ -215,6 +225,7 @@ function playable(kind: "video" | "audio", type: string): boolean {
 }
 
 function AttachmentMedia({ attachment }: { attachment: Attachment }) {
+  const t = useT(chat);
   const kind = isVideoType(attachment.content_type) ? "video" : "audio";
   const [failed, setFailed] = useState(
     () => !playable(kind, attachment.content_type),
@@ -260,7 +271,7 @@ function AttachmentMedia({ attachment }: { attachment: Attachment }) {
           {attachment.filename}
         </a>
         {download.started ? (
-          <span role="status">{DOWNLOAD_STARTED}</span>
+          <span role="status">{t("attachment.downloadStarted")}</span>
         ) : (
           <span>{formatSize(attachment.size)}</span>
         )}
@@ -270,6 +281,7 @@ function AttachmentMedia({ attachment }: { attachment: Attachment }) {
 }
 
 function AttachmentText({ attachment }: { attachment: Attachment }) {
+  const t = useT(chat);
   const [open, setOpen] = useState(false);
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -311,14 +323,16 @@ function AttachmentText({ attachment }: { attachment: Attachment }) {
       </summary>
       {error ? (
         <p className="lr-attachment-text-state">
-          Vorschau nicht verfügbar.{" "}
+          {t("attachment.previewFailed")}{" "}
           <DownloadLink
             href={attachmentDownloadUrl(attachment.id)}
             filename={attachment.filename}
           />
         </p>
       ) : text === null ? (
-        <p className="lr-attachment-text-state">Vorschau wird geladen…</p>
+        <p className="lr-attachment-text-state">
+          {t("attachment.previewLoading")}
+        </p>
       ) : (
         <>
           <pre>
@@ -335,6 +349,7 @@ function AttachmentText({ attachment }: { attachment: Attachment }) {
 }
 
 function AttachmentFile({ attachment }: { attachment: Attachment }) {
+  const t = useT(chat);
   const { started, link } = useDownload();
   return (
     <a
@@ -349,7 +364,7 @@ function AttachmentFile({ attachment }: { attachment: Attachment }) {
       {started ? <CheckIcon size={15} /> : <PaperclipIcon size={15} />}
       <span>{attachment.filename}</span>
       {started ? (
-        <span role="status">{DOWNLOAD_STARTED}</span>
+        <span role="status">{t("attachment.downloadStarted")}</span>
       ) : (
         <span>{formatSize(attachment.size)}</span>
       )}

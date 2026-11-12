@@ -1,5 +1,4 @@
 import { useMutation } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
 import {
   useId,
   useRef,
@@ -21,12 +20,9 @@ import {
   removesAvatarAtOnce,
   validateAvatarUrl,
   validateName,
-  validatePassword,
 } from "../auth/rules.ts";
 import {
-  changePassword,
   claimProfileWrite,
-  logoutEverywhere,
   updateProfile,
   uploadAvatar,
   useProfileWrites,
@@ -35,15 +31,15 @@ import {
 import type { User } from "../auth/types.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Avatar } from "../components/Avatar.tsx";
-import { confirmAction } from "../components/confirm.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
-import { PasswordField } from "../components/ui/PasswordField.tsx";
 import { useDebouncedValue } from "../components/useDebouncedValue.ts";
-import { leaveVoice } from "../voice/session.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { settings } from "../i18n/catalogs/settings.ts";
 import { ProfileCardForm } from "./ProfileCardForm.tsx";
 import "./settings.css";
 
@@ -62,16 +58,11 @@ export function ProfileCardArea() {
   return <ProfileCardForm key={user.id} user={user} />;
 }
 
-/** Settings area "Sicherheit". */
-export function SecurityArea() {
-  const user = useSession((state) => state.user);
-  if (!user) return null;
-  return <AccountSecurity key={user.id} email={user.email} />;
-}
-
 type Upload = { file: File; release: () => void };
 
 function ProfileForm({ user }: { user: User }) {
+  const t = useT(settings);
+  const tc = useT(common);
   const [name, setName] = useState(user.name);
   const [avatarUrl, setAvatarUrl] = useState(user.avatar_url ?? "");
   const [saved, setSaved] = useState(false);
@@ -203,9 +194,9 @@ function ProfileForm({ user }: { user: User }) {
               onClick={() => picker.current?.click()}
               disabled={busy}
               pending={upload.isPending}
-              pendingLabel="Lädt hoch…"
+              pendingLabel={t("profile.uploading")}
             >
-              Bild hochladen
+              {t("profile.upload")}
             </Button>
             {avatarUrl.trim() ? (
               <Button
@@ -214,9 +205,9 @@ function ProfileForm({ user }: { user: User }) {
                 onClick={onRemove}
                 disabled={busy}
                 pending={removal.isPending}
-                pendingLabel="Entfernt…"
+                pendingLabel={t("profile.removing")}
               >
-                Entfernen
+                {tc("remove")}
               </Button>
             ) : null}
           </div>
@@ -225,7 +216,7 @@ function ProfileForm({ user }: { user: User }) {
             type="file"
             accept="image/png,image/jpeg,image/webp,image/gif"
             hidden
-            aria-label="Avatar-Bild auswählen"
+            aria-label={t("profile.pickLabel")}
             onChange={onPick}
           />
         </div>
@@ -233,7 +224,7 @@ function ProfileForm({ user }: { user: User }) {
 
       <Field
         id="name"
-        label="Name"
+        label={t("profile.name")}
         type="text"
         autoComplete="nickname"
         maxLength={64}
@@ -247,10 +238,12 @@ function ProfileForm({ user }: { user: User }) {
       />
       <Field
         id="avatar_url"
-        label="Avatar-URL"
+        label={t("profile.avatarUrl")}
         type="url"
         inputMode="url"
-        placeholder={uploaded ? "Hochgeladenes Bild" : "https://…"}
+        placeholder={
+          uploaded ? t("profile.avatarUrl.uploaded") : "https://…" // i18n-ok
+        }
         value={uploaded ? "" : avatarUrl}
         onChange={(event) => {
           setAvatarUrl(event.target.value);
@@ -260,152 +253,33 @@ function ProfileForm({ user }: { user: User }) {
         error={errors.fields.avatar_url}
         hint={
           uploaded
-            ? "Eine URL hier ersetzt das hochgeladene Bild."
+            ? t("profile.avatarUrl.replacesUpload")
             : removalUnsaved
-              ? "Wird beim Speichern entfernt."
-              : "Wird bei jedem Aufruf von der fremden Seite geladen."
+              ? t("profile.avatarUrl.removedOnSave")
+              : t("profile.avatarUrl.hint")
         }
       />
       <FormError message={errors.form} />
       <div className="settings-actions">
         <SubmitButton
           pending={mutation.isPending}
-          pendingLabel="Speichern…"
+          pendingLabel={t("profile.saving")}
           disabled={!dirty || (busy && !mutation.isPending)}
           aria-describedby={unchanged ? unchangedId : undefined}
         >
-          Speichern
+          {tc("save")}
         </SubmitButton>
         {unchanged ? (
           <span id={unchangedId} className="settings-hint">
-            Keine Änderungen.
+            {t("profile.unchanged")}
           </span>
         ) : null}
         <InlineStatus
           status={
-            saved && !dirty
-              ? { tone: "success", message: "Gespeichert." }
-              : null
+            saved && !dirty ? { tone: "success", message: tc("saved") } : null
           }
         />
       </div>
     </form>
-  );
-}
-
-/** Password change and signing out every device (issue #188). */
-function AccountSecurity({ email }: { email: string }) {
-  const navigate = useNavigate();
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [password, setPassword] = useState("");
-  const [changed, setChanged] = useState(false);
-  const { errors, clearField, setFields, fromError } = useFormErrors();
-
-  const mutation = useMutation({
-    mutationFn: () => changePassword(currentPassword, password),
-    onSuccess: () => {
-      setCurrentPassword("");
-      setPassword("");
-      setChanged(true);
-    },
-    onError: fromError,
-  });
-
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setChanged(false);
-    const fields: Record<string, string> = {};
-    if (currentPassword.length === 0)
-      fields.current_password = fieldMessage("current_password", "required");
-    const passwordCode = validatePassword(password);
-    if (passwordCode) fields.password = fieldMessage("password", passwordCode);
-    if (Object.keys(fields).length > 0) {
-      setFields(fields);
-      return;
-    }
-    mutation.mutate();
-  };
-
-  const onLogoutEverywhere = async () => {
-    if (
-      !(await confirmAction({
-        title: "Auf allen Geräten abmelden?",
-        message:
-          "Auch dieses Gerät. Danach musst du dich überall neu anmelden.",
-        confirmLabel: "Überall abmelden",
-      }))
-    )
-      return;
-    leaveVoice();
-    void logoutEverywhere();
-    void navigate({ to: "/login" });
-  };
-
-  return (
-    <>
-      <form onSubmit={onSubmit} noValidate className="settings-form">
-        <p className="settings-hint">
-          Angemeldet als <strong className="settings-strong">{email}</strong>
-        </p>
-        <PasswordField
-          id="current_password"
-          label="Aktuelles Passwort"
-          autoComplete="current-password"
-          value={currentPassword}
-          onChange={(event) => {
-            setCurrentPassword(event.target.value);
-            setChanged(false);
-            clearField("current_password");
-          }}
-          error={errors.fields.current_password}
-        />
-        <PasswordField
-          id="new_password"
-          label="Neues Passwort"
-          autoComplete="new-password"
-          value={password}
-          onChange={(event) => {
-            setPassword(event.target.value);
-            setChanged(false);
-            clearField("password");
-          }}
-          error={errors.fields.password}
-          hint="Andere Geräte werden dabei abgemeldet."
-        />
-        <FormError message={errors.form} />
-        <div className="settings-actions">
-          <SubmitButton pending={mutation.isPending} pendingLabel="Ändern…">
-            Passwort ändern
-          </SubmitButton>
-          <InlineStatus
-            status={
-              changed
-                ? {
-                    tone: "success",
-                    message: "Geändert. Andere Geräte sind abgemeldet.",
-                  }
-                : null
-            }
-          />
-        </div>
-      </form>
-
-      <section
-        className="settings-group settings-danger"
-        aria-labelledby="logout-everywhere-heading"
-      >
-        <h3 id="logout-everywhere-heading" className="settings-group-title">
-          Überall abmelden
-        </h3>
-        <p className="settings-hint">
-          Beendet jede Anmeldung, auch auf diesem Gerät.
-        </p>
-        <div className="settings-actions">
-          <Button variant="danger-outline" onClick={onLogoutEverywhere}>
-            Auf allen Geräten abmelden
-          </Button>
-        </div>
-      </section>
-    </>
   );
 }

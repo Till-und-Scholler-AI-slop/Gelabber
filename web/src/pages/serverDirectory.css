@@ -1,0 +1,56 @@
+/* Server settings "Verzeichnis": the listing form, its preview (an
+   Entdecken row) and the join requests. */
+.server-directory-delisted {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--lr-warning) 40%, transparent);
+  border-radius: var(--lr-radius-md);
+  background: color-mix(in srgb, var(--lr-warning) 10%, transparent);
+  font: var(--lr-type-body);
+  color: var(--lr-text);
+}
+.server-directory-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.server-directory-modes legend {
+  margin-bottom: 8px;
+}
+.server-directory-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.server-directory-preview .discover-list {
+  border-top: 1px solid var(--lr-border);
+}
+.server-directory-requests {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.server-directory-requests__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.server-directory-requests__head h3 {
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+.server-directory-requests__when {
+  color: var(--lr-muted);
+  font-weight: 400;
+}
+.server-directory-requests__message {
+  font: var(--lr-type-body);
+  color: var(--lr-muted);
+  overflow-wrap: anywhere;
+}
+/* The anchor row's count of open requests. */
+.server-settings-nav a .ui-badge {
+  margin-left: 6px;
+}

@@ -9,6 +9,8 @@ import { useReadBridge } from "../messages/readState.ts";
 import { useUnreadIndicators } from "../messages/unreadIndicators.ts";
 import { useNotificationSettingsBridge } from "../messages/notificationSettings.ts";
 import { useSession } from "../auth/session.ts";
+import { useAccountLocaleBridge } from "../i18n/account.ts";
+import { useDirectoryBridge } from "../discover/queries.ts";
 import { useVoice } from "../voice/session.ts";
 import { useLiveNotices } from "../voice/useLiveNotices.ts";
 import { useCallWakeLock } from "../voice/wakeLock.ts";
@@ -30,16 +32,21 @@ import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
 import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
 import { SessionRecoveryNotice } from "./SessionRecoveryNotice.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 function AuthenticatedRealtime() {
   useAuthenticatedSubscriptions();
   useReadBridge();
   useUnreadIndicators();
   useNotificationSettingsBridge();
+  useAccountLocaleBridge();
+  useDirectoryBridge();
   return null;
 }
 
 export function AppShell() {
+  const t = useT(shell);
   const user = useSession((state) => state.user);
   const workspace = useRouterState({
     select: (state) =>
@@ -83,13 +90,13 @@ export function AppShell() {
         className="shell-skip-link"
         href={workspace ? "#workspace-content" : "#app-content"}
       >
-        Zum Inhalt springen
+        {t("skipLink")}
       </a>
       {!workspace && !bare ? (
         <header className="app-header">
           <div className="flex h-full items-center justify-between px-4">
             <Link to="/" className="text-lg font-semibold tracking-tight">
-              Gelabber
+              Gelabber{/* i18n-ok */}
             </Link>
           </div>
         </header>

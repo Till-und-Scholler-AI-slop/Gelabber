@@ -16,6 +16,9 @@ import { useServerDetails, useServers } from "../servers/queries.ts";
 import { Avatar } from "./Avatar.tsx";
 import { Modal } from "./Modal.tsx";
 import { Picker } from "./Picker.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
+import { common } from "../i18n/catalogs/common.ts";
 
 export function NewMessageDialog({
   open,
@@ -24,14 +27,17 @@ export function NewMessageDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const t = useT(dmsCatalog);
   return (
-    <Modal open={open} onClose={onClose} title="Neue Nachricht">
+    <Modal open={open} onClose={onClose} title={t("newMessage")}>
       {open ? <NewMessageBody onClose={onClose} /> : null}
     </Modal>
   );
 }
 
 function NewMessageBody({ onClose }: { onClose: () => void }) {
+  const t = useT(dmsCatalog);
+  const tc = useT(common);
   const client = useQueryClient();
   const navigate = useNavigate();
   const me = useUserId();
@@ -69,8 +75,8 @@ function NewMessageBody({ onClose }: { onClose: () => void }) {
 
   return (
     <Picker
-      label="Person"
-      placeholder="Name suchen"
+      label={t("newMessage.person")}
+      placeholder={t("newMessage.placeholder")}
       query={query}
       onQuery={setQuery}
       busy={openDm.isPending}
@@ -79,17 +85,17 @@ function NewMessageBody({ onClose }: { onClose: () => void }) {
         value: person,
         label: person.name,
         detail: person.dmId
-          ? "Unterhaltung fortsetzen"
+          ? t("newMessage.continue")
           : person.servers.join(", "),
         icon: <Avatar name={person.name} url={person.avatar_url} decorative />,
       }))}
       onPick={(option) => write(option.value)}
       empty={
         loading
-          ? "Wird geladen…"
+          ? tc("loading")
           : people.length === 0
-            ? "Keine Personen. Direktnachrichten gehen an Mitglieder deiner Server."
-            : `Niemand gefunden für „${query.trim()}“.`
+            ? t("newMessage.nobody")
+            : t("newMessage.notFound", { query: query.trim() })
       }
     />
   );

@@ -105,7 +105,7 @@
   padding: 32px 40px 48px;
   color: var(--lr-text);
 }
-/* No specificity, so narrower forms (.settings-form, .settings-danger) keep
+/* No specificity, so narrower forms (.settings-form) keep
    their own width inside the measure. */
 :where(.settings-area:not(.settings-area--profilkarte, .settings-area--themes))
   > * {
@@ -275,15 +275,6 @@
     height: 44px;
   }
 }
-.settings-danger {
-  max-width: 560px;
-  margin-top: 40px;
-  padding-top: 24px;
-  border-top: 1px solid var(--lr-border);
-}
-.settings-danger .settings-hint {
-  margin: 4px 0 12px;
-}
 
 /* Hell / Dunkel / System */
 .settings-mode-options {
@@ -376,6 +367,30 @@
   border-radius: 0 var(--lr-radius-sm) var(--lr-radius-sm) 0;
 }
 .settings-mode-options + .settings-hint {
+  margin-top: 10px;
+}
+/* Deutsch / English: two cards in the columns of the mode cards above. The
+   RadioCard height and the gap between groups stay as shipped, looser than
+   the reference drawing (#515: everything else stays as shipped). */
+.settings-language-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 640px;
+  margin-top: 4px;
+}
+.settings-language-options .ui-radio-card {
+  align-items: center;
+}
+.settings-language-options .ui-radio-card:has(:checked) {
+  background: var(--lr-panel);
+  box-shadow: inset 0 0 0 1px var(--lr-accent);
+}
+.settings-language-options .ui-radio-card:has(:focus-visible) {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+}
+.settings-language-options + .settings-hint {
   margin-top: 10px;
 }
 
@@ -597,6 +612,11 @@
   display: flex;
   gap: 8px;
 }
+/* The width of a member row's "…" (a small IconButton), where it has none. */
+.server-settings-row__menu-slot {
+  flex-shrink: 0;
+  width: var(--lr-control-sm);
+}
 .server-settings-code {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 13px;
@@ -652,7 +672,8 @@
   .settings-area .media-settings-form fieldset {
     padding: 14px;
   }
-  .settings-mode-options {
+  .settings-mode-options,
+  .settings-language-options {
     gap: 8px;
   }
   .settings-mode-option {
@@ -721,4 +742,62 @@
   position: absolute;
   opacity: 0;
   pointer-events: none;
+}
+
+/* Settings action rows (Sicherheit): title and hint on the left, the row's
+   button on the right, a rule under each; on a narrow screen the button
+   goes under the text. */
+.settings-action-section,
+.settings-group + .settings-action-section {
+  margin-top: 24px;
+}
+.settings-action-section > .settings-group-title {
+  margin-bottom: 4px;
+}
+.settings-action-list {
+  border-top: 1px solid var(--lr-border);
+}
+.settings-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 52px;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--lr-border);
+}
+.settings-action-row__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 14rem;
+}
+.settings-action-row__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+/* The 20px tag must not make its row taller than a row without one. */
+.settings-action-row__title .ui-badge {
+  margin-block: -2px;
+}
+.settings-action-list__state {
+  padding-block: 8px;
+  border-bottom: 1px solid var(--lr-border);
+}
+.settings-action-row .ui-inline-status:not(:empty) {
+  margin-top: 4px;
+}
+.settings-signin-reauth {
+  margin-top: 10px;
+}
+.settings-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }

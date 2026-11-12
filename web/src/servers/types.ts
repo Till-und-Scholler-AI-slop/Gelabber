@@ -10,7 +10,8 @@ export type Permission =
   | "send_files"
   | "join_voice"
   | "go_live"
-  | "mention_everyone";
+  | "mention_everyone"
+  | "moderate_members";
 
 export type Role = "owner" | "member";
 
@@ -30,6 +31,9 @@ export type Server = {
   permissions: Permission[];
   /** The mask every non-owner member holds. */
   member_permissions: Permission[];
+  /** An operator blocked the server: it stays listed, but everything else
+   * answers `403 server_blocked`. Optional: older APIs lack it. */
+  blocked?: boolean;
 };
 
 export type Category = {
@@ -46,6 +50,11 @@ export type Channel = {
   name: string;
   kind: ChannelKind;
   created_at: string;
+  /** Seen only by the owner and holders of one of `role_ids`. A limited
+   * channel whose last role was deleted is the owner's alone. */
+  limited: boolean;
+  /** The roles a limited channel is for; empty when it is not limited. */
+  role_ids: string[];
 };
 
 export type Member = Pick<
@@ -57,12 +66,32 @@ export type Member = Pick<
   avatar_url: string | null;
   joined_at: string;
   role: Role;
+  /** The member's custom roles, by position. */
+  role_ids: string[];
+};
+
+/** The six role colours, as the API stores them. */
+export type RoleColor =
+  "amber" | "blue" | "green" | "pink" | "violet" | "coral";
+
+/** A custom role. "Alle Mitglieder" (`member_permissions`) and the owner
+ * are fixed and never one of these. */
+export type ServerRole = {
+  id: string;
+  server_id: string;
+  name: string;
+  color: RoleColor;
+  permissions: Permission[];
+  position: number;
+  created_at: string;
 };
 
 export type ServerDetail = Server & {
   categories: Category[];
   channels: Channel[];
   members: Member[];
+  /** Custom roles, by position. */
+  roles: ServerRole[];
 };
 
 export type Invite = {
@@ -92,12 +121,16 @@ export type CreateChannelInput = {
   name: string;
   kind: ChannelKind;
   category_id: string | null;
+  /** Limits the new channel to these roles; absent or `[]`: everyone. */
+  role_ids?: string[];
 };
 
 export type UpdateChannelInput = {
   name?: string;
   /** `null` detaches the channel from its category. */
   category_id?: string | null;
+  /** `[]` opens the channel to everyone; a list limits it to those roles. */
+  role_ids?: string[];
 };
 
 export type UpdateServerInput = {
@@ -114,6 +147,25 @@ export type Ban = {
   user_id: string;
   name: string;
   avatar_url: string | null;
-  banned_by: string;
+  /** Who issued the ban; `null` once their account is deleted. */
+  banned_by: string | null;
   banned_at: string;
+};
+
+export type CreateRoleInput = {
+  name: string;
+  color: RoleColor;
+  permissions?: Permission[];
+};
+
+/** Full replacement of the fields given. */
+export type UpdateRoleInput = {
+  name?: string;
+  color?: RoleColor;
+  permissions?: Permission[];
+};
+
+export type MemberRoles = {
+  user_id: string;
+  role_ids: string[];
 };

@@ -1,3 +1,5 @@
+import { translate } from "../i18n/catalog.ts";
+import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
 import {
   captureMicrophone,
   type MicProcessor,
@@ -67,7 +69,7 @@ export function createMicrophoneComparison(
     if (stopped) return;
     callbacks.state({
       phase: "pending",
-      message: "Bitte erlaube den lokalen Mikrofonzugriff.",
+      message: translate(voiceSettings, "micTest.allow"),
     });
     try {
       // Resume before the permission prompt consumes the explicit button gesture.
@@ -81,8 +83,7 @@ export function createMicrophoneComparison(
         () => {
           callbacks.state({
             phase: "error",
-            message:
-              "Rauschfilter ausgefallen. Beende den Test und starte ihn erneut.",
+            message: translate(voiceSettings, "micTest.error.noiseFilter"),
           });
           stop();
         },
@@ -144,7 +145,10 @@ export function createMicrophoneComparison(
             if (!stopped) {
               callbacks.state({
                 phase: "error",
-                message: "Mikrofonverbindung beendet. Starte den Test erneut.",
+                message: translate(
+                  voiceSettings,
+                  "micTest.error.connectionEnded",
+                ),
               });
               stop();
             }
@@ -162,8 +166,8 @@ export function createMicrophoneComparison(
       if (!stopped) {
         const message =
           error instanceof Error && error.name === "NotAllowedError"
-            ? "Mikrofonzugriff nicht erlaubt. Prüfe die Browserberechtigung."
-            : "Mikrofontest konnte nicht starten. Prüfe Gerät und Berechtigung.";
+            ? translate(voiceSettings, "micTest.error.denied")
+            : translate(voiceSettings, "micTest.error.startFailed");
         callbacks.state({ phase: "error", message });
         stop();
       }
@@ -174,7 +178,7 @@ export function createMicrophoneComparison(
     if (typeof MediaRecorder === "undefined") {
       callbacks.state({
         phase: "active",
-        message: "Dieser Browser unterstützt keine lokale Aufnahme.",
+        message: translate(voiceSettings, "micTest.recordingUnsupported"),
       });
       return;
     }
@@ -210,7 +214,7 @@ export function createMicrophoneComparison(
           clearClips();
           callbacks.state({
             phase: "active",
-            message: "Aufnahme fehlgeschlagen; Mikrofontest läuft weiter.",
+            message: translate(voiceSettings, "micTest.recordingFailed"),
           });
         };
         return recorder;
@@ -224,7 +228,7 @@ export function createMicrophoneComparison(
       clearClips();
       callbacks.state({
         phase: "active",
-        message: "Lokale Aufnahme wird hier nicht unterstützt.",
+        message: translate(voiceSettings, "micTest.recordingUnsupportedHere"),
       });
     }
   }

@@ -18,6 +18,8 @@ import {
 import { ApiError, type ApiErrorCode } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { notifyError } from "../components/toasts.ts";
+import { translate } from "../i18n/catalog.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
 import { getGateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
 import { applyVoiceJoin, applyVoiceLeave } from "./roster.ts";
@@ -137,8 +139,6 @@ export {
   type VoiceState,
   type VoiceStatus,
 } from "./voiceStore.ts";
-
-const LIVE_FORBIDDEN_MESSAGE = "In diesem Server darfst du nicht live gehen.";
 
 const ICE_DISCONNECTED_RESTART_DELAY_MS = 2000;
 
@@ -418,6 +418,9 @@ function onSig(event: SigEvent): void {
         if (voice.republishOnJoin) {
           voice.republishOnJoin = false;
           reannounceActive();
+        } else {
+          // A new seat holds no watches: the room learns ours again.
+          announceWatches();
         }
       }
       useVoice.setState({
@@ -531,7 +534,7 @@ function onErr(err: ErrFrame): void {
     // Refused to go live: the seat stays, the screen capture ends.
     voice.awaitingScreen = null;
     if (useVoice.getState().sharing) stopLocalVideo("s");
-    voice.deps?.onError?.(new Error(LIVE_FORBIDDEN_MESSAGE));
+    voice.deps?.onError?.(new Error(translate(texts, "live.notAllowed")));
   }
 }
 
@@ -907,7 +910,8 @@ function rollbackSeat(error?: unknown, lost = false): void {
           lostCall: {
             serverId,
             channelId,
-            channelName: state.channelName ?? "Sprachkanal",
+            channelName:
+              state.channelName ?? translate(texts, "call.voiceChannel"),
           },
         }
       : {}),
@@ -1098,6 +1102,31 @@ function reannounceActive(): void {
     sendPub("s", true);
     if (hasLiveTrack(voice.screenStream, "audio")) sendPub("sa", true);
   }
+  announceWatches();
+}
+
+/** Tell the gateway whose Live we watch, so the room can count us (#521). */
+function sendWatch(owner: string, on: boolean): void {
+  const state = useVoice.getState();
+  if (state.status !== "joined" || !state.serverId || !state.channelId) return;
+  voice.deps?.gateway.send({
+    op: "sig",
+    t: "w",
+    s: state.serverId,
+    c: state.channelId,
+    o: owner,
+    k: "s",
+    on,
+  });
+}
+
+/** Every watch we hold, once the gateway seat stands. */
+function announceWatches(): void {
+  for (const [owner, kinds] of Object.entries(
+    useVoice.getState().sourceSubscriptions,
+  )) {
+    if (kinds?.s === true) sendWatch(owner, true);
+  }
 }
 
 function onTransportState(
@@ -1163,11 +1192,7 @@ function onMediaFrame(frame: MediaServerFrame): void {
     return;
   }
   if (frame.e === "update_required") {
-    rollbackSeat(
-      new Error(
-        "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
-      ),
-    );
+    rollbackSeat(new Error(translate(texts, "error.update")));
     return;
   }
   if (frame.e === "unauthorized" || frame.e === "gone") {
@@ -1187,7 +1212,7 @@ function onMediaFrame(frame: MediaServerFrame): void {
       scheduleSeatRebuild();
       return;
     }
-    voice.deps?.onError?.(new Error("Kein freier Sprachplatz."));
+    voice.deps?.onError?.(new Error(translate(texts, "error.unavailable")));
     retractAnnouncedMedia();
     stopPeer();
     setConnection("failed");
@@ -1450,6 +1475,9 @@ export function toggleSourceWatch(userId: string, kind: "s"): void {
     void voice.seat
       .request("w", { u: userId, k: kind, on })
       .catch((error) => voice.deps?.onError?.(error));
+  // Before the join's ack there is no seat to hold it; the ack announces
+  // every watch (and a refusal then would read as a refused join).
+  if (!voice.awaitingJoin) sendWatch(userId, on);
   if (!on) {
     dropRemote(userId, kind);
     voice.receivedAudio.clearSourcePlayback(userId, kind);
@@ -1544,12 +1572,7 @@ function scheduleSeatRebuild(): void {
       void startPeer(state.serverId!, state.channelId!, true);
     },
     () =>
-      rollbackSeat(
-        new Error(
-          "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
-        ),
-        true,
-      ),
+      rollbackSeat(new Error(translate(texts, "error.reconnectFailed")), true),
   );
 }
 
@@ -1636,11 +1659,7 @@ async function startPeer(
     if (voice.seat.generation !== mine) return;
     voice.seatStarting = 0;
     if (error instanceof MediaError && error.code === "update_required") {
-      rollbackSeat(
-        new Error(
-          "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
-        ),
-      );
+      rollbackSeat(new Error(translate(texts, "error.update")));
       return;
     }
     const unloaded = sdkLoadError(error);

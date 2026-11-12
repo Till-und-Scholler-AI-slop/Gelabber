@@ -36,6 +36,23 @@ services:
       # app's own origin with ATTACHMENT_DELIVERY=proxy (#348).
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
       ATTACHMENT_DELIVERY: ${ATTACHMENT_DELIVERY:-redirect}
+      # Public landing and legal pages, written at start; empty keeps them off
+      # (deploy/README.md, "Public pages").
+      GELABBER_LANDING: ${GELABBER_LANDING:-}
+      GELABBER_OPERATOR_NAME: ${GELABBER_OPERATOR_NAME:-}
+      GELABBER_OPERATOR_STREET: ${GELABBER_OPERATOR_STREET:-}
+      GELABBER_OPERATOR_CITY: ${GELABBER_OPERATOR_CITY:-}
+      GELABBER_OPERATOR_EMAIL: ${GELABBER_OPERATOR_EMAIL:-}
+      GELABBER_OPERATOR_PHONE: ${GELABBER_OPERATOR_PHONE:-}
+      GELABBER_CONTENT_RESPONSIBLE: ${GELABBER_CONTENT_RESPONSIBLE:-}
+      GELABBER_REPORT_EMAIL: ${GELABBER_REPORT_EMAIL:-}
+      GELABBER_CONTACT_EMAIL: ${GELABBER_CONTACT_EMAIL:-}
+      GELABBER_INVITE_REQUEST: ${GELABBER_INVITE_REQUEST:-}
+      GELABBER_SOURCE_URL: ${GELABBER_SOURCE_URL:-}
+      GELABBER_OPERATOR_GUIDE_URL: ${GELABBER_OPERATOR_GUIDE_URL:-}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
+    volumes:
+      - ./legal:/etc/gelabber/legal:ro
     expose:
       - "80"
     restart: unless-stopped
@@ -114,6 +131,19 @@ services:
       API_WS_PRESENCE_TTL_MS: ${API_WS_PRESENCE_TTL_MS:-}
       API_WS_TYPING_TTL_MS: ${API_WS_TYPING_TTL_MS:-}
       RUST_LOG: ${RUST_LOG:-}
+      # Operators of this instance and who may register (deploy/README.md, "Betrieb").
+      API_OPERATOR_EMAILS: ${API_OPERATOR_EMAILS:-}
+      API_REGISTRATION: ${API_REGISTRATION:-open}
+      # Sign-in with Google (deploy/README.md); both client values empty: off.
+      OIDC_GOOGLE_CLIENT_ID: ${OIDC_GOOGLE_CLIENT_ID:-}
+      OIDC_GOOGLE_CLIENT_SECRET: ${OIDC_GOOGLE_CLIENT_SECRET:-}
+      OIDC_GOOGLE_ISSUER: ${OIDC_GOOGLE_ISSUER:-}
+      # Server directory "Entdecken", off by default (deploy/README.md, "Verzeichnis").
+      API_DIRECTORY: ${API_DIRECTORY:-false}
+      # Hours a finished data export stays downloadable; empty: 168 (7 days).
+      API_EXPORT_RETENTION_HOURS: ${API_EXPORT_RETENTION_HOURS:-}
+      # Largest export archive in bytes; empty: 10737418240 (10 GiB).
+      API_EXPORT_MAX_BYTES: ${API_EXPORT_MAX_BYTES:-}
     expose:
       - "8080"
     depends_on:

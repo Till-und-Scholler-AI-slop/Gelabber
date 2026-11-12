@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setLocale } from "../i18n/locale.ts";
+
 import {
   badgeOf,
   isMuted,
@@ -199,5 +201,20 @@ describe("unread label", () => {
     expect(unreadLabel({ count: 120, dot: true })).toBe(
       "Mehr als 99 ungelesene Benachrichtigungen",
     );
+  });
+
+  it("speaks English after a switch", () => {
+    setLocale("en", { persist: false });
+    try {
+      expect(unreadLabel({ count: 0, dot: true })).toBe("Unread messages");
+      expect(unreadLabel({ count: 1, dot: true })).toBe(
+        "1 unread notification",
+      );
+      expect(unreadLabel({ count: 7, dot: false })).toBe(
+        "7 unread notifications",
+      );
+    } finally {
+      setLocale("de", { persist: false });
+    }
   });
 });

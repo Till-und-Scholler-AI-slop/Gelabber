@@ -13,8 +13,11 @@ import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { notify } from "../components/toasts.ts";
 import { PasswordField } from "../components/ui/PasswordField.tsx";
+import { translate, useT } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 
 export function ResetPasswordPage() {
+  const t = useT(auth);
   const navigate = useNavigate();
   const token = useLinkToken();
   const [password, setPassword] = useState("");
@@ -26,7 +29,7 @@ export function ResetPasswordPage() {
   const mutation = useMutation({
     mutationFn: () => resetPassword(token, password),
     onSuccess: () => {
-      notify("Passwort geändert. Andere Geräte sind abgemeldet.");
+      notify(translate(auth, "reset.done"));
       void navigate({ href: takePendingRedirect() ?? "/", replace: true });
     },
     onError: (error) => {
@@ -52,14 +55,12 @@ export function ResetPasswordPage() {
 
   return (
     <section className="lr-auth-card">
-      <h1>Neues Passwort</h1>
-      <p className="auth-lead">
-        Danach bist du auf allen anderen Geräten abgemeldet.
-      </p>
+      <h1>{t("reset.title")}</h1>
+      <p className="auth-lead">{t("reset.lead")}</p>
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <PasswordField
           id="password"
-          label="Neues Passwort"
+          label={t("reset.passwordLabel")}
           autoComplete="new-password"
           autoFocus
           value={password}
@@ -68,16 +69,16 @@ export function ResetPasswordPage() {
             clearField("password");
           }}
           error={errors.fields.password}
-          hint={`Mindestens ${PASSWORD_MIN} Zeichen.`}
+          hint={t("page.passwordHint", { min: PASSWORD_MIN })}
         />
         <FormError message={errors.form} />
         <SubmitButton
           size="lg"
           pending={mutation.isPending}
-          pendingLabel="Wird gespeichert…"
+          pendingLabel={t("reset.submitting")}
           cooldown={cooldown}
         >
-          Passwort speichern
+          {t("reset.submit")}
         </SubmitButton>
       </form>
     </section>
@@ -85,18 +86,19 @@ export function ResetPasswordPage() {
 }
 
 function DeadResetLink() {
+  const t = useT(auth);
   const heading = useFocusOnMount<HTMLHeadingElement>();
   return (
     <section className="lr-auth-card">
       <h1 ref={heading} tabIndex={-1}>
-        Link abgelaufen
+        {t("page.linkExpired")}
       </h1>
       <div className="auth-result">
-        <p>Dieser Link ist abgelaufen oder wurde schon benutzt.</p>
+        <p>{t("page.linkUsed")}</p>
       </div>
       <div className="auth-actions">
         <Link to="/forgot-password" className="auth-link self-start">
-          Neuen Link anfordern
+          {t("reset.requestNew")}
         </Link>
       </div>
     </section>

@@ -37,8 +37,9 @@ vi.mock("../auth/store.ts", () => signedIn);
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
   EMPTY_LIVE_PEOPLE: {},
+  EMPTY_WATCHES: {},
   useVoiceRoster: (select: (state: unknown) => unknown) =>
-    select({ byServer: {}, live: {} }),
+    select({ byServer: {}, live: {}, watches: {} }),
 }));
 // A tile as its label and what it says about the sound.
 vi.mock("./VoiceTile.tsx", () => ({
@@ -67,7 +68,10 @@ vi.mock("./settings.ts", async (original) => {
   };
 });
 
-import { LiveMenuItems } from "../components/VoiceControls.tsx";
+import {
+  LiveMenuItems,
+  ShareSoundSwitch,
+} from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { dockNotices } from "./callBar.ts";
 import {
@@ -178,8 +182,15 @@ function propsOf(node: ReactNode, wanted: (props: Props) => boolean): Props {
 }
 /** Presses the switch in the Live menu. */
 function pressSoundControl(): void {
-  const button = propsOf(
+  const entry = propsOf(
     elements(() => LiveMenuItems({ canLive: true })),
+    (props) => props.role === "menuitemcheckbox",
+  );
+  // The entry is the switch's own component: what that hands to React.
+  const button = propsOf(
+    elements(() =>
+      ShareSoundSwitch(entry as Parameters<typeof ShareSoundSwitch>[0]),
+    ),
     (props) => props.role === "menuitemcheckbox",
   );
   (button.onClick as () => void)();
