@@ -723,3 +723,278 @@ fn reply(ui: &mut Ui, app: &AppCtx, form: &mut ReplyForm, id: Uuid) {
         }));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Einstellungen → Feedback against the stand-in API
+    //! (FeedbackArea.test.tsx).
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use parking_lot::Mutex;
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label, workspace};
+    use crate::platform::paths::testing::TempConfig;
+
+    const OPEN: &str = "00000000-0000-4000-8000-0000000000e1";
+    const DONE: &str = "00000000-0000-4000-8000-0000000000e2";
+    const REPLY: &str = "00000000-0000-4000-8000-0000000000a1";
+
+    fn entries() -> Value {
+        json!({"total": 2, "entries": [
+            {
+                "id": OPEN, "kind": "problem", "status": "open",
+                "text": "Das Vorschaubild bleibt schwarz.",
+                "created_at": "2026-11-12T09:00:00Z",
+                "last_activity_at": "2026-11-12T10:00:00Z", "image": null,
+                "context": {"client": "web", "os": "linux", "app_version": "0.10.0",
+                            "locale": "de", "page": "/s/x"},
+                "unread": true,
+                "messages": [{"id": REPLY, "from": "operators",
+                              "text": "Welchen Browser nutzt du?",
+                              "created_at": "2026-11-12T10:00:00Z", "new": true}]
+            },
+            {
+                "id": DONE, "kind": "praise", "status": "done", "text": "Schön.",
+                "created_at": "2026-11-11T09:00:00Z",
+                "last_activity_at": "2026-11-11T09:00:00Z", "image": null,
+                "context": {"client": "desktop", "os": null, "app_version": null,
+                            "locale": "en", "page": null},
+                "unread": false,
+                "messages": [{"id": "00000000-0000-4000-8000-0000000000a2", "from": "you",
+                              "text": "Danke!", "created_at": "2026-11-11T09:30:00Z",
+                              "new": false}]
+            }
+        ]})
+    }
+
+    type Posts = Arc<Mutex<Vec<(String, String)>>>;
+
+    /// Lena on an instance that takes feedback; `list` answers the list.
+    fn api(list: impl Fn() -> Reply + Send + Sync + 'static, unread: u32, posts: Posts) -> FakeApi {
+        FakeApi::start(true, move |method, path, body| match (method, path) {
+            ("GET", "/feedback/status") => {
+                Some(Reply::json(json!({"enabled": true, "unread": unread})))
+            }
+            ("GET", "/feedback") => Some(list()),
+            ("POST", p) if p.starts_with("/feedback/") => {
+                posts.lock().push((p.to_owned(), body.to_owned()));
+                if p.ends_with("/read") {
+                    Some(Reply::status(204, Value::Null))
+                } else {
+                    Some(Reply::status(
+                        201,
+                        json!({"id": "00000000-0000-4000-8000-0000000000a3", "from": "you",
+                               "text": "Firefox.", "created_at": "2026-11-12T11:00:00Z",
+                               "new": false}),
+                    ))
+                }
+            }
+            _ => workspace(method, path),
+        })
+    }
+
+    #[test]
+    fn what_went_along_leaves_out_what_was_not_sent() {
+        let _german = gelabber_i18n::on_this_thread(Locale::De);
+        let context = FeedbackEntryContext {
+            client: FeedbackClient::Web,
+            os: Some(gelabber_client::DeviceOs::Linux),
+            app_version: Some("0.10.0".into()),
+            locale: "de".into(),
+            page: Some("/s/x".into()),
+        };
+        assert_eq!(
+            sent_along_line(&context),
+            "Web-App · Linux · 0.10.0 · Deutsch · /s/x"
+        );
+        let bare = FeedbackEntryContext {
+            client: FeedbackClient::Desktop,
+            os: Some(gelabber_client::DeviceOs::Other),
+            app_version: None,
+            locale: "en".into(),
+            page: None,
+        };
+        assert_eq!(sent_along_line(&bare), "Desktop-App · Unbekannt · English");
+    }
+
+    /// Each entry as a thread: kind, status, Du and Betreiber, "Neu" on the
+    /// reply that was new, the done note; the unread entry is marked read
+    /// once, and the nav row says so until the status is read again.
+    #[test]
+    fn entries_show_as_threads_and_unread_ones_are_marked_read_once() {
+        let _config = TempConfig::new("feedback-area");
+        let posts: Posts = Arc::default();
+        let api = api(|| Reply::json(entries()), 1, posts.clone());
+        let mut harness = launcher(&api, "/settings/feedback");
+        wait_for_label(&mut harness, "Welchen Browser nutzt du?");
+        for shown in [
+            "Das Vorschaubild bleibt schwarz.",
+            "Problem",
+            "Offen",
+            "Lob",
+            "Erledigt",
+            "Betreiber",
+            "Du",
+            "Neu",
+            "Die Betreiber haben das als erledigt markiert. Wenn du antwortest, ist es wieder offen.",
+        ] {
+            assert!(harness.query_by_label(shown).is_some(), "{shown}");
+        }
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Link, "Feedback, neue Antwort")
+                .is_some()
+        );
+        wait_for(&mut harness, "the read call", |_| !posts.lock().is_empty());
+        harness.run_steps(10);
+        let posts = posts.lock().clone();
+        assert_eq!(posts.len(), 1, "{posts:?}");
+        assert_eq!(posts[0].0, format!("/feedback/{OPEN}/read"));
+        // The mark stays for the visit.
+        assert!(harness.query_by_label("Neu").is_some());
+        // "Mitgeschickt" opens on the line of what went along.
+        harness
+            .query_all_by_role_and_label(Role::DisclosureTriangle, "Mitgeschickt")
+            .next()
+            .expect("Mitgeschickt")
+            .click();
+        wait_for_label(&mut harness, "Web-App · Linux · 0.10.0 · Deutsch · /s/x");
+    }
+
+    #[test]
+    fn an_empty_list_is_explained_with_the_button() {
+        let _config = TempConfig::new("feedback-area-empty");
+        let api = api(
+            || Reply::json(json!({"total": 0, "entries": []})),
+            0,
+            Arc::default(),
+        );
+        let mut harness = launcher(&api, "/settings/feedback");
+        wait_for_label(&mut harness, "Du hast noch kein Feedback geschickt.");
+        assert!(
+            harness
+                .query_by_label(
+                    "Ideen, Probleme und Lob gehen direkt an die Betreiber dieser Instanz."
+                )
+                .is_some()
+        );
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Link, "Feedback")
+                .is_some()
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Feedback geben")
+            .click();
+        wait_for_label(&mut harness, "Wird mitgeschickt");
+    }
+
+    #[test]
+    fn a_failed_list_offers_a_retry() {
+        let _config = TempConfig::new("feedback-area-error");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let api = api(
+            move || {
+                if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Reply::error(500, "internal")
+                } else {
+                    Reply::json(json!({"total": 0, "entries": []}))
+                }
+            },
+            0,
+            Arc::default(),
+        );
+        let mut harness = launcher(&api, "/settings/feedback");
+        wait_for_label(&mut harness, "Feedback konnte nicht geladen werden.");
+        harness
+            .get_by_role_and_label(Role::Button, gelabber_i18n::common::try_again())
+            .click();
+        wait_for_label(&mut harness, "Du hast noch kein Feedback geschickt.");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// "Antworten" opens the form; an empty reply is refused on the spot;
+    /// a sent one is appended and the done entry is open again.
+    #[test]
+    fn a_reply_is_sent_and_appended() {
+        let _config = TempConfig::new("feedback-area-reply");
+        let posts: Posts = Arc::default();
+        let api = api(|| Reply::json(entries()), 0, posts.clone());
+        let mut harness = launcher(&api, "/settings/feedback");
+        wait_for_label(&mut harness, "Erledigt");
+        // The second entry's "Antworten" (the done one).
+        harness
+            .query_all_by_role_and_label(Role::Button, "Antworten")
+            .nth(1)
+            .expect("Antworten")
+            .click();
+        wait_for_label(&mut harness, "Deine Antwort");
+        harness
+            .get_by_role_and_label(Role::Button, "Senden")
+            .click();
+        wait_for_label(&mut harness, "Schreib ein paar Worte.");
+        let field = || {
+            harness
+                .query_all_by_label("Deine Antwort")
+                .find(|n| n.accesskit_node().role() == Role::MultilineTextInput)
+                .expect("the field")
+        };
+        field().focus();
+        harness.step();
+        harness
+            .query_all_by_label("Deine Antwort")
+            .find(|n| n.accesskit_node().role() == Role::MultilineTextInput)
+            .expect("the field")
+            .type_text("Firefox.");
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(Role::Button, "Senden")
+            .click();
+        wait_for_label(&mut harness, "Firefox.");
+        wait_for(&mut harness, "the form closes", |h| {
+            h.query_by_label("Deine Antwort").is_none()
+        });
+        assert!(harness.query_by_label("Erledigt").is_none());
+        let posts = posts.lock().clone();
+        let sent = posts
+            .iter()
+            .find(|(p, _)| p == &format!("/feedback/{DONE}/messages"))
+            .expect("the reply");
+        let body: Value = serde_json::from_str(&sent.1).expect("json");
+        assert_eq!(body["text"], "Firefox.");
+    }
+
+    /// An instance without feedback: no nav row, and the address falls
+    /// back to the default area.
+    #[test]
+    fn without_feedback_the_area_is_hidden() {
+        let _config = TempConfig::new("feedback-area-off");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, "/settings/feedback");
+        wait_for(&mut harness, "the status", |_| {
+            api.saw("GET /feedback/status")
+        });
+        let start = std::time::Instant::now();
+        loop {
+            harness.step();
+            let route = harness.state_mut().app().unwrap().nav().route().path();
+            if route == "/settings/darstellung" {
+                break;
+            }
+            assert!(start.elapsed().as_secs() < 15, "still at {route}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Link, "Feedback")
+                .is_none()
+        );
+    }
+}
