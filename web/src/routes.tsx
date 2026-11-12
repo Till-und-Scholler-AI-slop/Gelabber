@@ -365,11 +365,12 @@ const operatorPageRoute = createRoute({
   beforeLoad: ({ params }) => requireOperator(params.page),
   component: function OperatorPageRoute() {
     const { page } = operatorPageRoute.useParams();
-    const { q } = operatorPageRoute.useSearch();
+    const { q, entry } = operatorPageRoute.useSearch();
     return isOperatorPage(page) ? (
       <OperatorArea.Component
         page={page}
         q={q}
+        entry={entry}
         fallback={<MainSkeleton kind="list" />}
       />
     ) : null;
