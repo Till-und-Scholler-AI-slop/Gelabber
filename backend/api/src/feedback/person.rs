@@ -11,6 +11,7 @@ use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Json, Response};
 use axum::routing::{get, post};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::info;
@@ -408,29 +409,91 @@ async fn reply(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    notify::person_reply(&state, id);
+    notify::person_reply(&state, id, message.body.clone());
     Ok((StatusCode::CREATED, Json(message.for_person(None))))
 }
 
-/// `POST /api/feedback/{id}/read`: the person has seen the replies.
+#[derive(Debug, Default, Deserialize)]
+pub struct ReadBody {
+    /// The newest message of the entry the client showed. Operator replies
+    /// after it stay unread. A string, so that a bad value is a field error.
+    #[serde(default)]
+    through: Option<String>,
+}
+
+/// `POST /api/feedback/{id}/read`: the person has seen the replies up to
+/// `through`, or all of them without a body (older clients). A reply that
+/// arrived after the client loaded the list keeps the entry unread, so its
+/// "Neu" mark and the dot survive the read call that raced it.
 async fn read(
     _: Enabled,
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(id): Id,
+    body: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    let found = sqlx::query(
-        "UPDATE feedback SET person_unread_since = NULL \
-         WHERE id = $1 AND user_id = $2 AND status <> 'pending'",
+    let body: ReadBody = if body.is_empty() {
+        ReadBody::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|_| {
+            ApiError::BadRequest("JSON body does not match the expected shape".to_owned())
+        })?
+    };
+    let through = match body.through.as_deref().map(Uuid::parse_str) {
+        None => None,
+        Some(Ok(through)) => Some(through),
+        Some(Err(_)) => {
+            let mut errors = FieldErrors::new();
+            errors.insert("through", "invalid");
+            return Err(ApiError::Validation(errors));
+        }
+    };
+    let mut tx = state.db.begin().await?;
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM feedback WHERE id = $1 AND user_id = $2 AND status <> 'pending' \
+         FOR UPDATE",
     )
     .bind(id)
     .bind(user.id)
-    .execute(&state.db)
-    .await?
-    .rows_affected();
-    if found == 0 {
+    .fetch_optional(&mut *tx)
+    .await?;
+    if found.is_none() {
         return Err(ApiError::NotFound);
     }
+    let seen: Option<DateTime<Utc>> = match through {
+        None => None,
+        Some(through) => Some(
+            sqlx::query_scalar(
+                "SELECT created_at FROM feedback_messages WHERE id = $1 AND feedback_id = $2",
+            )
+            .bind(through)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| {
+                let mut errors = FieldErrors::new();
+                errors.insert("through", "invalid");
+                ApiError::Validation(errors)
+            })?,
+        ),
+    };
+    // The mark moves to the first operator reply after what was seen, or
+    // goes. It never comes back once cleared, so a stale tab cannot mark
+    // replies unread again that another tab already read.
+    sqlx::query(
+        "UPDATE feedback SET person_unread_since = CASE \
+             WHEN $2::timestamptz IS NULL OR person_unread_since IS NULL THEN NULL \
+             ELSE (SELECT min(m.created_at) FROM feedback_messages m \
+                   WHERE m.feedback_id = $1 AND m.author_kind = 'operator' \
+                     AND m.created_at > $2 AND m.created_at >= person_unread_since) \
+         END \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(seen)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -758,17 +758,32 @@ async fn operator_notices_go_to_confirmed_enabled_operators_in_their_language(po
         "max@example.test",
         "ute@example.test",
         "kai@example.test",
+        "ida@example.test",
     ] {
         signed_in(&plain, email).await;
     }
     sqlx::query(
         "UPDATE users SET email_verified_at = now() \
          WHERE email IN ('tom@example.test', 'lena@example.test', 'max@example.test', \
-                         'kai@example.test')",
+                         'kai@example.test', 'ida@example.test')",
     )
     .execute(&pool)
     .await
     .unwrap();
+    // Ida's account is under deletion: the purge lock held here stands for
+    // a purge still running, so her row stays as the notices meet it.
+    let mut purging = pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtext('account-purge'), hashtext(id::text)) \
+         FROM users WHERE email = 'ida@example.test'",
+    )
+    .execute(&mut *purging)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET deleted_at = now() WHERE email = 'ida@example.test'")
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE users SET locale = 'en' WHERE email = 'lena@example.test'")
         .execute(&pool)
         .await
@@ -779,11 +794,13 @@ async fn operator_notices_go_to_confirmed_enabled_operators_in_their_language(po
         .unwrap();
 
     let mut state = feedback_state(pool.clone());
-    // Kai is confirmed but no operator; Ute is an operator, unconfirmed.
+    // Kai is confirmed but no operator; Ute is an operator, unconfirmed;
+    // Ida is an operator whose account is deleted.
     state.operators = Arc::new(HashSet::from([
         "lena@example.test".to_owned(),
         "max@example.test".to_owned(),
         "ute@example.test".to_owned(),
+        "ida@example.test".to_owned(),
     ]));
     let mailer = Mailer::memory(&url::Url::parse("https://chat.example.org/").unwrap());
     state.mail = Some(mailer.clone());
@@ -833,4 +850,107 @@ async fn operator_notices_go_to_confirmed_enabled_operators_in_their_language(po
         "{}",
         sent[1].body
     );
+
+    // Replies in quick succession: each notice quotes its own reply, and
+    // notices draw on the Notice budget (30 an hour), so more than five
+    // reach one operator within the hour.
+    let replies = ["Drei", "Vier", "Fünf", "Sechs"];
+    for text in replies {
+        let res = tom
+            .send(
+                Method::POST,
+                &format!("/api/feedback/{id}/messages"),
+                Some(json!({ "text": text })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    }
+    let sent = mails(&mailer, 6).await;
+    for text in replies {
+        let quote = format!("\n\n> {text}\n\n");
+        assert_eq!(
+            sent[2..]
+                .iter()
+                .filter(|mail| mail.body.contains(&quote))
+                .count(),
+            1,
+            "{text}: {sent:?}"
+        );
+    }
+    assert!(sent.iter().all(|mail| mail.to == "lena@example.test"));
+    purging.rollback().await.unwrap();
+}
+
+#[sqlx::test]
+async fn a_read_keeps_replies_the_list_never_held(pool: PgPool) {
+    let state = feedback_state(pool.clone());
+    let mut ada = signed_in(&state, "ada@example.test").await;
+    let mut tom = signed_in(&state, "tom@example.test").await;
+    let id = create(&mut ada, entry("Hallo")).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other = create(&mut tom, entry("Anderes")).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    operator_reply(&pool, &id, "Eins").await;
+    operator_reply(&pool, &other, "Fremd").await;
+    let shown = ada.send(Method::GET, "/api/feedback", None).await.body;
+    let seen = shown["entries"][0]["messages"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // A reply lands between the list and the read call.
+    operator_reply(&pool, &id, "Zwei").await;
+
+    let path = format!("/api/feedback/{id}/read");
+    let res = ada
+        .send(Method::POST, &path, Some(json!({ "through": "x" })))
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(res.body["fields"], json!({ "through": "invalid" }));
+    // A message of another entry is no message of this one.
+    let foreign: String =
+        sqlx::query_scalar("SELECT id::text FROM feedback_messages WHERE feedback_id = $1::uuid")
+            .bind(&other)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let res = ada
+        .send(Method::POST, &path, Some(json!({ "through": foreign })))
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let res = ada
+        .send(Method::POST, &path, Some(json!({ "through": seen })))
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let res = ada.send(Method::GET, "/api/feedback/status", None).await;
+    assert_eq!(res.body["unread"], 1, "the later reply is still unread");
+    let res = ada.send(Method::GET, "/api/feedback", None).await;
+    let entry = &res.body["entries"][0];
+    assert_eq!(entry["unread"], true);
+    let news: Vec<(&str, bool)> = entry["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| (m["text"].as_str().unwrap(), m["new"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(news, [("Eins", false), ("Zwei", true)]);
+
+    let last = entry["messages"][1]["id"].as_str().unwrap().to_owned();
+    let res = ada
+        .send(Method::POST, &path, Some(json!({ "through": last })))
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let res = ada.send(Method::GET, "/api/feedback/status", None).await;
+    assert_eq!(res.body["unread"], 0);
+    // A stale tab that read less does not mark it unread again.
+    let res = ada
+        .send(Method::POST, &path, Some(json!({ "through": seen })))
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let res = ada.send(Method::GET, "/api/feedback/status", None).await;
+    assert_eq!(res.body["unread"], 0);
 }
