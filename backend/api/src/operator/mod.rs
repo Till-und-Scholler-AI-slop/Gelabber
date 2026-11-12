@@ -36,12 +36,15 @@ pub fn router() -> Router<AppState> {
 }
 
 /// `GET /api/operator`: what the area needs before its first page. The web
-/// client refetches it for the reports badge, so it writes no audit row.
+/// client refetches it for the reports and feedback badges, so it writes no
+/// audit row.
 #[derive(Debug, Serialize)]
 pub struct Overview {
     pub registration: RegistrationMode,
     pub mail: bool,
     pub open_reports: i64,
+    /// Feedback entries that are open (#542); pending ones are not.
+    pub open_feedback: i64,
 }
 
 async fn overview(
@@ -52,9 +55,14 @@ async fn overview(
         sqlx::query_scalar("SELECT COUNT(*) FROM reports WHERE status = 'open'")
             .fetch_one(&state.db)
             .await?;
+    let open_feedback: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM feedback WHERE status = 'open'")
+            .fetch_one(&state.db)
+            .await?;
     Ok(Json(Overview {
         registration: state.registration,
         mail: state.mail.is_some(),
         open_reports,
+        open_feedback,
     }))
 }

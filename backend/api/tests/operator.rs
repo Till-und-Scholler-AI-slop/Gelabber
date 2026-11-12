@@ -75,7 +75,7 @@ async fn an_operator_gets_the_area_bootstrap(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(
         res.body,
-        json!({ "registration": "open", "mail": false, "open_reports": 0 })
+        json!({ "registration": "open", "mail": false, "open_reports": 0, "open_feedback": 0 })
     );
 
     // Open reports are counted, closed ones are not.
@@ -115,7 +115,7 @@ async fn an_operator_gets_the_area_bootstrap(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(
         res.body,
-        json!({ "registration": "invitation", "mail": false, "open_reports": 1 })
+        json!({ "registration": "invitation", "mail": false, "open_reports": 1, "open_feedback": 0 })
     );
     // The bootstrap writes no audit row.
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM operator_audit")

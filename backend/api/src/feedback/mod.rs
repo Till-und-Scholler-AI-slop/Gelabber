@@ -13,6 +13,7 @@
 //! trigger (0036) queues the object again once its entry goes.
 
 pub mod notify;
+pub mod operator;
 pub mod person;
 
 use std::time::SystemTime;
@@ -48,7 +49,7 @@ pub const APP_VERSION_MAX: usize = 32;
 pub const PAGE_MAX: usize = 300;
 
 pub fn router() -> Router<AppState> {
-    person::router()
+    person::router().merge(operator::router())
 }
 
 /// Feedback is on while at least one operator is named.
