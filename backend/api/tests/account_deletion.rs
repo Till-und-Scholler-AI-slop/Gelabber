@@ -947,6 +947,13 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
     let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
     assert_eq!(frame, json!({ "op": "jq", "s": keller, "n": 1 }));
 
+    // Keep the row from being purged while the checks before the purge run.
+    let mut hold = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('account-purge'), hashtext($1::text))")
+        .bind(lena_id)
+        .execute(&mut *hold)
+        .await
+        .unwrap();
     let res = delete_me(&mut lena, json!({ "password": PASSWORD })).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
@@ -971,6 +978,7 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
         left,
         vec![(Uuid::parse_str(&werkstatt).unwrap(), "declined".to_owned())]
     );
+    hold.rollback().await.unwrap();
 }
 
 /// Feedback outlives its sender's account (#542): the entry stays for the
