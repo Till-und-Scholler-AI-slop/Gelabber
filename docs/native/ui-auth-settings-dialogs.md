@@ -549,7 +549,7 @@ Sidebar `.settings-sidebar` (224px, panel, border-right):
 | hover | bg hover, text |
 | current | bg selected, text, weight 600, plus accent bar: 3px wide, from y=7 to bottom−7, at x=0, radius 0 3 3 0 |
 
-Areas (order; `settingsAreas.ts:15-76`): Konto → **Profil** (`profil`), **Profilkarte** (`profilkarte`), **Sicherheit** (`konto`); App → **Darstellung** (`darstellung`, default for `/settings`), **Themes**, **Audio**, **Video**, **Benachrichtigungen**, **App** (only when installable — hidden in the desktop app). User panel at bottom (shell spec).
+Areas (order; `settingsAreas.ts:15-76`): Konto → **Profil** (`profil`), **Profilkarte** (`profilkarte`), **Sicherheit** (`konto`), **Feedback** (`feedback`, v0.10: only while `GET /api/feedback/status` says `enabled`; while a reply is unread its row carries the 8px accent `.unread-dot` at its right end, padding 10, and its name gains ", neue Antwort"; native `screens/settings/mod.rs` `AREAS: [Area; 10]`); App → **Darstellung** (`darstellung`, default for `/settings`), **Themes**, **Audio**, **Video**, **Benachrichtigungen**, **App** (only when installable — hidden in the desktop app). User panel at bottom (shell spec).
 
 Main: `.settings-screen` column: header `.lr-channel-header` with h1 **"Einstellungen"** (gap 4); beside the sidebar the h1 is `sr-only` (the sidebar title names the page) and the header is an empty 52px bar with its bottom rule; on a phone (list first) it shows with the back button, then a scroll area containing `.settings-area`: max-width **1040**, padding **32 40 48** (left-aligned). Content width **912 @1280**, **960 @1600** (1312 − 80 > 1040 − 80).
 
@@ -565,6 +565,7 @@ Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20
 | Audio | Nur dieses Gerät | Mikrofon, Lautsprecher und Lautstärke. |
 | Video | Nur dieses Gerät | Kamera, Live gehen und Bildqualität. |
 | Benachrichtigungen | — (per group) | Hinweise auf neue Nachrichten. |
+| Feedback | Für dein Konto | Was du geschickt hast und die Antworten darauf. |
 | App | — | Gelabber als App installieren. (Native app: listed when it has content; subtitle "Updates und was beim Schließen des Fensters passiert.", without a tray "Updates dieser App."; the update switch, state and install, and close-to-tray with a tray.) |
 
 Shared building blocks (`settings.css:129-270`): `.settings-form` column gap 20, max-width 560. Group (`components/SettingsGroup.tsx`): fieldset, legend flex wrap gap 6/10, margin-bottom 8, 600 16px/1.3 + scope badge; consecutive groups 32px apart. `.settings-row` (a Switch row): min-height 64, padding-y 12, border-bottom 1 border, gap 18; description small line-height 1.5, margin-top 2. `.settings-hint` 12px/1.5 muted. `.settings-actions` flex wrap centre gap 8/12. `.settings-row-noted`: a switch row with a note boxed under it (padding-bottom 12, border-bottom 1 border; the switch row inside has no rule); `.settings-row-note`: padding 10/12, radius md, bg surface, muted meta 12px/1.5, and the switch is `aria-describedby` its status line. `.settings-danger`: max 560, margin-top 40, padding-top 24, border-top. Loading area body: 4 skeleton rows; load failure "Dieser Bereich konnte nicht geladen werden.".
@@ -664,6 +665,22 @@ Group **"Sperrbildschirm"** [FÜR DEIN KONTO]: "Inhalt in Benachrichtigungen ver
 Permission note (`.settings-row-note`, §6.1) boxed under the desktop-notify switch, in the same row, describing it: desktop app with system notifications: "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein." (browser texts: `messages/notify.ts:86-100`, e.g. "Browser-Benachrichtigungen sind blockiert …").
 
 ---
+
+### 6.9 Feedback (v0.10, #542; `feedback/FeedbackArea.tsx`, `feedback/FeedbackThread.tsx`, `feedback/feedback.css`; native `screens/settings/feedback.rs`)
+
+`/settings/feedback` waits for the status and falls back to Darstellung while the instance takes no feedback. `.feedback-area` column gap 16:
+
+1. Primary md button **"Feedback geben"** (opens the dialog of the user menu, the shell spec).
+2. Loading: 3 skeleton rows (§1.15). Failed with nothing loaded: LoadError "Feedback konnte nicht geladen werden." with "Erneut laden". Empty (`.feedback-empty`, gap 4): "Du hast noch kein Feedback geschickt." (16px/1.5 text), hint "Ideen, Probleme und Lob gehen direkt an die Betreiber dieser Instanz." (meta muted).
+3. Entries (`.feedback-entries`, gap 12), from `GET /api/feedback` (20 a page; "Mehr laden", secondary md, centred, 16 below, while entries are left). Each `.feedback-entry`: column gap 12, padding 16, border 1 `--lr-border`, radius md, bg `--lr-surface`:
+   - head (flex centre gap 8, meta muted): neutral Badge **IDEE / PROBLEM / LOB**, the date (`formatDate`, "12. November 2026"), status Badge **OFFEN** (neutral) or **ERLEDIGT** (success);
+   - the text, 16px/1.5 `--lr-text`, pre-wrapped;
+   - with an image: a thumbnail button (border 1, radius md, bg `--lr-bg`, at most 160 high and the column wide, `zoom-in`) that opens the image lightbox (§2.5);
+   - `<details>` "Mitgeschickt" (meta muted, closed): the line "Web-App · Linux · 0.10.0 · Deutsch · /s/…" (App, system, version, language, page; what was not sent is left out), 4 below the summary;
+   - the thread (`ol`, gap 8, padding-left 12, border-left 2 `--lr-border`): per message a meta row (gap 8) with **"Du"** or **"Betreiber"** (600 meta `--lr-text`), the time (`dateStyle: medium, timeStyle: short`: "12.11.2026, 19:15"), and an accent Badge **NEU** for a reply that was new this visit; then its text 16px/1.5;
+   - on a done entry the hint "Die Betreiber haben das als erledigt markiert. Wenn du antwortest, ist es wieder offen.";
+   - sm secondary **"Antworten"**, which opens in place: label "Deine Antwort" (ui 13px, 6 above the field), a 3-row textarea (4000 characters), FormError, then right-aligned ghost "Abbrechen" and primary "Senden" (pending "Wird gesendet…"), column gap 12. An empty reply shows "Schreib ein paar Worte."; a sent one is appended, opens a done entry again, closes the form and puts the focus back on "Antworten" with the status "Antwort gesendet.".
+4. Each entry with `unread: true` gets `POST /api/feedback/{id}/read` once it has shown, then the status is read again; the "Neu" marks stay until the area is left.
 
 ## 7. Server settings `/s/{id}/settings` (`pages/ServerSettingsPage.tsx`, `settings.css:494-582`)
 

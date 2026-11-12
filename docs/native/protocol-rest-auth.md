@@ -203,6 +203,8 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | `mail_invite` | invited address | 5 / hour (silently not sent; the invitation is still created) | `POST /api/operator/invitations` with `send_mail` (v0.10) |
 | `dir_join` | user | 10 / hour → `429 rate_limited`, shared by both routes | `POST /api/directory/listings/{id}/join` and `/request` (v0.10, §4.7) |
 | `dir_search` | user | 60 / min → `429 rate_limited`, **also on GET** | `GET /api/directory/listings` (v0.10, §4.7) |
+| `feedback` | user | 5 / hour → `429 rate_limited` | `POST /api/feedback` (v0.10, §4.8); `POST /api/feedback/images` is refused while it is used up, without counting |
+| `feedback_reply` | user | 30 / hour → `429 rate_limited` | `POST /api/feedback/{id}/messages` (v0.10, §4.8) |
 
 A native client must not send `X-Forwarded-For` (the API trusts the last entry).
 
@@ -618,6 +620,30 @@ Shapes:
 - The join mode governs only the directory: invites work as before. Switching the mode or unlisting keeps the pending requests.
 - Reporting a listing uses `POST /api/servers/{id}/reports` (§4.5).
 
+### 4.8 Feedback (v0.10, `backend/api/src/feedback/person.rs`)
+
+On while the instance names an operator (`API_OPERATOR_EMAILS`, deploy/README.md "Feedback"); there is no switch of its own. Signed-in only: every route answers `401` without a session. While feedback is off, `GET /api/feedback/status` answers `{"enabled": false, "unread": 0}` and every other route here answers `404`. Servers older than v0.10 answer `404` on the status route too: read that as off. The operator routes (`/api/operator/feedback*`) and the public form are web only. There is no gateway frame: the clients read the status on start, every five minutes, when the window gets the focus back, and after the person's own changes.
+
+Shapes:
+
+- `Status`: `{"enabled": bool, "unread": int}`; `unread` counts the caller's entries with an operator reply they have not marked read.
+- `Context` (sent): `{"client": "web"|"desktop", "os": "linux"|"windows"|"macos"|"android"|"ios"|"other", "app_version": string, "locale": "de"|"en", "page": string}`, all required; `page` is a path without query and fragment, at most 300 characters. The native app sends `desktop`, its build's system, `CARGO_PKG_VERSION`, the interface language and the route's path. Nothing else goes along.
+- `Entry`: `{"id", "kind": "idea"|"problem"|"praise", "status": "open"|"done", "text", "created_at", "last_activity_at", "image": {"url", "content_type", "size"}|null, "context": {"client": "web"|"desktop"|"form", "os": string|null, "app_version": string|null, "locale", "page": string|null}, "unread": bool, "messages": Message[]}`. `image.url` is `/api/feedback/{id}/image`.
+- `Message`: `{"id", "from": "you"|"operators", "text", "created_at", "new": bool}`. Operators stay unnamed; `new` marks an operator reply the caller had not seen when the list was read.
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/feedback/status` | — | `200 Status` | — |
+| `POST /api/feedback/images` | the image's bytes as they are, `Content-Type` the image's type; PNG, JPEG or WebP by its first bytes, at most 5 MiB (5,242,880 bytes) and 8192 px a side | `201 {"image": uuid}`, a staged upload that expires after 10 minutes unclaimed; charged to the daily upload quota | `404` off; `413` over 5 MiB (plain body); `422` field `image: invalid`; `429 rate_limited` (`feedback`, not counted here); `429 quota_exceeded` |
+| `POST /api/feedback` | `{"kind", "text", "image"?: uuid, "context": Context}`; `text` trimmed, 1 to 4000 characters | `201 Entry` | `404` off; `422` fields `kind`, `client`, `os`, `app_version`, `locale`, `page` (`invalid` each), `text: required \| too_long \| invalid`, `image: invalid` (not a staged upload of the caller, already used or expired); `429 rate_limited` (`feedback`) |
+| `GET /api/feedback?offset=` | `offset` from 0, left out for 0 | `200 {"entries": Entry[], "total": int}`, 20 per page, latest activity first | `404` off; `422` field `offset: invalid` |
+| `POST /api/feedback/{id}/messages` | `{"text"}`, as for an entry | `201 Message`; a reply on a done entry opens it again | `404` off or not the caller's entry; `422` field `text: required \| too_long \| invalid \| too_many` (200 messages a thread); `429 rate_limited` (`feedback_reply`) |
+| `POST /api/feedback/{id}/read` | none | `204`; the entry's `unread` clears | `404` off or not the caller's entry |
+| `GET /api/feedback/{id}/image` | — | the image, as attachments are delivered (`ATTACHMENT_DELIVERY`: the bytes, or a redirect to the bucket) | `404` off, not the caller's entry, or no image |
+
+- The native app uploads the image right before `POST /api/feedback`, with `UPLOAD_TIMEOUT` on that one request; a 5 MiB image on a slow line takes longer than the 10 s default.
+- Einstellungen → Feedback marks each entry with `unread: true` read once it has shown it, then reads the status again; the "Neu" marks stay for that visit.
+
 ---
 
 ## 5. Direct messages (`backend/api/src/dms/mod.rs`; web `web/src/dms/api.ts`, `web/src/dms/types.ts`)
@@ -971,6 +997,10 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 | GET, POST | /api/me/export | yes (v0.10) | 3.4 |
 | GET | /api/me/export/download | link (v0.10) | 3.4 |
 | POST | /api/servers/{id}/transfer | yes (v0.10) | 4.2 |
+| GET | /api/feedback/status | yes (v0.10) | 4.8 |
+| GET, POST | /api/feedback | yes (v0.10) | 4.8 |
+| POST | /api/feedback/images, /api/feedback/{id}/messages, /api/feedback/{id}/read | yes (v0.10) | 4.8 |
+| GET | /api/feedback/{id}/image | img (v0.10) | 4.8 |
 | GET | /health, /ready, /metrics | no | — |
 | GET | /ws (upgrade) | yes | gateway spec |
 

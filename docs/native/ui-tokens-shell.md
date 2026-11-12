@@ -708,8 +708,13 @@ User menu popup (`index.css:1196-1233`): absolute, right edge = chevron right, b
 grows from bottom-right (opacity/scale .96, 180ms ease-enter; closes 130ms ease-exit),
 z 35. Items: block, 14px weight 400, line box 21 → 37 tall, padding 8px 10px,
 radius 5, colour `--lr-text`, left-aligned, no icons, hover bg `--lr-hover`; in order:
-"Profil bearbeiten", "Einstellungen", "Server wechseln …" (desktop app only, title
-"Strg+Umschalt+S"), "Abmelden". Popup height with 4 items: 2 + 16 + 4·37 + 3·3 = 175.
+"Profil bearbeiten", "Einstellungen", "Feedback geben" (v0.10, #542: only while
+`GET /api/feedback/status` says `enabled`; opens the feedback dialog), "Betrieb"
+(operators), "Server wechseln …" (desktop app only, title "Strg+Umschalt+S"),
+"Abmelden". Popup height with 4 items: 2 + 16 + 4·37 + 3·3 = 175. While a feedback
+reply is unread, "Feedback geben" and the chevron carry the 8px accent `.unread-dot`
+(on the chevron absolute, top 4, right 2), and their names become "Feedback geben,
+neue Antwort auf dein Feedback" and "Benutzermenü, neue Antwort auf dein Feedback".
 At 1280×800: x 99..279 (180 wide, right edge = chevron right 279), bottom y = 790.5 − 43
 = 747.5, so it overlaps the panel's top line by 3.5px. Chevron icon points UP at rest
 (rotate 180°) and does not rotate further when open.
@@ -806,7 +811,7 @@ The file has 49 icons (`Icons.tsx:21-460`); the rest belong to other areas.
 | DM sidebar | Nachrichten, Neue Nachricht, Noch keine Unterhaltungen., Unterhaltungen |
 | Header | Suchen, In dieser Unterhaltung suchen, Wörter oder eine Phrase in Anführungszeichen, Strg F, Benachrichtigungen, Stummgeschaltet, `Benachrichtigungen für <x>`, `… (stumm)`, Mitgliederliste, Mitgliederliste einblenden, Mitgliederliste ausblenden, Live, Zuschauen, Zum Kanal |
 | Member panel | Mitglieder, Online, Abwesend, Offline, ` — ` (em dash between label and count), ` · Du`, `Profil von <Name>`, Live, `Live in <channel>`, einem Sprachkanal, Im Sprachkanal, `In <ch>`, `Stumm in <ch>`, `Taub in <ch>`, Stumm, Taub |
-| User panel | Online, Abwesend, Offline, `<presence> · <status>`, Einstellungen, Benutzermenü, Benutzerkonto, Profil bearbeiten, Server wechseln …, Abmelden, Dein Status, Status, Speichern, Speichert…, Gespeichert., Nicht gespeichert – erneut versuchen |
+| User panel | Online, Abwesend, Offline, `<presence> · <status>`, Einstellungen, Benutzermenü, Benutzerkonto, Profil bearbeiten, Feedback geben, Benutzermenü, neue Antwort auf dein Feedback, Server wechseln …, Abmelden, Dein Status, Status, Speichern, Speichert…, Gespeichert., Nicht gespeichert – erneut versuchen |
 
 ---------------------------------------------------------------------------------
 
