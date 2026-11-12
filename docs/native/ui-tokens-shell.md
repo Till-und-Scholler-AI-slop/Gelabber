@@ -709,7 +709,8 @@ grows from bottom-right (opacity/scale .96, 180ms ease-enter; closes 130ms ease-
 z 35. Items: block, 14px weight 400, line box 21 → 37 tall, padding 8px 10px,
 radius 5, colour `--lr-text`, left-aligned, no icons, hover bg `--lr-hover`; in order:
 "Profil bearbeiten", "Einstellungen", "Feedback geben" (v0.10, #542: only while
-`GET /api/feedback/status` says `enabled`; opens the feedback dialog), "Betrieb"
+`GET /api/feedback/status` says `enabled`; opens the feedback dialog,
+ui-auth-settings-dialogs §6.10), "Betrieb"
 (operators), "Server wechseln …" (desktop app only, title "Strg+Umschalt+S"),
 "Abmelden". Popup height with 4 items: 2 + 16 + 4·37 + 3·3 = 175. While a feedback
 reply is unread, "Feedback geben" and the chevron carry the 8px accent `.unread-dot`
