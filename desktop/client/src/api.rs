@@ -980,6 +980,72 @@ impl Http {
         )
         .await
     }
+
+    // ---------------------------------------------------------- feedback
+
+    /// Whether the instance takes feedback, and the unread count of the
+    /// dot. An API without the routes (older than v0.10) answers
+    /// `404 not_found`: that is off, not a failure.
+    pub async fn feedback_status(&self) -> Result<FeedbackStatus> {
+        match self.get("/feedback/status").await {
+            Err(error) if error.status() == Some(404) => Ok(FeedbackStatus::OFF),
+            answer => answer,
+        }
+    }
+
+    /// One page of the caller's entries with their threads; offset 0 is
+    /// left out, as the web's `listFeedback`.
+    pub async fn feedback_list(&self, offset: u32) -> Result<FeedbackPage> {
+        if offset > 0 {
+            self.get(&format!("/feedback?offset={offset}")).await
+        } else {
+            self.get("/feedback").await
+        }
+    }
+
+    /// Stages one image for the entry about to be created: only on
+    /// "Senden", since an unclaimed upload expires after ten minutes. The
+    /// bytes go as they are, with [`UPLOAD_TIMEOUT`] for a slow line.
+    ///
+    /// [`UPLOAD_TIMEOUT`]: crate::http::UPLOAD_TIMEOUT
+    pub async fn upload_feedback_image(
+        &self,
+        content_type: &str,
+        data: Vec<u8>,
+    ) -> Result<ImageStaged> {
+        self.send_bytes_within(
+            Method::POST,
+            "/feedback/images",
+            content_type,
+            data,
+            crate::http::UPLOAD_TIMEOUT,
+        )
+        .await
+    }
+
+    pub async fn create_feedback(&self, body: &NewFeedback) -> Result<FeedbackEntry> {
+        self.send(Method::POST, "/feedback", body).await
+    }
+
+    pub async fn reply_feedback(&self, id: Uuid, text: &str) -> Result<FeedbackMessage> {
+        self.send(
+            Method::POST,
+            &format!("/feedback/{id}/messages"),
+            &json!({ "text": text }),
+        )
+        .await
+    }
+
+    /// The entry's operator replies are seen: its `unread` clears.
+    pub async fn read_feedback(&self, id: Uuid) -> Result<()> {
+        self.send_empty(Method::POST, &format!("/feedback/{id}/read"))
+            .await
+    }
+
+    /// The URL of an entry's image, for [`Http::bytes`].
+    pub fn feedback_image_url(&self, id: Uuid) -> String {
+        self.url(&format!("/api/feedback/{id}/image"))
+    }
 }
 
 #[cfg(test)]
@@ -1417,5 +1483,114 @@ mod tests {
         let http = Http::new(&base).unwrap();
         let error = runtime.block_on(http.request_export()).unwrap_err();
         assert_eq!(error.code(), "export_pending");
+    }
+
+    /// Feedback (#542): every call goes to its route with the web's body,
+    /// the image as raw bytes.
+    #[test]
+    fn the_feedback_calls_go_to_their_routes() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = fake_api(|line| {
+            let entry = r#"{"id":"00000000-0000-0000-0000-000000000001","kind":"idea","status":"open","text":"Mehr Themes","created_at":"2026-11-12T09:00:00Z","last_activity_at":"2026-11-12T09:00:00Z","image":null,"context":{"client":"desktop","os":"linux","app_version":"0.10.0","locale":"de","page":"/settings"},"unread":false,"messages":[]}"#;
+            match line.split(' ').take(2).collect::<Vec<_>>().as_slice() {
+                ["GET", "/api/feedback/status"] => {
+                    ("200 OK", r#"{"enabled":true,"unread":2}"#.to_owned())
+                }
+                ["GET", path] if path.starts_with("/api/feedback") => {
+                    ("200 OK", format!(r#"{{"entries":[{entry}],"total":21}}"#))
+                }
+                ["POST", "/api/feedback/images"] => (
+                    "201 Created",
+                    r#"{"image":"00000000-0000-0000-0000-000000000005"}"#.to_owned(),
+                ),
+                ["POST", "/api/feedback"] => ("201 Created", entry.to_owned()),
+                ["POST", path] if path.ends_with("/messages") => (
+                    "201 Created",
+                    r#"{"id":"00000000-0000-0000-0000-000000000006","from":"you","text":"Firefox.","created_at":"2026-11-12T10:00:00Z","new":false}"#
+                        .to_owned(),
+                ),
+                _ => ("204 No Content", String::new()),
+            }
+        });
+        let http = Http::new(&base).unwrap();
+        let id = Uuid::from_u128(1);
+        runtime.block_on(async {
+            assert_eq!(
+                http.feedback_status().await.unwrap(),
+                FeedbackStatus {
+                    enabled: true,
+                    unread: 2
+                }
+            );
+            assert_eq!(http.feedback_list(0).await.unwrap().total, 21);
+            assert_eq!(http.feedback_list(20).await.unwrap().entries[0].id, id);
+            let staged = http
+                .upload_feedback_image("image/png", b"PNGBYTES".to_vec())
+                .await
+                .unwrap();
+            assert_eq!(staged.image, Uuid::from_u128(5));
+            let body = NewFeedback {
+                kind: FeedbackKind::Idea,
+                text: "Mehr Themes".into(),
+                image: Some(staged.image),
+                context: FeedbackContext {
+                    client: FeedbackClient::Desktop,
+                    os: DeviceOs::Linux,
+                    app_version: "0.10.0".into(),
+                    locale: "de".into(),
+                    page: "/settings".into(),
+                },
+            };
+            assert_eq!(http.create_feedback(&body).await.unwrap().id, id);
+            let reply = http.reply_feedback(id, "Firefox.").await.unwrap();
+            assert_eq!(reply.from, FeedbackAuthor::You);
+            http.read_feedback(id).await.unwrap();
+        });
+        assert_eq!(
+            http.feedback_image_url(id),
+            format!("{base}/api/feedback/{id}/image")
+        );
+        let i = "00000000-0000-0000-0000-000000000001";
+        let expected = [
+            ("GET /api/feedback/status".to_owned(), String::new()),
+            ("GET /api/feedback".to_owned(), String::new()),
+            ("GET /api/feedback?offset=20".to_owned(), String::new()),
+            ("POST /api/feedback/images".to_owned(), "PNGBYTES".to_owned()),
+            (
+                "POST /api/feedback".to_owned(),
+                r#"{"kind":"idea","text":"Mehr Themes","image":"00000000-0000-0000-0000-000000000005","context":{"client":"desktop","os":"linux","app_version":"0.10.0","locale":"de","page":"/settings"}}"#
+                    .to_owned(),
+            ),
+            (
+                format!("POST /api/feedback/{i}/messages"),
+                r#"{"text":"Firefox."}"#.to_owned(),
+            ),
+            (format!("POST /api/feedback/{i}/read"), String::new()),
+        ];
+        let seen = seen.lock();
+        assert_eq!(seen.len(), expected.len(), "{seen:?}");
+        for ((line, body), (want_line, want_body)) in seen.iter().zip(expected) {
+            assert_eq!(line, &format!("{want_line} HTTP/1.1"));
+            assert_eq!(body, &want_body, "{line}");
+        }
+    }
+
+    /// An API older than the feedback routes answers `404 not_found`: the
+    /// feature is off there. Other failures stay failures.
+    #[test]
+    fn an_api_without_feedback_has_it_off() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, _) = fake_api(|_| {
+            (
+                "404 Not Found",
+                r#"{"error":"not_found","message":"Not found"}"#.to_owned(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let status = runtime.block_on(http.feedback_status()).unwrap();
+        assert_eq!(status, FeedbackStatus::OFF);
+        let (base, _) = fake_api(|_| ("500 Internal Server Error", String::new()));
+        let http = Http::new(&base).unwrap();
+        assert!(runtime.block_on(http.feedback_status()).is_err());
     }
 }
