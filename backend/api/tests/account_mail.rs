@@ -532,3 +532,172 @@ async fn malformed_links_are_refused_without_touching_accounts(pool: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
 }
+
+/// Issue #515: every account mail is in the account's language, whatever
+/// language the request that caused it carried.
+#[sqlx::test]
+async fn mails_follow_the_account_language(pool: PgPool) {
+    let (state, mailer) = mail_state(pool);
+    let mut ada = client(&state).await;
+    let register = |locale: &'static str, password: &'static str| json!({ "email": ADA, "password": password, "name": "Ada", "locale": locale });
+
+    let res = post(&mut ada, "/api/auth/register", register("en", PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 1).await;
+    assert_eq!(sent[0].subject, "Confirm your email address for Gelabber");
+    assert!(sent[0].body.starts_with("Hi,\n\n"), "{}", sent[0].body);
+
+    // Taking over the pending registration takes its language too.
+    let res = post(&mut ada, "/api/auth/register", register("de", PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 2).await;
+    assert_eq!(
+        sent[1].subject,
+        "Bestätige deine E-Mail-Adresse für Gelabber"
+    );
+    let res = post(&mut ada, "/api/auth/register", register("en", PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 3).await;
+    assert_eq!(sent[2].subject, "Confirm your email address for Gelabber");
+    let res = post(
+        &mut ada,
+        "/api/auth/verify-email",
+        json!({ "token": token(&sent[2]), "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["user"]["locale"], "en");
+
+    // A German registration with her address: the notice is in her language,
+    // and her account keeps it.
+    let mut stranger = client(&state).await;
+    let res = post(
+        &mut stranger,
+        "/api/auth/register",
+        register("de", "another password"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 4).await;
+    assert_eq!(sent[3].subject, "Your Gelabber account");
+    assert!(
+        sent[3]
+            .body
+            .contains("Forgot password: https://chat.example.org/forgot-password"),
+        "{}",
+        sent[3].body
+    );
+
+    let res = post(
+        &mut stranger,
+        "/api/auth/password-reset",
+        json!({ "email": ADA }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 5).await;
+    assert_eq!(sent[4].subject, "New password for Gelabber");
+    assert!(
+        sent[4]
+            .body
+            .contains("https://chat.example.org/reset-password#token="),
+        "{}",
+        sent[4].body
+    );
+
+    // A switch to German applies to the next mail.
+    let res = ada
+        .send(
+            Method::PUT,
+            "/api/me/locale",
+            Some(json!({ "locale": "de" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = post(
+        &mut stranger,
+        "/api/auth/password-reset",
+        json!({ "email": ADA }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 6).await;
+    assert_eq!(sent[5].subject, "Neues Passwort für Gelabber");
+}
+
+/// Registration with mail on, on an invitation-only instance (#517): the
+/// answer stays `202` either way, and only a new or pending account uses
+/// up the invitation.
+#[sqlx::test]
+async fn with_mail_only_a_new_or_pending_account_uses_an_invitation(pool: PgPool) {
+    let (open, mailer) = mail_state(pool.clone());
+    confirmed_ada(&open, &mailer).await;
+    let mut state = open.clone();
+    state.registration = gelabber_api::config::RegistrationMode::Invitation;
+    let invitation = |code: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "INSERT INTO beta_invitations (code) VALUES ($1) RETURNING id",
+            )
+            .bind(code)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let used_by = |id: uuid::Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<uuid::Uuid>>(
+                "SELECT used_by FROM beta_invitations WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let register = |email: &'static str, code: Option<&'static str>| {
+        let state = state.clone();
+        async move {
+            let mut client = client(&state).await;
+            let mut body = json!({ "email": email, "password": PASSWORD, "name": "Neu" });
+            if let Some(code) = code {
+                body["invitation"] = json!(code);
+            }
+            post(&mut client, "/api/auth/register", body).await
+        }
+    };
+
+    let res = register("bob@example.com", None).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(res.body["error"], "invitation_required");
+
+    // A confirmed address keeps its account and the invitation stays open.
+    let first = invitation("aaaaaaaaaaaa").await;
+    let res = register(ADA, Some("aaaaaaaaaaaa")).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    assert_eq!(used_by(first).await, None);
+    let sent = outbox(&mailer, 2).await;
+    assert_eq!(sent[1].to, ADA);
+
+    // A new address uses it up.
+    let res = register("bob@example.com", Some("aaaaaaaaaaaa")).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let bob: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM users WHERE email = 'bob@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(used_by(first).await, Some(bob));
+    outbox(&mailer, 3).await;
+
+    // Taking over the pending row uses the next one.
+    let second = invitation("bbbbbbbbbbbb").await;
+    let res = register("bob@example.com", Some("aaaaaaaaaaaa")).await;
+    assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
+    let res = register("bob@example.com", Some("bbbbbbbbbbbb")).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    assert_eq!(used_by(second).await, Some(bob));
+}

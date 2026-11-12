@@ -59,7 +59,7 @@ pub fn new_email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
     let bare = !value.contains('"')
         && value
             .parse::<lettre::Address>()
-            .is_ok_and(|address| address.as_ref() == value);
+            .is_ok_and(|address| AsRef::<str>::as_ref(&address) == value);
     // The URL parser percent-decodes a domain (`ex%61mple.org`), and one
     // without an ASCII form would be stored as typed.
     let domain = value.rsplit_once('@').map_or("", |(_, domain)| domain);

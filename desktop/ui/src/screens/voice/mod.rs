@@ -19,6 +19,7 @@ pub mod sync;
 pub mod tile;
 pub mod video;
 pub mod volume;
+pub mod watchers;
 pub mod window;
 
 pub use page::show;

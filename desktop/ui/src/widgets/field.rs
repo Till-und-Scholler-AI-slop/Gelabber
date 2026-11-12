@@ -233,9 +233,9 @@ impl<'a> TextField<'a> {
                 Vec2::new(44.0, field_rect.height()),
             );
             let title = if shown {
-                "Passwort verbergen"
+                gelabber_i18n::chat::password_hide()
             } else {
-                "Passwort anzeigen"
+                gelabber_i18n::chat::password_show()
             };
             let toggle = ui.add(
                 IconButton::new(if shown { Icon::EyeOff } else { Icon::Eye }, title)
@@ -253,7 +253,12 @@ impl<'a> TextField<'a> {
         // "Feststelltaste ist an" under a focused password field.
         if self.password && caps_lock(ui, self.id, response.has_focus()) {
             y += space::S1_5;
-            let block = Block::single(ui, "Feststelltaste ist an", text::META, c.warning);
+            let block = Block::single(
+                ui,
+                gelabber_i18n::chat::password_caps_lock(),
+                text::META,
+                c.warning,
+            );
             let row = Rect::from_min_size(
                 pos2(top.x, y),
                 Vec2::new(14.0 + space::S1_5 + block.width(), block.height()),
@@ -270,7 +275,11 @@ impl<'a> TextField<'a> {
                 pos2(row.left() + 14.0 + space::S1_5, row.top()),
             );
             let hint = ui.interact(row, self.id.with("caps"), Sense::hover());
-            super::announce(&hint, egui::Role::Label, "Feststelltaste ist an");
+            super::announce(
+                &hint,
+                egui::Role::Label,
+                gelabber_i18n::chat::password_caps_lock(),
+            );
             y += layout_unit(block.height());
         }
         let note = self

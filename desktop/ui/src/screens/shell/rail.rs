@@ -3,6 +3,7 @@
 //! tooltip, and the dashed "Server hinzufügen" button under the list.
 
 use egui::{Color32, CornerRadius, Id, Rect, Shape, Stroke, Ui, Vec2, pos2};
+use gelabber_i18n::shell;
 use uuid::Uuid;
 
 use super::common;
@@ -46,8 +47,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
         (s.dms_badge(now), last)
     });
     let home_id = Id::unique("rail-home");
-    let response = common::click(ui, home, home_id).on_hover_text("Direktnachrichten");
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Direktnachrichten"));
+    let response = common::click(ui, home, home_id).on_hover_text(shell::rail_dms());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, shell::rail_dms()));
     common::describe_unread(ui, &response, dm_badge);
     // Its menu marks every conversation read.
     if response.secondary_clicked() || row_menu::menu_key(ui, &response) {
@@ -120,7 +121,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     // A failed load shows its error on the page: the placeholders rest.
     let failed = !loaded && super::home::bootstrap_failed(ui.ctx(), app.client, loaded);
     let list_top = rect.top() + 52.0;
-    let footer_h = 5.0 + TILE + 16.0;
+    // "Entdecken" under "Server hinzufügen", while there is a directory.
+    let discover = crate::screens::discover::enabled(ui.ctx(), app) == Some(true);
+    let footer_h = 5.0 + TILE + 16.0 + if discover { 12.0 + TILE } else { 0.0 };
     let count = if loaded { servers.len() } else { 3 };
     let content_h = 16.0 + ROW * count as f32;
     let list_h = content_h.min(rect.bottom() - list_top - footer_h).max(0.0);
@@ -143,7 +146,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     } else {
         common::Roved::default()
     };
-    common::list_hint(ui, list, Id::unique("rail-list"), common::LIST_HINT);
+    common::list_hint(ui, list, Id::unique("rail-list"), common::list_hint_text());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list));
     child.set_clip_rect(list);
     egui::ScrollArea::vertical()
@@ -203,16 +206,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                 }
                 let summary = if badge.count > 0 {
                     Some(if badge.count > 99 {
-                        "Mehr als 99 Erwähnungen".to_owned()
-                    } else if badge.count == 1 {
-                        "1 Erwähnung".to_owned()
+                        shell::rail_mentions_over99().to_owned()
                     } else {
-                        format!("{} Erwähnungen", badge.count)
+                        shell::rail_mentions(badge.count as u64)
                     })
                 } else if badge.dot {
-                    Some("Ungelesene Nachrichten".to_owned())
+                    Some(shell::rail_unread().to_owned())
                 } else if *muted {
-                    Some("Stummgeschaltet".to_owned())
+                    Some(shell::server_menu_muted().to_owned())
                 } else {
                     None
                 };
@@ -290,9 +291,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
         Vec2::splat(TILE),
     );
     let response =
-        common::click(ui, add, Id::unique("rail-add")).on_hover_text("Server hinzufügen");
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Server hinzufügen"));
+        common::click(ui, add, Id::unique("rail-add")).on_hover_text(shell::rail_add_server());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, true, shell::rail_add_server())
+    });
     if response.hovered() {
         painter.circle_filled(add.center(), TILE / 2.0, c.hover);
         painter.circle_stroke(
@@ -307,6 +309,39 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     common::focus_visible(ui, &response, add, TILE / 2.0);
     if response.clicked() {
         super::dialogs::open_add(ui.ctx(), AddStep::Choose);
+    }
+    if discover {
+        let tile = Rect::from_min_size(pos2(add.left(), add.bottom() + 12.0), Vec2::splat(TILE));
+        discover_tile(ui, app, &theme, tile);
+    }
+}
+
+/// "Entdecken" (`DiscoverTile`, `.server-discover-tile`): a square tile
+/// with the compass, amber while the directory is open.
+fn discover_tile(ui: &mut Ui, app: &mut AppCtx, theme: &Theme, tile: Rect) {
+    let c = &theme.c;
+    let active = matches!(app.nav.route(), crate::route::Route::Discover(_));
+    let id = Id::unique("rail-discover");
+    let response = common::click(ui, tile, id).on_hover_text(shell::rail_discover());
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, shell::rail_discover()));
+    let hovered = response.hovered();
+    let (fill, fg) = if active {
+        (c.selected, c.accent_text)
+    } else if hovered {
+        (c.hover, c.text)
+    } else {
+        (Color32::TRANSPARENT, c.muted)
+    };
+    if fill != Color32::TRANSPARENT {
+        common::fill(ui.painter(), tile, theme.radius.md, fill);
+    }
+    common::focus_visible(ui, &response, tile, theme.radius.md);
+    icons::paint_centered(ui.painter(), Icon::Compass, tile, 22.0, fg);
+    // A link to `/discover` without a search, also from a search.
+    let target = crate::route::Route::Discover(Default::default()).path();
+    if response.clicked() && app.nav.location().href() != target {
+        app.nav.navigate(&target);
     }
 }
 

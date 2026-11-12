@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { setLocale } from "../i18n/locale.ts";
 import { isContinued } from "./pages.ts";
 import { asSystem, systemText } from "./system.ts";
 import { asReply, replyTo, type Message } from "./types.ts";
@@ -25,6 +26,18 @@ function msg(id: string, extra: Partial<Message> = {}): Message {
 describe("system messages", () => {
   it("renders the live notice like the server's push", () => {
     expect(systemText(live, "Ada")).toBe("Ada ist live in Lounge.");
+  });
+
+  it("says it in English like an English push", () => {
+    setLocale("en", { persist: false });
+    try {
+      expect(systemText(live, "Ada")).toBe("Ada is live in Lounge.");
+      expect(systemText({ kind: "later", params: {} }, "Ada")).toBe(
+        "System message from Ada",
+      );
+    } finally {
+      setLocale("de", { persist: false });
+    }
   });
 
   it("names a kind it does not know yet", () => {

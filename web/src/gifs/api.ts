@@ -3,6 +3,8 @@
 
 import { ApiError, api } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import type { Gif } from "../messages/types.ts";
 
 export type GifStatus = { enabled: boolean; provider: string | null };
@@ -55,7 +57,9 @@ export function gifLabel(gif: Pick<Gif, "title">): string {
 
 /** "45 s", "2 Min." (rounded up): how long until the next try. */
 function waitText(seconds: number): string {
-  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} Min.`;
+  return seconds < 60
+    ? translate(chat, "gif.waitSeconds", { seconds })
+    : translate(chat, "gif.waitMinutes", { minutes: Math.ceil(seconds / 60) });
 }
 
 /** The picker's status line. A full budget (the user's own or the server's
@@ -71,21 +75,25 @@ export function gifFeedStatus({
   count: number;
   query: string;
 }): string {
-  if (pending) return "GIFs werden geladen …";
+  if (pending) return translate(chat, "gif.loading");
   if (error) {
     if (error instanceof ApiError && error.code === "rate_limited")
       return error.retryAfter
-        ? `Zu viele GIF-Anfragen. Bitte in ${error.retryAfter} s noch einmal versuchen.`
+        ? translate(chat, "gif.rateLimited", {
+            seconds: String(error.retryAfter),
+          })
         : errorMessage("rate_limited");
     if (error instanceof ApiError && error.code === "upstream_quota")
       return error.retryAfter
-        ? `Dieser Server hat sein GIF-Kontingent gerade aufgebraucht. Bitte in ${waitText(error.retryAfter)} noch einmal versuchen.`
+        ? translate(chat, "gif.quota", { wait: waitText(error.retryAfter) })
         : errorMessage("upstream_quota");
     if (error instanceof ApiError && error.code === "upstream_unavailable")
       return errorMessage("upstream_unavailable");
-    if (count === 0) return "GIFs konnten nicht geladen werden.";
-    return "Weitere GIFs konnten nicht geladen werden.";
+    if (count === 0) return translate(chat, "gif.failed");
+    return translate(chat, "gif.moreFailed");
   }
-  if (count === 0) return "Keine GIFs gefunden.";
-  return query ? `${count} GIFs zu „${query}“` : `${count} angesagte GIFs`;
+  if (count === 0) return translate(chat, "gif.none");
+  return query
+    ? translate(chat, "gif.found", { count, query })
+    : translate(chat, "gif.trending", { count });
 }

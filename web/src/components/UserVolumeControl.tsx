@@ -1,4 +1,6 @@
 import { useId, type CSSProperties } from "react";
+import { useT } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 import {
   PLAYBACK_SLIDER_MAX,
   playbackSliderFill,
@@ -34,16 +36,19 @@ export function UserVolumeView({
   name: string;
   level: UserVolume;
 }) {
+  const t = useT(voice);
   const id = useId();
+  const percent = t("percent", { percent: Math.round(level.volume * 100) });
   const { setVolume, setMuted, reset } = useUserVolumes.getState();
   const changed = level.volume !== 1 || level.muted;
   return (
-    <section className="user-volume" aria-label={`Lautstärke von ${name}`}>
+    <section
+      className="user-volume"
+      aria-label={t("userVolume.sectionLabel", { name })}
+    >
       <div className="user-volume__row">
-        <label htmlFor={`${id}-volume`}>Lautstärke</label>
-        <output htmlFor={`${id}-volume`}>
-          {Math.round(level.volume * 100)} %
-        </output>
+        <label htmlFor={`${id}-volume`}>{t("userVolume.volume")}</label>
+        <output htmlFor={`${id}-volume`}>{percent}</output>
       </div>
       <input
         id={`${id}-volume`}
@@ -57,7 +62,7 @@ export function UserVolumeView({
             "--lr-range-value": playbackSliderFill(level.volume),
           } as CSSProperties
         }
-        aria-valuetext={`${Math.round(level.volume * 100)} %`}
+        aria-valuetext={percent}
         disabled={level.muted}
         onChange={(event) =>
           setVolume(userId, playbackSliderVolume(Number(event.target.value)))
@@ -71,7 +76,7 @@ export function UserVolumeView({
             checked={level.muted}
             onChange={(event) => setMuted(userId, event.target.checked)}
           />
-          Lokal stummschalten
+          {t("userVolume.muteLocally")}
         </label>
         <button
           type="button"
@@ -79,12 +84,10 @@ export function UserVolumeView({
           disabled={!changed}
           onClick={() => reset(userId)}
         >
-          Zurücksetzen
+          {t("userVolume.reset")}
         </button>
       </div>
-      <p className="user-volume__hint">
-        Nur für dich hörbar. Live-Ton bleibt unverändert.
-      </p>
+      <p className="user-volume__hint">{t("userVolume.hint")}</p>
     </section>
   );
 }
@@ -96,10 +99,11 @@ export function LocallyMutedIcon({ userId }: { userId: string }) {
 }
 
 export function LocallyMutedMark() {
+  const t = useT(voice);
   return (
-    <span className="user-volume-muted" title="Lokal stummgeschaltet">
+    <span className="user-volume-muted" title={t("userVolume.locallyMuted")}>
       <SpeakerOffIcon size={16} />
-      <span className="sr-only">Lokal stummgeschaltet</span>
+      <span className="sr-only">{t("userVolume.locallyMuted")}</span>
     </span>
   );
 }

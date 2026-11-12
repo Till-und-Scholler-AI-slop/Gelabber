@@ -32,9 +32,9 @@ impl UiScale {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Compact => "Kompakt",
-            Self::Standard => "Standard",
-            Self::Large => "Groß",
+            Self::Compact => gelabber_i18n::settings::appearance_scale_compact(),
+            Self::Standard => gelabber_i18n::settings::appearance_scale_standard(),
+            Self::Large => gelabber_i18n::settings::appearance_scale_large(),
         }
     }
 
@@ -95,6 +95,9 @@ pub struct Prefs {
     pub ptt_release_delay: f64,
     /// The account's last theme, painted at start before /me/themes answers.
     pub theme: Option<gelabber_client::Theme>,
+    /// The language the app showed last, for the next start and while
+    /// signed out (the web's `localStorage["gelabber.locale"]`).
+    pub locale: Option<gelabber_i18n::Locale>,
 }
 
 impl Default for Prefs {
@@ -133,6 +136,7 @@ impl Default for Prefs {
             ptt_key_label: String::new(),
             ptt_release_delay: 200.0,
             theme: None,
+            locale: None,
         }
     }
 }
@@ -194,6 +198,10 @@ impl Prefs {
             theme: v
                 .get("theme")
                 .and_then(|t| serde_json::from_value(t.clone()).ok()),
+            locale: v
+                .get("locale")
+                .and_then(Value::as_str)
+                .and_then(gelabber_i18n::Locale::parse),
         }
     }
 
@@ -234,6 +242,9 @@ impl Prefs {
         put("pttReleaseDelay", json!(self.ptt_release_delay));
         if let Some(theme) = &self.theme {
             put("theme", serde_json::to_value(theme).unwrap_or(Value::Null));
+        }
+        if let Some(locale) = self.locale {
+            put("locale", json!(locale.as_str()));
         }
         Value::Object(m)
     }
@@ -298,6 +309,19 @@ pub fn update(ctx: &Context, change: impl FnOnce(&mut Prefs)) {
     }
 }
 
+/// The language the app showed last on this device, before any window
+/// (the start reads it: setup.rs `start_locale`).
+pub fn stored_locale() -> Option<gelabber_i18n::Locale> {
+    load().locale
+}
+
+/// Shows the interface in `locale` from the next frame on, and keeps it for
+/// the next start.
+pub fn show_locale(ctx: &Context, locale: gelabber_i18n::Locale) {
+    gelabber_i18n::set(locale);
+    update(ctx, |p| p.locale = Some(locale));
+}
+
 /// Text size as egui zoom (the web's `zoom: var(--lr-ui-scale)`) and
 /// reduced motion as instant animations.
 pub fn apply(ctx: &Context, prefs: &Prefs) {
@@ -325,9 +349,12 @@ mod tests {
             ui_scale: UiScale::Large,
             input_gain: 1.5,
             voice_input: "ptt".into(),
+            locale: Some(gelabber_i18n::Locale::En),
             ..Prefs::default()
         };
         assert_eq!(Prefs::from_json(&p.to_json()), p);
+        assert_eq!(p.to_json()["locale"], "en");
+        assert_eq!(Prefs::from_json(&json!({"locale": "fr"})).locale, None);
         let partial = Prefs::from_json(&json!({"inputGain": 9, "voiceInput": "x"}));
         assert_eq!(partial.input_gain, 2.0);
         assert_eq!(partial.voice_input, "activity");

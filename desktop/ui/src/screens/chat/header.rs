@@ -3,6 +3,7 @@
 //! search field with its Strg F hint, the bell and the member toggle.
 
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, TextBuffer, Ui, Vec2, pos2, vec2};
+use gelabber_i18n::chat as texts;
 
 use crate::icons::{self, Icon};
 use crate::images::Images;
@@ -20,6 +21,8 @@ pub enum Title<'a> {
     Channel {
         name: &'a str,
         voice: bool,
+        /// Limited to roles: a lock after the name.
+        limited: bool,
     },
     Dm {
         name: &'a str,
@@ -85,11 +88,15 @@ pub fn show(
     let max_title = right - 260.0 - 10.0 - rect.left() - 20.0;
     // NotificationBell's aria-label: "#allgemein" or the person.
     let bell_name = match &title {
-        Title::Channel { name, .. } => format!("Benachrichtigungen für #{name}"),
-        Title::Dm { name, .. } => format!("Benachrichtigungen für {name}"),
-    } + if muted { " (stumm)" } else { "" };
+        Title::Channel { name, .. } => texts::header_bell_label(&format!("#{name}"), muted),
+        Title::Dm { name, .. } => texts::header_bell_label(name, muted),
+    };
     match title {
-        Title::Channel { name, voice } => {
+        Title::Channel {
+            name,
+            voice,
+            limited,
+        } => {
             let x = rect.left() + 20.0;
             icons::paint(
                 ui.painter(),
@@ -98,12 +105,26 @@ pub fn show(
                 18.0,
                 c.muted,
             );
-            let mut job = crate::text::job(name, TITLE, c.text, Some(max_title.max(40.0)));
+            // `.lr-channel-title-lock` keeps its 14 and the 10 gap.
+            let lock_room = if limited { 10.0 + 14.0 } else { 0.0 };
+            let mut job =
+                crate::text::job(name, TITLE, c.text, Some((max_title - lock_room).max(40.0)));
             job.wrap.max_rows = 1;
             job.wrap.break_anywhere = true;
             let block = Block::new(ui, job, TITLE);
             block.paint(ui.painter(), pos2(x + 28.0, mid - TITLE.line_px() / 2.0));
             out.title_right = x + 28.0 + block.width();
+            if limited {
+                let id = egui::Id::unique(("gelabber-header-title", channel));
+                let lock = crate::screens::shell::access::lock(
+                    ui,
+                    ui.painter(),
+                    id,
+                    out.title_right + 10.0,
+                    mid,
+                );
+                out.title_right = lock.right();
+            }
         }
         Title::Dm {
             name,
@@ -152,7 +173,7 @@ pub fn show(
             if response.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
-            Tooltip::new(&format!("Profil von {name}")).on_hover(&response, Side::Below);
+            Tooltip::new(&texts::header_profile_of(name)).on_hover(&response, Side::Below);
             out.peer_clicked = response.clicked();
         }
     }
@@ -190,7 +211,12 @@ pub fn show(
         16.0,
         if hot { c.text } else { c.muted },
     );
-    let kbd = Block::single(ui, "Strg F", TextStyle::new(11.0, 400.0, 1.5), c.muted);
+    let kbd = Block::single(
+        ui,
+        texts::header_search_shortcut(),
+        TextStyle::new(11.0, 400.0, 1.5),
+        c.muted,
+    );
     let kbd_rect = Rect::from_min_size(
         pos2(field.right() - 11.0 - kbd.width() - 12.0, mid - 9.25),
         vec2(kbd.width() + 12.0, 18.5),
@@ -285,11 +311,15 @@ pub fn show(
         })
         .inner;
     // The web names the field by its aria-label "Suchen".
-    let edit_response = edit.response.response.clone().accessible_name("Suchen");
+    let edit_response = edit
+        .response
+        .response
+        .clone()
+        .accessible_name(texts::pane_search_placeholder());
     out.search_changed |= edit_response.changed();
     out.search_focused = edit_response.has_focus();
     if search.is_empty() {
-        let hint = Block::single(ui, "Suchen", SEARCH, c.subtle);
+        let hint = Block::single(ui, texts::pane_search_placeholder(), SEARCH, c.subtle);
         hint.paint(ui.painter(), pos2(input_left, mid - SEARCH.line_px() / 2.0));
         ui.painter().rect(
             kbd_rect,
@@ -306,7 +336,7 @@ pub fn show(
     if field_resp.hovered() || edit.response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
     }
-    Tooltip::new("Wörter oder eine Phrase in Anführungszeichen").on_hover(&field_resp, Side::Below);
+    Tooltip::new(texts::pane_search_hint()).on_hover(&field_resp, Side::Below);
 
     // The bell and the member toggle (`.lr-header-icon`).
     let bell = header_icon(
@@ -316,9 +346,9 @@ pub fn show(
         16.0,
         false,
         if muted {
-            "Stummgeschaltet"
+            texts::header_bell_title_muted()
         } else {
-            "Benachrichtigungen"
+            texts::header_bell_title()
         },
         id.with("bell"),
     );
@@ -327,9 +357,9 @@ pub fn show(
     if let Some(r) = toggle_rect {
         let on = layout::members_visible(ui.ctx());
         let label = if on {
-            "Mitgliederliste ausblenden"
+            texts::header_members_hide()
         } else {
-            "Mitgliederliste einblenden"
+            texts::header_members_show()
         };
         let toggle = header_icon(ui, r, Icon::Users, 18.0, on, label, id.with("members"));
         toggle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));

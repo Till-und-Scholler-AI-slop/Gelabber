@@ -15,11 +15,17 @@ pub struct Popover {
     anchor: Rect,
     align_end: bool,
     min_width: f32,
+    /// `top-*`: over the anchor when it fits there.
+    above: bool,
     takes_focus: bool,
     /// A submenu: the menu it opens beside (`submenuPosition`).
     beside: Option<Rect>,
     /// Presses here are not outside (an open submenu).
     inside: Option<Rect>,
+    /// Inside the 1px border; 8 unless a popover sets its own.
+    padding: f32,
+    /// `matchAnchorWidth`: at least the anchor's width, past the 360 cap.
+    anchor_width: bool,
 }
 
 /// `SUBMENU_INSET` of RowMenu.tsx: the submenu's padding and border, so its
@@ -34,9 +40,12 @@ impl Popover {
             anchor,
             align_end: false,
             min_width: 180.0,
+            above: false,
             takes_focus: true,
             beside: None,
             inside: None,
+            padding: 8.0,
+            anchor_width: false,
         }
     }
 
@@ -66,8 +75,29 @@ impl Popover {
         self
     }
 
+    /// `top-start` / `top-end`: over the anchor, under it only when it
+    /// does not fit above.
+    pub fn above(mut self) -> Self {
+        self.above = true;
+        self
+    }
+
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = width;
+        self
+    }
+
+    /// Its own padding inside the border (the role picker's 12).
+    pub fn padding(mut self, padding: f32) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    /// `matchAnchorWidth`: as wide as the anchor at least. The inline
+    /// min-width wins over `.ui-popover`'s max-width of 360.
+    pub fn match_anchor_width(mut self) -> Self {
+        self.anchor_width = true;
+        self.min_width = self.min_width.max(self.anchor.width());
         self
     }
 
@@ -94,6 +124,8 @@ impl Popover {
                 screen.top() + 8.0,
                 (screen.bottom() - 8.0 - size.y).max(screen.top() + 8.0),
             )
+        } else if self.above && self.anchor.top() - 6.0 - size.y >= screen.top() + 8.0 {
+            self.anchor.top() - 6.0 - size.y
         } else if below + size.y > screen.bottom() - 8.0 {
             (self.anchor.top() - 6.0 - size.y).max(screen.top() + 8.0)
         } else {
@@ -153,11 +185,12 @@ impl Popover {
             .order(Order::Foreground)
             .fixed_pos(pos2(left, top))
             .show(ctx, |ui| {
+                let inset = self.padding + 1.0;
                 let inner_rect = Rect::from_min_size(
-                    pos2(left + 9.0, top + 9.0),
+                    pos2(left + inset, top + inset),
                     Vec2::new(
-                        (size.x - 18.0).max(self.min_width - 18.0),
-                        (size.y - 18.0).max(0.0),
+                        (size.x - 2.0 * inset).max(self.min_width - 2.0 * inset),
+                        (size.y - 2.0 * inset).max(0.0),
                     ),
                 );
                 let frame_rect = Rect::from_min_size(pos2(left, top), size);
@@ -174,12 +207,16 @@ impl Popover {
                 out = Some(content(&mut child));
                 let used = child.min_rect();
                 let measured = Vec2::new(
-                    (used.width() + 18.0).max(self.min_width).min(360.0),
-                    used.height() + 18.0,
+                    if self.anchor_width {
+                        (used.width() + 2.0 * inset).min(360.0).max(self.min_width)
+                    } else {
+                        (used.width() + 2.0 * inset).max(self.min_width).min(360.0)
+                    },
+                    used.height() + 2.0 * inset,
                 );
                 if (measured - size).length() > 0.5 {
                     ctx.data_mut(|d| d.insert_temp(size_id, measured));
-                    ctx.request_discard("popover size");
+                    ctx.request_discard("popover size"); // i18n-ok
                 }
                 ui.allocate_rect(frame_rect, Sense::hover());
             });

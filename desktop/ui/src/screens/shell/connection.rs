@@ -4,6 +4,7 @@
 
 use egui::{Color32, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::GatewayStatus;
+use gelabber_i18n::shell;
 
 use crate::icons::{self, Icon};
 use crate::text::{self, Block};
@@ -27,16 +28,16 @@ pub enum Notice {
 impl Notice {
     pub fn text(&self) -> String {
         match self {
-            Self::Offline => "Keine Verbindung – dein Gerät ist offline".into(),
-            Self::Reconnecting => "Keine Verbindung – wird wiederhergestellt…".into(),
+            Self::Offline => shell::connection_offline().into(),
+            Self::Reconnecting => shell::connection_reconnecting().into(),
             Self::Refused(reason) if reason.starts_with("TLS") => {
-                "Keine Verbindung – das Zertifikat des Servers wird nicht akzeptiert".into()
+                shell::connection_certificate().into()
             }
             Self::Refused(reason) if reason.starts_with("HTTP ") => {
-                format!("Keine Verbindung – vom Server abgelehnt ({reason})")
+                shell::connection_refused_with(reason)
             }
-            Self::Refused(_) => "Keine Verbindung – vom Server abgelehnt".into(),
-            Self::Restored => "Verbindung wiederhergestellt".into(),
+            Self::Refused(_) => shell::connection_refused().into(),
+            Self::Restored => shell::connection_restored().into(),
         }
     }
 }

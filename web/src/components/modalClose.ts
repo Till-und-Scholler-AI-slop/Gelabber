@@ -3,6 +3,8 @@
 // confirmed first, and where focus goes back to.
 
 import { confirmAction, type ConfirmRequest } from "./confirm.ts";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 type Box = { top: number; right: number; bottom: number; left: number };
 
@@ -44,11 +46,13 @@ export function backdropClicks() {
   };
 }
 
-export const DISCARD_CHANGES: ConfirmRequest = {
-  title: "Änderungen verwerfen?",
-  message: "Deine Eingaben gehen verloren.",
-  confirmLabel: "Verwerfen",
-};
+export function discardChanges(): ConfirmRequest {
+  return {
+    title: translate(shell, "discard.title"),
+    message: translate(shell, "discard.message"),
+    confirmLabel: translate(shell, "discard.confirm"),
+  };
+}
 
 /**
  * Esc or "Schließen": closes at once, or with unsaved input only once the
@@ -63,7 +67,7 @@ export async function requestClose({
   onClose: () => void;
   confirm?: (request: ConfirmRequest) => Promise<boolean>;
 }): Promise<boolean> {
-  if (dirty && !(await confirm(DISCARD_CHANGES))) return false;
+  if (dirty && !(await confirm(discardChanges()))) return false;
   onClose();
   return true;
 }

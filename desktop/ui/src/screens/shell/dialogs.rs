@@ -5,6 +5,7 @@
 
 use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::{ApiError, Category, Channel, ChannelKind, ChannelPatch, Invite, OpState};
+use gelabber_i18n::{Text, dms, servers, shell};
 use std::sync::atomic::Ordering;
 
 use uuid::Uuid;
@@ -20,18 +21,17 @@ use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
 use crate::widgets::{Button, FormError, InlineStatus, Modal, StatusTone, TextField};
 
-const CREATE_HINT: &str = "Mit #allgemein und einem Sprachkanal.";
-const EXPIRY: [(&str, Option<u32>); 4] = [
-    ("1 Stunde", Some(1)),
-    ("24 Stunden", Some(24)),
-    ("7 Tage", Some(168)),
-    ("Nie", None),
+const EXPIRY: [(Text, Option<u32>); 4] = [
+    (servers::terms_expiry_hour, Some(1)),
+    (servers::terms_expiry_day, Some(24)),
+    (servers::terms_expiry_week, Some(168)),
+    (servers::terms_expiry_never, None),
 ];
-const USES: [(&str, Option<u32>); 4] = [
-    ("1", Some(1)),
-    ("5", Some(5)),
-    ("25", Some(25)),
-    ("Unbegrenzt", None),
+const USES: [(Text, Option<u32>); 4] = [
+    (|| "1", Some(1)),
+    (|| "5", Some(5)),
+    (|| "25", Some(25)),
+    (servers::terms_uses_unlimited, None),
 ];
 
 pub fn open_add(ctx: &egui::Context, step: AddStep) {
@@ -81,6 +81,9 @@ pub fn open_channel(
             name: editing.map(|c| c.name.clone()).unwrap_or_default(),
             category: editing.map_or(category, |c| c.category_id),
             error: None,
+            access: editing.and_then(super::access::of),
+            initial_name: editing.map(|c| c.name.clone()).unwrap_or_default(),
+            initial_access: editing.and_then(super::access::of),
         });
     });
 }
@@ -102,9 +105,9 @@ pub fn confirm_delete_channel(ctx: &egui::Context, server: Uuid, channel: &Chann
     super::overlays::ask(
         ctx,
         super::overlays::Question::danger(
-            format!("Kanal „{}“ löschen?", channel.name),
-            Some("Alle Nachrichten darin werden gelöscht."),
-            "Kanal löschen",
+            shell::channels_delete_channel_title(&channel.name),
+            Some(shell::channels_delete_channel_message()),
+            shell::channels_delete_channel_confirm(),
             super::overlays::ConfirmAction::DeleteChannel {
                 server,
                 channel: channel.id,
@@ -117,9 +120,9 @@ pub fn confirm_delete_category(ctx: &egui::Context, server: Uuid, category: &Cat
     super::overlays::ask(
         ctx,
         super::overlays::Question::danger(
-            format!("Kategorie „{}“ löschen?", category.name),
-            Some("Die Kanäle darin bleiben erhalten."),
-            "Kategorie löschen",
+            shell::channels_delete_category_title(&category.name),
+            Some(shell::channels_delete_category_message()),
+            shell::channels_delete_category_confirm(),
             super::overlays::ConfirmAction::DeleteCategory {
                 server,
                 category: category.id,
@@ -161,7 +164,24 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             name,
             category,
             error,
-        } => channel_dialog(ui, app, *server, *editing, voice, name, category, error),
+            access,
+            initial_name,
+            initial_access,
+        } => channel_dialog(
+            ui,
+            app,
+            *server,
+            *editing,
+            voice,
+            name,
+            category,
+            error,
+            ChannelAccess {
+                value: access,
+                initial_name,
+                initial: initial_access,
+            },
+        ),
         Dialog::Category {
             server,
             editing,
@@ -208,9 +228,9 @@ fn add_server(
 ) -> bool {
     let ctx = ui.ctx().clone();
     let title = match step {
-        AddStep::Choose => "Server hinzufügen",
-        AddStep::Create => "Server erstellen",
-        AddStep::Join => "Server beitreten",
+        AddStep::Choose => servers::add_title(),
+        AddStep::Create => servers::create_title(),
+        AddStep::Join => servers::join_title(),
     };
     let op = app.client.with_state(|s| s.op("create_server").cloned());
     let pending = *sent && matches!(op, Some(OpState::Pending));
@@ -256,7 +276,12 @@ fn add_server(
                 match step {
                     AddStep::Choose => {
                         ui.spacing_mut().item_spacing.y = 8.0;
-                        let create = choice(ui, Icon::Plus, "Server erstellen", CREATE_HINT);
+                        let create = choice(
+                            ui,
+                            Icon::Plus,
+                            servers::create_title(),
+                            servers::create_hint(),
+                        );
                         // The dialog opens on its first control, as showModal does.
                         if crate::widgets::field::mounted(ui.ctx(), Id::unique("gelabber-add-open"))
                         {
@@ -265,23 +290,18 @@ fn add_server(
                         if create.clicked() {
                             *step = AddStep::Create;
                         }
-                        if choice(
-                            ui,
-                            Icon::Link,
-                            "Server beitreten",
-                            "Mit einem Einladungslink oder Code.",
-                        )
-                        .clicked()
+                        if choice(ui, Icon::Link, servers::join_title(), servers::join_hint())
+                            .clicked()
                         {
                             *step = AddStep::Join;
                         }
                     }
                     AddStep::Create => {
                         let field = TextField::new("server-name", name)
-                            .label("Name")
+                            .label(servers::form_name_label())
                             .autofocus(true)
                             .char_limit(100)
-                            .hint(Some(CREATE_HINT))
+                            .hint(Some(servers::create_hint()))
                             .error(error.as_deref())
                             .show(ui);
                         if field.response.changed() {
@@ -291,12 +311,15 @@ fn add_server(
                         buttons(ui, |ui| {
                             submit |= ui
                                 .add(
-                                    Button::new("Erstellen")
+                                    Button::new(servers::form_create())
                                         .primary()
-                                        .pending(pending.then_some("Erstellen…")),
+                                        .pending(pending.then_some(servers::form_creating())),
                                 )
                                 .clicked();
-                            if ui.add(Button::new("Zurück").ghost()).clicked() {
+                            if ui
+                                .add(Button::new(gelabber_i18n::common::back()).ghost())
+                                .clicked()
+                            {
                                 *step = AddStep::Choose;
                             }
                         });
@@ -312,8 +335,8 @@ fn add_server(
                     }
                     AddStep::Join => {
                         let field = TextField::new("join-invite", code)
-                            .label("Einladungslink oder Code")
-                            .placeholder("Link oder Code einfügen")
+                            .label(servers::join_input_label())
+                            .placeholder(servers::join_input_placeholder())
                             .autofocus(true)
                             .error(error.as_deref())
                             .show(ui);
@@ -322,8 +345,13 @@ fn add_server(
                         }
                         let mut submit = field.submitted;
                         buttons(ui, |ui| {
-                            submit |= ui.add(Button::new("Weiter").primary()).clicked();
-                            if ui.add(Button::new("Zurück").ghost()).clicked() {
+                            submit |= ui
+                                .add(Button::new(gelabber_i18n::common::next()).primary())
+                                .clicked();
+                            if ui
+                                .add(Button::new(gelabber_i18n::common::back()).ghost())
+                                .clicked()
+                            {
                                 *step = AddStep::Choose;
                             }
                         });
@@ -388,9 +416,9 @@ fn choice(ui: &mut Ui, icon: Icon, title: &str, detail: &str) -> egui::Response 
 pub fn parse_invite(input: &str, own_link: &str) -> Result<String, &'static str> {
     let value = input.trim();
     if value.is_empty() {
-        return Err("Bitte einen Einladungslink oder Code eingeben.");
+        return Err(servers::join_error_empty());
     }
-    let invalid = "Das sieht nicht wie ein Einladungslink aus.";
+    let invalid = servers::join_error_invalid();
     let bare = |v: &str| {
         let code = v.to_lowercase();
         let ok = code.chars().count() == 12
@@ -433,7 +461,7 @@ pub fn parse_invite(input: &str, own_link: &str) -> Result<String, &'static str>
                 )
             };
             if own.as_ref().is_some_and(|o| host(o) != host(&url)) {
-                return Err("Dieser Link gehört zu einem anderen Gelabber-Server.");
+                return Err(servers::join_error_foreign());
             }
             from_path(url.path())
         }
@@ -444,12 +472,12 @@ pub fn parse_invite(input: &str, own_link: &str) -> Result<String, &'static str>
 /// `termsSummary`: "gültig 7 Tage · unbegrenzt nutzbar".
 fn summary(terms: Terms) -> String {
     let expiry = match EXPIRY[terms.expiry].1 {
-        None => "unbegrenzt gültig".to_owned(),
-        Some(_) => format!("gültig {}", EXPIRY[terms.expiry].0),
+        None => servers::terms_valid_forever().to_owned(),
+        Some(_) => servers::terms_valid_for(EXPIRY[terms.expiry].0()),
     };
     let uses = match USES[terms.uses].1 {
-        None => "unbegrenzt nutzbar".to_owned(),
-        Some(n) => format!("{n}-mal nutzbar"),
+        None => servers::terms_uses_unlimited_note().to_owned(),
+        Some(n) => servers::terms_uses_limited(u64::from(n)),
     };
     format!("{expiry} · {uses}")
 }
@@ -484,7 +512,7 @@ fn settle(s: &mut InviteState, terms: Terms, result: Result<Invite, ApiError>) -
                     revoke = Some(old.code);
                 }
                 s.status = Some((
-                    format!("Neuer Link · {}", summary(terms)),
+                    servers::invite_new_link(&summary(terms)),
                     StatusTone::Neutral,
                 ));
             }
@@ -527,7 +555,7 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
         .as_ref()
         .map(|(i, _)| app.client.http().invite_link(&i.code))
         .unwrap_or_default();
-    let title = format!("Zu {} einladen", s.name);
+    let title = servers::invite_title(&s.name);
     let output = Modal::new(("invite", s.server), &title).show(
         &ctx,
         |ui| {
@@ -535,16 +563,19 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
             if s.invite.is_none()
                 && let Some(error) = &s.error
             {
-                let message = format!("Der Einladungslink konnte nicht erstellt werden. {error}");
+                let message = servers::invite_create_failed(error);
                 ui.add(FormError::new(&message));
-                if ui.add(Button::new("Erneut versuchen").small()).clicked() {
+                if ui
+                    .add(Button::new(gelabber_i18n::common::try_again()).small())
+                    .clicked()
+                {
                     s.error = None;
                 }
                 return;
             }
             // The link and "Link kopieren".
             let row_w = ui.available_width();
-            let copy_label = "Link kopieren";
+            let copy_label = servers::invite_copy();
             let copy_w = Block::single(ui, copy_label, text::UI.weight(600.0), c.text).width()
                 + 16.0
                 + 8.0
@@ -560,7 +591,7 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 StrokeKind::Inside,
             );
             let shown = if creating {
-                "Link wird erstellt…"
+                servers::invite_making()
             } else {
                 link.as_str()
             };
@@ -589,7 +620,7 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
             }
             if copy_button.clicked() {
                 if creating {
-                    s.status = Some(("Link wird erstellt…".into(), StatusTone::Neutral));
+                    s.status = Some((servers::invite_making().into(), StatusTone::Neutral));
                 } else if !link.is_empty() {
                     let (message, tone, copied) = crate::screens::chat::clipboard::copy_link(
                         ui.ctx(),
@@ -612,26 +643,21 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 }
             }
             if s.error.is_some() && s.invite.is_some() {
-                text::label(
-                    ui,
-                    "Der neue Link konnte nicht erstellt werden. Der bisherige gilt weiter.",
-                    text::META,
-                    c.danger,
-                );
+                text::label(ui, servers::invite_replace_failed(), text::META, c.danger);
             }
             // "Ablauf & Limit ändern".
             ui.add_space(4.0);
             let (r, _) =
                 ui.allocate_exact_size(Vec2::new(row_w, 1.0 + 12.0 + 32.0), egui::Sense::hover());
             crate::widgets::hairline_h(ui.painter(), &theme, r.left()..=r.right(), r.top());
-            let label = Block::single(ui, "Ablauf & Limit ändern", text::UI, c.muted);
+            let label = Block::single(ui, servers::invite_terms_editor(), text::UI, c.muted);
             let summary_rect = Rect::from_min_size(
                 pos2(r.left(), r.top() + 13.0),
                 Vec2::new(label.width() + 4.0 + 14.0, 32.0),
             );
             let response = common::click(ui, summary_rect, Id::unique("invite-terms"));
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, true, "Ablauf & Limit ändern")
+                egui::WidgetInfo::labeled(egui::Role::Button, true, servers::invite_terms_editor())
             });
             let color = if response.hovered() { c.text } else { c.muted };
             paint_mid(
@@ -654,8 +680,18 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 ui.spacing_mut().item_spacing.y = 8.0;
                 let mut changed = None;
                 for (n, (caps, options, current, which)) in [
-                    ("Läuft ab nach", EXPIRY.map(|o| o.0), s.terms.expiry, 0),
-                    ("Wie oft nutzbar", USES.map(|o| o.0), s.terms.uses, 1),
+                    (
+                        servers::invite_expires_after(),
+                        EXPIRY.map(|o| o.0()),
+                        s.terms.expiry,
+                        0,
+                    ),
+                    (
+                        servers::invite_uses_label(),
+                        USES.map(|o| o.0()),
+                        s.terms.uses,
+                        1,
+                    ),
                 ]
                 .into_iter()
                 .enumerate()
@@ -738,6 +774,13 @@ fn slug(name: &str) -> String {
     out.trim_matches('-').to_owned()
 }
 
+/// The channel dialog's "Zugriff" and what it opened with.
+struct ChannelAccess<'a> {
+    value: &'a mut Option<Vec<Uuid>>,
+    initial_name: &'a str,
+    initial: &'a Option<Vec<Uuid>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn channel_dialog(
     ui: &mut Ui,
@@ -748,29 +791,37 @@ fn channel_dialog(
     name: &mut String,
     category: &mut Option<Uuid>,
     error: &mut Option<String>,
+    access: ChannelAccess,
 ) -> bool {
     let ctx = ui.ctx().clone();
     let theme = Theme::of(&ctx);
     let c = theme.c;
     let title = if editing.is_some() {
-        "Kanal bearbeiten"
+        servers::channel_edit_title()
     } else {
-        "Kanal erstellen"
+        servers::channel_create_title()
     };
-    let categories = app.client.with_state(|s| {
+    let (categories, roles) = app.client.with_state(|s| {
         s.detail(server)
-            .map(|d| d.categories.clone())
+            .map(|d| (d.categories.clone(), d.roles.clone()))
             .unwrap_or_default()
     });
     let mut done = false;
-    // An open category list takes Esc first, like the web's native select.
+    // An open category list takes Esc first, like the web's native select;
+    // the access list's popover closes on its own Esc too.
     let select_id = Id::unique(("channel-category", server));
-    if ctx.data(|d| d.get_temp::<bool>(select_id)).unwrap_or(false)
-        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
-        ctx.data_mut(|d| d.insert_temp(select_id, false));
+    let access_id = Id::unique(("channel-access", server));
+    for list in [select_id, access_id] {
+        if ctx.data(|d| d.get_temp::<bool>(list)).unwrap_or(false)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            ctx.data_mut(|d| d.insert_temp(list, false));
+        }
     }
-    let output = Modal::new(("channel-dialog", server), title).show(
+    let dirty =
+        name.as_str() != access.initial_name || !super::access::same(access.value, access.initial);
+    let modal = Modal::new(("channel-dialog", server), title).dirty(dirty);
+    let output = modal.show(
         &ctx,
         |ui| {
             ui.spacing_mut().item_spacing.y = 20.0;
@@ -778,13 +829,23 @@ fn channel_dialog(
                 ui.vertical(|ui| {
                     // The legend sits 2px higher in its fieldset than a label.
                     ui.spacing_mut().item_spacing.y = 6.0;
-                    text::label(ui, "Kanaltyp", text::UI, c.text);
+                    text::label(ui, servers::channel_kind_legend(), text::UI, c.text);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         let w = (ui.available_width() - 8.0) / 2.0;
                         for (is_voice, icon, label, detail) in [
-                            (false, Icon::Hash, "Text", "Nachrichten, Dateien"),
-                            (true, Icon::Speaker, "Sprache", "Reden, Kamera, Live"),
+                            (
+                                false,
+                                Icon::Hash,
+                                servers::channel_kind_text(),
+                                servers::channel_kind_text_hint(),
+                            ),
+                            (
+                                true,
+                                Icon::Speaker,
+                                servers::channel_kind_voice(),
+                                servers::channel_kind_voice_hint(),
+                            ),
                         ] {
                             // A `RadioCard`: the radio, then the label and its hint.
                             let (rect, response) =
@@ -841,9 +902,9 @@ fn channel_dialog(
             let hint = (!*voice)
                 .then(|| slug(name))
                 .filter(|s| !s.is_empty() && *s != name.trim())
-                .map(|s| format!("Wird gespeichert als #{s}"));
+                .map(|s| servers::channel_saved_as(&s));
             let field = TextField::new("channel-name", name)
-                .label("Name")
+                .label(servers::form_name_label())
                 .autofocus(true)
                 .char_limit(100)
                 .hint(hint.as_deref())
@@ -854,24 +915,28 @@ fn channel_dialog(
             }
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
-                text::label(ui, "Kategorie", text::UI, c.text);
-                let mut options = vec![(None, "Ohne Kategorie".to_owned())];
+                text::label(ui, servers::channel_category_label(), text::UI, c.text);
+                let mut options = vec![(None, servers::channel_no_category().to_owned())];
                 options.extend(categories.iter().map(|x| (Some(x.id), x.name.clone())));
                 select(ui, select_id, &options, category);
             });
+            super::access::field(ui, access_id, &roles, access.value);
             let mut submit = field.submitted;
             buttons(ui, |ui| {
                 submit |= ui
                     .add(
                         Button::new(if editing.is_some() {
-                            "Speichern"
+                            gelabber_i18n::common::save()
                         } else {
-                            "Erstellen"
+                            servers::form_create()
                         })
                         .primary(),
                     )
                     .clicked();
-                if ui.add(Button::new("Abbrechen").ghost()).clicked() {
+                if ui
+                    .add(Button::new(gelabber_i18n::common::cancel()).ghost())
+                    .clicked()
+                {
                     done = true;
                 }
             });
@@ -880,6 +945,8 @@ fn channel_dialog(
                     Some(code) => *error = Some(rules::field_message("name", code)),
                     None => {
                         let name = name.trim();
+                        let role_ids =
+                            super::access::role_ids(access.initial, access.value, &roles);
                         match editing {
                             Some(channel) => app.client.update_channel(
                                 server,
@@ -889,6 +956,7 @@ fn channel_dialog(
                                     category_id: Some(
                                         category.map(|c| c.to_string()).unwrap_or_default(),
                                     ),
+                                    role_ids,
                                 },
                             ),
                             None => app.client.create_channel(
@@ -900,6 +968,7 @@ fn channel_dialog(
                                     ChannelKind::Text
                                 },
                                 *category,
+                                role_ids,
                             ),
                         }
                         done = true;
@@ -922,9 +991,9 @@ fn category_dialog(
 ) -> bool {
     let ctx = ui.ctx().clone();
     let title = if editing.is_some() {
-        "Kategorie umbenennen"
+        servers::category_rename_title()
     } else {
-        "Kategorie erstellen"
+        servers::category_create_title()
     };
     let mut done = false;
     let output = Modal::new(("category-dialog", server), title).show(
@@ -932,7 +1001,7 @@ fn category_dialog(
         |ui| {
             ui.spacing_mut().item_spacing.y = 20.0;
             let field = TextField::new("category-name", name)
-                .label("Name")
+                .label(servers::form_name_label())
                 .autofocus(true)
                 .char_limit(100)
                 .error(error.as_deref())
@@ -945,14 +1014,17 @@ fn category_dialog(
                 submit |= ui
                     .add(
                         Button::new(if editing.is_some() {
-                            "Speichern"
+                            gelabber_i18n::common::save()
                         } else {
-                            "Erstellen"
+                            servers::form_create()
                         })
                         .primary(),
                     )
                     .clicked();
-                if ui.add(Button::new("Abbrechen").ghost()).clicked() {
+                if ui
+                    .add(Button::new(gelabber_i18n::common::cancel()).ghost())
+                    .clicked()
+                {
                     done = true;
                 }
             });
@@ -1037,7 +1109,7 @@ fn new_message(
         for dm in &s.dms {
             if let Some(i) = people.iter().position(|p| p.0 == dm.peer.id) {
                 let mut p = people.remove(i);
-                p.3 = "Unterhaltung fortsetzen".into();
+                p.3 = dms::new_message_continue().into();
                 p.4 = true;
                 recent.push(p);
             }
@@ -1075,15 +1147,15 @@ fn new_message(
         })
         .collect();
     let empty = if !missing.is_empty() {
-        "Wird geladen…".to_owned()
+        gelabber_i18n::common::loading().to_owned()
     } else if people.is_empty() {
-        "Keine Personen. Direktnachrichten gehen an Mitglieder deiner Server.".to_owned()
+        dms::new_message_nobody().to_owned()
     } else {
-        format!("Niemand gefunden für „{}“.", picker.query.trim())
+        dms::new_message_not_found(picker.query.trim())
     };
     let mut picked = None;
     let busy = waiting.is_some();
-    let output = Modal::new("new-message", "Neue Nachricht").show(
+    let output = Modal::new("new-message", dms::new_message()).show(
         &ctx,
         |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -1092,8 +1164,8 @@ fn new_message(
                 app.images,
                 "new-message-query",
                 picker,
-                "Person",
-                "Name suchen",
+                dms::new_message_person(),
+                dms::new_message_placeholder(),
                 &rows,
                 &empty,
                 busy,
@@ -1415,5 +1487,141 @@ mod tests {
             summary(Terms { expiry: 3, uses: 0 }),
             "unbegrenzt gültig · 1-mal nutzbar"
         );
+    }
+
+    /// "Zugriff" (ChannelAccessField, channelRequest): the field reads the
+    /// roles, its checklist follows `toggleAccess`, Esc closes only the
+    /// list, and the submit sends `role_ids` only when the access changed.
+    #[test]
+    fn the_channel_dialog_sends_the_access() {
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::{NodeT, Queryable};
+        use parking_lot::Mutex;
+        use std::sync::Arc;
+
+        use crate::app::testkit::{
+            FakeApi, HOME, MODERATION, SPIELE, STAMMGAESTE, launcher, wait_for, wait_for_label,
+            workspace,
+        };
+        use crate::platform::paths::testing::TempConfig;
+
+        let _config = TempConfig::new("channel-access");
+        let sent: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let log = sent.clone();
+        let api = FakeApi::start(true, move |method, path, body| {
+            if method == "PATCH" || method == "POST" {
+                log.lock()
+                    .push((format!("{method} {path}"), body.to_owned()));
+            }
+            workspace(method, path)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{SPIELE}"));
+        wait_for_label(&mut harness, "musik");
+        let spiele: Channel = serde_json::from_value(serde_json::json!({
+            "id": SPIELE, "server_id": HOME, "category_id": null, "name": "spiele",
+            "kind": "text", "created_at": "2026-01-01T00:00:00Z",
+            "limited": true, "role_ids": [MODERATION, STAMMGAESTE],
+        }))
+        .expect("channel");
+        let home: Uuid = HOME.parse().expect("id");
+        open_channel(&harness.ctx.clone(), home, Some(&spiele), None);
+        wait_for_label(&mut harness, "Zugriff");
+        let trigger = harness.get_by_role_and_label(Role::Button, "Zugriff");
+        assert!(
+            trigger
+                .accesskit_node()
+                .description()
+                .is_some_and(|d| d.starts_with("Moderation, Stammgäste "))
+        );
+        trigger.click();
+        harness.run_steps(4);
+        let checked = |h: &egui_kittest::Harness<'_, crate::Launcher>, name: &str| {
+            h.get_by_role_and_label(Role::CheckBox, name)
+                .accesskit_node()
+                .toggled()
+                .is_some_and(|t| t == egui::accesskit::Toggled::True)
+        };
+        assert!(!checked(&harness, "Alle Mitglieder"));
+        assert!(checked(&harness, "Moderation"));
+        assert!(checked(&harness, "Stammgäste"));
+        harness
+            .get_by_role_and_label(Role::CheckBox, "Stammgäste")
+            .click();
+        harness.run_steps(4);
+        assert!(checked(&harness, "Moderation"));
+        assert!(!checked(&harness, "Stammgäste"));
+        // Esc closes the list, not the dialog.
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Stammgäste").is_none());
+        let trigger = harness.get_by_role_and_label(Role::Button, "Zugriff");
+        assert!(
+            trigger
+                .accesskit_node()
+                .description()
+                .is_some_and(|d| d.starts_with("Moderation "))
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Speichern")
+            .click();
+        let patch = format!("PATCH /channels/{SPIELE}");
+        wait_for(&mut harness, "the patch", |_| {
+            sent.lock().iter().any(|(r, _)| *r == patch)
+        });
+        let body: serde_json::Value = {
+            let sent = sent.lock();
+            let (_, body) = sent.iter().find(|(r, _)| *r == patch).expect("patch");
+            serde_json::from_str(body).expect("json")
+        };
+        assert_eq!(body["role_ids"], serde_json::json!([MODERATION]));
+
+        // A new channel: "Alle Mitglieder" sends no `role_ids`; choosing
+        // a role clears "Alle Mitglieder" and limits it.
+        for limit in [false, true] {
+            open_channel(&harness.ctx.clone(), home, None, None);
+            wait_for_label(&mut harness, "Zugriff");
+            harness.run_steps(4);
+            harness
+                .get_by_role_and_label(Role::TextInput, "Name")
+                .focus();
+            harness.step();
+            harness
+                .get_by_role_and_label(Role::TextInput, "Name")
+                .type_text(if limit { "geheim" } else { "offen" });
+            harness.run_steps(2);
+            if limit {
+                harness
+                    .get_by_role_and_label(Role::Button, "Zugriff")
+                    .click();
+                harness.run_steps(4);
+                assert!(checked(&harness, "Alle Mitglieder"));
+                harness
+                    .get_by_role_and_label(Role::CheckBox, "Moderation")
+                    .click();
+                harness.run_steps(4);
+                assert!(!checked(&harness, "Alle Mitglieder"));
+                harness.key_press(egui::Key::Escape);
+                harness.run_steps(4);
+            }
+            harness
+                .get_by_role_and_label(Role::Button, "Erstellen")
+                .click();
+            let post = format!("POST /servers/{HOME}/channels");
+            let count = if limit { 2 } else { 1 };
+            wait_for(&mut harness, "the create", |_| {
+                sent.lock().iter().filter(|(r, _)| *r == post).count() == count
+            });
+            let body: serde_json::Value = {
+                let sent = sent.lock();
+                let (_, body) = sent.iter().rfind(|(r, _)| *r == post).expect("post");
+                serde_json::from_str(body).expect("json")
+            };
+            if limit {
+                assert_eq!(body["role_ids"], serde_json::json!([MODERATION]));
+            } else {
+                assert!(body.get("role_ids").is_none(), "{body}");
+            }
+            harness.run_steps(4);
+        }
     }
 }

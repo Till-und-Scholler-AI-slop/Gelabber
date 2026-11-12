@@ -2,6 +2,7 @@
 //! DM while it is listed, else the hint with "Neue Nachricht".
 
 use egui::{Rect, Ui, Vec2, pos2};
+use gelabber_i18n::dms;
 
 use super::state;
 use crate::app::AppCtx;
@@ -38,11 +39,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         let area = rect.shrink(24.0);
         let mut box_ui = ui.new_child(egui::UiBuilder::new().max_rect(area));
         let pending = matches!(bootstrap, Some(gelabber_client::OpState::Pending));
-        if crate::widgets::load_error(
-            &mut box_ui,
-            "Die Direktnachrichten konnten nicht geladen werden.",
-            pending,
-        ) {
+        if crate::widgets::load_error(&mut box_ui, dms::index_load_failed(), pending) {
             app.client.bootstrap();
         }
         return;
@@ -58,16 +55,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     }
     let any = !dms.is_empty();
     let first = if any {
-        Block::single(
-            ui,
-            "Wähle eine Unterhaltung.",
-            text::BODY.size(16.0),
-            c.muted,
-        )
+        Block::single(ui, dms::index_pick(), text::BODY.size(16.0), c.muted)
     } else {
-        Block::single(ui, "Keine Unterhaltungen", text::TITLE, c.text)
+        Block::single(ui, dms::index_empty(), text::TITLE, c.text)
     };
-    let label = "Neue Nachricht";
+    let label = dms::new_message();
     let button_w = Block::single(ui, label, text::UI, c.text).width() + 16.0 + 8.0 + 32.0 + 2.0;
     let total = first.height() + 14.0 + 36.0;
     let top = rect.center().y - total / 2.0;

@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
+import noLiteralUiText from "./eslint-rules/no-literal-ui-text.js";
 
 // typescript-eslint 8.x has no TS 7 API. `npm run lint` loads
 // eslint-ts6-register.cjs so this package sees @typescript/typescript6.
@@ -23,5 +24,11 @@ export default tseslint.config(
         { allowConstantExport: true },
       ],
     },
+  },
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.*", "src/i18n/catalogs/**"],
+    plugins: { gelabber: { rules: { "no-literal-ui-text": noLiteralUiText } } },
+    rules: { "gelabber/no-literal-ui-text": "error" },
   },
 );

@@ -6,8 +6,11 @@ import {
   redirect,
 } from "@tanstack/react-router";
 
+import { ApiError } from "./api/client.ts";
 import { safeRedirect } from "./auth/redirect.ts";
-import { currentUserId } from "./auth/scope.ts";
+import { isOidcError, type OidcError } from "./auth/rules.ts";
+import { currentUserId, takeStamp } from "./auth/scope.ts";
+import { SECURITY_PATH } from "./auth/signInMethods.ts";
 import {
   ensureSession,
   useSession,
@@ -29,6 +32,7 @@ import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage.tsx";
 import { RouteErrorPage } from "./pages/RouteErrorPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
+import { SignInNamePage } from "./pages/SignInNamePage.tsx";
 import {
   DEFAULT_SETTINGS_AREA,
   isSettingsArea,
@@ -41,7 +45,19 @@ import {
 import { VerifyEmailPage } from "./pages/VerifyEmailPage.tsx";
 import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
 import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
+import { DiscoverPage } from "./pages/DiscoverPage.tsx";
+import { ensureDirectoryStatus } from "./discover/queries.ts";
+import { validateDiscoverSearch } from "./discover/search.ts";
+import { queryClient } from "./queryClient.ts";
 import { placeFromPath, useLastPlace } from "./servers/lastPlace.ts";
+import { translate } from "./i18n/catalog.ts";
+import { shell } from "./i18n/catalogs/shell.ts";
+import { operator } from "./i18n/catalogs/operator.ts";
+import {
+  DEFAULT_OPERATOR_PAGE,
+  isOperatorPage,
+  validateOperatorSearch,
+} from "./operator/areas.ts";
 
 // Server settings are a chunk of their own. Not `lazyRouteComponent`: it
 // reloads the page when a deploy removed the chunk, which ends a call.
@@ -50,7 +66,14 @@ const ServerSettings = lazyPart(
     import("./pages/ServerSettingsPage.tsx").then(
       (module) => module.ServerSettingsPage,
     ),
-  "Die Servereinstellungen konnten nicht geladen werden.",
+  () => translate(shell, "lazyPart.serverSettingsFailed"),
+);
+
+// The operator area "Betrieb" is one chunk too, like the server settings.
+const OperatorArea = lazyPart(
+  () =>
+    import("./operator/OperatorArea.tsx").then((module) => module.OperatorArea),
+  () => translate(operator, "lazyPartFailed"),
 );
 
 const rootRoute = createRootRoute({
@@ -59,10 +82,16 @@ const rootRoute = createRootRoute({
 
 export type AuthSearch = {
   redirect?: string;
-  /** "expired": the session ended while the app was open. */
-  reason?: "expired";
+  /** "expired": the session ended while the app was open. "deleted": the
+   * account was just deleted (#519). */
+  reason?: "expired" | "deleted";
   /** Carried from sign-in to "Passwort vergessen", so it is not retyped. */
   email?: string;
+  /** A beta invitation's code (`/register?invitation=…`), which pre-fills
+   * the register page's invitation field. */
+  invitation?: string;
+  /** Why a Google sign-in sent the visitor here instead of signing in. */
+  oidc_error?: OidcError;
 };
 
 export const validateAuthSearch = (
@@ -71,13 +100,23 @@ export const validateAuthSearch = (
   const out: AuthSearch = {};
   const target = safeRedirect(search.redirect);
   if (target) out.redirect = target;
-  if (search.reason === "expired") out.reason = "expired";
+  if (search.reason === "expired" || search.reason === "deleted")
+    out.reason = search.reason;
   if (
     typeof search.email === "string" &&
     search.email.length > 0 &&
     search.email.length <= 254
   )
     out.email = search.email;
+  // The router reads an all-digit code as a number.
+  const invitation =
+    typeof search.invitation === "number" &&
+    Number.isSafeInteger(search.invitation)
+      ? String(search.invitation)
+      : search.invitation;
+  if (typeof invitation === "string" && /^[A-Za-z0-9]{1,64}$/.test(invitation))
+    out.invitation = invitation;
+  if (isOidcError(search.oidc_error)) out.oidc_error = search.oidc_error;
   return out;
 };
 
@@ -103,8 +142,25 @@ function requireUser(signIn: "/login" | "/register" = "/login") {
 async function requireAnonymous({ search }: { search: AuthSearch }) {
   await ensureSession();
   if (useSession.getState().status === "authenticated") {
-    throw redirect({ href: search.redirect ?? "/", replace: true });
+    throw redirect({ href: signedInTarget(search), replace: true });
   }
+}
+
+/**
+ * Where a signed-in visitor of login or register goes. A failed provider
+ * sign-in started from Sicherheit ("Mit Google bestätigen") comes back to
+ * `/login` while the tab is still signed in; its error goes on to Sicherheit,
+ * which shows it.
+ */
+export function signedInTarget(search: AuthSearch): string {
+  const target = search.redirect ?? "/";
+  if (!search.oidc_error) return target;
+  // Also from the Konto löschen dialog, which comes back with `?delete=1`.
+  const [path, query] = target.split("?", 2);
+  if (path !== SECURITY_PATH) return target;
+  const params = new URLSearchParams(query);
+  params.set("oidc_error", search.oidc_error);
+  return `${path}?${params}`;
 }
 
 // The profile became the first settings area; old links and bookmarks land
@@ -187,6 +243,15 @@ const inviteRoute = createRoute({
   ),
 });
 
+// A first sign-in through a provider names its new account here; the
+// token in the fragment works signed in or not, like a mailed link.
+const signInNameRoute = createRoute({
+  getParentRoute: () => authLayout,
+  path: "/sign-in/name",
+  beforeLoad: () => ensureSession(),
+  component: SignInNamePage,
+});
+
 // ---------------------------------------------------------------------------
 // Workspace: server rail + channel sidebar + page.
 
@@ -267,6 +332,74 @@ const dmRoute = createRoute({
   component: DmChannelPage,
 });
 
+/**
+ * Guard for the operator area: anyone who is not an operator, and every
+ * unknown page, gets "not found", so the area is not confirmed to exist.
+ */
+async function requireOperator(page?: string) {
+  await ensureSession();
+  if (!useSession.getState().operator) throw notFound();
+  if (page !== undefined && !isOperatorPage(page)) throw notFound();
+}
+
+const operatorRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/betrieb",
+  beforeLoad: async () => {
+    await requireOperator();
+    throw redirect({
+      to: "/betrieb/$page",
+      params: { page: DEFAULT_OPERATOR_PAGE },
+      replace: true,
+    });
+  },
+});
+
+const operatorPageRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/betrieb/$page",
+  validateSearch: validateOperatorSearch,
+  beforeLoad: ({ params }) => requireOperator(params.page),
+  component: function OperatorPageRoute() {
+    const { page } = operatorPageRoute.useParams();
+    const { q } = operatorPageRoute.useSearch();
+    return isOperatorPage(page) ? (
+      <OperatorArea.Component
+        page={page}
+        q={q}
+        fallback={<MainSkeleton kind="list" />}
+      />
+    ) : null;
+  },
+});
+
+/** The directory "Entdecken" exists only while the instance runs one. */
+async function requireDirectory() {
+  await ensureSession();
+  const stamp = takeStamp();
+  if (!stamp) return;
+  try {
+    const status = await ensureDirectoryStatus(queryClient, stamp);
+    if (!status.enabled) throw notFound();
+  } catch (error) {
+    // An API from before the directory has no status route.
+    if (error instanceof ApiError && error.code === "not_found")
+      throw notFound();
+    throw error;
+  }
+}
+
+const discoverRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/discover",
+  validateSearch: validateDiscoverSearch,
+  beforeLoad: requireDirectory,
+  component: function DiscoverRoute() {
+    const { q, lang } = discoverRoute.useSearch();
+    return <DiscoverPage q={q} lang={lang} />;
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   profileRoute,
   authLayout.addChildren([
@@ -276,6 +409,7 @@ const routeTree = rootRoute.addChildren([
     resetPasswordRoute,
     verifyEmailRoute,
     inviteRoute,
+    signInNameRoute,
   ]),
   workspaceLayout.addChildren([
     indexRoute,
@@ -286,6 +420,9 @@ const routeTree = rootRoute.addChildren([
     userSettingsAreaRoute,
     dmIndexRoute,
     dmRoute,
+    operatorRoute,
+    operatorPageRoute,
+    discoverRoute,
   ]),
 ]);
 

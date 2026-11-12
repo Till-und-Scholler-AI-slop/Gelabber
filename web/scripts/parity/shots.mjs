@@ -1,6 +1,8 @@
 // Reference screenshots of the web client for the native parity check
 // (desktop/parity): every scene in scenes.json, signed in as its user, at
-// the scene size, device scale 1, reduced motion, no caret.
+// the scene size, device scale 1, reduced motion, no caret. Scenes with
+// `webOnly` (the "Betrieb" pages, which the native app leaves to the
+// browser) are shot here too, as the web reference; desktop/parity skips them.
 // Run in web/ against a seeded stack (seed.mjs):
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
@@ -147,6 +149,7 @@ for (const scene of scenes) {
   if (ONLY && !ONLY.includes(scene.name)) continue;
   // Every scene starts from the reference state (reset.mjs).
   execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
+  let restoreLocale = null;
   // say.mjs words that set the scene up (a theme), undone by the next reset.
   if (scene.before) sayWords(scene.before);
   if (scene.media && !mediaBrowser)
@@ -157,10 +160,14 @@ for (const scene of scenes) {
     viewport: { width: size[0], height: size[1] },
     deviceScaleFactor: 1,
     reducedMotion: "reduce",
-    locale: "de-DE",
+    // `locale: "en"`: an English browser, as a signed-out scene needs it.
+    locale: scene.locale === "en" ? "en-GB" : "de-DE",
     timezoneId: "Europe/Berlin",
     // Playwright's default; the native tool sets the same system theme.
     colorScheme: scene.scheme ?? "light",
+    // `userAgent`: what the scene's sign-in records as its device, such as
+    // the native app's, so Sicherheit names this device as the native one.
+    userAgent: scene.userAgent,
   });
   if (scene.user) {
     const user = fixture.users[scene.user];
@@ -170,6 +177,19 @@ for (const scene of scenes) {
       headers: { "X-CSRF-Token": session.csrf_token },
     });
     if (!login.ok()) throw new Error(`login ${scene.user}: ${login.status()}`);
+    // `locale` on a signed-in scene: the account's language, German again
+    // after the shot (and reset.mjs puts it back should a scene fail early).
+    if (scene.locale) {
+      const { csrf_token } = await login.json();
+      const setLocale = (locale) =>
+        context.request.put("/api/me/locale", {
+          data: { locale },
+          headers: { "X-CSRF-Token": csrf_token },
+        });
+      const set = await setLocale(scene.locale);
+      if (!set.ok()) throw new Error(`locale ${scene.user}: ${set.status()}`);
+      restoreLocale = () => setLocale("de");
+    }
   }
   const call = scene.call ? await startCall(scene.call) : null;
   // A missing control fails the scene instead of waiting for ever.
@@ -252,6 +272,15 @@ for (const scene of scenes) {
         }
         ${BANNER}`,
       });
+    // The desktop-app toast comes after a delay, so only the longer scenes
+    // caught it, and the app never shows it: mark it as shown (desktopApp.ts).
+    await page.addInitScript(() => {
+      try {
+        window.localStorage.setItem("gelabber.desktopApp.offered", "1");
+      } catch {
+        // about:blank has no storage; the scene's own page sets it.
+      }
+    });
     if (process.env.GELABBER_PARITY_LOG_INVOKE)
       page.on("console", (message) => {
         if (message.text().startsWith("invoke ")) console.log(`${scene.name}: ${message.text()}`);
@@ -289,12 +318,18 @@ for (const scene of scenes) {
         ).trim();
         said.push([who, id]);
       }
+      // A button, or a <summary> with that label (the user menu), which
+      // Playwright does not expose as a button.
       if (action.click)
-        await page.getByRole("button", { name: named(action.click), exact: true }).first().click();
+        await page
+          .getByRole("button", { name: named(action.click), exact: true })
+          .or(page.locator("summary").and(page.getByLabel(named(action.click), { exact: true })))
+          .first()
+          .click();
       if (action.menuitem)
         await page.getByRole("menuitem", { name: named(action.menuitem), exact: true }).first().click();
       if (action.link)
-        await page.getByRole("link", { name: action.link, exact: true }).first().click();
+        await page.getByRole("link", { name: named(action.link), exact: true }).first().click();
       // The first button or link of that name, with the secondary button.
       if (action.rightclick)
         await page
@@ -359,6 +394,7 @@ for (const scene of scenes) {
     if (scene.before)
       execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
     for (const started of calls) await stopCall(started);
+    if (restoreLocale) await restoreLocale();
   }
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();

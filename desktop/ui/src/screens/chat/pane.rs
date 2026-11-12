@@ -10,6 +10,7 @@ use std::hash::{Hash, Hasher};
 use chrono::{DateTime, Utc};
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use gelabber_client::{ChannelMessages, Message, ReadState, State};
+use gelabber_i18n::chat as texts;
 use uuid::Uuid;
 
 use super::reactions;
@@ -347,12 +348,7 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
     }
 
     if error.is_some() && !loaded {
-        paint_state(
-            ui,
-            rect,
-            "Nachrichten konnten nicht geladen werden.",
-            &mut actions,
-        );
+        paint_state(ui, rect, texts::list_failed(), &mut actions);
         return actions;
     }
     if !loaded {
@@ -598,7 +594,7 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
     if loading_older {
         let block = Block::single(
             &child,
-            "Ältere Nachrichten…",
+            texts::list_loading_older(),
             TextStyle::new(12.0, 400.0, 16.0 / 12.0),
             c.muted,
         );
@@ -610,12 +606,7 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
     if let Some(error) = error.filter(|_| loaded) {
         let _ = error;
         let r = Rect::from_min_size(pos2(rect.left(), y0), vec2(width, OLDER_FAILED));
-        paint_state(
-            &mut child,
-            r,
-            "Ältere Nachrichten konnten nicht geladen werden.",
-            &mut actions,
-        );
+        paint_state(&mut child, r, texts::list_older_failed(), &mut actions);
     }
     // Which row the pointer is on; its bar keeps it hovered over the row above.
     let pointer = ui.input(|i| i.pointer.hover_pos());
@@ -800,7 +791,12 @@ fn paint_state(ui: &mut Ui, rect: Rect, message: &str, actions: &mut Vec<ListAct
     let block = Block::single(ui, message, TextStyle::new(13.0, 400.0, 1.5), c.text);
     let y = rect.top() + 12.0;
     block.paint(ui.painter(), pos2(rect.center().x - block.width() / 2.0, y));
-    let label = Block::single(ui, "Erneut laden", TextStyle::new(13.0, 400.0, 1.5), c.text);
+    let label = Block::single(
+        ui,
+        texts::list_reload(),
+        TextStyle::new(13.0, 400.0, 1.5),
+        c.text,
+    );
     let button = Rect::from_min_size(
         pos2(
             rect.center().x - (label.width() + 26.0) / 2.0,
@@ -813,7 +809,8 @@ fn paint_state(ui: &mut Ui, rect: Rect, message: &str, actions: &mut Vec<ListAct
         egui::Id::unique(("gelabber-list-retry", rect.top() as i32)),
         Sense::click(),
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Erneut laden"));
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, texts::list_reload()));
     let fill = if response.hovered() { c.hover } else { c.panel };
     ui.painter().rect(
         button,
@@ -876,8 +873,8 @@ fn paint_start(ui: &Ui, start: &Start, at: egui::Pos2, images: &Images) {
     }
     y += 25.0 + 4.0;
     let label = match start {
-        Start::Channel(_) => "Anfang des Kanals.",
-        Start::Dm { .. } => "Anfang der Unterhaltung.",
+        Start::Channel(_) => texts::list_start_of_channel(),
+        Start::Dm { .. } => texts::list_start_of_dm(),
     };
     Block::single(ui, label, text::UI.weight(400.0), c.muted).paint(ui.painter(), pos2(x, y));
 }
@@ -904,7 +901,12 @@ fn paint_new(ui: &Ui, at: egui::Pos2, width: f32) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let style = TextStyle::new(11.0, 700.0, 1.5).tracking(0.4 / 11.0);
-    let block = Block::single(ui, "NEU", style, c.accent_text);
+    let block = Block::single(
+        ui,
+        &texts::list_new_divider().to_uppercase(),
+        style,
+        c.accent_text,
+    );
     let right = at.x + width - 20.0;
     let text_x = right - block.width();
     let line_y = (at.y + 6.0 + 8.25 - 0.5).floor();
@@ -921,7 +923,7 @@ fn paint_empty(ui: &Ui, rect: Rect, start: &Start, images: &Images) {
     let c = theme.c;
     let note = Block::single(
         ui,
-        "Noch keine Nachrichten. Schreib die erste.",
+        texts::list_empty(),
         TextStyle::new(13.0, 400.0, 1.5),
         c.muted,
     );
@@ -953,18 +955,20 @@ fn paint_unread_bar(
         0.0,
         mix(c.border, c.accent, 0.35),
     );
-    let lead = if count == 1 {
-        "1 neue Nachricht".to_owned()
-    } else if count > 99 {
-        "99+ neue Nachrichten".to_owned()
+    let shown = if count > 99 {
+        "99+".to_owned()
     } else {
-        format!("{count} neue Nachrichten")
+        count.to_string()
     };
+    let lead = texts::pane_new_messages(count as u64, &shown);
     let style = TextStyle::new(13.0, 400.0, 1.35);
     let mut rich = text::Rich::new(style).push(&lead, style.weight(600.0), c.text);
     if let Some(first) = first {
         rich = rich.push(
-            &format!(" seit {}", time::format_when(first.created_at, now)),
+            &format!(
+                " {}",
+                texts::pane_unread_since(&time::format_when(first.created_at, now))
+            ),
             style,
             c.text,
         );
@@ -987,9 +991,10 @@ fn paint_unread_bar(
             .layout(egui::Layout::right_to_left(egui::Align::Center)),
     );
     child.spacing_mut().item_spacing.x = 8.0;
+    let mark_read = format!("{}  Esc", texts::pane_mark_read());
     if child
         .add(
-            Button::new("Als gelesen markieren  Esc")
+            Button::new(&mark_read)
                 .small()
                 .variant(ButtonVariant::Ghost),
         )
@@ -997,7 +1002,7 @@ fn paint_unread_bar(
     {
         out = Some(ListAction::MarkReadNow);
     }
-    if child.add(Button::new("Springen").small()).clicked() {
+    if child.add(Button::new(texts::pane_jump()).small()).clicked() {
         pane.opened = false;
         pane.stick = false;
     }
@@ -1009,9 +1014,8 @@ fn paint_jump(ui: &mut Ui, rect: Rect, arrived: usize) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let label = match arrived {
-        0 => "Zu den neuesten Nachrichten".to_owned(),
-        1 => "1 neue Nachricht".to_owned(),
-        n => format!("{n} neue Nachrichten"),
+        0 => texts::pane_to_latest().to_owned(),
+        n => texts::pane_new_messages(n as u64, &n.to_string()),
     };
     let news = arrived > 0;
     let fg = if news { c.accent_ink } else { c.text };

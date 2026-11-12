@@ -20,14 +20,15 @@ vi.mock("../voice/VoiceSettings.tsx", () => ({
 vi.mock("./ProfilePage.tsx", () => ({
   ProfileArea: () => null,
   ProfileCardArea: () => null,
-  SecurityArea: () => null,
 }));
+vi.mock("./SecurityArea.tsx", () => ({ SecurityArea: () => null }));
 vi.mock("../components/UserPanel.tsx", () => ({ UserPanel: () => null }));
 vi.mock("../messages/notificationPrivacy.ts", () => ({
   useNotificationPrivacy: () => ({ data: { hide_content: false } }),
   useChangeNotificationPrivacy: () => vi.fn(),
 }));
 
+import { setLocale } from "../i18n/locale.ts";
 import { SettingsAreaPart } from "./settingsAreaPart.ts";
 import { SettingsSidebar, UserSettingsPage } from "./UserSettingsPage.tsx";
 
@@ -75,6 +76,28 @@ describe("user settings page", () => {
     const html = page();
     expect(html).toContain('aria-label="Textgröße"');
     expect(html).toMatch(/aria-checked="true"[^>]*>Kompakt</);
+  });
+
+  it("speaks English when the interface does", () => {
+    setLocale("en", { persist: false });
+    try {
+      const html = page();
+      expect(html).toContain('tabindex="-1">Appearance</h2>');
+      expect(html).toContain(
+        "<p>Language, colour scheme, text size and motion.</p>",
+      );
+      expect(html).toContain("For your account");
+      expect(html).toContain("This device only");
+      expect(html).toContain("Colour scheme");
+      const sidebar = renderToStaticMarkup(<SettingsSidebar />);
+      expect(sidebar).toContain(">Settings<");
+      expect(sidebar.indexOf(">Account<")).toBeLessThan(
+        sidebar.indexOf(">Profile card<"),
+      );
+      expect(sidebar).toContain(">Notifications<");
+    } finally {
+      setLocale("de", { persist: false });
+    }
   });
 
   it("groups the sidebar into Konto and App", () => {

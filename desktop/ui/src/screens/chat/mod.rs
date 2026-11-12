@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use egui::{Rect, Ui, pos2, vec2};
 use gelabber_client::{ChannelKind, Client, Permission};
+use gelabber_i18n::{chat as texts, common};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
@@ -232,6 +233,12 @@ struct Conversation {
     members: Vec<Member>,
     peer: Option<(String, Option<String>, Presence)>,
     muted: bool,
+    /// Who the `@…` suggestions offer: `members`, or in a channel limited
+    /// to roles only who can read it. Names in messages still resolve
+    /// against every member.
+    mentionable: Vec<Member>,
+    /// Limited to roles: the header's lock.
+    limited: bool,
 }
 
 /// A server text channel: header and body, drawn into `ui.max_rect()`.
@@ -269,6 +276,14 @@ pub fn channel_page(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) 
                     .collect(),
                 peer: None,
                 muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
+                mentionable: crate::screens::shell::access::members_who_see(detail, ch)
+                    .into_iter()
+                    .map(|m| Member {
+                        id: m.user_id,
+                        name: m.name.clone(),
+                    })
+                    .collect(),
+                limited: ch.limited,
             }
         }))
     });
@@ -281,7 +296,7 @@ pub fn channel_page(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) 
             ui.painter().rect_filled(page, 0.0, theme.c.bg);
             if let Some(pending) = app.client.with_state(|s| notice::channel_error(s, server)) {
                 let at = pos2(page.left() + 24.0, page.top() + 24.0);
-                let message = "Dieser Kanal konnte nicht geladen werden.";
+                let message = texts::load_channel();
                 if notice::load_error(ui, at, page.width() - 48.0, message, pending) {
                     app.client.refresh_server(server);
                 }
@@ -337,9 +352,11 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             can_send_files: true,
             can_moderate: false,
             can_everyone: false,
+            mentionable: members.clone(),
             members,
             peer: Some((dm.peer.name.clone(), dm.peer.avatar_url.clone(), presence)),
             muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
+            limited: false,
         })
     });
     // Each opening fetches the conversation itself (`useDm`), also one the
@@ -385,7 +402,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             if gone {
                 app.nav.replace("/d");
             } else if let Some(pending) = error {
-                let message = "Diese Unterhaltung konnte nicht geladen werden.";
+                let message = texts::load_dm();
                 let width =
                     (crate::text::Block::single(ui, message, crate::text::BODY, theme.c.text)
                         .width()
@@ -458,6 +475,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         None => header::Title::Channel {
             name: &conv.title,
             voice: false,
+            limited: conv.limited,
         },
     };
     let head = header::show(
@@ -518,7 +536,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             pos2(page.left() + 16.0, top + 8.0),
             vec2(page.width() - 32.0, 30.0),
         );
-        if notice::inline_notice(ui, r, "Lesestatus nicht gespeichert.", "Erneut versuchen") {
+        if notice::inline_notice(ui, r, texts::pane_read_not_saved(), common::try_again()) {
             client.mark_read(channel);
         }
         top = r.bottom();
@@ -535,6 +553,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         me: Some(me),
         keywords: conv.server.is_some() && conv.can_everyone,
         unsent,
+        mentionable: &conv.mentionable,
     };
     let composer_state = chat.composers.entry(channel).or_default();
     let composer_h = composer::height(ui.ctx(), composer_state, &composer_input, page.width());
@@ -1062,9 +1081,9 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                             Block::single(ui, emoji, TextStyle::new(18.0, 400.0, 1.5), c.text);
                         glyph.paint(ui.painter(), r.center() - glyph.size() / 2.0);
                         let label = if given {
-                            format!("Reaktion {emoji} entfernen")
+                            texts::menu_remove_reaction(emoji)
                         } else {
-                            format!("Mit {emoji} reagieren")
+                            texts::menu_react_with(emoji)
                         };
                         crate::widgets::Tooltip::new(&label)
                             .on_hover(&resp, crate::widgets::tooltip::Side::Above);
@@ -1091,7 +1110,7 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                         18.0,
                         if resp.hovered() { c.text } else { c.muted },
                     );
-                    crate::widgets::Tooltip::new("Andere Reaktion auswählen")
+                    crate::widgets::Tooltip::new(texts::menu_other_reaction())
                         .on_hover(&resp, crate::widgets::tooltip::Side::Above);
                     if resp.clicked() {
                         chosen = Some(MenuChoice::Picker);
@@ -1107,14 +1126,14 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                 let item = |ui: &mut Ui, icon, label: &str, danger: bool| -> bool {
                     menu_row(ui, icon, label, danger)
                 };
-                if conv.can_send && item(ui, crate::icons::Icon::Reply, "Antworten", false) {
+                if conv.can_send && item(ui, crate::icons::Icon::Reply, texts::row_reply(), false) {
                     chosen = Some(MenuChoice::Reply);
                 }
-                if can_edit && item(ui, crate::icons::Icon::Pencil, "Bearbeiten", false) {
+                if can_edit && item(ui, crate::icons::Icon::Pencil, texts::row_edit(), false) {
                     chosen = Some(MenuChoice::Edit);
                 }
                 if !message.content.is_empty()
-                    && item(ui, crate::icons::Icon::Copy, "Text kopieren", false)
+                    && item(ui, crate::icons::Icon::Copy, texts::menu_copy_text(), false)
                 {
                     chosen = Some(MenuChoice::Copy);
                 }
@@ -1124,7 +1143,7 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                         .allocate_exact_size(vec2(ui.available_width(), 1.0), egui::Sense::hover());
                     crate::widgets::rule_h(ui.painter(), c.border, line.x_range(), line.top());
                     ui.add_space(4.0);
-                    if item(ui, crate::icons::Icon::Trash, "Löschen", true) {
+                    if item(ui, crate::icons::Icon::Trash, common::delete(), true) {
                         let shift = ui.input(|i| i.modifiers.shift);
                         chosen = Some(MenuChoice::Delete(shift));
                     }
@@ -1175,27 +1194,22 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
             None => pane.confirm_delete = None,
             Some((author_id, name)) => {
                 let title = if author_id == me {
-                    "Nachricht löschen?".to_owned()
+                    texts::delete_title_own().to_owned()
                 } else {
-                    format!("Nachricht von {name} löschen?")
+                    texts::delete_title_other(&name)
                 };
                 let mut confirm = false;
                 let mut cancel = false;
                 let output = Modal::new(("delete", id), &title).show(
                     &ctx,
                     |ui| {
-                        crate::text::label(
-                            ui,
-                            "Das lässt sich nicht rückgängig machen.",
-                            crate::text::BODY,
-                            c.muted,
-                        );
+                        crate::text::label(ui, texts::delete_message(), crate::text::BODY, c.muted);
                     },
                     Some(&mut |ui: &mut Ui| {
-                        if ui.add(Button::new("Löschen").danger()).clicked() {
+                        if ui.add(Button::new(common::delete()).danger()).clicked() {
                             confirm = true;
                         }
-                        if ui.add(Button::new("Abbrechen")).clicked() {
+                        if ui.add(Button::new(common::cancel())).clicked() {
                             cancel = true;
                         }
                     }),
@@ -1215,7 +1229,7 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
         match emoji::show(
             &ctx,
             ("reaction", id),
-            "Reaktion auswählen",
+            texts::reactions_pick(),
             &mut chat.picker,
         ) {
             Some(Some(emoji)) => {
@@ -1240,7 +1254,7 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
         match emoji::show(
             &ctx,
             ("composer", channel),
-            "Emoji einfügen",
+            texts::composer_insert_emoji(),
             &mut chat.picker,
         ) {
             Some(Some(emoji)) => {
@@ -1360,7 +1374,7 @@ fn menu_row(ui: &mut Ui, icon: crate::icons::Icon, label: &str, danger: bool) ->
         ),
     );
     if danger {
-        crate::widgets::Tooltip::new("Löschen (Umschalt: ohne Nachfrage)")
+        crate::widgets::Tooltip::new(texts::menu_delete_hint())
             .on_hover(&response, crate::widgets::tooltip::Side::Above);
     }
     response.clicked()
@@ -1897,5 +1911,36 @@ mod page_tests {
             1,
             "closed with its page"
         );
+    }
+
+    /// In English the conversation and its emoji picker speak English
+    /// (the picker's names: `emoji::tests`).
+    #[test]
+    fn the_conversation_speaks_english() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let _config = TempConfig::new("chat-english");
+        let api = FakeApi::start(true, |method, path, _| {
+            let mut reply = workspace(method, path)?;
+            if let Some(list) = reply
+                .body
+                .get_mut("permissions")
+                .and_then(|p| p.as_array_mut())
+            {
+                list.push(json!("send_messages"));
+            }
+            Some(reply)
+        });
+        let home = crate::app::testkit::HOME;
+        let allgemein = crate::app::testkit::ALLGEMEIN;
+        let mut harness = launcher(&api, &format!("/s/{home}/c/{allgemein}"));
+        wait_for_label(&mut harness, "Message #allgemein");
+        harness.get_by_label("Search");
+        assert!(harness.query_by_label("Nachricht an #allgemein").is_none());
+        harness.run_steps(4);
+        harness.get_by_label("Insert emoji").click();
+        // The picker's title is the button's label.
+        wait_for(&mut harness, "the picker", |h| {
+            h.query_all_by_label("Insert emoji").count() > 1
+        });
     }
 }

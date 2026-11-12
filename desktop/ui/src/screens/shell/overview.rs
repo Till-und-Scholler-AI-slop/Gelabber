@@ -5,6 +5,7 @@
 use chrono::{DateTime, Datelike, Local, Utc};
 use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::{Channel, ChannelKind, HistoryQuery, Message, Permission, ServerDetail};
+use gelabber_i18n::{Locale, chat, servers, shell};
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
@@ -39,7 +40,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
         18.0,
         c.muted,
     );
-    let title = Block::single(ui, "Übersicht", text::TITLE_SM.size(15.0), c.text);
+    let title = Block::single(
+        ui,
+        servers::overview_label(),
+        text::TITLE_SM.size(15.0),
+        c.text,
+    );
     paint_mid(
         &painter,
         &title,
@@ -117,7 +123,7 @@ fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) -> bool {
         pos2(rect.left() + 24.0, rect.top() + 24.0),
         Vec2::new(rect.width() - 48.0, 200.0),
     );
-    let msg = "Der Server konnte nicht geladen werden.";
+    let msg = servers::load_server();
     let block = Block::wrapped(ui, msg, text::BODY, c.text, area.width() - 30.0);
     let h = 20.0 + block.height() + 12.0 + 32.0;
     let r = Rect::from_min_size(area.min, Vec2::new(area.width(), h));
@@ -135,7 +141,7 @@ fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) -> bool {
         egui::Sense::hover(),
     )
     .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, msg));
-    let label = "Erneut versuchen";
+    let label = gelabber_i18n::common::try_again();
     let bw = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 26.0;
     let br = Rect::from_min_size(
         pos2(r.left() + 15.0, r.top() + 10.0 + block.height() + 12.0),
@@ -143,7 +149,7 @@ fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) -> bool {
     );
     let button = Button::new(label)
         .small()
-        .pending(pending.then_some("Wird geladen…"));
+        .pending(pending.then_some(gelabber_i18n::common::loading()));
     if ui.put(br, button).clicked() && !pending {
         app.client.refresh_server(server);
     }
@@ -168,8 +174,10 @@ pub fn unread_name(ui: &Ui, rect: Rect, name: &str, draft: bool) -> f32 {
             Id::unique(("overview-draft", name)),
             egui::Sense::hover(),
         );
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, "Entwurf"));
-        response.on_hover_text("Entwurf");
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Image, true, servers::overview_draft())
+        });
+        response.on_hover_text(servers::overview_draft());
         w += 6.0 + 13.0;
     }
     w
@@ -251,14 +259,17 @@ fn head(
     y += block.height();
     if detail.members.len() == 1 {
         y += 10.0;
-        let alone = Block::single(ui, "Noch keine weiteren Mitglieder.", meta, c.muted);
+        let alone = Block::single(ui, servers::overview_alone(), meta, c.muted);
         let row_h = 32.0;
         paint_mid(ui.painter(), &alone, left, y + row_h / 2.0);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(
             pos2(left + alone.width() + 16.0, y),
             Vec2::new(200.0, row_h),
         )));
-        if child.add(Button::new("Einladen").small()).clicked() {
+        if child
+            .add(Button::new(servers::overview_invite()).small())
+            .clicked()
+        {
             super::dialogs::open_invite(ui.ctx(), detail.server.id, &detail.server.name);
         }
         y += row_h;
@@ -270,10 +281,7 @@ fn head(
 fn overview_line(app: &AppCtx, detail: &ServerDetail) -> String {
     let server = detail.server.id;
     let count = detail.members.len();
-    let members = format!(
-        "{count} {}",
-        if count == 1 { "Mitglied" } else { "Mitglieder" }
-    );
+    let members = servers::overview_members(count as u64);
     let rooms: Vec<Uuid> = detail
         .channels
         .iter()
@@ -306,11 +314,11 @@ fn overview_line(app: &AppCtx, detail: &ServerDetail) -> String {
         return members;
     }
     let place = if spread {
-        "in Sprachkanälen"
+        servers::overview_in_voice_rooms(inside as u64)
     } else {
-        "im Sprachkanal"
+        servers::overview_in_voice(inside as u64)
     };
-    format!("{members} · {inside} {place}")
+    format!("{members} · {place}")
 }
 
 /// `overviewRoom`: the current call, the last visited room, an occupied
@@ -369,7 +377,7 @@ fn voice_room(
             18.0,
             c.muted,
         );
-        let h2 = Block::single(ui, "Kein Sprachkanal", text::TITLE_SM, c.text);
+        let h2 = Block::single(ui, servers::overview_no_room(), text::TITLE_SM, c.text);
         paint_mid(ui.painter(), &h2, left + 28.0, top + 14.0);
         let mut y = top + 28.0;
         let can = app.client.with_state(|s| {
@@ -380,7 +388,7 @@ fn voice_room(
             y += 6.0;
             let p = Block::wrapped(
                 ui,
-                "Erstelle einen Sprachkanal in der Seitenleiste.",
+                servers::overview_no_room_hint(),
                 TextStyle::new(13.0, 400.0, 1.4),
                 c.muted,
                 width,
@@ -433,7 +441,7 @@ fn voice_room(
     let mut x = left + 28.0 + h2.width() + 10.0;
     if here {
         let style = text::META.weight(500.0);
-        let label = Block::single(ui, "Verbunden", style, c.online_text);
+        let label = Block::single(ui, servers::room_connected(), style, c.online_text);
         let pill = Rect::from_min_size(
             pos2(x, center - 11.0),
             Vec2::new(8.0 + 6.0 + 6.0 + label.width() + 8.0, 22.0),
@@ -473,20 +481,21 @@ fn voice_room(
         if free > 0 {
             voice::tile::seat_sized(ui, place(occupants.len()), 56.0, 12.0, 12.0);
         }
+        let self_suffix = format!(" {}", servers::room_self());
         for (i, (user, occupant)) in occupants.iter().enumerate() {
             let tile = place(i);
             let member = detail.members.iter().find(|m| m.user_id == *user);
-            let name = member.map_or("Jemand", |m| m.name.as_str());
+            let name = member.map_or(shell::someone(), |m| m.name.as_str());
             let speaking =
                 voice::session::speaking(&call, *user, occupant.muted, occupant.deafened);
             let status = if occupant.deafened {
-                "Taub"
+                servers::room_deafened()
             } else if occupant.muted {
-                "Stumm"
+                servers::room_muted()
             } else if speaking {
-                "Spricht"
+                servers::room_speaking()
             } else {
-                "Im Raum"
+                servers::room_present()
             };
             // Who speaks is the avatar's ring and the status line.
             ui.painter().rect(
@@ -540,11 +549,11 @@ fn voice_room(
                 let white = Color32::WHITE;
                 let soft = Color32::from_white_alpha((0.82 * 255.0) as u8);
                 let name_b = line(ui, name, text::UI.weight(600.0), white, 168.0 - 54.0);
-                let self_b =
-                    (me == Some(*user)).then(|| line(ui, " (du)", text::UI, white, 168.0 - 54.0));
+                let self_b = (me == Some(*user))
+                    .then(|| line(ui, &self_suffix, text::UI, white, 168.0 - 54.0));
                 let status_b = line(
                     ui,
-                    &format!("{status} · Kamera an"),
+                    &servers::room_status_camera(status),
                     text::META,
                     soft,
                     168.0 - 54.0,
@@ -614,7 +623,7 @@ fn voice_room(
             let self_b = (me == Some(*user)).then(|| {
                 line(
                     ui,
-                    " (du)",
+                    &self_suffix,
                     text::UI,
                     c.muted,
                     (168.0 - 24.0 - name_block.width()).max(0.0),
@@ -647,9 +656,9 @@ fn voice_room(
             );
             let response = common::click(ui, tile, Id::unique(("overview-person", *user)))
                 .on_hover_text(if me == Some(*user) {
-                    "Dein Profil"
+                    servers::room_own_profile()
                 } else {
-                    "Profil und Lautstärke"
+                    servers::room_profile()
                 });
             if response.clicked() {
                 super::overlays::open_member(ui.ctx(), server, *user);
@@ -663,9 +672,10 @@ fn voice_room(
         y += 12.0;
         let note = Block::wrapped(
             ui,
-            &format!(
-                "Du verlässt dabei {}.",
-                elsewhere_name.as_deref().unwrap_or("deinen Sprachkanal")
+            &servers::room_switch_note(
+                elsewhere_name
+                    .as_deref()
+                    .unwrap_or(servers::room_switch_note_unnamed()),
             ),
             text::META,
             c.muted,
@@ -684,9 +694,9 @@ fn voice_room(
     let mut x = left;
     if allowed {
         let label = if elsewhere {
-            "Hierher wechseln"
+            servers::room_switch_here()
         } else {
-            "Beitreten"
+            servers::room_join()
         };
         let join = voice::chips::join_button(ui, theme, row, label, Id::unique("overview-join"));
         if join.clicked() {
@@ -694,12 +704,7 @@ fn voice_room(
         }
         x = join.rect.right() + 8.0;
     } else {
-        let p = Block::single(
-            ui,
-            "Keine Berechtigung für Sprachkanäle.",
-            text::UI,
-            c.muted,
-        );
+        let p = Block::single(ui, servers::room_no_permission(), text::UI, c.muted);
         paint_mid(ui.painter(), &p, x, row.center().y);
         x += p.width() + 8.0;
     }
@@ -707,7 +712,7 @@ fn voice_room(
     if ui
         .put(
             mic,
-            IconButton::new(Icon::Mic, "Mikrofon testen")
+            IconButton::new(Icon::Mic, servers::room_test_microphone())
                 .secondary()
                 .icon_size(18.0),
         )
@@ -718,7 +723,7 @@ fn voice_room(
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
         gear,
-        IconButton::new(Icon::Gear, "Anrufeinstellungen")
+        IconButton::new(Icon::Gear, servers::room_call_settings())
             .secondary()
             .icon_size(17.0),
     );
@@ -770,7 +775,12 @@ fn unread(
     });
     channels.truncate(UNREAD_SHOWN);
 
-    let title = Block::single(ui, "UNGELESEN", text::CAPS, c.muted);
+    let title = Block::single(
+        ui,
+        &servers::overview_unread().to_uppercase(),
+        text::CAPS,
+        c.muted,
+    );
     title.paint(ui.painter(), pos2(left, top));
     let list_top = top + title.height() + 10.0;
     let list = Rect::from_min_size(
@@ -935,16 +945,15 @@ fn message_preview(
 ) -> (Option<String>, String) {
     if let Some(system) = &message.system {
         let text = match system.kind.as_str() {
-            "live_started" => format!(
-                "{} ist live in {}.",
-                message.author.name,
+            "live_started" => chat::system_live_started(
+                &message.author.name,
                 system
                     .params
                     .get("voice_name")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
+                    .unwrap_or(""),
             ),
-            _ => format!("Systemnachricht von {}", message.author.name),
+            _ => chat::system_unknown(&message.author.name),
         };
         return (None, text);
     }
@@ -954,13 +963,13 @@ fn message_preview(
         text = if message.gif.is_some() {
             "GIF".into()
         } else if !message.attachments.is_empty() {
-            "Anhang".into()
+            servers::overview_attachment().into()
         } else {
             String::new()
         };
     }
     let author = if Some(message.author.id) == me {
-        "Du".to_owned()
+        servers::overview_you().to_owned()
     } else {
         message.author.name.clone()
     };
@@ -987,7 +996,7 @@ fn readable_mentions(content: &str, members: &[(Uuid, String)]) -> String {
                 let name = members
                     .iter()
                     .find(|(m, _)| *m == id)
-                    .map_or("Unbekannt", |(_, n)| n.as_str());
+                    .map_or(chat::mention_unknown(), |(_, n)| n.as_str());
                 out.push('@');
                 out.push_str(name);
                 rest = &after[37..];
@@ -1010,13 +1019,17 @@ pub fn short_when(at: DateTime<Utc>, now: DateTime<Local>) -> String {
         return local.format("%H:%M").to_string();
     }
     if Some(local.date_naive()) == now.date_naive().pred_opt() {
-        return "Gestern".into();
+        return servers::overview_yesterday().into();
     }
-    if local.year() == now.year() {
-        local.format("%d.%m.").to_string()
-    } else {
-        local.format("%d.%m.%y").to_string()
-    }
+    // `day` and `month` 2-digit (and `year` in another year) in de-DE /
+    // en-GB: "21.10." / "21/10".
+    let format = match (gelabber_i18n::get(), local.year() == now.year()) {
+        (Locale::De, true) => "%d.%m.",
+        (Locale::De, false) => "%d.%m.%y",
+        (Locale::En, true) => "%d/%m",
+        (Locale::En, false) => "%d/%m/%y",
+    };
+    local.format(format).to_string()
 }
 
 #[cfg(test)]

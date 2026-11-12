@@ -54,9 +54,9 @@
   flex: 0 0 auto;
   width: 192px;
 }
-/* The channel's stage while pictures run: a line of facts, the pictures
-   filling the space between the header and the call bar, and the people
-   without a camera under them. VoiceRoom measures the stage and places
+/* The channel's stage while pictures run: the pictures filling the space
+   between the header and the call bar, and the people without a camera
+   under them. VoiceRoom measures the stage and places
    each picture (--stage-x, -y, -w, -h); the pictures never change their
    element, only their place. */
 .voice-room[data-stage] {
@@ -67,22 +67,30 @@
   min-height: 360px;
   padding: 16px 24px;
 }
-.voice-stage-bar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 12px;
-  min-height: 36px;
+/* The people stage keeps the references' inset: 696x648 at 1280x800. */
+.voice-room[data-stage="people"] {
+  padding: 20px 24px 24px;
 }
-.voice-stage-facts {
-  flex: 1;
+/* In the call the header carries the facts, so a card alone starts where
+   the people stage does. */
+.voice-room[data-joined] > .voice-room-participants:first-child {
+  margin-top: 0;
+}
+/* In the call the channel header carries the room's facts after its name,
+   and its view and Kino at the right end. */
+.voice-header-facts {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--lr-muted);
-  font: var(--lr-type-ui);
-  font-weight: 400;
+  font-size: 13px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.lr-channel-header > .voice-stage-views,
+.lr-channel-header > .voice-stage-kino {
+  flex: none;
 }
 .voice-stage {
   position: relative;
@@ -888,6 +896,168 @@ html[data-compact-rooms="true"] .voice-room-seat {
     min-width: 0;
   }
 }
+/* A call of two or more without pictures: the people fill the stage, each
+   in a tile of the pictures' grid (VoiceRoom places them, --stage-*). The
+   avatar is a third of the tile's height (--person-avatar); a tile under
+   180 pixels high keeps a smaller name and drops the status line. A phone
+   too small for the tiles keeps the cards and scrolls. */
+.voice-people {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.voice-people > .voice-stage {
+  position: absolute;
+  inset: 0;
+  display: block;
+  margin: 0;
+}
+.voice-people > .voice-room-participants {
+  margin-top: 4px;
+  padding-bottom: var(--voice-room-bottom);
+}
+.voice-stage[data-view="people"]:not([data-measured]) > .voice-stage-item {
+  visibility: hidden;
+}
+.voice-stage[data-view="people"] > .voice-room-participant {
+  position: absolute;
+  left: var(--stage-x);
+  top: var(--stage-y);
+  width: var(--stage-w);
+  height: var(--stage-h);
+  justify-content: center;
+  gap: 4px;
+  aspect-ratio: auto;
+  padding: 12px;
+  overflow: hidden;
+  border: 1px solid var(--lr-border);
+  border-radius: 10px;
+  background: var(--lr-surface);
+}
+.voice-stage[data-view="people"] .voice-room-avatar {
+  width: var(--person-avatar);
+}
+.voice-stage[data-view="people"] .voice-room-avatar > .gel-avatar {
+  font-size: calc(var(--person-avatar) * 0.38);
+}
+.voice-stage[data-view="people"] .voice-room-connection {
+  display: none;
+}
+/* Who speaks: a ring around the avatar, the status line and the corner's
+   speaker in green. */
+.voice-stage[data-view="people"] .gel-avatar.is-speaking {
+  box-shadow: none;
+  outline: 3px solid var(--lr-speaking);
+  outline-offset: 2px;
+}
+.voice-stage[data-view="people"] .gel-avatar.is-speaking::after {
+  display: none;
+}
+.voice-stage[data-view="people"] .voice-room-participant-text {
+  max-width: 90%;
+  margin-top: 10px;
+}
+.voice-stage[data-view="people"] .voice-room-participant-text strong {
+  max-width: 100%;
+  font-size: 16px;
+  line-height: 1.3;
+}
+.voice-stage[data-view="people"] .voice-room-profile-name {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-stage[data-view="people"] .voice-room-self {
+  font-weight: inherit;
+  opacity: 1;
+}
+.voice-stage[data-view="people"] .voice-room-participant-status {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.voice-stage[data-view="people"]
+  > .voice-room-participant
+  > .voice-room-participant-marks {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  margin: 0;
+}
+.voice-stage[data-view="people"]
+  > .voice-room-participant
+  > .voice-room-participant-marks
+  .voice-state-icons {
+  display: flex;
+}
+.voice-stage[data-view="people"]
+  .voice-room-participant-marks
+  .voice-state-icons
+  > span {
+  width: auto;
+  height: auto;
+}
+.voice-stage[data-view="people"] .voice-room-participant-marks svg {
+  width: 16px;
+  height: 16px;
+  color: var(--lr-muted);
+}
+.voice-stage[data-view="people"]
+  > .voice-room-participant.is-speaking
+  .voice-room-participant-marks
+  .voice-state-icons-speaker {
+  display: block;
+  color: var(--lr-online-text);
+}
+.voice-stage[data-view="people"]
+  > .voice-room-participant
+  > .voice-room-participant-more {
+  top: 6px;
+  right: 6px;
+}
+.voice-stage[data-view="people"] > .is-small {
+  gap: 0;
+}
+.voice-stage[data-view="people"] > .is-small .voice-room-participant-text {
+  margin-top: 8px;
+}
+.voice-stage[data-view="people"]
+  > .is-small
+  .voice-room-participant-text
+  strong {
+  font-size: 12px;
+}
+/* Said to a screen reader only on a small tile. */
+.voice-stage[data-view="people"] > .is-small .voice-room-participant-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.voice-stage[data-view="people"] > .is-small > .voice-room-participant-marks {
+  top: 7px;
+  left: 7px;
+}
+.voice-stage[data-view="people"] > .is-small .voice-room-participant-marks svg {
+  width: 13px;
+  height: 13px;
+}
+@media (max-width: 640px) {
+  /* The people stage fills the room between the facts and the call bar. */
+  .voice-room[data-stage="people"] {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+  }
+}
 /* Under a finger "…" is always there, and before joining the way in stays
    at the bottom edge, where the call bar will be. */
 @media (pointer: coarse) {
@@ -1086,29 +1256,78 @@ html[data-compact-rooms="true"] .voice-room-seat {
   line-height: 1.3;
 }
 .voice-session-link > strong,
-.voice-session-link > span {
+.voice-session-link > span,
+.voice-session-status > strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+  line-height: 1.3;
 }
-.voice-session-link > strong {
+.voice-session-link > strong,
+.voice-session-status > strong {
   font-weight: 600;
   color: var(--lr-muted);
 }
 .voice-session-link > span {
   color: var(--lr-muted);
 }
-[data-connection="connected"] .voice-session-link > strong {
+[data-connection="connected"]
+  :is(.voice-session-link, .voice-session-status)
+  > strong {
   color: var(--lr-online-text);
 }
 /* --lr-warning is drawn for icons (3:1); text takes it a step towards the
    text colour, for 4.5:1 in light and dark. */
-[data-connection="reconnecting"] .voice-session-link > strong {
+[data-connection="reconnecting"]
+  :is(.voice-session-link, .voice-session-status)
+  > strong {
   color: color-mix(in srgb, var(--lr-warning) 70%, var(--lr-text));
 }
-[data-connection="failed"] .voice-session-link > strong {
+[data-connection="failed"]
+  :is(.voice-session-link, .voice-session-status)
+  > strong {
   color: var(--lr-danger);
+}
+/* The call's status: the icon and state word are one button that opens the
+   connection, the place under the word is the link back to the channel.
+   The button spans both lines, so the icon stays centred beside them as
+   before; the link lies over its second line. */
+.voice-session-where {
+  display: grid;
+  flex: 1;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.voice-session-status {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--lr-radius);
+  text-align: left;
+  cursor: pointer;
+}
+.voice-session-status > :first-child {
+  grid-row: 1 / -1;
+}
+.voice-session-status > strong {
+  grid-column: 2;
+  grid-row: 1;
+}
+.voice-session-where > .voice-session-link {
+  position: relative;
+  grid-column: 2;
+  grid-row: 2;
+}
+.voice-session-status:hover > .voice-quality-bars {
+  background: var(--lr-hover);
 }
 a.voice-session-link:hover > span {
   color: var(--lr-text);
@@ -1127,9 +1346,6 @@ a.voice-session-link:hover > span {
   border-radius: var(--lr-radius);
   color: var(--lr-online);
   cursor: pointer;
-}
-.voice-quality-bars:hover {
-  background: var(--lr-hover);
 }
 .voice-quality-bars > span {
   width: 3px;
@@ -1338,6 +1554,12 @@ a.voice-session-link:hover > span {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+/* A long device name ends in an ellipsis before the chevron. */
+.voice-quick-field select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .voice-quick-field > label,
 .voice-quick-volume > label {
@@ -1758,4 +1980,163 @@ html[data-reduced-motion="true"]
 }
 html[data-reduced-motion="true"] .voice-video-tile.is-speaking::before {
   animation: none;
+}
+
+/* Who watches a Live (#521). On the stage a Live's caption is the LIVE
+   badge, the owner's name and, after a divider, the eye and the count: a
+   button, so the caption takes presses there only. */
+.voice-stage .voice-live-caption {
+  gap: 8px;
+  padding: 0 8px;
+}
+.voice-live-caption-badge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-live);
+  color: var(--lr-on-live);
+  font: var(--lr-type-caps);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.voice-live-caption-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-live-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding-left: 8px;
+  border-left: 1px solid rgb(255 255 255 / 0.3);
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.voice-live-count:hover > svg,
+.voice-live-count[aria-expanded="true"] > svg {
+  color: var(--lr-live-text);
+}
+.voice-stage > .is-strip .voice-live-caption {
+  gap: 5px;
+}
+.voice-stage > .is-strip .voice-live-count {
+  height: 14px;
+  padding-left: 5px;
+}
+/* The list: a title, where the Live runs, who watches and then the others
+   in the channel; the own Live's ends with "Live beenden". */
+.ui-popover.voice-watchers {
+  width: 272px;
+}
+.voice-watchers-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px 8px;
+}
+.voice-watchers-head strong {
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+.voice-watchers-head small {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.voice-watchers-people {
+  display: flex;
+  flex-direction: column;
+}
+.voice-watchers-people > li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  font: var(--lr-type-ui);
+}
+.voice-watchers-people > li > .gel-avatar {
+  --avatar-size: 24px;
+  font-size: 10px;
+}
+.voice-watchers-people > li > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-watchers-others > h3 {
+  padding: 10px 8px 2px;
+  color: var(--lr-muted);
+  font: var(--lr-type-caps);
+  text-transform: uppercase;
+}
+.voice-watchers-others .voice-watchers-people > li {
+  color: var(--lr-muted);
+}
+.voice-watchers-end {
+  align-items: center;
+}
+.voice-watchers-end > svg {
+  margin-top: 0;
+}
+/* The own Live on the call bar: its count after a divider. */
+.voice-control-watchers {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 7px;
+  border-left: 1px solid color-mix(in srgb, var(--lr-on-live) 40%, transparent);
+  font: var(--lr-type-ui);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* Fokus's row: a person without a camera as their avatar, then the name
+   and one status line: live, watching the Live in front, or their state.
+   Kino's small thumbnail keeps the shipped avatar over the name. */
+.voice-room:not([data-kino])
+  .voice-stage
+  > .voice-room-participant.is-strip:not(.has-video) {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 14px;
+  text-align: left;
+}
+.voice-room:not([data-kino])
+  .voice-stage
+  > .is-strip:not(.has-video)
+  .voice-room-participant-text {
+  align-items: flex-start;
+}
+.voice-room:not([data-kino])
+  .voice-stage
+  > .is-strip:not(.has-video)
+  .voice-room-participant-text
+  > .voice-room-participant-status {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  overflow: hidden;
+  clip-path: none;
+  text-overflow: ellipsis;
+}
+.voice-room-participant-status > svg {
+  flex: none;
+}
+.voice-room-participant-status.is-live,
+.voice-room-participant.is-speaking .voice-room-participant-status.is-live {
+  color: var(--lr-live-text);
+}
+.voice-room-participant.is-speaking .voice-room-participant-status.is-watching {
+  color: var(--lr-muted);
 }

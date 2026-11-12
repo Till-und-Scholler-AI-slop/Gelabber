@@ -28,6 +28,15 @@ fn auth_and_account() {
     assert_eq!(session.user.unwrap().name, "Lena");
     let me: User = round_trip("me");
     assert_eq!(me.email, "lena@example.test");
+    // From a server older than v0.10: no language, and none written back.
+    assert_eq!(me.locale, None);
+    let mut english = fixture("me");
+    english["locale"] = "en".into();
+    let user: User = serde_json::from_value(english.clone()).unwrap();
+    assert_eq!(user.locale.as_deref(), Some("en"));
+    assert_eq!(serde_json::to_value(&user).unwrap(), english);
+    let saved: LocaleBody = serde_json::from_value(serde_json::json!({"locale": "en"})).unwrap();
+    assert_eq!(saved.locale, "en");
     let profile: PublicProfile = round_trip("user_profile");
     assert_eq!(profile.name, "Jonas");
     let mail: MailStatus = round_trip("mail");
@@ -139,9 +148,11 @@ fn gateway_frames() {
         }
         ops.insert(frame["op"].as_str().unwrap().to_owned());
     }
-    for op in ["ok", "p", "sig", "y", "e", "rd", "ns"] {
+    for op in ["ok", "p", "sig", "y", "e", "rd", "ns", "lc"] {
         assert!(ops.contains(op), "no {op} frame captured");
     }
+    let locale: ServerFrame = serde_json::from_str(r#"{"op":"lc","l":"en"}"#).unwrap();
+    assert_eq!(locale, ServerFrame::Locale { l: "en".into() });
 }
 
 #[test]
@@ -230,7 +241,7 @@ fn a_newer_server_degrades_per_element() {
     .unwrap();
     assert!(matches!(frame, ServerFrame::Sig(SigFrame { k: None, .. })));
     let frame: ServerFrame = serde_json::from_value(serde_json::json!({
-        "op": "sig", "t": "w", "s": "00000000-0000-0000-0000-000000000001",
+        "op": "sig", "t": "x", "s": "00000000-0000-0000-0000-000000000001",
     }))
     .unwrap();
     assert!(matches!(
@@ -240,4 +251,583 @@ fn a_newer_server_degrades_per_element() {
             ..
         })
     ));
+}
+
+/// Who watches a Live (#521), as `backend/api/src/gateway/protocol.rs`
+/// writes and reads it.
+#[test]
+fn watch_frames() {
+    let (s, c, u) = (
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+        "00000000-0000-0000-0000-000000000003",
+    );
+    let owner = "00000000-0000-0000-0000-000000000004";
+    let json = serde_json::json!({"op": "sig", "t": "w", "s": s, "c": c, "u": u, "w": [owner]});
+    let frame: ServerFrame = serde_json::from_value(json.clone()).unwrap();
+    let ServerFrame::Sig(sig) = &frame else {
+        panic!("not a sig frame: {frame:?}");
+    };
+    assert_eq!(sig.t, SigKind::W);
+    assert_eq!(sig.w, Some(vec![owner.parse().unwrap()]));
+    assert_eq!(serde_json::to_value(&frame).unwrap(), json);
+    // An empty set is a set: it survives the round trip.
+    let json = serde_json::json!({"op": "sig", "t": "w", "s": s, "c": c, "u": u, "w": []});
+    let frame: ServerFrame = serde_json::from_value(json.clone()).unwrap();
+    assert!(matches!(&frame, ServerFrame::Sig(SigFrame { w: Some(w), .. }) if w.is_empty()));
+    assert_eq!(serde_json::to_value(&frame).unwrap(), json);
+    // Other frames carry none, and an entry this client cannot read drops.
+    let frame: ServerFrame =
+        serde_json::from_value(serde_json::json!({"op": "sig", "t": "j", "s": s, "c": c, "u": u}))
+            .unwrap();
+    assert!(matches!(frame, ServerFrame::Sig(SigFrame { w: None, .. })));
+    assert!(!serde_json::to_string(&frame).unwrap().contains(r#""w""#));
+    let frame: ServerFrame = serde_json::from_value(
+        serde_json::json!({"op": "sig", "t": "w", "s": s, "c": c, "u": u, "w": [owner, 7]}),
+    )
+    .unwrap();
+    assert!(matches!(&frame, ServerFrame::Sig(SigFrame { w: Some(w), .. }) if w.len() == 1));
+
+    let request = ClientFrame::Sig {
+        t: SigKind::W,
+        s: s.parse().unwrap(),
+        c: c.parse().unwrap(),
+        k: Some(TrackKind::S),
+        on: Some(true),
+        o: Some(owner.parse().unwrap()),
+    };
+    let json = serde_json::json!(
+        {"op": "sig", "t": "w", "s": s, "c": c, "k": "s", "on": true, "o": owner}
+    );
+    assert_eq!(serde_json::to_value(&request).unwrap(), json);
+    assert_eq!(
+        serde_json::from_value::<ClientFrame>(json).unwrap(),
+        request
+    );
+    // The other requests name no owner.
+    let request = ClientFrame::Sig {
+        t: SigKind::J,
+        s: s.parse().unwrap(),
+        c: c.parse().unwrap(),
+        k: None,
+        on: None,
+        o: None,
+    };
+    assert!(!serde_json::to_string(&request).unwrap().contains(r#""o""#));
+}
+
+/// Roles and limited channels (#516), as `servers/roles.rs` and
+/// `servers/channel.rs` write them; a server older than v0.10 sends none.
+#[test]
+fn roles_and_limited_channels() {
+    use serde_json::json;
+    let (role, other) = (
+        "00000000-0000-0000-0000-0000000000d1",
+        "00000000-0000-0000-0000-0000000000d2",
+    );
+    // An old payload: no roles, nothing limited, nobody holds a role.
+    let old: ServerDetail = round_trip("server_wohnzimmer");
+    assert!(old.roles.is_empty());
+    assert!(
+        old.channels
+            .iter()
+            .all(|c| !c.limited && c.role_ids.is_empty())
+    );
+    assert!(old.members.iter().all(|m| m.role_ids.is_empty()));
+
+    let mut detail = fixture("server_wohnzimmer");
+    let server = detail["id"].clone();
+    detail["permissions"] = json!(["moderate_members", "send_messages", "can_fly"]);
+    detail["roles"] = json!([
+        {"id": role, "server_id": server, "name": "Moderation", "color": "blue",
+         "permissions": ["moderate_members", "manage_messages", "mention_everyone"],
+         "position": 0, "created_at": "2026-01-01T00:00:00Z"},
+        {"id": other, "server_id": server, "name": "Stammgäste", "color": "teal",
+         "permissions": [], "position": 1, "created_at": "2026-01-01T00:00:00Z"},
+        {"id": "nope"}
+    ]);
+    detail["channels"][0]["limited"] = true.into();
+    detail["channels"][0]["role_ids"] = json!([role, other]);
+    detail["channels"][1]["limited"] = false.into();
+    detail["channels"][1]["role_ids"] = json!([]);
+    detail["members"][1]["role_ids"] = json!([role]);
+    let decoded: ServerDetail = serde_json::from_value(detail).unwrap();
+    assert!(decoded.server.can(Permission::ModerateMembers));
+    assert!(!decoded.server.can(Permission::ManageServer));
+    assert!(decoded.server.permissions.contains(&Permission::Unknown));
+    // The unreadable role drops; an unknown colour reads as amber.
+    assert_eq!(decoded.roles.len(), 2);
+    let moderation = decoded.role(role.parse().unwrap()).unwrap();
+    assert_eq!(moderation.color, RoleColor::Blue);
+    assert_eq!(moderation.permissions[0], Permission::ModerateMembers);
+    assert_eq!(decoded.roles[1].color, RoleColor::Amber);
+    assert!(decoded.channels[0].limited);
+    assert_eq!(decoded.channels[0].role_ids.len(), 2);
+    assert!(!decoded.channels[1].limited);
+    assert_eq!(
+        decoded.members[1].role_ids,
+        vec![role.parse::<uuid::Uuid>().unwrap()]
+    );
+
+    // The canonical order of the server, with the new flag second.
+    assert_eq!(Permission::ALL.len(), 9);
+    assert_eq!(Permission::ALL[1], Permission::ModerateMembers);
+    assert_eq!(
+        serde_json::to_value(Permission::ModerateMembers).unwrap(),
+        "moderate_members"
+    );
+    assert_eq!(
+        serde_json::to_value(RoleColor::ALL).unwrap(),
+        json!(["amber", "blue", "green", "pink", "violet", "coral"])
+    );
+
+    // Request bodies: absent stays absent, `[]` opens a channel again.
+    let patch = ChannelPatch {
+        name: Some("spiele".into()),
+        ..ChannelPatch::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&patch).unwrap(),
+        json!({"name": "spiele"})
+    );
+    let open = ChannelPatch {
+        role_ids: Some(Vec::new()),
+        ..ChannelPatch::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&open).unwrap(),
+        json!({"role_ids": []})
+    );
+    let new = NewRole {
+        name: "Neue Rolle".into(),
+        color: RoleColor::Green,
+        permissions: Some(Vec::new()),
+    };
+    assert_eq!(
+        serde_json::to_value(&new).unwrap(),
+        json!({"name": "Neue Rolle", "color": "green", "permissions": []})
+    );
+    let rename = RolePatch {
+        color: Some(RoleColor::Coral),
+        ..RolePatch::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&rename).unwrap(),
+        json!({"color": "coral"})
+    );
+    let assigned: MemberRoles =
+        serde_json::from_value(json!({"user_id": other, "role_ids": [role]})).unwrap();
+    assert_eq!(assigned.role_ids.len(), 1);
+}
+
+/// The server-topic event "access changed": `t: "e"`, no `c`, `d.k: "a"`.
+#[test]
+fn access_change_events() {
+    let s = "00000000-0000-0000-0000-000000000001";
+    let event = |json: serde_json::Value| -> EventFrame { serde_json::from_value(json).unwrap() };
+    assert!(
+        event(serde_json::json!({"t": "e", "s": s, "n": 4, "d": {"k": "a"}})).is_access_change()
+    );
+    assert!(
+        !event(serde_json::json!({"t": "e", "s": s, "c": s, "n": 4, "d": {"k": "a"}}))
+            .is_access_change()
+    );
+    assert!(
+        !event(serde_json::json!({"t": "d", "s": s, "n": 4, "d": {"k": "a"}})).is_access_change()
+    );
+    assert!(
+        !event(serde_json::json!({"t": "e", "s": s, "n": 4, "d": {"k": "b"}})).is_access_change()
+    );
+    assert!(!event(serde_json::json!({"t": "e", "s": s, "n": 4})).is_access_change());
+}
+
+/// `/public-pages.json` (issue #522), read like the web's
+/// `parsePublicPages`: anything but version 1 publishes nothing.
+#[test]
+fn public_pages_parse_like_the_web() {
+    use serde_json::json;
+    let all = PublicPages::parse(&json!({
+        "version": 1,
+        "landing": true,
+        "legal": {
+            "terms": {"de": "/de/nutzungsbedingungen", "en": "/en/terms"},
+            "imprint": {"de": "/de/impressum", "en": "/en/imprint"},
+            "privacy": {"de": "/de/datenschutz", "en": "/en/privacy"}
+        }
+    }));
+    assert!(all.landing);
+    let kinds: Vec<_> = all.legal.iter().map(|(k, _)| *k).collect();
+    assert_eq!(
+        kinds,
+        [
+            LegalPageKind::Imprint,
+            LegalPageKind::Privacy,
+            LegalPageKind::Terms
+        ]
+    );
+    let imprint = &all.legal[0].1;
+    assert_eq!(
+        imprint.path(gelabber_i18n::Locale::De),
+        Some("/de/impressum")
+    );
+    assert_eq!(imprint.path(gelabber_i18n::Locale::En), Some("/en/imprint"));
+
+    // A partial `legal`, one language only, a foreign and a broken entry.
+    let partial = PublicPages::parse(&json!({
+        "version": 1,
+        "legal": {
+            "privacy": {"de": "/de/datenschutz"},
+            "terms": {"de": "//evil.example/x", "en": "https://evil.example/"},
+            "imprint": "/de/impressum"
+        }
+    }));
+    assert!(!partial.landing);
+    assert_eq!(partial.legal.len(), 1);
+    let (kind, privacy) = &partial.legal[0];
+    assert_eq!(*kind, LegalPageKind::Privacy);
+    // The other language's page where this one has none.
+    assert_eq!(
+        privacy.path(gelabber_i18n::Locale::En),
+        Some("/de/datenschutz")
+    );
+
+    for nothing in [
+        json!({"version": 2, "landing": true, "legal": {"terms": {"en": "/en/terms"}}}),
+        json!({"landing": true}),
+        json!([1]),
+        json!(null),
+        json!({"version": "1", "legal": {"terms": {"en": "/en/terms"}}}),
+    ] {
+        assert_eq!(
+            PublicPages::parse(&nothing),
+            PublicPages::default(),
+            "{nothing}"
+        );
+    }
+}
+
+/// The sign-in-through-a-provider shapes (#518), as
+/// backend/api/src/auth/oidc/routes.rs writes them and
+/// backend/api/tests/oidc.rs checks them.
+#[test]
+fn sign_in_through_a_provider() {
+    use serde_json::json;
+    let providers: AuthProviders =
+        serde_json::from_value(json!({"providers": [{"id": "google", "name": "Google"}]})).unwrap();
+    assert_eq!(providers.providers[0].name, "Google");
+    let off: AuthProviders = serde_json::from_value(json!({"providers": []})).unwrap();
+    assert!(off.providers.is_empty());
+
+    let methods = json!({
+        "password": false,
+        "providers": [
+            {"id": "google", "name": "Google", "configured": true,
+             "connected": {"email": "lena@example.test", "since": "2026-11-10T10:00:00Z"}},
+            {"id": "old", "name": "old", "configured": false, "connected": null},
+        ],
+    });
+    let read: SignInMethods = serde_json::from_value(methods.clone()).unwrap();
+    assert!(!read.password);
+    let google = read.providers[0].connected.as_ref().unwrap();
+    assert_eq!(google.email, "lena@example.test");
+    assert!(!read.providers[1].configured && read.providers[1].connected.is_none());
+    assert_eq!(serde_json::to_value(&read).unwrap(), methods);
+
+    let pending = json!({
+        "provider": {"id": "google", "name": "Google"},
+        "email": "neu@example.test",
+        "name": null,
+    });
+    let read: OidcPending = serde_json::from_value(pending.clone()).unwrap();
+    assert_eq!(read.name, None);
+    assert_eq!(serde_json::to_value(&read).unwrap(), pending);
+
+    let mut session = fixture("session");
+    session["redirect"] = "/invite/abc123".into();
+    let complete: OidcCompleteResponse = serde_json::from_value(session.clone()).unwrap();
+    assert_eq!(complete.user.name, "Lena");
+    assert_eq!(complete.redirect.as_deref(), Some("/invite/abc123"));
+    assert_eq!(serde_json::to_value(&complete).unwrap(), session);
+
+    // The exchange, by `result`.
+    let mut signed_in = fixture("session");
+    signed_in["result"] = "signed_in".into();
+    let read: OidcExchange = serde_json::from_value(signed_in.clone()).unwrap();
+    assert!(matches!(&read, OidcExchange::SignedIn(s) if s.user.is_some()));
+    assert_eq!(serde_json::to_value(&read).unwrap(), signed_in);
+    let mut needs_name = pending.clone();
+    needs_name["result"] = "needs_name".into();
+    needs_name["name"] = "Lena".into();
+    let read: OidcExchange = serde_json::from_value(needs_name.clone()).unwrap();
+    assert!(matches!(&read, OidcExchange::NeedsName(p) if p.name.as_deref() == Some("Lena")));
+    assert_eq!(serde_json::to_value(&read).unwrap(), needs_name);
+    let mut linked = methods;
+    linked["result"] = "linked".into();
+    let read: OidcExchange = serde_json::from_value(linked.clone()).unwrap();
+    assert!(matches!(&read, OidcExchange::Linked(m) if !m.password));
+    assert_eq!(serde_json::to_value(&read).unwrap(), linked);
+
+    // The start body: only what is set, with the app's loopback fields.
+    let mut start = OidcStart::new(OidcPurpose::Link);
+    start.current_password = Some("geheim".into());
+    assert_eq!(
+        serde_json::to_value(&start).unwrap(),
+        json!({"purpose": "link", "current_password": "geheim"})
+    );
+    assert!(!format!("{start:?}").contains("geheim"));
+    assert_eq!(
+        serde_json::to_value(OidcStart::new(OidcPurpose::SignIn)).unwrap(),
+        json!({"purpose": "sign_in"})
+    );
+}
+
+/// The operator package's shapes (#517), as backend/api/src/auth/mod.rs
+/// and servers/mod.rs write them; older servers send none of the new keys.
+#[test]
+fn operator_flags_registration_and_admission_codes() {
+    use serde_json::json;
+    let old: SessionResponse = round_trip("session");
+    assert!(!old.operator);
+    let mut session = fixture("session");
+    session["operator"] = true.into();
+    let read: SessionResponse = serde_json::from_value(session.clone()).unwrap();
+    assert!(read.operator);
+    assert_eq!(serde_json::to_value(&read).unwrap(), session);
+    let registered: RegisterResponse = serde_json::from_value(session).unwrap();
+    assert!(registered.operator && !registered.verification_sent);
+
+    let servers: Vec<Server> = round_trip("servers");
+    assert!(servers.iter().all(|s| !s.blocked));
+    let mut blocked = fixture("join");
+    blocked["blocked"] = true.into();
+    let read: Server = serde_json::from_value(blocked.clone()).unwrap();
+    assert!(read.blocked);
+    assert_eq!(serde_json::to_value(&read).unwrap(), blocked);
+
+    for (mode, expected) in [
+        ("open", RegistrationMode::Open),
+        ("invitation", RegistrationMode::Invitation),
+    ] {
+        let read: RegistrationStatus = serde_json::from_value(json!({"mode": mode})).unwrap();
+        assert_eq!(read.mode, expected);
+    }
+
+    // Only the codes that are there go out, and the log shows none.
+    let mut body = RegisterBody::new("neu@example.test", "geheim123", "Neu");
+    assert_eq!(
+        serde_json::to_value(&body).unwrap(),
+        json!({"email": "neu@example.test", "password": "geheim123", "name": "Neu", "locale": "de"})
+    );
+    body.invitation = Some("k7m2p9qrs4tx".into());
+    body.server_invite = Some("abcdefghjkmn".into());
+    let sent = serde_json::to_value(&body).unwrap();
+    assert_eq!(sent["invitation"], "k7m2p9qrs4tx");
+    assert_eq!(sent["server_invite"], "abcdefghjkmn");
+    let logged = format!("{body:?}");
+    for secret in ["geheim123", "k7m2p9qrs4tx", "abcdefghjkmn"] {
+        assert!(!logged.contains(secret), "{logged}");
+    }
+}
+
+/// The directory's shapes (#520), as backend/api/src/directory and
+/// backend/api/tests/directory.rs write them.
+#[test]
+fn directory_listings_settings_requests_and_reports() {
+    use serde_json::json;
+    let round = |value: &Value| assert_eq!(serde_json::to_value(value).unwrap(), *value);
+
+    let status = json!({"enabled": true, "languages": [
+        {"code": "de", "name": "Deutsch", "listings": 3},
+        {"code": "uk", "name": "Українська", "listings": 0},
+    ]});
+    let read: DirectoryStatus = serde_json::from_value(status.clone()).unwrap();
+    assert!(read.enabled);
+    assert_eq!(read.languages[1].name, "Українська");
+    assert_eq!(serde_json::to_value(&read).unwrap(), status);
+    let off: DirectoryStatus =
+        serde_json::from_value(json!({"enabled": false, "languages": []})).unwrap();
+    assert!(!off.enabled && off.languages.is_empty());
+
+    let filmclub = json!({
+        "server_id": "00000000-0000-0000-0000-000000000001",
+        "name": "Filmclub",
+        "icon_url": null,
+        "description": "Jeden Freitag ein Film.",
+        "language": "de",
+        "member_count": 2,
+        "join_mode": "open",
+        "member": false,
+        "request": null,
+        "retry_at": null,
+    });
+    let declined = json!({
+        "server_id": "00000000-0000-0000-0000-000000000002",
+        "name": "Modellbau-Keller",
+        "icon_url": "/api/server-icons/00000000-0000-0000-0000-000000000002/a.png",
+        "description": "Kleine Dinge, große Geduld.",
+        "language": "de",
+        "member_count": 48,
+        "join_mode": "request",
+        "member": false,
+        "request": "declined",
+        "retry_at": "2026-11-18T10:00:00Z",
+    });
+    let page = json!({"listings": [filmclub, declined], "next_offset": 30});
+    let read: ListingPage = serde_json::from_value(page.clone()).unwrap();
+    assert_eq!(read.next_offset, Some(30));
+    assert_eq!(read.listings[0].join_mode, JoinMode::Open);
+    assert_eq!(read.listings[0].request, None);
+    assert_eq!(read.listings[1].join_mode, JoinMode::Request);
+    assert_eq!(read.listings[1].request, Some(RequestState::Declined));
+    assert!(read.listings[1].retry_at.is_some());
+    assert_eq!(serde_json::to_value(&read).unwrap(), page);
+    // A row this client cannot read costs only that row; the last page
+    // has no next offset.
+    let mut odd = filmclub.clone();
+    odd["join_mode"] = "invite_only".into();
+    let read: ListingPage =
+        serde_json::from_value(json!({"listings": [odd, filmclub], "next_offset": null})).unwrap();
+    assert_eq!(read.listings.len(), 1);
+    assert_eq!(read.next_offset, None);
+    for (value, expected) in [
+        ("pending", RequestState::Pending),
+        ("declined", RequestState::Declined),
+    ] {
+        let mut row = declined.clone();
+        row["request"] = value.into();
+        let listing: Listing = serde_json::from_value(row).unwrap();
+        assert_eq!(listing.request, Some(expected));
+    }
+
+    // The form: the defaults of a server without a row, and a saved one.
+    let fresh = json!({"listed": false, "description": "", "language": null,
+        "join_mode": "request", "delisted": false, "listed_at": null});
+    let read: ListingSettings = serde_json::from_value(fresh.clone()).unwrap();
+    assert_eq!((read.language, read.join_mode), (None, JoinMode::Request));
+    round(&fresh);
+    let saved = json!({"listed": true, "description": "Gemütliche Abende mit Freunden.",
+        "language": "de", "join_mode": "open", "delisted": true,
+        "listed_at": "2026-11-10T10:00:00Z"});
+    let read: ListingSettings = serde_json::from_value(saved.clone()).unwrap();
+    assert!(read.listed && read.delisted);
+    assert_eq!(serde_json::to_value(&read).unwrap(), saved);
+    let body = ListingSettingsBody {
+        listed: true,
+        description: "Gemütliche Abende mit Freunden.".into(),
+        language: "de".into(),
+        join_mode: JoinMode::Request,
+    };
+    assert_eq!(
+        serde_json::to_value(&body).unwrap(),
+        json!({"listed": true, "description": "Gemütliche Abende mit Freunden.",
+            "language": "de", "join_mode": "request"})
+    );
+
+    let answer: RequestAnswer = serde_json::from_value(json!({"request": "pending"})).unwrap();
+    assert_eq!(answer.request, RequestState::Pending);
+
+    let queue = json!([{"user_id": "00000000-0000-0000-0000-000000000003", "name": "Kai",
+        "avatar_url": null, "message": "Ich baue Schiffe.",
+        "created_at": "2026-11-10T10:00:00Z"}]);
+    let read: Vec<JoinRequest> = serde_json::from_value(queue.clone()).unwrap();
+    assert_eq!(read[0].name, "Kai");
+    assert_eq!(serde_json::to_value(&read).unwrap(), queue);
+
+    // Reports: `details` only when given.
+    assert_eq!(
+        serde_json::to_value(ReportBody {
+            reason: ReportReason::Spam,
+            details: None
+        })
+        .unwrap(),
+        json!({"reason": "spam"})
+    );
+    assert_eq!(
+        serde_json::to_value(ReportBody {
+            reason: ReportReason::Other,
+            details: Some("Werbung für Fremdes".into())
+        })
+        .unwrap(),
+        json!({"reason": "other", "details": "Werbung für Fremdes"})
+    );
+    for (reason, text) in [
+        (ReportReason::Harassment, "harassment"),
+        (ReportReason::Sexual, "sexual"),
+        (ReportReason::Illegal, "illegal"),
+    ] {
+        assert_eq!(serde_json::to_value(reason).unwrap(), text);
+    }
+    let filed: ReportFiled = serde_json::from_value(json!({
+        "id": "00000000-0000-0000-0000-000000000004", "created_at": "2026-11-10T10:00:00Z"}))
+    .unwrap();
+    assert_eq!(filed.id.as_u128(), 4);
+}
+
+/// The account's devices, export and deletion (v0.10, #519).
+#[test]
+fn devices_export_and_deletion() {
+    use serde_json::json;
+    let devices = json!({"sessions": [
+        {"id": "00000000-0000-0000-0000-000000000001", "client": "desktop", "os": "linux",
+         "created_at": "2026-11-01T18:00:00Z", "last_used_at": "2026-11-10T19:02:00Z",
+         "current": true},
+        {"id": "00000000-0000-0000-0000-000000000002", "client": "firefox", "os": "windows",
+         "created_at": "2026-11-01T18:00:00Z", "last_used_at": "2026-11-09T19:02:00Z",
+         "current": false}]});
+    let row: DeviceSession = serde_json::from_value(devices["sessions"][0].clone()).unwrap();
+    assert_eq!(
+        (row.client, row.os, row.current),
+        (DeviceClient::Desktop, DeviceOs::Linux, true)
+    );
+    assert_eq!(serde_json::to_value(&row).unwrap(), devices["sessions"][0]);
+    // A device a newer server knows reads as unknown, not as an error.
+    let newer: DeviceSession = serde_json::from_value(json!({
+        "id": "00000000-0000-0000-0000-000000000003", "client": "opera", "os": "haiku",
+        "created_at": "2026-11-01T18:00:00Z", "last_used_at": "2026-11-01T18:00:00Z",
+        "current": false}))
+    .unwrap();
+    assert_eq!(
+        (newer.client, newer.os),
+        (DeviceClient::Unknown, DeviceOs::Other)
+    );
+
+    let ready = json!({"export": {"state": "ready", "requested_at": "2026-11-10T22:00:00Z",
+        "finished_at": "2026-11-11T00:10:00Z", "expires_at": "2026-11-18T00:10:00Z",
+        "size_bytes": 123456}, "mail": true});
+    let status: ExportStatus = serde_json::from_value(ready.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&status).unwrap(), ready);
+    assert!(!status.building());
+    let view = status.export.unwrap();
+    assert_eq!(view.size_bytes, Some(123_456));
+    assert_eq!(view.file_name(), "gelabber-export-2026-11-11.zip");
+    let pending: ExportStatus = serde_json::from_value(json!({"export": {"state": "pending",
+        "requested_at": "2026-11-10T22:00:00Z", "finished_at": null, "expires_at": null,
+        "size_bytes": null}, "mail": false}))
+    .unwrap();
+    assert!(pending.building());
+    let none: ExportStatus =
+        serde_json::from_value(json!({"export": null, "mail": false})).unwrap();
+    assert!(none.export.is_none() && !none.building());
+
+    let password = DeleteConfirmation::Password("geheim 1".into());
+    assert_eq!(
+        serde_json::to_value(&password).unwrap(),
+        json!({"password": "geheim 1"})
+    );
+    assert!(!format!("{password:?}").contains("geheim"));
+    assert_eq!(
+        serde_json::to_value(DeleteConfirmation::Email("lena@example.test".into())).unwrap(),
+        json!({"email": "lena@example.test"})
+    );
+    let owned: OwnedServer = serde_json::from_value(json!({
+        "id": "00000000-0000-0000-0000-000000000007", "name": "Wohnzimmer", "member_count": 5}))
+    .unwrap();
+    assert_eq!(owned.member_count, Some(5));
+
+    // A ban outlives the account that issued it.
+    let bans: Vec<Ban> = serde_json::from_value(json!([{
+        "user_id": "00000000-0000-0000-0000-000000000003", "name": "Kai", "avatar_url": null,
+        "banned_by": null, "banned_at": "2026-11-10T10:00:00Z"}]))
+    .unwrap();
+    assert_eq!(bans[0].banned_by, None);
 }

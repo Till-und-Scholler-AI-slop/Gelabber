@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { useLocale } from "../i18n/locale.ts";
 
 import {
   liveSentence,
@@ -44,6 +46,17 @@ describe("room summary", () => {
     expect(roomSummary([], { here: true })).toBe("Nur du bist im Kanal.");
   });
 
+  it('puts the rest in the dative after "mit"', () => {
+    const others = ["Jonas", "Mira", ...Array.from({ length: 22 }, () => "X")];
+    expect(roomSummary(others, { here: true })).toBe(
+      "Du bist hier mit Jonas, Mira und 22 weiteren.",
+    );
+    expect(roomSummary(others, { here: false })).toBe(
+      "Jonas, Mira und 22 weitere sind da.",
+    );
+    expect(nameList(others)).toBe("Jonas, Mira und 22 weitere");
+  });
+
   it("lists three by name", () => {
     expect(nameList(["Mia", "Lena", "Kim"])).toBe("Mia, Lena und Kim");
   });
@@ -57,25 +70,45 @@ describe("room summary", () => {
 });
 
 describe("stage facts", () => {
-  const facts = (
-    cameras: number,
-    live: string[] = [],
-    selfLive = false,
-    people = 3,
-  ) => stageFacts({ people, cameras, live, selfLive });
+  const facts = (cameras: number, lives = 0, people = 3) =>
+    stageFacts({ people, cameras, lives });
 
   it("counts the people and the cameras", () => {
     expect(facts(2)).toBe("3 im Kanal · 2 Kameras");
-    expect(facts(1, [], false, 2)).toBe("2 im Kanal · 1 Kamera");
+    expect(facts(1, 0, 2)).toBe("2 im Kanal · 1 Kamera");
     expect(facts(0)).toBe("3 im Kanal");
   });
 
-  it("says who is live instead of counting cameras", () => {
-    expect(facts(2, ["Jonas"])).toBe("3 im Kanal · Jonas ist live");
-    expect(facts(0, ["Jonas", "Mia"])).toBe(
-      "3 im Kanal · Jonas und Mia sind live",
+  it("counts the Lives instead of the cameras", () => {
+    expect(facts(2, 1)).toBe("3 im Kanal · 1 Live");
+    expect(facts(0, 2, 4)).toBe("4 im Kanal · 2 Live");
+  });
+});
+
+describe("in English", () => {
+  beforeEach(() => useLocale.setState({ locale: "en" }));
+  afterEach(() => useLocale.setState({ locale: "de" }));
+
+  it("lists names and says who is live", () => {
+    expect(nameList(["Mia", "Lena", "Kim", "Jo"])).toBe("Mia, Lena and 2 more");
+    expect(liveSentence(["You", "Mia"], true)).toBe("You and Mia are live");
+    expect(liveSentence(["Mia"], false)).toBe("Mia is live");
+    expect(roomSummary(["Mia", "Lena"], { here: false, live: ["Mia"] })).toBe(
+      "Mia and Lena are here. Mia is live.",
     );
-    expect(facts(1, [], true)).toBe("3 im Kanal · Du bist live");
-    expect(facts(1, ["Mia"], true)).toBe("3 im Kanal · Du und Mia seid live");
+    expect(roomSummary([], { here: true })).toBe(
+      "It’s just you in the channel.",
+    );
+  });
+
+  it("counts on the stage", () => {
+    const facts = (cameras: number, lives = 0) =>
+      stageFacts({ people: 3, cameras, lives });
+    expect(facts(1)).toBe("3 in the channel · 1 camera");
+    expect(facts(2)).toBe("3 in the channel · 2 cameras");
+    expect(facts(0, 1)).toBe("3 in the channel · 1 live");
+    expect(roomSummary(["Mia", "Lena", "Kim", "Jo"], { here: true })).toBe(
+      "You’re here with Mia, Lena and 2 more.",
+    );
   });
 });

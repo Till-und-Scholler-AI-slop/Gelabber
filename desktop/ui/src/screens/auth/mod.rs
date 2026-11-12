@@ -6,13 +6,17 @@ pub mod invite;
 pub mod layout;
 pub mod login;
 pub mod not_found;
+pub mod oidc;
 pub mod recovery;
 pub mod register;
+pub mod registration;
 pub mod reset_password;
+pub mod sign_in_name;
 pub mod verify_email;
 
 use egui::{Color32, Rect, Sense, Ui, Vec2, pos2};
 use gelabber_client::ApiError;
+use gelabber_i18n::auth;
 use serde_json::Value;
 
 use crate::rules::{Failure, FormErrors};
@@ -54,11 +58,7 @@ pub fn banner(ui: &mut Ui, message: &str, invite: bool) {
 
 /// The invite redirect banner.
 pub fn invite_banner(ui: &mut Ui) {
-    banner(
-        ui,
-        "Einladung erhalten. Melde dich an oder registriere dich, um beizutreten.",
-        true,
-    );
+    banner(ui, auth::layout_invite_banner(), true);
 }
 
 /// `<FormError>` and the 20px form gap after it, when there is a message.
@@ -68,6 +68,22 @@ pub fn form_error(ui: &mut Ui, errors: &FormErrors) {
         ui.add(FormError::new(message).on(theme.c.panel));
         ui.add_space(space::S5);
     }
+}
+
+/// Why a provider sign-in came back to this page (`?oidc_error=`), in
+/// `<FormError>`'s place while the form has no error of its own; true when
+/// shown.
+pub fn oidc_error_line(ui: &mut Ui, app: &crate::app::AppCtx, errors: &FormErrors) -> bool {
+    if errors.form.is_some() {
+        return false;
+    }
+    let Some(code) = crate::rules::oidc_error(app.nav.location().query("oidc_error")) else {
+        return false;
+    };
+    let theme = Theme::of(ui.ctx());
+    ui.add(FormError::new(crate::rules::oidc_error_message(code)).on(theme.c.panel));
+    ui.add_space(space::S5);
+    true
 }
 
 /// `<SubmitButton size="lg">`: the primary, full-width form action.
@@ -88,7 +104,7 @@ pub fn submit_after(
         // Each second drops one, as useCooldown's timer does.
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(250));
-        let waiting = format!("Erneut versuchen in {cooldown} s");
+        let waiting = gelabber_i18n::app::submit_cooldown(cooldown);
         ui.add(
             Button::new(&waiting)
                 .primary()
@@ -141,16 +157,22 @@ pub fn result_lines(ui: &mut Ui, lines: &[(&str, bool)]) {
     }
 }
 
-/// A result line with one bold run (`Bestätigungslink an <strong>…`).
-pub fn result_with_strong(ui: &mut Ui, before: &str, strong: &str, after: &str) {
+/// A result line with bold runs (`Bestätigungslink an <b>{email}</b> …`):
+/// `{email}` is filled in after the tags are read, so an address cannot
+/// add any.
+pub fn result_with_strong(ui: &mut Ui, template: &str, email: &str) {
     let theme = Theme::of(ui.ctx());
     ui.add_space(space::S5);
-    let block = text::Rich::new(text::BODY)
-        .push(before, text::BODY, theme.c.text)
-        .push(strong, text::BODY.weight(700.0), theme.c.text)
-        .push(after, text::BODY, theme.c.text)
-        .wrap(ui.available_width())
-        .layout(ui);
+    let mut rich = text::Rich::new(text::BODY);
+    for piece in gelabber_i18n::pieces(template) {
+        let style = if piece.tag == Some("b") {
+            text::BODY.weight(700.0)
+        } else {
+            text::BODY
+        };
+        rich = rich.push(&piece.text.replace("{email}", email), style, theme.c.text);
+    }
+    let block = rich.wrap(ui.available_width()).layout(ui);
     layout::show_block(ui, &block);
 }
 

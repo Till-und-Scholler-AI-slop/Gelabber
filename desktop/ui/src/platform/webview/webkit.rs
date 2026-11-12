@@ -123,7 +123,7 @@ fn private_dir(base: &Path) -> io::Result<PathBuf> {
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
-        "no free name for the copy",
+        "no free name for the copy", // i18n-ok
     ))
 }
 
@@ -132,7 +132,7 @@ fn query(copy: &Path) -> rusqlite::Result<std::collections::BTreeMap<String, Str
         copy,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    let mut statement = db.prepare("SELECT key, value FROM ItemTable")?;
+    let mut statement = db.prepare("SELECT key, value FROM ItemTable")?; // i18n-ok
     let mut rows = statement.query([])?;
     let mut entries = std::collections::BTreeMap::new();
     while let Some(row) = rows.next()? {

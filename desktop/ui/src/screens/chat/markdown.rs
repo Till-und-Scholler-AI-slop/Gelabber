@@ -600,7 +600,7 @@ fn drop_cut_marks(word: &str) -> String {
         word
     };
     match word.strip_suffix('…') {
-        Some(body) => format!("{}…", body.trim_end_matches(mark)),
+        Some(body) => format!("{}…", body.trim_end_matches(mark)), // i18n-ok
         None => word.to_owned(),
     }
 }

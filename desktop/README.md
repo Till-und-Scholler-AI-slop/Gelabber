@@ -32,6 +32,7 @@ app that still loads it only gets the notice to update
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
+| `i18n/` | Rust crate `gelabber-i18n`: the interface text in German and English, one catalog per namespace, and the check that no text is left outside them (docs/i18n.md) |
 | `client/`, `call/`, `ui/`, `gelabber/` | The app (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
 | `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the setup page (in the sign-in pages' frame) and the Tauri app's update notice, the references of the scenes `setup*` and `update-*` |
 | `packaging/native/` | The packages: `tarball.sh` (Linux), `windows/installer.nsi` (NSIS), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
@@ -49,8 +50,8 @@ release tarball), see "Building".
 
 ```sh
 cargo run --manifest-path desktop/Cargo.toml -p gelabber -- --server https://gelabber.example.org
-cargo test --manifest-path desktop/Cargo.toml -p gelabber-client -p gelabber-call -p gelabber-ui -p gelabber
-cargo clippy --manifest-path desktop/Cargo.toml -p gelabber-ui -p gelabber --all-targets -- -D warnings
+cargo test --manifest-path desktop/Cargo.toml -p gelabber-i18n -p gelabber-client -p gelabber-call -p gelabber-ui -p gelabber
+cargo clippy --manifest-path desktop/Cargo.toml -p gelabber-i18n -p gelabber-ui -p gelabber --all-targets -- -D warnings
 # Starts it for 10 s with no server and empty settings (Xvfb when there is no display):
 desktop/packaging/native/smoke.sh desktop/target/debug/gelabber 10
 ```
@@ -67,6 +68,17 @@ files of earlier native builds in `~/.config/gelabber/`
 after that long, with 0 once it painted its setup or login screen; CI's
 smoke tests use it.
 
+Language: German or English (docs/i18n.md). Before any window the app
+takes the language this device showed last (`locale` in `settings.json`),
+else the system's (Linux: `LC_ALL`, then `LC_MESSAGES`, then `LANG`;
+Windows: the user's locale), else English. Signed in, it follows the
+account's language (`user.locale`): on sign-in, on the gateway frame `lc`
+and after a change under Einstellungen → Darstellung → Sprache, and keeps
+it in `settings.json` for the next start. Against a server older than
+v0.10 the account has no language, so the Sprache section is hidden and
+the device's choice stays. The text lives in the `gelabber-i18n` crate
+(`i18n/`); tests and the parity tool start in German.
+
 Parity with the web client, against a seeded local stack (in `web/`:
 `node scripts/parity/seed.mjs`, then `node scripts/parity/shots.mjs <web-dir>`):
 
@@ -74,6 +86,33 @@ Parity with the web client, against a seeded local stack (in `web/`:
 cargo run --manifest-path desktop/Cargo.toml -p gelabber-parity -- render <native-dir>
 cargo run --manifest-path desktop/Cargo.toml -p gelabber-parity -- compare <web-dir> <native-dir> <report-dir>
 ```
+
+A scene with `"locale": "en"` in `web/scripts/parity/scenes.json` is shot in
+English. Signed in, the tool sets the scene user's language with
+`PUT /api/me/locale` before the page loads and sets `de` again afterwards,
+also when the scene fails; signed out, it starts the app in English
+(`gelabber_i18n::set`), as `shots.mjs` uses an English browser.
+
+The parity stack's API runs with this environment (each package adds its
+keys to this one block):
+
+```sh
+# lena is an operator, for the "Betrieb" scenes; registration stays open.
+API_OPERATOR_EMAILS=lena@example.test
+# Sign-in with Google is on, so the auth pages show its button; Google is
+# never contacted (say.mjs oidc-* writes the results into the database).
+OIDC_GOOGLE_CLIENT_ID=parity.apps.googleusercontent.com
+OIDC_GOOGLE_CLIENT_SECRET=parity
+APP_PUBLIC_URL=http://127.0.0.1:5180
+# The directory is on, for the "Entdecken" scenes; seed.mjs stops without it.
+API_DIRECTORY=true
+```
+
+The parity stack's web dev server (Vite, in `web/`) runs with
+`GELABBER_DEV_PUBLIC_PAGES=scripts/parity/public-pages.json`. It publishes
+all three legal pages, so every scene in the auth frame shows the link row
+under the card, in both clients; the native app reads the same
+`/public-pages.json` from the instance.
 
 Packages, built by `desktop-native.yml` after merge and for releases:
 
@@ -112,7 +151,9 @@ toolchain. On Windows the same holds with the MSVC STL and a DLL.
 ## Building (Linux)
 
 The libwebrtc build needs network access to `*.googlesource.com`, ~30 GB
-disk and takes hours on 4 cores; CI caches the result (`.github/workflows/desktop-native.yml`).
+disk and takes hours on 4 cores; CI caches the result (`.github/workflows/desktop-native.yml`)
+and keeps each package as an asset of the `libwebrtc-packages` release, named by the cache
+key, so an evicted cache costs a download and not a build.
 
 ```sh
 desktop/native/scripts/build-libwebrtc-linux.sh /mnt/webrtc /mnt/libwebrtc-package

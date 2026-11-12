@@ -16,6 +16,7 @@ vi.mock("./devices.ts", async (original) => {
 });
 
 import { VoiceSettingsTabs } from "../components/VoiceSettingsDialog.tsx";
+import { useLocale } from "../i18n/locale.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { CallSound, QuickCallSettings } from "./QuickCallSettings.tsx";
 import { MediaSettingsForm } from "./VoiceSettings.tsx";
@@ -169,5 +170,29 @@ describe("microphone test", () => {
     expect(html).toContain("<legend>Verarbeitung</legend>");
     expect(html.match(/type="radio"/g)).toHaveLength(3);
     expect(html).not.toContain("beende den Test");
+  });
+});
+
+describe("in English", () => {
+  beforeAll(() => VoiceSettingsPanelPart.preload());
+  afterEach(() => useLocale.setState({ locale: "de" }));
+
+  it("names the settings, devices and limits in English", () => {
+    useLocale.setState({ locale: "en" });
+    const form = renderToStaticMarkup(<MediaSettingsForm />);
+    expect(form).toContain("Microphone gain");
+    expect(form).toContain("Enhanced voice");
+    expect(form).toContain("Data saver");
+    // Numbers in the language's own form: 2.5, not 2,5.
+    expect(form).toContain("video 2.5 Mbit/s combined");
+    expect(form).toContain('<output for="input-gain">100%</output>');
+    const tabs = renderToStaticMarkup(<VoiceSettingsTabs initial="audio" />);
+    expect(tabs).toMatch(/role="tablist" aria-label="Sections"/);
+    expect(tabs).toContain(">Diagnostics</button>");
+    const quick = renderToStaticMarkup(
+      <QuickCallSettings onMore={() => undefined} />,
+    );
+    expect(quick).toContain(">Calls</label>");
+    expect(quick).toContain("All settings…");
   });
 });

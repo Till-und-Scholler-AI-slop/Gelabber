@@ -1,14 +1,14 @@
 {
   "name": "gelabber-web",
   "private": true,
-  "version": "0.9.3",
+  "version": "0.10.0",
   "type": "module",
   "engines": {
     "node": ">=26.8.2"
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/public-pages/prerender.mjs",
     "preview": "vite preview",
     "lint": "node --require ./eslint-ts6-register.cjs ./node_modules/eslint/bin/eslint.js .",
     "format": "prettier --write .",

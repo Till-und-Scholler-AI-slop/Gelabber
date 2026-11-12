@@ -64,8 +64,11 @@
   letter-spacing: -0.03em;
   overflow-wrap: anywhere;
 }
+/* A heading focused on arrival shows no ring, nor the ring's page-coloured
+   gap (index.css). */
 .lr-auth-card h1:focus {
   outline: none;
+  box-shadow: none;
 }
 @media (max-width: 480px) {
   .lr-auth-card {
@@ -143,6 +146,101 @@
   background: color-mix(in srgb, var(--lr-accent) 14%, var(--lr-panel));
 }
 
+/* The legal pages under the card; the column's gap sets it off. */
+.auth-legal {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--lr-space-1) 18px;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+  font-size: 13px;
+}
+.auth-legal a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.auth-legal a:hover {
+  color: var(--lr-text);
+}
+
+/* Sign-in through a provider (ProviderSignIn), above the form. */
+.auth-providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-6);
+}
+.auth-provider.ui-button--secondary {
+  background: transparent;
+  font-weight: 600;
+}
+.auth-provider.ui-button--secondary:hover:not(:disabled) {
+  background: var(--lr-hover);
+}
+.auth-provider__mark {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font: 700 11px / 1 var(--lr-font);
+}
+/* Google's button keeps Google's colours and font on every theme: its light
+   theme on light pages, its dark theme on dark ones (components/pageTone.ts). */
+.auth-provider--google.ui-button--secondary {
+  gap: 10px;
+  padding-inline: 12px;
+  font:
+    500 14px / 20px "Google Sans",
+    Roboto,
+    var(--lr-font);
+  letter-spacing: 0.25px;
+}
+.auth-provider--google.auth-provider--light {
+  border-color: #747775;
+  background: #ffffff;
+  color: #1f1f1f;
+}
+.auth-provider--google.auth-provider--light:hover:not(:disabled) {
+  background: color-mix(in srgb, #1f1f1f 8%, #ffffff);
+}
+.auth-provider--google.auth-provider--dark {
+  border-color: #8e918f;
+  background: #131314;
+  color: #e3e3e3;
+}
+.auth-provider--google.auth-provider--dark:hover:not(:disabled) {
+  background: color-mix(in srgb, #e3e3e3 8%, #131314);
+}
+.auth-provider--google:disabled:not([aria-busy="true"]) {
+  opacity: 0.6;
+}
+.auth-provider__logo {
+  width: 20px;
+  height: 20px;
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-3);
+  margin-top: var(--lr-space-4);
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--lr-border);
+}
+.auth-divider + .auth-form {
+  margin-top: var(--lr-space-4);
+}
+
 @media (pointer: coarse) {
   /* 44px hit areas for text links, without loosening the layout. */
   .auth-link {
@@ -152,6 +250,11 @@
   }
   .auth-recovery {
     min-height: 20px;
+  }
+  .auth-legal a {
+    display: inline-block;
+    padding-block: 12px;
+    margin-block: -12px;
   }
 }
 

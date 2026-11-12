@@ -4,6 +4,10 @@
 
 import type { ReactNode } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
+import { formatNumber } from "../i18n/format.ts";
+
 import {
   lossTone,
   pingHistory,
@@ -18,10 +22,13 @@ import {
 } from "./diagnostics.ts";
 import "./connection.css";
 
-const PATH_LABEL = { direct: "Direkt", turn: "Relay" } as const;
+const PATH_LABEL = {
+  direct: "status.pathDirect",
+  turn: "status.pathRelay",
+} as const;
 
 function percent(ratio: number): string {
-  return (ratio * 100).toLocaleString("de-DE", {
+  return formatNumber(ratio * 100, {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   });
@@ -46,61 +53,66 @@ export function ConnectionStatus({
   /** Drawn at the end of the block, such as a tip for a weak call. */
   children?: ReactNode;
 }) {
+  const t = useT(diagnostics);
   const sample = useVoiceDiagnostics((state) => state.latest?.voice ?? null);
   const samples = useVoiceDiagnostics((state) => state.samples);
   const measuring = useVoiceDiagnostics((state) => state.polling.voice);
   const quality = measuring ? callQuality(sample) : null;
   const detail = quality ? callQualityDetail(quality) : null;
   const count = compact ? 30 : 45;
-  const path = quality?.path ? PATH_LABEL[quality.path] : null;
+  const path = quality?.path ? t(PATH_LABEL[quality.path]) : null;
   return (
     <section
       className={`connection-status${compact ? " is-compact" : ""}`}
       data-level={quality?.level ?? 0}
-      aria-label="Verbindung"
+      aria-label={t("status.label")}
     >
       <div className="connection-status-head">
         <SignalBars level={quality?.level ?? 0} />
         <div className="connection-status-verdict">
           <h3>
             {quality
-              ? `Verbindung ${quality.label}`
+              ? t("status.verdict", { label: quality.label })
               : measuring
-                ? "Verbindung wird gemessen …"
-                : "Keine laufende Messung"}
+                ? t("status.measuring")
+                : t("status.notMeasuring")}
           </h3>
           {!compact && detail ? <p>{detail}</p> : null}
         </div>
         {compact ? (
           quality?.path ? (
             <span className="connection-status-meta">
-              {quality.path === "direct" ? "direkt verbunden" : "über Relay"}
+              {quality.path === "direct"
+                ? t("status.direct")
+                : t("status.relay")}
             </span>
           ) : null
         ) : measuring ? (
           <span className="connection-status-meta is-live">
-            misst alle {DIAGNOSTIC_LIMITS.intervalMs / 1000} s
+            {t("status.interval", {
+              seconds: DIAGNOSTIC_LIMITS.intervalMs / 1000,
+            })}
           </span>
         ) : null}
       </div>
       <dl className="connection-figures">
         <Figure
-          label="Ping"
+          label={t("status.ping")}
           value={quality?.rttMs ?? null}
           format={(ms) => String(Math.round(ms))}
-          unit="ms"
+          unit=" ms"
           tone={pingTone}
         />
         <Figure
-          label="Paketverlust"
+          label={t("status.packetLoss")}
           value={quality?.loss ?? null}
           format={percent}
-          unit="%"
+          unit={t("status.percentUnit")}
           tone={lossTone}
         />
         {compact ? null : (
           <div>
-            <dt>Verbunden</dt>
+            <dt>{t("status.connected")}</dt>
             <dd>{path ?? "–"}</dd>
           </div>
         )}
@@ -124,6 +136,7 @@ function Figure({
   label: string;
   value: number | null;
   format: (value: number) => string;
+  /** With its own leading space where the language sets one. */
   unit: string;
   tone: (value: number) => QualityTone;
 }) {
@@ -136,7 +149,7 @@ function Figure({
         ) : (
           <>
             {format(value)}
-            <small> {unit}</small>
+            <small>{unit}</small>
           </>
         )}
       </dd>
@@ -152,6 +165,7 @@ function PingTrace({
   history: (number | null)[];
   seconds: number;
 }) {
+  const t = useT(diagnostics);
   const known = history.filter((ms): ms is number => ms !== null);
   const low = Math.round(Math.min(...known));
   const high = Math.round(Math.max(...known));
@@ -160,7 +174,7 @@ function PingTrace({
   return (
     <div className="connection-trace">
       <div className="connection-trace-caption" aria-hidden="true">
-        <span>Ping der letzten {seconds} s</span>
+        <span>{t("trace.caption", { seconds })}</span>
         {known.length > 0 ? (
           <span>{low === high ? `${low} ms` : `${low}–${high} ms`}</span>
         ) : null}
@@ -170,8 +184,12 @@ function PingTrace({
         role="img"
         aria-label={
           known.length > 0
-            ? `Ping der letzten ${seconds} Sekunden: ${low} bis ${high} Millisekunden`
-            : `Ping der letzten ${seconds} Sekunden: noch nichts gemessen`
+            ? t("trace.label", {
+                seconds,
+                low: String(low),
+                high: String(high),
+              })
+            : t("trace.labelEmpty", { seconds })
         }
       >
         {history.map((ms, index) => (
@@ -185,8 +203,8 @@ function PingTrace({
         ))}
       </div>
       <div className="connection-trace-axis" aria-hidden="true">
-        <span>vor {seconds} s</span>
-        <span>jetzt</span>
+        <span>{t("trace.ago", { seconds })}</span>
+        <span>{t("trace.now")}</span>
       </div>
     </div>
   );

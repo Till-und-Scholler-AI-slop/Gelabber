@@ -20,7 +20,11 @@
 //! setup page (kept in desktop/parity/reference/setup) instead of a route:
 //! the Launcher here. A scene with `update` shows the update notice over the
 //! page: the Tauri app's BANNER (reference/update-banner.js) there,
-//! `platform::update::Notice` here.
+//! `platform::update::Notice` here. A scene with `locale: "en"` shows the
+//! English interface: a signed-in scene sets the account's language
+//! (`PUT /api/me/locale`) before the page loads and puts German back
+//! afterwards, also when the scene fails; a signed-out one starts the app in
+//! English (`gelabber_i18n::set`), as the web shot uses an English browser.
 
 mod pixels;
 mod ssim;
@@ -74,6 +78,12 @@ struct Scene {
     /// The setup page's update section, as the Tauri app's `update_state`
     /// answers that page where the app updates itself.
     updates: Option<SetupState>,
+    /// `"en"`: the scene in English (see the module's comment).
+    locale: Option<String>,
+    /// Only the web has this page (the operator area): shots.mjs takes it
+    /// as a reference, render and compare pass it by.
+    #[serde(default, rename = "webOnly")]
+    web_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -227,6 +237,17 @@ impl Drop for Restore {
     }
 }
 
+/// Puts the scene user's language back to German when dropped.
+struct GermanAgain(gelabber_client::Client);
+
+impl Drop for GermanAgain {
+    fn drop(&mut self) {
+        if let Err(e) = self.0.set_locale_blocking("de") {
+            eprintln!("putting the language back to German: {e}");
+        }
+    }
+}
+
 /// Runs say.mjs with `args`; its output (a message id for "post").
 fn say(args: &[&str]) -> String {
     let out = std::process::Command::new("node")
@@ -369,6 +390,12 @@ fn unknown_scenes(scenes: &[Scene], only: Option<&[String]>) -> Vec<String> {
         .collect()
 }
 
+/// Whether render and compare take the scene: picked by `only` (or no
+/// `only`), and not a page only the web has.
+fn runs_natively(scene: &Scene, only: Option<&[String]>) -> bool {
+    !scene.web_only && only.is_none_or(|o| o.contains(&scene.name))
+}
+
 fn check_only(scenes: &[Scene], only: Option<&[String]>) {
     let unknown = unknown_scenes(scenes, only);
     if !unknown.is_empty() {
@@ -401,7 +428,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
     unsafe { std::env::set_var("GELABBER_CONFIG_DIR", &config) };
     let mut failed = Vec::new();
     for scene in &scenes.scenes {
-        if only.as_ref().is_some_and(|o| !o.contains(&scene.name)) {
+        if !runs_natively(scene, only.as_deref()) {
             continue;
         }
         // A scene that fails is reported, and the others still render.
@@ -418,11 +445,26 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             });
             let _call = scene.call.as_deref().map(Call::start);
             let client = gelabber_client::Client::new(&fixture.base).expect("client");
+            // German unless the scene asks; the app follows a signed-in
+            // account's language by itself.
+            let locale = scene
+                .locale
+                .as_deref()
+                .map(|l| gelabber_i18n::Locale::parse(l).expect("locale is de or en"))
+                .unwrap_or_default();
+            gelabber_i18n::set(locale);
+            let mut _german_again = None;
             if let Some(user) = &scene.user {
                 let email = &fixture.users[user].email;
                 client
                     .login_blocking(email, &fixture.password)
                     .unwrap_or_else(|e| panic!("login {user}: {e}"));
+                if let Some(locale) = &scene.locale {
+                    client
+                        .set_locale_blocking(locale)
+                        .unwrap_or_else(|e| panic!("locale {user}: {e}"));
+                    _german_again = Some(GermanAgain(client.clone()));
+                }
             }
             let route = fill(&scene.path, &fixture);
             let size = egui::vec2(scenes.size[0] as f32, scenes.size[1] as f32);
@@ -762,32 +804,19 @@ fn find_text<'t>(harness: &'t App<'_>, label: &'t str) -> Option<egui_kittest::N
     find(harness, label, &others).or_else(|| find(harness, label, &[]))
 }
 
-/// Playwright scrolls a target out of view to the middle before it
-/// clicks; here in 100px scroll steps until it is there or cannot move.
+/// Playwright scrolls a target out of view to the middle of its scroller
+/// before it clicks; egui's `ScrollIntoView` does the same in its scroll
+/// area. `height` is the window's.
 fn reveal(harness: &mut App<'_>, height: f32, label: &str, roles: &[egui::accesskit::Role]) {
-    let middle = height / 2.0;
-    let mut scrolling = false;
-    for _ in 0..60 {
-        let Some(node) = find(harness, label, roles) else {
-            return;
-        };
-        let rect = node.rect();
-        let visible = rect.top() >= 0.0 && rect.bottom() <= height;
-        if (!scrolling && visible) || (scrolling && (rect.center().y - middle).abs() <= 50.0) {
-            return;
-        }
-        scrolling = true;
-        if rect.center().y > middle {
-            node.scroll_down();
-        } else {
-            node.scroll_up();
-        }
-        harness.run_steps(10);
-        let moved = find(harness, label, roles).map(|n| n.rect().center().y);
-        if moved == Some(rect.center().y) {
-            return;
-        }
+    let Some(node) = find(harness, label, roles) else {
+        return;
+    };
+    let rect = node.rect();
+    if rect.top() >= 0.0 && rect.bottom() <= height {
+        return;
     }
+    node.scroll_to_me();
+    harness.run_steps(10);
 }
 
 /// Signed in on a server's page whose presence has not arrived yet.
@@ -840,7 +869,7 @@ fn compare(
         "|---|---|---|---|---|".to_owned(),
     ];
     for scene in &scenes.scenes {
-        if only.is_some_and(|o| !o.contains(&scene.name)) {
+        if !runs_natively(scene, only) {
             continue;
         }
         let (a, b) = (
@@ -993,5 +1022,36 @@ mod tests {
             vec!["lgoin".to_owned()]
         );
         assert!(unknown_scenes(&scenes, None).is_empty());
+    }
+
+    /// The web shot's `userAgent` (the Security scenes) is the browser's
+    /// business; the app sends its own, so the scene reads without it.
+    #[test]
+    fn a_scene_with_a_user_agent_reads() {
+        let scenes: Vec<Scene> = serde_json::from_value(serde_json::json!([
+            {"name": "settings-konto", "path": "/settings/konto", "user": "lena",
+             "userAgent": "Gelabber-Desktop/0.10.0 (linux)"}
+        ]))
+        .unwrap();
+        assert_eq!(scenes[0].name, "settings-konto");
+    }
+
+    /// The operator pages are web-only: the flag reads, and render and
+    /// compare pass those scenes by, also when `only` names them.
+    #[test]
+    fn a_web_only_scene_is_skipped() {
+        let scenes: Vec<Scene> = serde_json::from_value(serde_json::json!([
+            {"name": "register-invitation", "path": "/register?invitation=k7m2p9qrs4tx", "user": null},
+            {"name": "operator-server", "path": "/betrieb/server", "user": "lena", "webOnly": true}
+        ]))
+        .unwrap();
+        assert!(!scenes[0].web_only);
+        assert!(scenes[1].web_only);
+        assert!(runs_natively(&scenes[0], None));
+        assert!(!runs_natively(&scenes[1], None));
+        let only = ["operator-server".to_owned()];
+        assert!(!runs_natively(&scenes[1], Some(&only)));
+        assert!(!runs_natively(&scenes[0], Some(&only)));
+        assert!(unknown_scenes(&scenes, Some(&only)).is_empty());
     }
 }

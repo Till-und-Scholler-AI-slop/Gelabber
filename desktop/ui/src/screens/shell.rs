@@ -4,6 +4,8 @@
 //! route, remembers where the user was, sends "/" there, and runs the
 //! workspace shortcuts; the pages draw into the rects it hands them.
 
+pub(crate) mod access;
+mod blocked;
 mod channel_sidebar;
 pub(crate) mod common;
 pub mod connection;
@@ -12,12 +14,13 @@ mod dm_index;
 mod dm_sidebar;
 mod home;
 mod members;
+pub(crate) mod operator;
 pub mod overlays;
 pub(crate) mod overview;
 mod rail;
-mod row_menu;
+pub(crate) mod row_menu;
 mod state;
-mod user_panel;
+pub(crate) mod user_panel;
 
 use egui::{Key, Modifiers, Rect, Ui, UiBuilder, pos2};
 use gelabber_client::{ChannelKind, OpState, View};
@@ -26,7 +29,7 @@ use uuid::Uuid;
 use crate::app::AppCtx;
 use crate::route::Route;
 use crate::screens::layout::{self, MEMBERS_WIDTH, RAIL_WIDTH, SIDEBAR_WIDTH};
-use crate::screens::{chat, server_settings, settings, voice};
+use crate::screens::{chat, discover, server_settings, settings, voice};
 use crate::theme::{Theme, layout::DOCK_HEIGHT};
 use crate::widgets::hairline_v;
 
@@ -66,6 +69,15 @@ pub fn leave_server(ctx: &egui::Context, client: &gelabber_client::Client, serve
         }
     });
     state::with(ctx, |s| s.left.insert(server));
+}
+
+/// Whether the request that leaves or deletes a server has ended, as far
+/// as the shell can tell: it failed, or the server list no longer holds the
+/// server. A list that has not arrived yet holds nothing and says nothing;
+/// read as the end, it dropped the mark and "/" led back into the server
+/// when the list came.
+fn leave_settled(failed: bool, list_loaded: bool, listed: bool) -> bool {
+    failed || (list_loaded && !listed)
 }
 
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
@@ -143,7 +155,21 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         user_panel::show(ui, app, dock, context);
         crate::app::content_anchor(ui, main_at);
     };
+    // SelectedServer: a server an operator blocked opens to its notice.
+    let blocked_server = match route {
+        Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s) => {
+            blocked::blocked(app, s)
+        }
+        _ => None,
+    };
     match route.clone() {
+        _ if blocked_server.is_some() => {
+            if let Some(server) = &blocked_server {
+                channel_sidebar::brand_named(ui, sidebar, &server.name);
+                panel(ui, app);
+                blocked::show(ui, app, layout::page_rect(content, false), server);
+            }
+        }
         Route::Server(s) => {
             channel_sidebar::show(ui, app, sidebar, s, None, true);
             panel(ui, app);
@@ -198,6 +224,20 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
                 ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             chat::dm_page(&mut main, app, c);
         }
+        Route::Discover(search) => {
+            let mut side = ui.new_child(UiBuilder::new().max_rect(sidebar));
+            discover::sidebar(&mut side, app, &search);
+            panel(ui, app);
+            let mut main =
+                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
+            discover::page(&mut main, app, &search);
+        }
+        Route::Operator(page) => {
+            channel_sidebar::brand(ui, sidebar);
+            panel(ui, app);
+            let path = Route::Operator(page.or(Some(operator::DEFAULT_PAGE.into()))).path();
+            operator::show(ui, app, layout::page_rect(content, false), &path);
+        }
         _ => {
             // `/`: the brand sidebar; the page sends the user on.
             channel_sidebar::brand(ui, sidebar);
@@ -208,7 +248,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
                 let theme = Theme::of(ui.ctx());
                 let block = crate::text::Block::wrapped(
                     ui,
-                    "Keine Server. Erstelle einen über + in der Serverleiste oder öffne einen Einladungslink.",
+                    gelabber_i18n::shell::no_servers(),
                     crate::text::BODY.line_height(1.6),
                     theme.c.muted,
                     sidebar.width() - 1.0 - 44.0,
@@ -308,6 +348,14 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
     }
     let user = app.client.with_state(|s| s.me().map(|m| m.id));
     match &route {
+        // Blocked: nothing of it loads; the notice needs only the list.
+        Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s)
+            if blocked::blocked(app, *s).is_some() =>
+        {
+            if app.client.with_state(|s| s.view != View::default()) {
+                app.client.close_view();
+            }
+        }
         Route::Server(s) => {
             app.client.open_server(*s);
             if first {
@@ -355,7 +403,11 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
             let failed = [format!("leave:{server}"), format!("delete_server:{server}")]
                 .iter()
                 .any(|key| matches!(s.op(key), Some(OpState::Failed(_))));
-            failed || !s.servers.iter().any(|v| v.id == server)
+            leave_settled(
+                failed,
+                s.servers_loaded,
+                s.servers.iter().any(|v| v.id == server),
+            )
         });
         if settled {
             state::with(ui.ctx(), |s| s.left.remove(&server));
@@ -370,8 +422,7 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
                 _ => false,
             });
         if gone {
-            app.toasts
-                .notify("Server nicht gefunden oder kein Zugriff.");
+            app.toasts.notify(gelabber_i18n::shell::server_gone());
             app.client.clear_op(format!("server:{s}"));
             state::remember(ui.ctx(), user, |m| {
                 m.channels.remove(&s);
@@ -520,6 +571,18 @@ fn next_unread(unread: &[bool], index: Option<usize>, step: i32) -> Option<usize
 mod tests {
     use super::*;
 
+    /// Seen in CI: a server left before the server list had arrived was
+    /// taken for gone, and "/" went back into it when the list came.
+    #[test]
+    fn a_leave_ends_with_a_failure_or_a_loaded_list_without_the_server() {
+        // (failed, list loaded, listed)
+        assert!(!leave_settled(false, false, false), "no list yet");
+        assert!(!leave_settled(false, true, true), "still listed");
+        assert!(leave_settled(false, true, false), "gone from the list");
+        assert!(leave_settled(true, true, true), "failed: a way back again");
+        assert!(leave_settled(true, false, false), "failed before the list");
+    }
+
     #[test]
     fn steps_like_the_web() {
         assert_eq!(step_index(3, None, 1), Some(0));
@@ -628,5 +691,34 @@ mod tests {
         crate::app::testkit::wait_for(&mut harness, "the detail request", |_| asked() > 0);
         settle(&mut harness, 1500);
         assert_eq!(asked(), 1, "{:?}", api.seen.lock());
+    }
+
+    /// The frame around the conversation in English: rail, sidebar, user
+    /// panel and the server's overview.
+    #[test]
+    fn the_shell_speaks_english() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label, workspace};
+        use crate::platform::paths::testing::TempConfig;
+        use egui_kittest::kittest::Queryable;
+
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let _config = TempConfig::new("shell-english");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for_label(&mut harness, "Overview");
+        for label in [
+            "Direct messages",
+            "Add server",
+            "Invite",
+            "Settings",
+            "User menu",
+        ] {
+            assert!(
+                harness.query_all_by_label(label).next().is_some(),
+                "{label}"
+            );
+        }
+        assert!(harness.query_by_label("Übersicht").is_none());
+        assert!(harness.query_by_label("Server hinzufügen").is_none());
     }
 }

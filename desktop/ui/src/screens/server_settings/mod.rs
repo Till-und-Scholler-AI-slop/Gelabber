@@ -1,17 +1,21 @@
 //! Server settings (web pages/ServerSettingsPage.tsx, settings.css): name
-//! and icon, member permissions, invites, members, bans and the danger
-//! zone for managers; members and leaving for everyone else.
+//! and icon, roles, invites, members, bans and the danger zone, each for
+//! whom [`sections`] shows it.
 
+mod directory;
 mod invite;
+pub(crate) mod roles;
+mod transfer;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::{Color32, Id, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{
-    ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, ServerDetail,
+    ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, Server, ServerDetail,
     ServerPatch,
 };
+use gelabber_i18n::{Text, common, server_settings as texts};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
@@ -31,60 +35,91 @@ use crate::widgets::{
     eased,
 };
 
-/// `PERMISSIONS` of servers/permissions.ts.
-const PERMISSIONS: [(Permission, &str, &str); 8] = [
+/// `PERMISSIONS` of servers/permissions.ts, in canonical order.
+const PERMISSIONS: [(Permission, Text, Text); 9] = [
     (
         Permission::ManageServer,
-        "Server verwalten",
-        "Umbenennen, Rechte ändern, Einladungen, Kick und Ban.",
+        texts::permission_manage_server_label,
+        texts::permission_manage_server_hint,
+    ),
+    (
+        Permission::ModerateMembers,
+        texts::permission_moderate_members_label,
+        texts::permission_moderate_members_hint,
     ),
     (
         Permission::ManageChannels,
-        "Kanäle verwalten",
-        "Kategorien und Kanäle anlegen, umbenennen, löschen.",
+        texts::permission_manage_channels_label,
+        texts::permission_manage_channels_hint,
     ),
     (
         Permission::ManageMessages,
-        "Nachrichten löschen",
-        "Fremde Nachrichten im Chat löschen.",
+        texts::permission_manage_messages_label,
+        texts::permission_manage_messages_hint,
     ),
     (
         Permission::MentionEveryone,
-        "@everyone und @here",
-        "Alle Mitglieder auf einmal erwähnen und benachrichtigen.",
+        texts::permission_mention_everyone_label,
+        texts::permission_mention_everyone_hint,
     ),
     (
         Permission::SendMessages,
-        "Nachrichten schreiben",
-        "In Textkanälen schreiben.",
+        texts::permission_send_messages_label,
+        texts::permission_send_messages_hint,
     ),
     (
         Permission::SendFiles,
-        "Dateien senden",
-        "Anhänge hochladen.",
+        texts::permission_send_files_label,
+        texts::permission_send_files_hint,
     ),
     (
         Permission::JoinVoice,
-        "Sprachkanälen beitreten",
-        "In Sprachkanälen reden, zuhören und die Kamera zeigen.",
+        texts::permission_join_voice_label,
+        texts::permission_join_voice_hint,
     ),
     (
         Permission::GoLive,
-        "Live gehen",
-        "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen.",
+        texts::permission_go_live_label,
+        texts::permission_go_live_hint,
     ),
 ];
 
-const SECTIONS: [(&str, &str); 6] = [
-    ("allgemein", "Allgemein"),
-    ("rechte", "Rechte"),
-    ("einladungen", "Einladungen"),
-    ("mitglieder", "Mitglieder"),
-    ("sperren", "Sperren"),
-    ("gefahrenzone", "Gefahrenzone"),
+/// Each section's label; the ids stay German, as the web's URL fragments.
+const SECTIONS: [(&str, Text); 7] = [
+    ("allgemein", texts::section_general),
+    ("rollen", texts::section_roles),
+    ("einladungen", texts::section_invites),
+    ("verzeichnis", texts::section_directory),
+    ("mitglieder", texts::section_members),
+    ("sperren", texts::section_bans),
+    ("gefahrenzone", texts::section_danger),
 ];
 
-const NOT_SAVED: &str = "Nicht gespeichert – erneut versuchen";
+/// The sections the caller sees, in page order: the one place that decides
+/// who sees which (web pages/serverSettingsSections.ts
+/// `serverSettingsSections`; later packages add their line here).
+/// `manage_server` edits the server; `moderate_members` kicks, bans and so
+/// sees the ban list; everyone sees the members and can leave. While the
+/// directory is on, the owner (the listing) and `moderate_members` (the
+/// join requests) see Verzeichnis, after Einladungen. The owner holds
+/// every right, as the web's `can`.
+fn sections(server: &Server, directory: bool) -> Vec<&'static str> {
+    let manage = server.can(Permission::ManageServer);
+    let moderate = server.role == Role::Owner || server.can(Permission::ModerateMembers);
+    let mut out = Vec::new();
+    if manage {
+        out.extend(["allgemein", "rollen", "einladungen"]);
+    }
+    if directory && moderate {
+        out.push("verzeichnis");
+    }
+    out.push("mitglieder");
+    if moderate {
+        out.push("sperren");
+    }
+    out.push("gefahrenzone");
+    out
+}
 
 type Load<T> = Option<Pending<Result<T, ApiError>>>;
 
@@ -101,10 +136,8 @@ struct State {
     picking: Option<Picked>,
     /// The picked icon, read and cropped off the UI thread.
     preparing: Option<controls::Prepared>,
-    permissions_status: Status,
-    /// The mask the next switch builds on, ahead of the server's answer.
-    permissions: Option<Vec<Permission>>,
-    saving_permissions: bool,
+    /// The Rollen editor, the member rows' chips and pickers.
+    roles: roles::Roles,
     invites: Option<Result<Vec<Invite>, ApiError>>,
     invites_load: Load<Vec<Invite>>,
     invites_status: Status,
@@ -126,6 +159,13 @@ struct State {
     jumped: Option<(&'static str, f32)>,
     content_height: f32,
     opened_at: f64,
+    /// The section the address names (`#server-settings-gefahrenzone`),
+    /// jumped to once its heading has a place.
+    from_address: Option<&'static str>,
+    /// "Server übergeben", while its dialog is open.
+    transfer: Option<transfer::Dialog>,
+    /// Verzeichnis: the listing form and the join requests.
+    directory: directory::Directory,
 }
 
 /// How far below the anchor row a heading may sit and still count as
@@ -182,6 +222,13 @@ fn section_in_view(
     (current_section(headings, at_end), None)
 }
 
+/// The offset a jump to the heading at `y` (in the scroller's content)
+/// leaves: 64px over it (`scroll-margin-top`), and no further than the page
+/// scrolls, as `scrollBy` stops there; past the end egui would spring back.
+fn jump_offset(y: f32, content: f32, view: f32) -> f32 {
+    (y - 64.0).min(content - view).max(0.0)
+}
+
 fn state(ctx: &egui::Context) -> Arc<Mutex<State>> {
     let id = Id::unique("gelabber-server-settings");
     ctx.data_mut(|d| {
@@ -205,7 +252,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let c = &theme.c;
     let detail = app.client.with_state(|s| s.detail(server).cloned());
     let Some(detail) = detail else {
-        controls::header(ui, rect, "Servereinstellungen", None);
+        controls::header(ui, rect, texts::title(), None);
         let failed = app
             .client
             .with_state(|s| matches!(s.op(&format!("server:{server}")), Some(OpState::Failed(_))));
@@ -214,7 +261,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         }
         return;
     };
-    controls::header(ui, rect, "Servereinstellungen", Some(&detail.server.name));
+    controls::header(ui, rect, texts::title(), Some(&detail.server.name));
     let shared = state(&ctx);
     let mut s = shared.lock();
     // Each visit starts afresh, as the web's page mounts: lists, drafts and
@@ -222,53 +269,107 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let entered =
         crate::widgets::field::mounted(&ctx, Id::unique("gelabber-server-settings-mount"));
     if s.server != Some(server) || entered {
+        let fragment = app.nav.location().fragment.clone();
         *s = State {
             server: Some(server),
             opened_at: chrono::Utc::now().timestamp_millis() as f64,
+            from_address: SECTIONS
+                .iter()
+                .map(|(id, _)| *id)
+                .find(|id| fragment.strip_prefix("server-settings-") == Some(*id)),
             ..State::default()
         };
     }
     let manage = detail.server.can(Permission::ManageServer);
-    poll_loads(ui, app, &mut s, &detail, manage);
+    let moderate = detail.server.can(Permission::ModerateMembers);
+    let owner = detail.server.role == Role::Owner;
+    let directory_on = crate::screens::discover::enabled(&ctx, app) == Some(true);
+    let shown = sections(&detail.server, directory_on);
+    let shows = |id: &str| shown.contains(&id);
+    let languages = if shows("verzeichnis") {
+        crate::screens::discover::languages(&ctx, app)
+    } else {
+        Vec::new()
+    };
+    poll_loads(
+        ui,
+        app,
+        &mut s,
+        &detail,
+        shows("einladungen"),
+        shows("sperren"),
+    );
+    roles::poll(ui, app, &mut s.roles, &detail);
+    directory::poll_loads(
+        ui,
+        app,
+        &mut s.directory,
+        &detail,
+        shows("verzeichnis"),
+        owner,
+    );
+    let requests = s.directory.pending();
 
-    // The anchor row: fixed under the header (sticky at the scroll top).
-    // Its links take input first, for the Tab order; they are painted after
-    // the body, with the section that is in view now.
+    // The anchor row: sticky at the top of the page's scroller, as the web's
+    // `.server-settings-nav` in `.settings-scroll`, so a scroll offset, a
+    // jump and a target scrolled to the middle land where the web's do. Its
+    // links are the scroller's first widgets, for the Tab order and over its
+    // drag area; they are painted after the body, with the section in view.
     let nav = Rect::from_min_size(
         pos2(rect.left(), rect.top() + 52.0),
         vec2(rect.width(), 49.0),
     );
-    let mut x = nav.left() + 32.0;
     let ids: Vec<(&'static str, &'static str)> = SECTIONS
         .iter()
-        .copied()
-        .filter(|(id, _)| manage || matches!(*id, "mitglieder" | "gefahrenzone"))
+        .map(|(id, label)| (*id, label()))
+        .filter(|(id, _)| shows(id))
         .collect();
-    let mut links = Vec::with_capacity(ids.len());
-    for (id, label) in &ids {
-        let b = Block::single(ui, label, text::UI, c.muted);
-        let r = Rect::from_min_size(pos2(x, nav.top() + 8.0), vec2(b.width() + 24.0, 32.0));
-        let wid = Id::unique(("gelabber-server-nav", *id));
-        let response = ui.interact(r, wid, Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, *label));
-        if response.clicked() {
-            s.scroll_to = Some(id);
-        }
-        links.push((*id, b, response));
-        x += links.last().map_or(0.0, |(_, _, r)| r.rect.width()) + 4.0;
+    let body = Rect::from_min_max(nav.min, rect.max);
+    if let Some(id) = s.from_address
+        && s.anchors.contains_key(id)
+    {
+        s.scroll_to = s.from_address.take();
     }
-
-    let body = Rect::from_min_max(pos2(rect.left(), nav.bottom()), rect.max);
     let jump = s.scroll_to.take();
     let offset = jump
         .and_then(|id| s.anchors.get(id).copied())
-        .map(|y| (y - 64.0 + 49.0).max(0.0));
+        .map(|y| jump_offset(y, s.content_height, body.height()));
+    // Under the scrollbar, which floats over the row as over the page.
+    ui.painter().rect_filled(nav, 0.0, c.bg);
+    crate::widgets::rule_h(ui.painter(), c.border, nav.x_range(), nav.bottom() - 1.0);
     let st = &mut *s;
+    let mut links = Vec::with_capacity(ids.len());
     let (_, scrolled) = controls::scroll(ui, body, ("server", server), offset, |ui| {
+        let mut x = nav.left() + 32.0;
+        for (id, label) in &ids {
+            let b = Block::single(ui, label, text::UI, c.muted);
+            // Verzeichnis counts the open requests in a badge, 6px after it.
+            let badge = requests
+                .filter(|_| *id == "verzeichnis")
+                .map_or(0.0, |n| 6.0 + count_width(ui, n));
+            let r = Rect::from_min_size(
+                pos2(x, nav.top() + 8.0),
+                vec2(b.width() + badge + 24.0, 32.0),
+            );
+            let wid = Id::unique(("gelabber-server-nav", *id));
+            let response = ui.interact(r, wid, Sense::click());
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, *label));
+            if let Some(n) = requests.filter(|_| *id == "verzeichnis") {
+                let count = texts::join_requests_count(n);
+                ctx.accesskit_node_builder(wid, |node| node.set_description(count));
+            }
+            if response.clicked() {
+                st.scroll_to = Some(id);
+            }
+            x += response.rect.width() + 4.0;
+            links.push((*id, b, response));
+        }
         let width = ui.available_width().min(1040.0);
+        // The roles editor is wider than the reading measure.
+        let wide = (width - 80.0).max(0.0);
         let left = ui.cursor().min.x;
         let content_top = ui.cursor().min.y;
-        ui.add_space(32.0);
+        ui.add_space(nav.height() + 32.0);
         let inner = Rect::from_min_size(
             pos2(left + 40.0, ui.cursor().min.y),
             vec2((width - 80.0).min(controls::MEASURE), f32::INFINITY),
@@ -279,6 +380,12 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         col.spacing_mut().item_spacing = egui::Vec2::ZERO;
+        // Nothing shows or takes input under the anchor row.
+        let under = Rect::from_min_max(
+            pos2(f32::NEG_INFINITY, nav.bottom()),
+            pos2(f32::INFINITY, f32::INFINITY),
+        );
+        col.set_clip_rect(col.clip_rect().intersect(under));
         let mut first = true;
         let mut section =
             |col: &mut Ui, id: &'static str, title: &str, hint: Option<&str>, st: &mut State| {
@@ -295,53 +402,65 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 }
                 col.add_space(14.0);
             };
-        if manage {
+        if shows("allgemein") {
             section(
                 &mut col,
                 "allgemein",
-                "Allgemein",
-                Some("Ein neues Bild gilt sofort, den Namen übernimmst du mit Speichern."),
+                texts::section_general(),
+                Some(texts::general_hint()),
                 st,
             );
             general(&mut col, app, st, &detail);
+        }
+        if shows("rollen") {
             section(
                 &mut col,
-                "rechte",
-                "Rechte für Mitglieder",
-                Some("Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort."),
+                "rollen",
+                texts::section_roles(),
+                Some(texts::roles_hint()),
                 st,
             );
-            permissions(&mut col, app, st, &detail);
+            roles::editor(&mut col, app, &mut st.roles, &detail, wide);
+        }
+        if shows("einladungen") {
             section(
                 &mut col,
                 "einladungen",
-                "Einladungen",
-                Some("Alle aktiven Links. Jedes Mitglied kann Links erstellen."),
+                texts::section_invites(),
+                Some(texts::invites_hint()),
                 st,
             );
             invites(&mut col, app, st, &detail);
         }
-        let title = format!("Mitglieder ({})", detail.members.len());
-        section(&mut col, "mitglieder", &title, None, st);
-        members(&mut col, app, st, &detail, manage);
-        if manage {
+        if shows("verzeichnis") {
+            section(
+                &mut col,
+                "verzeichnis",
+                texts::section_directory(),
+                owner.then(texts::directory_hint),
+                st,
+            );
+            directory::section(&mut col, app, &mut st.directory, &detail, &languages, owner);
+        }
+        let title = texts::members_title(detail.members.len());
+        let hint = manage.then(texts::members_hint);
+        section(&mut col, "mitglieder", &title, hint, st);
+        members(&mut col, app, st, &detail, manage, moderate);
+        if shows("sperren") {
             section(
                 &mut col,
                 "sperren",
-                "Gesperrte Konten",
-                Some("Gesperrte User können auch mit einem Einladungslink nicht wieder beitreten."),
+                texts::bans_title(),
+                Some(texts::bans_hint()),
                 st,
             );
             bans(&mut col, app, st);
         }
-        let owner = detail.server.role == Role::Owner;
-        let hint = if owner {
-            "Löscht Kanäle, Kategorien, Nachrichten, Einladungen und Mitgliedschaften endgültig."
-        } else {
-            "Wieder beitreten kannst du nur mit einem neuen Einladungslink."
-        };
-        section(&mut col, "gefahrenzone", "Gefahrenzone", Some(hint), st);
-        danger(&mut col, app, &detail);
+        // The owner's rows each say what they do (#519); members keep the
+        // section's sentence.
+        let hint = (!owner).then(texts::danger_member_hint);
+        section(&mut col, "gefahrenzone", texts::section_danger(), hint, st);
+        danger(&mut col, app, st, &detail);
         let used = col.min_rect();
         st.content_height = used.bottom() + 48.0 - content_top;
         ui.advance_cursor_after_rect(Rect::from_min_max(
@@ -356,7 +475,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     }
     let tops: Vec<(&'static str, f32)> = ids
         .iter()
-        .filter_map(|(id, _)| st.anchors.get(id).map(|y| (*id, y - scrolled)))
+        .filter_map(|(id, _)| {
+            st.anchors
+                .get(id)
+                .map(|y| (*id, y - scrolled - nav.height()))
+        })
         .collect();
     let (current, held) = section_in_view(
         &tops,
@@ -368,8 +491,6 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         st.jumped,
     );
     st.jumped = held;
-    ui.painter().rect_filled(nav, 0.0, c.bg);
-    crate::widgets::rule_h(ui.painter(), c.border, nav.x_range(), nav.bottom() - 1.0);
     for (id, b, response) in &links {
         let r = response.rect;
         let on = current == Some(*id);
@@ -399,6 +520,15 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 c.muted
             }),
         );
+        if let Some(n) = requests.filter(|_| *id == "verzeichnis") {
+            crate::widgets::count_badge(
+                ui.painter(),
+                ui,
+                pos2(r.right() - 12.0, r.center().y + 9.0),
+                n.min(u64::from(u32::MAX)) as u32,
+                None,
+            );
+        }
         if response.hovered() {
             ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -413,8 +543,24 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         st.inviting = None;
         reload_invites(app, st, server);
     }
+    if let Some(dialog) = &mut st.transfer
+        && !dialog.show(&ctx, app, &detail)
+    {
+        st.transfer = None;
+    }
     drop(s);
     controls::show_confirm(&ctx);
+}
+
+/// The width of a [`crate::widgets::count_badge`] showing `n`.
+fn count_width(ui: &Ui, n: u64) -> f32 {
+    let label = if n > 99 {
+        "99+".to_owned()
+    } else {
+        n.to_string()
+    };
+    let style = TextStyle::new(11.0, 700.0, 1.0);
+    (Block::single(ui, &label, style, Color32::WHITE).width() + 10.0).max(18.0)
 }
 
 /// Whether a copy can land anywhere: without a display server (Linux) there
@@ -435,7 +581,7 @@ fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) {
         vec2(rect.width() - 48.0, 200.0),
     );
     controls::place(ui, UiBuilder::new().max_rect(area), |ui| {
-        let msg = "Die Servereinstellungen konnten nicht geladen werden.";
+        let msg = texts::load_failed();
         let block = Block::wrapped(ui, msg, text::BODY, c.text, area.width() - 30.0);
         let h = 20.0 + block.height() + 12.0 + 32.0;
         let r = Rect::from_min_size(area.min, vec2(area.width(), h));
@@ -454,7 +600,7 @@ fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) {
             vec2(200.0, 32.0),
         );
         controls::place(ui, UiBuilder::new().max_rect(br), |ui| {
-            if ui.add(Button::new("Erneut versuchen").small()).clicked() {
+            if ui.add(Button::new(common::try_again()).small()).clicked() {
                 app.client.refresh_server(server);
             }
         });
@@ -475,12 +621,19 @@ fn reload_bans(app: &AppCtx, s: &mut State, server: Uuid) {
     }));
 }
 
-fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, manage: bool) {
+fn poll_loads(
+    ui: &Ui,
+    app: &mut AppCtx,
+    s: &mut State,
+    detail: &ServerDetail,
+    invites: bool,
+    bans: bool,
+) {
     let id = detail.server.id;
-    if manage && s.invites.is_none() && s.invites_load.is_none() {
+    if invites && s.invites.is_none() && s.invites_load.is_none() {
         reload_invites(app, s, id);
     }
-    if manage && s.bans.is_none() && s.bans_load.is_none() {
+    if bans && s.bans.is_none() && s.bans_load.is_none() {
         reload_bans(app, s, id);
     }
     if let Some(r) = poll(&mut s.invites_load) {
@@ -491,22 +644,25 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
     }
     if let Some(r) = poll(&mut s.revoke) {
         match r {
-            Ok(()) => s.invites_status.success(ui, "Link widerrufen."),
+            Ok(()) => s.invites_status.success(ui, texts::invites_revoked()),
             // useRevokeInvite: a toast, not the section's status.
-            Err(e) => app.toasts.failure("Einladung nicht widerrufen.", None, &e),
+            Err(e) => app
+                .toasts
+                .failure(texts::error_invite_not_revoked(), None, &e),
         }
         reload_invites(app, s, id);
     }
     if let Some(r) = poll(&mut s.unban) {
         if let Err(e) = r {
-            app.toasts.failure("Mitglied nicht entsperrt.", None, &e);
+            app.toasts
+                .failure(texts::error_member_not_unbanned(), None, &e);
         }
         reload_bans(app, s, id);
     }
     if let Some(r) = poll(&mut s.icon) {
         match r {
             Ok(_) => {
-                s.icon_status.success(ui, "Gespeichert.");
+                s.icon_status.success(ui, common::saved());
                 app.client.refresh_server(id);
                 app.client.refresh_servers();
             }
@@ -523,11 +679,7 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
             if s.saving_name {
                 s.saving_name = false;
                 s.name = None;
-                s.name_status.success(ui, "Gespeichert.");
-            }
-            if s.saving_permissions {
-                s.saving_permissions = false;
-                s.permissions_status.success(ui, "Gespeichert.");
+                s.name_status.success(ui, common::saved());
             }
         }
         Some(OpState::Failed(e)) => {
@@ -536,11 +688,6 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
                 s.saving_name = false;
                 s.name_errors
                     .from_failure(&Failure::from_api(&e), &["name"]);
-            }
-            if s.saving_permissions {
-                s.saving_permissions = false;
-                s.permissions = None;
-                s.permissions_status.error(ui, NOT_SAVED);
             }
         }
         _ => {}
@@ -562,7 +709,9 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
     if let Some(r) = poll(&mut s.ban) {
         match r {
             Ok(()) => app.client.refresh_server(id),
-            Err(e) => app.toasts.failure("Mitglied nicht gesperrt.", None, &e),
+            Err(e) => app
+                .toasts
+                .failure(texts::error_member_not_banned(), None, &e),
         }
         reload_bans(app, s, id);
     }
@@ -703,10 +852,10 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         ui.spacing_mut().item_spacing.x = 8.0;
         if ui
             .add(
-                Button::new("Bild hochladen")
+                Button::new(texts::icon_upload())
                     .small()
                     .disabled(busy && s.icon_removing)
-                    .pending((busy && !s.icon_removing).then_some("Lädt hoch…")),
+                    .pending((busy && !s.icon_removing).then_some(texts::icon_uploading())),
             )
             .clicked()
             && !busy
@@ -714,18 +863,18 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         {
             s.picking = Some(controls::pick_file(
                 ui.ctx(),
-                "Serverbild auswählen",
+                texts::icon_pick_label(),
                 &controls::IMAGE_FILTER,
             ));
         }
         if detail.server.icon_url.is_some()
             && ui
                 .add(
-                    Button::new("Entfernen")
+                    Button::new(common::remove())
                         .small()
                         .ghost()
                         .disabled(busy && !s.icon_removing)
-                        .pending((busy && s.icon_removing).then_some("Entfernt…")),
+                        .pending((busy && s.icon_removing).then_some(texts::icon_removing())),
                 )
                 .clicked()
             && !busy
@@ -746,7 +895,7 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         let mut name = s.name.clone().unwrap_or_else(|| detail.server.name.clone());
         // Not the add-server dialog's "server-name", which can draw over it.
         let field = TextField::new(("server-settings", "server-name"), &mut name)
-            .label("Servername")
+            .label(texts::general_name_label())
             .char_limit(100)
             .error(s.name_errors.field("name"))
             .show(ui);
@@ -761,10 +910,10 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         controls::row(ui, 12.0, 36.0, |ui| {
             submit |= ui
                 .add(
-                    Button::new("Speichern")
+                    Button::new(common::save())
                         .primary()
                         .disabled(!dirty)
-                        .pending(s.saving_name.then_some("Speichert…")),
+                        .pending(s.saving_name.then_some(texts::general_saving())),
                 )
                 .clicked();
             let status = s.name_status.current(ui);
@@ -773,7 +922,7 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                 controls::paint(
                     ui,
                     pos2(ui.cursor().min.x, ui.max_rect().center().y - 9.0),
-                    "Keine Änderungen.",
+                    texts::general_unchanged(),
                     controls::HINT,
                     Theme::of(ui.ctx()).c.muted,
                 );
@@ -825,41 +974,6 @@ fn list_top(ui: &mut Ui) {
     ui.add_space(1.0);
 }
 
-fn permissions(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) {
-    let current = s
-        .permissions
-        .clone()
-        .unwrap_or_else(|| detail.server.member_permissions.clone());
-    list_top(ui);
-    for (perm, label, desc) in PERMISSIONS {
-        let mut on = current.contains(&perm);
-        if controls::switch_row(ui, ("perm", label), label, Some(desc), &mut on, false) {
-            let next: Vec<Permission> = Permission::ALL
-                .iter()
-                .copied()
-                .filter(|p| if *p == perm { on } else { current.contains(p) })
-                .collect();
-            s.permissions = Some(next.clone());
-            s.saving_permissions = true;
-            s.permissions_status.clear();
-            app.client.update_server(
-                detail.server.id,
-                ServerPatch {
-                    name: None,
-                    member_permissions: Some(next),
-                },
-            );
-        }
-    }
-    // A finished save hands over to the server's mask again.
-    if !s.saving_permissions && s.permissions.as_ref() == Some(&detail.server.member_permissions) {
-        s.permissions = None;
-    }
-    ui.add_space(14.0);
-    let w = ui.available_width();
-    s.permissions_status.ui(ui, w);
-}
-
 fn row_frame(ui: &mut Ui) -> Rect {
     let theme = Theme::of(ui.ctx());
     let width = ui.available_width();
@@ -880,38 +994,29 @@ fn hint(ui: &mut Ui, s: &str) {
 /// `"läuft in 6 Tagen ab"` (servers/inviteText.ts).
 fn expiry(at: Option<&chrono::DateTime<chrono::Utc>>, now_ms: f64) -> String {
     let Some(at) = at else {
-        return "läuft nie ab".into();
+        return texts::expiry_never().into();
     };
     let left = at.timestamp_millis() as f64 - now_ms;
     if left <= 0.0 {
-        return "abgelaufen".into();
+        return texts::expiry_expired().into();
     }
     let minutes = (left / 60_000.0).ceil() as i64;
     if minutes < 60 {
-        return format!(
-            "läuft in {minutes} {} ab",
-            if minutes == 1 { "Minute" } else { "Minuten" }
-        );
+        return texts::expiry_in_minutes(minutes);
     }
     let hours = (minutes as f64 / 60.0).round() as i64;
     if hours < 48 {
-        return format!(
-            "läuft in {hours} {} ab",
-            if hours == 1 { "Stunde" } else { "Stunden" }
-        );
+        return texts::expiry_in_hours(hours);
     }
     let days = (hours as f64 / 24.0).round() as i64;
-    format!(
-        "läuft in {days} {} ab",
-        if days == 1 { "Tag" } else { "Tagen" }
-    )
+    texts::expiry_in_days(days)
 }
 
 fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     controls::row(ui, 12.0, 36.0, |ui| {
-        if ui.add(Button::new("Neuen Link erstellen")).clicked() {
+        if ui.add(Button::new(texts::invites_create())).clicked() {
             s.inviting = Some(invite::Dialog::new(app, detail.server.id));
         }
         if let Some((m, t)) = s.invites_status.current(ui) {
@@ -920,15 +1025,15 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
     });
     ui.add_space(14.0);
     match &s.invites {
-        None => hint(ui, "Lade Einladungen…"),
+        None => hint(ui, texts::invites_loading()),
         Some(Err(_)) => {
-            hint(ui, "Die Einladungen konnten nicht geladen werden.");
+            hint(ui, texts::invites_load_failed());
             ui.add_space(8.0);
-            if ui.add(Button::new("Erneut versuchen").small()).clicked() {
+            if ui.add(Button::new(common::try_again()).small()).clicked() {
                 reload_invites(app, s, detail.server.id);
             }
         }
-        Some(Ok(list)) if list.is_empty() => hint(ui, "Keine aktiven Einladungen."),
+        Some(Ok(list)) if list.is_empty() => hint(ui, texts::invites_empty()),
         Some(Ok(list)) => {
             let list = list.clone();
             let now = ui.input(|i| i.time);
@@ -945,13 +1050,12 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                     },
                     code_style,
                 );
-                let uses = format!(
-                    "{}/{} benutzt · {}",
-                    inv.uses,
-                    inv.max_uses
+                let uses = texts::expiry_uses(
+                    &inv.uses.to_string(),
+                    &inv.max_uses
                         .map(|m| m.to_string())
                         .unwrap_or_else(|| "∞".into()),
-                    expiry(inv.expires_at.as_ref(), s.opened_at)
+                    &expiry(inv.expires_at.as_ref(), s.opened_at),
                 );
                 let hb = Block::single(ui, &uses, controls::HINT, c.muted);
                 let total = mono.height() + 2.0 + hb.height();
@@ -959,10 +1063,16 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                 mono.paint(ui.painter(), pos2(rect.left(), y));
                 hb.paint(ui.painter(), pos2(rect.left(), y + mono.height() + 2.0));
                 // Actions right: Kopieren, Widerrufen.
-                let revoke_w = Block::single(ui, "Widerrufen", text::UI, c.text).width() + 26.0;
+                let revoke_w =
+                    Block::single(ui, texts::invites_revoke(), text::UI, c.text).width() + 26.0;
                 let copied = s.copied.get(&inv.code).is_some_and(|t| now - t < 1.5);
-                let copy_label = if copied { "Kopiert" } else { "Kopieren" };
-                let copy_w = Block::single(ui, "Kopieren", text::UI, c.text).width() + 26.0 + 24.0;
+                let copy_label = if copied {
+                    common::copied()
+                } else {
+                    common::copy()
+                };
+                let copy_w =
+                    Block::single(ui, common::copy(), text::UI, c.text).width() + 26.0 + 24.0;
                 let actions = Rect::from_min_size(
                     pos2(
                         rect.right() - revoke_w - 8.0 - copy_w,
@@ -991,17 +1101,15 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                                 s.copied.insert(inv.code.clone(), now);
                                 s.invites_status.clear();
                             } else {
-                                s.invites_status.error(
-                                    ui,
-                                    format!("Kopieren ging nicht. Der Code ist {}.", inv.code),
-                                );
+                                s.invites_status
+                                    .error(ui, texts::invites_copy_failed(&inv.code));
                             }
                             ui.ctx()
                                 .request_repaint_after(std::time::Duration::from_millis(1500));
                         }
                         if ui
                             .add(
-                                Button::new("Widerrufen")
+                                Button::new(texts::invites_revoke())
                                     .small()
                                     .variant(ButtonVariant::DangerOutline),
                             )
@@ -1011,11 +1119,9 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                                 ui.ctx(),
                                 Confirm::danger(
                                     &format!("revoke:{}", inv.code),
-                                    "Link widerrufen?",
-                                    Some(
-                                        "Der Link funktioniert danach nicht mehr. Bestehende Mitglieder bleiben.",
-                                    ),
-                                    "Widerrufen",
+                                    texts::invites_revoke_title(),
+                                    Some(texts::invites_revoke_message()),
+                                    texts::invites_revoke(),
                                 ),
                             );
                         }
@@ -1034,7 +1140,14 @@ fn presence(p: PresenceStatus) -> Presence {
     }
 }
 
-fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, manage: bool) {
+fn members(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    s: &mut State,
+    detail: &ServerDetail,
+    manage: bool,
+    moderate: bool,
+) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let me_id = me(app).map(|u| u.id);
@@ -1050,39 +1163,64 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
             .image(m.avatar_url.as_deref(), app.images)
             .presence(Some(presence(status)))
             .paint(ui, av);
-        let allowed = manage && m.role != Role::Owner && Some(m.user_id) != me_id;
-        let menu_w = if allowed { 32.0 + 12.0 } else { 0.0 };
         let owner = m.role == Role::Owner;
-        let label = if owner { "Inhaber" } else { "Mitglied" };
-        let badge_w = Block::single(ui, &label.to_uppercase(), text::CAPS, c.text).width() + 12.0;
-        let name_w = rect.width() - 32.0 - 12.0 - 12.0 - badge_w - menu_w;
+        let allowed = moderate && !owner && Some(m.user_id) != me_id;
+        // Without a "…" (the owner, oneself) its column stays, so the
+        // badge and the chips line up.
+        let menu_w = if moderate { 32.0 + 12.0 } else { 0.0 };
+        let mid = rect.top() + 27.5;
+        let mut right = rect.right() - menu_w;
+        if owner {
+            let label = texts::members_owner();
+            let badge_w =
+                Block::single(ui, &label.to_uppercase(), text::CAPS, c.text).width() + 12.0;
+            let badge = Rect::from_min_size(pos2(right - badge_w, mid - 10.0), vec2(badge_w, 20.0));
+            controls::place(ui, UiBuilder::new().max_rect(badge), |ui| {
+                ui.add(Badge::new(label).tone(BadgeTone::Accent))
+            });
+            right = badge.left() - 12.0;
+        } else {
+            // The chips, then the "+" for managers (`.role-chips`, gap 8).
+            if manage {
+                let pr = Rect::from_min_size(pos2(right - 24.0, mid - 12.0), vec2(24.0, 24.0));
+                if let roles::Picked::Manage = roles::picker(ui, app, &mut s.roles, detail, m, pr) {
+                    s.scroll_to = Some("rollen");
+                }
+                right = pr.left() - 12.0;
+            }
+            let held = roles::held(&s.roles, detail, m);
+            if !held.is_empty() {
+                let widths: Vec<f32> = held
+                    .iter()
+                    .map(|(name, _)| roles::chip_width(ui, name))
+                    .collect();
+                let total = widths.iter().sum::<f32>() + 8.0 * (widths.len() - 1) as f32;
+                let mut x = right - total;
+                for ((name, color), w) in held.iter().zip(&widths) {
+                    let chip = Rect::from_min_size(pos2(x, mid - 12.0), vec2(*w, 24.0));
+                    roles::chip(ui, chip, name, *color);
+                    x += w + 8.0;
+                }
+                right -= total + 12.0;
+            }
+        }
         let nb = Block::single(ui, &m.name, text::UI, c.text);
-        let clip = Rect::from_min_size(
-            pos2(av.right() + 12.0, rect.top()),
-            vec2(name_w, rect.height()),
+        let name_left = av.right() + 12.0;
+        let clip = Rect::from_min_max(
+            pos2(name_left, rect.top()),
+            pos2(right.max(name_left), rect.bottom()),
         );
         nb.paint(
-            &ui.painter().with_clip_rect(clip),
+            &ui.painter().with_clip_rect(clip.intersect(ui.clip_rect())),
             pos2(clip.left(), rect.top() + (55.0 - nb.height()) / 2.0),
         );
-        let badge = Rect::from_min_size(
-            pos2(rect.right() - menu_w - badge_w, rect.top() + 17.5),
-            vec2(badge_w, 20.0),
-        );
-        controls::place(ui, UiBuilder::new().max_rect(badge), |ui| {
-            ui.add(Badge::new(label).tone(if owner {
-                BadgeTone::Accent
-            } else {
-                BadgeTone::Neutral
-            }))
-        });
         if allowed {
             let br = Rect::from_min_size(
                 pos2(rect.right() - 32.0, rect.top() + 11.5),
                 vec2(32.0, 32.0),
             );
             let resp = ui.add(
-                IconButton::new(Icon::More, &format!("Aktionen für {}", m.name))
+                IconButton::new(Icon::More, &texts::moderation_menu_label(&m.name))
                     .size(32.0)
                     .icon_size(18.0)
                     .pressed(false)
@@ -1103,8 +1241,8 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
                     .show(ui.ctx(), |ui| {
                         use crate::screens::shell::overlays::profile::member_menu_item;
                         ui.spacing_mut().item_spacing.y = 0.0;
-                        let kick = member_menu_item(ui, "Vom Server entfernen", false).clicked();
-                        let ban = member_menu_item(ui, "Sperren", true).clicked();
+                        let kick = member_menu_item(ui, texts::moderation_kick(), false).clicked();
+                        let ban = member_menu_item(ui, texts::moderation_ban(), true).clicked();
                         (kick, ban)
                     });
                 match shown {
@@ -1115,11 +1253,9 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
                             ui.ctx(),
                             Confirm::danger(
                                 &format!("kick:{}", m.user_id),
-                                format!("{} vom Server entfernen?", m.name),
-                                Some(
-                                    "Mit einem neuen Einladungslink ist ein erneuter Beitritt möglich.",
-                                ),
-                                "Entfernen",
+                                texts::moderation_kick_title(&m.name),
+                                Some(texts::moderation_kick_message()),
+                                common::remove(),
                             ),
                         );
                     }
@@ -1130,11 +1266,9 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
                             ui.ctx(),
                             Confirm::danger(
                                 &format!("ban:{}", m.user_id),
-                                format!("{} sperren?", m.name),
-                                Some(
-                                    "Sie können nicht wieder beitreten, auch nicht mit einem Einladungslink.",
-                                ),
-                                "Sperren",
+                                texts::moderation_ban_title(&m.name),
+                                Some(texts::moderation_ban_message()),
+                                texts::moderation_ban(),
                             ),
                         );
                     }
@@ -1150,17 +1284,17 @@ fn bans(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     match &s.bans {
-        None => hint(ui, "Lade Sperren…"),
+        None => hint(ui, texts::bans_loading()),
         Some(Err(_)) => {
-            hint(ui, "Die Sperren konnten nicht geladen werden.");
+            hint(ui, texts::bans_load_failed());
             ui.add_space(8.0);
-            if ui.add(Button::new("Erneut versuchen").small()).clicked()
+            if ui.add(Button::new(common::try_again()).small()).clicked()
                 && let Some(id) = s.server
             {
                 reload_bans(app, s, id);
             }
         }
-        Some(Ok(list)) if list.is_empty() => hint(ui, "Niemand ist gesperrt."),
+        Some(Ok(list)) if list.is_empty() => hint(ui, texts::bans_empty()),
         Some(Ok(list)) => {
             let list = list.clone();
             list_top(ui);
@@ -1177,23 +1311,20 @@ fn bans(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                     ui.painter(),
                     pos2(av.right() + 12.0, rect.top() + (55.0 - nb.height()) / 2.0),
                 );
-                let bw = Block::single(ui, "Entsperren", text::UI, c.text).width() + 26.0;
+                let bw = Block::single(ui, texts::bans_unban(), text::UI, c.text).width() + 26.0;
                 let br = Rect::from_min_size(
                     pos2(rect.right() - bw, rect.center().y - 16.5),
                     vec2(bw, 32.0),
                 );
                 controls::place(ui, UiBuilder::new().max_rect(br), |ui| {
-                    if ui.add(Button::new("Entsperren").small()).clicked() {
+                    if ui.add(Button::new(texts::bans_unban()).small()).clicked() {
                         controls::ask(
                             ui.ctx(),
                             Confirm {
                                 key: format!("unban:{}", b.user_id),
-                                title: format!("{} wieder zulassen?", b.name),
-                                message: Some(
-                                    "Ein Beitritt per Einladungslink ist dann wieder möglich."
-                                        .into(),
-                                ),
-                                label: "Entsperren".into(),
+                                title: texts::bans_unban_title(&b.name),
+                                message: Some(texts::bans_unban_message().into()),
+                                label: texts::bans_unban().into(),
                                 neutral: true,
                             },
                         );
@@ -1204,40 +1335,94 @@ fn bans(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
 }
 
-fn danger(ui: &mut Ui, _app: &mut AppCtx, detail: &ServerDetail) {
-    let owner = detail.server.role == Role::Owner;
-    let label = if owner {
-        "Server löschen"
-    } else {
-        "Server verlassen"
-    };
+/// Gefahrenzone (web `DangerSection`): for the owner one list of two rows,
+/// "Server übergeben" then "Server löschen"; for everyone else the
+/// "Server verlassen" button under the section's sentence.
+fn danger(ui: &mut Ui, _app: &mut AppCtx, s: &mut State, detail: &ServerDetail) {
+    let name = &detail.server.name;
+    let key = format!("drop-server:{}", detail.server.id);
+    if detail.server.role == Role::Owner {
+        let theme = Theme::of(ui.ctx());
+        // `.settings-action-list`: a hairline over the first row.
+        let width = ui.available_width();
+        crate::widgets::rule_h(
+            ui.painter(),
+            theme.c.border,
+            ui.cursor().min.x..=ui.cursor().min.x + width,
+            ui.cursor().min.y,
+        );
+        ui.add_space(1.0);
+        let none = transfer::candidates(detail).is_empty();
+        let hint = if none {
+            texts::transfer_no_member()
+        } else {
+            texts::transfer_hint()
+        };
+        if controls::action_row(
+            ui,
+            texts::transfer_title(),
+            hint,
+            None,
+            Some(controls::RowButton::new(texts::transfer_open()).disabled(none)),
+        ) && !none
+        {
+            s.transfer = Some(transfer::Dialog::default());
+        }
+        if controls::action_row(
+            ui,
+            texts::danger_delete(),
+            texts::danger_owner_hint(),
+            None,
+            Some(
+                controls::RowButton::new(texts::danger_delete())
+                    .variant(ButtonVariant::DangerOutline),
+            ),
+        ) {
+            controls::ask(
+                ui.ctx(),
+                Confirm::danger(
+                    &key,
+                    texts::danger_delete_title(name),
+                    Some(texts::danger_delete_message()),
+                    texts::danger_delete(),
+                ),
+            );
+        }
+        return;
+    }
     if ui
-        .add(Button::new(label).variant(ButtonVariant::DangerOutline))
+        .add(Button::new(texts::danger_leave()).variant(ButtonVariant::DangerOutline))
         .clicked()
     {
-        let name = &detail.server.name;
-        let confirm = if owner {
+        controls::ask(
+            ui.ctx(),
             Confirm::danger(
-                &format!("drop-server:{}", detail.server.id),
-                format!("Server „{name}“ endgültig löschen?"),
-                Some("Kanäle, Nachrichten, Einladungen und Mitgliedschaften werden gelöscht."),
-                "Server löschen",
-            )
-        } else {
-            Confirm::danger(
-                &format!("drop-server:{}", detail.server.id),
-                format!("Server „{name}“ verlassen?"),
+                &key,
+                texts::danger_leave_title(name),
                 None,
-                "Verlassen",
-            )
-        };
-        controls::ask(ui.ctx(), confirm);
+                texts::danger_leave_confirm(),
+            ),
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invite_expiry_words_in_english() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let now = 1_000_000_000_000.0;
+        let at = |ms: f64| chrono::DateTime::from_timestamp_millis((now + ms) as i64).unwrap();
+        assert_eq!(expiry(None, now), "never expires");
+        assert_eq!(expiry(Some(&at(-1.0)), now), "expired");
+        assert_eq!(
+            expiry(Some(&at(6.0 * 86_400_000.0)), now),
+            "expires in 6 days"
+        );
+        assert_eq!(expiry(Some(&at(3_600_000.0)), now), "expires in 1 hour");
+    }
 
     #[test]
     fn invite_expiry_words() {
@@ -1357,6 +1542,69 @@ mod tests {
         );
     }
 
+    /// A jump stops where the page ends, as the web's `scrollBy`.
+    #[test]
+    fn a_jump_goes_no_further_than_the_page() {
+        assert_eq!(jump_offset(500.0, 2000.0, 748.0), 436.0);
+        assert_eq!(jump_offset(1900.0, 2000.0, 748.0), 1252.0);
+        assert_eq!(jump_offset(40.0, 2000.0, 748.0), 0.0);
+        assert_eq!(jump_offset(500.0, 600.0, 748.0), 0.0);
+    }
+
+    /// The page scrolls as the web's `.settings-scroll` with its sticky
+    /// anchor row: a jump to the last section ends at the page's end without
+    /// springing back, and a target scrolled into view sits in the middle of
+    /// header bottom and window bottom, as Playwright's does on the web.
+    #[test]
+    fn the_page_scrolls_as_the_web_scroller() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label};
+        use egui::accesskit::{AriaCurrent, Role as A11y};
+        use egui_kittest::kittest::{NodeT, Queryable};
+        let _config = crate::platform::paths::testing::TempConfig::new("server-settings-scroll");
+        let api = FakeApi::start(
+            true,
+            with_jonas(std::sync::Arc::default(), std::sync::Arc::default()),
+        );
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Aktionen für Jonas");
+        harness.run_steps(10);
+        harness
+            .get_by_role_and_label(A11y::Link, "Gefahrenzone")
+            .click();
+        harness.run_steps(2);
+        let delete = |h: &egui_kittest::Harness<'_, crate::setup::Launcher>| {
+            h.get_by_role_and_label(A11y::Button, "Server löschen")
+                .rect()
+        };
+        let landed = delete(&harness);
+        harness.run_steps(30);
+        assert_eq!(delete(&harness), landed, "the page sprang back");
+        let current = harness.get_by_role_and_label(A11y::Link, "Gefahrenzone");
+        assert_eq!(
+            current.accesskit_node().aria_current(),
+            Some(AriaCurrent::Location)
+        );
+        // The delete row (52px, its button in the middle) ends 48px over
+        // the window's bottom.
+        assert!(
+            (landed.center().y + 26.0 + 48.0 - 800.0).abs() < 1.5,
+            "{landed:?}"
+        );
+
+        harness
+            .get_by_role_and_label(A11y::Link, "Allgemein")
+            .click();
+        harness.run_steps(4);
+        harness
+            .get_by_role_and_label(A11y::Button, "Aktionen für Jonas")
+            .scroll_to_me();
+        harness.run_steps(4);
+        let actions = harness
+            .get_by_role_and_label(A11y::Button, "Aktionen für Jonas")
+            .rect();
+        assert!((actions.center().y - 426.0).abs() < 1.0, "{actions:?}");
+    }
+
     /// "Server erstellen" over a server's settings: two name fields in one
     /// frame (debug builds panicked; release ones typed into both).
     #[test]
@@ -1381,9 +1629,11 @@ mod tests {
             harness.run_steps(4);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        // The Rollen panel has a "Name" field too: the dialog adds one.
+        let names = harness.query_all_by_label("Name").count();
         harness.get_by_label("Server erstellen").click();
         harness.run_steps(6);
-        harness.get_by_label("Name");
+        assert_eq!(harness.query_all_by_label("Name").count(), names + 1);
         harness.get_by_label("Servername");
     }
 
@@ -1424,8 +1674,19 @@ mod tests {
                     invites.fetch_add(1, Ordering::SeqCst);
                     Some(Reply::json(json!([])))
                 }
+                // The owner holds every flag, moderate_members too.
+                "GET" if path == "/servers" => {
+                    let mut reply = workspace(method, path)?;
+                    if let Some(perms) = reply.body[0]["permissions"].as_array_mut() {
+                        perms.push(json!("moderate_members"));
+                    }
+                    Some(reply)
+                }
                 "GET" if path == base => {
                     let mut reply = workspace(method, path)?;
+                    if let Some(perms) = reply.body["permissions"].as_array_mut() {
+                        perms.push(json!("moderate_members"));
+                    }
                     if !is_banned {
                         let jonas = json!({
                             "user_id": JONAS, "name": "Jonas", "avatar_url": null,
@@ -1494,5 +1755,249 @@ mod tests {
         wait_for(&mut harness, "the invites again", |_| {
             invites.load(Ordering::SeqCst) == 2
         });
+    }
+
+    /// The role writes the fake server saw: method, path and body.
+    type Log = std::sync::Arc<parking_lot::Mutex<Vec<(String, String, String)>>>;
+
+    /// Wohnzimmer with Jonas, answering the role routes and logging them.
+    fn with_roles(
+        log: Log,
+    ) -> impl Fn(&str, &str, &str) -> Option<crate::app::testkit::Reply> + Send + Sync + 'static
+    {
+        use crate::app::testkit::{HOME, Reply, roles};
+        use serde_json::{Value, json};
+        let inner = with_jonas(std::sync::Arc::default(), std::sync::Arc::default());
+        move |method, path, body| {
+            let member_roles = format!("/servers/{HOME}/members/{JONAS}/roles");
+            if path.starts_with("/roles/") || path == member_roles {
+                log.lock().push((method.into(), path.into(), body.into()));
+                let sent: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+                return Some(match method {
+                    "PUT" => Reply::json(json!({"user_id": JONAS, "role_ids": sent["role_ids"]})),
+                    "PATCH" => {
+                        let id = path.trim_start_matches("/roles/");
+                        let mut role = roles()
+                            .as_array()
+                            .and_then(|r| r.iter().find(|x| x["id"] == id).cloned())
+                            .unwrap_or(Value::Null);
+                        if let (Some(role), Some(patch)) = (role.as_object_mut(), sent.as_object())
+                        {
+                            role.extend(patch.clone());
+                        }
+                        Reply::json(role)
+                    }
+                    _ => Reply::json(Value::Null),
+                });
+            }
+            inner(method, path, body)
+        }
+    }
+
+    fn logged(log: &Log, method: &str, path: &str) -> Vec<String> {
+        log.lock()
+            .iter()
+            .filter(|(m, p, _)| m == method && p == path)
+            .map(|(_, _, b)| b.clone())
+            .collect()
+    }
+
+    /// The Rollen list (Inhaber, the custom roles, Alle Mitglieder), the
+    /// first custom role's panel, a switch that saves, and a delete.
+    #[test]
+    fn the_roles_editor_saves_and_deletes() {
+        use crate::app::testkit::{FakeApi, HOME, MODERATION, launcher, wait_for, wait_for_label};
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("roles-editor");
+        let log = Log::default();
+        let api = FakeApi::start(true, with_roles(log.clone()));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Neue Rolle");
+        harness.get_by_role_and_label(A11y::Link, "Rollen").click();
+        harness.run_steps(4);
+        for name in ["Inhaber", "Moderation", "Stammgäste", "Alle Mitglieder"] {
+            harness.get_by_role_and_label(A11y::Button, name);
+        }
+        // Moderation's panel: its name, the delete, the nine switches.
+        harness.get_by_role_and_label(A11y::Button, "Rolle löschen");
+        harness.get_by_label("Name");
+        harness
+            .query_all_by_label("Server verwalten")
+            .next()
+            .expect("the switch")
+            .click();
+        let path = format!("/roles/{MODERATION}");
+        wait_for(&mut harness, "the switch saved", |_| {
+            !logged(&log, "PATCH", &path).is_empty()
+        });
+        let sent: serde_json::Value =
+            serde_json::from_str(&logged(&log, "PATCH", &path)[0]).unwrap();
+        assert_eq!(
+            sent,
+            serde_json::json!({"permissions": [
+                "manage_server", "moderate_members", "manage_messages", "mention_everyone"
+            ]})
+        );
+        controls::answer_for_test(&harness.ctx, &format!("delete-role:{MODERATION}"), true);
+        wait_for(&mut harness, "the delete", |_| {
+            !logged(&log, "DELETE", &path).is_empty()
+        });
+        // The owner's panel: no delete, every switch on and fixed.
+        harness
+            .get_by_role_and_label(A11y::Button, "Inhaber")
+            .click();
+        wait_for(&mut harness, "the owner's panel", |h| {
+            h.query_by_label("Rolle löschen").is_none()
+        });
+        use egui_kittest::kittest::NodeT;
+        let switch = harness
+            .query_all_by_label("Server verwalten")
+            .next()
+            .expect("the switch");
+        assert!(switch.accesskit_node().is_disabled());
+    }
+
+    /// Two quick switches on one role: each write settles from its own
+    /// answer, so the second one's failure is said and not "Gespeichert.".
+    #[test]
+    fn a_failed_second_switch_is_not_saved() {
+        use crate::app::testkit::wait_for_label;
+        use crate::app::testkit::{FakeApi, HOME, MODERATION, Reply, launcher, wait_for};
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("roles-second-fails");
+        let log = Log::default();
+        let inner = with_roles(log.clone());
+        let patches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failed = log.clone();
+        let api = FakeApi::start(true, move |method, path, body| {
+            if method == "PATCH" && path.starts_with("/roles/") {
+                let n = patches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 1 {
+                    failed
+                        .lock()
+                        .push((method.into(), path.into(), body.into()));
+                    return Some(Reply::error(403, "forbidden"));
+                }
+            }
+            inner(method, path, body)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Neue Rolle");
+        harness.get_by_role_and_label(A11y::Link, "Rollen").click();
+        harness.run_steps(4);
+        harness
+            .query_all_by_label("Server verwalten")
+            .next()
+            .expect("the switch")
+            .click();
+        harness.run_steps(1);
+        harness
+            .query_all_by_label("Kanäle verwalten")
+            .next()
+            .expect("the switch")
+            .click();
+        let path = format!("/roles/{MODERATION}");
+        wait_for(&mut harness, "both writes", |_| {
+            logged(&log, "PATCH", &path).len() == 2
+        });
+        wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+    }
+
+    /// The "+" on a member row lists the roles; a checkbox saves the
+    /// member's roles at once and the list stays open.
+    #[test]
+    fn the_role_picker_saves_a_members_roles() {
+        use crate::app::testkit::{FakeApi, HOME, STAMMGAESTE, launcher, wait_for, wait_for_label};
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("role-picker");
+        let log = Log::default();
+        let api = FakeApi::start(true, with_roles(log.clone()));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Rollen für Jonas");
+        harness
+            .get_by_role_and_label(A11y::Link, "Mitglieder")
+            .click();
+        harness.run_steps(4);
+        harness.get_by_label("Rollen für Jonas").click();
+        wait_for_label(&mut harness, "Rollen verwalten");
+        harness
+            .get_by_role_and_label(A11y::CheckBox, "Stammgäste")
+            .click();
+        let path = format!("/servers/{HOME}/members/{JONAS}/roles");
+        wait_for(&mut harness, "the roles saved", |_| {
+            !logged(&log, "PUT", &path).is_empty()
+        });
+        let sent: serde_json::Value = serde_json::from_str(&logged(&log, "PUT", &path)[0]).unwrap();
+        assert_eq!(sent, serde_json::json!({"role_ids": [STAMMGAESTE]}));
+        harness.run_steps(4);
+        harness.get_by_label("Rollen verwalten").click();
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Rollen verwalten").is_none());
+    }
+
+    /// `serverSettingsSections`: who sees which section, with the
+    /// directory off and on.
+    #[test]
+    fn the_sections_follow_the_rights() {
+        let server = |role: &str, perms: &[&str]| -> Server {
+            serde_json::from_value(serde_json::json!({
+                "id": Uuid::nil(), "name": "W", "owner_id": Uuid::nil(), "icon_url": null,
+                "created_at": "2026-01-01T00:00:00Z", "role": role,
+                "permissions": perms, "member_permissions": []
+            }))
+            .unwrap()
+        };
+        let member = |perms: &[&str]| server("member", perms);
+        assert_eq!(
+            sections(&member(&["manage_server", "moderate_members"]), false),
+            [
+                "allgemein",
+                "rollen",
+                "einladungen",
+                "mitglieder",
+                "sperren",
+                "gefahrenzone"
+            ]
+        );
+        assert_eq!(
+            sections(&member(&["manage_server", "moderate_members"]), true),
+            [
+                "allgemein",
+                "rollen",
+                "einladungen",
+                "verzeichnis",
+                "mitglieder",
+                "sperren",
+                "gefahrenzone"
+            ]
+        );
+        assert_eq!(
+            sections(&member(&["manage_server"]), true),
+            [
+                "allgemein",
+                "rollen",
+                "einladungen",
+                "mitglieder",
+                "gefahrenzone"
+            ]
+        );
+        assert_eq!(
+            sections(&member(&["moderate_members"]), true),
+            ["verzeichnis", "mitglieder", "sperren", "gefahrenzone"]
+        );
+        assert_eq!(
+            sections(&member(&["moderate_members"]), false),
+            ["mitglieder", "sperren", "gefahrenzone"]
+        );
+        assert_eq!(sections(&member(&[]), true), ["mitglieder", "gefahrenzone"]);
+        // The owner holds every right, as the web's `can`, even before the
+        // list says so.
+        assert_eq!(
+            sections(&server("owner", &[]), true),
+            ["verzeichnis", "mitglieder", "sperren", "gefahrenzone"]
+        );
     }
 }

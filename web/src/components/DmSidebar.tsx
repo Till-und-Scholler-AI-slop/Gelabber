@@ -32,6 +32,9 @@ import {
 import { useMediaQuery } from "./useMediaQuery.ts";
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 const ROW_PX = 48;
 
@@ -42,6 +45,7 @@ export function DmSidebar({
   dms: DirectMessage[];
   activeChannelId: string | undefined;
 }) {
+  const t = useT(dmsCatalog);
   const [writing, setWriting] = useState(false);
   const drawer = useNavigationDrawer();
   // From the phone drawer the dialog takes the drawer's place.
@@ -51,13 +55,13 @@ export function DmSidebar({
   };
   return (
     <aside
-      aria-label="Direktnachrichten"
+      aria-label={t("sidebar.label")}
       className="channel-sidebar dm-sidebar"
     >
       <header className="dm-sidebar-heading">
-        <h2>Nachrichten</h2>
+        <h2>{t("sidebar.title")}</h2>
         <IconButton
-          label="Neue Nachricht"
+          label={t("newMessage")}
           icon={<PlusIcon size={18} />}
           size="sm"
           onClick={startNew}
@@ -65,9 +69,9 @@ export function DmSidebar({
       </header>
       {dms.length === 0 ? (
         <div className="sidebar-empty dm-sidebar-empty">
-          <p>Noch keine Unterhaltungen.</p>
+          <p>{t("sidebar.empty")}</p>
           <Button size="sm" icon={<PlusIcon size={16} />} onClick={startNew}>
-            Neue Nachricht
+            {t("newMessage")}
           </Button>
         </div>
       ) : (
@@ -94,6 +98,7 @@ function DmList({
   dms: DirectMessage[];
   activeChannelId: string | undefined;
 }) {
+  const t = useT(dmsCatalog);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<string | null>(null);
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -115,7 +120,7 @@ function DmList({
     <div ref={scrollRef} className="sidebar-list-scroll">
       <div
         role="list"
-        aria-label="Unterhaltungen"
+        aria-label={t("list.label")}
         style={{ height: virtualizer.getTotalSize() }}
         className="relative"
         onKeyDown={moveWithinList}
@@ -158,6 +163,7 @@ export function DmRow({
   /** In a list with one Tab stop: whether it is this row's. */
   tabStop?: boolean;
 }) {
+  const ts = useT(shell);
   const status = usePresenceStore((state) =>
     presenceOf(state.byServer, dm.id, dm.peer.id),
   );
@@ -169,7 +175,7 @@ export function DmRow({
   const menu = useRowMenu();
   const roving = useRovingRow(true, tabStop, true);
   const coarse = useMediaQuery("(pointer: coarse)");
-  const label = `Aktionen für ${dm.peer.name}`;
+  const label = ts("channel.actionsLabel", { name: dm.peer.name });
   return (
     <div
       className={`group dm-row-item${menu.open ? " is-menu-open" : ""}`}
@@ -197,9 +203,9 @@ export function DmRow({
         />
         <span className="dm-row-name">{dm.peer.name}</span>
         {draft ? (
-          <span className="channel-row-draft" title="Entwurf">
+          <span className="channel-row-draft" title={ts("channel.draft")}>
             <PencilIcon size={13} />
-            <span className="sr-only">Entwurf</span>
+            <span className="sr-only">{ts("channel.draft")}</span>
           </span>
         ) : null}
         <UnreadBadge channelId={dm.id} showDot={false} />

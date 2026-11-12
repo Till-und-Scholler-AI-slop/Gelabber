@@ -23,31 +23,48 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.9.3}
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.10.0}
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.9.3
+        - gelabber/web:v0.10.0
     environment:
       # The same values as the API's: the app shell's Content-Security-Policy
       # allows uploads and attachments on this origin only (#288), or on the
       # app's own origin with ATTACHMENT_DELIVERY=proxy (#348).
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
       ATTACHMENT_DELIVERY: ${ATTACHMENT_DELIVERY:-redirect}
+      # Public landing and legal pages, written at start; empty keeps them off
+      # (deploy/README.md, "Public pages").
+      GELABBER_LANDING: ${GELABBER_LANDING:-}
+      GELABBER_OPERATOR_NAME: ${GELABBER_OPERATOR_NAME:-}
+      GELABBER_OPERATOR_STREET: ${GELABBER_OPERATOR_STREET:-}
+      GELABBER_OPERATOR_CITY: ${GELABBER_OPERATOR_CITY:-}
+      GELABBER_OPERATOR_EMAIL: ${GELABBER_OPERATOR_EMAIL:-}
+      GELABBER_OPERATOR_PHONE: ${GELABBER_OPERATOR_PHONE:-}
+      GELABBER_CONTENT_RESPONSIBLE: ${GELABBER_CONTENT_RESPONSIBLE:-}
+      GELABBER_REPORT_EMAIL: ${GELABBER_REPORT_EMAIL:-}
+      GELABBER_CONTACT_EMAIL: ${GELABBER_CONTACT_EMAIL:-}
+      GELABBER_INVITE_REQUEST: ${GELABBER_INVITE_REQUEST:-}
+      GELABBER_SOURCE_URL: ${GELABBER_SOURCE_URL:-}
+      GELABBER_OPERATOR_GUIDE_URL: ${GELABBER_OPERATOR_GUIDE_URL:-}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
+    volumes:
+      - ./legal:/etc/gelabber/legal:ro
     expose:
       - "80"
     restart: unless-stopped
 
   api:
-    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.9.3}
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.10.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: backend/api/Dockerfile
       tags:
-        - gelabber/api:v0.9.3
+        - gelabber/api:v0.10.0
     environment:
       API_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see deploy/README.md)}@postgres:5432/${POSTGRES_DB:-gelabber}
@@ -114,6 +131,19 @@ services:
       API_WS_PRESENCE_TTL_MS: ${API_WS_PRESENCE_TTL_MS:-}
       API_WS_TYPING_TTL_MS: ${API_WS_TYPING_TTL_MS:-}
       RUST_LOG: ${RUST_LOG:-}
+      # Operators of this instance and who may register (deploy/README.md, "Betrieb").
+      API_OPERATOR_EMAILS: ${API_OPERATOR_EMAILS:-}
+      API_REGISTRATION: ${API_REGISTRATION:-open}
+      # Sign-in with Google (deploy/README.md); both client values empty: off.
+      OIDC_GOOGLE_CLIENT_ID: ${OIDC_GOOGLE_CLIENT_ID:-}
+      OIDC_GOOGLE_CLIENT_SECRET: ${OIDC_GOOGLE_CLIENT_SECRET:-}
+      OIDC_GOOGLE_ISSUER: ${OIDC_GOOGLE_ISSUER:-}
+      # Server directory "Entdecken", off by default (deploy/README.md, "Verzeichnis").
+      API_DIRECTORY: ${API_DIRECTORY:-false}
+      # Hours a finished data export stays downloadable; empty: 168 (7 days).
+      API_EXPORT_RETENTION_HOURS: ${API_EXPORT_RETENTION_HOURS:-}
+      # Largest export archive in bytes; empty: 10737418240 (10 GiB).
+      API_EXPORT_MAX_BYTES: ${API_EXPORT_MAX_BYTES:-}
     expose:
       - "8080"
     depends_on:
@@ -126,13 +156,13 @@ services:
     restart: unless-stopped
 
   media:
-    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.9.3}
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.10.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: backend/media/Dockerfile
       tags:
-        - gelabber/media:v0.9.3
+        - gelabber/media:v0.10.0
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379

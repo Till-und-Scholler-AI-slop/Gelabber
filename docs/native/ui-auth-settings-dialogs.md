@@ -291,7 +291,7 @@ Full-viewport modal dialog, transparent, padding `56px 16px 16px`, image centred
 | Element | Spec |
 |---|---|
 | page | full window, bg `--lr-bg`, grid centred both axes, min-height 100vh, padding `32px 16px` |
-| artwork (viewport ≥ 800px, i.e. always on desktop) | fixed full-window layer behind content: `public/images/living-room/community-banner.png` `cover` centred at **opacity .18**, then over it a radial gradient `ellipse at center: transparent 30% → --lr-bg 95%` |
+| artwork (viewport ≥ 800px, i.e. always on desktop) | fixed full-window layer behind content: `public/images/living-room/community-banner.webp` (the app bundles the same file) `cover` centred at **opacity .18**, then over it a radial gradient `ellipse at center: transparent 30% → --lr-bg 95%` |
 | column | flex column, **gap 24px**, width `min(100%, 384px)` |
 | brand (top, centred) | inline-flex, centre, gap 10: `public/icons/icon-192.png` drawn **40×40, radius 7** + text **"Gelabber"** 700 20px/1.2, letter-spacing −0.02em, colour text; links to `/` |
 | card `.lr-auth-card` | flex column, padding **32px**, border 1 border, radius **10px**, bg panel, colour text → inner width **318px** |
@@ -681,6 +681,15 @@ Sidebar = the server's channel sidebar (shell spec). Header h1 **"Servereinstell
 | Gefahrenzone | hint owner "Löscht Kanäle, Kategorien, Nachrichten, Einladungen und Mitgliedschaften endgültig." / member "Wieder beitreten kannst du nur mit einem neuen Einladungslink."; danger-outline **"Server löschen"** / **"Server verlassen"** |
 
 Load failure: LoadError "Die Servereinstellungen konnten nicht geladen werden.".
+
+**Verzeichnis** (v0.10 discovery, `pages/ServerDirectory.tsx`, `serverDirectory.css`; native `screens/server_settings/directory.rs`). While `GET /api/directory` says `enabled`, the owner and holders of `moderate_members` get the anchor **"Verzeichnis"** after Einladungen (`serverSettingsSections`, native `sections`). The anchor carries the open requests as the accent count pill (`.ui-badge--count`, 18px, 6px after the label; screen readers hear "1 offene Anfrage"); the queue read and every `jq` frame set it, and a `jq` reads the queue again.
+
+| Part | Spec |
+|---|---|
+| Heading | "Verzeichnis"; hint (owner only) "Ob und wie dein Server unter Entdecken erscheint." |
+| Form (owner) | `.settings-form` max 560, gap 20. Delisted note first (padding 10/12, radius md, border warning 40 %, bg warning 10 %): "Der Betreiber hat diesen Server aus dem Verzeichnis genommen." Switch row 44px "Im Verzeichnis zeigen"; "Beschreibung" textarea 88px (one line: breaks become spaces), under it "{n} / 300 Zeichen" (danger above 300); "Sprache" select 37px ("Sprache wählen" until picked, then the endonyms from `GET /api/directory`); "Beitritt" with two radio cards gap 8: "Offen" / "Jeder kann direkt beitreten.", "Auf Anfrage" / "Du oder wer Mitglieder moderieren darf, nimmt Anfragen an."; "Vorschau" then, 26px lower, the Entdecken row (§ discover, border-top) with its buttons inert; primary "Speichern" (pending "Speichert…", disabled unchanged with "Keine Änderungen.") and the inline status "Gespeichert." |
+| Checks | listed without description: "Im Verzeichnis braucht der Server eine Beschreibung."; too long / control characters: "Die Beschreibung ist zu lang." / "Die Beschreibung enthält Zeichen, die nicht erlaubt sind."; no language: "Bitte eine Sprache wählen." |
+| Beitrittsanfragen | 12px under the form; heading 600 13px + inline status, 10px gap; "Lade Anfragen…" / "Keine offenen Anfragen." / LoadError "Die Anfragen konnten nicht geladen werden."; list rows (§7 lists): avatar 32, "Kai · vor 2 Stunden" (time muted 400, `formatWhen` from when the section opened), message 14px muted, sm primary **"Annehmen"** and sm **"Ablehnen"** (all disabled while one answer runs). An answer drops the row; an accepted one reloads the server's members; a refusal shows in the heading's status. |
 
 ---
 

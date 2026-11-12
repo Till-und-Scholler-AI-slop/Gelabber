@@ -1,6 +1,9 @@
 // The workspace's keyboard shortcuts: which key does what, and where each
 // one moves to. Apart from the DOM so it can be tested in node.
 
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
+
 export type ShellShortcut =
   | { kind: "switcher" }
   | { kind: "help" }
@@ -78,7 +81,11 @@ export function isMac(): boolean {
 export function keyNames(mac: boolean) {
   return mac
     ? { mod: "⌘", alt: "⌥", shift: "⇧" }
-    : { mod: "Strg", alt: "Alt", shift: "Umschalt" };
+    : {
+        mod: translate(shell, "keys.ctrl"),
+        alt: translate(shell, "keys.alt"),
+        shift: translate(shell, "keys.shift"),
+      };
 }
 
 export type Shortcut = { keys: string[]; label: string };
@@ -94,37 +101,48 @@ export function shortcutGroups(
   const { mod, alt, shift } = keyNames(mac);
   return [
     {
-      title: "Allgemein",
+      title: translate(shell, "shortcuts.general"),
       shortcuts: [
-        { keys: [mod, "K"], label: "Server, Kanal oder Unterhaltung öffnen" },
-        { keys: [mod, "F"], label: "In der Unterhaltung suchen" },
-        { keys: [alt, "↑ / ↓"], label: "Vorheriger oder nächster Kanal" },
+        { keys: [mod, "K"], label: translate(shell, "shortcuts.switcher") },
+        { keys: [mod, "F"], label: translate(shell, "shortcuts.search") },
+        { keys: [alt, "↑ / ↓"], label: translate(shell, "shortcuts.channel") },
         {
           keys: [alt, shift, "↑ / ↓"],
-          label: "Vorheriger oder nächster ungelesener Kanal",
+          label: translate(shell, "shortcuts.unreadChannel"),
         },
-        { keys: [mod, alt, "↑ / ↓"], label: "Vorheriger oder nächster Server" },
-        // Whatever is open takes Esc first (MessagePane).
         {
-          keys: ["Esc"],
-          label: "Schließen, sonst Unterhaltung als gelesen markieren",
+          keys: [mod, alt, "↑ / ↓"],
+          label: translate(shell, "shortcuts.server"),
         },
-        { keys: [shift, "Esc"], label: "Ganzen Server als gelesen markieren" },
-        { keys: [mod, "/"], label: "Diese Übersicht" },
+        // Whatever is open takes Esc first (MessagePane).
+        { keys: ["Esc"], label: translate(shell, "shortcuts.escape") },
+        {
+          keys: [shift, "Esc"],
+          label: translate(shell, "shortcuts.serverRead"),
+        },
+        { keys: [mod, "/"], label: translate(shell, "shortcuts.help") },
       ],
     },
     {
-      title: "Im Sprachkanal",
+      title: translate(shell, "shortcuts.voice"),
       shortcuts: [
-        { keys: [mod, shift, "M"], label: "Stummschaltung ein oder aus" },
-        { keys: [mod, shift, "D"], label: "Taubschaltung ein oder aus" },
-        ...(pushToTalk
-          ? [{ keys: [pushToTalk], label: "Zum Sprechen gedrückt halten" }]
-          : []),
-        { keys: ["K"], label: "Kino ein oder aus" },
+        { keys: [mod, shift, "M"], label: translate(shell, "shortcuts.mute") },
         {
-          keys: ["M / Leertaste"],
-          label: "Im Vollbild: Stummschaltung ein oder aus",
+          keys: [mod, shift, "D"],
+          label: translate(shell, "shortcuts.deafen"),
+        },
+        ...(pushToTalk
+          ? [
+              {
+                keys: [pushToTalk],
+                label: translate(shell, "shortcuts.pushToTalk"),
+              },
+            ]
+          : []),
+        { keys: ["K"], label: translate(shell, "shortcuts.cinema") },
+        {
+          keys: [translate(shell, "shortcuts.fullscreenMuteKeys")],
+          label: translate(shell, "shortcuts.fullscreenMute"),
         },
       ],
     },

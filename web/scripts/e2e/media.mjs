@@ -4,6 +4,7 @@ import { sampleVideoConsumers } from "./probe.mjs";
 import {
   check,
   click,
+  liveTiles,
   navigate,
   snapshot,
   until,
@@ -52,7 +53,7 @@ export async function watchSource(
   { deadlineEpochMs = Date.now() + 5_000 } = {},
 ) {
   if (kind !== "live") return;
-  const tiles = actor.page.locator("figure").filter({ hasText: "— Live" });
+  const tiles = liveTiles(actor.page);
   const start = tiles.getByRole("button", { name: "Zuschauen", exact: true });
   const stop = tiles.getByRole("button", {
     name: "Nicht mehr zuschauen",

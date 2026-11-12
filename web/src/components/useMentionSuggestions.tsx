@@ -8,13 +8,16 @@ import {
   type Suggestion,
 } from "../messages/mentions.ts";
 import { useMentions } from "./mentionContext.ts";
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 
 /** Suggestions for the `@…` at the caret of a field. */
 export function useMentionSuggestions(
   draft: string,
   setDraft: (text: string, caret: number) => void,
 ) {
-  const { members, me, keywords } = useMentions();
+  const t = useT(chat);
+  const { mentionable, me, keywords } = useMentions();
   const [caret, setCaret] = useState<number | null>(null);
   const [active, setActive] = useState(0);
   // Escape closes the list until the `@…` it was shown for changes.
@@ -29,7 +32,7 @@ export function useMentionSuggestions(
   const key = at ? `${at.start}:${at.query}` : null;
   const suggestions =
     at && key !== dismissed
-      ? mentionSuggestions(at.query, members, { me, keywords })
+      ? mentionSuggestions(at.query, mentionable, { me, keywords })
       : [];
   const open = suggestions.length > 0;
   const current = Math.min(active, suggestions.length - 1);
@@ -90,7 +93,7 @@ export function useMentionSuggestions(
       id={listId}
       role="listbox"
       className="lr-mention-list"
-      aria-label="Erwähnen"
+      aria-label={t("mention.listLabel")}
     >
       {suggestions.map((suggestion, index) => (
         <li
@@ -112,9 +115,11 @@ export function useMentionSuggestions(
             <>
               <span>@{suggestion.kind}</span>
               <small>
-                {suggestion.kind === "everyone"
-                  ? "Alle Mitglieder"
-                  : "Alle, die gerade online sind"}
+                {t(
+                  suggestion.kind === "everyone"
+                    ? "mention.everyone"
+                    : "mention.here",
+                )}
               </small>
             </>
           )}

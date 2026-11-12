@@ -1,3 +1,4 @@
+import "./i18n/startup.ts";
 import "./theme/startup.ts";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
@@ -5,6 +6,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import { ensureSession, useSession } from "./auth/session.ts";
+import { followAccountLocale } from "./i18n/account.ts";
 import { queryClient } from "./queryClient.ts";
 import { router } from "./routes.tsx";
 import { ThemeController } from "./theme/ThemeController.tsx";
@@ -27,6 +29,9 @@ startPwa({
   user: () => useSession.getState().user?.id,
   navigate: (to) => router.navigate(to),
 });
+
+const stopLocale = followAccountLocale();
+if (import.meta.hot) import.meta.hot.dispose(stopLocale);
 
 // Kick off the session bootstrap in parallel with the first render; the
 // route guards await the same promise instead of starting a second request.

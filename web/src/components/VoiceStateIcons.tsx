@@ -1,6 +1,8 @@
 // Reserved-width mute/deafen slots so avatars and names never shift
 // when voice state flips (issue 12).
 
+import { useT } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 import { HeadsetOffIcon, MicOffIcon, SpeakerIcon } from "./Icons.tsx";
 import "../voice/room.css";
 
@@ -17,20 +19,21 @@ export function VoiceStateIcons({
   deafened: boolean;
   channelName?: string;
 }) {
+  const t = useT(voice);
   const micOff = muted || deafened;
   const title = !inVoice
     ? undefined
     : deafened
       ? channelName
-        ? `Taub in ${channelName}`
-        : "Taub"
+        ? t("stateIcons.deafenedIn", { channel: channelName })
+        : t("stateIcons.deafened")
       : micOff
         ? channelName
-          ? `Stumm in ${channelName}`
-          : "Stumm"
+          ? t("stateIcons.mutedIn", { channel: channelName })
+          : t("stateIcons.muted")
         : channelName
-          ? `In ${channelName}`
-          : "Im Sprachkanal";
+          ? t("stateIcons.inChannel", { channel: channelName })
+          : t("stateIcons.inVoice");
 
   return (
     <span

@@ -190,7 +190,10 @@ pub fn add_files(files: &mut Vec<OutgoingFile>, next: Vec<OutgoingFile>) -> Opti
         files.push(candidate);
     }
     for (reason, names) in over {
-        notes.push(format!("Nicht angehängt: {}. {reason}", names.join(", ")));
+        notes.push(gelabber_i18n::chat::composer_not_attached(
+            &names.join(", "),
+            &reason,
+        ));
     }
     (!notes.is_empty()).then(|| notes.join(" "))
 }
@@ -279,7 +282,12 @@ pub fn pasted_image(
         .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .ok()?;
     Some(OutgoingFile {
-        filename: format!("Bild-{}.png", now.format("%Y%m%d-%H%M%S")),
+        filename: format!(
+            "{}.png",
+            gelabber_i18n::chat::composer_pasted_image_name(
+                &now.format("%Y%m%d-%H%M%S").to_string()
+            )
+        ),
         content_type: "image/png".into(),
         data: std::sync::Arc::new(png),
     })

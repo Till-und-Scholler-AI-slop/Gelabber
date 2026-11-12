@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { translate } from "../i18n/catalog.ts";
+import { serverSettings } from "../i18n/catalogs/serverSettings.ts";
 import {
   ALL_PERMISSIONS,
   PERMISSIONS,
@@ -27,16 +29,43 @@ describe("permissions", () => {
       normalisePermissions(["go_live", "send_messages", "go_live"]),
     ).toEqual(["send_messages", "go_live"]);
     expect(normalisePermissions(ALL_PERMISSIONS)).toEqual(ALL_PERMISSIONS);
-    expect(ALL_PERMISSIONS).toHaveLength(8);
+    expect(ALL_PERMISSIONS).toHaveLength(9);
     expect(ALL_PERMISSIONS).toContain("manage_messages");
+  });
+
+  it("holds the nine flags in the Rust order, moderate_members second", () => {
+    expect(ALL_PERMISSIONS).toEqual([
+      "manage_server",
+      "moderate_members",
+      "manage_channels",
+      "manage_messages",
+      "mention_everyone",
+      "send_messages",
+      "send_files",
+      "join_voice",
+      "go_live",
+    ]);
+    const hint = (key: (typeof PERMISSIONS)[number]["key"]) =>
+      translate(serverSettings, `permission.${key}.hint`);
+    expect(translate(serverSettings, "permission.moderateMembers.label")).toBe(
+      "Mitglieder moderieren",
+    );
+    expect(hint("moderateMembers")).toBe(
+      "Mitglieder vom Server entfernen und sperren.",
+    );
+    expect(hint("manageServer")).toBe(
+      "Umbenennen, Rollen ändern, Einladungen.",
+    );
   });
 
   it("keeps the go_live id and calls it Live gehen", () => {
     const live = PERMISSIONS.find((p) => p.id === "go_live");
-    expect(live?.label).toBe("Live gehen");
-    expect(live?.hint).toContain("Sprachkanal");
-    expect(
-      PERMISSIONS.map((p) => `${p.label} ${p.hint}`).join(" "),
-    ).not.toMatch(/Go Live|Bildschirm teilen/);
+    expect(live?.key).toBe("goLive");
+    const text = (key: (typeof PERMISSIONS)[number]["key"]) =>
+      `${translate(serverSettings, `permission.${key}.label`)} ${translate(serverSettings, `permission.${key}.hint`)}`;
+    expect(text("goLive")).toMatch(/^Live gehen .*Sprachkanal/);
+    expect(PERMISSIONS.map((p) => text(p.key)).join(" ")).not.toMatch(
+      /Go Live|Bildschirm teilen/,
+    );
   });
 });

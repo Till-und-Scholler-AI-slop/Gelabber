@@ -1,5 +1,9 @@
 import { useId, useMemo, useState } from "react";
+import { useT } from "../i18n/catalog.ts";
+import { emoji as catalog } from "../i18n/catalogs/emoji.ts";
+import { useCurrentLocale } from "../i18n/locale.ts";
 import data from "../messages/emoji-data.json";
+import { useEmojiNames } from "./emojiNames.ts";
 import { useMissingEmoji } from "./emojiSupport.ts";
 
 const groups = [...new Set(data.emoji.map((entry) => entry.group))];
@@ -9,6 +13,22 @@ export default function EmojiPicker({
 }: {
   onSelect: (emoji: string) => void;
 }) {
+  const t = useT(catalog);
+  // English names once they are loaded; German until then.
+  const names = useEmojiNames(useCurrentLocale());
+  const entries = useMemo(
+    () =>
+      names
+        ? data.emoji.map((entry) => {
+            const [label, keywords] = names.emoji[entry.emoji] ?? [
+              entry.label,
+              entry.keywords,
+            ];
+            return { ...entry, label, keywords };
+          })
+        : data.emoji,
+    [names],
+  );
   const id = useId();
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState("");
@@ -16,26 +36,22 @@ export default function EmojiPicker({
   // Emoji newer than this device's emoji font would show as empty boxes.
   const missing = useMissingEmoji(allEmoji, data.version);
   const matches = useMemo(() => {
-    const terms = query
-      .trim()
-      .toLocaleLowerCase("de")
-      .split(/\s+/)
-      .filter(Boolean);
-    return data.emoji.filter(
+    const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    return entries.filter(
       (entry) =>
         !missing.has(entry.emoji) &&
         (!group || entry.group === group) &&
         terms.every((term) =>
           `${entry.emoji} ${entry.label} ${entry.keywords.join(" ")}`
-            .toLocaleLowerCase("de")
+            .toLocaleLowerCase()
             .includes(term),
         ),
     );
-  }, [query, group, missing]);
+  }, [entries, query, group, missing]);
   return (
     <div className="flex flex-col gap-3">
       <label htmlFor={`${id}-search`} className="text-sm font-medium">
-        Emoji suchen
+        {t("picker.search")}
       </label>
       <input
         id={`${id}-search`}
@@ -49,7 +65,7 @@ export default function EmojiPicker({
         className="rounded border border-neutral-300 p-2 dark:border-neutral-600"
       />
       <label htmlFor={`${id}-group`} className="text-sm font-medium">
-        Kategorie
+        {t("picker.group")}
       </label>
       <select
         id={`${id}-group`}
@@ -60,19 +76,19 @@ export default function EmojiPicker({
         }}
         className="rounded border border-neutral-300 p-2 dark:border-neutral-600"
       >
-        <option value="">Alle Kategorien</option>
-        {groups.map((label) => (
-          <option key={label} value={label}>
-            {label}
+        <option value="">{t("picker.allGroups")}</option>
+        {groups.map((value) => (
+          <option key={value} value={value}>
+            {names?.groups[value] ?? value}
           </option>
         ))}
       </select>
       <p role="status" className="text-xs text-neutral-500">
-        {matches.length} Emojis gefunden
+        {t("picker.found", { count: matches.length })}
       </p>
       <div
         className="grid max-h-[40dvh] grid-cols-5 gap-1 min-[380px]:grid-cols-6 overflow-y-auto sm:grid-cols-8"
-        aria-label="Emoji-Auswahl"
+        aria-label={t("picker.gridLabel")}
       >
         {matches.slice(0, limit).map((entry) => (
           <button
@@ -93,7 +109,7 @@ export default function EmojiPicker({
           onClick={() => setLimit(limit + 80)}
           className="rounded border px-3 py-2 text-sm"
         >
-          Weitere Emojis anzeigen
+          {t("picker.more")}
         </button>
       )}
       <a
@@ -102,7 +118,7 @@ export default function EmojiPicker({
         rel="noreferrer"
         className="text-xs text-neutral-500 underline"
       >
-        Unicode {data.version} / CLDR {data.cldr} – Lizenz
+        {t("picker.licence", { version: data.version, cldr: data.cldr })}
       </a>
     </div>
   );

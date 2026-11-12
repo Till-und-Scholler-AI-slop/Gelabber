@@ -1,10 +1,13 @@
 //! The emoji picker (components/EmojiPicker.tsx in a wide `Modal`):
 //! search, category, the 8-column grid of 80 at a time, "Weitere Emojis
-//! anzeigen". The data is web/src/messages/emoji-data.json.
+//! anzeigen". The data is web/src/messages/emoji-data.json; in English the
+//! names, search words and categories come from emoji-names.en.json
+//! (components/emojiNames.ts), German where it has no entry.
 
 use std::sync::OnceLock;
 
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, TextBuffer, Ui, Vec2, pos2, vec2};
+use gelabber_i18n::{Locale, emoji as texts};
 use serde_json::Value;
 
 use crate::text::{Block, TextStyle};
@@ -26,46 +29,70 @@ struct Data {
     entries: Vec<Entry>,
 }
 
+/// The picker's data in the interface's language. The entries and groups
+/// are in the same order in both, so a chosen group and the drawable
+/// check carry over a language switch.
 fn data() -> &'static Data {
-    static DATA: OnceLock<Data> = OnceLock::new();
-    DATA.get_or_init(|| {
-        let raw: Value =
-            serde_json::from_str(include_str!("../../../assets/emoji/emoji-data.json"))
-                .unwrap_or(Value::Null);
-        let mut groups: Vec<String> = Vec::new();
-        let mut entries = Vec::new();
-        for e in raw["emoji"].as_array().into_iter().flatten() {
-            let emoji = e["emoji"].as_str().unwrap_or_default().to_owned();
-            let label = e["label"].as_str().unwrap_or_default().to_owned();
-            let group_name = e["group"].as_str().unwrap_or_default().to_owned();
-            let group = match groups.iter().position(|g| *g == group_name) {
-                Some(i) => i,
-                None => {
-                    groups.push(group_name);
-                    groups.len() - 1
-                }
-            };
-            let keywords: Vec<&str> = e["keywords"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .collect();
-            let haystack = format!("{emoji} {label} {}", keywords.join(" ")).to_lowercase();
-            entries.push(Entry {
-                emoji,
-                haystack,
-                label,
-                group,
-            });
-        }
-        Data {
-            version: raw["version"].as_str().unwrap_or_default().to_owned(),
-            cldr: raw["cldr"].as_str().unwrap_or_default().to_owned(),
-            groups,
-            entries,
-        }
-    })
+    static GERMAN: OnceLock<Data> = OnceLock::new();
+    static ENGLISH: OnceLock<Data> = OnceLock::new();
+    match gelabber_i18n::get() {
+        Locale::De => GERMAN.get_or_init(|| load(&Value::Null)),
+        Locale::En => ENGLISH.get_or_init(|| {
+            let names: Value =
+                serde_json::from_str(include_str!("../../../assets/emoji/emoji-names.en.json"))
+                    .unwrap_or(Value::Null);
+            load(&names)
+        }),
+    }
+}
+
+/// `names`: emoji-names.en.json (`{groups: {de: en}, emoji: {e: [label,
+/// keywords]}}`), or null for German.
+fn load(names: &Value) -> Data {
+    let raw: Value = serde_json::from_str(include_str!("../../../assets/emoji/emoji-data.json"))
+        .unwrap_or(Value::Null);
+    let mut groups: Vec<String> = Vec::new();
+    let mut entries = Vec::new();
+    for e in raw["emoji"].as_array().into_iter().flatten() {
+        let emoji = e["emoji"].as_str().unwrap_or_default().to_owned();
+        let english = &names["emoji"][emoji.as_str()];
+        let (label, keywords) = match english.as_array() {
+            Some(pair) => (&pair[0], &pair[1]),
+            None => (&e["label"], &e["keywords"]),
+        };
+        let label = label.as_str().unwrap_or_default().to_owned();
+        let group_name = e["group"].as_str().unwrap_or_default();
+        let group_name = names["groups"][group_name]
+            .as_str()
+            .unwrap_or(group_name)
+            .to_owned();
+        let group = match groups.iter().position(|g| *g == group_name) {
+            Some(i) => i,
+            None => {
+                groups.push(group_name);
+                groups.len() - 1
+            }
+        };
+        let keywords: Vec<&str> = keywords
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let haystack = format!("{emoji} {label} {}", keywords.join(" ")).to_lowercase();
+        entries.push(Entry {
+            emoji,
+            haystack,
+            label,
+            group,
+        });
+    }
+    Data {
+        version: raw["version"].as_str().unwrap_or_default().to_owned(),
+        cldr: raw["cldr"].as_str().unwrap_or_default().to_owned(),
+        groups,
+        entries,
+    }
 }
 
 #[derive(Default)]
@@ -116,7 +143,7 @@ pub fn show(
                 let d = data();
                 let width = ui.available_width();
                 ui.spacing_mut().item_spacing.y = 12.0;
-                crate::text::label(ui, "Emoji suchen", LABEL, c.text);
+                crate::text::label(ui, texts::picker_search(), LABEL, c.text);
                 let input_id = egui::Id::unique(("gelabber-emoji-search", id));
                 let (r, _) = ui.allocate_exact_size(vec2(width, 39.0), Sense::hover());
                 let border = if theme.is_dark() { c.muted } else { c.border };
@@ -141,6 +168,10 @@ pub fn show(
                         .desired_width(r.width() - 2.0)
                         .layouter(&mut layouter)
                         .show(ui)
+                        .response
+                        .response
+                        // The label above names the field (`<label for>`).
+                        .accessible_name(texts::picker_search())
                 });
                 if ui.memory(|m| m.has_focus(input_id)) {
                     crate::widgets::focus_ring(ui.painter(), r, 4.0, &theme);
@@ -152,7 +183,7 @@ pub fn show(
                 if state.query != before {
                     state.limit = 80;
                 }
-                crate::text::label(ui, "Kategorie", LABEL, c.text);
+                crate::text::label(ui, texts::picker_group(), LABEL, c.text);
                 let (sel, _) = ui.allocate_exact_size(vec2(width, 37.0), Sense::hover());
                 let resp = ui.interact(
                     sel,
@@ -168,7 +199,7 @@ pub fn show(
                 );
                 let current = state
                     .group
-                    .map_or("Alle Kategorien", |g| d.groups[g].as_str());
+                    .map_or(texts::picker_all_groups(), |g| d.groups[g].as_str());
                 Block::single(ui, current, INPUT, c.text)
                     .paint(ui.painter(), pos2(sel.left() + 13.0, sel.top() + 8.0));
                 crate::icons::paint(
@@ -191,8 +222,8 @@ pub fn show(
                         .select_list()
                         .show(ctx, |ui| {
                             for option in &options {
-                                let label =
-                                    option.map_or("Alle Kategorien", |g| d.groups[g].as_str());
+                                let label = option
+                                    .map_or(texts::picker_all_groups(), |g| d.groups[g].as_str());
                                 if crate::widgets::menu_item(ui, None, label, false).clicked() {
                                     choose = Some(*option);
                                 }
@@ -229,7 +260,7 @@ pub fn show(
                     .collect();
                 crate::text::label(
                     ui,
-                    &format!("{} Emojis gefunden", matches.len()),
+                    &texts::picker_found(matches.len() as u64),
                     TextStyle::new(12.0, 400.0, 16.0 / 12.0),
                     c.muted,
                 );
@@ -282,7 +313,7 @@ pub fn show(
                 if matches.len() > state.limit {
                     let label = Block::single(
                         ui,
-                        "Weitere Emojis anzeigen",
+                        texts::picker_more(),
                         TextStyle::new(14.0, 400.0, 20.0 / 14.0),
                         c.text,
                     );
@@ -305,7 +336,7 @@ pub fn show(
                         state.limit += 80;
                     }
                 }
-                let note = format!("Unicode {} / CLDR {} – Lizenz", d.version, d.cldr);
+                let note = texts::picker_licence(&d.version, &d.cldr);
                 let block =
                     Block::single(ui, &note, TextStyle::new(12.0, 400.0, 16.0 / 12.0), c.muted);
                 let (r, resp) = ui
@@ -332,4 +363,31 @@ pub fn show(
         return Some(None);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use gelabber_i18n::{Locale, on_this_thread};
+
+    use super::data;
+
+    /// In English the names, search words and categories come from
+    /// emoji-names.en.json, in the same order as the German ones.
+    #[test]
+    fn english_names_and_search_words() {
+        let (de_groups, de_label) = {
+            let _german = on_this_thread(Locale::De);
+            let d = data();
+            (d.groups.clone(), d.entries[0].label.clone())
+        };
+        let _english = on_this_thread(Locale::En);
+        let d = data();
+        assert_eq!(de_groups[0], "Gesichter und Gefühle");
+        assert_eq!(d.groups[0], "Smileys & Emotion");
+        assert_eq!(d.groups.len(), de_groups.len());
+        assert_eq!(d.entries[0].emoji, "😀");
+        assert_eq!(de_label, "grinsendes Gesicht");
+        assert_eq!(d.entries[0].label, "grinning face");
+        assert!(d.entries[0].haystack.contains("happy"));
+    }
 }

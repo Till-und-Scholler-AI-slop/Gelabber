@@ -2,10 +2,10 @@
 # needs the native libwebrtc package (see native/README in desktop/README.md).
 [workspace]
 resolver = "3"
-members = ["core", "client", "call", "ui", "gelabber", "parity"]
+members = ["core", "client", "call", "ui", "gelabber", "parity", "i18n"]
 
 [workspace.package]
-version = "0.9.3"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.98.1"
 license = "MIT"

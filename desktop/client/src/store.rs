@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use gelabber_i18n::{chat, dms, servers, shell};
 use uuid::Uuid;
 
 use crate::gateway::GatewayStatus;
@@ -116,12 +117,12 @@ pub enum SendStage {
 }
 
 impl SendStage {
-    /// The start of the row's failure line: "{label} fehlgeschlagen.".
-    pub fn label(self) -> &'static str {
+    /// The start of the row's failure line: "{stage} fehlgeschlagen.".
+    pub fn failed(self) -> &'static str {
         match self {
-            Self::Presign => "Dateifreigabe",
-            Self::Upload => "Dateiübertragung",
-            Self::Bind => "Nachricht speichern",
+            Self::Presign => chat::send_presign_failed(),
+            Self::Upload => chat::send_upload_failed(),
+            Self::Bind => chat::send_bind_failed(),
         }
     }
 }
@@ -182,26 +183,26 @@ pub fn rejected_uploads(error: &ApiError) -> Option<Vec<(Option<usize>, String, 
 pub fn failure_text(op: &str) -> Option<&'static str> {
     let kind = op.split_once(':').map_or(op, |(kind, _)| kind);
     Some(match kind {
-        "server_update" => "Server nicht gespeichert.",
-        "delete_server" => "Server nicht gelöscht.",
-        "leave" => "Server nicht verlassen.",
-        "create_category" => "Kategorie nicht erstellt.",
-        "category" => "Kategorie nicht gespeichert.",
-        "delete_category" => "Kategorie nicht gelöscht.",
-        "create_channel" => "Kanal nicht erstellt.",
-        "channel" => "Kanal nicht gespeichert.",
-        "delete_channel" => "Kanal nicht gelöscht.",
-        "revoke" => "Einladung nicht widerrufen.",
-        "kick" => "Mitglied nicht entfernt.",
-        "ban" => "Mitglied nicht gesperrt.",
-        "unban" => "Mitglied nicht entsperrt.",
-        "edit" => "Änderung nicht gespeichert.",
-        "delete" => "Nachricht nicht gelöscht.",
-        "react" => "Reaktion nicht gespeichert.",
-        "dm" => "Unterhaltung nicht geöffnet.",
+        "server_update" => servers::error_server_not_saved(),
+        "delete_server" => servers::error_server_not_deleted(),
+        "leave" => servers::error_server_not_left(),
+        "create_category" => servers::error_category_not_created(),
+        "category" => servers::error_category_not_saved(),
+        "delete_category" => servers::error_category_not_deleted(),
+        "create_channel" => servers::error_channel_not_created(),
+        "channel" => servers::error_channel_not_saved(),
+        "delete_channel" => servers::error_channel_not_deleted(),
+        "revoke" => servers::error_invite_not_revoked(),
+        "kick" => servers::error_member_not_kicked(),
+        "ban" => servers::error_member_not_banned(),
+        "unban" => servers::error_member_not_unbanned(),
+        "edit" => chat::row_edit_failed(),
+        "delete" => chat::delete_failed(),
+        "react" => chat::reactions_not_saved(),
+        "dm" => dms::open_failed(),
         // A row menu's choices; the dialog shows its own failure.
-        "notify_menu" => "Nicht gespeichert.",
-        "read" | "read_all" => "Nicht als gelesen markiert.",
+        "notify_menu" => shell::row_menu_not_saved(),
+        "read" | "read_all" => shell::row_menu_not_marked_read(),
         _ => return None,
     })
 }
@@ -212,7 +213,7 @@ pub fn failure_text(op: &str) -> Option<&'static str> {
 pub fn gone_text(op: &str) -> Option<&'static str> {
     let kind = op.split_once(':').map_or(op, |(kind, _)| kind);
     // The message, its conversation or your access to it is gone.
-    (kind == "react").then_some("Die Nachricht gibt es nicht mehr.")
+    (kind == "react").then(chat::reactions_gone)
 }
 
 /// A file to attach; kept with the pending row so a retry can send it again.
@@ -349,9 +350,7 @@ impl ChannelMessages {
         // Nothing in it could be read: the cursor would not move and the
         // pane would ask for the same page again. The error row stops it.
         if page.messages.is_empty() && page.has_more {
-            self.error = Some(ApiError::Decode(
-                "keine lesbare Nachricht auf der älteren Seite".into(),
-            ));
+            self.error = Some(ApiError::Decode(shell::error_unreadable_page().into()));
             return;
         }
         self.has_more = page.has_more;
@@ -465,6 +464,27 @@ pub enum Notice {
         server: Uuid,
         message: Box<Message>,
     },
+    /// An operator blocked the server: like a kick it leaves the server's
+    /// view, but the server stays listed, marked.
+    Blocked {
+        server: Uuid,
+        text: String,
+    },
+    /// A request to join was accepted (`jn`): the server is in the list
+    /// now, and `text` names it.
+    Joined {
+        server: Uuid,
+        text: String,
+    },
+}
+
+/// A server's pending requests to join, as the last `jq` said.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct JoinRequestCount {
+    pub pending: i64,
+    /// Bumped by every `jq`, so a queue on screen reads itself again even
+    /// when the number stayed (one answered, one new).
+    pub changes: u64,
 }
 
 #[derive(Debug, Default)]
@@ -495,6 +515,10 @@ pub struct State {
     pub voice: HashMap<Uuid, HashMap<Uuid, VoiceOccupant>>,
     /// server → channel → users who are live, in the order they went live.
     pub live: HashMap<Uuid, HashMap<Uuid, Vec<Uuid>>>,
+    /// server → channel → watcher → the owners whose Live they watch there
+    /// (`sig t:"w"`). Per channel, as the web keeps it: the gateway sends
+    /// each room's set, and one person's seats can sit in two rooms.
+    pub watches: HashMap<Uuid, HashMap<Uuid, HashMap<Uuid, Vec<Uuid>>>>,
     pub voice_self: VoiceSelf,
     pub gateway: GatewayStatus,
     /// Why the gateway's upgrade is turned down (`HTTP 403`, `TLS: …`)
@@ -519,12 +543,28 @@ pub struct State {
     /// The newest Lives worth a notice, oldest first; each consumer keeps
     /// the last `seq` it handled.
     pub live_started: Vec<LiveStart>,
+    /// server → its pending requests to join, from `jq` (owner and
+    /// `moderate_members` only); absent until the first frame.
+    pub join_requests: HashMap<Uuid, JoinRequestCount>,
+    /// The account's signed-in devices (`load_devices`); `None` until read.
+    pub devices: Option<Vec<DeviceSession>>,
+    /// The account's data export (`load_export`); `None` until read.
+    pub export: Option<ExportStatus>,
+    /// The servers a refused deletion named (`409 owns_servers`).
+    pub owned_servers: Option<Vec<OwnedServer>>,
+    /// The account was deleted from here ("Dein Konto wurde gelöscht." on
+    /// the login page).
+    pub account_deleted: bool,
     /// When the server list and each server's detail were last fetched
     /// (or a background refetch began), for the stale refetch.
     pub(crate) servers_fetched: Option<Instant>,
     pub(crate) server_fetched: HashMap<Uuid, Instant>,
     /// Bumped by every account reset; answers started before are dropped.
     pub(crate) epoch: u64,
+    /// `/public-pages.json`: what the instance published (the legal links
+    /// under the sign-in card); `None` until it answered. Fixed per
+    /// instance, so it outlives a change of account.
+    pub public_pages: Option<PublicPages>,
 }
 
 impl State {
@@ -581,9 +621,11 @@ impl State {
     /// Clears all account data (sign-out, other account).
     pub fn reset_account(&mut self) {
         let mail = self.mail;
+        let public_pages = self.public_pages.take();
         let epoch = self.epoch + 1;
         *self = State {
             mail,
+            public_pages,
             epoch,
             ..State::default()
         };
@@ -714,13 +756,14 @@ impl State {
             (None, EventKind::D) => {
                 let user = event.i?;
                 let me = self.me().map(|u| u.id);
+                let kind = event.kind();
+                // This account's own deletion ends its sessions; nothing to
+                // leave.
+                if kind == Some("x") && Some(user) == me {
+                    return None;
+                }
                 if Some(user) == me {
-                    let banned = event
-                        .d
-                        .as_ref()
-                        .and_then(|d| d.get("k"))
-                        .and_then(|k| k.as_str())
-                        == Some("b");
+                    let banned = kind == Some("b");
                     return Some((event.s, banned));
                 }
                 if let Some(detail) = self.server_details.get_mut(&event.s) {
@@ -729,10 +772,56 @@ impl State {
                 if let Some(map) = self.presence.get_mut(&event.s) {
                     map.remove(&user);
                 }
+                if kind == Some("x") {
+                    self.drop_author_messages(event.s, user);
+                }
+            }
+            // Ownership moved: the list entry and the detail name the new
+            // owner at once; the caller's role follows with the refetch
+            // (`Client::on_gateway`).
+            (None, EventKind::E) if event.kind() == Some("o") => {
+                let owner = event
+                    .d
+                    .as_ref()
+                    .and_then(|d| d.get("owner_id"))
+                    .and_then(|o| o.as_str())
+                    .and_then(|o| Uuid::parse_str(o).ok());
+                if let Some(owner) = owner {
+                    if let Some(entry) = self.servers.iter_mut().find(|v| v.id == event.s) {
+                        entry.owner_id = owner;
+                    }
+                    if let Some(detail) = self.server_details.get_mut(&event.s) {
+                        detail.server.owner_id = owner;
+                    }
+                }
             }
             _ => {}
         }
         None
+    }
+
+    /// A member's account was deleted (`k: "x"`): their messages leave the
+    /// loaded histories of the server's channels, as deleted ones do; the
+    /// server removes them without an event per message.
+    pub fn drop_author_messages(&mut self, server: Uuid, author: Uuid) {
+        let Some(detail) = self.server_details.get(&server) else {
+            return;
+        };
+        let channels: Vec<Uuid> = detail.channels.iter().map(|c| c.id).collect();
+        for channel in channels {
+            let Some(history) = self.channels.get_mut(&channel) else {
+                continue;
+            };
+            let ids: Vec<Uuid> = history
+                .messages
+                .iter()
+                .filter(|m| m.author.id == author)
+                .map(|m| m.id)
+                .collect();
+            for id in ids {
+                history.remove(id);
+            }
+        }
     }
 
     /// Kicked, banned, left or deleted: drop everything of that server.
@@ -750,6 +839,7 @@ impl State {
         self.presence.remove(&server);
         self.voice.remove(&server);
         self.live.remove(&server);
+        self.watches.remove(&server);
         if self.view.server == Some(server) {
             self.view = View::default();
         }
@@ -759,6 +849,35 @@ impl State {
         if self.voice_self.server == Some(server) {
             self.voice_self = VoiceSelf::default();
         }
+        self.join_requests.remove(&server);
+    }
+
+    /// An operator blocked the server (`markServerBlocked`): everything of
+    /// it goes as with [`Self::forget_server`], but it stays in the list,
+    /// marked, so its tile opens the blocked notice. `false` when the list
+    /// already said so: nothing is news then.
+    pub fn mark_server_blocked(&mut self, server: Uuid) -> bool {
+        let index = self.servers.iter().position(|s| s.id == server);
+        if index.is_some_and(|i| self.servers[i].blocked) {
+            return false;
+        }
+        let listed = index.map(|i| {
+            let mut entry = self.servers[i].clone();
+            entry.blocked = true;
+            (i, entry)
+        });
+        self.forget_server(server);
+        if let Some((i, entry)) = listed {
+            self.servers.insert(i, entry);
+        }
+        true
+    }
+
+    /// `jq`: the number of a server's pending requests to join changed.
+    pub fn set_join_requests(&mut self, server: Uuid, pending: i64) {
+        let count = self.join_requests.entry(server).or_default();
+        count.pending = pending;
+        count.changes += 1;
     }
 
     // ----------------------------------------------------------- presence
@@ -884,7 +1003,10 @@ impl State {
         let names: Vec<String> = self
             .typers(channel, now)
             .into_iter()
-            .map(|u| self.name_of(channel, u).unwrap_or_else(|| "Jemand".into()))
+            .map(|u| {
+                self.name_of(channel, u)
+                    .unwrap_or_else(|| shell::someone().into())
+            })
             .collect();
         typing_text(&names)
     }
@@ -915,6 +1037,15 @@ impl State {
                 live.entry(entry.c).or_default().push(entry.u);
             }
             self.live.insert(server, live);
+            // The snapshot carries no watches: keep those of people still
+            // in a call.
+            if let Some(watches) = self.watches.get_mut(&server) {
+                let roster = &self.voice[&server];
+                for people in watches.values_mut() {
+                    people.retain(|u, _| roster.contains_key(u));
+                }
+                watches.retain(|_, people| !people.is_empty());
+            }
             return;
         }
         let (Some(channel), Some(user)) = (sig.c, sig.u) else {
@@ -934,6 +1065,16 @@ impl State {
                 );
             }
             SigKind::L => {
+                // Nobody watches from a channel they left; the watches of a
+                // seat in another channel stay, set by that room's `w`.
+                if let Some(watches) = self.watches.get_mut(&server)
+                    && let Some(people) = watches.get_mut(&channel)
+                {
+                    people.remove(&user);
+                    if people.is_empty() {
+                        watches.remove(&channel);
+                    }
+                }
                 let shown = roster.get(&user).map(|o| o.channel_id);
                 let live = self.live.entry(server).or_default();
                 if let Some(users) = live.get_mut(&channel) {
@@ -978,8 +1119,40 @@ impl State {
                     users.retain(|u| *u != user);
                 }
             }
+            SigKind::W => {
+                // The full set of the room: it replaces what was there.
+                self.watches
+                    .entry(server)
+                    .or_default()
+                    .entry(channel)
+                    .or_default()
+                    .insert(user, sig.w.clone().unwrap_or_default());
+            }
             _ => {}
         }
+    }
+
+    /// The people in `channel` other than `owner` who watch `owner`'s Live,
+    /// and the others there, each sorted by name (web `watchersOf`). Only
+    /// the gateway's sets: the own watch is the call's to add.
+    pub fn watchers_of(&self, server: Uuid, channel: Uuid, owner: Uuid) -> (Vec<Uuid>, Vec<Uuid>) {
+        let watches = self.watches.get(&server).and_then(|w| w.get(&channel));
+        let mut watching = Vec::new();
+        let mut not_watching = Vec::new();
+        for (user, _) in self.voice_occupants(server, channel) {
+            if user == owner {
+                continue;
+            }
+            let watches_owner = watches
+                .and_then(|w| w.get(&user))
+                .is_some_and(|owners| owners.contains(&owner));
+            if watches_owner {
+                watching.push(user);
+            } else {
+                not_watching.push(user);
+            }
+        }
+        (watching, not_watching)
     }
 
     /// Who sits in a voice channel, sorted by name like the sidebar.
@@ -1207,13 +1380,13 @@ impl State {
     }
 }
 
-/// `"{name} tippt…"` and friends, verbatim from web/src/ws/live.ts.
+/// `"{name} tippt…"` and friends, as web/src/ws/live.ts.
 pub fn typing_text(names: &[String]) -> String {
     match names {
         [] => String::new(),
-        [one] => format!("{one} tippt…"),
-        [a, b] => format!("{a} und {b} tippen…"),
-        [a, b, rest @ ..] => format!("{a}, {b} und {} weitere tippen…", rest.len()),
+        [one] => shell::typing_one(one),
+        [a, b] => shell::typing_two(a, b),
+        [a, b, rest @ ..] => shell::typing_more(a, b, rest.len() as u64),
     }
 }
 
@@ -1458,6 +1631,47 @@ mod tests {
         assert_eq!(s.epoch, epoch + 1);
     }
 
+    /// A blocked server stays listed, marked, without anything else of it;
+    /// a second block is no news.
+    #[test]
+    fn a_blocked_server_stays_listed_and_marked() {
+        let mut s = State::default();
+        let server = |n: u128, name: &str| -> Server {
+            serde_json::from_value(serde_json::json!({
+                "id": id(n), "name": name, "owner_id": id(9), "icon_url": null,
+                "created_at": "2026-10-01T00:00:00Z", "role": "member",
+                "permissions": [], "member_permissions": [],
+            }))
+            .unwrap()
+        };
+        s.servers = vec![server(1, "Wohnzimmer"), server(2, "Spieleabend")];
+        let blocked = id(1);
+        s.view = View {
+            server: Some(blocked),
+            channel: None,
+        };
+        s.last_server = Some(blocked);
+        s.voice_self.server = Some(blocked);
+        s.voice.insert(blocked, HashMap::new());
+        assert!(s.mark_server_blocked(blocked));
+        let names: Vec<&str> = s.servers.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, ["Wohnzimmer", "Spieleabend"]);
+        assert!(s.servers[0].blocked && !s.servers[1].blocked);
+        assert_eq!(s.view, View::default());
+        assert_eq!(s.last_server, None);
+        assert_eq!(s.voice_self, VoiceSelf::default());
+        assert!(!s.voice.contains_key(&blocked));
+        assert!(
+            !s.desired_topics()
+                .iter()
+                .any(|t| t.key() == Topic::server(blocked).key())
+        );
+        assert!(!s.mark_server_blocked(blocked));
+        // Not listed (yet): still news.
+        assert!(s.mark_server_blocked(id(3)));
+        assert_eq!(s.servers.len(), 2);
+    }
+
     fn api(status: u16, code: &str, fields: serde_json::Value) -> ApiError {
         ApiError::Api {
             status,
@@ -1489,7 +1703,10 @@ mod tests {
         // Before the bind nothing can be saved yet.
         assert!(!send_uncertain(SendStage::Upload, &lost));
         assert!(!send_uncertain(SendStage::Presign, &lost));
-        assert_eq!(SendStage::Bind.label(), "Nachricht speichern");
+        assert_eq!(
+            SendStage::Bind.failed(),
+            "Nachricht speichern fehlgeschlagen."
+        );
 
         let mut p = PendingMessage::new(id(100), "x".into(), chrono::Utc::now());
         p.files = vec![
@@ -1646,6 +1863,7 @@ mod tests {
             d: None,
             snap: None,
             replay,
+            w: None,
         };
         let at = chrono::Utc::now();
         let roster = SigFrame {
@@ -1732,6 +1950,24 @@ mod tests {
     }
 
     #[test]
+    fn typing_text_in_english() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(typing_text(&n(&["Lena"])), "Lena is typing…");
+        assert_eq!(typing_text(&n(&["A", "B"])), "A and B are typing…");
+        assert_eq!(
+            typing_text(&n(&["A", "B", "C"])),
+            "A, B and 1 other are typing…"
+        );
+        assert_eq!(
+            typing_text(&n(&["A", "B", "C", "D"])),
+            "A, B and 2 others are typing…"
+        );
+        assert_eq!(failure_text("kick:1"), Some("Member not removed."));
+        assert_eq!(SendStage::Upload.failed(), "File upload failed.");
+    }
+
+    #[test]
     fn presence_snapshot_and_updates() {
         let mut s = State::default();
         let snap = [
@@ -1768,6 +2004,7 @@ mod tests {
             d: None,
             snap: None,
             replay: false,
+            w: None,
         };
         s.apply_sig(&SigFrame {
             snap: Some(vec![VoiceEntry {
@@ -1797,6 +2034,75 @@ mod tests {
         assert_eq!(s.voice_occupants(srv, b).len(), 1);
         s.apply_sig(&sig(SigKind::L, Some(b)));
         assert!(s.voice_occupants(srv, b).is_empty());
+    }
+
+    #[test]
+    fn watches_follow_sig_and_split_the_room() {
+        let mut s = State::default();
+        let (srv, room, other) = (id(1), id(2), id(3));
+        let (owner, ada, bea, cid) = (id(10), id(11), id(12), id(13));
+        let sig = |t, u: Uuid, c: Uuid| SigFrame {
+            t,
+            s: srv,
+            c: Some(c),
+            u: Some(u),
+            k: None,
+            on: None,
+            m: None,
+            d: None,
+            snap: None,
+            replay: false,
+            w: None,
+        };
+        let watch = |u: Uuid, c: Uuid, owners: Vec<Uuid>| SigFrame {
+            w: Some(owners),
+            ..sig(SigKind::W, u, c)
+        };
+        for u in [owner, ada, bea, cid] {
+            s.apply_sig(&sig(SigKind::J, u, room));
+        }
+        assert_eq!(
+            s.watchers_of(srv, room, owner),
+            (vec![], vec![ada, bea, cid])
+        );
+        s.apply_sig(&watch(ada, room, vec![owner]));
+        s.apply_sig(&watch(bea, room, vec![cid, owner]));
+        assert_eq!(s.watchers_of(srv, room, owner), (vec![ada, bea], vec![cid]));
+        // The owner is never in either list.
+        assert_eq!(s.watchers_of(srv, room, cid), (vec![bea], vec![owner, ada]));
+        // Each frame is the full set.
+        s.apply_sig(&watch(bea, room, vec![]));
+        assert_eq!(s.watchers_of(srv, room, owner).0, vec![ada]);
+        // A frame without the set reads as watching nothing.
+        s.apply_sig(&sig(SigKind::W, ada, room));
+        assert!(s.watchers_of(srv, room, owner).0.is_empty());
+        s.apply_sig(&watch(ada, room, vec![owner]));
+        s.apply_sig(&watch(bea, room, vec![owner]));
+        // A leave of another room keeps the watches here.
+        s.apply_sig(&sig(SigKind::L, ada, other));
+        assert_eq!(s.watchers_of(srv, room, owner).0, vec![ada, bea]);
+        s.apply_sig(&sig(SigKind::L, ada, room));
+        assert_eq!(s.watchers_of(srv, room, owner), (vec![bea], vec![cid]));
+        assert!(!s.watches[&srv][&room].contains_key(&ada));
+        // A snapshot keeps the watches of those still in a call.
+        let entry = |u| VoiceEntry {
+            u,
+            c: room,
+            m: false,
+            d: false,
+            s: u == owner,
+        };
+        s.apply_sig(&watch(cid, room, vec![owner]));
+        s.apply_sig(&SigFrame {
+            snap: Some(vec![entry(owner), entry(bea)]),
+            c: None,
+            u: None,
+            ..sig(SigKind::R, owner, room)
+        });
+        assert_eq!(s.watchers_of(srv, room, owner), (vec![bea], vec![]));
+        assert!(!s.watches[&srv][&room].contains_key(&cid));
+        s.forget_server(srv);
+        assert!(s.watches.is_empty());
     }
 
     #[test]
@@ -1881,5 +2187,130 @@ mod tests {
         let mut names = vec!["Zoe", "ärger", "Anna", "bob"];
         names.sort_by_cached_key(|n| collation_key(n));
         assert_eq!(names, vec!["Anna", "ärger", "bob", "Zoe"]);
+    }
+
+    /// A state with Lena signed in (id 5) and one loaded server (id 1,
+    /// owner id 9) with a text channel (100), Jonas (id 1) and Kai (id 3)
+    /// as members, and a history of both.
+    fn workspace() -> State {
+        let mut s = State::default();
+        let mut me: User = serde_json::from_str(include_str!("../tests/fixtures/me.json")).unwrap();
+        me.id = id(5);
+        s.session = Session::Authenticated(Box::new(me));
+        let member = |n: u128, name: &str| {
+            serde_json::json!({"user_id": id(n), "name": name, "avatar_url": null,
+                "joined_at": "2026-10-01T00:00:00Z", "status_text": null,
+                "accent_color": null, "avatar_decoration": null, "role": "member"})
+        };
+        let detail: ServerDetail = serde_json::from_value(serde_json::json!({
+            "id": id(1), "name": "Wohnzimmer", "owner_id": id(9), "icon_url": null,
+            "created_at": "2026-10-01T00:00:00Z", "role": "member",
+            "permissions": [], "member_permissions": [],
+            "categories": [],
+            "channels": [{"id": id(100), "server_id": id(1), "category_id": null,
+                "name": "allgemein", "kind": "text", "created_at": "2026-10-01T00:00:00Z"}],
+            "members": [member(1, "Jonas"), member(3, "Kai"), member(5, "Lena")],
+        }))
+        .unwrap();
+        s.servers.push(detail.server.clone());
+        s.server_details.insert(id(1), detail);
+        let history = s.channel_mut(id(100));
+        history.loaded = true;
+        history.upsert(message(1, 10, 1));
+        let mut kai = message(2, 20, 1);
+        kai.author.id = id(3);
+        history.upsert(kai);
+        let mut reply = message(3, 30, 1);
+        reply.reply = Some(Reply {
+            id: id(1),
+            deleted: false,
+            author: None,
+            excerpt: Some("m1".into()),
+            has_attachment: false,
+            has_gif: false,
+            system: None,
+        });
+        reply.author.id = id(3);
+        history.upsert(reply);
+        s
+    }
+
+    fn server_event(t: EventKind, user: Option<Uuid>, d: serde_json::Value) -> EventFrame {
+        EventFrame {
+            t,
+            s: id(1),
+            c: None,
+            n: 1,
+            ep: None,
+            i: user,
+            d: Some(d),
+            r: None,
+        }
+    }
+
+    /// `k: "x"` (`applyAccountDeleted`): the member leaves the list and
+    /// their messages leave the histories; replies to them read as deleted.
+    #[test]
+    fn a_deleted_account_takes_its_messages_along() {
+        let mut s = workspace();
+        s.apply_presence(id(1), Some(id(1)), Some(PresenceStatus::Online), None);
+        let gone = s.apply_event(&server_event(
+            EventKind::D,
+            Some(id(1)),
+            serde_json::json!({"k": "x"}),
+        ));
+        assert_eq!(gone, None);
+        let members: Vec<Uuid> = s.server_details[&id(1)]
+            .members
+            .iter()
+            .map(|m| m.user_id)
+            .collect();
+        assert_eq!(members, [id(3), id(5)]);
+        assert!(!s.presence[&id(1)].contains_key(&id(1)));
+        let history = &s.channels[&id(100)];
+        let ids: Vec<Uuid> = history.messages.iter().map(|m| m.id).collect();
+        assert_eq!(ids, [id(2), id(3)]);
+        assert!(history.get(id(3)).unwrap().reply.as_ref().unwrap().deleted);
+        // A kick leaves the messages.
+        s.apply_event(&server_event(
+            EventKind::D,
+            Some(id(3)),
+            serde_json::json!({"k": "k"}),
+        ));
+        assert_eq!(s.channels[&id(100)].messages.len(), 2);
+    }
+
+    /// The own deletion is no removal: the session ends anyway.
+    #[test]
+    fn the_own_deleted_account_leaves_nothing() {
+        let mut s = workspace();
+        let me = server_event(EventKind::D, Some(id(5)), serde_json::json!({"k": "x"}));
+        assert_eq!(s.apply_event(&me), None);
+        assert_eq!(s.server_details[&id(1)].members.len(), 3);
+        // A ban of the own account still is one.
+        let banned = server_event(EventKind::D, Some(id(5)), serde_json::json!({"k": "b"}));
+        assert_eq!(s.apply_event(&banned), Some((id(1), true)));
+    }
+
+    /// `k: "o"`: the list entry and the detail name the new owner.
+    #[test]
+    fn an_ownership_move_names_the_new_owner() {
+        let mut s = workspace();
+        let moved = server_event(
+            EventKind::E,
+            None,
+            serde_json::json!({"k": "o", "owner_id": id(5)}),
+        );
+        assert_eq!(moved.kind(), Some("o"));
+        assert_eq!(s.apply_event(&moved), None);
+        assert_eq!(s.servers[0].owner_id, id(5));
+        assert_eq!(s.server_details[&id(1)].server.owner_id, id(5));
+        // Without a readable owner nothing changes.
+        s.apply_event(&server_event(
+            EventKind::E,
+            None,
+            serde_json::json!({"k": "o"}),
+        ));
+        assert_eq!(s.servers[0].owner_id, id(5));
     }
 }

@@ -195,7 +195,7 @@ impl<'a> Modal<'a> {
             // Last in the Tab order, as it is last in the DOM; focused
             // first only when the dialog asked for nothing else.
             let close_button = ui.add(
-                IconButton::new(Icon::Close, "Schließen")
+                IconButton::new(Icon::Close, gelabber_i18n::common::close())
                     .icon_size(18.0)
                     .at(close_rect),
             );
@@ -208,7 +208,7 @@ impl<'a> Modal<'a> {
             let measured = bottom + 1.0 - card.top();
             if (measured - last_height).abs() > 0.5 {
                 ctx.data_mut(|d| d.insert_temp(height_id, measured));
-                ctx.request_discard("modal height");
+                ctx.request_discard("modal height"); // i18n-ok
             }
         });
         // Esc or "Schließen" with unsaved input (a backdrop click does not
@@ -221,9 +221,9 @@ impl<'a> Modal<'a> {
         if asking
             && let Some(discard) = crate::screens::shell::overlays::confirm::dialog(
                 ctx,
-                "Änderungen verwerfen?",
-                Some("Deine Eingaben gehen verloren."),
-                "Verwerfen",
+                gelabber_i18n::chat::discard_title(),
+                Some(gelabber_i18n::chat::discard_message()),
+                gelabber_i18n::chat::discard_confirm(),
                 false,
                 false,
             )

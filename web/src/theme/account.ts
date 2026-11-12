@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { api, ApiError } from "../api/client.ts";
+import { translate } from "../i18n/catalog.ts";
+import { themes } from "../i18n/catalogs/themes.ts";
 import { BUILTIN_IDS } from "./presets.ts";
 import {
   isThemeDocument,
@@ -104,7 +106,7 @@ export function bindThemeAccount(owner: string | null): void {
     doc,
     pending,
     status: pending ? "error" : "loading",
-    error: pending ? "Noch nicht synchronisiert." : "",
+    error: pending ? translate(themes, "error.notSynced") : "",
   });
   if (!owner && typeof document !== "undefined") {
     try {
@@ -119,7 +121,7 @@ function applyOperation(doc: ThemeDocument, op: Operation): ThemeDocument {
   if (op.kind === "save") {
     next.customThemes = next.customThemes.filter((t) => t.id !== op.theme.id);
     if (next.customThemes.length >= MAX_THEMES)
-      throw new Error("Du kannst höchstens 50 eigene Themes speichern.");
+      throw new Error(translate(themes, "error.tooMany"));
     next.customThemes.push(op.theme);
     next.active = op.theme.id;
   } else if (op.kind === "delete") {
@@ -127,7 +129,7 @@ function applyOperation(doc: ThemeDocument, op: Operation): ThemeDocument {
     if (next.active === op.id) next.active = "dark";
   } else next = { ...next, active: op.id };
   if (!isThemeDocument(next, BUILTIN_IDS))
-    throw new Error("Das ausgewählte Theme ist nicht mehr verfügbar.");
+    throw new Error(translate(themes, "error.unavailable"));
   return next;
 }
 export async function syncThemes(): Promise<void> {
@@ -150,7 +152,7 @@ export async function syncThemes(): Promise<void> {
     )
       return;
     if (!isThemeDocument(remote, BUILTIN_IDS))
-      throw new Error("Unbekanntes Theme-Format vom Server.");
+      throw new Error(translate(themes, "error.serverFormat"));
     if (remote.revision === 0) {
       // Import the old device preference only for an account without theme settings.
       useAccountThemes.setState({
@@ -166,7 +168,7 @@ export async function syncThemes(): Promise<void> {
     if (stamp === generation && request === readId)
       useAccountThemes.setState({
         status: "error",
-        error: "Themes konnten nicht geladen werden. Bitte erneut versuchen.",
+        error: translate(themes, "error.loadFailed"),
       });
   }
 }
@@ -196,7 +198,7 @@ async function change(op: Operation, importing: boolean): Promise<boolean> {
       error:
         error instanceof Error
           ? error.message
-          : "Theme konnte nicht gespeichert werden.",
+          : translate(themes, "error.saveFailed"),
     });
     return false;
   }
@@ -216,7 +218,7 @@ async function sendPending(refresh: boolean, importing = false): Promise<void> {
       const remote = await api<ThemeDocument>("/me/themes");
       if (stamp !== generation) return;
       if (!isThemeDocument(remote, BUILTIN_IDS))
-        throw new Error("Unbekanntes Theme-Format.");
+        throw new Error(translate(themes, "error.unknownFormat"));
       next = applyOperation(remote, s.pending);
     }
     const saved = await api<ThemeDocument>("/me/themes", {
@@ -225,7 +227,7 @@ async function sendPending(refresh: boolean, importing = false): Promise<void> {
     });
     if (stamp !== generation) return;
     if (!isThemeDocument(saved, BUILTIN_IDS))
-      throw new Error("Unbekanntes Theme-Format.");
+      throw new Error(translate(themes, "error.unknownFormat"));
     useAccountThemes.setState({
       doc: saved,
       pending: null,
@@ -244,8 +246,8 @@ async function sendPending(refresh: boolean, importing = false): Promise<void> {
       useAccountThemes.setState({
         status: conflict ? "conflict" : "error",
         error: conflict
-          ? "Auf einem anderen Gerät geändert. Deine Änderung bleibt erhalten. Erneut anwenden übernimmt sie auf den aktuellen Stand."
-          : "Noch nicht synchronisiert. Deine Änderung ist hier gespeichert.",
+          ? translate(themes, "error.conflict")
+          : translate(themes, "error.offline"),
       });
     cache();
   } finally {

@@ -10,6 +10,7 @@ use sqlx::PgPool;
 use tracing::warn;
 use uuid::Uuid;
 
+use super::device::{Device, DeviceClient};
 use super::user::{self, User};
 use crate::cookies::{self, SESSION_COOKIE};
 use crate::error::ApiError;
@@ -18,25 +19,38 @@ use crate::token;
 
 /// Creates a session row and returns the raw cookie token. Only the hash is
 /// stored; the raw value exists exactly once, in the `Set-Cookie` header.
-pub async fn create(db: &PgPool, user_id: Uuid, ttl: Duration) -> Result<String, ApiError> {
+/// `device` is the client that receives the cookie (`auth::device`).
+pub async fn create(
+    db: &PgPool,
+    user_id: Uuid,
+    ttl: Duration,
+    device: Device,
+) -> Result<String, ApiError> {
     let raw = token::generate();
     let expires_at = Utc::now()
         + chrono::Duration::from_std(ttl)
             .map_err(|err| ApiError::Internal(format!("session ttl out of range: {err}")))?;
-    sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
-        .bind(token::hash(&raw))
-        .bind(user_id)
-        .bind(expires_at)
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO sessions (token_hash, user_id, expires_at, device_client, device_os) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(token::hash(&raw))
+    .bind(user_id)
+    .bind(expires_at)
+    .bind(device.client)
+    .bind(device.os)
+    .execute(db)
+    .await?;
     Ok(raw)
 }
 
 const SESSION_ROW: &str = "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, \
          u.pronouns, u.status_text, u.accent_color, u.banner_color, u.banner_url, \
-         u.avatar_decoration, s.created_at AS session_created_at, s.expires_at \
+         u.avatar_decoration, u.locale, s.created_at AS session_created_at, s.expires_at, \
+         s.id AS session_id, s.device_client \
      FROM sessions s JOIN users u ON u.id = s.user_id \
-     WHERE s.token_hash = $1 AND s.expires_at > now()";
+     WHERE s.token_hash = $1 AND s.expires_at > now() AND u.disabled_at IS NULL \
+         AND u.deleted_at IS NULL";
 
 #[derive(sqlx::FromRow)]
 struct SessionRow {
@@ -44,6 +58,8 @@ struct SessionRow {
     user: User,
     session_created_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
+    session_id: Uuid,
+    device_client: DeviceClient,
 }
 
 async fn row_of<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
@@ -57,8 +73,9 @@ async fn row_of<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
 }
 
 /// Resolves a raw cookie token to its user. Expired rows are treated as
-/// absent; the next sign-in sweeps them (`revoke`). Read-only: the request
-/// extractors renew the session on top ([`touch`]).
+/// absent; the next sign-in sweeps them (`revoke`). So is any session of a
+/// disabled account (#517), whose rows disabling removes. Read-only: the
+/// request extractors renew the session on top ([`touch`]).
 pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     raw: &str,
@@ -110,11 +127,16 @@ pub fn needs_renewal(
 /// revoked meanwhile. Returns the expiry the row has afterwards, or `None`
 /// when it is gone. The cookie keeps its `Max-Age` of the absolute TTL; the
 /// row alone decides whether the session is still alive.
+///
+/// The same write moves `last_used_at`, so "last active" is accurate to one
+/// renewal step. A row still on the `unknown` device (issued before devices
+/// were recorded) takes `device`, the one of the request that renews it.
 pub async fn touch(
     state: &AppState,
     hash: &[u8],
     created_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
+    device: Option<Device>,
 ) -> Result<Option<DateTime<Utc>>, ApiError> {
     if !needs_renewal(
         created_at,
@@ -130,21 +152,38 @@ pub async fn touch(
         state.session_idle,
         state.session_ttl,
     );
+    // Both CASEs read the row as it was, so the client guards the OS too.
     Ok(sqlx::query_scalar(
-        "UPDATE sessions SET expires_at = GREATEST(expires_at, $2) \
+        "UPDATE sessions SET expires_at = GREATEST(expires_at, $2), last_used_at = now(), \
+             device_client = CASE WHEN device_client = 'unknown' AND $3::text IS NOT NULL \
+                 THEN $3 ELSE device_client END, \
+             device_os = CASE WHEN device_client = 'unknown' AND $3::text IS NOT NULL \
+                 THEN $4 ELSE device_os END \
          WHERE token_hash = $1 AND expires_at > now() RETURNING expires_at",
     )
     .bind(hash)
     .bind(target)
+    .bind(device.map(|device| device.client))
+    .bind(device.map(|device| device.os))
     .fetch_optional(&state.db)
     .await?)
 }
 
 /// [`touch`] for the request extractors: a failed renewal must not fail a
 /// request the session already authorized. The session then simply keeps
-/// its current expiry until the next use.
-async fn renew(state: &AppState, session: &CurrentSession) -> DateTime<Utc> {
-    match touch(state, &session.hash, session.created_at, session.expires_at).await {
+/// its current expiry until the next use. `device` is the request's; only a
+/// row whose device is still unknown takes it.
+async fn renew(state: &AppState, session: &CurrentSession, device: Device) -> DateTime<Utc> {
+    let fill = (session.device_client == DeviceClient::Unknown).then_some(device);
+    match touch(
+        state,
+        &session.hash,
+        session.created_at,
+        session.expires_at,
+        fill,
+    )
+    .await
+    {
         Ok(Some(expires_at)) => expires_at,
         Ok(None) => session.expires_at,
         Err(err) => {
@@ -235,6 +274,10 @@ pub struct CurrentSession {
     pub created_at: DateTime<Utc>,
     /// The row's expiry after this request renewed it.
     pub expires_at: DateTime<Utc>,
+    /// The public id clients address the session by (`/api/auth/sessions`).
+    pub id: Uuid,
+    /// As stored; `unknown` for a row issued before devices were recorded.
+    pub device_client: DeviceClient,
 }
 
 impl CurrentSession {
@@ -276,6 +319,8 @@ pub async fn lookup(db: &PgPool, raw: &str) -> Result<Option<CurrentSession>, Ap
         hash,
         created_at: row.session_created_at,
         expires_at: row.expires_at,
+        id: row.session_id,
+        device_client: row.device_client,
     }))
 }
 
@@ -306,7 +351,7 @@ async fn session_of(
     let Some(mut session) = session else {
         return Ok(None);
     };
-    session.expires_at = renew(state, &session).await;
+    session.expires_at = renew(state, &session, Device::from_headers(&parts.headers)).await;
     if from_gate {
         parts.extensions.insert(Resolved(Some(session.clone())));
     }

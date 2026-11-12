@@ -4,8 +4,10 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
 use common::Client;
 
@@ -103,7 +105,7 @@ async fn creating_a_server_makes_the_caller_owner_with_a_chat_and_a_voice_room(p
     let permissions = server["permissions"].as_array().unwrap();
     assert_eq!(
         permissions.len(),
-        8,
+        9,
         "owner holds every flag: {permissions:?}"
     );
     assert_eq!(
@@ -704,7 +706,7 @@ async fn member_permission_flags_are_enforced_and_editable(pool: PgPool) {
         "canonical order, independent of input order"
     );
     assert_eq!(res.body["role"], "owner");
-    assert_eq!(res.body["permissions"].as_array().unwrap().len(), 8);
+    assert_eq!(res.body["permissions"].as_array().unwrap().len(), 9);
 
     let res = member
         .send(
@@ -742,6 +744,20 @@ async fn member_permission_flags_are_enforced_and_editable(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(res.body["fields"]["member_permissions"], "invalid");
+
+    // The v0.10 flag is a member flag like the others.
+    let res = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{id}"),
+            Some(json!({ "member_permissions": ["send_messages", "moderate_members"] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(
+        res.body["member_permissions"],
+        json!(["moderate_members", "send_messages"])
+    );
 
     // Empty set is allowed (read-only members); rename in the same patch.
     let res = owner
@@ -850,4 +866,359 @@ async fn servers_are_listed_in_join_order(pool: PgPool) {
         .collect();
     assert_eq!(ids, [&first["id"], &second["id"], &theirs["id"]]);
     assert_eq!(list.body[2]["role"], "member");
+}
+
+/// Issue #515: a new server's first channels are named in its creator's
+/// language; members never see anyone's language.
+#[sqlx::test]
+async fn a_new_server_is_named_in_the_creator_language(pool: PgPool) {
+    let (mut owner, _) = two_users(pool).await;
+    let res = owner
+        .send(
+            Method::PUT,
+            "/api/me/locale",
+            Some(json!({ "locale": "en" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    let server = create_server(&mut owner, "Team Ada").await;
+    let categories: Vec<_> = server["categories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(categories, ["Text channels", "Voice channels"]);
+    let channels: Vec<_> = server["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["name"].as_str().unwrap(), c["kind"].as_str().unwrap()))
+        .collect();
+    assert_eq!(channels, [("general", "text"), ("Living room", "voice")]);
+    assert!(server["members"][0].get("locale").is_none());
+}
+
+fn transfer_path(id: &str) -> String {
+    format!("/api/servers/{id}/transfer")
+}
+
+/// #519 §4.1: the owner hands the server to a member, who can then delete
+/// it, and the former owner, now a member, can leave.
+#[sqlx::test]
+async fn the_owner_transfers_the_server_to_a_member(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let id = id_of(&server);
+    let ada = owner.user_id().to_owned();
+    let bob = member.user_id().to_owned();
+
+    let res = owner
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["id"], id.as_str());
+    assert_eq!(res.body["owner_id"], bob.as_str());
+    assert_eq!(res.body["role"], "member");
+    assert!(
+        !res.body["permissions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("manage_server")),
+        "{}",
+        res.body
+    );
+
+    let detail = member
+        .send(Method::GET, &format!("/api/servers/{id}"), None)
+        .await;
+    assert_eq!(detail.body["role"], "owner");
+    let roles: Vec<_> = detail.body["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| (m["user_id"].as_str().unwrap(), m["role"].as_str().unwrap()))
+        .collect();
+    assert_eq!(roles, [(ada.as_str(), "member"), (bob.as_str(), "owner")]);
+
+    // The new owner cannot leave; the former owner can.
+    let res = member
+        .send(Method::POST, &format!("/api/servers/{id}/leave"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    let res = owner
+        .send(Method::POST, &format!("/api/servers/{id}/leave"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let res = member
+        .send(Method::DELETE, &format!("/api/servers/{id}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn transfer_is_owner_only_and_to_another_member(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let id = id_of(&server);
+    let ada = owner.user_id().to_owned();
+    let bob = member.user_id().to_owned();
+    let mut outsider = Client::new(pool.clone());
+    outsider.bootstrap().await;
+    let res = outsider
+        .register("outsider@example.com", "password123", "Cy")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED);
+    let cy = outsider.user_id().to_owned();
+
+    // A member is not the owner; an outsider does not see the server.
+    let res = member
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(res.body["error"], "forbidden");
+    let res = outsider
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": cy })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+    for (body, code) in [
+        (json!({}), "required"),
+        (json!({ "user_id": "  " }), "required"),
+        (json!({ "user_id": "not-a-uuid" }), "invalid"),
+        (json!({ "user_id": ada }), "invalid"),
+    ] {
+        let res = owner
+            .send(Method::POST, &transfer_path(&id), Some(body.clone()))
+            .await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(res.body["error"], "validation_failed");
+        assert_eq!(res.body["fields"]["user_id"], code, "{body}");
+    }
+
+    // Not a member: an outsider, an unknown id, a banned former member.
+    for target in [cy.clone(), uuid::Uuid::new_v4().to_string()] {
+        let res = owner
+            .send(
+                Method::POST,
+                &transfer_path(&id),
+                Some(json!({ "user_id": target })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    }
+    let res = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{id}/ban"),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let res = owner
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+    let still: String =
+        sqlx::query_scalar("SELECT owner_id::text FROM servers WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(still, ada);
+}
+
+/// Amendment: a blocked server cannot be transferred, but it can still be
+/// deleted.
+#[sqlx::test]
+async fn a_blocked_server_cannot_be_transferred(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let id = id_of(&server);
+    let bob = member.user_id().to_owned();
+    sqlx::query("UPDATE servers SET blocked_at = now() WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = owner
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(res.body["error"], "server_blocked");
+    let res = owner
+        .send(Method::DELETE, &format!("/api/servers/{id}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+}
+
+/// A member an operator disabled cannot sign in to manage the server, so
+/// it cannot be handed to them; they are answered like a non-member.
+#[sqlx::test]
+async fn a_disabled_member_cannot_take_over_the_server(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let id = id_of(&server);
+    let ada = owner.user_id().to_owned();
+    let bob = member.user_id().to_owned();
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1::uuid")
+        .bind(&bob)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = owner
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let still: String =
+        sqlx::query_scalar("SELECT owner_id::text FROM servers WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(still, ada);
+}
+
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// The next frame `want` accepts, answering heartbeats on the way.
+async fn next_frame(ws: &mut Ws, want: impl Fn(&Value) -> bool) -> Value {
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if let Message::Text(raw) = ws.next().await.expect("open socket").expect("frame") {
+                let frame: Value = serde_json::from_str(&raw).unwrap();
+                if frame["op"] == "h" {
+                    ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
+                        .await
+                        .unwrap();
+                }
+                if want(&frame) {
+                    return frame;
+                }
+            }
+        }
+    })
+    .await
+    .expect("frame")
+}
+
+/// Members subscribed to the server get `{"k": "o", "owner_id": …}`.
+#[sqlx::test]
+async fn a_transfer_publishes_the_ownership_event(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut owner = Client::with_state(state.clone());
+    owner.bootstrap().await;
+    let res = owner
+        .register("owner@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED);
+    let mut member = Client::with_state(state);
+    member.bootstrap().await;
+    let res = member
+        .register("member@example.com", "password123", "Bob")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED);
+    let server = server_with_member(&mut owner, &mut member).await;
+    let id = id_of(&server);
+    let bob = member.user_id().to_owned();
+
+    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
+    req.headers_mut().insert(
+        "cookie",
+        format!("{}={}", common::SESSION, member.jar[common::SESSION])
+            .parse()
+            .unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    ws.send(Message::Text(
+        json!({ "op": "s", "s": id }).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    next_frame(&mut ws, |f| f["op"] == "ok").await;
+
+    let res = owner
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let frame = next_frame(&mut ws, |f| f["op"] == "e" && f["d"]["k"] == "o").await;
+    assert_eq!(frame["t"], "e", "{frame}");
+    assert_eq!(frame["s"], id.as_str(), "{frame}");
+    assert_eq!(frame["d"]["owner_id"], bob.as_str(), "{frame}");
+}
+
+/// The former owner holds only the base role and their own roles after a
+/// transfer; without voice rights there, their voice access is cut.
+#[sqlx::test]
+async fn a_former_owner_without_voice_rights_is_detected(pool: PgPool) {
+    use gelabber_api::servers::access;
+
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let id = id_of(&server);
+    let sid: uuid::Uuid = id.parse().unwrap();
+    let ada: uuid::Uuid = owner.user_id().parse().unwrap();
+    let bob = member.user_id().to_owned();
+
+    let mut conn = pool.acquire().await.unwrap();
+    assert!(
+        !access::former_owner_lost_voice(&mut conn, sid, ada)
+            .await
+            .unwrap(),
+        "the default base role allows voice"
+    );
+    let res = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{id}"),
+            Some(json!({ "member_permissions": ["send_messages"] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = owner
+        .send(
+            Method::POST,
+            &transfer_path(&id),
+            Some(json!({ "user_id": bob })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        access::former_owner_lost_voice(&mut conn, sid, ada)
+            .await
+            .unwrap()
+    );
 }

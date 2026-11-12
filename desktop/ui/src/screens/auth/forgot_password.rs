@@ -1,6 +1,7 @@
 //! `/forgot-password` (pages/ForgotPasswordPage.tsx).
 
 use egui::Ui;
+use gelabber_i18n::auth;
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -65,14 +66,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     let pending = s.request.is_some();
     layout::frame(ui, app, "forgot-password", |ui, app| {
-        layout::heading(ui, "Passwort vergessen");
-        layout::lead(
-            ui,
-            "Du erhältst einen Link, um ein neues Passwort festzulegen.",
-        );
+        layout::heading(ui, auth::forgot_title());
+        layout::lead(ui, auth::forgot_lead());
         ui.add_space(space::S6);
         let email = TextField::new("email", &mut s.email)
-            .label("E-Mail-Adresse")
+            .label(auth::field_label_email())
             .autofocus(true)
             .error(s.errors.field("email"))
             .show(ui);
@@ -82,8 +80,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         ui.add_space(space::S5);
         form_error(ui, &s.errors);
         let cooldown = s.errors.cooldown();
-        if (submit_after(ui, "Link schicken", "Wird gesendet…", pending, cooldown)
-            || email.submitted)
+        if (submit_after(
+            ui,
+            auth::forgot_submit(),
+            auth::page_sending(),
+            pending,
+            cooldown,
+        ) || email.submitted)
             && !pending
             && cooldown == 0
         {
@@ -99,7 +102,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         focus_invalid(ui, &mut s.errors);
         ui.add_space(space::S6);
-        if layout::link_line(ui, "Zurück zur Anmeldung") {
+        if layout::link_line(ui, auth::page_back_to_sign_in()) {
             app.nav.navigate("/login");
         }
     });
@@ -111,7 +114,7 @@ fn sent(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         match result {
             Ok(_) => {
                 s.resend_until = Some(ui.input(|i| i.time) + RESEND_COOLDOWN_S);
-                s.status = Some(("Neuer Link gesendet.".into(), StatusTone::Success));
+                s.status = Some((auth::page_new_link_sent().into(), StatusTone::Success));
             }
             Err(error) => {
                 let failure = Failure::from_api(&error);
@@ -123,32 +126,21 @@ fn sent(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let seconds = seconds_left(ui, s.resend_until);
     let pending = s.resend.is_some();
     layout::frame(ui, app, "forgot-password-sent", |ui, app| {
-        layout::focused_heading(ui, "Postfach prüfen");
-        result_with_strong(
-            ui,
-            "Falls zu ",
-            &email,
-            " ein Konto existiert, wurde ein Link gesendet. Er gilt eine Stunde.",
-        );
-        result_lines(
-            ui,
-            &[(
-                "Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut.",
-                true,
-            )],
-        );
+        layout::focused_heading(ui, auth::page_check_inbox());
+        result_with_strong(ui, auth::forgot_mail_sent(), &email);
+        result_lines(ui, &[(auth::page_no_mail(), true)]);
         ui.add_space(space::S6);
         let label = if seconds > 0 {
-            format!("Erneut senden ({seconds} s)")
+            auth::page_resend_in(seconds)
         } else {
-            "Erneut senden".to_owned()
+            auth::forgot_resend().to_owned()
         };
         let resend = ui.add(
             Button::new(&label)
                 .large()
                 .fill()
                 .disabled(seconds > 0)
-                .pending(pending.then_some("Wird gesendet…")),
+                .pending(pending.then_some(auth::page_sending())),
         );
         if resend.clicked() {
             s.resend = request_reset(app, &email);
@@ -160,13 +152,13 @@ fn sent(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             status.map_or(StatusTone::Neutral, |(_, t)| *t),
         ));
         ui.add_space(space::S2);
-        if wide_button(ui, "Andere Adresse verwenden", true) {
+        if wide_button(ui, auth::page_other_address(), true) {
             s.sent_to = None;
             s.status = None;
             ui.memory_mut(|m| m.request_focus(field_id("email")));
         }
         ui.add_space(space::S6);
-        if layout::link_line(ui, "Zurück zur Anmeldung") {
+        if layout::link_line(ui, auth::page_back_to_sign_in()) {
             app.nav.navigate("/login");
         }
     });

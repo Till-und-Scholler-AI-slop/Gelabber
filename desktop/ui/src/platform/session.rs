@@ -222,7 +222,7 @@ pub mod secret {
             let Some(cookie) = cookie else {
                 let (unlocked, locked) = self.search(origin)?;
                 if !locked.is_empty() {
-                    return Err("the keyring is locked".into());
+                    return Err("the keyring is locked".into()); // i18n-ok
                 }
                 for item in unlocked {
                     self.call(item.as_str(), ITEM, "Delete", &())?;
@@ -235,7 +235,7 @@ pub mod secret {
                 .deserialize()
                 .map_err(err)?;
             if collection.as_str() == "/" {
-                return Err("no default collection".into());
+                return Err("no default collection".into()); // i18n-ok
             }
             let locked: bool = self
                 .conn
@@ -252,9 +252,10 @@ pub mod secret {
                 .map_err(err)
                 .and_then(|v| bool::try_from(v).map_err(err))?;
             if locked {
-                return Err("the keyring is locked".into());
+                return Err("the keyring is locked".into()); // i18n-ok
             }
-            let label = format!("Gelabber-Anmeldung ({origin})");
+            // A stored item label: it keeps the name it was made with.
+            let label = format!("Gelabber-Anmeldung ({origin})"); // i18n-ok
             let properties: HashMap<&str, Value<'_>> = HashMap::from([
                 ("org.freedesktop.Secret.Item.Label", Value::from(label)),
                 (
@@ -279,7 +280,7 @@ pub mod secret {
                 .deserialize()
                 .map_err(err)?;
             if prompt.as_str() != "/" {
-                return Err("the keyring wants a prompt".into());
+                return Err("the keyring wants a prompt".into()); // i18n-ok
             }
             Ok(())
         }
@@ -685,7 +686,7 @@ mod tests {
         }
         fn set(&self, origin: &str, cookie: Option<&str>) -> Result<(), String> {
             if self.locked.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err("the keyring is locked".into());
+                return Err("the keyring is locked".into()); // i18n-ok
             }
             match cookie {
                 Some(c) => self.items.lock().insert(origin.into(), c.into()),

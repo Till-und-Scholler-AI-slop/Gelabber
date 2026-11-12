@@ -1,3 +1,6 @@
+import { translate } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
+
 /** Edge length of uploaded avatars; shown at most at 96 CSS px (×2 for HiDPI). */
 export const AVATAR_SIZE = 256;
 /** Uploaded banners: 3:1, shown at most ~480 CSS px wide on profile cards. */
@@ -131,6 +134,6 @@ export class AvatarImageError extends Error {
 
 export function avatarImageMessage(error: AvatarImageError): string {
   return error.reason === "too_large"
-    ? "Das Bild ist zu groß (höchstens 20 MB)."
-    : "Dieses Bild kann der Browser nicht lesen. PNG, JPEG, WebP oder GIF gehen.";
+    ? translate(auth, "avatarImage.tooLarge")
+    : translate(auth, "avatarImage.unreadable");
 }

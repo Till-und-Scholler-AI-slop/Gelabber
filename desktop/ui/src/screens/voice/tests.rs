@@ -163,15 +163,51 @@ fn pictures_of_the_call() {
         super::summary::stage_facts(
             room.occupants.len(),
             room.cameras.len(),
-            &room.others_live,
-            room.own_live
+            room.occupants.iter().filter(|p| p.live).count(),
         ),
-        "3 im Kanal · Mira ist live"
+        "3 im Kanal · 1 Live"
     );
     // Outside the call no pictures run: a Live is watched in the room.
     let outside = session::build(&s, &CallState::default(), SERVER, SOFA).expect("room");
     assert!(!outside.staged());
     assert_eq!(outside.others_live, ["Mira"]);
+}
+
+#[test]
+fn who_watches_each_live() {
+    let mut call = joined();
+    call.live = true;
+    call.participants[2].live = Some(VideoKey(8));
+    let mut s = state();
+    s.live.insert(SERVER, [(SOFA, vec![MIRA, LENA])].into());
+    // The gateway's sets: Jonas watches both Lives; its echo still says
+    // Lena watches nobody.
+    s.watches.insert(
+        SERVER,
+        [(SOFA, [(JONAS, vec![MIRA, LENA]), (LENA, vec![])].into())].into(),
+    );
+    let room = session::build(&s, &call, SERVER, SOFA).expect("room");
+    assert_eq!(room.watchers.len(), 2, "one entry per Live");
+    assert_eq!(room.watchers[&LENA], (vec![JONAS], vec![MIRA]));
+    assert_eq!(room.watchers[&MIRA], (vec![JONAS], vec![LENA]));
+    // The own watch comes from the call, before the gateway's echo.
+    call.participants[2].watching = true;
+    let room = session::build(&s, &call, SERVER, SOFA).expect("room");
+    assert_eq!(room.watchers[&MIRA], (vec![JONAS, LENA], vec![]));
+    // And only from the call: a set naming Lena does not count.
+    call.participants[2].watching = false;
+    s.watches
+        .get_mut(&SERVER)
+        .unwrap()
+        .get_mut(&SOFA)
+        .unwrap()
+        .insert(LENA, vec![MIRA]);
+    let room = session::build(&s, &call, SERVER, SOFA).expect("room");
+    assert_eq!(room.watchers[&MIRA], (vec![JONAS], vec![LENA]));
+    // Outside the call: the roster's Live, without Lena.
+    let outside = session::build(&s, &CallState::default(), SERVER, SOFA).expect("room");
+    assert_eq!(outside.watchers.len(), 1);
+    assert_eq!(outside.watchers[&MIRA], (vec![JONAS], vec![]));
 }
 
 // The interface in egui_kittest: the call bar, tiles and the overview.

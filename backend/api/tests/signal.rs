@@ -906,3 +906,180 @@ async fn source_audio_requires_its_same_socket_parent_and_parent_stop_cleans_it(
     }
     assert_eq!(snapshot, std::collections::HashSet::from(["a".into()]));
 }
+
+async fn another_user(pool: PgPool, owner: &mut Client, server_id: Uuid, name: &str) -> Client {
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+    let res = client
+        .register(&format!("{name}@example.com"), "password123", name)
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    join_member(owner, &mut client, &server_id.to_string()).await;
+    client
+}
+
+async fn seat(addr: std::net::SocketAddr, client: &Client, server_id: Uuid, voice_id: Uuid) -> Ws {
+    let mut ws = connect(addr, &session_cookie(client)).await;
+    send_json(
+        &mut ws,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    recv_until(&mut ws, |f| {
+        f["op"] == "sig" && f["t"] == "j" && f["u"] == client.user_id()
+    })
+    .await;
+    ws
+}
+
+fn watch(server_id: Uuid, channel_id: Uuid, owner: &str, on: bool) -> Value {
+    json!({ "op": "sig", "t": "w", "s": server_id, "c": channel_id, "o": owner, "k": "s", "on": on })
+}
+
+async fn watch_set(ws: &mut Ws, watcher: &str) -> Value {
+    recv_until(ws, |f| {
+        f["op"] == "sig" && f["t"] == "w" && f["u"] == watcher
+    })
+    .await
+}
+
+/// Who watches a Live reaches everyone in the room, and a late joiner gets
+/// every occupant's set in its replay.
+#[sqlx::test]
+async fn watching_a_live_reaches_the_room_and_late_joiners(pool: PgPool) {
+    let (mut owner, member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Kino").await;
+    let (server_id, _) = ids(&server);
+    let mut member = member;
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let cara = another_user(pool.clone(), &mut owner, server_id, "Cara").await;
+    let dan = another_user(pool.clone(), &mut owner, server_id, "Dan").await;
+    let voice_id = create_voice(&mut owner, server_id).await;
+    let (ada, bob) = (owner.user_id().to_owned(), member.user_id().to_owned());
+
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut ada_ws = seat(addr, &owner, server_id, voice_id).await;
+    let mut bob_ws = seat(addr, &member, server_id, voice_id).await;
+    let mut cara_ws = seat(addr, &cara, server_id, voice_id).await;
+    send_json(
+        &mut ada_ws,
+        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
+    )
+    .await;
+    send_json(&mut bob_ws, watch(server_id, voice_id, &ada, true)).await;
+    for ws in [&mut ada_ws, &mut bob_ws, &mut cara_ws] {
+        let set = watch_set(ws, &bob).await;
+        assert_eq!(set["w"], json!([ada]), "{set}");
+        assert_eq!(set["s"], server_id.to_string());
+        assert_eq!(set["c"], voice_id.to_string());
+        assert!(set.get("replay").is_none(), "{set}");
+    }
+
+    // Dan joins late: one replayed set per occupant, also the empty ones.
+    let mut dan_ws = connect(addr, &session_cookie(&dan)).await;
+    send_json(
+        &mut dan_ws,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    let mut sets = std::collections::HashMap::new();
+    while sets.len() < 3 {
+        let frame = recv_until(&mut dan_ws, |f| f["op"] == "sig" && f["t"] == "w").await;
+        assert_eq!(frame["replay"], true, "{frame}");
+        sets.insert(frame["u"].as_str().unwrap().to_owned(), frame["w"].clone());
+    }
+    assert_eq!(sets[&bob], json!([ada]));
+    assert_eq!(sets[&ada], json!([]));
+    assert_eq!(sets[cara.user_id()], json!([]));
+
+    // Bob leaves: the room hears `l`, and Bob's rejoin starts with nothing.
+    send_json(
+        &mut bob_ws,
+        json!({ "op": "sig", "t": "l", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    let left = recv_until(&mut cara_ws, |f| f["op"] == "sig" && f["u"] == bob).await;
+    assert_eq!(left["t"], "l", "{left}");
+    send_json(
+        &mut bob_ws,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    recv_until(&mut cara_ws, |f| {
+        f["op"] == "sig" && f["t"] == "j" && f["u"] == bob
+    })
+    .await;
+    drop(dan_ws);
+    let mut dan_ws = connect(addr, &session_cookie(&dan)).await;
+    send_json(
+        &mut dan_ws,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    let again = recv_until(&mut dan_ws, |f| {
+        f["op"] == "sig" && f["t"] == "w" && f["u"] == bob
+    })
+    .await;
+    assert_eq!(again["w"], json!([]), "{again}");
+    assert_eq!(again["replay"], true, "{again}");
+}
+
+async fn refused(ws: &mut Ws) -> Value {
+    recv_until(ws, |f| f["op"] == "err").await["e"].clone()
+}
+
+#[sqlx::test]
+async fn watch_needs_a_seat_another_owner_and_join_voice(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Regeln").await;
+    let (server_id, text_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let voice_id = create_voice(&mut owner, server_id).await;
+    let (ada, bob) = (owner.user_id().to_owned(), member.user_id().to_owned());
+
+    let (addr, _) = common::serve_ws(pool).await;
+
+    // No seat in the room yet.
+    let mut bob_ws = connect(addr, &session_cookie(&member)).await;
+    send_json(&mut bob_ws, watch(server_id, voice_id, &ada, true)).await;
+    assert_eq!(refused(&mut bob_ws).await, "bad_request");
+    // A text channel is no voice room.
+    send_json(&mut bob_ws, watch(server_id, text_id, &ada, true)).await;
+    assert_eq!(refused(&mut bob_ws).await, "bad_request");
+
+    drop(bob_ws);
+    let mut bob_ws = seat(addr, &member, server_id, voice_id).await;
+    // Oneself, a missing owner or `on`, and a kind other than the screen.
+    for frame in [
+        watch(server_id, voice_id, &bob, true),
+        json!({ "op": "sig", "t": "w", "s": server_id, "c": voice_id, "k": "s", "on": true }),
+        json!({ "op": "sig", "t": "w", "s": server_id, "c": voice_id, "o": ada, "k": "s" }),
+        json!({ "op": "sig", "t": "w", "s": server_id, "c": voice_id, "o": ada, "k": "v", "on": true }),
+    ] {
+        send_json(&mut bob_ws, frame.clone()).await;
+        assert_eq!(refused(&mut bob_ws).await, "bad_request", "{frame}");
+    }
+    // Without `k` it is the screen; the owner need not be in the room.
+    send_json(
+        &mut bob_ws,
+        json!({ "op": "sig", "t": "w", "s": server_id, "c": voice_id, "o": ada, "on": true }),
+    )
+    .await;
+    let set = recv_until(&mut bob_ws, |f| {
+        f["op"] == "err" || (f["op"] == "sig" && f["t"] == "w")
+    })
+    .await;
+    assert_eq!(set["w"], json!([ada]), "{set}");
+
+    // Without join_voice the seat is no longer enough.
+    let res = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{server_id}"),
+            Some(json!({ "member_permissions": ["send_messages"] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    send_json(&mut bob_ws, watch(server_id, voice_id, &ada, false)).await;
+    assert_eq!(refused(&mut bob_ws).await, "forbidden");
+}

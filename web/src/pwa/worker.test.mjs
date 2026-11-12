@@ -22,9 +22,9 @@ const appPages = [
 const origin = "https://gelabber.example";
 // The cache name under which browsers keep their copy of offline.html, and
 // the page it was last raised for. See the test at the end of this file.
-const OFFLINE_CACHE = "gelabber-pwa-offline-v2";
+const OFFLINE_CACHE = "gelabber-pwa-offline-v3";
 const OFFLINE_PAGE_SHA256 =
-  "9575b6ef542b870852a51873acbf649baf6231415f8899f80e8cb115b64c76d8";
+  "45310a5cee3af35d3a795de506f11160a2da1abc514be758b5e068a612de1a63";
 
 function appWindow(path, state = {}) {
   const client = {

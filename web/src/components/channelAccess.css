@@ -1,0 +1,36 @@
+/* "Zugriff" in the channel dialog (v0.10 roles): a button drawn like the
+   "Kategorie" select, and its checklist. */
+.channel-access-trigger {
+  display: flex;
+  align-items: center;
+  padding-right: 34px;
+  text-align: left;
+  cursor: pointer;
+}
+.channel-access-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.channel-access {
+  min-width: 240px;
+}
+.channel-access__list {
+  display: flex;
+  flex-direction: column;
+}
+.channel-access__row {
+  padding-inline: 4px;
+}
+.channel-access__role {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.channel-access__empty {
+  margin-top: 4px;
+  padding: 4px;
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}

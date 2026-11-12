@@ -1,6 +1,9 @@
 // The own microphone: capture with its processor, the switch to another
 // device or gain, losing it mid-call and getting it back, and its sender.
 
+import { translate } from "../i18n/catalog.ts";
+import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
 import {
   captureMicrophone,
   createProcessor,
@@ -127,7 +130,7 @@ function failedMicProcessor(owner: MicProcessor): void {
     noteAudioProcessing({
       ...owner.info,
       actual: null,
-      message: "Mikrofon getrennt; Standardgerät wird aktiviert",
+      message: translate(diagnostics, "processing.micLost"),
       contextState: "closed",
     });
     noteMicLost(lost);
@@ -135,14 +138,10 @@ function failedMicProcessor(owner: MicProcessor): void {
     noteAudioProcessing({
       ...owner.info,
       actual: null,
-      message: "Audioprozessor ausgefallen; Ersatzmikrofon wird aktiviert",
+      message: translate(diagnostics, "processing.processorFallback"),
       contextState: "closed",
     });
-    voice.deps?.onError?.(
-      new Error(
-        "Audioprozessor ausgefallen; lokale Aufnahme beendet, Browser-Ersatz wird aktiviert",
-      ),
-    );
+    voice.deps?.onError?.(new Error(translate(texts, "mic.processorFallback")));
   }
   void enqueueAudioCommit(async () => {
     if (voice.seat.generation === generation && sender?.track === failedTrack)
@@ -227,7 +226,7 @@ export async function acquireMic(
       return acquireMic(getMedia, current);
     }
     throw new Error(
-      "Mikrofonanfrage abgebrochen oder Audioprozessor ausgefallen",
+      translate(diagnostics, "processing.error.cancelledOrFailed"),
     );
   }
   voice.captureEpochs.set(result.processor.stream, captureEpoch(result.raw));
@@ -245,9 +244,7 @@ export function discardFailedMicCandidate(
   if (current && !voice.micForceBrowser) {
     voice.micForceBrowser = true;
     voice.deps?.onError?.(
-      new Error(
-        "Audioprozessor vor Mikrofonwechsel ausgefallen; Browser-Ersatz wird aktiviert",
-      ),
+      new Error(translate(texts, "mic.processorFailedBeforeSwitch")),
     );
     void refreshMic();
   }
@@ -260,7 +257,8 @@ function micRefused(error: unknown): boolean {
   return name === "NotAllowedError" || name === "SecurityError";
 }
 
-/** The browser's reason stays in the console; the toast says it in German. */
+/** The browser's reason stays in the console; the toast says it in the
+ * interface's language. */
 function logMicFailure(error: unknown): void {
   logVoice("warn", "microphone", {
     detail:
@@ -282,7 +280,7 @@ export function reportJoinMicFailure(error: unknown): void {
   noteAudioProcessing({
     ...info,
     requested: useMediaSettings.getState().processingMode,
-    message: "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu",
+    message: translate(diagnostics, "processing.micFailed"),
   });
 }
 
@@ -362,9 +360,7 @@ function noteMicLost(raw: MediaStream): void {
     detail: "audio-input-lost",
   });
   voice.micFellBack = useMediaSettings.getState().audioInputId !== "";
-  voice.deps?.onError?.(
-    new Error("Mikrofon getrennt – Standardgerät wird verwendet"),
-  );
+  voice.deps?.onError?.(new Error(translate(texts, "mic.lost")));
 }
 
 /** The audio inputs as one comparable value. Without permission the ids are
@@ -478,9 +474,7 @@ export async function refreshMic(): Promise<void> {
     if (micCurrent(pc, session, request)) {
       if (hasLiveTrack(voice.localStream, "audio")) {
         logMicFailure(error);
-        voice.deps?.onError?.(
-          microphoneFailure(error, "der Wechsel hat nicht geklappt"),
-        );
+        voice.deps?.onError?.(microphoneFailure(error, "switch"));
       } else reportJoinMicFailure(error);
     } else if (voice.seat.generation !== session)
       resumeOvertakenMic(join, error);
@@ -534,9 +528,7 @@ export async function refreshMic(): Promise<void> {
         voice.deps?.onError?.(
           error instanceof Error
             ? error
-            : new Error(
-                "Mikrofonwechsel fehlgeschlagen; bisheriges Mikrofon bleibt aktiv",
-              ),
+            : new Error(translate(texts, "mic.switchFailed")),
         );
       }
       return;
@@ -623,11 +615,7 @@ async function applyInputGain(): Promise<void> {
     if (!micCurrent(pc, session, request) || !insert.usable()) {
       insert.dispose();
       if (micCurrent(pc, session, request))
-        voice.deps?.onError?.(
-          new Error(
-            "Mikrofonverstärkung konnte nicht aktiviert werden; bisheriges Mikrofon bleibt aktiv",
-          ),
-        );
+        voice.deps?.onError?.(new Error(translate(texts, "mic.gainFailed")));
       return;
     }
     disableAudio(insert.stream);
@@ -645,9 +633,7 @@ async function applyInputGain(): Promise<void> {
         await replaceSenderTrack(sender, previous).catch(() => undefined);
       insert.dispose();
       if (micCurrent(pc, session, request))
-        voice.deps?.onError?.(
-          new Error("Mikrofonverstärkung ausgefallen; bisheriges Mikrofon bleibt aktiv"),
-        );
+        voice.deps?.onError?.(new Error(translate(texts, "mic.gainLost")));
       return;
     }
     voice.activeMicGain?.dispose();
@@ -666,25 +652,33 @@ export function audioSender(): RtpSender | undefined {
   return voice.seat.connection?.sender("a");
 }
 
-/** The browser's own getUserMedia reasons are English ("Requested device not
- * found"); say them in German with what follows for the call: without a
- * sending microphone it goes on without one, a failed switch keeps the
- * previous one. */
+/** The browser's own getUserMedia reasons are terse ("Requested device not
+ * found"); say them in the interface's language with what follows for the
+ * call: without a sending microphone it goes on without one, a failed
+ * switch keeps the previous one. */
 function microphoneFailure(
   error: unknown,
-  consequence = "du hörst nur zu",
+  after: "listen" | "switch" = "listen",
 ): unknown {
+  const consequence = translate(
+    texts,
+    after === "listen" ? "mic.consequenceListen" : "mic.consequenceSwitch",
+  );
   switch ((error as { name?: unknown } | null)?.name) {
     case "NotFoundError":
     case "OverconstrainedError":
-      return new Error(`Kein Mikrofon gefunden, ${consequence}.`);
+      return new Error(
+        translate(texts, "mic.failureNotFound", { consequence }),
+      );
     case "NotAllowedError":
     case "SecurityError":
-      return new Error(`Mikrofonzugriff nicht erlaubt, ${consequence}.`);
+      return new Error(
+        translate(texts, "mic.failureNotAllowed", { consequence }),
+      );
     case "NotReadableError":
     case "AbortError":
       return new Error(
-        `Das Mikrofon ist gerade nicht verfügbar, ${consequence}.`,
+        translate(texts, "mic.failureUnavailable", { consequence }),
       );
     default:
       return error;

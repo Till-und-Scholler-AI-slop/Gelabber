@@ -95,7 +95,7 @@ fn chromium_store(user_data: &Path) -> Option<PathBuf> {
         others.sort();
         profiles.extend(others);
     }
-    let store = |profile: &Path| profile.join("Local Storage").join("leveldb");
+    let store = |profile: &Path| profile.join("Local Storage").join("leveldb"); // i18n-ok
     if let Some(profile) = profiles.iter().find(|p| store(p).is_dir()) {
         return Some(store(profile));
     }

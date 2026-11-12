@@ -1,17 +1,17 @@
-//! "Profil" (name and picture) and "Sicherheit" (password, sign out
-//! everywhere) of pages/ProfilePage.tsx.
+//! "Profil" (name and picture) of pages/ProfilePage.tsx. "Sicherheit"
+//! moved to security.rs, as the web's to SecurityArea.tsx.
 
-use egui::{Ui, vec2};
+use egui::Ui;
 use gelabber_client::{ApiError, ProfilePatch, User};
+use gelabber_i18n::{common, settings as texts};
 
-use super::controls::{self, Confirm, Picked};
+use super::controls::{self, Picked};
 use super::{adopt_user, op_pending, settled};
 use crate::app::AppCtx;
-use crate::rules::{Failure, FormErrors, field_message, validate_name, validate_password};
+use crate::rules::{Failure, FormErrors, field_message, validate_name};
 use crate::screens::auth::form_error;
-use crate::text;
 use crate::theme::Theme;
-use crate::widgets::{Avatar, AvatarSize, Button, ButtonVariant, TextField};
+use crate::widgets::{Avatar, AvatarSize, Button, TextField};
 
 /// `isUploadedAvatar`: an image the API stores itself.
 pub fn is_uploaded_avatar(url: &str) -> bool {
@@ -178,16 +178,16 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
             ui.spacing_mut().item_spacing.x = 8.0;
             let upload_clicked = ui
                 .add(
-                    Button::new("Bild hochladen")
+                    Button::new(texts::profile_upload())
                         .small()
                         .disabled(busy && !uploading)
-                        .pending(uploading.then_some("Lädt hoch…")),
+                        .pending(uploading.then_some(texts::profile_uploading())),
                 )
                 .clicked();
             if upload_clicked && !busy && s.picking.is_none() {
                 s.picking = Some(controls::pick_file(
                     ui.ctx(),
-                    "Avatar-Bild auswählen",
+                    texts::profile_pick_label(),
                     &controls::IMAGE_FILTER,
                 ));
             }
@@ -195,11 +195,11 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
                 let removing = s.running == Some("remove");
                 let remove = ui
                     .add(
-                        Button::new("Entfernen")
+                        Button::new(common::remove())
                             .small()
                             .ghost()
                             .disabled(busy && !removing)
-                            .pending(removing.then_some("Entfernt…")),
+                            .pending(removing.then_some(texts::profile_removing())),
                     )
                     .clicked();
                 if remove && !busy {
@@ -220,7 +220,7 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
         });
         ui.add_space(20.0);
         let name = TextField::new("name", &mut s.name)
-            .label("Name")
+            .label(texts::profile_name())
             .char_limit(64)
             .error(s.errors.field("name"))
             .show(ui);
@@ -232,11 +232,11 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
         let uploaded = is_uploaded_avatar(&s.avatar_url);
         let removal_unsaved = s.avatar_url.trim().is_empty() && user.avatar_url.is_some();
         let hint = if uploaded {
-            "Eine URL hier ersetzt das hochgeladene Bild."
+            texts::profile_avatar_url_replaces_upload()
         } else if removal_unsaved {
-            "Wird beim Speichern entfernt."
+            texts::profile_avatar_url_removed_on_save()
         } else {
-            "Wird bei jedem Aufruf von der fremden Seite geladen."
+            texts::profile_avatar_url_hint()
         };
         // An uploaded picture shows as an empty field with its own placeholder.
         let mut shown = if uploaded {
@@ -245,11 +245,11 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
             s.avatar_url.clone()
         };
         let url = TextField::new("avatar_url", &mut shown)
-            .label("Avatar-URL")
+            .label(texts::profile_avatar_url())
             .placeholder(if uploaded {
-                "Hochgeladenes Bild"
+                texts::profile_avatar_url_uploaded()
             } else {
-                "https://…"
+                texts::profile_avatar_url_placeholder()
             })
             .error(s.errors.field("avatar_url"))
             .hint(Some(hint))
@@ -267,24 +267,24 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
             let saving = s.running == Some("save");
             submit |= ui
                 .add(
-                    Button::new("Speichern")
+                    Button::new(common::save())
                         .primary()
                         .disabled(!dirty || (busy && !saving))
-                        .pending(saving.then_some("Speichern…")),
+                        .pending(saving.then_some(texts::profile_saving())),
                 )
                 .clicked();
             if unchanged {
                 controls::paint(
                     ui,
                     egui::pos2(ui.cursor().min.x, ui.max_rect().center().y - 9.0),
-                    "Keine Änderungen.",
+                    texts::profile_unchanged(),
                     controls::HINT,
                     theme.c.muted,
                 );
             }
             if s.saved && !dirty {
                 ui.add(crate::widgets::InlineStatus::new(
-                    Some("Gespeichert."),
+                    Some(common::saved()),
                     crate::widgets::StatusTone::Success,
                 ));
             }
@@ -319,156 +319,6 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
 fn prepare(ctx: &egui::Context, s: &mut ProfileState, file: controls::ImageFile) {
     s.saved = false;
     s.preparing = Some(controls::prepare(ctx, file, 256, 256));
-}
-
-// ------------------------------------------------------------ security
-
-#[derive(Default)]
-pub struct SecurityState {
-    current: String,
-    password: String,
-    changed: bool,
-    running: bool,
-    errors: FormErrors,
-}
-
-const SECURITY_ORDER: [&str; 2] = ["current_password", "password"];
-
-/// Settings area "Sicherheit".
-pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityState) {
-    let theme = Theme::of(ui.ctx());
-    let c = &theme.c;
-    if s.running
-        && let Some(result) = settled(app, "password")
-    {
-        s.running = false;
-        match result {
-            Ok(()) => {
-                s.current.clear();
-                s.password.clear();
-                s.changed = true;
-                if let Some(updated) = app.client.with_state(|st| st.me().cloned()) {
-                    adopt_user(app, &updated);
-                }
-            }
-            Err(e) => s
-                .errors
-                .from_failure(&Failure::from_api(&e), &SECURITY_ORDER),
-        }
-    }
-    if let Some(true) = controls::answer(ui.ctx(), "logout-all") {
-        app.client.voice_leave();
-        app.client.logout_all();
-        app.session.adopt(&serde_json::json!({ "user": null }));
-        app.nav.navigate("/login");
-        return;
-    }
-    controls::column(ui, 560.0, |ui| {
-        let block = text::Rich::new(controls::HINT)
-            .push("Angemeldet als ", controls::HINT, c.muted)
-            .push(&user.email, controls::HINT.weight(600.0), c.text)
-            .layout(ui);
-        crate::text::show(ui, &block);
-        ui.add_space(20.0);
-        let current = TextField::new("current_password", &mut s.current)
-            .label("Aktuelles Passwort")
-            .password()
-            .error(s.errors.field("current_password"))
-            .show(ui);
-        if current.response.changed() {
-            s.changed = false;
-            s.errors.clear_field("current_password");
-        }
-        ui.add_space(20.0);
-        let new = TextField::new("new_password", &mut s.password)
-            .label("Neues Passwort")
-            .password()
-            .error(s.errors.field("password"))
-            .hint(Some("Andere Geräte werden dabei abgemeldet."))
-            .show(ui);
-        if new.response.changed() {
-            s.changed = false;
-            s.errors.clear_field("password");
-        }
-        ui.add_space(20.0);
-        form_error(ui, &s.errors);
-        let mut submit = current.submitted || new.submitted;
-        controls::row(ui, 12.0, 36.0, |ui| {
-            submit |= ui
-                .add(
-                    Button::new("Passwort ändern")
-                        .primary()
-                        .pending(s.running.then_some("Ändern…")),
-                )
-                .clicked();
-            if s.changed {
-                ui.add(crate::widgets::InlineStatus::new(
-                    Some("Geändert. Andere Geräte sind abgemeldet."),
-                    crate::widgets::StatusTone::Success,
-                ));
-            }
-        });
-        if submit && !s.running {
-            s.changed = false;
-            let mut fields = Vec::new();
-            if s.current.is_empty() {
-                fields.push((
-                    "current_password",
-                    field_message("current_password", "required"),
-                ));
-            }
-            if let Some(code) = validate_password(&s.password) {
-                fields.push(("password", field_message("password", code)));
-            }
-            if fields.is_empty() {
-                s.errors = FormErrors::default();
-                s.running = true;
-                app.client.change_password(&s.current, &s.password);
-            } else {
-                s.errors.set_fields(fields);
-            }
-        }
-        // ProfilePage's forms call useFormErrors() without a form ref: focus stays put.
-        s.errors.focus = None;
-
-        // `.settings-danger`: margin-top 40, border-top, padding-top 24.
-        ui.add_space(32.0);
-        let top = ui.cursor().min.y;
-        crate::widgets::rule_h(ui.painter(), c.border, ui.max_rect().x_range(), top);
-        ui.add_space(25.0);
-        controls::paint(
-            ui,
-            ui.cursor().min,
-            "Überall abmelden",
-            text::TITLE_SM,
-            c.text,
-        );
-        ui.allocate_exact_size(vec2(560.0, 20.8), egui::Sense::hover());
-        // `.settings-danger .settings-hint`: margin 4 0 12.
-        ui.add_space(4.0);
-        controls::paragraph(
-            ui,
-            "Beendet jede Anmeldung, auch auf diesem Gerät.",
-            controls::HINT,
-            c.muted,
-            560.0,
-        );
-        ui.add_space(12.0);
-        if ui
-            .add(Button::new("Auf allen Geräten abmelden").variant(ButtonVariant::DangerOutline))
-            .clicked()
-        {
-            controls::ask(
-                ui.ctx(),
-                Confirm::danger(
-                    "logout-all",
-                    "Auf allen Geräten abmelden?",
-                    Some("Auch dieses Gerät. Danach musst du dich überall neu anmelden."),
-                    "Überall abmelden",
-                ),
-            );
-        }
-    });
 }
 
 #[cfg(test)]

@@ -11,7 +11,9 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::hub::ConnId;
-use super::protocol::{CatchUp, ClientFrame, PresenceStatus, ServerFrame, Topic};
+use super::protocol::{
+    CatchUp, ClientFrame, PresenceStatus, ServerFrame, SigKind, Topic, VoiceEntry,
+};
 use crate::auth::session::CurrentSession;
 use crate::auth::user::User;
 use crate::error::ApiError;
@@ -83,6 +85,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let mut last_activity = Instant::now();
     let mut idle = false;
     let mut focused = false;
+    let mut rosters = Rosters::new();
     // A focus claim outlives a few missed heartbeats, not a dead socket.
     let focus_ttl = state.ws_dead * 2;
     let mut beat = tokio::time::interval(state.ws_heartbeat);
@@ -136,7 +139,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         last_client = Instant::now();
-                        match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink).await {
+                        match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink, &mut rosters).await {
                             Ok(FrameEffect::Close) => break,
                             Ok(FrameEffect::Liveness) => {
                                 let _ = state.gateway.touch_presence(conn).await;
@@ -214,7 +217,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
                 let Ok(batch) = take_batch(frame, &mut rx) else { break };
-                match deliver(&state, &session, user.id, conn, &mut sink, batch).await {
+                match deliver(&state, &session, user.id, conn, &mut sink, batch, &mut rosters).await {
                     Ok(true) => checked = Instant::now(),
                     Ok(false) => {}
                     Err(_) => break,
@@ -287,7 +290,7 @@ async fn renew(
     }
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        crate::auth::session::touch(state, &session.hash, session.created_at, expires_at),
+        crate::auth::session::touch(state, &session.hash, session.created_at, expires_at, None),
     )
     .await
     .ok()?
@@ -348,6 +351,7 @@ async fn handle_text(
     conn: ConnId,
     text: &str,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    rosters: &mut Rosters,
 ) -> Result<FrameEffect, ApiError> {
     let frame: ClientFrame = match serde_json::from_str(text) {
         Ok(frame) => frame,
@@ -368,7 +372,12 @@ async fn handle_text(
             // The scope tells the client which subscribe to retry. A database
             // error also fails the frame's commit, which ends the socket.
             match subscribe(state, db, user, conn, (s, c), (n, ep), sink).await {
-                Ok(()) => Ok(FrameEffect::Activity),
+                Ok(roster) => {
+                    if let Some(roster) = roster {
+                        rosters.insert(s, roster);
+                    }
+                    Ok(FrameEffect::Activity)
+                }
                 Err(SubscribeError::Read(err)) => {
                     state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
                     warn!(error = err.code(), user_id = %user.id, "ws subscribe failed");
@@ -410,7 +419,7 @@ async fn subscribe(
     scope: (Uuid, Option<Uuid>),
     resume: (Option<u64>, Option<Uuid>),
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
-) -> Result<(), SubscribeError> {
+) -> Result<Option<Vec<VoiceEntry>>, SubscribeError> {
     let (server_id, channel_id) = scope;
     let _guard = if channel_id.is_some_and(|cid| cid == server_id) {
         None // DM authorization below still verifies participants.
@@ -424,21 +433,21 @@ async fn subscribe(
                 )
                 .await
                 .map_err(SubscribeError::Write)?;
-                return Ok(());
+                return Ok(None);
             }
             Err(err) => return Err(err.into()),
         }
     };
     match authorize(&mut *db, user.id, server_id, channel_id).await {
         Ok(()) => {}
-        Err(ApiError::NotFound) => {
+        Err(err @ (ApiError::NotFound | ApiError::ServerBlocked)) => {
             send(
                 sink,
-                ServerFrame::error("not_found", Some(server_id), channel_id),
+                ServerFrame::error(err.code(), Some(server_id), channel_id),
             )
             .await
             .map_err(SubscribeError::Write)?;
-            return Ok(());
+            return Ok(None);
         }
         Err(other) => return Err(other.into()),
     }
@@ -504,13 +513,49 @@ async fn subscribe(
             .map_err(SubscribeError::Write)?,
         Err(err) => warn!(error = err.code(), "presence snapshot on subscribe failed"),
     }
-    match state.gateway.voice_snapshot(server_id).await {
-        Ok(voice) => send(sink, ServerFrame::voice_snap(server_id, voice))
-            .await
-            .map_err(SubscribeError::Write)?,
-        Err(err) => warn!(error = err.code(), "voice snapshot on subscribe failed"),
-    }
-    Ok(())
+    let roster = match state.gateway.voice_snapshot(server_id).await {
+        Ok(voice) => {
+            let voice = if _guard.is_some() {
+                visible_seats(voice, &hidden_rooms(&mut *db, server_id, user.id).await?)
+            } else {
+                voice
+            };
+            send(sink, ServerFrame::voice_snap(server_id, voice.clone()))
+                .await
+                .map_err(SubscribeError::Write)?;
+            Some(voice)
+        }
+        Err(err) => {
+            warn!(error = err.code(), "voice snapshot on subscribe failed");
+            None
+        }
+    };
+    Ok(roster)
+}
+
+/// The limited channels of `server_id` that `user_id` cannot see. Their
+/// seats leave the voice roster, so nobody learns who sits or is live there.
+async fn hidden_rooms(
+    db: &mut sqlx::PgConnection,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> Result<HashSet<Uuid>, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM channels WHERE server_id = $1 AND limited AND NOT channel_visible_to(id, $2)",
+    )
+    .bind(server_id)
+    .bind(user_id)
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .collect())
+}
+
+fn visible_seats(seats: Vec<VoiceEntry>, hidden: &HashSet<Uuid>) -> Vec<VoiceEntry> {
+    seats
+        .into_iter()
+        .filter(|seat| !hidden.contains(&seat.c))
+        .collect()
 }
 
 async fn typing(
@@ -541,10 +586,10 @@ async fn typing(
     };
     match authorize(&mut *db, user.id, server_id, Some(channel_id)).await {
         Ok(()) => {}
-        Err(ApiError::NotFound) => {
+        Err(err @ (ApiError::NotFound | ApiError::ServerBlocked)) => {
             send(
                 sink,
-                ServerFrame::error("not_found", Some(server_id), Some(channel_id)),
+                ServerFrame::error(err.code(), Some(server_id), Some(channel_id)),
             )
             .await?;
             return Ok(());
@@ -557,10 +602,10 @@ async fn typing(
         .await
 }
 
-/// Membership + (optional) channel belongs to that server — or the caller
-/// is a participant of a 1:1 DM. For DMs the protocol `s` is the channel
-/// id. Same 404 semantics as the REST API: unknown and foreign are
-/// indistinguishable.
+/// Membership + (optional) channel belongs to that server and is visible to
+/// the caller — or the caller is a participant of a 1:1 DM. For DMs the
+/// protocol `s` is the channel id. Same 404 semantics as the REST API:
+/// unknown, foreign and hidden are indistinguishable.
 async fn authorize(
     db: &mut sqlx::PgConnection,
     user_id: Uuid,
@@ -594,7 +639,10 @@ async fn authorize(
     if channel.server_id != Some(server_id) {
         return Err(ApiError::NotFound);
     }
-    membership::load(&mut *db, server_id, user_id).await?;
+    let member = membership::load(&mut *db, server_id, user_id).await?;
+    if !member.sees(&channel) {
+        return Err(ApiError::NotFound);
+    }
     Ok(())
 }
 
@@ -607,6 +655,12 @@ const BATCH_FRAMES: usize = 64;
 const BATCH_BYTES: usize = 16 * 1024;
 
 type Scope = (Uuid, Option<Uuid>);
+
+/// The voice roster this socket last received per server, as filtered for
+/// its user. A roster pass that changes only a hidden room filters to the
+/// same list and is dropped, so the frame itself does not tell that
+/// something happened there.
+type Rosters = HashMap<Uuid, Vec<VoiceEntry>>;
 
 fn take_batch(
     first: ServerFrame,
@@ -638,6 +692,7 @@ async fn deliver(
     conn: ConnId,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     batch: Vec<(ServerFrame, String)>,
+    rosters: &mut Rosters,
 ) -> Result<bool, ApiError> {
     let mut checked = false;
     let dms = state.gateway.socket_dms(conn).await;
@@ -652,6 +707,7 @@ async fn deliver(
         state.gateway.reconcile_access(conn, &mut db).await?;
         checked = true;
         let mut allowed = HashMap::new();
+        let mut hidden: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
         let mut out = Vec::with_capacity(run.len());
         for (frame, json) in run {
             if !state.gateway.wants_frame(conn, &frame).await {
@@ -668,8 +724,37 @@ async fn deliver(
                         .or_insert(scope_allowed(&mut db, user_id, scope).await?),
                 },
             };
-            if ok {
-                out.push(json);
+            if !ok {
+                continue;
+            }
+            // A roster is server-wide: re-serialize it without hidden rooms,
+            // and drop it when this socket already has that list.
+            match frame {
+                ServerFrame::Sig {
+                    t: SigKind::R,
+                    s,
+                    snap: Some(seats),
+                    ..
+                } => {
+                    let hidden = match hidden.entry(s) {
+                        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            entry.insert(hidden_rooms(&mut db, s, user_id).await?)
+                        }
+                    };
+                    let (seats, json) = if seats.iter().any(|seat| hidden.contains(&seat.c)) {
+                        let seats = visible_seats(seats, hidden);
+                        let json = to_json(&ServerFrame::voice_snap(s, seats.clone()))?;
+                        (seats, json)
+                    } else {
+                        (seats, json)
+                    };
+                    if rosters.get(&s) != Some(&seats) {
+                        rosters.insert(s, seats);
+                        out.push(json);
+                    }
+                }
+                _ => out.push(json),
             }
         }
         send_texts(sink, out).await?;
@@ -714,8 +799,14 @@ fn frame_scope(frame: &ServerFrame) -> Option<Scope> {
 }
 
 /// [`frame_scope`] for the dequeue check. Presence on a DM is published on
-/// the DM id, which is no server row: it is checked as the DM it is.
+/// the DM id, which is no server row: it is checked as the DM it is. A DM
+/// discovery notice carries only the channel id and is only ever queued for
+/// that DM's own participants; it passes unchecked, so the notice that a
+/// deleted account's DM is gone (`account::deletion`) reaches the peer.
 fn dequeue_scope(frame: &ServerFrame, dms: &HashSet<Uuid>) -> Option<Scope> {
+    if matches!(frame, ServerFrame::Dm { .. }) {
+        return None;
+    }
     match frame_scope(frame) {
         Some((sid, None))
             if matches!(frame, ServerFrame::Presence { .. }) && dms.contains(&sid) =>
@@ -743,7 +834,7 @@ async fn scope_allowed(
     }
     match authorize(db, user_id, sid, cid).await {
         Ok(()) => Ok(true),
-        Err(ApiError::NotFound) => Ok(false),
+        Err(ApiError::NotFound | ApiError::ServerBlocked) => Ok(false),
         Err(err) => Err(err),
     }
 }
@@ -848,12 +939,23 @@ mod tests {
         })
         .unwrap();
         let state = AppState::with_pool(&config, pool.clone()).unwrap();
-        let user = crate::auth::user::insert(&pool, "renew@example.test", "renew", "unused")
-            .await
-            .unwrap();
-        let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(120))
-            .await
-            .unwrap();
+        let user = crate::auth::user::insert(
+            &pool,
+            "renew@example.test",
+            "renew",
+            "unused",
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let raw = crate::auth::session::create(
+            &pool,
+            user.id,
+            Duration::from_secs(120),
+            crate::auth::device::Device::UNKNOWN,
+        )
+        .await
+        .unwrap();
         let hash = crate::token::hash(&raw);
         let (created_at, expires_at): (
             chrono::DateTime<chrono::Utc>,
@@ -868,6 +970,8 @@ mod tests {
             hash: hash.clone(),
             created_at,
             expires_at,
+            id: uuid::Uuid::nil(),
+            device_client: crate::auth::device::DeviceClient::Unknown,
         };
 
         let renewed = renew(&state, &session, expires_at).await.expect("renewed");
@@ -918,12 +1022,23 @@ mod tests {
             .await
             .unwrap();
         let state = AppState::with_pool(&config, small.clone()).unwrap();
-        let user = crate::auth::user::insert(&pool, "tick@example.test", "tick", "unused")
-            .await
-            .unwrap();
-        let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(600))
-            .await
-            .unwrap();
+        let user = crate::auth::user::insert(
+            &pool,
+            "tick@example.test",
+            "tick",
+            "unused",
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let raw = crate::auth::session::create(
+            &pool,
+            user.id,
+            Duration::from_secs(600),
+            crate::auth::device::Device::UNKNOWN,
+        )
+        .await
+        .unwrap();
         let hash = crate::token::hash(&raw);
         let (created_at, expires_at) =
             sqlx::query_as("SELECT created_at, expires_at FROM sessions WHERE token_hash = $1")
@@ -936,6 +1051,8 @@ mod tests {
             hash,
             created_at,
             expires_at,
+            id: uuid::Uuid::nil(),
+            device_client: crate::auth::device::DeviceClient::Unknown,
         };
         let server: Uuid = sqlx::query_scalar(
             "INSERT INTO servers (name, owner_id) VALUES ('Tick', $1) RETURNING id",

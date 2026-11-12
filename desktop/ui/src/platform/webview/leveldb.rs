@@ -57,7 +57,7 @@ pub(super) fn read(dir: &Path) -> Result<(Areas, Stats), Failure> {
         Some(version) if version.as_slice() == VERSION => {}
         version => {
             return Err(Failure::Permanent(format!(
-                "{}: localStorage schema {:?}, not 1",
+                "{}: localStorage schema {:?}, not 1", // i18n-ok
                 dir.display(),
                 version.map(|v| String::from_utf8_lossy(v).into_owned())
             )));
@@ -127,7 +127,7 @@ fn entries(dir: &Path) -> Result<(Entries, Stats), Failure> {
                     .cloned()
                     // Compaction replaced it after CURRENT was read: next start.
                     .ok_or_else(|| {
-                        Failure::Transient(format!("{}: table {number} is gone", dir.display()))
+                        Failure::Transient(format!("{}: table {number} is gone", dir.display())) // i18n-ok
                     })
             });
             let tables = tables.collect::<Result<_, _>>()?;
@@ -399,9 +399,9 @@ fn table_entries(path: &Path, bytes: &[u8], merge: &mut Merge) -> Result<usize, 
         .len()
         .checked_sub(FOOTER)
         .map(|at| &bytes[at..])
-        .ok_or_else(|| damaged("shorter than a table's footer"))?;
+        .ok_or_else(|| damaged("shorter than a table's footer"))?; // i18n-ok
     if u64::from_le_bytes(footer[40..].try_into().unwrap_or_default()) != TABLE_MAGIC {
-        return Err(damaged("no table magic"));
+        return Err(damaged("no table magic")); // i18n-ok
     }
     let mut pos = 0;
     let handles = (|| {
@@ -410,24 +410,24 @@ fn table_entries(path: &Path, bytes: &[u8], merge: &mut Merge) -> Result<usize, 
     })();
     let index = handles.ok_or_else(|| damaged("footer"))?;
     let (index, _) = block(bytes, index)
-        .map_err(|kind| damaged(&format!("compression type {kind}")))?
-        .ok_or_else(|| damaged("index block"))?;
+        .map_err(|kind| damaged(&format!("compression type {kind}")))? // i18n-ok
+        .ok_or_else(|| damaged("index block"))?; // i18n-ok
     let mut snappy_blocks = 0;
     // Where the previous data block's trailer ended: a table's blocks follow
     // each other, so an index that names one twice is crafted.
     let mut next = 0;
-    for (_, handle) in block_entries(&index).ok_or_else(|| damaged("index block"))? {
+    let entries = block_entries(&index).ok_or_else(|| damaged("index block"))?; // i18n-ok
+    for (_, handle) in entries {
         let mut pos = 0;
         let Some(handle) = varint(&handle, &mut pos).zip(varint(&handle, &mut pos)) else {
-            return Err(damaged("index entry"));
+            return Err(damaged("index entry")); // i18n-ok
         };
         if handle.0 < next {
-            return Err(damaged("index entries out of order"));
+            return Err(damaged("index entries out of order")); // i18n-ok
         }
         next = handle.0.saturating_add(handle.1).saturating_add(5);
-        let Some((data, snappy)) =
-            block(bytes, handle).map_err(|kind| damaged(&format!("compression type {kind}")))?
-        else {
+        let compression = |kind| damaged(&format!("compression type {kind}")); // i18n-ok
+        let Some((data, snappy)) = block(bytes, handle).map_err(compression)? else {
             continue;
         };
         snappy_blocks += usize::from(snappy);

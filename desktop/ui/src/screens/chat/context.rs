@@ -5,6 +5,7 @@
 
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use gelabber_client::{ApiError, Client, MessageContext};
+use gelabber_i18n::chat as texts;
 use uuid::Uuid;
 
 use super::pane::{self, ContextScroll, ListInput};
@@ -132,7 +133,7 @@ pub fn show(
         let (r, clicked) = bordered(
             ui,
             pos2(x, rect.top() + 12.0),
-            "Zurück zu den Treffern",
+            texts::context_back_to_results(),
             egui::Id::unique(("gelabber-context-hits", channel)),
             true,
         );
@@ -144,7 +145,7 @@ pub fn show(
     let (_, clicked) = bordered(
         ui,
         pos2(x, rect.top() + 12.0),
-        "Zurück zum Chat",
+        texts::pane_back_to_chat(),
         egui::Id::unique(("gelabber-context-chat", channel)),
         true,
     );
@@ -166,19 +167,19 @@ pub fn show(
     let mut retry = false;
     match state.shown() {
         Shown::Loading => {
-            line(ui, "Nachrichtenkontext wird geladen…");
+            line(ui, texts::context_loading());
         }
         Shown::Missing | Shown::Failed => {
             let text = if state.shown() == Shown::Missing {
-                "Diese Nachricht ist nicht mehr verfügbar oder du hast keinen Zugriff mehr."
+                texts::context_missing()
             } else {
-                "Der Nachrichtenkontext konnte nicht geladen werden."
+                texts::context_failed()
             };
             let h = line(ui, text);
             let (_, clicked) = bordered(
                 ui,
                 pos2(body.left() + 16.0, body.top() + 12.0 + h + 8.0),
-                "Erneut laden",
+                texts::list_reload(),
                 egui::Id::unique(("gelabber-context-retry", channel)),
                 state.request.is_none(),
             );

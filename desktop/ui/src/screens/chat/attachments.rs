@@ -12,6 +12,7 @@ use std::sync::Arc;
 use egui::{Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use gelabber_client::store::UploadState;
 use gelabber_client::{Attachment, Gif, LinkPreview};
+use gelabber_i18n::{chat as texts, common};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
@@ -47,13 +48,9 @@ pub fn is_text(content_type: &str) -> bool {
     content_type.starts_with("text/") || content_type == "application/json"
 }
 
-/// `formatSize`: "1,5 MB" or "12 KB".
+/// `formatSize` ([`crate::rules::format_size`]) of a size the server sent.
 pub fn format_size(bytes: i64) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)).replace('.', ",")
-    } else {
-        format!("{} KB", ((bytes as f64 / 1024.0).round() as i64).max(1))
-    }
+    crate::rules::format_size(bytes.max(0) as u64)
 }
 
 pub fn attachment_url(id: Uuid) -> String {
@@ -68,8 +65,8 @@ pub fn download_url(id: Uuid) -> String {
 /// The upload state's words (`UploadState`), none once it arrived.
 pub fn upload_text(state: Option<UploadState>) -> Option<&'static str> {
     match state? {
-        UploadState::Uploading => Some("Wird hochgeladen…"),
-        UploadState::Waiting => Some("Wartet"),
+        UploadState::Uploading => Some(texts::attachment_uploading()),
+        UploadState::Waiting => Some(texts::attachment_waiting()),
         UploadState::Done => None,
     }
 }
@@ -150,14 +147,16 @@ pub fn download(ctx: &egui::Context, client: &gelabber_client::Client, url: &str
     let (url, name) = (url.to_owned(), safe_file_name(name));
     client.spawn(async move {
         match http.bytes(&url, gelabber_client::Download::File).await {
-            Ok(bytes) => crate::platform::files::save(&ctx, "Datei speichern", &name, bytes),
+            Ok(bytes) => {
+                crate::platform::files::save(&ctx, texts::attachment_save_title(), &name, bytes)
+            }
             Err(e) => {
                 tracing::warn!("download {url}: {e}");
                 // A lost session sends the app to the login page instead.
                 if let Some(text) = crate::toasts::error_text(&e) {
                     download_errors(&ctx)
                         .lock()
-                        .push(format!("Datei nicht heruntergeladen. {text}"));
+                        .push(texts::attachment_download_failed(&text));
                 }
                 ctx.request_repaint();
             }
@@ -407,7 +406,7 @@ pub fn layout(
                     (false, TextState::Failed) => TextBody::State(
                         Block::wrapped(
                             ui,
-                            "Vorschau nicht verfügbar.",
+                            texts::attachment_preview_failed(),
                             STATE_STYLE,
                             c.muted,
                             inner,
@@ -415,7 +414,13 @@ pub fn layout(
                         true,
                     ),
                     _ => TextBody::State(
-                        Block::wrapped(ui, "Vorschau wird geladen…", STATE_STYLE, c.muted, inner),
+                        Block::wrapped(
+                            ui,
+                            texts::attachment_preview_loading(),
+                            STATE_STYLE,
+                            c.muted,
+                            inner,
+                        ),
                         false,
                     ),
                 }
@@ -443,7 +448,12 @@ pub fn layout(
         let started = download_started(ui.ctx(), a.id);
         // With an upload state last, the size is a plain 13px span.
         let size = if started {
-            Block::single(ui, "Download gestartet", SIZE_STYLE, c.muted)
+            Block::single(
+                ui,
+                texts::attachment_download_started(),
+                SIZE_STYLE,
+                c.muted,
+            )
         } else if upload.is_some() {
             Block::single(ui, &format_size(a.size), FILE_STYLE.weight(400.0), c.text)
         } else {
@@ -466,7 +476,7 @@ pub fn layout(
                     "{} {}",
                     a.filename,
                     if started {
-                        "Download gestartet".to_owned()
+                        texts::attachment_download_started().to_owned()
                     } else {
                         format_size(a.size)
                     }
@@ -618,9 +628,9 @@ fn paint_failed(
     name_job.wrap.max_rows = 1;
     let name = Block::new(ui, name_job, TextStyle::new(13.0, 400.0, 1.5));
     let said = if images.too_large(&attachment_url(att.id), Fit::Inline) {
-        "Bild ist zu groß zum Anzeigen."
+        texts::attachment_image_too_large()
     } else {
-        "Bild konnte nicht geladen werden."
+        texts::attachment_image_failed()
     };
     let status = Block::wrapped(ui, said, STATE_STYLE, c.muted, inner.width());
     let actions_h = STATE_STYLE.line_px();
@@ -647,7 +657,7 @@ fn paint_failed(
     let retry = text_action(
         ui,
         pos2(inner.left(), y),
-        "Erneut laden",
+        texts::attachment_reload(),
         egui::Role::Button,
         id.with("retry"),
     );
@@ -659,9 +669,9 @@ fn paint_failed(
         ui,
         pos2(retry.rect.right() + 12.0, y),
         if download_started(ui.ctx(), att.id) {
-            "Download gestartet"
+            texts::attachment_download_started()
         } else {
-            "Herunterladen"
+            texts::attachment_download()
         },
         egui::Role::Link,
         id.with("download"),
@@ -769,7 +779,7 @@ impl Media {
                         egui::WidgetInfo::labeled(
                             egui::Role::Link,
                             true,
-                            format!("{} vergrößern", att.filename),
+                            texts::attachment_enlarge_label(&att.filename),
                         )
                     });
                     picture_ring(ui, &response, rect);
@@ -808,7 +818,7 @@ impl Media {
                             egui::WidgetInfo::labeled(
                                 egui::Role::Link,
                                 true,
-                                format!("{} vergrößern", att.filename),
+                                texts::attachment_enlarge_label(&att.filename),
                             )
                         });
                         picture_ring(ui, &response, rect);
@@ -922,9 +932,9 @@ fn paint_text(
     let link = |ui: &mut Ui, pos: Pos2, action: &mut Option<MediaAction>| {
         let started = download_started(ui.ctx(), piece.att.id);
         let label = if started {
-            "Download gestartet"
+            texts::attachment_download_started()
         } else {
-            "Herunterladen"
+            texts::attachment_download()
         };
         let block = Block::single(ui, label, STATE_STYLE, c.muted);
         let r = Rect::from_min_size(pos, block.size());
@@ -1037,7 +1047,7 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> 
             pos2(screen.right() - 16.0 - 40.0, screen.top() + 10.0),
             vec2(40.0, 40.0),
         );
-        let dl = Block::single(ui, "Herunterladen", style, white);
+        let dl = Block::single(ui, texts::attachment_download(), style, white);
         let dl_rect = Rect::from_min_size(
             pos2(
                 close_rect.left() - 16.0 - dl.width(),
@@ -1069,8 +1079,11 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> 
             egui::Id::unique("gelabber-lightbox-close"),
             Sense::click(),
         );
-        dl_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Herunterladen"));
-        close_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Schließen"));
+        dl_resp.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Link, true, texts::attachment_download())
+        });
+        close_resp
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, common::close()));
         // The close button has the focus, not the download link.
         if first {
             close_resp.request_focus();
@@ -1126,10 +1139,10 @@ pub fn paint_gif(
     let label = if gif.title.is_empty() {
         "GIF".to_owned()
     } else {
-        format!("GIF: {}", gif.title)
+        texts::attachment_gif_title(&gif.title)
     };
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::Role::Button, true, format!("{label}, Animation"))
+        egui::WidgetInfo::labeled(egui::Role::Button, true, texts::gif_animation_label(&label))
     });
     let state = shown(ui.ctx());
     let chosen = state.lock().gifs.get(&message).copied();
@@ -1680,6 +1693,12 @@ mod tests {
         assert_eq!(format_size(1536 * 1024), "1,5 MB");
         assert_eq!(format_size(100), "1 KB");
         assert_eq!(format_size(12 * 1024 + 300), "12 KB");
+        assert_eq!(format_size(2000 * 1024 * 1024), "2000,0 MB");
+        {
+            let _en = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+            assert_eq!(format_size(1536 * 1024), "1.5 MB");
+            assert_eq!(format_size(2000 * 1024 * 1024), "2000.0 MB");
+        }
         let b = image_box(Some(vec2(1920.0, 1080.0)), 656.0);
         assert!(
             (b.x - 360.0).abs() < 0.01 && (b.y - 203.37).abs() < 0.05,

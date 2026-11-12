@@ -5,6 +5,8 @@ import type { DirectMessage } from "../dms/types.ts";
 import type { Badge } from "../messages/notifyLevel.ts";
 import type { Server, ServerDetail } from "../servers/types.ts";
 import { channelOrder } from "../servers/rows.ts";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 export type SwitchTarget =
   | { kind: "server"; serverId: string }
@@ -50,7 +52,7 @@ export function switchEntries({
       id: `dm:${dm.id}`,
       kind: "dm",
       label: dm.peer.name,
-      detail: "Direktnachricht",
+      detail: translate(shell, "switcher.dmDetail"),
       target: { kind: "dm", channelId: dm.id },
       badge: badges.get(dm.id) ?? NO_BADGE,
       avatar: dm.peer.avatar_url,
@@ -78,7 +80,7 @@ export function switchEntries({
       id: `server:${server.id}`,
       kind: "server",
       label: server.name,
-      detail: "Server",
+      detail: translate(shell, "switcher.serverDetail"),
       target: { kind: "server", serverId: server.id },
       badge: { count, dot },
       avatar: server.icon_url ?? null,

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use gelabber_client::{ApiError, Client, MessagePage};
+use gelabber_i18n::chat as texts;
 use uuid::Uuid;
 
 use super::content::{self, Mentions};
@@ -79,9 +80,9 @@ impl SearchState {
     pub fn more_button(&self) -> Option<(&'static str, bool)> {
         self.next_cursor()?;
         Some(if self.more.is_some() {
-            ("Lädt…", false)
+            (texts::search_loading_more(), false)
         } else {
-            ("Ältere Treffer", true)
+            (texts::search_older(), true)
         })
     }
 
@@ -175,7 +176,7 @@ pub fn show(
             }
             Err(e) => {
                 state.pages.clear();
-                state.result = Some(Err(e.german().to_owned()));
+                state.result = Some(Err(e.text().to_owned()));
             }
         }
     }
@@ -193,7 +194,7 @@ pub fn show(
     // Summary line: padding 10 20 0.
     let summary = Block::single(
         ui,
-        "Treffer in dieser Unterhaltung",
+        texts::search_summary(),
         TextStyle::new(12.0, 400.0, 1.5),
         c.muted,
     );
@@ -203,7 +204,7 @@ pub fn show(
     );
     let back = Block::single(
         ui,
-        "Zurück zum Chat",
+        texts::pane_back_to_chat(),
         TextStyle::new(12.0, 600.0, 1.5),
         c.muted,
     );
@@ -247,14 +248,14 @@ pub fn show(
     };
     let failed = matches!(state.result, Some(Err(_))) || state.more_failed;
     if state.result.is_none() {
-        state_line(ui, &mut y, "Suche läuft…");
+        state_line(ui, &mut y, texts::search_running());
     }
     if failed {
-        state_line(ui, &mut y, "Die Suche konnte nicht geladen werden.");
+        state_line(ui, &mut y, texts::search_failed());
         let retry = secondary(
             ui,
             pos2(body.left() + 8.0, y - 6.0),
-            "Erneut laden",
+            texts::list_reload(),
             true,
             egui::Id::unique(("gelabber-search-retry", channel)),
         );
@@ -274,7 +275,7 @@ pub fn show(
         .flat_map(|page| page.messages.iter().rev())
         .collect();
     if matches!(state.result, Some(Ok(()))) && hits.is_empty() {
-        state_line(ui, &mut y, "Keine Nachrichten gefunden.");
+        state_line(ui, &mut y, texts::search_none());
     }
     let width = body.width() - 24.0;
     let terms = search_terms(&state.shown);
@@ -299,7 +300,7 @@ pub fn show(
         let laid = content::layout_hit(ui, &m.content, width, &mentions, &terms);
         let open = Block::single(
             ui,
-            "Nachricht im Kontext öffnen",
+            texts::search_open_in_context(),
             TextStyle::new(12.0, 400.0, 1.5),
             c.muted,
         );
@@ -316,10 +317,13 @@ pub fn show(
                 Sense::click(),
             );
             let text = readable_mentions(&super::markdown::plain_text(&m.content), names);
-            let label = format!(
-                "Zur Nachricht von {}: {}",
-                m.author.name,
-                if text.is_empty() { "Datei" } else { &text }
+            let label = texts::search_hit_label(
+                &m.author.name,
+                if text.is_empty() {
+                    texts::notify_file()
+                } else {
+                    &text
+                },
             );
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
             // The hit's text lies over it (selectable), so its hover is

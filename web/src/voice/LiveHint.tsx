@@ -7,7 +7,9 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { useSession } from "../auth/session.ts";
-import { liveSentence, nameList } from "./roomSummary.ts";
+import { T, useT } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
+import { liveSentence, nameList, youName } from "./roomSummary.ts";
 import { EMPTY_LIVE, useVoiceRoster } from "./roster.ts";
 import { useVoice } from "./session.ts";
 import { currentCall, joinToWatch, watchLabel } from "./watchLive.ts";
@@ -20,6 +22,7 @@ export function LiveHint({
   /** `pill`: compact, in the channel header on wide screens. */
   variant?: "strip" | "pill";
 }) {
+  const t = useT(voice);
   const me = useSession((s) => s.user?.id);
   const lives = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
   const call = useVoice(currentCall);
@@ -36,8 +39,10 @@ export function LiveHint({
       self,
       // You first, as German says it.
       who: [
-        ...(self ? ["Du"] : []),
-        ...ids.filter((id) => id !== me).map((id) => names.get(id) ?? "Jemand"),
+        ...(self ? [youName()] : []),
+        ...ids
+          .filter((id) => id !== me)
+          .map((id) => names.get(id) ?? t("people.someone")),
       ],
       // Only someone else's Live is worth coming along for.
       others: ids.filter((id) => id !== me),
@@ -71,17 +76,21 @@ export function LiveHint({
 
   if (variant === "pill") {
     const more = entries.length - 1;
-    const where = first.name ? ` in ${first.name}` : "";
+    const sentence = liveSentence(first.who, first.self);
+    const who = nameList(first.who);
     return (
       <div className="lr-live-pill">
-        <span className="lr-live-badge">Live</span>
+        <span className="lr-live-badge">{t("live.badge")}</span>
         <Link
           to="/s/$serverId/c/$channelId"
           params={{ serverId: server.id, channelId: first.channelId }}
-          title={`${liveSentence(first.who, first.self)}${where}`}
+          title={
+            first.name
+              ? t("hint.in", { what: sentence, channel: first.name })
+              : sentence
+          }
         >
-          {nameList(first.who)}
-          {where}
+          {first.name ? t("hint.in", { what: who, channel: first.name }) : who}
           {more > 0 ? ` +${more}` : ""}
         </Link>
         {action(first)}
@@ -94,21 +103,34 @@ export function LiveHint({
       {entries.map((entry) => (
         <div key={entry.channelId}>
           <p>
-            <span className="lr-live-badge">Live</span>
-            {liveSentence(entry.who, entry.self)}
+            <span className="lr-live-badge">{t("live.badge")}</span>
             {entry.name ? (
-              <>
-                {" "}
-                in{" "}
-                <Link
-                  to="/s/$serverId/c/$channelId"
-                  params={{ serverId: server.id, channelId: entry.channelId }}
-                >
-                  {entry.name}
-                </Link>
-              </>
-            ) : null}
-            .
+              <T
+                catalog={voice}
+                k="hint.sentenceIn"
+                params={{
+                  sentence: liveSentence(entry.who, entry.self),
+                  channel: entry.name,
+                }}
+                tags={{
+                  link: (text) => (
+                    <Link
+                      to="/s/$serverId/c/$channelId"
+                      params={{
+                        serverId: server.id,
+                        channelId: entry.channelId,
+                      }}
+                    >
+                      {text}
+                    </Link>
+                  ),
+                }}
+              />
+            ) : (
+              t("hint.sentence", {
+                sentence: liveSentence(entry.who, entry.self),
+              })
+            )}
           </p>
           {action(entry)}
         </div>

@@ -1,9 +1,10 @@
-//! Client-side checks and the German error copy of web/src/auth/rules.ts
-//! and useFormErrors.ts, so forms answer exactly like the web.
+//! Client-side checks and the error copy of web/src/auth/rules.ts and
+//! useFormErrors.ts, so forms answer exactly like the web.
 
 use std::collections::BTreeMap;
 
 use gelabber_client::ApiError;
+use gelabber_i18n::auth;
 
 pub const PASSWORD_MIN: usize = 8;
 pub const PASSWORD_MAX: usize = 128;
@@ -65,37 +66,74 @@ pub fn validate_name(raw: &str) -> Option<&'static str> {
     }
 }
 
+pub const ROLE_NAME_MAX: usize = 32;
+
+/// Names of the two fixed roles in both languages; no custom role takes one.
+pub const RESERVED_ROLE_NAMES: [&str; 4] = [
+    "Alle Mitglieder", // i18n-ok: compared, never shown
+    "All members",     // i18n-ok
+    "Inhaber",         // i18n-ok
+    "Owner",           // i18n-ok
+];
+
+/// `validateRoleName` (web/src/servers/rules.ts): trimmed, 1–32
+/// characters, no control characters, not a fixed role's name and not the
+/// name of another role (`others`), both ignoring case.
+pub fn validate_role_name(raw: &str, others: &[&str]) -> Option<&'static str> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Some("required");
+    }
+    if value.chars().count() > ROLE_NAME_MAX {
+        return Some("too_long");
+    }
+    if value.chars().any(char::is_control) {
+        return Some("invalid");
+    }
+    let lower = value.to_lowercase();
+    RESERVED_ROLE_NAMES
+        .iter()
+        .chain(others)
+        .any(|name| name.to_lowercase() == lower)
+        .then_some("taken")
+}
+
 fn field_label(field: &str) -> &'static str {
     match field {
-        "email" => "E-Mail-Adresse",
-        "password" => "Passwort",
-        "current_password" => "Aktuelles Passwort",
-        "name" => "Name",
-        "avatar_url" => "Avatar-URL",
-        "bio" => "Über mich",
-        "pronouns" => "Pronomen",
-        "status_text" => "Status",
-        "accent_color" => "Akzentfarbe",
-        "banner_color" => "Bannerfarbe",
-        "banner_url" => "Banner",
-        "avatar_decoration" => "Avatar-Rahmen",
-        "kind" => "Kanaltyp",
-        "category_id" => "Kategorie",
-        "member_permissions" => "Rechte",
-        "max_uses" => "Maximale Nutzungen",
-        "expires_in_hours" => "Gültigkeit",
-        "content" => "Nachricht",
-        "before" | "after" => "Cursor",
-        "limit" => "Anzahl",
-        "user_id" => "Nutzer",
-        "filename" => "Dateiname",
-        "content_type" => "Dateityp",
-        "size" => "Datei",
-        "attachment_ids" => "Anhang",
-        "gif" => "GIF",
-        "q" => "Suche",
-        "token" => "Link",
-        _ => "Eingabe",
+        "email" => auth::field_label_email(),
+        "password" => auth::field_label_password(),
+        "current_password" => auth::field_label_current_password(),
+        "name" => auth::field_label_name(),
+        "avatar_url" => auth::field_label_avatar_url(),
+        "bio" => auth::field_label_bio(),
+        "pronouns" => auth::field_label_pronouns(),
+        "status_text" => auth::field_label_status_text(),
+        "accent_color" => auth::field_label_accent_color(),
+        "banner_color" => auth::field_label_banner_color(),
+        "banner_url" => auth::field_label_banner_url(),
+        "avatar_decoration" => auth::field_label_avatar_decoration(),
+        "kind" => auth::field_label_kind(),
+        "category_id" => auth::field_label_category_id(),
+        "member_permissions" => auth::field_label_member_permissions(),
+        "max_uses" => auth::field_label_max_uses(),
+        "expires_in_hours" => auth::field_label_expires_in_hours(),
+        "content" => auth::field_label_content(),
+        "before" | "after" => auth::field_label_cursor(),
+        "limit" => auth::field_label_limit(),
+        "user_id" => auth::field_label_user_id(),
+        "filename" => auth::field_label_filename(),
+        "content_type" => auth::field_label_content_type(),
+        "size" => auth::field_label_size(),
+        "attachment_ids" => auth::field_label_attachment_ids(),
+        "gif" => auth::field_label_gif(),
+        "q" => auth::field_label_q(),
+        "token" => auth::field_label_token(),
+        "color" => auth::field_label_color(),
+        "permissions" => auth::field_label_member_permissions(),
+        "roles" => auth::field_label_roles(),
+        "role_ids" => auth::field_label_role_ids(),
+        "invitation" => auth::field_label_invitation(),
+        _ => auth::field_label_other(),
     }
 }
 
@@ -103,28 +141,35 @@ fn field_label(field: &str) -> &'static str {
 pub fn field_message(field: &str, code: &str) -> String {
     let label = field_label(field);
     match code {
-        "required" => format!("{label} fehlt."),
-        "too_short" if field == "password" => format!("Mindestens {PASSWORD_MIN} Zeichen."),
-        "too_short" => format!("{label} ist zu kurz."),
-        "too_long" if field == "size" => "Die Datei ist zu groß (max. 25 MB).".into(),
-        "too_long" if field == "attachment_ids" => "Höchstens 10 Dateien pro Nachricht.".into(),
-        "too_long" => format!("{label} ist zu lang."),
-        "too_large" => "Alle Dateien zusammen sind zu groß (max. 100 MB).".into(),
-        "mismatch" => "Der Inhalt der Datei passt nicht zu ihrem Typ.".into(),
-        "taken" => "Diese E-Mail-Adresse ist schon registriert.".into(),
-        "wrong" => "Das Passwort stimmt nicht.".into(),
-        "stale" => "Dein Bild wurde inzwischen woanders geändert. Lade die Seite neu.".into(),
-        "exclusive" => "Ein GIF wird ohne Text und Anhang gesendet.".into(),
-        "unavailable" => "GIFs sind auf diesem Server nicht eingerichtet.".into(),
-        "not_editable" => "Ein GIF lässt sich nicht bearbeiten.".into(),
+        // The API's `{"invitation":"required"}` (invitation_required).
+        "required" if field == "invitation" => auth::error_invitation_required().into(),
+        "required" => auth::field_error_required(label),
+        "too_short" if field == "password" => auth::field_error_password_too_short(PASSWORD_MIN),
+        "too_short" => auth::field_error_too_short(label),
+        "too_long" if field == "size" => auth::field_error_file_too_large().into(),
+        "too_long" if field == "attachment_ids" => auth::field_error_too_many_files().into(),
+        "too_long" => auth::field_error_too_long(label),
+        "too_large" => auth::field_error_too_large().into(),
+        "mismatch" => auth::field_error_mismatch().into(),
+        // Only a role's name is taken by name; an address by email.
+        "taken" if field == "name" => auth::field_error_role_name_taken().into(),
+        "taken" => auth::field_error_taken().into(),
+        "wrong" => auth::field_error_wrong().into(),
+        "stale" => auth::field_error_stale().into(),
+        "exclusive" => auth::field_error_exclusive().into(),
+        "unavailable" => auth::field_error_unavailable().into(),
+        "not_editable" => auth::field_error_not_editable().into(),
+        "too_many" => auth::field_error_too_many_roles().into(),
         _ => match field {
-            "email" => "Das sieht nicht wie eine E-Mail-Adresse aus.".into(),
-            "avatar_url" => "Bitte eine vollständige https-URL angeben.".into(),
-            "accent_color" | "banner_color" => "Bitte eine Farbe im Format #rrggbb wählen.".into(),
-            "bio" => "Nur Text und Zeilenumbrüche, keine Steuerzeichen.".into(),
-            "pronouns" | "status_text" => "Nur eine Zeile Text, keine Steuerzeichen.".into(),
-            "content_type" => "Dieser Dateityp ist nicht erlaubt.".into(),
-            _ => format!("{label} ist ungültig."),
+            "email" => auth::field_error_email_invalid().into(),
+            "avatar_url" => auth::field_error_avatar_url_invalid().into(),
+            "accent_color" | "banner_color" => auth::field_error_color_invalid().into(),
+            "bio" => auth::field_error_bio_invalid().into(),
+            "pronouns" | "status_text" => auth::field_error_line_invalid().into(),
+            "content_type" => auth::field_error_content_type_invalid().into(),
+            "role_ids" => auth::field_error_role_ids_invalid().into(),
+            "invitation" => auth::error_invitation_invalid().into(),
+            _ => auth::field_error_invalid(label),
         },
     }
 }
@@ -132,34 +177,124 @@ pub fn field_message(field: &str, code: &str) -> String {
 /// `errorMessage(code)`: the form-level line for an API error code.
 pub fn error_message(code: &str) -> &'static str {
     match code {
-        "invalid_credentials" => "E-Mail oder Passwort ist falsch.",
-        "theme_conflict" => "Auf einem anderen Gerät geändert. Bitte erneut versuchen.",
-        "email_taken" => "Diese E-Mail-Adresse ist schon registriert.",
-        "email_unverified" => {
-            "Bitte bestätige zuerst deine E-Mail-Adresse. Wir haben dir gerade einen neuen Link geschickt."
+        "invalid_credentials" => auth::error_invalid_credentials(),
+        "theme_conflict" => auth::error_theme_conflict(),
+        "email_taken" => auth::error_email_taken(),
+        "email_unverified" => auth::error_email_unverified(),
+        "token_invalid" => auth::error_token_invalid(),
+        "unauthenticated" => auth::error_unauthenticated(),
+        "csrf_invalid" => auth::error_csrf_invalid(),
+        "insecure_transport" => auth::error_insecure_transport(),
+        "forbidden" => auth::error_forbidden(),
+        "not_found" => auth::error_not_found(),
+        "invite_invalid" => auth::error_invite_invalid(),
+        "banned" => auth::error_banned(),
+        "rate_limited" => auth::error_rate_limited(),
+        "quota_exceeded" => auth::error_quota_exceeded(),
+        "upstream_unavailable" => auth::error_upstream_unavailable(),
+        "upstream_quota" => auth::error_upstream_quota(),
+        "validation_failed" => auth::error_validation_failed(),
+        "timeout" => auth::error_timeout(),
+        "network" => auth::error_network(),
+        "oidc_unavailable" => auth::error_oidc_unavailable(),
+        "oidc_email_unverified" => auth::error_oidc_email_unverified(),
+        "oidc_account_unverified" => auth::error_oidc_account_unverified(),
+        "identity_taken" => auth::error_identity_taken(),
+        "password_required" => auth::error_password_required(),
+        "reauth_required" => auth::error_reauth_required(),
+        "oidc_wrong_origin" => auth::error_oidc_wrong_origin(),
+        "session_changed" => auth::error_session_changed(),
+        "invitation_required" => auth::error_invitation_required(),
+        "invitation_invalid" => auth::error_invitation_invalid(),
+        "account_disabled" => auth::error_account_disabled(),
+        "server_blocked" => auth::error_server_blocked(),
+        "join_request_required" => auth::error_join_request_required(),
+        "join_request_declined" => auth::error_join_request_declined(),
+        "join_requests_full" => auth::error_join_requests_full(),
+        "already_member" => auth::error_already_member(),
+        _ => auth::error_internal(),
+    }
+}
+
+/// `apiErrorMessage`: the copy of a failure with what its body adds. A
+/// declined request to join names the day from which the person may ask
+/// again (`retry_after` seconds from `now`).
+pub fn failure_message(failure: &Failure, now: chrono::DateTime<chrono::Utc>) -> String {
+    if failure.code == "join_request_declined"
+        && let Some(wait) = failure.retry_after.filter(|w| *w > 0.0)
+    {
+        let at = now + chrono::Duration::milliseconds((wait * 1000.0) as i64);
+        return auth::error_join_request_declined_until(&format_day(at));
+    }
+    error_message(&failure.code).to_owned()
+}
+
+/// `formatSize`: "2,5 MB" ("2.5 MB" in English, one decimal, no grouping)
+/// or "12 KB".
+pub fn format_size(bytes: u64) -> String {
+    use gelabber_i18n::{Locale, intl};
+    if bytes >= 1024 * 1024 {
+        let group = match gelabber_i18n::get() {
+            Locale::De => '.',
+            Locale::En => ',',
+        };
+        let mb = intl::format_number(bytes as f64 / (1024.0 * 1024.0), 1, 1).replace(group, "");
+        format!("{mb} MB")
+    } else {
+        format!("{} KB", ((bytes as f64 / 1024.0).round() as u64).max(1))
+    }
+}
+
+/// `formatDate(at)`: the local day, "18. November 2026".
+pub fn format_day(at: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::{Datelike, Timelike};
+    let at = at.with_timezone(&chrono::Local);
+    let fields = gelabber_i18n::intl::DateTime {
+        year: at.year(),
+        month: at.month(),
+        day: at.day(),
+        weekday: at.weekday().num_days_from_monday(),
+        hour: at.hour(),
+        minute: at.minute(),
+    };
+    gelabber_i18n::intl::format_date(&fields, gelabber_i18n::intl::DateStyle::Long)
+}
+
+/// `OIDC_ERRORS`: why a provider sign-in came back without signing in
+/// (the `?oidc_error=` of `/login`, `/register` and `/settings/konto`).
+pub const OIDC_ERRORS: [&str; 11] = [
+    "cancelled",
+    "expired",
+    "failed",
+    "email_unverified",
+    "account_unverified",
+    "identity_taken",
+    "insecure_transport",
+    "session_changed",
+    "invitation_required",
+    "invitation_invalid",
+    "account_disabled",
+];
+
+/// `isOidcError`: the code when it is one of [`OIDC_ERRORS`].
+pub fn oidc_error(value: Option<&str>) -> Option<&'static str> {
+    let value = value?;
+    OIDC_ERRORS.iter().copied().find(|code| *code == value)
+}
+
+/// `oidcErrorMessage`: the copy of an `oidc_error`, in the interface's
+/// language. The operator's codes take the client's copy.
+pub fn oidc_error_message(code: &str) -> &'static str {
+    match code {
+        "cancelled" => auth::oidc_error_cancelled(),
+        "expired" => auth::oidc_error_expired(),
+        "failed" => auth::oidc_error_failed(),
+        "email_unverified" => error_message("oidc_email_unverified"),
+        "account_unverified" => error_message("oidc_account_unverified"),
+        "invitation_required" | "invitation_invalid" | "account_disabled" => {
+            gelabber_client::error_message(code)
         }
-        "token_invalid" => "Dieser Link ist abgelaufen oder wurde schon benutzt.",
-        "unauthenticated" => "Bitte melde dich erneut an.",
-        "csrf_invalid" => "Sicherheits-Token abgelaufen. Bitte noch einmal versuchen.",
-        "insecure_transport" => {
-            "Anmelden geht nur über eine verschlüsselte Verbindung. Öffne Gelabber mit https:// (oder auf diesem Rechner über http://localhost)."
-        }
-        "forbidden" => "Dafür fehlt dir die Berechtigung.",
-        "not_found" => "Das gibt es nicht (mehr).",
-        "invite_invalid" => "Diese Einladung ist abgelaufen oder aufgebraucht.",
-        "banned" => "Du bist auf diesem Server gesperrt.",
-        "rate_limited" => "Zu viele Anfragen. Bitte kurz warten und noch einmal versuchen.",
-        "quota_exceeded" => "Tageslimit für Uploads erreicht.",
-        "upstream_unavailable" => {
-            "Der GIF-Dienst antwortet gerade nicht. Bitte gleich noch einmal versuchen."
-        }
-        "upstream_quota" => {
-            "Dieser Server hat sein GIF-Kontingent gerade aufgebraucht. Bitte später noch einmal versuchen."
-        }
-        "validation_failed" => "Bitte die markierten Felder prüfen.",
-        "timeout" => "Der Server antwortet nicht. Bitte noch einmal versuchen.",
-        "network" => "Keine Verbindung zum Server.",
-        _ => "Da ist etwas schiefgelaufen. Bitte noch einmal versuchen.",
+        _ => error_message(code),
     }
 }
 
@@ -229,7 +364,7 @@ impl FormErrors {
     /// `setFields`: client-side check results, in form order.
     pub fn set_fields(&mut self, fields: Vec<(&str, String)>) {
         self.focus = fields.first().map(|(f, _)| (*f).to_owned());
-        self.form = (fields.len() > 1).then(|| "Bitte die markierten Felder prüfen.".to_owned());
+        self.form = (fields.len() > 1).then(|| auth::error_validation_failed().to_owned());
         self.fields = fields.into_iter().map(|(f, m)| (f.to_owned(), m)).collect();
     }
 
@@ -249,9 +384,7 @@ impl FormErrors {
             let seconds = wait.ceil() as u64;
             self.cooldown_until =
                 Some(std::time::Instant::now() + std::time::Duration::from_secs(seconds));
-            self.form = Some(format!(
-                "Zu viele Versuche. Bitte {seconds} Sekunden warten."
-            ));
+            self.form = Some(auth::form_rate_limited(seconds));
             self.fields.clear();
             self.focus = None;
             return;
@@ -262,9 +395,9 @@ impl FormErrors {
             .map(|(f, code)| (f.clone(), field_message(f, code)))
             .collect();
         self.form = if fields.is_empty() {
-            Some(error_message(&failure.code).to_owned())
+            Some(failure_message(failure, chrono::Utc::now()))
         } else if fields.len() > 1 {
-            Some("Bitte die markierten Felder prüfen.".to_owned())
+            Some(auth::error_validation_failed().to_owned())
         } else {
             None
         };
@@ -377,9 +510,174 @@ mod tests {
     }
 
     #[test]
+    fn role_rules_and_copy() {
+        assert_eq!(validate_role_name("  ", &[]), Some("required"));
+        assert_eq!(validate_role_name(&"x".repeat(33), &[]), Some("too_long"));
+        assert_eq!(validate_role_name(&"ä".repeat(32), &[]), None);
+        assert_eq!(validate_role_name("Mo\u{85}d", &[]), Some("invalid"));
+        assert_eq!(validate_role_name("alle mitglieder", &[]), Some("taken"));
+        assert_eq!(validate_role_name("OWNER", &[]), Some("taken"));
+        assert_eq!(
+            validate_role_name(" moderation ", &["Moderation"]),
+            Some("taken")
+        );
+        assert_eq!(validate_role_name("Moderation", &["Stammgäste"]), None);
+        assert_eq!(
+            field_message("name", "taken"),
+            "Diesen Namen hat schon eine Rolle."
+        );
+        assert_eq!(
+            field_message("email", "taken"),
+            "Diese E-Mail-Adresse ist schon registriert."
+        );
+        assert_eq!(
+            field_message("roles", "too_many"),
+            "Ein Server hat höchstens 50 Rollen."
+        );
+        assert_eq!(
+            field_message("role_ids", "invalid"),
+            "Eine der Rollen gibt es nicht mehr. Lade die Seite neu."
+        );
+        assert_eq!(field_message("color", "invalid"), "Farbe ist ungültig.");
+        assert_eq!(
+            field_message("permissions", "invalid"),
+            "Rechte ist ungültig."
+        );
+        assert_eq!(field_message("roles", "required"), "Rollen fehlt.");
+    }
+
+    #[test]
     fn tokens() {
         let token = "ab".repeat(32);
         assert_eq!(link_token(&format!("#token={token}")), Some(token.clone()));
         assert_eq!(link_token("#token=xyz"), None);
+    }
+
+    /// Every sign-in code has its own copy, and only the listed
+    /// `oidc_error` codes are read from an address.
+    #[test]
+    fn sign_in_codes_have_copy() {
+        for code in [
+            "oidc_unavailable",
+            "oidc_email_unverified",
+            "oidc_account_unverified",
+            "identity_taken",
+            "password_required",
+            "reauth_required",
+            "oidc_wrong_origin",
+            "session_changed",
+        ] {
+            assert_ne!(error_message(code), auth::error_internal(), "{code}");
+        }
+        for code in OIDC_ERRORS {
+            assert_eq!(oidc_error(Some(code)), Some(code));
+            assert_ne!(oidc_error_message(code), auth::error_internal(), "{code}");
+        }
+        assert_eq!(oidc_error(Some("registration_closed")), None);
+        assert_eq!(oidc_error(None), None);
+        assert_eq!(
+            oidc_error_message("account_unverified"),
+            auth::error_oidc_account_unverified()
+        );
+        assert_eq!(oidc_error_message("cancelled"), "Anmeldung abgebrochen.");
+        assert_eq!(
+            oidc_error_message("invitation_required"),
+            "Zum Registrieren brauchst du eine Einladung."
+        );
+    }
+
+    /// The operator's codes (auth/rules.test.ts): the form line, and the
+    /// invitation field's own copy for `required` and `invalid`.
+    #[test]
+    fn operator_codes_have_copy() {
+        assert_eq!(
+            error_message("account_disabled"),
+            "Dieses Konto ist gesperrt."
+        );
+        assert_eq!(
+            error_message("server_blocked"),
+            "Dieser Server wurde vom Betreiber gesperrt."
+        );
+        assert_eq!(
+            error_message("invitation_required"),
+            "Zum Registrieren brauchst du eine Einladung."
+        );
+        assert_eq!(
+            error_message("invitation_invalid"),
+            "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt."
+        );
+        assert_eq!(
+            field_message("invitation", "required"),
+            auth::error_invitation_required()
+        );
+        assert_eq!(
+            field_message("invitation", "invalid"),
+            auth::error_invitation_invalid()
+        );
+        assert_eq!(
+            field_message("invitation", "too_long"),
+            "Einladungscode ist zu lang."
+        );
+        // A sign-in refused for a disabled account says so at the form.
+        let mut errors = FormErrors::default();
+        errors.from_failure(
+            &Failure {
+                code: "account_disabled".into(),
+                ..Failure::default()
+            },
+            &["email", "password"],
+        );
+        assert_eq!(errors.form.as_deref(), Some("Dieses Konto ist gesperrt."));
+    }
+
+    /// The directory's refusals (auth/rules.test.ts): their copy, and a
+    /// declined request names the day it may be asked again.
+    #[test]
+    fn join_request_codes_have_copy() {
+        for code in [
+            "join_request_required",
+            "join_request_declined",
+            "join_requests_full",
+            "already_member",
+        ] {
+            assert_ne!(error_message(code), auth::error_internal(), "{code}");
+        }
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-11T12:00:00Z")
+            .expect("time")
+            .with_timezone(&chrono::Utc);
+        let declined = Failure {
+            code: "join_request_declined".into(),
+            retry_after: Some(7.0 * 24.0 * 3600.0),
+            ..Failure::default()
+        };
+        let day = format_day(now + chrono::Duration::days(7));
+        assert!(day.ends_with("November 2026"), "{day}");
+        assert_eq!(
+            failure_message(&declined, now),
+            format!(
+                "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {day} wieder anfragen."
+            )
+        );
+        // Without the wait it is the plain line.
+        let plain = Failure {
+            retry_after: None,
+            ..declined
+        };
+        assert_eq!(
+            failure_message(&plain, now),
+            auth::error_join_request_declined()
+        );
+        let mut errors = FormErrors::default();
+        errors.from_failure(
+            &Failure {
+                code: "join_requests_full".into(),
+                ..Failure::default()
+            },
+            &["message"],
+        );
+        assert_eq!(
+            errors.form.as_deref(),
+            Some(auth::error_join_requests_full())
+        );
     }
 }

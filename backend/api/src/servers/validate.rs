@@ -1,5 +1,5 @@
-//! Input rules for server, category, channel and invite bodies. Same field
-//! codes as `auth::validate`; mirrored in `web/src/servers/rules.ts`.
+//! Input rules for server, category, channel, invite and role bodies. Same
+//! field codes as `auth::validate`; mirrored in `web/src/servers/rules.ts`.
 
 use uuid::Uuid;
 
@@ -12,6 +12,14 @@ use super::permissions::Permissions;
 pub const NAME_MAX: usize = 100;
 pub const INVITE_MAX_USES_MAX: i32 = 10_000;
 pub const INVITE_EXPIRES_HOURS_MAX: i64 = 24 * 365;
+pub const ROLE_NAME_MAX: usize = 32;
+/// Custom roles per server, and role ids per assignment.
+pub const ROLES_MAX: usize = 50;
+/// Names of the two fixed roles, in German and English. A custom role may
+/// not take one (compared ignoring case).
+pub const RESERVED_ROLE_NAMES: [&str; 4] = ["Alle Mitglieder", "All members", "Inhaber", "Owner"];
+/// The six role colours, as stored in `server_roles.color`.
+pub const ROLE_COLORS: [&str; 6] = ["amber", "blue", "green", "pink", "violet", "coral"];
 
 /// Server and category names: trimmed, 1–100 characters, no control chars.
 pub fn name(raw: &str, errors: &mut FieldErrors) -> Option<String> {
@@ -98,14 +106,81 @@ pub fn category_id(raw: Option<&str>, errors: &mut FieldErrors) -> Option<Option
     }
 }
 
-pub fn permissions(names: &[String], errors: &mut FieldErrors) -> Option<Permissions> {
+/// A flag set by name; an unknown name is `invalid` under `field`, the body
+/// field it came from (`member_permissions` or a role's `permissions`).
+pub fn permissions(
+    names: &[String],
+    field: &'static str,
+    errors: &mut FieldErrors,
+) -> Option<Permissions> {
     match Permissions::from_names(names) {
         Ok(set) => Some(set),
         Err(_) => {
-            errors.insert("member_permissions", "invalid");
+            errors.insert(field, "invalid");
             None
         }
     }
+}
+
+/// Custom role names: trimmed, 1–32 characters, no control chars, and none
+/// of the fixed roles' names (`taken`). Uniqueness within the server is
+/// checked against the database.
+pub fn role_name(raw: &str, errors: &mut FieldErrors) -> Option<String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        errors.insert("name", "required");
+        return None;
+    }
+    if value.chars().count() > ROLE_NAME_MAX {
+        errors.insert("name", "too_long");
+        return None;
+    }
+    if value.chars().any(char::is_control) {
+        errors.insert("name", "invalid");
+        return None;
+    }
+    let lower = value.to_lowercase();
+    if RESERVED_ROLE_NAMES
+        .iter()
+        .any(|reserved| reserved.to_lowercase() == lower)
+    {
+        errors.insert("name", "taken");
+        return None;
+    }
+    Some(value.to_owned())
+}
+
+/// One of the six role colours. A missing colour is `invalid` too.
+pub fn role_color(raw: Option<&str>, errors: &mut FieldErrors) -> Option<&'static str> {
+    match raw.and_then(|raw| ROLE_COLORS.into_iter().find(|color| *color == raw)) {
+        Some(color) => Some(color),
+        None => {
+            errors.insert("color", "invalid");
+            None
+        }
+    }
+}
+
+/// Role ids of an assignment or a channel's access: duplicates collapse,
+/// first occurrence kept; more than [`ROLES_MAX`] or a malformed id is
+/// `invalid`. Whether they are roles of the server is checked against the
+/// database.
+pub fn role_ids(raw: &[String], errors: &mut FieldErrors) -> Option<Vec<Uuid>> {
+    let mut ids: Vec<Uuid> = Vec::with_capacity(raw.len().min(ROLES_MAX));
+    for value in raw {
+        let Ok(id) = value.trim().parse::<Uuid>() else {
+            errors.insert("role_ids", "invalid");
+            return None;
+        };
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+        if ids.len() > ROLES_MAX {
+            errors.insert("role_ids", "invalid");
+            return None;
+        }
+    }
+    Some(ids)
 }
 
 /// `None` = unlimited.
@@ -204,6 +279,99 @@ mod tests {
         assert_eq!(
             run(|e| category_id(Some("nope"), e)).1.get("category_id"),
             Some(&"invalid")
+        );
+    }
+
+    #[test]
+    fn role_name_rules() {
+        assert_eq!(
+            run(|e| role_name("  Moderation ", e)).0.as_deref(),
+            Some("Moderation")
+        );
+        assert_eq!(run(|e| role_name(" ", e)).1.get("name"), Some(&"required"));
+        assert_eq!(
+            run(|e| role_name(&"x".repeat(ROLE_NAME_MAX), e))
+                .0
+                .map(|n| n.len()),
+            Some(ROLE_NAME_MAX)
+        );
+        assert_eq!(
+            run(|e| role_name(&"x".repeat(ROLE_NAME_MAX + 1), e))
+                .1
+                .get("name"),
+            Some(&"too_long")
+        );
+        assert_eq!(
+            run(|e| role_name("a\u{7}b", e)).1.get("name"),
+            Some(&"invalid")
+        );
+        for reserved in ["Alle Mitglieder", "all members", "INHABER", " owner "] {
+            assert_eq!(
+                run(|e| role_name(reserved, e)).1.get("name"),
+                Some(&"taken"),
+                "{reserved:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn role_colors() {
+        for color in ROLE_COLORS {
+            assert_eq!(run(|e| role_color(Some(color), e)).0, Some(color));
+        }
+        assert_eq!(
+            run(|e| role_color(Some("red"), e)).1.get("color"),
+            Some(&"invalid")
+        );
+        assert_eq!(
+            run(|e| role_color(Some("Blue"), e)).1.get("color"),
+            Some(&"invalid")
+        );
+        assert_eq!(
+            run(|e| role_color(None, e)).1.get("color"),
+            Some(&"invalid")
+        );
+    }
+
+    #[test]
+    fn role_ids_collapse_duplicates_and_cap_the_count() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let raw = [a.to_string(), b.to_string(), a.to_string()];
+        assert_eq!(run(|e| role_ids(&raw, e)).0, Some(vec![a, b]));
+        assert_eq!(run(|e| role_ids(&[], e)).0, Some(vec![]));
+        assert_eq!(
+            run(|e| role_ids(&["nope".to_owned()], e)).1.get("role_ids"),
+            Some(&"invalid")
+        );
+        let many: Vec<String> = (0..=ROLES_MAX as u128)
+            .map(|n| Uuid::from_u128(n).to_string())
+            .collect();
+        assert_eq!(
+            run(|e| role_ids(&many[..ROLES_MAX], e))
+                .0
+                .map(|ids| ids.len()),
+            Some(ROLES_MAX)
+        );
+        assert_eq!(
+            run(|e| role_ids(&many, e)).1.get("role_ids"),
+            Some(&"invalid")
+        );
+    }
+
+    #[test]
+    fn permissions_are_keyed_by_their_field() {
+        let names = ["send_messages".to_owned(), "nuke".to_owned()];
+        assert_eq!(
+            run(|e| permissions(&names, "permissions", e))
+                .1
+                .get("permissions"),
+            Some(&"invalid")
+        );
+        assert_eq!(
+            run(|e| permissions(&names[..1], "member_permissions", e))
+                .0
+                .map(Permissions::bits),
+            Some(4)
         );
     }
 

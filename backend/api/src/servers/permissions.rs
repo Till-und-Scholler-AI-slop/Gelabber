@@ -1,6 +1,8 @@
-//! Coarse permission flags (issue #4). One bitmask per server describes what
-//! a *member* may do; the owner always has every flag. There are no roles
-//! beyond owner/member and no per-channel overwrites in v1.
+//! Coarse permission flags (issue #4). The base role "Alle Mitglieder"
+//! (`servers.member_permissions`) and every custom role (`server_roles`, v0.10)
+//! hold one bitmask each; a member holds the union of the base role and their
+//! roles, and the owner always has every flag. There are no per-channel
+//! overwrites: a channel is only limited to roles or not (`channels.limited`).
 //!
 //! On the wire a set is a JSON array of names (`["send_messages", …]`); in
 //! Postgres it is the `INTEGER` bitmask.
@@ -13,7 +15,7 @@ use serde::{Serialize, Serializer};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum Permission {
-    /// Rename the server, edit member permissions, manage invites, kick/ban.
+    /// Rename the server, edit roles and member permissions, manage invites.
     ManageServer = 1,
     /// Create, rename, move and delete categories and channels.
     ManageChannels = 2,
@@ -25,11 +27,14 @@ pub enum Permission {
     ManageMessages = 64,
     /// `@everyone` and `@here` notify; without it they are plain text.
     MentionEveryone = 128,
+    /// Kick and ban members, list and lift bans.
+    ModerateMembers = 256,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 8] = [
+    pub const ALL: [Permission; 9] = [
         Self::ManageServer,
+        Self::ModerateMembers,
         Self::ManageChannels,
         Self::ManageMessages,
         Self::MentionEveryone,
@@ -49,6 +54,7 @@ impl Permission {
             Self::SendFiles => "send_files",
             Self::JoinVoice => "join_voice",
             Self::GoLive => "go_live",
+            Self::ModerateMembers => "moderate_members",
         }
     }
 
@@ -66,7 +72,7 @@ impl Permissions {
     /// What a fresh server grants its members: talk, share, join voice, go
     /// live — but not manage anything. Mirrored by the column default.
     pub const DEFAULT_MEMBER: Permissions = Permissions(4 | 8 | 16 | 32);
-    pub const ALL: Permissions = Permissions(1 | 2 | 4 | 8 | 16 | 32 | 64 | 128);
+    pub const ALL: Permissions = Permissions(1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256);
 
     pub fn contains(self, permission: Permission) -> bool {
         self.0 & permission as i32 != 0
@@ -74,6 +80,11 @@ impl Permissions {
 
     pub fn with(self, permission: Permission) -> Self {
         Self(self.0 | permission as i32)
+    }
+
+    /// Both sets together: the base role plus a member's roles.
+    pub fn union(self, other: Permissions) -> Self {
+        Self(self.0 | other.0)
     }
 
     pub fn bits(self) -> i32 {
@@ -139,6 +150,32 @@ mod tests {
     }
 
     #[test]
+    fn all_holds_the_nine_flags_in_canonical_order() {
+        assert_eq!(Permissions::ALL.bits(), 511);
+        assert_eq!(
+            Permission::ALL.iter().fold(0, |bits, p| bits | *p as i32),
+            511
+        );
+        let names: Vec<&str> = Permissions::ALL.iter().map(Permission::name).collect();
+        assert_eq!(
+            names,
+            [
+                "manage_server",
+                "moderate_members",
+                "manage_channels",
+                "manage_messages",
+                "mention_everyone",
+                "send_messages",
+                "send_files",
+                "join_voice",
+                "go_live",
+            ]
+        );
+        assert!(Permissions::from(256).contains(Permission::ModerateMembers));
+        assert_eq!(Permissions::from(1024 | 256).bits(), 256);
+    }
+
+    #[test]
     fn default_member_can_talk_but_not_manage() {
         let set = Permissions::DEFAULT_MEMBER;
         assert!(set.contains(Permission::SendMessages));
@@ -147,6 +184,7 @@ mod tests {
         assert!(set.contains(Permission::GoLive));
         assert!(!set.contains(Permission::ManageServer));
         assert!(!set.contains(Permission::ManageChannels));
+        assert!(!set.contains(Permission::ModerateMembers));
         assert_eq!(set.bits(), 60, "matches the column default");
     }
 

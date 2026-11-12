@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
+
+import { useLocale } from "../i18n/locale.ts";
+
+import { pushToTalkKeyLabel } from "./pushToTalk.ts";
 import {
   DEFAULT_MEDIA_SETTINGS,
   AUDIO_QUALITY,
@@ -498,5 +502,33 @@ describe("stream sound: what a share does", () => {
       on: sourceAudioChoice(true),
       off: sourceAudioChoice(false),
     }).toEqual({ on: "on", off: "auto" });
+  });
+});
+
+describe("push-to-talk key: the stored label", () => {
+  const storage = () => useMediaSettings.persist.getOptions().storage!;
+  afterEach(() => useLocale.setState({ locale: "de" }));
+
+  it("names a key saved with a German label in the current language", async () => {
+    await storage().setItem("gelabber.media", {
+      state: {
+        voiceInput: "ptt",
+        pttKey: "Space",
+        pttKeyLabel: "Leertaste",
+      } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    const s = useMediaSettings.getState();
+    expect(s.pttKeyLabel).toBe("");
+    useLocale.setState({ locale: "en" });
+    expect(s.pttKeyLabel || pushToTalkKeyLabel(s.pttKey)).toBe("Space");
+  });
+
+  it("keeps a printed key's character", async () => {
+    await storage().setItem("gelabber.media", {
+      state: { pttKey: "KeyY", pttKeyLabel: "Z" } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState().pttKeyLabel).toBe("Z");
   });
 });

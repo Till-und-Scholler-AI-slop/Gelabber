@@ -1,5 +1,7 @@
 import { useContext, useState } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import { removePreviews } from "../messages/api.ts";
 import { asPreviewList, type LinkPreview } from "../messages/types.ts";
 import { CloseIcon } from "./Icons.tsx";
@@ -61,6 +63,7 @@ function PreviewCard({
   preview: LinkPreview;
   onRemove: (() => void) | null;
 }) {
+  const t = useT(chat);
   const openImage = useContext(OpenImage);
   // The stored picture can be gone (expired, or the store was reset): the
   // card then goes on as text instead of showing a broken image.
@@ -73,7 +76,7 @@ function PreviewCard({
   return (
     <article
       className={`lr-preview${large ? " is-large" : ""}${video ? " is-video" : ""}`}
-      aria-label={`Vorschau: ${name}`}
+      aria-label={t("preview.label", { name })}
     >
       <div className="lr-preview-text">
         <span className="lr-preview-site">
@@ -107,8 +110,8 @@ function PreviewCard({
         <button
           type="button"
           className="lr-preview-image"
-          aria-label={`Bild vergrößern: ${name}`}
-          title="Bild vergrößern"
+          aria-label={t("preview.enlargeLabel", { name })}
+          title={t("preview.enlarge")}
           onClick={() =>
             openImage({
               id: `preview:${preview.url}`,
@@ -132,8 +135,8 @@ function PreviewCard({
         <button
           type="button"
           className="lr-preview-remove"
-          title="Vorschauen entfernen"
-          aria-label="Vorschauen entfernen"
+          title={t("preview.remove")}
+          aria-label={t("preview.remove")}
           onClick={onRemove}
         >
           <CloseIcon size={12} />
@@ -154,13 +157,14 @@ function YouTubePlayer({
   image?: string;
   onImageError: () => void;
 }) {
+  const t = useT(chat);
   const [playing, setPlaying] = useState(false);
   if (playing)
     return (
       <div className="lr-preview-video">
         <iframe
           src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=1`}
-          title={title ?? "YouTube-Video"}
+          title={title ?? t("preview.youtubeTitle")}
           allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
           allowFullScreen
           referrerPolicy="strict-origin-when-cross-origin"
@@ -171,7 +175,9 @@ function YouTubePlayer({
     <button
       type="button"
       className="lr-preview-video"
-      aria-label={`Video abspielen${title ? `: ${title}` : ""}`}
+      aria-label={
+        title ? t("preview.playTitledLabel", { title }) : t("preview.playLabel")
+      }
       onClick={() => setPlaying(true)}
     >
       {image ? (

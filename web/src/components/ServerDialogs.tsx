@@ -9,6 +9,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { currentUserId, useUserId } from "../auth/scope.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { servers } from "../i18n/catalogs/servers.ts";
 import { inviteInputMessage, parseInvite } from "../servers/inviteCode.ts";
 import { promptInvite } from "../servers/invitePrompt.ts";
 import { useLastChannel } from "../servers/lastChannel.ts";
@@ -25,12 +28,19 @@ import {
   validateChannelName,
   validateName,
 } from "../servers/rules.ts";
+import { channelRequest } from "../servers/channelRequest.ts";
+import {
+  accessOf,
+  sameAccess,
+  type AccessSelection,
+} from "../servers/roles.ts";
 import type {
   Category,
   Channel,
   ChannelKind,
   ServerDetail,
 } from "../servers/types.ts";
+import { ChannelAccessField } from "./ChannelAccessField.tsx";
 import { Field } from "./Field.tsx";
 import { FormError } from "./FormError.tsx";
 import { HashIcon, LinkIcon, PlusIcon, SpeakerIcon } from "./Icons.tsx";
@@ -52,6 +62,7 @@ export function AddServerDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const t = useT(servers);
   const [step, setStep] = useState<"choose" | "create" | "join">("choose");
   // After "Zurück", focus returns to the choice that was taken.
   const [from, setFrom] = useState<"create" | "join" | null>(null);
@@ -67,10 +78,10 @@ export function AddServerDialog({
   };
   const title =
     step === "create"
-      ? "Server erstellen"
+      ? t("create.title")
       : step === "join"
-        ? "Server beitreten"
-        : "Server hinzufügen";
+        ? t("join.title")
+        : t("add.title");
   return (
     <Modal open={open} onClose={close} title={title} dirty={dirty}>
       {!open ? null : step === "create" ? (
@@ -92,8 +103,8 @@ export function AddServerDialog({
           >
             <PlusIcon size={20} />
             <span>
-              <strong>Server erstellen</strong>
-              <small>{CREATE_HINT}</small>
+              <strong>{t("create.title")}</strong>
+              <small>{t("create.hint")}</small>
             </span>
           </button>
           <button
@@ -104,8 +115,8 @@ export function AddServerDialog({
           >
             <LinkIcon size={20} />
             <span>
-              <strong>Server beitreten</strong>
-              <small>Mit einem Einladungslink oder Code.</small>
+              <strong>{t("join.title")}</strong>
+              <small>{t("join.hint")}</small>
             </span>
           </button>
         </div>
@@ -121,15 +132,19 @@ export function CreateServerDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const t = useT(servers);
   const [dirty, setDirty] = useState(false);
   return (
-    <Modal open={open} onClose={onClose} title="Server erstellen" dirty={dirty}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t("create.title")}
+      dirty={dirty}
+    >
       {open ? <CreateServerForm onClose={onClose} onDirty={setDirty} /> : null}
     </Modal>
   );
 }
-
-const CREATE_HINT = "Mit #allgemein und einem Sprachkanal.";
 
 /** Tells the dialog around a form whether closing it would lose typed
  *  text: the backdrop then leaves it open, and Esc asks first. */
@@ -154,6 +169,8 @@ function CreateServerForm({
   onBack?: () => void;
   onDirty?: (dirty: boolean) => void;
 }) {
+  const t = useT(servers);
+  const tc = useT(common);
   const navigate = useNavigate();
   const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
@@ -186,7 +203,7 @@ function CreateServerForm({
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
       <Field
         id="server-name"
-        label="Name"
+        label={t("form.nameLabel")}
         type="text"
         autoFocus
         maxLength={100}
@@ -196,15 +213,18 @@ function CreateServerForm({
           clearField("name");
         }}
         error={errors.fields.name}
-        hint={CREATE_HINT}
+        hint={t("create.hint")}
       />
       <FormError message={errors.form} />
       <div className="flex justify-end gap-2">
         <GhostButton onClick={onBack ?? onClose}>
-          {onBack ? "Zurück" : "Abbrechen"}
+          {onBack ? tc("back") : tc("cancel")}
         </GhostButton>
-        <SubmitButton pending={mutation.isPending} pendingLabel="Erstellen…">
-          Erstellen
+        <SubmitButton
+          pending={mutation.isPending}
+          pendingLabel={t("form.creating")}
+        >
+          {t("form.create")}
         </SubmitButton>
       </div>
     </form>
@@ -230,6 +250,8 @@ export function JoinServerForm({
   /** Field and button side by side, without a dialog's button row. */
   inline?: boolean;
 }) {
+  const t = useT(servers);
+  const tc = useT(common);
   const navigate = useNavigate();
   const [value, setValue] = useState("");
   useReportDirty(onDirty, value !== "");
@@ -250,13 +272,13 @@ export function JoinServerForm({
   const field = (
     <Field
       id={inline ? "join-invite-inline" : "join-invite"}
-      label="Einladungslink oder Code"
+      label={t("join.inputLabel")}
       type="text"
       autoComplete="off"
       autoCapitalize="off"
       spellCheck={false}
       autoFocus={autoFocus}
-      placeholder="Link oder Code einfügen"
+      placeholder={t("join.inputPlaceholder")}
       value={value}
       onChange={(event) => {
         setValue(event.target.value);
@@ -270,7 +292,7 @@ export function JoinServerForm({
     return (
       <form onSubmit={onSubmit} noValidate className="join-server-inline">
         {field}
-        <Button type="submit">Beitreten</Button>
+        <Button type="submit">{t("join.submit")}</Button>
       </form>
     );
   }
@@ -278,9 +300,11 @@ export function JoinServerForm({
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
       {field}
       <div className="flex justify-end gap-2">
-        {onBack ? <GhostButton onClick={onBack}>Zurück</GhostButton> : null}
+        {onBack ? (
+          <GhostButton onClick={onBack}>{tc("back")}</GhostButton>
+        ) : null}
         <Button type="submit" variant="primary">
-          Weiter
+          {tc("next")}
         </Button>
       </div>
     </form>
@@ -301,8 +325,11 @@ export function CategoryDialog({
   state: CategoryDialogState | null;
   onClose: () => void;
 }) {
+  const t = useT(servers);
   const title =
-    state?.mode === "edit" ? "Kategorie umbenennen" : "Kategorie erstellen";
+    state?.mode === "edit"
+      ? t("category.renameTitle")
+      : t("category.createTitle");
   const [dirty, setDirty] = useState(false);
   return (
     <Modal open={state !== null} onClose={onClose} title={title} dirty={dirty}>
@@ -329,6 +356,8 @@ function CategoryForm({
   onClose: () => void;
   onDirty: (dirty: boolean) => void;
 }) {
+  const t = useT(servers);
+  const tc = useT(common);
   const [initialName] = useState(
     state.mode === "edit" ? state.category.name : "",
   );
@@ -358,7 +387,7 @@ function CategoryForm({
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
       <Field
         id="category-name"
-        label="Name"
+        label={t("form.nameLabel")}
         type="text"
         autoFocus
         maxLength={100}
@@ -371,9 +400,9 @@ function CategoryForm({
       />
       <FormError message={errors.form} />
       <div className="flex justify-end gap-2">
-        <GhostButton onClick={onClose}>Abbrechen</GhostButton>
+        <GhostButton onClick={onClose}>{tc("cancel")}</GhostButton>
         <SubmitButton pending={false} pendingLabel="">
-          {state.mode === "edit" ? "Speichern" : "Erstellen"}
+          {state.mode === "edit" ? tc("save") : t("form.create")}
         </SubmitButton>
       </div>
     </form>
@@ -395,7 +424,9 @@ export function ChannelDialog({
   state: ChannelDialogState | null;
   onClose: () => void;
 }) {
-  const title = state?.mode === "edit" ? "Kanal bearbeiten" : "Kanal erstellen";
+  const t = useT(servers);
+  const title =
+    state?.mode === "edit" ? t("channel.editTitle") : t("channel.createTitle");
   const [dirty, setDirty] = useState(false);
   return (
     <Modal open={state !== null} onClose={onClose} title={title} dirty={dirty}>
@@ -422,10 +453,20 @@ function ChannelForm({
   onClose: () => void;
   onDirty: (dirty: boolean) => void;
 }) {
+  const t = useT(servers);
+  const tc = useT(common);
   const editing = state.mode === "edit" ? state.channel : null;
   const [initialName] = useState(editing?.name ?? "");
   const [name, setName] = useState(initialName);
-  useReportDirty(onDirty, name !== initialName);
+  // "Alle Mitglieder" (`null`) unless the channel is limited.
+  const [initialAccess] = useState<AccessSelection>(
+    editing ? accessOf(editing) : null,
+  );
+  const [access, setAccess] = useState(initialAccess);
+  useReportDirty(
+    onDirty,
+    name !== initialName || !sameAccess(access, initialAccess),
+  );
   const [kind, setKind] = useState<ChannelKind>(
     state.mode === "edit" ? state.channel.kind : (state.kind ?? "text"),
   );
@@ -454,13 +495,18 @@ function ChannelForm({
       setFields({ name: fieldMessage("name", code) });
       return;
     }
-    if (editing) {
-      update.mutate({
-        id: editing.id,
-        patch: { name, category_id: parentId || null },
-      });
+    const request = channelRequest(editing, {
+      name,
+      kind,
+      categoryId: parentId,
+      initialAccess,
+      access,
+      roles: server.roles,
+    });
+    if (request.mode === "edit") {
+      update.mutate({ id: request.id, patch: request.patch });
     } else {
-      create.mutate({ name, kind, category_id: parentId || null });
+      create.mutate(request.input);
     }
     onClose();
   };
@@ -469,12 +515,12 @@ function ChannelForm({
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
       {!editing ? (
         <fieldset className="flex flex-col gap-2">
-          <legend className="ui-label mb-2">Kanaltyp</legend>
+          <legend className="ui-label mb-2">{t("channel.kindLegend")}</legend>
           <div className="grid grid-cols-2 gap-2">
             {(
               [
-                ["text", "Text", "Nachrichten, Dateien"],
-                ["voice", "Sprache", "Reden, Kamera, Live"],
+                ["text", t("channel.kindText"), t("channel.kindTextHint")],
+                ["voice", t("channel.kindVoice"), t("channel.kindVoiceHint")],
               ] as const
             ).map(([value, label, hint]) => (
               <RadioCard
@@ -501,7 +547,7 @@ function ChannelForm({
       ) : null}
       <Field
         id="channel-name"
-        label="Name"
+        label={t("form.nameLabel")}
         type="text"
         autoFocus
         maxLength={100}
@@ -513,17 +559,17 @@ function ChannelForm({
         error={errors.fields.name}
         hint={
           kind === "text" && preview && preview !== name.trim()
-            ? `Wird gespeichert als #${preview}`
+            ? t("channel.savedAs", { name: preview })
             : undefined
         }
       />
-      <FormField id="channel-category" label="Kategorie">
+      <FormField id="channel-category" label={t("channel.categoryLabel")}>
         <Select
           id="channel-category"
           value={parentId}
           onChange={(event) => setCategoryId(event.target.value)}
         >
-          <option value="">Ohne Kategorie</option>
+          <option value="">{t("channel.noCategory")}</option>
           {categories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}
@@ -531,11 +577,12 @@ function ChannelForm({
           ))}
         </Select>
       </FormField>
+      <ChannelAccessField server={server} value={access} onChange={setAccess} />
       <FormError message={errors.form} />
       <div className="flex justify-end gap-2">
-        <GhostButton onClick={onClose}>Abbrechen</GhostButton>
+        <GhostButton onClick={onClose}>{tc("cancel")}</GhostButton>
         <SubmitButton pending={false} pendingLabel="">
-          {editing ? "Speichern" : "Erstellen"}
+          {editing ? tc("save") : t("form.create")}
         </SubmitButton>
       </div>
     </form>

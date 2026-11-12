@@ -16,6 +16,9 @@ import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { buttonClass } from "../components/ui/buttonClass.ts";
 import { SkeletonCard } from "../components/ui/Skeleton.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
+import { common } from "../i18n/catalogs/common.ts";
 import { previewInvite } from "../servers/api.ts";
 import { inviteExpiry } from "../servers/inviteCode.ts";
 import { serverKeys, useJoinInvite } from "../servers/queries.ts";
@@ -32,6 +35,8 @@ const errorCode = (error: unknown): ApiErrorCode =>
   error instanceof ApiError ? error.code : "internal";
 
 export function InvitePage() {
+  const t = useT(auth);
+  const tc = useT(common);
   const { code } = useParams({ from: "/auth/invite/$code" });
   const navigate = useNavigate();
   const userId = useUserId();
@@ -56,7 +61,7 @@ export function InvitePage() {
       <DeadInvite code={failure} />
     ) : (
       <section className="lr-auth-card">
-        <h1>Einladung konnte nicht geladen werden</h1>
+        <h1>{t("invite.loadFailed")}</h1>
         <p role="alert" className="auth-lead">
           {errorMessage(failure)}
         </p>
@@ -65,16 +70,16 @@ export function InvitePage() {
             variant="primary"
             size="lg"
             pending={preview.isFetching}
-            pendingLabel="Wird geladen…"
+            pendingLabel={tc("loading")}
             onClick={() => void preview.refetch()}
           >
-            Erneut versuchen
+            {tc("tryAgain")}
           </Button>
           <Link
             to="/"
             className={buttonClass({ variant: "ghost", size: "lg" })}
           >
-            Zu deinen Servern
+            {t("invite.toServers")}
           </Link>
         </div>
       </section>
@@ -93,7 +98,7 @@ export function InvitePage() {
             params={{ serverId: server.id }}
             className={buttonClass({ variant: "primary", size: "lg" })}
           >
-            Zum Server
+            {t("invite.toServer")}
           </Link>
         ) : (
           <form
@@ -116,14 +121,14 @@ export function InvitePage() {
             <SubmitButton
               size="lg"
               pending={join.isPending}
-              pendingLabel="Beitreten…"
+              pendingLabel={t("invite.joining")}
             >
-              Beitreten
+              {t("invite.join")}
             </SubmitButton>
           </form>
         )}
         <Link to="/" className={buttonClass({ variant: "ghost", size: "lg" })}>
-          Abbrechen
+          {tc("cancel")}
         </Link>
       </div>
     </section>
@@ -131,11 +136,9 @@ export function InvitePage() {
 }
 
 function InviteServer({ preview }: { preview: InvitePreview }) {
+  const t = useT(auth);
   const { server, member } = preview;
-  const people =
-    server.member_count === 1
-      ? "1 Mitglied"
-      : `${server.member_count} Mitglieder`;
+  const people = t("invite.members", { count: server.member_count });
   const expiry = member ? null : inviteExpiry(preview.expires_at);
   return (
     <div className="invite-server">
@@ -153,7 +156,7 @@ function InviteServer({ preview }: { preview: InvitePreview }) {
           fallback={initials(server.name)}
         />
       </span>
-      <p>{member ? "Du bist bereits Mitglied von" : "Einladung zu"}</p>
+      <p>{member ? t("invite.alreadyMember") : t("invite.invitedTo")}</p>
       <h1 id="invite-server-name">{server.name}</h1>
       <p>{expiry ? `${people} · ${expiry}` : people}</p>
     </div>
@@ -161,22 +164,23 @@ function InviteServer({ preview }: { preview: InvitePreview }) {
 }
 
 function DeadInvite({ code }: { code: ApiErrorCode }) {
+  const t = useT(auth);
   return (
     <section className="lr-auth-card">
-      <h1>{code === "banned" ? "Kein Zutritt" : "Einladung nicht nutzbar"}</h1>
+      <h1>
+        {code === "banned" ? t("invite.bannedTitle") : t("invite.deadTitle")}
+      </h1>
       <div role="alert" className="auth-result">
         <p>
-          {code === "not_found"
-            ? "Dieser Einladungslink existiert nicht oder wurde widerrufen."
-            : errorMessage(code)}
+          {code === "not_found" ? t("invite.notFound") : errorMessage(code)}
         </p>
         {code === "banned" ? null : (
-          <p className="auth-quiet">Frag nach einem neuen Link.</p>
+          <p className="auth-quiet">{t("invite.askForNew")}</p>
         )}
       </div>
       <div className="auth-actions">
         <Link to="/" className={buttonClass({ size: "lg" })}>
-          Zu deinen Servern
+          {t("invite.toServers")}
         </Link>
       </div>
     </section>

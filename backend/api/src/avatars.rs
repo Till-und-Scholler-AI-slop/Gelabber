@@ -89,6 +89,14 @@ impl ImageKind {
         format!("{}/{user}/{file}", self.key_prefix())
     }
 
+    /// The object behind `url` if it is `user`'s own upload of this kind;
+    /// `None` for a link or someone else's path.
+    pub(crate) fn owned_object_key(self, user: Uuid, url: &str) -> Option<String> {
+        self.parse(url)
+            .filter(|(owner, _)| *owner == user)
+            .map(|(owner, file)| self.object_key(owner, file))
+    }
+
     fn patch(self, url: String) -> ProfilePatch {
         match self {
             Self::Avatar => ProfilePatch {

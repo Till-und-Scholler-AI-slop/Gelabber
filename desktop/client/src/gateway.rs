@@ -754,14 +754,14 @@ impl Failure {
                 if status == 401 {
                     Self::Unauthenticated
                 } else if status.is_client_error() && status != 408 && status != 429 {
-                    Self::Refused(format!("HTTP {}", status.as_u16()))
+                    Self::Refused(format!("HTTP {}", status.as_u16())) // i18n-ok
                 } else {
                     Self::Network
                 }
             }
-            Error::Tls(error) => Self::Refused(format!("TLS: {error}")),
+            Error::Tls(error) => Self::Refused(format!("TLS: {error}")), // i18n-ok
             Error::Io(io) => match io.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()) {
-                Some(error) => Self::Refused(format!("TLS: {error}")),
+                Some(error) => Self::Refused(format!("TLS: {error}")), // i18n-ok
                 None => Self::Network,
             },
             _ => Self::Network,
@@ -788,7 +788,7 @@ async fn connect(http: Http) -> Result<Socket, Failure> {
         request.headers_mut().insert("Cookie", value);
     }
     let connector =
-        crate::http::ws_connector().map_err(|e| Failure::Refused(format!("TLS: {e}")))?;
+        crate::http::ws_connector().map_err(|e| Failure::Refused(format!("TLS: {e}")))?; // i18n-ok
     let connect =
         tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
     match tokio::time::timeout(Duration::from_secs(10), connect).await {
@@ -932,6 +932,27 @@ mod tests {
         assert!(matches!(f, ServerFrame::Err { ref e, c: None, .. } if e == "kicked"));
     }
 
+    /// The directory's account frames, as backend/api/src/gateway/protocol.rs
+    /// writes them; both reach the handler.
+    #[test]
+    fn directory_frames_decode_like_the_server_sends_them() {
+        let jn = r#"{"op":"jn","s":"00000000-0000-0000-0000-000000000001"}"#;
+        let f: ServerFrame = serde_json::from_str(jn).unwrap();
+        assert_eq!(f, ServerFrame::Joined { s: id(1) });
+        assert_eq!(serde_json::to_string(&f).unwrap(), jn);
+        let jq = r#"{"op":"jq","s":"00000000-0000-0000-0000-000000000001","n":3}"#;
+        let f: ServerFrame = serde_json::from_str(jq).unwrap();
+        assert_eq!(f, ServerFrame::JoinRequests { s: id(1), n: 3 });
+        assert_eq!(serde_json::to_string(&f).unwrap(), jq);
+        // A count is required: without it the frame is not readable.
+        assert!(
+            serde_json::from_str::<ServerFrame>(
+                r#"{"op":"jq","s":"00000000-0000-0000-0000-000000000001"}"#
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn only_an_unreadable_event_names_its_topic_for_a_gap() {
         let bad = r#"{"op":"e","t":"c","s":"00000000-0000-0000-0000-000000000001","c":"00000000-0000-0000-0000-000000000002","n":"sieben"}"#;
@@ -1061,6 +1082,7 @@ mod tests {
                     c,
                     k: Some(crate::models::TrackKind::Sa),
                     on: None,
+                    o: None,
                 },
                 serde_json::json!({"op":"sig","t":"p","s":s,"c":c,"k":"sa"}),
             ),

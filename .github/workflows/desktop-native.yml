@@ -17,6 +17,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Line tables keep backtraces; full debug info made the target directory
+  # and its cache about a third larger.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   RELEASE_TAG: ${{ inputs.release_tag }}
 
 jobs:
@@ -25,6 +28,9 @@ jobs:
     runs-on: ubuntu-24.04
     # GitHub's limit: the build plus the renewal of the notices after it.
     timeout-minutes: 360
+    # Outside pull requests a new package is stored in a release.
+    permissions:
+      contents: write
     outputs:
       key: ${{ steps.key.outputs.key }}
     steps:
@@ -44,8 +50,38 @@ jobs:
           key: ${{ steps.key.outputs.key }}
           lookup-only: true
 
-      - name: Free disk space
+      # The cache is evicted under the quota; the libwebrtc-packages release
+      # keeps every package, so a miss costs a download, not a build. Anyone
+      # with write access can replace an asset, so only one whose SHA-256 the
+      # repository lists is taken.
+      - name: Fetch the stored package
+        id: stored
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /mnt/libwebrtc-package /mnt/libwebrtc-fetch
+          sudo chown -R "$USER" /mnt/libwebrtc-package /mnt/libwebrtc-fetch
+          pin=$(grep -F "  $KEY.tar.zst" desktop/native/libwebrtc-packages.sha256 || true)
+          if [ -z "$pin" ]; then
+            echo "desktop/native/libwebrtc-packages.sha256 lists no $KEY.tar.zst, so the package is built."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          elif gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" \
+            --pattern "$KEY.tar.zst" --dir /mnt/libwebrtc-fetch; then
+            (cd /mnt/libwebrtc-fetch && printf '%s\n' "$pin" | sha256sum --check --strict)
+            tar --zstd -xf "/mnt/libwebrtc-fetch/$KEY.tar.zst" -C /mnt/libwebrtc-package
+            test -f /mnt/libwebrtc-package/lib/libwebrtc.a
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+          # /mnt is root's, so the directory itself goes with sudo.
+          sudo rm -rf /mnt/libwebrtc-fetch
+
+      - name: Free disk space
+        if: steps.cache.outputs.cache-hit != 'true' && steps.stored.outputs.found != 'true'
         run: |
           set -euo pipefail
           df -h / /mnt
@@ -56,7 +92,8 @@ jobs:
           df -h / /mnt
 
       - name: Build libwebrtc
-        if: steps.cache.outputs.cache-hit != 'true'
+        id: build
+        if: steps.cache.outputs.cache-hit != 'true' && steps.stored.outputs.found != 'true'
         run: |
           set -euo pipefail
           start=$SECONDS
@@ -82,15 +119,65 @@ jobs:
           path: /mnt/libwebrtc-package
           key: ${{ steps.key.outputs.key }}
 
+      - name: Is the package stored?
+        id: asset
+        if: github.event_name != 'pull_request' && steps.stored.outputs.found != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          set -euo pipefail
+          if ! names=$(gh release view libwebrtc-packages --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); then
+            echo "::warning::The libwebrtc-packages release is missing, so the package is not stored."
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          elif printf '%s\n' "$names" | grep -qxF "$KEY.tar.zst"; then
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare the package directory to store it
+        if: steps.asset.outputs.missing == 'true' && steps.cache.outputs.cache-hit == 'true'
+        run: |
+          sudo mkdir -p /mnt/libwebrtc-package
+          sudo chown -R "$USER" /mnt/libwebrtc-package
+
+      - name: Restore the package to store it
+        if: steps.asset.outputs.missing == 'true' && steps.cache.outputs.cache-hit == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+          fail-on-cache-miss: true
+
+      - name: Store the package
+        if: steps.asset.outputs.missing == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /mnt/libwebrtc-store
+          sudo chown "$USER" /mnt/libwebrtc-store
+          tar -I 'zstd -T0' -cf "/mnt/libwebrtc-store/$KEY.tar.zst" -C /mnt/libwebrtc-package .
+          line=$(cd /mnt/libwebrtc-store && sha256sum "$KEY.tar.zst")
+          echo "$line"
+          if ! grep -qxF "$line" desktop/native/libwebrtc-packages.sha256; then
+            echo "::warning::Add this line to desktop/native/libwebrtc-packages.sha256, or the stored package is never fetched: $line"
+          fi
+          # A run beside this one may have stored it first.
+          gh release upload libwebrtc-packages "/mnt/libwebrtc-store/$KEY.tar.zst" --repo "$GITHUB_REPOSITORY" \
+            || gh release view libwebrtc-packages --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qxF "$KEY.tar.zst"
+
       # A new libwebrtc build renews part 2 of the third-party notices: the step
       # summary says whether it changed, the artifact holds the file to commit.
       - name: Rust toolchain (notices)
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.build.outcome == 'success'
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
 
       - name: Renew the third-party notices
         id: notices
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.build.outcome == 'success'
         env:
           GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
         run: |
@@ -121,6 +208,9 @@ jobs:
     name: libwebrtc (Windows x64)
     runs-on: windows-2022
     timeout-minutes: 330
+    # Outside pull requests a new package is stored in a release.
+    permissions:
+      contents: write
     outputs:
       key: ${{ steps.key.outputs.key }}
     steps:
@@ -141,14 +231,49 @@ jobs:
           key: ${{ steps.key.outputs.key }}
           lookup-only: true
 
-      - name: Python
+      # As on Linux: the release keeps what the cache loses. Windows' own tar
+      # takes C:\ paths, which Git's does not.
+      - name: Fetch the stored package
+        id: stored
         if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          $name = "$($env:KEY).tar.gz"
+          $fetch = Join-Path $env:RUNNER_TEMP libwebrtc-fetch
+          New-Item -ItemType Directory -Force C:\libwebrtc-package, $fetch | Out-Null
+          # Only a package whose SHA-256 the repository lists is taken (see Linux).
+          $pin = Select-String -Path desktop\native\libwebrtc-packages.sha256 -SimpleMatch "  $name" | Select-Object -First 1
+          if ($pin) {
+            gh release download libwebrtc-packages --repo $env:GITHUB_REPOSITORY --pattern $name --dir $fetch
+          } else {
+            "desktop/native/libwebrtc-packages.sha256 lists no $name, so the package is built."
+            $global:LASTEXITCODE = 1
+          }
+          if ($LASTEXITCODE -eq 0) {
+            $want = ($pin.Line -split '\s+')[0]
+            $have = (Get-FileHash -Algorithm SHA256 (Join-Path $fetch $name)).Hash.ToLower()
+            if ($have -ne $want) { throw "the stored package's SHA-256 is $have, not the listed $want" }
+            & "$env:SystemRoot\System32\tar.exe" -xzf (Join-Path $fetch $name) -C C:\libwebrtc-package
+            if ($LASTEXITCODE -ne 0) { throw "the stored package does not unpack" }
+            if (-not (Test-Path C:\libwebrtc-package\lib\webrtc.lib)) { throw "the stored package has no webrtc.lib" }
+            "found=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "found=false" >> $env:GITHUB_OUTPUT
+          }
+          Remove-Item -Recurse -Force $fetch
+          $global:LASTEXITCODE = 0
+
+      - name: Python
+        if: steps.cache.outputs.cache-hit != 'true' && steps.stored.outputs.found != 'true'
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
       - name: Build libwebrtc
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && steps.stored.outputs.found != 'true'
         shell: pwsh
         run: |
           git config --global core.longpaths true
@@ -169,6 +294,55 @@ jobs:
           path: C:\libwebrtc-package
           key: ${{ steps.key.outputs.key }}
 
+      - name: Is the package stored?
+        id: asset
+        if: github.event_name != 'pull_request' && steps.stored.outputs.found != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          set -euo pipefail
+          if ! names=$(gh release view libwebrtc-packages --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); then
+            echo "::warning::The libwebrtc-packages release is missing, so the package is not stored."
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          elif printf '%s\n' "$names" | grep -qxF "$KEY.tar.gz"; then
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore the package to store it
+        if: steps.asset.outputs.missing == 'true' && steps.cache.outputs.cache-hit == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: C:\libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+          fail-on-cache-miss: true
+
+      - name: Store the package
+        if: steps.asset.outputs.missing == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "$($env:KEY).tar.gz"
+          & "$env:SystemRoot\System32\tar.exe" -czf $archive -C C:\libwebrtc-package .
+          if ($LASTEXITCODE -ne 0) { throw "the package does not pack" }
+          $line = "$((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower())  $($env:KEY).tar.gz"
+          $line
+          if (-not (Select-String -Path desktop\native\libwebrtc-packages.sha256 -SimpleMatch $line -Quiet)) {
+            "::warning::Add this line to desktop/native/libwebrtc-packages.sha256, or the stored package is never fetched: $line"
+          }
+          gh release upload libwebrtc-packages $archive --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) {
+            # A run beside this one may have stored it first.
+            $names = gh release view libwebrtc-packages --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
+            if ($names -notcontains "$($env:KEY).tar.gz") { throw "the package was not stored" }
+          }
+          $global:LASTEXITCODE = 0
+
   core-linux:
     name: Native core (Linux x64)
     needs: libwebrtc-linux
@@ -176,7 +350,7 @@ jobs:
     # cancels the whole run, libwebrtc included). Branch runs are never cancelled.
     concurrency:
       group: desktop-core-linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -221,10 +395,15 @@ jobs:
           workspaces: desktop
           save-if: ${{ github.event_name == 'push' }}
 
+      # A release is built from a commit CI has tested on main, so its build
+      # runs the code checks no more: a flaky one would hold the release back.
+      # One loopback call stays, the only check that runs the release's core.
       - name: Format
+        if: inputs.release_tag == ''
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
       - name: Clippy
+        if: inputs.release_tag == ''
         run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
 
       # GStreamer and the test desktop (PipeWire, pipewire-pulse,
@@ -242,11 +421,13 @@ jobs:
       # Every test of the workspace. This core is built with H264, so the
       # loopback call must use it.
       - name: Loopback call against mediasoup 0.29
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
         run: cargo test --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
 
       - name: Loopback call with the GStreamer H264 encoder
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
           GELABBER_H264_ENCODER: x264enc
@@ -255,6 +436,7 @@ jobs:
         run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
 
       - name: Loopback call with the GStreamer H264 decoder
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
           GELABBER_H264_DECODER: avdec_h264
@@ -265,6 +447,7 @@ jobs:
       # AV1 through GStreamer in front of libaom and dav1d: av1enc and av1dec
       # (libaom in gst-plugins-bad) stand in for NVENC/VA-API/NVDEC.
       - name: Loopback call with GStreamer AV1 codecs
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
           GELABBER_AV1_ENCODER: av1enc
@@ -279,6 +462,7 @@ jobs:
       # decoder it cannot link AV1 to videoconvert, so it does not start.
       # libaom and dav1d take over.
       - name: Loopback call with failing GStreamer AV1 codecs
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
           GELABBER_AV1_ENCODER: identity
@@ -291,6 +475,7 @@ jobs:
       # Real xdg-desktop-portal frontend and PipeWire, with a test backend
       # whose monitor is a shared-memory test stream (no compositor or GPU here).
       - name: Screen capture through the ScreenCast portal
+        if: inputs.release_tag == ''
         timeout-minutes: 15
         env:
           GELABBER_TEST_SCREEN: "1"
@@ -306,6 +491,7 @@ jobs:
       # the speakers. Covers device selection, the three processing modes
       # (RNNoise included), Opus through mediasoup and playout.
       - name: Voice through PulseAudio devices
+        if: inputs.release_tag == ''
         id: voice
         timeout-minutes: 10
         env:
@@ -328,6 +514,14 @@ jobs:
 
       # The native app (desktop/gelabber) on lavapipe under Xvfb, no server and
       # empty settings: it must paint its setup screen and end by itself.
+      # The same selection as the step for checks, so the core is built once.
+      - name: Loopback call of the release build
+        if: inputs.release_tag != ''
+        timeout-minutes: 20
+        env:
+          GELABBER_EXPECT_H264: "1"
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture --test-threads=1
+
       - name: Native app smoke test
         timeout-minutes: 10
         run: |
@@ -427,7 +621,7 @@ jobs:
     # As core-linux: a newer push to a pull request cancels the older run's.
     concurrency:
       group: desktop-core-windows-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: windows-2022
     timeout-minutes: 120
     defaults:
@@ -967,7 +1161,8 @@ jobs:
       # The Linux job's call through an in-process mediasoup worker. H264 only
       # where Media Foundation has codecs, so no GELABBER_EXPECT_H264.
       # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
-      # picker; the test skips where Windows cannot capture.
+      # picker; the test skips where Windows cannot capture. A release build
+      # makes the call alone, without the tests that measure frame rates.
       - name: Loopback call against mediasoup 0.29
         id: tests
         if: ${{ !cancelled() && steps.worker.outcome == 'success' }}
@@ -975,7 +1170,9 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
           GELABBER_TEST_SCREEN_MONITOR: "1"
-        run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
+        run: |
+          $only = if ($env:RELEASE_TAG) { @('--test', 'mediasoup_loopback') } else { @() }
+          cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core @only -- --nocapture --test-threads=1
 
       # A native crash ends the test without a word; libwebrtc's log says
       # where it got to, and how far ICE came on the address chosen above.
@@ -996,16 +1193,16 @@ jobs:
       # features and rebuild the worker. The empty core directory keeps Clippy's
       # build scripts from compiling the C++ again.
       - name: Clippy
-        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
         timeout-minutes: 45
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $env:GELABBER_MEDIA_LIB_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'no-core')).FullName
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --all-targets -- -D warnings
-          cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber -p gelabber-ui -p gelabber-call -p gelabber-client --all-targets -- -D warnings
+          cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber -p gelabber-ui -p gelabber-call -p gelabber-client -p gelabber-i18n --all-targets -- -D warnings
 
       - name: Format
-        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
   # The pacman repository (Arch/Omarchy): package, signed database, a user's

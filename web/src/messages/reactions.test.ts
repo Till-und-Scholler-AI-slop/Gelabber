@@ -6,6 +6,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { login, resetSessionForTests } from "../auth/session.ts";
 import { takeStamp } from "../auth/scope.ts";
+import { setLocale } from "../i18n/locale.ts";
 import { applyChannelEvent, messageQueryOptions } from "./queries.ts";
 import {
   displayedReactions,
@@ -284,5 +285,19 @@ describe("reactor names", () => {
     expect(reactorNames(["r", "gone"], nameOf, "me")).toBe(
       "Rafi und 1 weitere",
     );
+  });
+
+  it("lists them in English after a switch", () => {
+    setLocale("en", { persist: false });
+    try {
+      expect(reactorNames(["me", "r", "l"], nameOf, "me")).toBe(
+        "you, Rafi and Lena",
+      );
+      expect(reactorNames(["r", "l", "m", "x"], nameOf, "me")).toBe(
+        "Rafi, Lena, Mia and 1 more",
+      );
+    } finally {
+      setLocale("de", { persist: false });
+    }
   });
 });

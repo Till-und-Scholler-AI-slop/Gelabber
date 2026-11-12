@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useLocale } from "../i18n/locale.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import type { VoiceFlags } from "./roster.ts";
 import type { VoiceState } from "./session.ts";
@@ -15,7 +16,14 @@ const fixture = vi.hoisted(() => ({
     string,
     Record<string, Record<string, Partial<Record<"s" | "l", true>>>>
   >,
+  /** The roster's watches: per server, per channel, per watcher, whose Lives. */
+  watches: {} as Record<
+    string,
+    Record<string, Record<string, readonly string[]>>
+  >,
   speaking: { call: null as string | null, users: {} as Record<string, true> },
+  /** The window's width for `max-width` queries; null matches none. */
+  width: null as number | null,
 }));
 vi.mock("./session.ts", () => ({
   useVoice: (select?: (state: VoiceState) => unknown) =>
@@ -56,11 +64,22 @@ vi.mock("../components/InviteDialog.tsx", () => ({
     <i data-invite-dialog={open ? "open" : "closed"} />
   ),
 }));
+vi.mock("../components/useMediaQuery.ts", () => ({
+  useMediaQuery: (query: string) => {
+    const max = /max-width: (\d+)px/.exec(query)?.[1];
+    return fixture.width !== null && max !== undefined && fixture.width <= +max;
+  },
+}));
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
   EMPTY_LIVE_PEOPLE: {},
+  EMPTY_WATCHES: {},
   useVoiceRoster: (select: (state: unknown) => unknown) =>
-    select({ byServer: fixture.roster, live: fixture.live }),
+    select({
+      byServer: fixture.roster,
+      live: fixture.live,
+      watches: fixture.watches,
+    }),
 }));
 vi.mock("./speaking.ts", () => ({
   useSpeakingUsers: (serverId: string, channelId: string) =>
@@ -73,13 +92,18 @@ vi.mock("./VoiceTile.tsx", () => ({
     stream,
     label,
     speaking,
+    liveCaption,
   }: {
     stream: MediaStream | null;
     label: string;
     speaking?: boolean;
+    liveCaption?: { name: string; watchers: ReactNode };
   }) => (
     <span data-source={stream?.id ?? "none"} data-speaking={speaking}>
       {label}
+      {liveCaption ? (
+        <i data-caption={liveCaption.name}>{liveCaption.watchers}</i>
+      ) : null}
     </span>
   ),
 }));
@@ -112,7 +136,10 @@ import {
   VoiceAudioToggles,
   VoiceControls,
 } from "../components/VoiceControls.tsx";
-import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
+import {
+  ConnectionDetails,
+  VoiceSessionControls,
+} from "../components/VoiceSessionControls.tsx";
 import { callAnnouncement } from "./callBar.ts";
 import { CallSound } from "./QuickCallSettings.tsx";
 import { resetPushToTalkForTests, usePushToTalk } from "./pushToTalk.ts";
@@ -166,12 +193,14 @@ beforeEach(() => {
     playbackBlocked: false,
   };
   fixture.roster = {};
+  fixture.watches = {};
   fixture.live = {
     a: { stage: { alice: { l: true } } },
     b: { stage: { bob: { s: true } } },
   };
   fixture.server = undefined;
   fixture.requestedServer = undefined;
+  fixture.width = null;
   // A desktop browser: the capture controls depend on what the client can do.
   vi.stubGlobal("navigator", {
     mediaDevices: { getDisplayMedia() {}, getUserMedia() {} },
@@ -198,6 +227,7 @@ describe("active media UI", () => {
               avatar_url: null,
               joined_at: "",
               role: "member",
+              role_ids: [],
             },
           ],
         }}
@@ -268,8 +298,11 @@ describe("active media UI", () => {
       ),
     ).toHaveLength(3);
     expect(html).not.toContain('aria-label="Ohne Kamera"');
-    expect(html).toContain("3 im Kanal · Jemand und Jemand sind live");
-    expect(html.match(/· Live</g)).toHaveLength(2);
+    expect(html).toContain(
+      '<p class="voice-header-facts">3 im Kanal · 2 Live</p>',
+    );
+    // The row says who is live, in a line of its own (#521).
+    expect(html.match(/>Ist live<\/span>/g)).toHaveLength(2);
     // The overview keeps the spotlight for whoever went live first.
     const overview = renderToStaticMarkup(
       <VoiceRoom
@@ -303,6 +336,7 @@ describe("active media UI", () => {
               avatar_url: "/real-alice.png",
               joined_at: "",
               role: "member",
+              role_ids: [],
             },
             {
               user_id: "bob",
@@ -310,6 +344,7 @@ describe("active media UI", () => {
               avatar_url: null,
               joined_at: "",
               role: "member",
+              role_ids: [],
             },
           ],
         }}
@@ -361,6 +396,141 @@ describe("active media UI", () => {
     const controls = renderToStaticMarkup(<VoiceSessionControls />);
     expect(control(controls, "Stummschalten")).toContain('aria-pressed="true"');
     expect(controls).toContain("Verlassen");
+  });
+
+  it("names the stage views Grid, Focus and Cinema in English", () => {
+    fixture.live = {};
+    fixture.roster = {
+      a: { alice: { channelId: "stage", muted: false, deafened: false } },
+    };
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      participants: { alice: { pubs: ["v", "s"] } },
+      remote: { alice: { v: stream, s: stream } },
+    });
+    useLocale.setState({ locale: "en" });
+    try {
+      const html = renderToStaticMarkup(
+        <VoiceRoom
+          server={{ ...server, id: "a" }}
+          channelId="stage"
+          channelName="Room"
+        />,
+      );
+      expect(html).toMatch(
+        /<button type="button" class="voice-stage-kino" aria-keyshortcuts="K" title="Cinema \(K\)"[^>]*>(?:<svg.*?<\/svg>)?Cinema<\/button>/,
+      );
+      expect(html).toMatch(
+        /role="radiogroup" aria-label="View"(?:(?!<\/div>).)*>(?:<svg.*?<\/svg>)?Grid(?:(?!<\/div>).)*>(?:<svg.*?<\/svg>)?Focus/,
+      );
+      expect(html).toContain("2 in the channel · 1 live");
+    } finally {
+      useLocale.setState({ locale: "de" });
+    }
+  });
+
+  it("draws the channel header with the facts, the view and Kino in the call", () => {
+    fixture.live = { a: { stage: { alice: { s: true } } } };
+    fixture.roster = {
+      a: { alice: { channelId: "stage", muted: false, deafened: false } },
+    };
+    const page = () =>
+      renderToStaticMarkup(
+        <VoiceRoom
+          server={server}
+          channelId="stage"
+          channelName="Stage"
+          title={<h1>Stage</h1>}
+          hint={<i data-live-pill="" />}
+          actions={<i data-members-toggle="" />}
+        />,
+      );
+    const header = (html: string) =>
+      /<header class="lr-channel-header">(.*?)<\/header>/.exec(html)?.[1] ?? "";
+
+    // Outside the call: the name, the Live pill and the members, as shipped;
+    // the room's line stays in the room.
+    const outside = page();
+    expect(header(outside)).toBe(
+      '<h1>Stage</h1><i data-live-pill=""></i><span class="lr-channel-header-spacer"></span><i data-members-toggle=""></i>',
+    );
+    expect(outside).toContain(
+      '<p class="voice-room-summary">Jemand ist da. Jemand ist live.</p>',
+    );
+
+    // In the call with a Live: facts after the name, then the view and
+    // Kino before the members; no pill and no bar over the stage.
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      participants: { alice: { pubs: ["s"] } },
+      remote: { alice: { s: stream } },
+    });
+    const staged = page();
+    expect(header(staged)).toMatch(
+      /^<h1>Stage<\/h1><p class="voice-header-facts">2 im Kanal · 1 Live<\/p><span class="lr-channel-header-spacer"><\/span><div role="radiogroup" aria-label="Ansicht" class="ui-chip-group voice-stage-views">.*<button type="button" class="voice-stage-kino"[^>]*>.*Kino<\/button><i data-members-toggle=""><\/i>$/,
+    );
+    expect(staged).not.toContain("data-live-pill");
+    expect(staged).not.toContain("voice-stage-bar");
+    expect(staged).not.toContain("voice-room-summary");
+    // The header sits over the room, outside its scrolling body.
+    expect(staged).toMatch(
+      /<\/header><div class="min-h-0 flex-1 overflow-y-auto"><section class="voice-room"/,
+    );
+
+    // In the call without pictures: who is there, and nothing to switch.
+    fixture.voice.participants = {};
+    fixture.voice.remote = {};
+    fixture.live = {};
+    const people = page();
+    expect(header(people)).toBe(
+      '<h1>Stage</h1><p class="voice-header-facts">Du bist hier mit Jemand.</p><span class="lr-channel-header-spacer"></span><i data-members-toggle=""></i>',
+    );
+    expect(people).not.toContain("voice-room-summary");
+  });
+
+  it("keeps only the name and the members in a phone's header", () => {
+    fixture.width = 390;
+    fixture.live = { a: { stage: { alice: { s: true } } } };
+    fixture.roster = {
+      a: { alice: { channelId: "stage", muted: false, deafened: false } },
+    };
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      participants: { alice: { pubs: ["s"] } },
+      remote: { alice: { s: stream } },
+    });
+    const page = () =>
+      renderToStaticMarkup(
+        <VoiceRoom
+          server={server}
+          channelId="stage"
+          channelName="Stage"
+          title={<h1>Stage</h1>}
+          hint={<i data-live-pill="" />}
+          actions={<i data-members-toggle="" />}
+        />,
+      );
+    const staged = page();
+    expect(staged).toContain(
+      '<header class="lr-channel-header"><h1>Stage</h1><span class="lr-channel-header-spacer"></span><i data-members-toggle=""></i></header>',
+    );
+    // The facts open the room's body instead.
+    expect(staged).toMatch(
+      /<section class="voice-room"[^>]*><p class="voice-room-summary">2 im Kanal · 1 Live<\/p>/,
+    );
+
+    fixture.voice.participants = {};
+    fixture.voice.remote = {};
+    fixture.live = {};
+    expect(page()).toMatch(
+      /<section class="voice-room"[^>]*><p class="voice-room-summary">Du bist hier mit Jemand\.<\/p>/,
+    );
   });
 
   it("keeps camera and screen media scoped to the exact active server and channel", () => {
@@ -534,7 +704,8 @@ describe("active media UI", () => {
     // A camera that is on wears the accent pill, a Live the red one.
     expect(camera).toContain("is-on");
     expect(live).toContain("voice-control-live");
-    expect(live).toContain('aria-haspopup="menu"');
+    // While live a press lists the watchers, with "Live beenden" (#521).
+    expect(live).toContain('aria-haspopup="dialog"');
   });
   it("says Stumm or Taub beside a closed microphone or headset", () => {
     Object.assign(fixture.voice, {
@@ -630,18 +801,61 @@ describe("active media UI", () => {
     expect(render()).not.toContain("voice-quality-bars");
     fixture.voice.connection = "reconnecting";
     expect(render()).toContain("Verbindung wird wiederhergestellt …");
+    // Away from a live connection the button names the state it shows,
+    // not the last measurement.
+    expect(render()).toContain(
+      'aria-label="Verbindung wird wiederhergestellt … – Details anzeigen"',
+    );
     fixture.voice.connection = "connected";
     expect(render()).toContain(">Verbunden<");
     expect(render()).toContain(
       'aria-label="Verbindung: wird gemessen … – Details anzeigen"',
     );
-    // The bars open the connection at a glance, not the dialog.
+    // The bars and the state word are one button that opens the connection
+    // at a glance, not the dialog; the place stays the way to the channel.
+    const status =
+      /<button[^>]*class="voice-session-status"[^>]*>(.*?)<\/button>/.exec(
+        render(),
+      );
+    expect(status?.[0]).toContain(
+      'aria-haspopup="dialog" aria-expanded="false"',
+    );
+    expect(status?.[1]).toContain('class="voice-quality-bars"');
+    expect(status?.[1]).toContain("<strong>Verbunden</strong>");
+    expect(status?.[1]).not.toContain("Zocken");
+    expect(render()).toMatch(/<a><span>Zocken · Spieleabend<\/span><\/a>/);
+    fixture.voice.connection = "connecting";
     expect(render()).toMatch(
-      /class="voice-quality-bars"[^>]*aria-haspopup="dialog" aria-expanded="false"/,
+      /class="voice-session-status"[^>]*>.*<strong>Verbinde …<\/strong><\/button>/,
     );
     fixture.voice.connection = "failed";
     expect(render()).toContain("Verbindung verloren");
     expect(render()).toContain("Erneut versuchen");
+  });
+  it("leaves the settings out of the call bar", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      channelName: "Zocken",
+      connection: "connected",
+    });
+    const html = renderToStaticMarkup(<VoiceSessionControls />);
+    expect(html).not.toContain("Anrufeinstellungen");
+    for (const label of ["Stummschalten", "Taubschalten", "Verlassen"])
+      expect(control(html, label)).not.toBeNull();
+  });
+  it("holds the call's volumes in the connection popover", () => {
+    const html = renderToStaticMarkup(<ConnectionDetails onDone={() => {}} />);
+    expect(html).toMatch(/<h3 id="[^"]+">Lautstärke<\/h3>/);
+    expect(html).toContain(">Gespräche</label>");
+    expect(html).toContain(">Live-Ton</label>");
+    expect(control(html, "Live-Ton stummschalten")).not.toBeNull();
+    // Totals first, then the volumes, then the ways on.
+    const order = ["Du sendest", "Lautstärke", "Einstellungen", "Alle Details"];
+    const at = order.map((text) => html.indexOf(text));
+    expect(at.every((index) => index >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
   it("offers a lost call again after the session left it", () => {
     Object.assign(fixture.voice, {
@@ -875,5 +1089,155 @@ describe("active media UI", () => {
     // The dialog does not hang on the prompt: whoever its link brings in
     // must not close it under the hand that copies the link.
     expect(page()).toContain('data-invite-dialog="closed"');
+  });
+
+  it("puts the people on the stage in a call without pictures", () => {
+    fixture.live = {};
+    const members = ["alice", "bob"].map((id) => ({
+      user_id: id,
+      name: id[0]!.toUpperCase() + id.slice(1),
+      avatar_url: null,
+      joined_at: "",
+      role: "member",
+    }));
+    fixture.roster = {
+      a: {
+        alice: { channelId: "stage", muted: false, deafened: false },
+        bob: { channelId: "stage", muted: true, deafened: false },
+      },
+    };
+    fixture.speaking = { call: "a/stage", users: { alice: true } };
+    const page = () =>
+      renderToStaticMarkup(
+        <VoiceRoom
+          server={{ ...server, members } as unknown as ServerDetail}
+          channelId="stage"
+          channelName="Stage"
+        />,
+      );
+
+    // Before joining: the cards, as shipped.
+    const outside = page();
+    expect(outside).not.toContain("data-stage");
+    expect(outside).toContain('aria-label="Teilnehmer im Sprachkanal"');
+
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+    });
+    const html = page();
+    expect(html).toMatch(/<section class="voice-room"[^>]*data-stage="people"/);
+    expect(html).toContain(
+      '<div class="voice-people"><ul class="voice-stage" aria-label="Bühne" data-view="people">',
+    );
+    expect(html).not.toContain("voice-room-participants");
+    // Every occupant a tile, in the roster's order, the own one too; before
+    // the first measure each is small, its avatar 36 pixels.
+    expect(
+      html.match(/<li class="voice-room-participant[^"]*"[^>]*>/g),
+    ).toEqual([
+      '<li class="voice-room-participant is-speaking is-fill is-small voice-stage-item" style="--person-avatar:36px">',
+      '<li class="voice-room-participant is-fill is-small voice-stage-item" style="--person-avatar:36px">',
+      '<li class="voice-room-participant is-fill is-small voice-stage-item" style="--person-avatar:36px">',
+    ]);
+    expect(html).toContain("gel-avatar-lg is-speaking");
+    expect(html).toContain(">Spricht<");
+    expect(html).toContain(">Stumm<");
+    expect(html).toContain(">Im Raum<");
+    expect(html).toContain('<span class="voice-room-self"> (du)</span>');
+    // Volume and profile stay a press away.
+    expect(html).toContain('aria-label="Optionen für Alice"');
+    expect(html).toContain('aria-label="Profil von Bob"');
+    expect(html).not.toContain("voice-room-invite");
+
+    // A picture brings the pictures' stage back.
+    fixture.voice.participants = { alice: { pubs: ["v"] } };
+    fixture.voice.remote = { alice: { v: stream } };
+    const camera = page();
+    expect(camera).not.toContain('data-view="people"');
+    expect(camera).not.toContain("is-fill");
+    expect(camera).toMatch(/<section class="voice-room"[^>]*data-stage="true"/);
+
+    // Alone in the call: the shipped card and the invite.
+    fixture.voice.participants = {};
+    fixture.voice.remote = {};
+    fixture.roster = {};
+    const alone = page();
+    expect(alone).not.toContain("data-stage");
+    expect(alone).toContain('aria-label="Teilnehmer im Sprachkanal"');
+    expect(alone).toContain('class="voice-room-invite"');
+  });
+
+  it("says who watches a Live: on its caption, in Fokus's row and on the own Live's button (#521)", () => {
+    const people = [
+      ["self", "Lena"],
+      ["jonas", "Jonas"],
+      ["mira", "Mira"],
+      ["tom", "Tom"],
+    ].map(([user_id, name]) => ({
+      user_id,
+      name,
+      avatar_url: null,
+      joined_at: "",
+      role: "member",
+      role_ids: [],
+    }));
+    const home = { ...server, members: people } as unknown as ServerDetail;
+    fixture.live = { a: { sofa: { jonas: { s: true } } } };
+    fixture.roster = {
+      a: Object.fromEntries(
+        ["self", "jonas", "mira", "tom"].map((id) => [
+          id,
+          { channelId: "sofa", muted: false, deafened: false },
+        ]),
+      ),
+    };
+    // Mira's watch comes from the gateway, the own one from local state.
+    fixture.watches = { a: { sofa: { mira: ["jonas"], tom: [] } } };
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "sofa",
+      channelName: "Sofa",
+      participants: { jonas: { pubs: ["s"] } },
+      remote: { jonas: { s: stream } },
+      sourceSubscriptions: { jonas: { s: true } },
+    });
+    const html = renderToStaticMarkup(
+      <VoiceRoom server={home} channelId="sofa" channelName="Sofa" />,
+    );
+    // The caption: the owner's name and the count, a button for the list.
+    expect(html).toContain('data-caption="Jonas"');
+    expect(html).toMatch(
+      /<button type="button" class="voice-live-count" aria-label="2 schauen zu – Liste anzeigen" aria-haspopup="dialog" aria-expanded="false">/,
+    );
+    // Fokus's row: live, watching the Live in front, or the state.
+    expect(html).toContain('data-view="fokus"');
+    const status = (name: string) =>
+      new RegExp(
+        `${name}(?:(?!</li>).)*<span class="voice-room-participant-status([^"]*)">(?:<svg(?:(?!</svg>).)*</svg>)?([^<]*)</span>`,
+      )
+        .exec(html)
+        ?.slice(1);
+    expect(status("Lena")).toEqual([" is-watching", "Schaut zu"]);
+    expect(status("Jonas")).toEqual([" is-live", "Ist live"]);
+    expect(status("Mira")).toEqual([" is-watching", "Schaut zu"]);
+    expect(status("Tom")).toEqual(["", "Im Raum"]);
+
+    // The own Live: its button counts who watches, still "Live gehen".
+    fixture.watches = { a: { sofa: { jonas: ["self"], mira: ["self"] } } };
+    Object.assign(fixture.voice, {
+      participants: {},
+      remote: {},
+      sourceSubscriptions: {},
+      sharing: true,
+    });
+    const bar = renderToStaticMarkup(<VoiceControls canLive server={home} />);
+    expect(control(bar, "Live gehen")).toContain('aria-pressed="true"');
+    expect(control(bar, "Live gehen")).toContain('aria-haspopup="dialog"');
+    expect(bar).toMatch(
+      /<span class="voice-control-watchers"><svg(?:(?!<\/svg>).)*<\/svg>2<\/span>/,
+    );
   });
 });

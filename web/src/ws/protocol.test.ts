@@ -84,6 +84,19 @@ describe("ws protocol", () => {
     expect(decode("not-json")).toBeNull();
   });
 
+  it("accepts the account's language frame", () => {
+    expect(decode('{"op":"lc","l":"en"}')).toEqual({ op: "lc", l: "en" });
+  });
+
+  it("accepts the directory's account frames", () => {
+    expect(decode('{"op":"jn","s":"srv"}')).toEqual({ op: "jn", s: "srv" });
+    expect(decode('{"op":"jq","s":"srv","n":3}')).toEqual({
+      op: "jq",
+      s: "srv",
+      n: 3,
+    });
+  });
+
   it("keeps signaling frames small", () => {
     expect(encode({ op: "sig", t: "j", s: "srv", c: "voice" })).toBe(
       '{"op":"sig","t":"j","s":"srv","c":"voice"}',

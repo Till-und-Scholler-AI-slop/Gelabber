@@ -11,8 +11,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::body::Body;
-use futures_util::StreamExt;
+use axum::body::{Body, Bytes};
+use futures_util::stream::{self, BoxStream};
+use futures_util::{StreamExt, future};
 use rusty_s3::actions::S3Action;
 use rusty_s3::{Bucket, Credentials, UrlStyle};
 use url::Url;
@@ -241,6 +242,30 @@ impl ObjectStore {
         match self {
             Self::Memory(store) => store.fetch(key),
             Self::Minio(store) => store.fetch(key).await,
+        }
+    }
+
+    /// The whole object for the API itself, streamed whatever the delivery
+    /// mode: a worker reads objects of any size this way (data export).
+    pub async fn read(
+        &self,
+        key: &str,
+    ) -> Result<BoxStream<'static, Result<Bytes, StoreError>>, StoreError> {
+        match self {
+            Self::Memory(store) => {
+                let (_, bytes) = store.fetch(key)?;
+                Ok(stream::once(future::ready(Ok(Bytes::from(bytes)))).boxed())
+            }
+            Self::Minio(store) => {
+                let object = store.stream(key, None).await?;
+                Ok(object
+                    .body
+                    .into_data_stream()
+                    .map(|chunk| {
+                        chunk.map_err(|err| StoreError::Other(format!("read object: {err}")))
+                    })
+                    .boxed())
+            }
         }
     }
 
@@ -961,6 +986,10 @@ mod tests {
     /// object (8 bytes) or one range of it, `/gelabber/att/gone` is 404,
     /// `bytes=100-` is 416, and PUT takes any body.
     async fn fake_minio() -> (MinioStore, Arc<Mutex<Vec<Seen>>>) {
+        fake_minio_with(AttachmentDelivery::Proxy).await
+    }
+
+    async fn fake_minio_with(delivery: AttachmentDelivery) -> (MinioStore, Arc<Mutex<Vec<Seen>>>) {
         use axum::http::{Request, StatusCode};
         let seen = Arc::new(Mutex::new(Vec::new()));
         let log = seen.clone();
@@ -1013,10 +1042,49 @@ mod tests {
             secret_key: "gelabbergelabber".into(),
             bucket: "gelabber".into(),
             root_credentials: false,
-            delivery: AttachmentDelivery::Proxy,
+            delivery,
         })
         .expect("minio store");
         (store, seen)
+    }
+
+    async fn read_all(store: &ObjectStore, key: &str) -> Result<Vec<u8>, StoreError> {
+        let mut chunks = store.read(key).await?;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = chunks.next().await {
+            bytes.extend_from_slice(&chunk?);
+        }
+        Ok(bytes)
+    }
+
+    /// #519: a worker reads a whole object through the internal endpoint
+    /// even when browsers are redirected to MinIO.
+    #[tokio::test]
+    async fn read_streams_the_whole_object_in_every_delivery_mode() {
+        for delivery in [AttachmentDelivery::Redirect, AttachmentDelivery::Proxy] {
+            let (minio, seen) = fake_minio_with(delivery).await;
+            let store = ObjectStore::Minio(minio);
+            assert_eq!(read_all(&store, "att/x").await.unwrap(), b"01234567");
+            assert!(matches!(
+                read_all(&store, "att/gone").await,
+                Err(StoreError::NotFound)
+            ));
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen[0].method, "GET");
+            assert_eq!(seen[0].path, "/gelabber/att/x");
+            assert_eq!(seen[0].range, None);
+        }
+
+        let memory = ObjectStore::memory();
+        memory
+            .put("exports/a.zip", "application/zip", b"PK".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(read_all(&memory, "exports/a.zip").await.unwrap(), b"PK");
+        assert!(matches!(
+            read_all(&memory, "exports/b.zip").await,
+            Err(StoreError::NotFound)
+        ));
     }
 
     async fn body_bytes(object: StoredObject) -> Vec<u8> {

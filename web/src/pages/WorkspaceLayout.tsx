@@ -16,6 +16,7 @@ import {
 
 import { ApiError } from "../api/client.ts";
 import { useUserId } from "../auth/scope.ts";
+import { useSession } from "../auth/session.ts";
 import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
 import { DmSidebar } from "../components/DmSidebar.tsx";
 import { MenuIcon } from "../components/Icons.tsx";
@@ -36,6 +37,7 @@ import { useNavigationDrawer } from "../components/navigationDrawer.ts";
 import { notify } from "../components/toasts.ts";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { useShellShortcuts } from "../components/useShellShortcuts.ts";
+import { useDirectoryStatus } from "../discover/queries.ts";
 import { useDms } from "../dms/queries.ts";
 import { offerDesktopApp } from "../pwa/desktopApp.ts";
 import { useInstallation } from "../pwa/install.ts";
@@ -43,7 +45,12 @@ import { useMuteClock } from "../messages/notificationSettings.ts";
 import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { unreadMark } from "../messages/unreadIndicators.ts";
 import { forgetServer, useServer, useServers } from "../servers/queries.ts";
+import { BlockedServerNotice } from "../servers/BlockedServerNotice.tsx";
 import { SettingsSidebar } from "./UserSettingsPage.tsx";
+import { OperatorSidebar } from "../operator/OperatorSidebar.tsx";
+import { DiscoverSidebar } from "./DiscoverPage.tsx";
+import { translate, useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 // After the first screen has settled, so it does not land among the start's
 // own notices; not on the page it would lead to.
@@ -77,11 +84,19 @@ export function WorkspaceLayout() {
 }
 
 function Workspace() {
+  const t = useT(shell);
   const { serverId, channelId } = useParams({ strict: false });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const onDms = pathname === "/d" || pathname.startsWith("/d/");
   const onSettings =
     pathname === "/settings" || pathname.startsWith("/settings/");
+  // Only for an operator: everyone else sees "not found" in the plain frame.
+  const operator = useSession((state) => state.operator);
+  const onOperator =
+    operator && (pathname === "/betrieb" || pathname.startsWith("/betrieb/"));
+  // Only while the directory is on: otherwise the page is "not found".
+  const { data: directory } = useDirectoryStatus();
+  const onDiscover = pathname === "/discover" && directory?.enabled === true;
   // Before the early returns so hooks keep their order; the rail shares it.
   const { data: servers } = useServers();
   // Voice room and settings load in the background once the first screen is
@@ -94,20 +109,34 @@ function Workspace() {
   if (onDms) return <SelectedDms channelId={channelId} />;
   if (onSettings)
     return (
-      <WorkspaceFrame place="Einstellungen" sidebar={<SettingsSidebar />} />
+      <WorkspaceFrame
+        place={t("place.settings")}
+        sidebar={<SettingsSidebar />}
+      />
+    );
+  if (onOperator)
+    return (
+      <WorkspaceFrame
+        place={t("place.operator")}
+        sidebar={<OperatorSidebar />}
+      />
+    );
+  if (onDiscover)
+    return (
+      <WorkspaceFrame
+        place={t("place.discover")}
+        sidebar={<DiscoverSidebar />}
+      />
     );
   return (
     <WorkspaceFrame
       place="Gelabber"
       sidebar={
-        <aside className="channel-sidebar" aria-label="Navigation">
-          <div className="sidebar-brand">Gelabber</div>
+        <aside className="channel-sidebar" aria-label={t("sidebar.label")}>
+          <div className="sidebar-brand">Gelabber{/* i18n-ok */}</div>
           {/* Only once the list says so: never flash it at members. */}
           {servers?.length === 0 ? (
-            <div className="sidebar-empty">
-              Keine Server. Erstelle einen über + in der Serverleiste oder öffne
-              einen Einladungslink.
-            </div>
+            <div className="sidebar-empty">{t("noServers")}</div>
           ) : null}
           <UserPanel />
         </aside>
@@ -125,12 +154,16 @@ function WorkspaceFrame({
   place,
   serverId,
   dmActive = false,
+  main,
 }: {
   sidebar: ReactNode;
   place: Place;
   serverId?: string;
   dmActive?: boolean;
+  /** Takes the place of the routed page (a blocked server's notice). */
+  main?: ReactNode;
 }) {
+  const t = useT(shell);
   const drawer = useNavigationDrawer();
   const navigationId = useId();
   const { channelId } = useParams({ strict: false });
@@ -160,17 +193,19 @@ function WorkspaceFrame({
   const count = mark.count > 99 ? "99+" : String(mark.count);
   const label =
     mark.count > 0
-      ? `Navigation öffnen, ${mark.count > 99 ? "mehr als 99" : mark.count} ${mark.count === 1 ? "Benachrichtigung" : "Benachrichtigungen"}`
+      ? mark.count > 99
+        ? t("drawer.openLabelOver99")
+        : t("drawer.openLabelCount", { count: mark.count })
       : mark.any
-        ? "Navigation öffnen, ungelesene Nachrichten"
-        : "Navigation öffnen";
+        ? t("drawer.openLabelUnread")
+        : t("drawer.openLabel");
   return (
     <div className="workspace">
       <WorkspaceDrawer
         id={navigationId}
         open={drawer.open}
         onClose={drawer.hide}
-        title="Navigation"
+        title={t("sidebar.label")}
         breakpoint={NAVIGATION_DRAWER_MAX_WIDTH}
         className="workspace-navigation"
       >
@@ -221,7 +256,7 @@ function WorkspaceFrame({
           tabIndex={-1}
           className="workspace-content"
         >
-          <Outlet />
+          {main ?? <Outlet />}
         </main>
       </div>
       <QuickSwitcher
@@ -241,6 +276,7 @@ function SelectedServer({
   serverId: string;
   channelId: string | undefined;
 }) {
+  const t = useT(shell);
   const client = useQueryClient();
   const navigate = useNavigate();
   const userId = useUserId();
@@ -250,10 +286,19 @@ function SelectedServer({
   const gone =
     error instanceof ApiError &&
     (error.code === "not_found" || error.code === "forbidden");
+  // Blocked by an operator: the list says so, or a read just met it.
+  const blockedRead =
+    error instanceof ApiError && error.code === "server_blocked";
+  const blocked = blockedRead || listed?.blocked === true;
+  // Lifted meanwhile: the list (read again) knows first.
+  const lifted = blockedRead && listed?.blocked === false;
+  useEffect(() => {
+    if (lifted) void refetch();
+  }, [lifted, refetch]);
 
   useEffect(() => {
     if (!gone || !userId) return;
-    notify("Server nicht gefunden oder kein Zugriff.");
+    notify(translate(shell, "serverGone"));
     forgetServer(client, userId, serverId, { keepDetail: true });
     void navigate({ to: "/", replace: true }).then(() =>
       forgetServer(client, userId, serverId),
@@ -261,6 +306,20 @@ function SelectedServer({
   }, [gone, client, navigate, serverId, userId]);
 
   if (gone) return null;
+  if (blocked)
+    return (
+      <WorkspaceFrame
+        serverId={serverId}
+        place={listed ?? "Gelabber"}
+        sidebar={
+          <aside className="channel-sidebar" aria-label={t("sidebar.label")}>
+            <div className="sidebar-brand">{listed?.name ?? "Gelabber"}</div>
+            <UserPanel />
+          </aside>
+        }
+        main={<BlockedServerNotice serverId={serverId} server={listed} />}
+      />
+    );
   return (
     <WorkspaceFrame
       serverId={serverId}
@@ -273,7 +332,7 @@ function SelectedServer({
             failure={
               error
                 ? {
-                    message: "Die Kanäle konnten nicht geladen werden.",
+                    message: t("channels.loadFailed"),
                     pending: isFetching,
                     onRetry: () => void refetch(),
                   }
@@ -287,11 +346,12 @@ function SelectedServer({
 }
 
 function SelectedDms({ channelId }: { channelId: string | undefined }) {
+  const t = useT(shell);
   const { data: dms, error, isFetching, refetch } = useDms();
   return (
     <WorkspaceFrame
       dmActive
-      place="Nachrichten"
+      place={t("place.dms")}
       sidebar={
         dms ? (
           <DmSidebar dms={dms} activeChannelId={channelId} />
@@ -300,7 +360,7 @@ function SelectedDms({ channelId }: { channelId: string | undefined }) {
             failure={
               error
                 ? {
-                    message: "Die Unterhaltungen konnten nicht geladen werden.",
+                    message: t("dmsLoadFailed"),
                     pending: isFetching,
                     onRetry: () => void refetch(),
                   }

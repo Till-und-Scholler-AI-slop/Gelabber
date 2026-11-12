@@ -118,6 +118,44 @@ export function rasterRects(
   });
 }
 
+/** A call without pictures puts its people on the stage, each in a tile of
+ * rasterRects' size: the avatar a third of the tile's height, between 36
+ * and 96 pixels; below 180 pixels high a smaller name and no status line.
+ * A phone gives way to the cards when a tile would come out smaller than
+ * 72 pixels either way. */
+export const PERSON_TILE = {
+  avatarMin: 36,
+  avatarMax: 96,
+  avatarShare: 0.34,
+  smallBelow: 180,
+  phoneFloor: 72,
+} as const;
+
+/** How a person's tile on the people stage looks at this height. */
+export function personTile(height: number): { avatar: number; small: boolean } {
+  return {
+    avatar: Math.max(
+      PERSON_TILE.avatarMin,
+      Math.min(
+        PERSON_TILE.avatarMax,
+        Math.round(height * PERSON_TILE.avatarShare),
+      ),
+    ),
+    small: height < PERSON_TILE.smallBelow,
+  };
+}
+
+/** Whether a phone keeps the people stage for these tiles, or shows the
+ * cards instead. True while nothing is measured yet. */
+export function peopleStageFits(rects: readonly Rect[]): boolean {
+  const first = rects[0];
+  return (
+    !first ||
+    (first.width >= PERSON_TILE.phoneFloor &&
+      first.height >= PERSON_TILE.phoneFloor)
+  );
+}
+
 /** The picture that fills the stage in Fokus: the pinned one, else the
  * first Live of someone else, else the own Live, else someone else's
  * camera, else the own. */

@@ -181,3 +181,50 @@ describe("watching full size", () => {
     expect(html).not.toContain("Nicht mehr zuschauen");
   });
 });
+
+describe("a Live's caption on the stage (#521)", () => {
+  const live = (props: { sourceAudioNotice?: string } = {}) =>
+    renderToStaticMarkup(
+      <VoiceTile
+        stream={null}
+        label="Jonas — Live"
+        screen
+        live
+        liveCaption={{ name: "Jonas", watchers: <b data-count="">3</b> }}
+        {...props}
+      />,
+    );
+
+  it("is the badge, the name and the count, with no Live tag on top", () => {
+    const html = live();
+    expect(html).toContain(
+      '<figcaption class="voice-video-caption voice-live-caption"><span class="voice-live-caption-badge">Live</span><span class="voice-live-caption-name">Jonas</span><b data-count="">3</b></figcaption>',
+    );
+    expect(html).not.toContain("voice-video-live");
+    expect(html).not.toContain("voice-video-tags");
+  });
+
+  it("keeps the own Live's sound tag top left", () => {
+    const html = live({ sourceAudioNotice: "Ton wird mitgesendet" });
+    expect(html).toMatch(
+      /<div class="voice-video-tags"><span role="status" class="voice-video-sound[ "]/,
+    );
+    expect(html).not.toContain("voice-video-live");
+  });
+
+  it("leaves cameras and the overview's Lives as they were", () => {
+    const camera = renderToStaticMarkup(
+      <VoiceTile stream={null} label="Mia" />,
+    );
+    expect(camera).toContain(
+      '<figcaption class="voice-video-caption">Mia</figcaption>',
+    );
+    const overview = renderToStaticMarkup(
+      <VoiceTile stream={null} label="Jonas — Live" screen live />,
+    );
+    expect(overview).toContain(
+      '<figcaption class="voice-video-caption">Jonas — Live</figcaption>',
+    );
+    expect(overview).toContain('<span class="voice-video-live">Live</span>');
+  });
+});

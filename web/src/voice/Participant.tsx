@@ -1,7 +1,7 @@
 // One person in a voice room: a card with their avatar, or their camera in
 // its place; on the channel's stage a camera tile or a chip in the row of
-// people without one. "…", a long press or a right click opens their
-// volume and profile.
+// people without one, and in a call without pictures a tile of its own.
+// "…", a long press or a right click opens their volume and profile.
 
 import {
   useEffect,
@@ -11,10 +11,12 @@ import {
   type RefObject,
 } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 import type { Member } from "../servers/types.ts";
 import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
 import { Avatar } from "../components/Avatar.tsx";
-import { MoreIcon } from "../components/Icons.tsx";
+import { EyeIcon, LiveIcon, MoreIcon } from "../components/Icons.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
 import { Popover } from "../components/ui/Popover.tsx";
@@ -64,6 +66,8 @@ export function Participant({
   onSelect,
   className,
   style,
+  fill,
+  strip,
 }: {
   id: string;
   member: Member | undefined;
@@ -88,21 +92,29 @@ export function Participant({
   onSelect?: () => void;
   className?: string;
   style?: CSSProperties;
+  /** A tile of the people stage, in a call without pictures: the avatar
+   * this many pixels across, and `small` drops the status line. */
+  fill?: { avatar: number; small: boolean };
+  /** In Fokus's row: one status line under the name, that they are live,
+   * else that they watch the Live in front, else their state. */
+  strip?: { live: boolean; watching: boolean };
 }) {
+  const t = useT(voice);
   const [menu, setMenu] = useState(false);
   const menuAnchor = useRef<HTMLButtonElement>(null);
   const hasMenu = Boolean(member) && !self;
   const [press] = useState(() => createLongPress(() => setMenu(true)));
   // Someone who leaves mid-press opens nothing.
   useEffect(() => press.up, [press]);
-  const name = member?.name ?? (self ? fallbackName : "Mitglied");
+  const name = member?.name ?? (self ? fallbackName : t("people.member"));
   const status = deafened
-    ? "Taub"
+    ? t("participant.deafened")
     : muted
-      ? "Stumm"
+      ? t("participant.muted")
       : speaking
-        ? "Spricht"
-        : "Im Raum";
+        ? t("participant.speaking")
+        : t("participant.present");
+  const stripState = strip?.live ? "live" : strip?.watching ? "watching" : null;
   const profile = () => {
     if (press.consumeClick()) return;
     if (member) onProfile(id);
@@ -125,11 +137,20 @@ export function Participant({
         "voice-room-participant",
         speaking ? "is-speaking" : "",
         camera ? "has-video" : "",
+        fill ? "is-fill" : "",
+        fill?.small ? "is-small" : "",
         className,
       ]
         .filter(Boolean)
         .join(" ")}
-      style={style}
+      style={
+        fill
+          ? ({
+              ...style,
+              "--person-avatar": `${fill.avatar}px`,
+            } as CSSProperties)
+          : style
+      }
       onPointerDown={hasMenu ? (event) => press.down(event) : undefined}
       onPointerMove={hasMenu ? (event) => press.move(event) : undefined}
       onPointerUp={hasMenu ? press.up : undefined}
@@ -166,7 +187,7 @@ export function Participant({
         <button
           type="button"
           className="voice-room-avatar"
-          aria-label={`Profil von ${name}`}
+          aria-label={t("participant.profileLabel", { name })}
           disabled={!member}
           onClick={profile}
         >
@@ -189,15 +210,33 @@ export function Participant({
             onClick={profile}
           >
             {name}
-            {self ? <span className="voice-room-self"> (du)</span> : null}
+            {self ? (
+              <span className="voice-room-self"> {t("participant.self")}</span>
+            ) : null}
           </button>
         </strong>
         {/* The state, then a camera or a Live. A tile and a chip say it to
-            a screen reader only. */}
-        <span className="voice-room-participant-status">
-          {status}
-          {media ? ` · ${media}` : ""}
-        </span>
+            a screen reader only; Fokus's row shows its one line. */}
+        {strip ? (
+          <span
+            className={`voice-room-participant-status${stripState ? ` is-${stripState}` : ""}`}
+          >
+            {stripState === "live" ? <LiveIcon size={12} /> : null}
+            {stripState === "watching" ? <EyeIcon size={12} /> : null}
+            {stripState === "live"
+              ? self
+                ? t("live.youAreLive")
+                : t("strip.isLive")
+              : stripState === "watching"
+                ? t("strip.watching")
+                : status}
+          </span>
+        ) : (
+          <span className="voice-room-participant-status">
+            {status}
+            {media ? ` · ${media}` : ""}
+          </span>
+        )}
       </span>
       {tile ? null : marks}
       {hasMenu ? (
@@ -205,7 +244,7 @@ export function Participant({
           <IconButton
             ref={menuAnchor}
             size="xs"
-            label={`Optionen für ${name}`}
+            label={t("participant.optionsLabel", { name })}
             aria-haspopup="dialog"
             aria-expanded={menu}
             icon={<MoreIcon size={16} />}
@@ -244,6 +283,7 @@ function ParticipantMenu({
   name: string;
   onProfile: () => void;
 }) {
+  const t = useT(voice);
   // A bottom sheet shows the name as its title already.
   const sheet = useMediaQuery(POPOVER_SHEET_QUERY);
   return (
@@ -265,7 +305,7 @@ function ParticipantMenu({
         className="voice-participant-profile"
         onClick={onProfile}
       >
-        Profil ansehen
+        {t("participant.viewProfile")}
       </Button>
     </Popover>
   );
@@ -273,12 +313,16 @@ function ParticipantMenu({
 
 /** A volume other than 100 % stays in sight on the card. */
 function VolumeChip({ userId }: { userId: string }) {
+  const t = useT(voice);
   const level = useUserVolumes((s) => userVolumeOf(userId, s.users));
   if (level.muted || level.volume === 1) return null;
   return (
-    <span className="voice-room-volume-chip" title="Lokale Lautstärke">
-      <span className="sr-only">Lautstärke </span>
-      {Math.round(level.volume * 100)} %
+    <span
+      className="voice-room-volume-chip"
+      title={t("participant.localVolume")}
+    >
+      <span className="sr-only">{t("userVolume.volume")} </span>
+      {t("percent", { percent: Math.round(level.volume * 100) })}
     </span>
   );
 }

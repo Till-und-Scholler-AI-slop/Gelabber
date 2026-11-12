@@ -59,6 +59,9 @@ async fn issue_ticket(
     // Re-read after acquiring the server lock: a delete may have won the race.
     let channel = load_channel(&mut *session_guard, channel_id).await?;
     let member = membership::load(&mut *session_guard, server_id, user.id).await?;
+    if !member.sees(&channel) {
+        return Err(ApiError::NotFound);
+    }
     member.require(Permission::JoinVoice)?;
     if channel.kind != ChannelKind::Voice {
         return Err(ApiError::BadRequest(
@@ -94,10 +97,11 @@ async fn load_channel<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     channel_id: Uuid,
 ) -> Result<Channel, ApiError> {
-    sqlx::query_as::<_, Channel>(
-        "SELECT id, server_id, category_id, name, kind, created_at \
-         FROM channels WHERE id = $1",
-    )
+    sqlx::query_as::<_, Channel>(concat!(
+        "SELECT ",
+        crate::servers::channel::channel_columns!(),
+        " FROM channels c WHERE c.id = $1"
+    ))
     .bind(channel_id)
     .fetch_optional(db)
     .await?
@@ -427,12 +431,23 @@ mod tests {
         })
         .unwrap();
         let state = AppState::with_pool(&config, pool.clone()).unwrap();
-        let user = crate::auth::user::insert(pool, "media@example.test", "media", "unused")
-            .await
-            .unwrap();
-        let raw = crate::auth::session::create(pool, user.id, Duration::from_secs(3600))
-            .await
-            .unwrap();
+        let user = crate::auth::user::insert(
+            pool,
+            "media@example.test",
+            "media",
+            "unused",
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let raw = crate::auth::session::create(
+            pool,
+            user.id,
+            Duration::from_secs(3600),
+            crate::auth::device::Device::UNKNOWN,
+        )
+        .await
+        .unwrap();
         let hash = crate::token::hash(&raw);
         let (created_at, expires_at) =
             sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
@@ -452,6 +467,8 @@ mod tests {
             hash,
             created_at,
             expires_at,
+            id: uuid::Uuid::nil(),
+            device_client: crate::auth::device::DeviceClient::Unknown,
         };
         (state, session, conn)
     }

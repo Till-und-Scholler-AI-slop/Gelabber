@@ -14,6 +14,8 @@ import {
   useSession,
 } from "../auth/session.ts";
 import type { User } from "../auth/types.ts";
+import { QuickCallSettings } from "../voice/QuickCallSettings.tsx";
+import { useVoice } from "../voice/session.ts";
 import { usePresenceStore } from "../ws/live.ts";
 import type { PresenceStatus } from "../ws/protocol.ts";
 import { ChevronIcon, GearIcon } from "./Icons.tsx";
@@ -25,10 +27,16 @@ import { InlineStatus } from "./ui/InlineStatus.tsx";
 import { Input } from "./ui/Input.tsx";
 import { Popover } from "./ui/Popover.tsx";
 import { useInlineStatus } from "./ui/useInlineStatus.ts";
-import { ownPresence, panelSubtitle, PRESENCE_LABEL } from "./userPresence.ts";
+import { ownPresence, panelSubtitle } from "./userPresence.ts";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { DEFAULT_OPERATOR_PAGE } from "../operator/areas.ts";
 
 export function UserPanel({ contextId }: { contextId?: string }) {
+  const t = useT(shell);
   const user = useSession((state) => state.user);
+  const operator = useSession((state) => state.operator);
   const presence = usePresenceStore((state) =>
     user ? ownPresence(state.byServer, user.id, contextId) : "o",
   );
@@ -36,6 +44,7 @@ export function UserPanel({ contextId }: { contextId?: string }) {
   const menu = useMenuDetails();
   const profileButton = useRef<HTMLButtonElement>(null);
   const [statusOpen, setStatusOpen] = useState(false);
+  const inCall = useVoice((state) => state.status === "joined");
   if (!user) return null;
 
   return (
@@ -66,7 +75,7 @@ export function UserPanel({ contextId }: { contextId?: string }) {
           open={statusOpen}
           onClose={() => setStatusOpen(false)}
           anchor={profileButton}
-          label="Dein Status"
+          label={t("userPanel.statusLabel")}
           placement="top-start"
           className="user-status-popover"
         >
@@ -76,38 +85,87 @@ export function UserPanel({ contextId }: { contextId?: string }) {
             onDone={() => setStatusOpen(false)}
           />
         </Popover>
-        <Link
-          to="/settings/$area"
-          params={{ area: "darstellung" }}
-          className="shell-icon-button"
-          aria-label="Einstellungen"
-          title="Einstellungen"
-        >
-          <GearIcon size={21} />
-        </Link>
+        {inCall ? (
+          <CallSettingsGear />
+        ) : (
+          <Link
+            to="/settings/$area"
+            params={{ area: "darstellung" }}
+            className="shell-icon-button"
+            aria-label={t("userPanel.settings")}
+            title={t("userPanel.settings")}
+          >
+            <GearIcon size={21} />
+          </Link>
+        )}
         <details ref={menu} className="user-panel-menu">
-          <summary className="shell-icon-button" aria-label="Benutzermenü">
+          <summary
+            className="shell-icon-button"
+            aria-label={t("userPanel.menuLabel")}
+          >
             <ChevronIcon size={18} />
           </summary>
-          <nav aria-label="Benutzerkonto">
+          <nav aria-label={t("userPanel.accountLabel")}>
             <Link to="/settings/$area" params={{ area: "profil" }}>
-              Profil bearbeiten
+              {t("userPanel.editProfile")}
             </Link>
             <Link to="/settings/$area" params={{ area: "darstellung" }}>
-              Einstellungen
+              {t("userPanel.settings")}
             </Link>
+            {operator ? (
+              <Link
+                to="/betrieb/$page"
+                params={{ page: DEFAULT_OPERATOR_PAGE }}
+              >
+                {t("userPanel.operator")}
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={async () => {
                 if (await logOut()) void navigate({ to: "/login" });
               }}
             >
-              Abmelden
+              {t("userPanel.signOut")}
             </button>
           </nav>
         </details>
       </footer>
     </div>
+  );
+}
+
+/** The gear during a call: the call's quick settings, as the call bar's
+ * gear opened them. The app's settings stay in the chevron menu. */
+function CallSettingsGear() {
+  const t = useT(shell);
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        className="shell-icon-button"
+        aria-label={t("userPanel.callSettings")}
+        title={t("userPanel.callSettings")}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <GearIcon size={21} />
+      </button>
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        label={t("userPanel.callSettings")}
+        placement="top-start"
+        className="voice-quick-settings"
+      >
+        <QuickCallSettings onMore={() => setOpen(false)} />
+      </Popover>
+    </>
   );
 }
 
@@ -121,6 +179,8 @@ function StatusCard({
   presence: PresenceStatus;
   onDone: () => void;
 }) {
+  const t = useT(shell);
+  const tc = useT(common);
   const [text, setText] = useState(user.status_text ?? "");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -147,11 +207,11 @@ function StatusCard({
     try {
       const updated = await updateProfile({ status_text: text.trim() });
       setText(updated.status_text ?? "");
-      status.show({ tone: "success", message: "Gespeichert." });
+      status.show({ tone: "success", message: tc("saved") });
     } catch {
       status.show({
         tone: "error",
-        message: "Nicht gespeichert – erneut versuchen",
+        message: tc("notSaved"),
       });
     } finally {
       release();
@@ -172,12 +232,12 @@ function StatusCard({
         />
         <span>
           <strong>{user.name}</strong>
-          <small>{PRESENCE_LABEL[presence]}</small>
+          <small>{t(`presence.${presence}`)}</small>
         </span>
       </div>
       <form className="user-status-card__form" onSubmit={onSubmit} noValidate>
         <label htmlFor="user-status-text" className="ui-label">
-          Status
+          {t("userPanel.status")}
         </label>
         <div className="user-status-card__row">
           <Input
@@ -196,9 +256,9 @@ function StatusCard({
             size="sm"
             disabled={!changed || (busy && !saving)}
             pending={saving}
-            pendingLabel="Speichert…"
+            pendingLabel={t("userPanel.saving")}
           >
-            Speichern
+            {tc("save")}
           </Button>
         </div>
         {error ? (
@@ -214,7 +274,7 @@ function StatusCard({
         className="user-status-card__link"
         onClick={onDone}
       >
-        Profil bearbeiten
+        {t("userPanel.editProfile")}
       </Link>
     </div>
   );

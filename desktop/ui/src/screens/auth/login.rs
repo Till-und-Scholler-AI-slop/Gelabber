@@ -1,10 +1,12 @@
 //! `/login` (pages/LoginPage.tsx).
 
 use egui::{Sense, Ui, Vec2};
-use gelabber_client::ApiError;
+use gelabber_client::{ApiError, OidcPurpose, OidcStart};
+use gelabber_i18n::auth;
 
 use super::{
-    Request, banner, fail, focus_invalid, form_error, invite_banner, layout, submit_after,
+    Request, banner, fail, focus_invalid, form_error, invite_banner, layout, oidc, oidc_error_line,
+    submit_after,
 };
 use crate::app::{AppCtx, is_invite_redirect, with_query};
 use crate::rules::{FormErrors, field_message, validate_email};
@@ -19,6 +21,8 @@ pub struct State {
     pub password: String,
     pub errors: FormErrors,
     request: Request,
+    /// "Über Google anmelden" and its flow through the system browser.
+    pub provider: oidc::ProviderSignIn,
 }
 
 const ORDER: [&str; 2] = ["email", "password"];
@@ -35,8 +39,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             Err(error) => fail(&mut s.errors, &error, &ORDER),
         }
     }
+    if s.provider.poll(ui, app, &mut s.errors, &ORDER) {
+        return;
+    }
     let invited = is_invite_redirect(redirect.as_deref());
-    let expired = app.nav.location().query("reason") == Some("expired");
+    let reason = app.nav.location().query("reason");
+    let expired = reason == Some("expired");
+    let deleted = reason == Some("deleted");
     let pending = s.request.is_some();
 
     layout::frame(ui, app, "login", |ui, app| {
@@ -44,29 +53,36 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             invite_banner(ui);
         }
         if expired {
-            banner(ui, "Sitzung abgelaufen. Melde dich erneut an.", false);
+            banner(ui, auth::login_session_expired(), false);
+        } else if deleted {
+            banner(ui, auth::login_account_deleted(), false);
         }
-        layout::heading(ui, "Anmelden");
+        layout::heading(ui, auth::login_title());
         let register = with_query(
             "/register",
             &[("redirect", redirect.as_deref().unwrap_or(""))],
         );
         if invited {
-            layout::lead(ui, "Neu bei Gelabber?");
+            layout::lead(ui, auth::login_new_here());
             ui.add_space(space::S3);
             if ui
-                .add(Button::new("Konto anlegen").large().fill())
+                .add(Button::new(auth::login_create_account()).large().fill())
                 .clicked()
             {
                 app.nav.navigate(&register);
             }
-        } else if layout::lead_with_link(ui, "Noch kein Konto?", "Registrieren") {
+        } else if layout::lead_with_link(ui, auth::login_no_account(), auth::login_register()) {
             app.nav.navigate(&register);
         }
-
-        ui.add_space(space::S6);
+        let start = || OidcStart {
+            redirect: redirect.clone(),
+            ..OidcStart::new(OidcPurpose::SignIn)
+        };
+        if !s.provider.show(ui, app, &mut s.errors, start) {
+            ui.add_space(space::S6);
+        }
         let email = TextField::new("email", &mut s.email)
-            .label("E-Mail-Adresse")
+            .label(auth::field_label_email())
             .autofocus(true)
             .error(s.errors.field("email"))
             .show(ui);
@@ -75,7 +91,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         ui.add_space(space::S5);
         let password = TextField::new("password", &mut s.password)
-            .label("Passwort")
+            .label(auth::field_label_password())
             .password()
             .error(s.errors.field("password"))
             .show(ui);
@@ -83,9 +99,17 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             s.errors.clear_field("password");
         }
         ui.add_space(space::S5);
-        form_error(ui, &s.errors);
+        if !oidc_error_line(ui, app, &s.errors) {
+            form_error(ui, &s.errors);
+        }
         let cooldown = s.errors.cooldown();
-        let clicked = submit_after(ui, "Anmelden", "Anmelden…", pending, cooldown);
+        let clicked = submit_after(
+            ui,
+            auth::login_submit(),
+            auth::login_submitting(),
+            pending,
+            cooldown,
+        );
         if (clicked || email.submitted || password.submitted) && !pending && cooldown == 0 {
             let mut fields = Vec::new();
             if let Some(code) = validate_email(&s.email) {
@@ -96,6 +120,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             }
             if fields.is_empty() {
                 s.errors = FormErrors::default();
+                // The password goes first; the browser's sign-in is dropped.
+                s.provider.cancel();
                 let http = app.client.http().clone();
                 let (email, password) = (s.email.clone(), s.password.clone());
                 s.request = Some(Pending::spawn(app.client, async move {
@@ -121,7 +147,7 @@ fn recovery(ui: &mut Ui, app: &mut AppCtx, email: &str) {
         Some(true) => {
             let block = text::Rich::new(style)
                 .push(
-                    "Passwort vergessen?",
+                    auth::page_forgot_password(),
                     style.weight(500.0),
                     theme.c.accent_text,
                 )
@@ -134,7 +160,7 @@ fn recovery(ui: &mut Ui, app: &mut AppCtx, email: &str) {
                 top_left,
                 0,
                 style.weight(500.0),
-                "Passwort vergessen?",
+                auth::page_forgot_password(),
             ) {
                 let typed = email.trim();
                 app.nav
@@ -144,7 +170,7 @@ fn recovery(ui: &mut Ui, app: &mut AppCtx, email: &str) {
         Some(false) => {
             let block = Block::wrapped(
                 ui,
-                "Passwort vergessen? Frag die Person, die diesen Gelabber-Server betreibt.",
+                auth::login_forgot_password_no_mail(),
                 style,
                 theme.c.muted,
                 ui.available_width(),

@@ -2,6 +2,9 @@
 // label / stack it. No DOM here — the hook owns permission + navigation,
 // and pwa/notifications.ts the delivery of system notifications.
 
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+
 export type ToastDecision = {
   show: boolean;
   dm: boolean;
@@ -95,16 +98,13 @@ export function notificationPermissionText(
   state: NotificationPermissionState,
   device: { secure: boolean; ios: boolean; standalone: boolean },
 ): string {
-  if (state === "granted") return "Browser-Benachrichtigungen sind erlaubt.";
-  if (state === "default")
-    return "Der Browser benötigt noch deine Erlaubnis für Benachrichtigungen.";
-  if (!device.secure)
-    return "Benachrichtigungen gibt es nur, wenn Gelabber über HTTPS geöffnet ist.";
-  if (state === "denied")
-    return "Browser-Benachrichtigungen sind blockiert. Du kannst sie in den Website-Einstellungen deines Browsers erlauben.";
+  if (state === "granted") return translate(chat, "permission.granted");
+  if (state === "default") return translate(chat, "permission.default");
+  if (!device.secure) return translate(chat, "permission.insecure");
+  if (state === "denied") return translate(chat, "permission.denied");
   if (device.ios && !device.standalone)
-    return "Auf iPhone und iPad gibt es Benachrichtigungen nur in der installierten App. Füge Gelabber über „Teilen“ zum Home-Bildschirm hinzu und öffne es von dort.";
-  return "Dieser Browser unterstützt hier keine Desktop-Benachrichtigungen.";
+    return translate(chat, "permission.iosBrowser");
+  return translate(chat, "permission.unsupported");
 }
 
 /** Bound replay suppression to the active account/session listener. */
@@ -150,7 +150,7 @@ export function previewText(
     return trimmed.length > 140 ? `${trimmed.slice(0, 137)}…` : trimmed;
   }
   if (isGif) return "GIF";
-  return hasAttachment ? "Datei" : "Neue Nachricht";
+  return translate(chat, hasAttachment ? "notify.file" : "notify.newMessage");
 }
 
 export const TOAST_STACK_MS = 1_600;

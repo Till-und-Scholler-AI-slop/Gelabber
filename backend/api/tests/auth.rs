@@ -543,3 +543,371 @@ async fn malformed_json_is_a_json_error(pool: PgPool) {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert_eq!(res.body["error"], "bad_request");
 }
+
+// --- Admission on an invitation-only instance (#517) ---
+
+const INVITED_PASSWORD: &str = "correct horse";
+
+fn invitation_state(pool: PgPool) -> gelabber_api::AppState {
+    let mut state = common::state(pool);
+    state.registration = gelabber_api::config::RegistrationMode::Invitation;
+    state
+}
+
+/// A beta invitation row as the operator page would write it, expiring in
+/// `expires_in` seconds (negative: expired), used or revoked.
+async fn beta_invitation(
+    pool: &PgPool,
+    code: &str,
+    email: Option<&str>,
+    expires_in: Option<i64>,
+    used: bool,
+    revoked: bool,
+) -> uuid::Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO beta_invitations (code, email, expires_at, used_at, revoked_at) \
+         VALUES ($1, $2, now() + make_interval(secs => $3::double precision), \
+             CASE WHEN $4 THEN now() END, CASE WHEN $5 THEN now() END) \
+         RETURNING id",
+    )
+    .bind(code)
+    .bind(email)
+    .bind(expires_in)
+    .bind(used)
+    .bind(revoked)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn server_invite(founder: &mut Client, server: &str, body: Value) -> String {
+    let res = founder
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/invites"),
+            Some(body),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    res.body["code"].as_str().unwrap().to_owned()
+}
+
+async fn register_with(client: &mut Client, email: &str, codes: Value) -> common::Response {
+    let mut body = json!({ "email": email, "password": INVITED_PASSWORD, "name": "Neu" });
+    for (key, value) in codes.as_object().unwrap() {
+        body[key] = value.clone();
+    }
+    client
+        .send(Method::POST, "/api/auth/register", Some(body))
+        .await
+}
+
+async fn fresh(state: &gelabber_api::AppState) -> Client {
+    let mut client = Client::from_state(state.clone());
+    client.bootstrap().await;
+    client
+}
+
+#[sqlx::test]
+async fn registration_mode_is_public(pool: PgPool) {
+    let mut client = Client::new(pool.clone());
+    let res = client
+        .send(Method::GET, "/api/auth/registration", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body, json!({ "mode": "open" }));
+
+    let mut client = fresh(&invitation_state(pool)).await;
+    let res = client
+        .send(Method::GET, "/api/auth/registration", None)
+        .await;
+    assert_eq!(res.body, json!({ "mode": "invitation" }));
+}
+
+#[sqlx::test]
+async fn open_registration_ignores_invitation_codes(pool: PgPool) {
+    let mut client = Client::new(pool.clone());
+    client.bootstrap().await;
+    let res = register_with(
+        &mut client,
+        "ada@example.com",
+        json!({ "invitation": "kein-code", "server_invite": "kkkkkkkkkkkk" }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    // A valid invitation is not used up either.
+    let id = beta_invitation(&pool, "k7m2p9qrs4tx", None, None, false, false).await;
+    let mut client = Client::new(pool.clone());
+    client.bootstrap().await;
+    let res = register_with(
+        &mut client,
+        "bob@example.com",
+        json!({ "invitation": "k7m2p9qrs4tx" }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let used: bool =
+        sqlx::query_scalar("SELECT used_at IS NOT NULL FROM beta_invitations WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!used);
+}
+
+#[sqlx::test]
+async fn invitation_only_registration_needs_a_code(pool: PgPool) {
+    let state = invitation_state(pool.clone());
+    // An address that has an account answers alike: the code is checked
+    // before any account lookup.
+    sqlx::query(
+        "INSERT INTO users (email, name, password_hash) VALUES ('ada@example.com', 'Ada', 'x')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (email, codes) in [
+        ("new@example.com", json!({})),
+        ("ada@example.com", json!({})),
+        (
+            "new@example.com",
+            json!({ "invitation": "  ", "server_invite": "" }),
+        ),
+        ("new@example.com", json!({ "invitation": null })),
+    ] {
+        let mut client = fresh(&state).await;
+        let res = register_with(&mut client, email, codes.clone()).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{codes} {}", res.body);
+        assert_eq!(res.body["error"], "invitation_required");
+        assert_eq!(res.body["fields"], json!({ "invitation": "required" }));
+        assert!(res.set_cookie(SESSION).is_none());
+    }
+    // Field errors still come first.
+    let mut client = fresh(&state).await;
+    let res = register_with(&mut client, "not-an-address", json!({})).await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(users, 1);
+}
+
+#[sqlx::test]
+async fn invalid_invitations_answer_alike(pool: PgPool) {
+    let state = invitation_state(pool.clone());
+    beta_invitation(&pool, "aaaaaaaaaaaa", None, Some(-60), false, false).await;
+    beta_invitation(&pool, "bbbbbbbbbbbb", None, None, false, true).await;
+    beta_invitation(&pool, "cccccccccccc", None, None, true, false).await;
+    beta_invitation(
+        &pool,
+        "dddddddddddd",
+        Some("bob@example.com"),
+        None,
+        false,
+        false,
+    )
+    .await;
+    for code in [
+        "eeeeeeeeeeee", // unknown
+        "zu-kurz",      // not a code at all
+        "aaaaaaaaaaaa", // expired
+        "bbbbbbbbbbbb", // revoked
+        "cccccccccccc", // used
+        "dddddddddddd", // for another address
+    ] {
+        let mut client = fresh(&state).await;
+        let res = register_with(
+            &mut client,
+            "ada@example.com",
+            json!({ "invitation": code }),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::GONE, "{code}: {}", res.body);
+        assert_eq!(res.body["error"], "invitation_invalid");
+        assert_eq!(res.body["fields"], json!({ "invitation": "invalid" }));
+    }
+    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(users, 0);
+}
+
+#[sqlx::test]
+async fn a_valid_invitation_admits_once(pool: PgPool) {
+    let state = invitation_state(pool.clone());
+    let id = beta_invitation(
+        &pool,
+        "k7m2p9qrs4tx",
+        Some("ada@example.com"),
+        Some(86_400),
+        false,
+        false,
+    )
+    .await;
+
+    // Retyped in capitals, and the address in another spelling.
+    let mut ada = fresh(&state).await;
+    let res = register_with(
+        &mut ada,
+        "Ada@Example.com",
+        json!({ "invitation": " K7M2P9QRS4TX " }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert!(res.set_cookie(SESSION).is_some());
+    let used_by: Option<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT used_by FROM beta_invitations WHERE id = $1 AND used_at IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        used_by.map(|id| id.to_string()).as_deref(),
+        Some(ada.user_id())
+    );
+
+    // Nobody else gets in with it, not even the same address again.
+    let mut again = fresh(&state).await;
+    let res = register_with(
+        &mut again,
+        "ada2@example.com",
+        json!({ "invitation": "k7m2p9qrs4tx" }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn two_registrations_racing_for_one_invitation_admit_one(pool: PgPool) {
+    let state = invitation_state(pool.clone());
+    let id = beta_invitation(&pool, "k7m2p9qrs4tx", None, None, false, false).await;
+    let mut a = fresh(&state).await;
+    let mut b = fresh(&state).await;
+    let code = json!({ "invitation": "k7m2p9qrs4tx" });
+    let (ra, rb) = tokio::join!(
+        register_with(&mut a, "a@example.com", code.clone()),
+        register_with(&mut b, "b@example.com", code.clone()),
+    );
+    let mut statuses = [ra.status, rb.status];
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        [StatusCode::CREATED, StatusCode::GONE],
+        "{} {}",
+        ra.body,
+        rb.body
+    );
+    let users: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM users")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(users.len(), 1, "the loser's account rolled back");
+    let used_by: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT used_by FROM beta_invitations WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(used_by, Some(users[0]));
+}
+
+#[sqlx::test]
+async fn a_server_invite_admits_unless_its_server_is_blocked(pool: PgPool) {
+    let state = invitation_state(pool.clone());
+    beta_invitation(&pool, "k7m2p9qrs4tx", None, None, false, false).await;
+    let mut founder = fresh(&state).await;
+    let res = register_with(
+        &mut founder,
+        "founder@example.com",
+        json!({ "invitation": "k7m2p9qrs4tx" }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = founder
+        .send(
+            Method::POST,
+            "/api/servers",
+            Some(json!({ "name": "Runde" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let server = res.body["id"].as_str().unwrap().to_owned();
+    let open = server_invite(&mut founder, &server, json!({})).await;
+    let single = server_invite(&mut founder, &server, json!({ "max_uses": 1 })).await;
+    sqlx::query("UPDATE invites SET uses = 1 WHERE code = $1")
+        .bind(&single)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut member = fresh(&state).await;
+    let res = register_with(
+        &mut member,
+        "member@example.com",
+        json!({ "server_invite": open }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    // Not used up by the registration; joining counts it.
+    let uses: i32 = sqlx::query_scalar("SELECT uses FROM invites WHERE code = $1")
+        .bind(&open)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(uses, 0);
+
+    // A stale beta code next to a good server invite still admits.
+    let mut other = fresh(&state).await;
+    let res = register_with(
+        &mut other,
+        "other@example.com",
+        json!({ "invitation": "k7m2p9qrs4tx", "server_invite": open }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    let mut late = fresh(&state).await;
+    let res = register_with(
+        &mut late,
+        "late@example.com",
+        json!({ "server_invite": single }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::GONE, "used up: {}", res.body);
+
+    sqlx::query("UPDATE servers SET blocked_at = now() WHERE id = $1::uuid")
+        .bind(&server)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = register_with(
+        &mut late,
+        "late@example.com",
+        json!({ "server_invite": open }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::GONE, "blocked: {}", res.body);
+    assert_eq!(res.body["error"], "invitation_invalid");
+}
+
+#[test]
+fn register_bodies_print_their_codes_redacted() {
+    let body = gelabber_api::auth::RegisterBody {
+        email: "ada@example.com".into(),
+        password: "geheim".into(),
+        name: "Ada".into(),
+        locale: None,
+        invitation: Some("k7m2p9qrs4tx".into()),
+        server_invite: Some("kkkkkkkkkkkk".into()),
+    };
+    let printed = format!("{body:?}");
+    assert!(
+        !printed.contains("k7m2p9qrs4tx") && !printed.contains("kkkkkkkkkkkk"),
+        "{printed}"
+    );
+    assert!(!printed.contains("geheim"));
+}

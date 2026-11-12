@@ -6,6 +6,9 @@ import type {
   MentionPart,
   MentionRenderer,
 } from "../messages/MessageContent.tsx";
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { useCurrentLocale } from "../i18n/locale.ts";
 import { splitMentions, type MentionMember } from "../messages/mentions.ts";
 import { useMentions } from "./mentionContext.ts";
 
@@ -57,13 +60,15 @@ export function mentionRenderer(
         : !!ping?.everyone || mentionsMe;
     const label =
       part.type === "mention"
-        ? `@${names.get(part.userId) ?? "Unbekannt"}`
+        ? `@${names.get(part.userId) ?? translate(chat, "mention.unknown")}`
         : `@${part.type}`;
     return (
       <span
         className={`lr-mention ${own ? "is-me" : ""}`}
         title={
-          part.type === "here" ? "Alle, die gerade online waren" : undefined
+          part.type === "here"
+            ? translate(chat, "mention.hereReached")
+            : undefined
         }
       >
         {label}
@@ -80,12 +85,15 @@ export function useMentionRenderer(message: {
 }): MentionRenderer {
   const { members, me } = useMentions();
   const { content, mentions, mention_everyone } = message;
+  // The renderer's words are in the language it was made in.
+  const locale = useCurrentLocale();
   return useMemo(
     () =>
       mentionRenderer(members, me, content, {
         everyone: mention_everyone === true,
         mentions: mentions ?? [],
       }),
-    [members, me, content, mentions, mention_everyone],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `locale` remakes it
+    [members, me, content, mentions, mention_everyone, locale],
   );
 }

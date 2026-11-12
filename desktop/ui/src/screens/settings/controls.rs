@@ -175,8 +175,8 @@ pub enum Scope {
 impl Scope {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Account => "Für dein Konto",
-            Self::Device => "Nur dieses Gerät",
+            Self::Account => gelabber_i18n::common::scope_account(),
+            Self::Device => gelabber_i18n::common::scope_device(),
         }
     }
 }
@@ -518,6 +518,19 @@ pub fn radio_mark(ui: &mut Ui, min: Pos2, checked: bool) {
 pub fn select_open(ctx: &egui::Context, id: &str) -> bool {
     let open_id = scoped(ctx, Id::unique(("gelabber-select-open", id)));
     ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false)
+}
+
+/// An open [`select`] list takes Esc before the dialog around it, like the
+/// web's native select: true when it took it and closed.
+pub fn select_takes_escape(ctx: &egui::Context, id: &str) -> bool {
+    if !select_open(ctx, id)
+        || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        return false;
+    }
+    let open_id = scoped(ctx, Id::unique(("gelabber-select-open", id)));
+    ctx.data_mut(|d| d.insert_temp(open_id, false));
+    true
 }
 
 pub fn select(
@@ -1017,11 +1030,11 @@ pub fn prepare(ctx: &egui::Context, file: ImageFile, w: u32, h: u32) -> Prepared
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
 fn too_large() -> String {
-    "Das Bild ist zu groß (höchstens 20 MB).".into()
+    gelabber_i18n::settings::image_too_large().into()
 }
 
 fn unreadable() -> String {
-    "Dieses Bild kann Gelabber nicht lesen. PNG, JPEG, WebP oder GIF gehen.".into()
+    gelabber_i18n::settings::image_unreadable().into()
 }
 
 /// Reads a dropped file, unless its size already rules it out.
@@ -1074,6 +1087,166 @@ fn prepare_image(bytes: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, &'static str)
 
 /// The image filters of the pickers (`accept=image/png,…`).
 pub const IMAGE_FILTER: [&str; 6] = ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.PNG"];
+
+// ------------------------------------------------------------ action row
+
+/// The button on the right of an [`action_row`]: small, secondary unless
+/// it says otherwise.
+pub struct RowButton<'a> {
+    pub label: &'a str,
+    pub pending: Option<&'a str>,
+    pub disabled: bool,
+    pub variant: crate::widgets::ButtonVariant,
+}
+
+impl<'a> RowButton<'a> {
+    pub fn new(label: &'a str) -> Self {
+        Self {
+            label,
+            pending: None,
+            disabled: false,
+            variant: crate::widgets::ButtonVariant::Secondary,
+        }
+    }
+
+    pub fn variant(mut self, variant: crate::widgets::ButtonVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    pub fn pending(mut self, label: Option<&'a str>) -> Self {
+        self.pending = label;
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+}
+
+/// `.settings-action-row__title`: `--lr-type-ui` at weight 600.
+const ROW_TITLE: TextStyle = text::UI.weight(600.0);
+
+/// `ActionRow` (components/ActionRow.tsx, `.settings-action-row`): title
+/// and hint on the left, the status line under them, a small button on
+/// the right; min-height 52, padding 8, bottom hairline. True when the
+/// button was clicked.
+pub fn action_row(
+    ui: &mut Ui,
+    title: &str,
+    hint: &str,
+    status: Option<(&str, StatusTone)>,
+    button: Option<RowButton<'_>>,
+) -> bool {
+    action_row_badged(ui, title, None, hint, status, button)
+}
+
+/// [`action_row`] with a tag after the title ("Dieses Gerät"): accent,
+/// 8px after it, and no taller than the title's line.
+pub fn action_row_badged(
+    ui: &mut Ui,
+    title: &str,
+    badge: Option<&str>,
+    hint: &str,
+    status: Option<(&str, StatusTone)>,
+    button: Option<RowButton<'_>>,
+) -> bool {
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
+    let width = ui.available_width();
+    // A primary or danger label is set at 600, so its button is wider.
+    let button_w = button.as_ref().map_or(0.0, |b| {
+        crate::widgets::Button::new(b.label)
+            .small()
+            .variant(b.variant)
+            .pending(b.pending)
+            .natural_width(ui)
+    });
+    let gap = if button.is_some() { 16.0 } else { 0.0 };
+    let text_w = (width - button_w - gap).max(1.0);
+    let title_block = Block::single(ui, title, ROW_TITLE, c.text);
+    let hint_block = Block::wrapped(ui, hint, HINT, c.muted, text_w);
+    let status_h = status.map_or(0.0, |(message, _)| {
+        let block = Block::wrapped(ui, message, text::META, c.muted, text_w - 20.0);
+        4.0 + block.height().max(20.0)
+    });
+    let hint_h = if hint.is_empty() {
+        0.0
+    } else {
+        hint_block.height()
+    };
+    let content_h = ROW_TITLE.line_px() + hint_h + status_h;
+    let height = (content_h + 17.0).max(52.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    crate::widgets::rule_h(
+        ui.painter(),
+        c.border,
+        rect.left()..=rect.right(),
+        rect.bottom() - 1.0,
+    );
+    // The content box is 8px under the top and over the hairline.
+    let middle = rect.top() + 8.0 + (height - 17.0) / 2.0;
+    let mut y = middle - content_h / 2.0;
+    title_block.paint(ui.painter(), pos2(rect.left(), y));
+    let label = ui.interact(
+        Rect::from_min_size(pos2(rect.left(), y), title_block.size()),
+        ui.scope_id().with(("action-row-title", title)),
+        Sense::hover(),
+    );
+    crate::widgets::announce(&label, egui::Role::Label, title);
+    if let Some(badge) = badge {
+        let at = Rect::from_min_size(
+            pos2(
+                rect.left() + title_block.width() + 8.0,
+                y + ROW_TITLE.line_px() / 2.0 - 10.0,
+            ),
+            vec2(200.0, 20.0),
+        );
+        let tag = place(ui, UiBuilder::new().max_rect(at), |ui| {
+            ui.add(Badge::new(badge).tone(crate::widgets::BadgeTone::Accent))
+        });
+        crate::widgets::announce(&tag, egui::Role::Label, badge);
+    }
+    y += ROW_TITLE.line_px();
+    if !hint.is_empty() {
+        hint_block.paint(ui.painter(), pos2(rect.left(), y));
+        let label = ui.interact(
+            Rect::from_min_size(pos2(rect.left(), y), hint_block.size()),
+            ui.scope_id().with(("action-row-hint", title)),
+            Sense::hover(),
+        );
+        crate::widgets::announce(&label, egui::Role::Label, hint);
+    }
+    y += hint_h;
+    if let Some((message, tone)) = status {
+        let at = Rect::from_min_size(pos2(rect.left(), y + 4.0), vec2(text_w, status_h - 4.0));
+        ui.put(at, InlineStatus::new(Some(message), tone));
+    }
+    let Some(button) = button else {
+        // `put` leaves the cursor under what it placed: back under the row.
+        ui.advance_cursor_after_rect(rect);
+        return false;
+    };
+    let at = Rect::from_min_size(
+        pos2(rect.right() - button_w, middle - 16.0),
+        vec2(button_w, 32.0),
+    );
+    let clicked = ui
+        .put(
+            at,
+            crate::widgets::Button::new(button.label)
+                .small()
+                .variant(button.variant)
+                .width(button_w)
+                .disabled(button.disabled)
+                .pending(button.pending),
+        )
+        .clicked();
+    // `put` leaves the cursor under what it placed: back under the row.
+    ui.advance_cursor_after_rect(rect);
+    clicked
+}
 
 #[cfg(test)]
 mod tests {

@@ -14,6 +14,8 @@ import { useMediaSettings } from "../voice/settings.ts";
 import { useVoice } from "../voice/session.ts";
 import { useInstallation } from "../pwa/install.ts";
 import { getGateway } from "../ws/client.ts";
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import type { ChatEvent } from "../ws/protocol.ts";
 import {
   closeMessageNotifications,
@@ -88,13 +90,13 @@ export function channelLabel(
   dm: boolean,
 ): string {
   // A DM's author already names the conversation: the place says what it is.
-  if (dm) return "Direktnachricht";
-  if (!event.c) return "Kanal";
+  if (dm) return translate(chat, "toast.directMessage");
+  if (!event.c) return translate(chat, "toast.channel");
   const server = client.getQueryData<ServerDetail>(
     serverKeys.detail(userId, generation, event.s),
   );
   const channel = server?.channels.find((row) => row.id === event.c);
-  return channel ? `#${channel.name}` : "Kanal";
+  return channel ? `#${channel.name}` : translate(chat, "toast.channel");
 }
 
 /** Names for the mention tokens of a preview, from what is cached. */

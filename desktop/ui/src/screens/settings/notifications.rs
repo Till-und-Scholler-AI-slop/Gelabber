@@ -2,6 +2,7 @@
 //! NotificationPrivacy.tsx, NotificationPermission.tsx).
 
 use egui::Ui;
+use gelabber_i18n::notifications as texts;
 
 use super::controls::{self, Scope};
 use super::{op_pending, prefs, settled};
@@ -21,11 +22,11 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let c = &theme.c;
     let mut p = prefs::get(&ctx);
     let before = p.clone();
-    controls::group_legend(ui, "Nachrichten", Some(Scope::Device));
+    controls::group_legend(ui, texts::alerts_title(), Some(Scope::Device));
     controls::switch_row(
         ui,
         "message-toasts",
-        "Popup bei neuen Nachrichten in anderen Chats",
+        texts::alerts_toasts(),
         None,
         &mut p.message_toasts,
         false,
@@ -37,19 +38,17 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     controls::switch_row_noted(
         ui,
         "desktop-notify",
-        "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist",
+        texts::alerts_desktop_app(),
         &mut p.desktop_notify,
         false,
-        "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein.",
+        texts::alerts_desktop_app_note(),
     );
     let off = !p.desktop_notify;
     controls::switch_row(
         ui,
         "message-sound",
-        "Ton bei Benachrichtigungen am Computer",
-        Some(
-            "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung.",
-        ),
+        texts::alerts_sound(),
+        Some(texts::alerts_sound_hint()),
         &mut p.message_sound,
         off,
     );
@@ -59,7 +58,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     // Closing into the tray (CloseToTray.tsx) is in "App".
 
     ui.add_space(32.0);
-    controls::group_legend(ui, "Sperrbildschirm", Some(Scope::Account));
+    controls::group_legend(ui, texts::privacy_title(), Some(Scope::Account));
     if s.saving
         && let Some(result) = settled(app, "privacy")
     {
@@ -74,10 +73,8 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     if controls::switch_row(
         ui,
         "hide-content",
-        "Inhalt in Benachrichtigungen verbergen",
-        Some(
-            "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Kontos.",
-        ),
+        texts::privacy_hide_content(),
+        Some(texts::privacy_hide_content_hint()),
         &mut hide,
         busy,
     ) {
@@ -88,12 +85,6 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     if s.failed {
         ui.add_space(6.0);
         let w = ui.available_width();
-        controls::paragraph(
-            ui,
-            "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut.",
-            text::META,
-            c.danger,
-            w,
-        );
+        controls::paragraph(ui, texts::privacy_failed(), text::META, c.danger, w);
     }
 }

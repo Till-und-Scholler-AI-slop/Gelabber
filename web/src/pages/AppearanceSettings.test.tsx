@@ -22,6 +22,7 @@ vi.mock("../theme/account.ts", () => ({
   useAccountThemes: () => fixture.themes,
 }));
 
+import { setLocale } from "../i18n/locale.ts";
 import { AppearanceSettings } from "./AppearanceSettings.tsx";
 
 describe("appearance settings", () => {
@@ -31,4 +32,35 @@ describe("appearance settings", () => {
     expect(html).toContain("Erneut anwenden übernimmt sie");
     expect(html).toMatch(/<button[^>]*>Erneut anwenden<\/button>/);
   });
+
+  it("starts with the language, above the colour scheme", () => {
+    const html = renderToStaticMarkup(<AppearanceSettings />);
+    expect(html.indexOf("Sprache")).toBeLessThan(html.indexOf("Farbschema"));
+    expect(html).toContain('name="ui-language"');
+    expect(html).toContain("Nachrichten anderer werden nicht übersetzt.");
+  });
+
+  it.each([
+    ["de", "Deutsch</span>", "English<small>Englisch</small>"],
+    ["en", "Deutsch<small>German</small>", "English</span>"],
+  ] as const)(
+    "names the other language in %s below its own name",
+    (locale, deutsch, english) => {
+      setLocale(locale, { persist: false });
+      try {
+        const html = renderToStaticMarkup(<AppearanceSettings />);
+        expect(html).toContain(`<span class="ui-choice-text">${deutsch}`);
+        expect(html).toContain(`<span class="ui-choice-text">${english}`);
+        expect(html).toMatch(
+          new RegExp(
+            `name="ui-language" checked=""/><span class="ui-choice-text">${
+              locale === "de" ? "Deutsch" : "English"
+            }`,
+          ),
+        );
+      } finally {
+        setLocale("de", { persist: false });
+      }
+    },
+  );
 });

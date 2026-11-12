@@ -38,7 +38,7 @@ impl Notice {
             return None;
         }
         let cut = |text: String| match text.char_indices().nth(TEXT_MAX) {
-            Some((end, _)) => format!("{}…", &text[..end]),
+            Some((end, _)) => format!("{}…", &text[..end]), // i18n-ok
             None => text,
         };
         Some(Self {
@@ -365,7 +365,10 @@ impl Notifier {
                 .members
                 .iter()
                 .find(|m| m.user_id == start.user)
-                .map_or_else(|| "Jemand".to_owned(), |m| m.name.clone());
+                .map_or_else(
+                    || gelabber_i18n::app::notify_someone().to_owned(),
+                    |m| m.name.clone(),
+                );
             let text = rules::live_text(&author, &voice.name);
             let (title, body) = rules::live_notification_text(
                 hides_content(state),
@@ -441,9 +444,9 @@ impl Notifier {
                     .get("voice_name")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
-                format!("{} ist live in {voice}.", message.author.name)
+                gelabber_i18n::app::notify_live_started(&message.author.name, voice)
             } else {
-                format!("Systemnachricht von {}", message.author.name)
+                gelabber_i18n::app::notify_system_unknown(&message.author.name)
             }
         });
         let text = system.unwrap_or_else(|| {
@@ -485,14 +488,14 @@ fn hides_content(state: &State) -> bool {
 /// `channelLabel`: the author already names a DM, the place says what it is.
 fn label(state: &State, server: Uuid, channel: Uuid, dm: bool) -> String {
     if dm {
-        return "Direktnachricht".into();
+        return gelabber_i18n::app::notify_direct_message().into();
     }
     state
         .server_details
         .get(&server)
         .and_then(|d| d.channels.iter().find(|c| c.id == channel))
         .map(|c| format!("#{}", c.name))
-        .unwrap_or_else(|| "Kanal".into())
+        .unwrap_or_else(|| gelabber_i18n::app::notify_channel().into())
 }
 
 /// `conversationMembers`: names for the mention tokens of a preview.

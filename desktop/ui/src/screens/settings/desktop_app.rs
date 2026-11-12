@@ -3,6 +3,7 @@
 //! installing Gelabber as an app, which the desktop app is already.
 
 use egui::{Color32, Id, Rect, Role, Sense, Ui, vec2};
+use gelabber_i18n::settings as texts;
 
 use super::controls::{self, Scope};
 use crate::platform::update::{self, Offer, SetupAsk, SetupView};
@@ -29,9 +30,9 @@ fn tray(ctx: &egui::Context) -> bool {
 /// The page's subtitle: what it holds here ("Fenster" with a tray only).
 pub fn description(ctx: &egui::Context) -> &'static str {
     match (update::setup_view(ctx).is_some(), tray(ctx)) {
-        (true, true) => "Updates und was beim Schließen des Fensters passiert.",
-        (false, true) => "Was beim Schließen des Fensters passiert.",
-        _ => "Updates dieser App.",
+        (true, true) => texts::area_app_description_desktop(),
+        (false, true) => texts::area_app_description_window(),
+        _ => texts::area_app_description_updates(),
     }
 }
 
@@ -49,12 +50,12 @@ fn updates(ui: &mut Ui, view: &SetupView) {
     let ctx = ui.ctx().clone();
     let theme = Theme::of(&ctx);
     let c = &theme.c;
-    controls::group_legend(ui, "Updates", Some(Scope::Device));
+    controls::group_legend(ui, texts::app_updates_title(), Some(Scope::Device));
     let mut auto = view.auto_check;
     if controls::switch_row(
         ui,
         "auto-check",
-        "Beim Start und alle 6 Stunden nach Updates suchen",
+        texts::app_auto_check(),
         None,
         &mut auto,
         view.checking,
@@ -101,27 +102,29 @@ fn updates(ui: &mut Ui, view: &SetupView) {
         // What the install does, with the status it explains.
         ui.add_space(2.0);
         let hint = (controls::HINT, c.muted);
-        let restart = "Zum Installieren startet die App neu.";
+        let restart = texts::app_restart_note();
         say(ui, "restart", restart, hint, width_text, Role::Label);
     }
     ui.add_space(12.0);
     controls::row(ui, 8.0, 36.0, |ui| {
         if offer == Some(Offer::Restart) && (view.can_install() || view.installing()) {
-            let install = Button::new("Jetzt installieren")
+            let install = Button::new(texts::app_install_now())
                 .primary()
-                .pending(view.installing().then_some("Wird installiert…"));
+                .pending(view.installing().then_some(texts::app_installing()));
             if ui.add(install).clicked() {
                 update::ask(&ctx, SetupAsk::Install);
             }
         }
         if offer == Some(Offer::Download)
             && let Some(n) = notice
-            && ui.add(Button::new("Herunterladen").primary()).clicked()
+            && ui
+                .add(Button::new(texts::app_download()).primary())
+                .clicked()
         {
             crate::platform::open_url_logged(&update::release_page(&n.version));
         }
-        let check = Button::new("Nach Updates suchen")
-            .pending(view.checking.then_some("Suche läuft…"))
+        let check = Button::new(texts::app_check_updates())
+            .pending(view.checking.then_some(texts::app_checking_updates()))
             .disabled(view.installing());
         if ui.add(check).clicked() {
             update::ask(&ctx, SetupAsk::CheckNow);
@@ -143,13 +146,13 @@ fn window(ui: &mut Ui, s: &mut State) {
     let Some(info) = crate::platform::desktop_info(&ctx).filter(|d| d.tray) else {
         return;
     };
-    controls::group_legend(ui, "Fenster", Some(Scope::Device));
+    controls::group_legend(ui, texts::app_window_title(), Some(Scope::Device));
     let mut on = info.close_to_tray;
     if controls::switch_row(
         ui,
         "close-to-tray",
-        "Fenster schließen minimiert in den Infobereich",
-        Some("Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich."),
+        texts::app_close_to_tray(),
+        Some(texts::app_close_to_tray_hint()),
         &mut on,
         false,
     ) {
@@ -160,7 +163,7 @@ fn window(ui: &mut Ui, s: &mut State) {
         let w = ui.available_width();
         controls::paragraph(
             ui,
-            "Die Einstellung konnte nicht gespeichert werden.",
+            texts::app_setting_failed(),
             text::META,
             theme.c.danger,
             w,

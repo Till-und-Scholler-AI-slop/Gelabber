@@ -754,7 +754,8 @@ try {
         "true",
       );
       await page.keyboard.press("Enter");
-      const settings = dock.getByRole("button", {
+      // In a call the user panel's gear holds the call settings.
+      const settings = page.locator(".user-panel").getByRole("button", {
         name: "Anrufeinstellungen",
         exact: true,
       });

@@ -16,6 +16,8 @@ pub enum ButtonVariant {
     Ghost,
     Danger,
     DangerOutline,
+    /// A border and no fill until hovered ("+ Neue Rolle").
+    Outline,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -55,6 +57,8 @@ pub struct Button<'a> {
     width: Option<f32>,
     height: Option<f32>,
     disabled: bool,
+    /// Disabled, yet in the focus order (`aria-disabled`).
+    focusable: bool,
     pending: Option<&'a str>,
     text_color: Option<Color32>,
 }
@@ -70,6 +74,7 @@ impl<'a> Button<'a> {
             width: None,
             height: None,
             disabled: false,
+            focusable: false,
             pending: None,
             text_color: None,
         }
@@ -133,6 +138,15 @@ impl<'a> Button<'a> {
         self
     }
 
+    /// Unavailable but focusable (`aria-disabled="true"`): it looks and
+    /// acts disabled, yet keyboard focus reaches it, so a tooltip can say
+    /// why on focus too.
+    pub fn unavailable_focusable(mut self) -> Self {
+        self.disabled = true;
+        self.focusable = true;
+        self
+    }
+
     /// While `Some`, the label is swapped and the button is busy: disabled
     /// but keeping its variant's look (`aria-busy`).
     pub fn pending(mut self, label: Option<&'a str>) -> Self {
@@ -144,6 +158,15 @@ impl<'a> Button<'a> {
     pub fn text_color(mut self, color: Color32) -> Self {
         self.text_color = Some(color);
         self
+    }
+
+    /// The width it takes without `width` or `fill`: the label (or the
+    /// pending one), the icon, the padding and the border.
+    pub fn natural_width(&self, ui: &Ui) -> f32 {
+        let label = self.pending.unwrap_or(self.label);
+        let block = Block::single(ui, label, self.style(), Color32::WHITE);
+        let icon_w = if self.icon.is_some() { 16.0 + 8.0 } else { 0.0 };
+        block.width() + icon_w + 2.0 * self.size.padding() + 2.0
     }
 
     fn style(&self) -> text::TextStyle {
@@ -198,6 +221,12 @@ fn look(theme: &Theme, variant: ButtonVariant) -> Look {
             border: c.danger,
             text: c.danger,
         },
+        ButtonVariant::Outline => Look {
+            fill: Color32::TRANSPARENT,
+            hover_fill: c.hover,
+            border: c.border_strong,
+            text: c.text,
+        },
     }
 }
 
@@ -220,6 +249,8 @@ impl Widget for Button<'_> {
         let enabled = !self.disabled && !busy;
         let sense = if enabled {
             Sense::click()
+        } else if self.focusable && !busy {
+            Sense::focusable_noninteractive()
         } else {
             Sense::hover()
         };

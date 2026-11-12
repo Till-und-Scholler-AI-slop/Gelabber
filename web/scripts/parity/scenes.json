@@ -68,7 +68,8 @@
       "name": "settings-konto",
       "path": "/settings/konto",
       "user": "lena",
-      "desktop": true
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)"
     },
     {
       "name": "settings-darstellung",
@@ -1433,6 +1434,9 @@
         },
         {
           "key": "Tab"
+        },
+        {
+          "key": "Tab"
         }
       ]
     },
@@ -1916,6 +1920,658 @@
           "wait": 1500
         }
       ]
+    },
+    {
+      "name": "settings-darstellung-en",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true
+    },
+    {
+      "name": "login-en",
+      "path": "/login",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "register-en",
+      "path": "/register",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "channel-allgemein-en",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "server-settings-en",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "voice-joined-en",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "locale": "en",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Join"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "dm-en",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "forgot-password-en",
+      "path": "/forgot-password",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "reset-password-en",
+      "path": "/reset-password",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "verify-email-en",
+      "path": "/verify-email",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "invite-page-en",
+      "path": "/invite/{invite}",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "invite-invalid-en",
+      "path": "/invite/xyz",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "not-found-en",
+      "path": "/gibt-es-nicht",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "login-expired-en",
+      "path": "/login?reason=expired",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "settings-themes-en",
+      "path": "/settings/themes",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true
+    },
+    {
+      "name": "settings-benachrichtigungen-en",
+      "path": "/settings/benachrichtigungen",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true
+    },
+    {
+      "name": "channel-search-en",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "placeholder": "Search"
+        },
+        {
+          "type": "Snacks"
+        },
+        {
+          "wait": 600
+        }
+      ]
+    },
+    {
+      "name": "emoji-picker-en",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "Insert emoji"
+        },
+        {
+          "wait": 1000
+        }
+      ]
+    },
+    {
+      "name": "home-en",
+      "path": "/",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "server-overview-en",
+      "path": "/s/{home}",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "add-server-en",
+      "path": "/s/{home}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "Add server"
+        }
+      ]
+    },
+    {
+      "name": "invite-dialog-en",
+      "path": "/s/{home}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "Invite"
+        },
+        {
+          "wait": 500
+        }
+      ],
+      "after": "revoke-unused lena home"
+    },
+    {
+      "name": "member-profile-en",
+      "path": "/s/{home}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "Tom’s profile"
+        }
+      ]
+    },
+    {
+      "name": "voice-focus-en",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "locale": "en",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Join"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "clicktext": "Focus"
+        }
+      ]
+    },
+    {
+      "name": "voice-settings-dialog-en",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true,
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "click": "Call settings"
+        },
+        {
+          "clicktext": "All settings…"
+        }
+      ]
+    },
+    {
+      "name": "voice-diagnostics-idle-en",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true,
+      "actions": [
+        {
+          "click": "Call settings"
+        },
+        {
+          "clicktext": "All settings…"
+        },
+        {
+          "clicktext": "Diagnostics"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-rollen",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Rollen"
+        },
+        {
+          "wait": 300
+        }
+      ]
+    },
+    {
+      "name": "server-settings-rollen-base",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Rollen"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "clicktext": "Alle Mitglieder"
+        }
+      ]
+    },
+    {
+      "name": "role-delete-confirm",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Rollen"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "click": "Rolle löschen"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-role-picker",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Mitglieder"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "click": "Rollen für Mira"
+        }
+      ]
+    },
+    {
+      "name": "edit-channel-access",
+      "path": "/s/{home}/c/{spiele}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "spiele"
+        },
+        {
+          "click": "#spiele bearbeiten"
+        },
+        {
+          "click": "Zugriff"
+        }
+      ]
+    },
+    {
+      "name": "channel-hidden-for-member",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "ada"
+    },
+    {
+      "name": "voice-four",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted,tom",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "voice-watching-live",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:live,mira:muted:watch,tom:watch",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        }
+      ],
+      "mask": [[312, 72, 944, 530]]
+    },
+    {
+      "name": "voice-live-viewers",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:live,mira:muted:watch",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "/schau(t|en) zu – Liste anzeigen$/"
+        }
+      ],
+      "mask": [[312, 72, 944, 530]]
+    },
+    {
+      "name": "voice-live-own-watchers",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:watch,mira:muted:watch,tom",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Live gehen"
+        },
+        {
+          "menuitem": "Live gehen"
+        },
+        {
+          "wait": 4000
+        },
+        {
+          "click": "Live gehen"
+        }
+      ],
+      "mask": [[312, 72, 944, 530]]
+    },
+    {
+      "name": "voice-user-panel-call-settings",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Anrufeinstellungen"
+        }
+      ]
+    },
+    {
+      "name": "register-invitation",
+      "path": "/register?invitation=k7m2p9qrs4tx",
+      "user": null
+    },
+    {
+      "name": "user-menu-operator",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benutzermenü"
+        }
+      ]
+    },
+    {
+      "name": "operator-server",
+      "path": "/betrieb/server",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-meldungen",
+      "path": "/betrieb/meldungen",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-konten",
+      "path": "/betrieb/konten",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-einladungen",
+      "path": "/betrieb/einladungen",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-auslastung",
+      "path": "/betrieb/auslastung",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "sign-in-name",
+      "path": "/sign-in/name#token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "user": null,
+      "before": "oidc-pending"
+    },
+    {
+      "name": "settings-konto-google",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "before": "oidc-link lena",
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)"
+    },
+    {
+      "name": "settings-konto-google-only",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "before": "oidc-link lena nopassword",
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)"
+    },
+    {
+      "name": "login-oidc-error",
+      "path": "/login?oidc_error=account_unverified",
+      "user": null
+    },
+    {
+      "name": "discover",
+      "path": "/discover",
+      "user": "lena"
+    },
+    {
+      "name": "discover-language",
+      "path": "/discover",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "English"
+        }
+      ]
+    },
+    {
+      "name": "discover-search",
+      "path": "/discover",
+      "user": "lena",
+      "actions": [
+        {
+          "placeholder": "Nach Name oder Thema suchen"
+        },
+        {
+          "type": "rust"
+        },
+        {
+          "wait": 400
+        }
+      ]
+    },
+    {
+      "name": "discover-request",
+      "path": "/discover",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Beitritt anfragen"
+        }
+      ]
+    },
+    {
+      "name": "discover-report",
+      "path": "/discover",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Mehr zu Filmclub"
+        },
+        {
+          "menuitem": "Melden"
+        }
+      ]
+    },
+    {
+      "name": "rail-discover-hover",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "Entdecken"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-verzeichnis",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "/^Verzeichnis/"
+        },
+        {
+          "wait": 300
+        }
+      ]
+    },
+    {
+      "name": "light-discover",
+      "path": "/discover",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "settings-konto-password",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
+      "actions": [
+        {
+          "click": "Ändern"
+        }
+      ]
+    },
+    {
+      "name": "settings-konto-export-ready",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
+      "before": "export lena ready"
+    },
+    {
+      "name": "settings-konto-delete",
+      "path": "/settings/konto",
+      "user": "mira",
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
+      "actions": [
+        {
+          "click": "Konto löschen"
+        }
+      ]
+    },
+    {
+      "name": "settings-konto-delete-owned",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true,
+      "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
+      "actions": [
+        {
+          "click": "Konto löschen"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-transfer",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Gefahrenzone"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "click": "Übergeben…"
+        }
+      ]
+    },
+    {
+      "name": "login-deleted",
+      "path": "/login?reason=deleted",
+      "user": null
     }
   ]
 }

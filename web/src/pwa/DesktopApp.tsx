@@ -1,6 +1,9 @@
 import { ChevronIcon } from "../components/Icons.tsx";
 import { buttonClass } from "../components/ui/buttonClass.ts";
 import { CopyButton } from "../components/ui/CopyButton.tsx";
+import { T, useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { pwa } from "../i18n/catalogs/pwa.ts";
 import { copyText } from "../servers/clipboard.ts";
 import {
   ARCH_INSTALL_COMMAND,
@@ -30,20 +33,26 @@ export function DesktopAppPanel({
   /** The address the app asks for on its first start: this server's. */
   server: string;
 }) {
+  const t = useT(pwa);
   const other: DesktopPlatform = platform === "windows" ? "linux" : "windows";
   return (
-    <section className="pwa-install desktop-app" aria-label="Desktop-App">
+    <section
+      className="pwa-install desktop-app"
+      aria-label={t("desktop.label")}
+    >
       <div className="pwa-install-heading">
         <img src="/icons/icon-192.png" alt="" width={48} height={48} />
         <div>
-          <h2>Desktop-App für {DESKTOP_PLATFORM_LABEL[platform]}</h2>
-          <p>Push-to-Talk wirkt auch, wenn Gelabber im Hintergrund ist.</p>
+          <h2>
+            {t("desktop.title", { platform: DESKTOP_PLATFORM_LABEL[platform] })}
+          </h2>
+          <p>{t("desktop.pushToTalk")}</p>
         </div>
       </div>
       <PlatformSteps platform={platform} server={server} />
       <details className="pwa-install-disclosure desktop-app-other">
         <summary>
-          Für {DESKTOP_PLATFORM_LABEL[other]}
+          {t("desktop.other", { platform: DESKTOP_PLATFORM_LABEL[other] })}
           <ChevronIcon size={14} />
         </summary>
         <PlatformSteps platform={other} server={server} />
@@ -59,45 +68,45 @@ function PlatformSteps({
   platform: DesktopPlatform;
   server: string;
 }) {
+  const t = useT(pwa);
   return platform === "windows" ? (
     <div className="desktop-app-steps">
       <a
         className={buttonClass({ variant: "primary" })}
         href={WINDOWS_SETUP_URL}
       >
-        Für Windows herunterladen
+        {t("windows.download")}
       </a>
       <ol>
-        <li>
-          Starte die heruntergeladene Datei. Zeigt Windows „Der Computer wurde
-          durch Windows geschützt“, wähle „Weitere Informationen“ und dann
-          „Trotzdem ausführen“.
-        </li>
+        <li>{t("windows.run")}</li>
         <li>
           <ServerStep server={server} />
         </li>
       </ol>
-      <p className="pwa-install-note">
-        Neue Versionen installiert die App danach selbst.
-      </p>
+      <p className="pwa-install-note">{t("windows.updates")}</p>
     </div>
   ) : (
     <div className="desktop-app-steps">
-      <h3>Arch Linux und Omarchy</h3>
-      <p>Im Terminal:</p>
+      <h3>{t("arch.title")}</h3>
+      <p>{t("arch.terminal")}</p>
       <Command text={ARCH_INSTALL_COMMAND} />
       <p>
-        Das richtet die Paketquelle von Gelabber ein und installiert die App.
-        Updates kommen mit <code>sudo pacman -Syu</code> (oder{" "}
-        <code>yay -Syu</code>) zusammen mit dem Rest des Systems.
+        <T catalog={pwa} k="arch.body" tags={{ code: inlineCode }} />
       </p>
-      <h3>Andere Distributionen</h3>
+      <h3>{t("linux.title")}</h3>
       <p>
-        <a className="living-room-link" href={LINUX_TARBALL_URL}>
-          gelabber-native-linux-x64.tar.gz
-        </a>{" "}
-        herunterladen, entpacken und darin <code>./gelabber</code> starten. Neue
-        Versionen meldet die App; entpacke sie dann über die alte.
+        <T
+          catalog={pwa}
+          k="linux.body"
+          tags={{
+            link: (text) => (
+              <a className="living-room-link" href={LINUX_TARBALL_URL}>
+                {text}
+              </a>
+            ),
+            code: inlineCode,
+          }}
+        />
       </p>
       <p>
         <ServerStep server={server} />
@@ -106,20 +115,26 @@ function PlatformSteps({
   );
 }
 
+const inlineCode = (text: string) => <code>{text}</code>;
+
 function ServerStep({ server }: { server: string }) {
   return (
-    <>
-      Beim ersten Start fragt die App nach dem Server: <code>{server}</code>
-    </>
+    <T
+      catalog={pwa}
+      k="desktop.server"
+      params={{ server }}
+      tags={{ code: inlineCode }}
+    />
   );
 }
 
 function Command({ text }: { text: string }) {
+  const t = useT(common);
   return (
     <div className="desktop-app-command">
       <code>{text}</code>
       <CopyButton size="sm" onCopy={() => copyText(text)}>
-        Kopieren
+        {t("copy")}
       </CopyButton>
     </div>
   );

@@ -76,7 +76,7 @@ impl fmt::Display for Imported {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} device settings, {} server, {} volumes, {} drafts",
+            "{} device settings, {} server, {} volumes, {} drafts", // i18n-ok
             self.settings,
             if self.server { "the" } else { "no" },
             self.volumes,

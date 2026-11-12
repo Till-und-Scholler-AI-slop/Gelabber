@@ -85,6 +85,30 @@ describe("gateway client", () => {
     gateway.stop();
   });
 
+  it("hands the directory's frames to the account listeners", () => {
+    const socket = new FakeSocket();
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 10,
+      maxRetryMs: 10,
+      heartbeatMs: 10_000,
+      deadMs: 20_000,
+      open: () => socket,
+    });
+    const frames: unknown[] = [];
+    const stop = gateway.onAccount((frame) => frames.push(frame));
+    gateway.start();
+    socket.emit("open");
+    socket.emit("message", '{"op":"jn","s":"srv"}');
+    socket.emit("message", '{"op":"jq","s":"srv","n":2}');
+    expect(frames).toEqual([
+      { op: "jn", s: "srv" },
+      { op: "jq", s: "srv", n: 2 },
+    ]);
+    stop();
+    gateway.stop();
+  });
+
   it("re-announces idle after its subscribes on a reconnect and a resync", async () => {
     const sockets: FakeSocket[] = [];
     const gateway = new Gateway({

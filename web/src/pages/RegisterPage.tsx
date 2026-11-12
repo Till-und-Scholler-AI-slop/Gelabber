@@ -12,29 +12,56 @@ import {
   PASSWORD_MIN,
   errorMessage,
   fieldMessage,
+  oidcErrorMessage,
   validateName,
   validateNewEmail,
   validatePassword,
 } from "../auth/rules.ts";
+import {
+  admissionCodes,
+  isAdmissionError,
+  showsInvitationField,
+  showsInvitationOnly,
+  useRegistrationMode,
+  validateInvitation,
+  withoutInvitationField,
+} from "../auth/registration.ts";
 import { login, register } from "../auth/session.ts";
 import { RESEND_COOLDOWN_S, useCooldown } from "../auth/useCooldown.ts";
 import { useFocusOnMount } from "../auth/useFocusOnMount.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
+import { ProviderSignIn } from "../components/ProviderButton.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { PasswordField } from "../components/ui/PasswordField.tsx";
 import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
+import { T, useT } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 import { InviteContextBanner } from "./AuthLayout.tsx";
 
 export function RegisterPage() {
+  const t = useT(auth);
   const navigate = useNavigate();
-  const { redirect } = useSearch({ from: "/auth/register" });
+  const {
+    redirect,
+    invitation: invitationParam,
+    oidc_error: oidcError,
+  } = useSearch({ from: "/auth/register" });
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [invitation, setInvitation] = useState(invitationParam ?? "");
+  const mode = useRegistrationMode();
+  // A refusal for want of a code brings the field up even before (or
+  // without) the mode check.
+  const [asked, setAsked] = useState(
+    oidcError === "invitation_required" || oidcError === "invitation_invalid",
+  );
+  const codeState = { mode, invitation: invitationParam, redirect, asked };
+  const askCode = showsInvitationField(codeState);
   const form = useRef<HTMLFormElement>(null);
   const { errors, clearField, setFields, fromError, cooldown } =
     useFormErrors(form);
@@ -42,7 +69,13 @@ export function RegisterPage() {
   const invited = isInviteRedirect(redirect);
 
   const mutation = useMutation({
-    mutationFn: () => register(email, password, name),
+    mutationFn: () =>
+      register(
+        email,
+        password,
+        name,
+        admissionCodes(askCode ? invitation : null, redirect),
+      ),
     onSuccess: (user) => {
       // `null`: the server mailed a confirmation link and nobody is signed in.
       if (user === null) {
@@ -53,7 +86,17 @@ export function RegisterPage() {
       }
       void navigate({ href: redirect ?? "/", replace: true });
     },
-    onError: fromError,
+    onError: (error) => {
+      if (!isAdmissionError(error)) {
+        fromError(error);
+      } else if (showsInvitationField({ ...codeState, asked: true })) {
+        setAsked(true);
+        fromError(error);
+      } else {
+        // A server invite was followed: no field to point at.
+        fromError(withoutInvitationField(error));
+      }
+    },
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -63,6 +106,10 @@ export function RegisterPage() {
       ["name", validateName(name)],
       ["email", validateNewEmail(email)],
       ["password", validatePassword(password)],
+      [
+        "invitation",
+        askCode ? validateInvitation(invitation, mode, redirect) : null,
+      ],
     ] as const;
     for (const [field, code] of checks) {
       if (code) fields[field] = fieldMessage(field, code);
@@ -94,22 +141,36 @@ export function RegisterPage() {
   return (
     <section className="lr-auth-card">
       {invited ? <InviteContextBanner /> : null}
-      <h1>Konto anlegen</h1>
+      {/* A refused provider sign-in says why at the form, as on /login. */}
+      {!oidcError && showsInvitationOnly(codeState) ? (
+        <p role="status" className="auth-banner">
+          {t("register.invitationOnly")}
+        </p>
+      ) : null}
+      <h1>{t("register.title")}</h1>
       <p className="auth-lead">
-        Schon registriert?{" "}
+        {t("register.haveAccount")}{" "}
         <Link
           to="/login"
           search={redirect ? { redirect } : {}}
           className="auth-link"
         >
-          Anmelden
+          {t("register.signIn")}
         </Link>
       </p>
+      <ProviderSignIn
+        redirect={redirect}
+        // A new account on an invitation-only instance needs the code too.
+        invitation={() =>
+          admissionCodes(askCode ? invitation : null, undefined).invitation
+        }
+        onError={fromError}
+      />
 
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <Field
           id="name"
-          label="Name"
+          label={t("fieldLabel.name")}
           type="text"
           autoComplete="nickname"
           autoFocus
@@ -120,11 +181,11 @@ export function RegisterPage() {
             clearField("name");
           }}
           error={errors.fields.name}
-          hint="Für andere sichtbar."
+          hint={t("register.nameHint")}
         />
         <Field
           id="email"
-          label="E-Mail-Adresse"
+          label={t("fieldLabel.email")}
           type="email"
           autoComplete="email"
           inputMode="email"
@@ -137,7 +198,7 @@ export function RegisterPage() {
         />
         <PasswordField
           id="password"
-          label="Passwort"
+          label={t("fieldLabel.password")}
           autoComplete="new-password"
           value={password}
           onChange={(event) => {
@@ -145,16 +206,41 @@ export function RegisterPage() {
             clearField("password");
           }}
           error={errors.fields.password}
-          hint={`Mindestens ${PASSWORD_MIN} Zeichen.`}
+          hint={t("page.passwordHint", { min: PASSWORD_MIN })}
         />
-        <FormError message={errors.form} />
+        {askCode ? (
+          <Field
+            id="invitation"
+            label={t("fieldLabel.invitation")}
+            type="text"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            maxLength={64}
+            value={invitation}
+            onChange={(event) => {
+              setInvitation(event.target.value);
+              clearField("invitation");
+            }}
+            error={errors.fields.invitation}
+          />
+        ) : null}
+        {errors.form === null && oidcError ? (
+          // Why the provider sign-in came back here; nothing failed on
+          // this page, so no alert.
+          <p role="status" className="ui-form-error">
+            {oidcErrorMessage(oidcError)}
+          </p>
+        ) : (
+          <FormError message={errors.form} />
+        )}
         <SubmitButton
           size="lg"
           pending={mutation.isPending}
-          pendingLabel="Konto wird angelegt…"
+          pendingLabel={t("register.submitting")}
           cooldown={cooldown}
         >
-          Registrieren
+          {t("register.submit")}
         </SubmitButton>
       </form>
     </section>
@@ -176,6 +262,7 @@ export function MailSent({
   redirect: string | undefined;
   onOtherAddress: () => void;
 }) {
+  const t = useT(auth);
   const navigate = useNavigate();
   const heading = useFocusOnMount<HTMLHeadingElement>();
   // The first mail just went out.
@@ -194,7 +281,7 @@ export function MailSent({
     onError: (error) => {
       if (error instanceof ApiError && error.code === "email_unverified") {
         start(RESEND_COOLDOWN_S);
-        show({ tone: "success", message: "Neuer Link gesendet." });
+        show({ tone: "success", message: t("page.newLinkSent") });
         return;
       }
       if (
@@ -215,33 +302,33 @@ export function MailSent({
   return (
     <section className="lr-auth-card">
       <h1 ref={heading} tabIndex={-1}>
-        Postfach prüfen
+        {t("page.checkInbox")}
       </h1>
       <div className="auth-result">
         <p>
-          Bestätigungslink an <strong>{email}</strong> gesendet. Er gilt 24
-          Stunden.
+          <T
+            catalog={auth}
+            k="register.mailSent"
+            params={{ email }}
+            tags={{ b: (text) => <strong>{text}</strong> }}
+          />
         </p>
-        {isInviteRedirect(redirect) ? (
-          <p>Danach geht es weiter zur Einladung.</p>
-        ) : null}
-        <p className="auth-quiet">
-          Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut.
-        </p>
+        {isInviteRedirect(redirect) ? <p>{t("register.thenInvite")}</p> : null}
+        <p className="auth-quiet">{t("page.noMail")}</p>
       </div>
       <div className="auth-actions">
         <Button
           size="lg"
           disabled={seconds > 0}
           pending={resend.isPending}
-          pendingLabel="Wird gesendet…"
+          pendingLabel={t("page.sending")}
           onClick={() => resend.mutate()}
         >
-          {seconds > 0 ? `Erneut senden (${seconds} s)` : "Link erneut senden"}
+          {seconds > 0 ? t("page.resendIn", { seconds }) : t("register.resend")}
         </Button>
         <InlineStatus status={status} />
         <Button variant="ghost" size="lg" onClick={onOtherAddress}>
-          Andere Adresse verwenden
+          {t("page.otherAddress")}
         </Button>
       </div>
       <p className="auth-footer">
@@ -250,7 +337,7 @@ export function MailSent({
           search={redirect ? { redirect } : {}}
           className="auth-link"
         >
-          Zur Anmeldung
+          {t("page.toSignIn")}
         </Link>
       </p>
     </section>

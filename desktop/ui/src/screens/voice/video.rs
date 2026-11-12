@@ -22,7 +22,7 @@ pub enum Fit {
     Contain,
 }
 
-const SHADER: &str = r#"
+const SHADER: &str = r#"// i18n-ok: WGSL, not interface text.
 @group(0) @binding(0) var plane_y: texture_2d<f32>;
 @group(0) @binding(1) var plane_u: texture_2d<f32>;
 @group(0) @binding(2) var plane_v: texture_2d<f32>;
@@ -165,7 +165,7 @@ pub fn install(render_state: &egui_wgpu::RenderState) {
         count: None,
     };
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("video planes"),
+        label: Some("video planes"), // i18n-ok
         entries: &[
             texture(0),
             texture(1),
@@ -258,12 +258,12 @@ impl Planes {
         };
         let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
         let textures = [
-            plane("video y", width, height),
-            plane("video u", cw, ch),
-            plane("video v", cw, ch),
+            plane("video y", width, height), // i18n-ok
+            plane("video u", cw, ch),        // i18n-ok
+            plane("video v", cw, ch),        // i18n-ok
         ];
         let params = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("video params"),
+            label: Some("video params"), // i18n-ok
             size: PARAMS_SIZE as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -273,7 +273,7 @@ impl Planes {
             .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()))
             .collect();
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("video planes"),
+            label: Some("video planes"), // i18n-ok
             layout: &res.layout,
             entries: &[
                 wgpu::BindGroupEntry {

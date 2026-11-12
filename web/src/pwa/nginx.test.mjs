@@ -32,6 +32,7 @@ function parse(text) {
   // is a list of directives with `;` between them.
   let quote = null;
   let comment = false;
+  let variable = false;
   for (const char of text) {
     if (comment) {
       if (char === "\n") {
@@ -50,7 +51,10 @@ function parse(text) {
       continue;
     }
     if (char === '"' || char === "'") quote = char;
-    if (char !== ";" && char !== "{" && char !== "}") {
+    // The braces of `${uri}` belong to the variable, not to a block.
+    if (char === "{" && statement.endsWith("$")) variable = true;
+    if (variable || (char !== ";" && char !== "{" && char !== "}")) {
+      if (char === "}") variable = false;
       statement += char;
       continue;
     }
@@ -100,6 +104,90 @@ function mapped(map, key) {
       .map(([, name, value]) => [name, value]),
   );
   return entries.get(`"${key}"`) ?? entries.get("default");
+}
+
+const LANDING_MAP = 'map "" $gelabber_landing';
+const SIGNED_OUT_MAP = "map $cookie_gelabber_session $gelabber_signed_out";
+const LANG_MAP = "map $http_accept_language $gelabber_public_lang";
+const FRONT_MAP =
+  'map "$gelabber_landing$gelabber_signed_out$is_args" $gelabber_front';
+const publicPagesScript = fileURLToPath(
+  new URL("docker-entrypoint.d/50-gelabber-public-pages.sh", web),
+);
+/** Where the public pages live: the script's output folder. */
+const PUBLIC_ROOT = "root /usr/share/nginx/public-pages";
+const PAGE_CSP =
+  "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+const unquote = (word) => word.replace(/^"(.*)"$/, "$1");
+
+/** A map's value for `key` as nginx picks it: an exact entry, else the first
+ *  matching regex, else default. `included` are the lines of the files its
+ *  `include` reads. */
+function lookup(map, key, included = []) {
+  const lines = (blocks.get(map) ?? []).flatMap((line) =>
+    line.startsWith("include ") ? included : [line],
+  );
+  const entries = lines.map((line) => {
+    const [, name, value] = line.match(/^("[^"]*"|\S+) (.*)$/);
+    return [unquote(name), unquote(value)];
+  });
+  const exact = entries.find(([name]) => name === key && !name.startsWith("~"));
+  if (exact) return exact[1];
+  const regex = entries.find(
+    ([name]) =>
+      name.startsWith("~") &&
+      new RegExp(
+        name.replace(/^~\*?/, ""),
+        name.startsWith("~*") ? "i" : "",
+      ).test(key),
+  );
+  if (regex) return regex[1];
+  return entries.find(([name]) => name === "default")?.[1];
+}
+
+/** Where `location = /` sends a request, with these maps' inputs. */
+function front({ landing, cookie = "", query = "", language = "" }) {
+  // What the entrypoint writes while the landing page is on
+  // (src/public/entrypoint.test.mjs).
+  const on = landing ? ['"" 1'] : [];
+  const key =
+    lookup(LANDING_MAP, "", on) +
+    lookup(SIGNED_OUT_MAP, cookie) +
+    (query ? "?" : "");
+  const rewrite = location("= /").filter((line) => line.startsWith("rewrite "));
+  expect(rewrite).toEqual(["rewrite ^ $gelabber_front last"]);
+  return lookup(FRONT_MAP, key).replace(
+    "$gelabber_public_lang",
+    lookup(LANG_MAP, language),
+  );
+}
+
+/** The file a public-page location serves for `uri`, given the files the
+ *  entrypoint wrote, or the URI its try_files falls back to. */
+function served(name, uri, files) {
+  const tries = location(name).filter((line) => line.startsWith("try_files "));
+  expect(tries, name).toHaveLength(1);
+  const [, ...candidates] = tries[0].split(" ");
+  const fallback = candidates.pop();
+  for (const candidate of candidates) {
+    const path = candidate.replaceAll("${uri}", uri).replaceAll("$uri", uri);
+    if (files.includes(path.replace(/^\//, ""))) return path;
+  }
+  return fallback;
+}
+
+/** Sources per directive of a Content-Security-Policy header line. */
+function policyOf(line) {
+  const value = line.match(/^add_header \S+ "([^"]*)" always$/)?.[1];
+  expect(value, line).toBeDefined();
+  return new Map(
+    value
+      .split(";")
+      .map((directive) => directive.trim().split(" "))
+      .filter(([name]) => name)
+      .map(([name, ...sources]) => [name, sources]),
+  );
 }
 
 /** The shell's Content-Security-Policy: sources per directive, with the
@@ -196,9 +284,11 @@ describe("production nginx config", () => {
     for (const directory of directories) {
       expect(location(directory), directory).toContain(MISSING_IS_404);
     }
-    // Only `/` may fall back to the shell.
+    // Only `/` may fall back to the shell, besides `location = /` (through the
+    // map) and the public pages, whose unpublished URLs are app routes.
+    const toShell = ["/", FRONT_MAP, "^~ /de/", "^~ /en/"];
     for (const [name, directives] of blocks) {
-      if (name === "/") continue;
+      if (toShell.includes(name)) continue;
       expect(directives.join("\n"), name).not.toContain("/index.html");
     }
   });
@@ -252,6 +342,13 @@ describe("production nginx config", () => {
         "/audio/",
         "/images/",
         "/",
+        "= /",
+        "^~ /de/",
+        "^~ /en/",
+        "= /public-pages.json",
+        "= /robots.txt",
+        "= /sitemap.xml",
+        "^~ /public-pages/",
       ]),
     );
     for (const name of locations) {
@@ -317,9 +414,10 @@ describe("production nginx config", () => {
       expect(policy.has(name), name).toBe(false);
     }
     // Only the shell: offline.html, the one other document, is static and
-    // runs inline scripts of its own.
+    // runs inline scripts of its own. The public pages have a policy of their
+    // own (below).
     for (const [name, directives] of blocks) {
-      if (name === "= /index.html") continue;
+      if (["= /index.html", "^~ /de/", "^~ /en/"].includes(name)) continue;
       expect(
         directives.filter((line) => line.startsWith(CSP)),
         name,
@@ -491,5 +589,147 @@ describe("production nginx config", () => {
       blocks.get("server").filter((line) => line.startsWith("add_header")),
     ).toEqual([]);
     expect(blocks.get("server")).toContain("absolute_redirect off");
+  });
+});
+
+describe("public pages in the nginx config (#522)", () => {
+  it("keeps / the app shell unless the landing page is on", () => {
+    // A self-hosted instance by default: no landing map, so / goes to the
+    // shell and from there to sign-in, as before.
+    for (const cookie of ["", "token"])
+      for (const query of ["", "?next=/s/x"])
+        for (const language of ["", "de-DE", "en"])
+          expect(
+            front({ landing: false, cookie, query, language }),
+            `${cookie} ${query} ${language}`,
+          ).toBe("/index.html");
+  });
+
+  it("serves the landing page at / only to a signed-out visitor without a query string", () => {
+    expect(front({ landing: true })).toBe("/en/");
+    // Signed in, or a session that has expired: the app decides.
+    expect(front({ landing: true, cookie: "token" })).toBe("/index.html");
+    // A link into the app with parameters, such as an OAuth return.
+    expect(front({ landing: true, query: "?code=1" })).toBe("/index.html");
+    expect(front({ landing: true, cookie: "token", query: "?a" })).toBe(
+      "/index.html",
+    );
+  });
+
+  it("picks German only when the browser lists German first", () => {
+    const lang = (language) => front({ landing: true, language });
+    expect(lang("de-DE,de;q=0.9,en;q=0.8")).toBe("/de/");
+    expect(lang("de")).toBe("/de/");
+    expect(lang(" DE-AT")).toBe("/de/");
+    expect(lang("en-GB,de;q=0.9")).toBe("/en/");
+    expect(lang("fr-FR, de")).toBe("/en/");
+    expect(lang("")).toBe("/en/");
+    expect(lang("*")).toBe("/en/");
+  });
+
+  it("serves the generated pages under /de/ and /en/, and the shell for the rest", () => {
+    const written = [
+      "de/index.html",
+      "de/impressum.html",
+      "en/index.html",
+      "en/imprint.html",
+    ];
+    for (const lang of ["de", "en"]) {
+      const name = `^~ /${lang}/`;
+      expect(location(name), name).toContain(PUBLIC_ROOT);
+      expect(served(name, `/${lang}/`, written)).toBe(`/${lang}/index.html`);
+      expect(served(name, `/${lang}/nope`, written)).toBe("/index.html");
+      expect(served(name, `/${lang}/`, []), "landing off").toBe("/index.html");
+    }
+    expect(served("^~ /de/", "/de/impressum", written)).toBe(
+      "/de/impressum.html",
+    );
+    expect(served("^~ /en/", "/en/imprint", written)).toBe("/en/imprint.html");
+    // Not published: the app's not-found page.
+    expect(served("^~ /en/", "/en/privacy", written)).toBe("/index.html");
+    // Prefix locations that no regex location can take over (above), and the
+    // output folder the entrypoint writes.
+    expect(readFileSync(publicPagesScript, "utf8")).toContain(
+      "OUT=${GELABBER_PUBLIC_OUT:-/usr/share/nginx/public-pages}",
+    );
+  });
+
+  it("sends the public pages with no-cache, Vary and a policy that allows no script", () => {
+    for (const name of ["^~ /de/", "^~ /en/"]) {
+      // The security headers are checked for every location above.
+      expect(ownDirectives(name), name).toEqual([
+        PUBLIC_ROOT,
+        NO_CACHE,
+        'add_header Vary "Accept-Language, Cookie" always',
+        `add_header Content-Security-Policy "${PAGE_CSP}" always`,
+        "try_files ${uri}index.html $uri.html /index.html",
+      ]);
+      const policy = policyOf(
+        location(name).find((line) => line.startsWith(CSP)),
+      );
+      // Without script-src, default-src 'none' covers scripts.
+      expect(policy.has("script-src"), name).toBe(false);
+      expect(policy.get("default-src")).toEqual(["'none'"]);
+      for (const [directive, sources] of policy)
+        expect(sources, directive).not.toEqual(
+          expect.arrayContaining(["'unsafe-inline'"]),
+        );
+    }
+  });
+
+  it("answers 404 for public-pages.json, robots.txt and sitemap.xml until they are written", () => {
+    for (const file of ["public-pages.json", "robots.txt", "sitemap.xml"]) {
+      const name = `= /${file}`;
+      expect(ownDirectives(name), name).toEqual([
+        PUBLIC_ROOT,
+        NO_CACHE,
+        MISSING_IS_404,
+      ]);
+      expect(served(name, `/${file}`, [])).toBe("=404");
+      expect(served(name, `/${file}`, [file])).toBe(`/${file}`);
+    }
+  });
+
+  it("keeps the build's unfilled templates private", () => {
+    // The entrypoint reads them from the web root; their placeholders must
+    // never be served.
+    expect(readFileSync(publicPagesScript, "utf8")).toContain(
+      "TEMPLATES=${GELABBER_PUBLIC_TEMPLATES:-/usr/share/nginx/html/public-pages/templates}",
+    );
+    expect(ownDirectives("^~ /public-pages/")).toEqual(["return 404"]);
+  });
+
+  it("leaves the shell's policy as it was", () => {
+    expect(
+      location("= /index.html").filter((line) => line.startsWith(CSP)),
+    ).toEqual([
+      `add_header Content-Security-Policy "script-src 'self' 'wasm-unsafe-eval' 'sha256-Ymhy9okZfEMbRFjgkub854NfFwTSwdNReGSoXDKUA3M='; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src https://www.youtube-nocookie.com; frame-ancestors 'none'$gelabber_fetch_directives" always`,
+    ]);
+  });
+
+  it("reads the landing map from a folder the storage map's include does not", () => {
+    const include = (map) =>
+      blocks
+        .get(map)
+        .find((line) => line.startsWith("include "))
+        .replace(/^include /, "");
+    // An nginx glob: `*` never crosses a `/`.
+    const matches = (glob, path) =>
+      new RegExp(
+        `^${glob.replace(/[.]/g, "\\.").replaceAll("*", "[^/]*")}$`,
+      ).test(path);
+    const landingMap = readFileSync(publicPagesScript, "utf8").match(
+      /MAP=\$\{GELABBER_LANDING_MAP:-([^}]+)\}/,
+    )?.[1];
+    expect(landingMap).toBe("/etc/nginx/gelabber/public/landing.map");
+    expect(matches(include(LANDING_MAP), landingMap)).toBe(true);
+    expect(matches(include(STORAGE_MAP), landingMap)).toBe(false);
+    expect(
+      matches(include(LANDING_MAP), "/etc/nginx/gelabber/storage-origin.map"),
+    ).toBe(false);
+    expect(blocks.get(LANDING_MAP)).toEqual([
+      "default 0",
+      "include /etc/nginx/gelabber/public/*.map",
+    ]);
   });
 });

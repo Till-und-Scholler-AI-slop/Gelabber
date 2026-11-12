@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { useT } from "../../i18n/catalog.ts";
+import { common } from "../../i18n/catalogs/common.ts";
 import "./ui.css";
 
 /**
@@ -14,9 +16,10 @@ function SkeletonRegion({
   className?: string;
   children: ReactNode;
 }) {
+  const t = useT(common);
   return (
     <div className={["ui-skeleton", className].filter(Boolean).join(" ")}>
-      <span className="sr-only">Wird geladen…</span>
+      <span className="sr-only">{t("loading")}</span>
       <div aria-hidden="true" className="contents">
         {children}
       </div>

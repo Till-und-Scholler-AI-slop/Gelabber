@@ -1,4 +1,7 @@
 import { useUserProfile } from "../profile/queries.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { members } from "../i18n/catalogs/members.ts";
 import type { PresenceStatus } from "../ws/protocol.ts";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { ProfileCardView, type CardPerson } from "./ProfileCard.tsx";
@@ -23,12 +26,18 @@ export function UserProfileDialog({
 }) {
   const { data: card } = useUserProfile(userId, open);
   const person = withCard(known, card, userId);
+  const t = useT(members);
+  const tc = useT(common);
   return (
-    <Modal open={open} title={`Profil von ${person.name}`} onClose={onClose}>
+    <Modal
+      open={open}
+      title={t("profile.title", { name: person.name })}
+      onClose={onClose}
+    >
       <div className="member-profile">
         <ProfileCardView person={person} presence={presence} />
         <div className="member-profile__actions">
-          <GhostButton onClick={onClose}>Schließen</GhostButton>
+          <GhostButton onClick={onClose}>{tc("close")}</GhostButton>
         </div>
       </div>
     </Modal>

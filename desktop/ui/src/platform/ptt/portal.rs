@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use gelabber_i18n::app as texts;
 use parking_lot::Mutex;
 use zbus::blocking::{Connection, MessageIterator, connection, fdo::DBusProxy};
 use zbus::message::Type;
@@ -173,7 +174,7 @@ impl Portal<'_> {
         let sender = self
             .conn
             .unique_name()
-            .ok_or("no D-Bus name")?
+            .ok_or("no D-Bus name")? // i18n-ok
             .trim_start_matches(':')
             .replace('.', "_");
         let path = format!("{PATH}/request/{sender}/{token}");
@@ -193,8 +194,8 @@ impl Portal<'_> {
         self.held.extend(later);
         match answer {
             Some((0, results)) => Ok(results),
-            Some((1, _)) => Err("Abgebrochen.".into()),
-            Some((code, _)) => Err(format!("Das Portal lehnt ab ({method}, {code}).")),
+            Some((1, _)) => Err(texts::ptt_cancelled().into()),
+            Some((code, _)) => Err(texts::ptt_portal_refuses(method, code)),
             None => Err("stopped".into()),
         }
     }
@@ -264,9 +265,7 @@ fn run(
         &(SHORTCUTS, "version"),
     );
     if version.is_err() {
-        return Err(
-            "Der Desktop bietet keine globalen Tasten an (GlobalShortcuts-Portal fehlt).".into(),
-        );
+        return Err(texts::ptt_no_portal().into());
     }
     let created = portal.request("CreateSession", |token| {
         (options(&[
@@ -277,12 +276,15 @@ fn run(
     let session = created
         .get("session_handle")
         .and_then(|v| text_of(v))
-        .ok_or("Das Portal nennt keine Sitzung.")?;
+        .ok_or(texts::ptt_no_session())?;
     let session_path = ObjectPath::try_from(session.as_str())
         .map_err(err)?
         .into_owned();
 
-    let mut about = options(&[("description", Value::from("Push-to-Talk"))]);
+    let mut about = options(&[(
+        "description",
+        Value::from(gelabber_i18n::settings::media_ptt_ptt()),
+    )]);
     if let Some(trigger) = trigger
         && let Ok(v) = OwnedValue::try_from(Value::from(trigger))
     {

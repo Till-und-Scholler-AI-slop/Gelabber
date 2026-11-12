@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use gelabber_i18n::call as texts;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -692,16 +693,17 @@ pub const MEDIA_PROTOCOL_VERSION: u8 = 4;
 /// A peer's mute change sounds once they were in the room this long.
 pub const PEER_SETTLE: Duration = Duration::from_millis(2000);
 
-/// German text for a media error code of the server (session.ts).
+/// The text for a media error code of the server (session.ts), in the
+/// current language.
 pub fn media_error_message(code: &str) -> &'static str {
     match code {
-        "update_required" => "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
+        "update_required" => texts::error_update(),
         // The seat, not the sign-in: the ticket endpoint answers for that.
-        "unauthorized" => "Der Sprachserver hat die Verbindung nicht zugelassen.",
-        "gone" => "Der Sprachserver ist gerade nicht erreichbar.",
-        "unavailable" => "Kein freier Sprachplatz.",
-        "forbidden" => "Dafür fehlt dir die Berechtigung.",
-        _ => "Der Stream konnte nicht verbunden werden. Der Sprachkanal bleibt aktiv.",
+        "unauthorized" => texts::error_unauthorized(),
+        "gone" => texts::error_gone(),
+        "unavailable" => texts::error_unavailable(),
+        "forbidden" => texts::error_forbidden(),
+        _ => texts::error_stream_failed(),
     }
 }
 
@@ -773,26 +775,45 @@ pub fn revoked_too_often(revocations: &mut Vec<Instant>, now: Instant) -> bool {
     revocations.len() >= REVOCATION_LIMIT
 }
 
-pub const LOST_CALL_MESSAGE: &str =
-    "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.";
-pub const LIVE_FORBIDDEN_MESSAGE: &str = "In diesem Server darfst du nicht live gehen.";
-pub const CAMERA_UNAVAILABLE: &str = "Die Kamera ist nicht verfügbar.";
+// The call's messages, in the current language when they are made.
+pub fn lost_call_message() -> &'static str {
+    texts::error_reconnect_failed()
+}
+pub fn live_forbidden_message() -> &'static str {
+    texts::live_not_allowed()
+}
+pub fn camera_unavailable() -> &'static str {
+    texts::camera_unavailable()
+}
 /// A Live the seat refused (`forbidden`): its ticket predates the grant.
-pub const LIVE_NEEDS_REJOIN: &str = "Betritt den Sprachkanal neu, um live zu gehen.";
+pub fn live_needs_rejoin() -> &'static str {
+    texts::rejoin_to_go_live()
+}
 /// `microphoneFailure` for a join that goes on listening.
-pub const MIC_NOT_FOUND: &str = "Kein Mikrofon gefunden, du hörst nur zu.";
-pub const MIC_DENIED: &str = "Mikrofonzugriff nicht erlaubt, du hörst nur zu.";
+pub fn mic_not_found() -> &'static str {
+    texts::mic_not_found()
+}
+pub fn mic_denied() -> &'static str {
+    texts::mic_denied()
+}
 /// The processing note of a call without a microphone.
-pub const MIC_LISTEN_ONLY: &str = "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu";
+pub fn mic_listen_only() -> &'static str {
+    texts::mic_listen_only()
+}
 /// A device or processing change that failed while the old one still runs.
-pub const MIC_SWITCH_FAILED: &str =
-    "Mikrofonwechsel fehlgeschlagen; bisheriges Mikrofon bleibt aktiv";
+pub fn mic_switch_failed() -> &'static str {
+    texts::mic_switch_failed()
+}
 /// The microphone test (voice/native/microphoneTest.ts).
-pub const MIC_TEST_FAILED: &str =
-    "Mikrofontest konnte nicht starten. Prüfe das Eingabegerät in den Systemeinstellungen.";
-pub const MIC_TEST_STALLED: &str =
-    "Das Mikrofon liefert keine Daten. Prüfe das Eingabegerät und starte den Test erneut.";
-pub const MIC_TEST_NO_LEVELS: &str = "Mikrofonpegel nicht verfügbar.";
+pub fn mic_test_failed() -> &'static str {
+    texts::mic_test_failed()
+}
+pub fn mic_test_stalled() -> &'static str {
+    texts::mic_test_stalled()
+}
+pub fn mic_test_no_levels() -> &'static str {
+    texts::mic_test_no_levels()
+}
 
 /// `SILENT_SECONDS` of localSourceAudio.ts: a chosen application may pause
 /// between two songs; only one quiet this many polls in a row counts.
@@ -886,26 +907,27 @@ pub fn mic_refused(error: &str) -> bool {
     [
         "permission",
         "denied",
-        "not allowed",
+        "not allowed", // i18n-ok: a word of the core's error
         "notallowed",
         "access",
     ]
     .iter()
     .any(|w| e.contains(w))
 }
-pub const NO_MEDIA_CORE: &str =
-    "Anrufe brauchen den Medienkern der Desktop-App, der in diesem Build fehlt.";
+pub fn no_media_core() -> &'static str {
+    texts::no_media_core()
+}
 
 pub fn engine_failed(reason: &str) -> String {
-    format!("Der Medienkern konnte nicht starten ({reason}).")
+    texts::engine_failed(reason)
 }
 
 pub fn screen_failed(reason: &str) -> String {
     let reason = reason.trim();
     if reason.is_empty() {
-        "Die Bildschirmaufnahme konnte nicht gestartet werden.".into()
+        texts::screen_failed().into()
     } else {
-        format!("Die Bildschirmaufnahme konnte nicht gestartet werden ({reason}).")
+        texts::screen_failed_because(reason)
     }
 }
 
@@ -1321,5 +1343,23 @@ mod tests {
         let user = Uuid::new_v4();
         assert_eq!(video_key(user, Kind::V), video_key(user, Kind::V));
         assert_ne!(video_key(user, Kind::V), video_key(user, Kind::S));
+    }
+
+    #[test]
+    fn messages_follow_the_language() {
+        assert_eq!(
+            media_error_message("unavailable"),
+            "Kein freier Sprachplatz."
+        );
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(media_error_message("unavailable"), "No free voice seat.");
+        assert_eq!(
+            mic_denied(),
+            "Microphone access not allowed, you’re only listening."
+        );
+        assert_eq!(
+            screen_failed(" timeout "),
+            "Screen capture could not be started (timeout)."
+        );
     }
 }

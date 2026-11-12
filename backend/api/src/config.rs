@@ -1,9 +1,12 @@
 //! Runtime configuration. Everything comes from the environment (Compose
 //! injects the same names as `api/.env.example`); there is no config file.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::Duration;
+
+use serde::Serialize;
 
 use crate::limits::Limits;
 use gelabber_shared::ice::{IceServer, parse_ice_servers};
@@ -75,6 +78,21 @@ pub const APP_PUBLIC_URL: &str = "APP_PUBLIC_URL";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
+/// Comma-separated addresses of the instance operators (v0.10 "Betrieb").
+pub const API_OPERATOR_EMAILS: &str = "API_OPERATOR_EMAILS";
+/// `open` (default) or `invitation`: who may create an account.
+pub const API_REGISTRATION: &str = "API_REGISTRATION";
+/// Sign-in with Google (OpenID Connect). Both client values set: on.
+pub const OIDC_GOOGLE_CLIENT_ID: &str = "OIDC_GOOGLE_CLIENT_ID";
+pub const OIDC_GOOGLE_CLIENT_SECRET: &str = "OIDC_GOOGLE_CLIENT_SECRET";
+/// Optional; default [`GOOGLE_ISSUER`]. Tests point it at a mock issuer.
+pub const OIDC_GOOGLE_ISSUER: &str = "OIDC_GOOGLE_ISSUER";
+/// `true` turns on the server directory "Entdecken" (v0.10); off by default.
+pub const API_DIRECTORY: &str = "API_DIRECTORY";
+/// Hours a finished data export stays downloadable (`account::export`).
+pub const API_EXPORT_RETENTION_HOURS: &str = "API_EXPORT_RETENTION_HOURS";
+/// Largest data export archive in bytes (`account::export`).
+pub const API_EXPORT_MAX_BYTES: &str = "API_EXPORT_MAX_BYTES";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
@@ -92,6 +110,11 @@ const DEFAULT_WS_PRESENCE_TTL_MS: u64 = 45_000;
 const DEFAULT_WS_TYPING_TTL_MS: u64 = 6_000;
 const DEFAULT_TURN_CRED_TTL_SECS: u64 = 21_600;
 const DEFAULT_MEDIA_TICKET_TTL_SECS: u64 = 30;
+/// A week; at most 30 days.
+const DEFAULT_EXPORT_RETENTION_HOURS: u64 = 168;
+const MAX_EXPORT_RETENTION_HOURS: u64 = 720;
+/// 10 GiB: the archive is built in the temporary directory first.
+const DEFAULT_EXPORT_MAX_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -159,6 +182,47 @@ pub struct Config {
     /// Account mail (#195): address confirmation and password reset.
     /// `None` without `SMTP_HOST`; registration then signs in at once.
     pub mail: Option<MailConfig>,
+    /// `APP_PUBLIC_URL`: where people open Gelabber. Links the API hands
+    /// out (mails, beta invitations) point here. Required with account
+    /// mail, optional otherwise.
+    pub public_url: Option<url::Url>,
+    /// `API_OPERATOR_EMAILS`, each in the form addresses are counted under
+    /// (`auth::validate::canonical`). Empty: the instance has no operator.
+    pub operators: HashSet<String>,
+    /// `API_REGISTRATION`.
+    pub registration: RegistrationMode,
+    /// Sign-in through OpenID Connect. `None` (off) unless a provider's
+    /// client ID and secret are both set.
+    pub oidc: Option<OidcConfig>,
+    /// `API_DIRECTORY`: the server directory is on.
+    pub directory: bool,
+    /// `API_EXPORT_RETENTION_HOURS`: how long a finished data export can be
+    /// downloaded before the archive is deleted. 1 to 720 hours.
+    pub export_retention: Duration,
+    /// `API_EXPORT_MAX_BYTES`: an export whose archive would be larger
+    /// fails instead of filling the temporary directory.
+    pub export_max_bytes: u64,
+}
+
+/// Who may create an account (`API_REGISTRATION`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegistrationMode {
+    /// Anyone; invitation codes are ignored.
+    #[default]
+    Open,
+    /// Only with a beta invitation or a server invite of a server that is
+    /// not blocked (`operator::admission`).
+    Invitation,
+}
+
+impl RegistrationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Invitation => "invitation",
+        }
+    }
 }
 
 /// How the API reaches the SMTP relay.
@@ -214,6 +278,60 @@ impl fmt::Debug for MailConfig {
             .field("from", &self.from)
             .field("public_url", &self.public_url.as_str())
             .finish()
+    }
+}
+
+/// Google's issuer, the base of its discovery document.
+pub const GOOGLE_ISSUER: &str = "https://accounts.google.com";
+
+/// Sign-in through OpenID Connect providers. Only Google is read from the
+/// environment in v0.10; the rest of the code is provider-generic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OidcConfig {
+    /// `APP_PUBLIC_URL`: the callback is `{public_url}/api/auth/oidc/{id}/callback`.
+    pub public_url: url::Url,
+    pub providers: Vec<OidcProvider>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct OidcProvider {
+    /// In routes and tables: `google`.
+    pub id: &'static str,
+    /// Shown on buttons and under Sicherheit: `Google`.
+    pub name: &'static str,
+    /// Discovery base. `https://`, or `http://` on a loopback host (tests).
+    pub issuer: url::Url,
+    pub client_id: String,
+    pub client_secret: String,
+    pub scopes: &'static str,
+    /// Added to the authorization URL.
+    pub extra_auth_params: &'static [(&'static str, &'static str)],
+}
+
+impl fmt::Debug for OidcProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OidcProvider")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("issuer", &self.issuer.as_str())
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .field("scopes", &self.scopes)
+            .field("extra_auth_params", &self.extra_auth_params)
+            .finish()
+    }
+}
+
+/// `localhost` (and `*.localhost`), `127.0.0.0/8` or `[::1]`.
+pub fn is_loopback_url(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => {
+            host.eq_ignore_ascii_case("localhost")
+                || host.to_ascii_lowercase().ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
     }
 }
 
@@ -515,7 +633,46 @@ impl Config {
         let gifs = parse_gifs(&get)?;
         let push = parse_push(&get)?;
         let previews = parse_previews(&get, &[&database_url, &redis_url], minio.as_ref())?;
-        let mail = parse_mail(&get, cookie_secure)?;
+        let public_url = parse_public_url(&get, cookie_secure)?;
+        let mail = parse_mail(&get, public_url.as_ref())?;
+        let operators = parse_operators(&get)?;
+        let registration = match get(API_REGISTRATION) {
+            Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+                "open" => RegistrationMode::Open,
+                "invitation" => RegistrationMode::Invitation,
+                _ => {
+                    return Err(invalid(
+                        API_REGISTRATION,
+                        &raw,
+                        "expected open or invitation",
+                    ));
+                }
+            },
+            None => RegistrationMode::Open,
+        };
+        let oidc = parse_oidc(&get, public_url.as_ref())?;
+        let directory = match get(API_DIRECTORY) {
+            Some(raw) => parse_bool(API_DIRECTORY, &raw)?,
+            None => false,
+        };
+        let export_retention_hours = match get(API_EXPORT_RETENTION_HOURS) {
+            Some(raw) => {
+                let hours = parse_positive::<u64>(API_EXPORT_RETENTION_HOURS, &raw)?;
+                if hours > MAX_EXPORT_RETENTION_HOURS {
+                    return Err(invalid(
+                        API_EXPORT_RETENTION_HOURS,
+                        &raw,
+                        "must be at most 720 (30 days)",
+                    ));
+                }
+                hours
+            }
+            None => DEFAULT_EXPORT_RETENTION_HOURS,
+        };
+        let export_max_bytes = match get(API_EXPORT_MAX_BYTES) {
+            Some(raw) => parse_positive::<u64>(API_EXPORT_MAX_BYTES, &raw)?,
+            None => DEFAULT_EXPORT_MAX_BYTES,
+        };
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -552,13 +709,109 @@ impl Config {
             push,
             previews,
             mail,
+            public_url,
+            operators,
+            registration,
+            oidc,
+            directory,
+            export_retention: Duration::from_secs(export_retention_hours * 3600),
+            export_max_bytes,
         })
     }
 }
 
-fn parse_mail(
+/// `APP_PUBLIC_URL`, parsed once for every link the API hands out.
+fn parse_public_url(
     get: &impl Fn(&str) -> Option<String>,
     cookie_secure: bool,
+) -> Result<Option<url::Url>, ConfigError> {
+    let Some(raw_url) = get(APP_PUBLIC_URL) else {
+        return Ok(None);
+    };
+    let public_url = url::Url::parse(raw_url.trim())
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        .filter(|url| url.query().is_none() && url.fragment().is_none())
+        .ok_or_else(|| invalid(APP_PUBLIC_URL, &raw_url, "expected an http(s) URL"))?;
+    if cookie_secure && public_url.scheme() != "https" {
+        return Err(invalid(
+            APP_PUBLIC_URL,
+            &raw_url,
+            format!("must be https:// while {API_COOKIE_SECURE}=true"),
+        ));
+    }
+    Ok(Some(public_url))
+}
+
+/// `API_OPERATOR_EMAILS`: comma-separated, empty entries skipped. Each entry
+/// follows the sign-in rules for an address (`auth::validate::email`); one
+/// that does not fails startup rather than leaving an operator locked out.
+fn parse_operators(get: &impl Fn(&str) -> Option<String>) -> Result<HashSet<String>, ConfigError> {
+    let mut operators = HashSet::new();
+    for entry in get(API_OPERATOR_EMAILS).unwrap_or_default().split(',') {
+        if entry.trim().is_empty() {
+            continue;
+        }
+        let mut errors = crate::error::FieldErrors::new();
+        let Some(email) = crate::auth::validate::email(entry, &mut errors) else {
+            return Err(invalid(
+                API_OPERATOR_EMAILS,
+                entry.trim(),
+                "expected comma-separated e-mail addresses",
+            ));
+        };
+        operators.insert(crate::auth::validate::canonical(&email));
+    }
+    Ok(operators)
+}
+
+/// `OIDC_GOOGLE_*`. Both client values unset: off. Needs `APP_PUBLIC_URL`,
+/// where the provider sends people back. No network here: discovery is
+/// fetched on the first sign-in.
+fn parse_oidc(
+    get: &impl Fn(&str) -> Option<String>,
+    public_url: Option<&url::Url>,
+) -> Result<Option<OidcConfig>, ConfigError> {
+    let (client_id, client_secret) =
+        match (get(OIDC_GOOGLE_CLIENT_ID), get(OIDC_GOOGLE_CLIENT_SECRET)) {
+            (None, None) => return Ok(None),
+            (Some(id), Some(secret)) => (id.trim().to_owned(), secret.trim().to_owned()),
+            (Some(_), None) => return Err(ConfigError::Missing(OIDC_GOOGLE_CLIENT_SECRET)),
+            (None, Some(_)) => return Err(ConfigError::Missing(OIDC_GOOGLE_CLIENT_ID)),
+        };
+    let public_url = public_url
+        .cloned()
+        .ok_or(ConfigError::Missing(APP_PUBLIC_URL))?;
+    let raw_issuer = get(OIDC_GOOGLE_ISSUER).unwrap_or_else(|| GOOGLE_ISSUER.to_owned());
+    let issuer = url::Url::parse(raw_issuer.trim())
+        .ok()
+        .filter(|url| url.host_str().is_some())
+        .filter(|url| url.query().is_none() && url.fragment().is_none())
+        .filter(|url| url.scheme() == "https" || (url.scheme() == "http" && is_loopback_url(url)))
+        .ok_or_else(|| {
+            invalid(
+                OIDC_GOOGLE_ISSUER,
+                &raw_issuer,
+                "expected an https:// URL (http:// only on a loopback host)",
+            )
+        })?;
+    Ok(Some(OidcConfig {
+        public_url,
+        providers: vec![OidcProvider {
+            id: "google",
+            name: "Google",
+            issuer,
+            client_id,
+            client_secret,
+            scopes: "openid email profile",
+            extra_auth_params: &[("prompt", "select_account")],
+        }],
+    }))
+}
+
+fn parse_mail(
+    get: &impl Fn(&str) -> Option<String>,
+    public_url: Option<&url::Url>,
 ) -> Result<Option<MailConfig>, ConfigError> {
     let Some(host) = get(SMTP_HOST).map(|host| host.trim().to_owned()) else {
         return Ok(None);
@@ -604,19 +857,9 @@ fn parse_mail(
             "expected an address like noreply@example.org or Gelabber <noreply@example.org>",
         ));
     }
-    let raw_url = get(APP_PUBLIC_URL).ok_or(ConfigError::Missing(APP_PUBLIC_URL))?;
-    let public_url = url::Url::parse(raw_url.trim())
-        .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
-        .filter(|url| url.query().is_none() && url.fragment().is_none())
-        .ok_or_else(|| invalid(APP_PUBLIC_URL, &raw_url, "expected an http(s) URL"))?;
-    if cookie_secure && public_url.scheme() != "https" {
-        return Err(invalid(
-            APP_PUBLIC_URL,
-            &raw_url,
-            format!("must be https:// while {API_COOKIE_SECURE}=true"),
-        ));
-    }
+    let public_url = public_url
+        .cloned()
+        .ok_or(ConfigError::Missing(APP_PUBLIC_URL))?;
     Ok(Some(MailConfig {
         host,
         port,
@@ -1793,5 +2036,332 @@ mod tests {
             hosts(Some(" Push.Example ")),
             vec!["push.example".to_owned()]
         );
+    }
+
+    fn base(extra: &[(&'static str, &'static str)]) -> Result<Config, ConfigError> {
+        let mut pairs = vec![
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+        ];
+        pairs.extend_from_slice(extra);
+        Config::from_source(source(&pairs))
+    }
+
+    #[test]
+    fn registration_is_open_unless_set_to_invitation() {
+        assert_eq!(base(&[]).unwrap().registration, RegistrationMode::Open);
+        // Compose passes an unset variable through as an empty value.
+        assert_eq!(
+            base(&[(API_REGISTRATION, "")]).unwrap().registration,
+            RegistrationMode::Open
+        );
+        assert_eq!(
+            base(&[(API_REGISTRATION, "open")]).unwrap().registration,
+            RegistrationMode::Open
+        );
+        assert_eq!(
+            base(&[(API_REGISTRATION, " Invitation ")])
+                .unwrap()
+                .registration,
+            RegistrationMode::Invitation
+        );
+        for raw in ["closed", "invite", "true"] {
+            let err = base(&[(API_REGISTRATION, raw)]).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: API_REGISTRATION,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
+        assert_eq!(RegistrationMode::Invitation.as_str(), "invitation");
+        assert_eq!(
+            serde_json::to_value(RegistrationMode::Open).unwrap(),
+            "open"
+        );
+    }
+
+    #[test]
+    fn directory_is_off_unless_turned_on() {
+        assert!(!base(&[]).unwrap().directory);
+        // Compose passes an unset variable through as an empty value.
+        assert!(!base(&[(API_DIRECTORY, "")]).unwrap().directory);
+        assert!(!base(&[(API_DIRECTORY, "false")]).unwrap().directory);
+        assert!(base(&[(API_DIRECTORY, " True ")]).unwrap().directory);
+        for raw in ["maybe", "2", "enabled"] {
+            let err = base(&[(API_DIRECTORY, raw)]).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: API_DIRECTORY,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn operator_emails_are_trimmed_lower_cased_and_skip_empty_entries() {
+        assert!(base(&[]).unwrap().operators.is_empty());
+        assert!(
+            base(&[(API_OPERATOR_EMAILS, " , ")])
+                .unwrap()
+                .operators
+                .is_empty()
+        );
+        let operators = base(&[(
+            API_OPERATOR_EMAILS,
+            " Lena@Example.TEST,,tom@example.test , lena@example.test",
+        )])
+        .unwrap()
+        .operators;
+        let mut sorted: Vec<_> = operators.into_iter().collect();
+        sorted.sort();
+        assert_eq!(sorted, ["lena@example.test", "tom@example.test"]);
+        // The domain in its ASCII form, as registration stores it.
+        let operators = base(&[(API_OPERATOR_EMAILS, "ada@Bücher.de")])
+            .unwrap()
+            .operators;
+        assert!(operators.contains("ada@xn--bcher-kva.de"), "{operators:?}");
+    }
+
+    #[test]
+    fn an_invalid_operator_email_fails_startup() {
+        for raw in [
+            "lena",
+            "lena@example.test, tom@",
+            "a@b@example.test",
+            "x@nodot",
+        ] {
+            let err = base(&[(API_OPERATOR_EMAILS, raw)]).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: API_OPERATOR_EMAILS,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn public_url_is_parsed_without_mail_and_shared_with_it() {
+        assert_eq!(base(&[]).unwrap().public_url, None);
+        let config = base(&[(APP_PUBLIC_URL, " https://chat.example.org ")]).unwrap();
+        assert!(config.mail.is_none());
+        assert_eq!(
+            config.public_url.as_ref().map(url::Url::as_str),
+            Some("https://chat.example.org/")
+        );
+        let config = Config::from_source(mail_source(&[])).unwrap();
+        assert_eq!(
+            config.public_url.as_ref(),
+            Some(&config.mail.as_ref().unwrap().public_url)
+        );
+        let err = base(&[(APP_PUBLIC_URL, "chat.example.org")]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: APP_PUBLIC_URL,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        let err = Config::from_source(secure_source(&[(
+            APP_PUBLIC_URL,
+            "http://chat.example.org",
+        )]))
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: APP_PUBLIC_URL,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+    #[test]
+    fn oidc_is_off_by_default_and_with_empty_values() {
+        assert_eq!(base(&[]).unwrap().oidc, None);
+        // Compose passes unset variables through as empty values.
+        let config = base(&[
+            (OIDC_GOOGLE_CLIENT_ID, ""),
+            (OIDC_GOOGLE_CLIENT_SECRET, " "),
+            (OIDC_GOOGLE_ISSUER, ""),
+        ])
+        .unwrap();
+        assert_eq!(config.oidc, None);
+    }
+
+    #[test]
+    fn oidc_reads_the_google_provider() {
+        let oidc = base(&[
+            (APP_PUBLIC_URL, "https://chat.example.org"),
+            (OIDC_GOOGLE_CLIENT_ID, " id.apps.googleusercontent.com "),
+            (OIDC_GOOGLE_CLIENT_SECRET, "google-secret"),
+        ])
+        .unwrap()
+        .oidc
+        .expect("oidc on");
+        assert_eq!(oidc.public_url.as_str(), "https://chat.example.org/");
+        let [google] = oidc.providers.as_slice() else {
+            panic!("one provider: {:?}", oidc.providers);
+        };
+        assert_eq!(google.id, "google");
+        assert_eq!(google.name, "Google");
+        assert_eq!(google.issuer.as_str(), "https://accounts.google.com/");
+        assert_eq!(google.client_id, "id.apps.googleusercontent.com");
+        assert_eq!(google.client_secret, "google-secret");
+        assert_eq!(google.scopes, "openid email profile");
+        assert_eq!(google.extra_auth_params, &[("prompt", "select_account")]);
+    }
+
+    #[test]
+    fn oidc_needs_both_client_values() {
+        let err = base(&[
+            (APP_PUBLIC_URL, "https://chat.example.org"),
+            (OIDC_GOOGLE_CLIENT_ID, "id"),
+        ])
+        .unwrap_err();
+        assert_eq!(err, ConfigError::Missing(OIDC_GOOGLE_CLIENT_SECRET));
+        let err = base(&[
+            (APP_PUBLIC_URL, "https://chat.example.org"),
+            (OIDC_GOOGLE_CLIENT_SECRET, "secret"),
+        ])
+        .unwrap_err();
+        assert_eq!(err, ConfigError::Missing(OIDC_GOOGLE_CLIENT_ID));
+    }
+
+    #[test]
+    fn oidc_needs_the_public_url() {
+        let err = base(&[
+            (OIDC_GOOGLE_CLIENT_ID, "id"),
+            (OIDC_GOOGLE_CLIENT_SECRET, "secret"),
+        ])
+        .unwrap_err();
+        assert_eq!(err, ConfigError::Missing(APP_PUBLIC_URL));
+    }
+
+    #[test]
+    fn oidc_issuer_is_https_unless_loopback() {
+        let issuer = |raw: &'static str| {
+            base(&[
+                (APP_PUBLIC_URL, "https://chat.example.org"),
+                (OIDC_GOOGLE_CLIENT_ID, "id"),
+                (OIDC_GOOGLE_CLIENT_SECRET, "secret"),
+                (OIDC_GOOGLE_ISSUER, raw),
+            ])
+            .map(|config| config.oidc.unwrap().providers[0].issuer.to_string())
+        };
+        assert_eq!(
+            issuer("https://issuer.example.org").unwrap(),
+            "https://issuer.example.org/"
+        );
+        for raw in [
+            "http://127.0.0.1:41234",
+            "http://localhost:8080/issuer",
+            "http://[::1]:9000",
+        ] {
+            assert!(issuer(raw).is_ok(), "{raw}");
+        }
+        for raw in [
+            "http://issuer.example.org",
+            "http://10.0.0.1",
+            "ftp://issuer.example.org",
+            "issuer.example.org",
+            "https://issuer.example.org/?x=1",
+        ] {
+            let err = issuer(raw).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: OIDC_GOOGLE_ISSUER,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn oidc_secret_is_redacted_in_debug() {
+        let config = base(&[
+            (APP_PUBLIC_URL, "https://chat.example.org"),
+            (OIDC_GOOGLE_CLIENT_ID, "id.apps.googleusercontent.com"),
+            (OIDC_GOOGLE_CLIENT_SECRET, "very-secret-value"),
+        ])
+        .unwrap();
+        let printed = format!("{config:?}");
+        assert!(!printed.contains("very-secret-value"), "{printed}");
+        assert!(printed.contains("<redacted>"), "{printed}");
+        assert!(
+            printed.contains("id.apps.googleusercontent.com"),
+            "{printed}"
+        );
+    }
+
+    #[test]
+    fn export_retention_is_a_week_unless_set_within_a_month() {
+        let hours = |raw: &'static str| {
+            base(&[(API_EXPORT_RETENTION_HOURS, raw)]).map(|config| config.export_retention)
+        };
+        assert_eq!(
+            base(&[]).unwrap().export_retention,
+            Duration::from_secs(168 * 3600)
+        );
+        assert_eq!(hours("").unwrap(), Duration::from_secs(168 * 3600));
+        assert_eq!(hours("1").unwrap(), Duration::from_secs(3600));
+        assert_eq!(hours(" 720 ").unwrap(), Duration::from_secs(720 * 3600));
+        for raw in ["0", "721", "-1", "a week"] {
+            assert!(
+                matches!(
+                    hours(raw),
+                    Err(ConfigError::Invalid {
+                        key: API_EXPORT_RETENTION_HOURS,
+                        ..
+                    })
+                ),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn export_size_is_capped_at_10_gib_unless_set() {
+        let max = |raw: &'static str| {
+            base(&[(API_EXPORT_MAX_BYTES, raw)]).map(|config| config.export_max_bytes)
+        };
+        assert_eq!(base(&[]).unwrap().export_max_bytes, 10 << 30);
+        assert_eq!(max("").unwrap(), 10 << 30);
+        assert_eq!(max(" 1048576 ").unwrap(), 1 << 20);
+        for raw in ["0", "-1", "10G"] {
+            assert!(
+                matches!(
+                    max(raw),
+                    Err(ConfigError::Invalid {
+                        key: API_EXPORT_MAX_BYTES,
+                        ..
+                    })
+                ),
+                "{raw}"
+            );
+        }
     }
 }

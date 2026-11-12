@@ -4,6 +4,10 @@ import { useEffect, useRef } from "react";
 import { stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { findCachedDm, useOpenDm } from "../dms/queries.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { members } from "../i18n/catalogs/members.ts";
+import { formatDate } from "../i18n/format.ts";
 import { useUserProfile } from "../profile/queries.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { useVoiceRoster, voiceOf } from "../voice/roster.ts";
@@ -25,6 +29,8 @@ export function MemberProfileDialog({
   memberId: string | null;
   onClose: () => void;
 }) {
+  const t = useT(members);
+  const tc = useT(common);
   const me = useSession((s) => s.user?.id);
   const member = server.members.find((person) => person.user_id === memberId);
   const presence = usePresenceStore((s) =>
@@ -81,7 +87,13 @@ export function MemberProfileDialog({
   return (
     <Modal
       open={Boolean(member)}
-      title={self ? "Dein Profil" : `Profil von ${member?.name ?? "Mitglied"}`}
+      title={
+        self
+          ? t("profile.own")
+          : t("profile.title", {
+              name: member?.name ?? t("profile.someone"),
+            })
+      }
       onClose={close}
     >
       {member && person ? (
@@ -89,21 +101,21 @@ export function MemberProfileDialog({
           <ProfileCardView person={person} presence={presence} />
           <dl className="member-profile__details">
             <div>
-              <dt>Server</dt>
+              <dt>{t("profile.server")}</dt>
               <dd>{server.name}</dd>
             </div>
             <div>
-              <dt>Mitgliedschaft</dt>
-              <dd>{member.role === "owner" ? "Inhaber" : "Mitglied"}</dd>
+              <dt>{t("profile.membership")}</dt>
+              <dd>
+                {member.role === "owner"
+                  ? t("profile.owner")
+                  : t("profile.member")}
+              </dd>
             </div>
             {joinedAt && !Number.isNaN(joinedAt.getTime()) ? (
               <div>
-                <dt>Dabei seit</dt>
-                <dd>
-                  {new Intl.DateTimeFormat("de-DE", {
-                    dateStyle: "medium",
-                  }).format(joinedAt)}
-                </dd>
+                <dt>{t("profile.since")}</dt>
+                <dd>{formatDate(joinedAt, { dateStyle: "medium" })}</dd>
               </div>
             ) : null}
           </dl>
@@ -115,7 +127,7 @@ export function MemberProfileDialog({
               onClick={close}
             >
               <SpeakerIcon size={20} />
-              In {channel.name}
+              {t("profile.inRoom", { channel: channel.name })}
             </Link>
           ) : null}
           {!self && room && room.channelId === myRoom ? (
@@ -129,7 +141,7 @@ export function MemberProfileDialog({
                 params={{ area: "profil" }}
                 onClick={close}
               >
-                Profil bearbeiten
+                {t("profile.edit")}
               </Link>
             ) : (
               <button
@@ -139,12 +151,10 @@ export function MemberProfileDialog({
                 disabled={openDm.isPending}
               >
                 <ChatIcon size={19} />
-                {openDm.isPending
-                  ? "Unterhaltung wird geöffnet…"
-                  : "Nachricht senden"}
+                {openDm.isPending ? t("profile.opening") : t("profile.message")}
               </button>
             )}
-            <GhostButton onClick={close}>Schließen</GhostButton>
+            <GhostButton onClick={close}>{tc("close")}</GhostButton>
           </div>
           <MemberActions server={server} member={member} />
         </div>

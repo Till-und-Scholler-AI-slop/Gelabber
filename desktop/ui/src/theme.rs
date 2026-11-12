@@ -50,7 +50,7 @@ impl Definition {
     pub fn dark() -> Self {
         Self {
             id: "dark".into(),
-            name: "Gelabber Dunkel".into(),
+            name: "Gelabber Dunkel".into(), // i18n-ok
             mode: Mode::Dark,
             style: Style::Clear,
             colors: BaseColors {
@@ -70,7 +70,7 @@ impl Definition {
     pub fn light() -> Self {
         Self {
             id: "light".into(),
-            name: "Gelabber Hell".into(),
+            name: "Gelabber Hell".into(), // i18n-ok
             mode: Mode::Light,
             style: Style::Clear,
             colors: BaseColors {
@@ -429,6 +429,12 @@ fn readable_ink(background: Color32) -> Color32 {
     }
 }
 
+/// `toneOf` (components/pageTone.ts): a page colour is dark where light
+/// ink reads better on it.
+pub fn is_dark_tone(background: Color32) -> bool {
+    readable_ink(background) == Color32::WHITE
+}
+
 fn ensure_contrast(foreground: Color32, backgrounds: &[Color32], ratio: f64) -> Color32 {
     let passes = |c: Color32| backgrounds.iter().all(|bg| contrast(c, *bg) >= ratio);
     if passes(foreground) {
@@ -545,25 +551,25 @@ pub fn contrast_issues(definition: &Definition) -> Vec<&'static str> {
     let backgrounds = [c.background, c.panel, c.surface, c.rail];
     let mut issues = Vec::new();
     if backgrounds.iter().any(|bg| contrast(c.text, *bg) < 4.5) {
-        issues.push("Text ist auf mindestens einer Fläche schwer lesbar.");
+        issues.push(gelabber_i18n::app::theme_issue_text());
     }
     if backgrounds.iter().any(|bg| contrast(c.muted, *bg) < 4.5) {
-        issues.push("Sekundärtext braucht mehr Kontrast.");
+        issues.push(gelabber_i18n::app::theme_issue_muted());
     }
     if contrast(readable_ink(c.accent), c.accent) < 4.5 {
-        issues.push("Schrift auf der Akzentfarbe ist schwer lesbar.");
+        issues.push(gelabber_i18n::app::theme_issue_accent_ink());
     }
     if [c.background, c.panel, c.surface, selected]
         .iter()
         .any(|bg| contrast(accent_text, *bg) < 4.5)
     {
-        issues.push("Links in der Akzentfarbe heben sich zu wenig ab.");
+        issues.push(gelabber_i18n::app::theme_issue_accent_text());
     }
     if [c.background, c.panel, c.surface, elevated]
         .iter()
         .any(|bg| contrast(border_strong, *bg) < 3.0)
     {
-        issues.push("Rahmen von Eingabefeldern heben sich zu wenig ab.");
+        issues.push(gelabber_i18n::app::theme_issue_border());
     }
     issues
 }
@@ -610,6 +616,21 @@ pub mod motion {
     pub const EXIT: f32 = 0.130;
     pub const LARGE_EXIT: f32 = 0.170;
     pub const PRESS_SCALE: f32 = 0.97;
+}
+
+/// `--lr-role-*` (index.css): the six role colours, the same in every
+/// theme. Only for dots and swatches, never text; dots get an inset
+/// `border` ring so they stay visible on light themes.
+pub const fn role_color(color: gelabber_client::RoleColor) -> Color32 {
+    use gelabber_client::RoleColor;
+    match color {
+        RoleColor::Amber => hex(0xe0a04a),
+        RoleColor::Blue => hex(0x6fb3d9),
+        RoleColor::Green => hex(0x85d69b),
+        RoleColor::Pink => hex(0xd98fb8),
+        RoleColor::Violet => hex(0xb29ae6),
+        RoleColor::Coral => hex(0xe08f6f),
+    }
 }
 
 #[cfg(test)]
@@ -797,6 +818,17 @@ mod tests {
             [
                 "#ead2c8", "#eae0c8", "#daeac8", "#c8ead6", "#c8e5ea", "#c8d6ea", "#d2c8ea",
                 "#eac8dd"
+            ]
+        );
+    }
+
+    // index.css `--lr-role-*`, sampled from roles-editor.png.
+    #[test]
+    fn role_colours() {
+        assert_eq!(
+            gelabber_client::RoleColor::ALL.map(|c| h(role_color(c))),
+            [
+                "#e0a04a", "#6fb3d9", "#85d69b", "#d98fb8", "#b29ae6", "#e08f6f"
             ]
         );
     }

@@ -1,14 +1,13 @@
-//! Outgoing account mail (#195): address confirmation, password reset and
-//! the notice for a registration with a known address.
+//! Outgoing account mail (#195): address confirmation, password reset, the
+//! notice for a registration with a known address, beta invitations
+//! (#517), the notice after an account was deleted and the one when a data
+//! export is ready (#519).
 //!
-//! Mail goes to the operator's SMTP relay (`SMTP_*`), plain text, German like
-//! the rest of the product. Sending runs in the background after the
-//! response (`crate::auth`), so neither the relay's speed nor its failures
-//! tell a caller whether an address has an account. Failures are logged with
-//! the user id, never the address.
-//!
-//! The texts never contain what a registrant typed (name, password): a
-//! confirmation mail can reach someone who never asked for it.
+//! Mail goes to the operator's SMTP relay (`SMTP_*`), plain text, in the
+//! account's language (`crate::i18n::mail` holds the texts). Sending runs in
+//! the background after the response (`crate::auth`), so neither the relay's
+//! speed nor its failures tell a caller whether an address has an account.
+//! Failures are logged with the user id, never the address.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,6 +20,7 @@ use lettre::transport::smtp::extension::ClientId;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
 use crate::config::{MailConfig, SmtpSecurity};
+use crate::i18n::{self, Locale};
 
 /// Per connection step; a hanging relay must not pile up tasks.
 const SMTP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -60,6 +60,25 @@ pub enum Mail {
     },
     /// Someone registered with an address that already has an account.
     AlreadyRegistered,
+    /// An operator invited this address to register (#517); `link` is the
+    /// invitation's registration link.
+    BetaInvitation {
+        link: String,
+    },
+    /// A provider account was connected to this account (#518), by the
+    /// owner or by a sign-in that joined it; `provider_name` is "Google".
+    ProviderConnected {
+        provider_name: String,
+    },
+    /// The account was deleted and its data is gone (#519); sent to the
+    /// address it had, in the language it had.
+    AccountDeleted,
+    /// The account's data export is ready to download until `expires_at`
+    /// (#519). It links to the settings page and carries no token: the
+    /// download needs the account's session.
+    ExportReady {
+        expires_at: chrono::DateTime<chrono::Utc>,
+    },
 }
 
 impl Mailer {
@@ -123,8 +142,8 @@ impl Mailer {
         }
     }
 
-    pub async fn send(&self, to: &str, mail: &Mail) -> Result<(), String> {
-        let (subject, body) = self.render(mail);
+    pub async fn send(&self, to: &str, mail: &Mail, locale: Locale) -> Result<(), String> {
+        let (subject, body) = self.render(mail, locale);
         match &self.transport {
             Transport::Memory(sent) => {
                 sent.lock()
@@ -154,48 +173,9 @@ impl Mailer {
         }
     }
 
-    fn render(&self, mail: &Mail) -> (String, String) {
-        let base = &self.public_url;
-        let instance = &self.instance;
-        match mail {
-            Mail::ConfirmEmail { token } => (
-                "Bestätige deine E-Mail-Adresse für Gelabber".to_owned(),
-                format!(
-                    "Hallo,\n\n\
-                     mit dieser Adresse wurde auf {instance} ein Gelabber-Konto angelegt. \
-                     Öffne diesen Link, um die Adresse zu bestätigen:\n\n\
-                     {base}/verify-email#token={token}\n\n\
-                     Der Link gilt 24 Stunden und nur einmal.\n\n\
-                     Warst du das nicht? Dann ignoriere diese Mail. Ohne Bestätigung \
-                     lässt sich das Konto nicht benutzen.\n"
-                ),
-            ),
-            Mail::ResetPassword { token } => (
-                "Neues Passwort für Gelabber".to_owned(),
-                format!(
-                    "Hallo,\n\n\
-                     für dein Gelabber-Konto auf {instance} wurde ein neues Passwort \
-                     angefordert. Hier kannst du es festlegen:\n\n\
-                     {base}/reset-password#token={token}\n\n\
-                     Der Link gilt eine Stunde und nur einmal. Danach bist du auf \
-                     allen Geräten abgemeldet.\n\n\
-                     Hast du nichts angefordert? Dann ignoriere diese Mail; dein \
-                     Passwort bleibt, wie es ist.\n"
-                ),
-            ),
-            Mail::AlreadyRegistered => (
-                "Dein Gelabber-Konto".to_owned(),
-                format!(
-                    "Hallo,\n\n\
-                     gerade wollte jemand auf {instance} ein Gelabber-Konto mit dieser \
-                     Adresse anlegen. Du hast dort schon eins.\n\n\
-                     Anmelden: {base}/login\n\
-                     Passwort vergessen: {base}/forgot-password\n\n\
-                     Warst du das nicht? Dann ignoriere diese Mail; an deinem Konto \
-                     hat sich nichts geändert.\n"
-                ),
-            ),
-        }
+    /// Subject and body in `locale` ([`i18n::mail::render`]).
+    pub fn render(&self, mail: &Mail, locale: Locale) -> (String, String) {
+        i18n::mail::render(locale, mail, &self.public_url, &self.instance)
     }
 }
 
@@ -212,6 +192,10 @@ impl Mail {
             Self::ConfirmEmail { .. } => "confirm_email",
             Self::ResetPassword { .. } => "reset_password",
             Self::AlreadyRegistered => "already_registered",
+            Self::BetaInvitation { .. } => "beta_invitation",
+            Self::ProviderConnected { .. } => "provider_connected",
+            Self::AccountDeleted => "account_deleted",
+            Self::ExportReady { .. } => "export_ready",
         }
     }
 }
@@ -233,6 +217,7 @@ mod tests {
                 &Mail::ResetPassword {
                     token: "abc".into(),
                 },
+                Locale::De,
             )
             .await
             .unwrap();

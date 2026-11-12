@@ -2,6 +2,8 @@
 //! and one click to join it.
 
 use egui::{Color32, Pos2, Rect, Sense, Ui, Vec2, pos2};
+use gelabber_i18n::intl::{Unit, format_relative};
+use gelabber_i18n::{auth, common};
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -85,20 +87,20 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             let reloading = s.load.is_some();
             let mut retry = false;
             layout::frame(ui, app, "invite-error", |ui, app| {
-                layout::heading(ui, "Einladung konnte nicht geladen werden");
+                layout::heading(ui, auth::invite_load_failed());
                 layout::lead(ui, error_message(&code));
                 ui.add_space(space::S6);
                 retry = ui
                     .add(
-                        Button::new("Erneut versuchen")
+                        Button::new(common::try_again())
                             .primary()
                             .large()
                             .fill()
-                            .pending(reloading.then_some("Wird geladen…")),
+                            .pending(reloading.then_some(common::loading())),
                     )
                     .clicked();
                 ui.add_space(space::S2);
-                if wide_button(ui, "Zu deinen Servern", true) {
+                if wide_button(ui, auth::invite_to_servers(), true) {
                     app.nav.navigate("/");
                 }
             });
@@ -125,7 +127,12 @@ fn loaded(ui: &mut Ui, app: &mut AppCtx, s: &mut State, preview: &Value) {
         ui.add_space(space::S6);
         if member {
             if ui
-                .add(Button::new("Zum Server").primary().large().fill())
+                .add(
+                    Button::new(auth::invite_to_server())
+                        .primary()
+                        .large()
+                        .fill(),
+                )
                 .clicked()
             {
                 app.nav.navigate(&format!("/s/{id}"));
@@ -136,10 +143,10 @@ fn loaded(ui: &mut Ui, app: &mut AppCtx, s: &mut State, preview: &Value) {
                 ui.add(FormError::new(message).on(theme.c.panel));
                 ui.add_space(space::S3);
             }
-            join = submit(ui, "Beitreten", "Beitreten…", pending);
+            join = submit(ui, auth::invite_join(), auth::invite_joining(), pending);
         }
         ui.add_space(space::S2);
-        if wide_button(ui, "Abbrechen", true) {
+        if wide_button(ui, common::cancel(), true) {
             app.nav.navigate("/");
         }
     });
@@ -197,9 +204,9 @@ fn invite_server(ui: &mut Ui, app: &AppCtx, preview: &Value) {
     centered(
         ui,
         if member {
-            "Du bist bereits Mitglied von"
+            auth::invite_already_member()
         } else {
-            "Einladung zu"
+            auth::invite_invited_to()
         },
         text::UI,
         c.muted,
@@ -208,11 +215,7 @@ fn invite_server(ui: &mut Ui, app: &AppCtx, preview: &Value) {
     centered(ui, name, layout::HEADING, c.text);
     ui.add_space(space::S2);
     let count = server["member_count"].as_i64().unwrap_or(0);
-    let people = if count == 1 {
-        "1 Mitglied".to_owned()
-    } else {
-        format!("{count} Mitglieder")
-    };
+    let people = auth::invite_members(count.max(0) as u64);
     let expiry = if member {
         None
     } else {
@@ -243,30 +246,26 @@ pub fn invite_expiry(expires_at: &str) -> Option<String> {
 
 fn expiry_text(left_ms: i64) -> String {
     if left_ms <= 0 {
-        return "abgelaufen".into();
+        return auth::invite_expiry_expired().into();
     }
     let (unit, size) = [(0, 86_400_000i64), (1, 3_600_000), (2, 60_000)]
         .into_iter()
         .find(|(_, ms)| left_ms >= *ms)
         .unwrap_or((2, 60_000));
     let n = ((left_ms as f64 / size as f64).round() as i64).max(1);
-    let relative = match (unit, n) {
-        (0, 1) => "morgen".to_owned(),
-        (0, 2) => "übermorgen".to_owned(),
-        (0, n) => format!("in {n} Tagen"),
-        (1, 1) => "in 1 Stunde".to_owned(),
-        (1, n) => format!("in {n} Stunden"),
-        (_, 1) => "in 1 Minute".to_owned(),
-        (_, n) => format!("in {n} Minuten"),
+    let relative = match unit {
+        0 => auth::invite_expiry_days(n),
+        1 => format_relative(n, Unit::Hour),
+        _ => format_relative(n, Unit::Minute),
     };
-    format!("läuft {relative} ab")
+    auth::invite_expiry_in(&relative)
 }
 
 /// `DeadInvite`.
 fn dead(ui: &mut Ui, app: &mut AppCtx, code: &str) {
     let banned = code == "banned";
     let message = if code == "not_found" {
-        "Dieser Einladungslink existiert nicht oder wurde widerrufen."
+        auth::invite_not_found()
     } else {
         error_message(code)
     };
@@ -274,25 +273,25 @@ fn dead(ui: &mut Ui, app: &mut AppCtx, code: &str) {
         layout::heading(
             ui,
             if banned {
-                "Kein Zutritt"
+                auth::invite_banned_title()
             } else {
-                "Einladung nicht nutzbar"
+                auth::invite_dead_title()
             },
         );
         let mut lines = vec![(message, false)];
         if !banned {
-            lines.push(("Frag nach einem neuen Link.", true));
+            lines.push((auth::invite_ask_for_new(), true));
         }
         result_lines(ui, &lines);
         ui.add_space(space::S6);
-        if wide_button(ui, "Zu deinen Servern", false) {
+        if wide_button(ui, auth::invite_to_servers(), false) {
             app.nav.navigate("/");
         }
     });
 }
 
 /// `SkeletonCard` (min-height 300) while the preview loads.
-fn skeleton(ui: &mut Ui, app: &mut AppCtx) {
+pub(super) fn skeleton(ui: &mut Ui, app: &mut AppCtx) {
     layout::frame(ui, app, "invite-loading", |ui, _app| {
         let theme = Theme::of(ui.ctx());
         let width = ui.available_width();
@@ -318,5 +317,15 @@ mod tests {
         assert_eq!(expiry_text(86_400_000), "läuft morgen ab");
         assert_eq!(expiry_text(3 * 3_600_000), "läuft in 3 Stunden ab");
         assert_eq!(expiry_text(0), "abgelaufen");
+    }
+
+    #[test]
+    fn expiry_in_english() {
+        let _locale = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(expiry_text(86_400_000 * 6), "expires in 6 days");
+        assert_eq!(expiry_text(86_400_000), "expires tomorrow");
+        assert_eq!(expiry_text(2 * 86_400_000), "expires in 2 days");
+        assert_eq!(expiry_text(3_600_000), "expires in 1 hour");
+        assert_eq!(expiry_text(0), "expired");
     }
 }

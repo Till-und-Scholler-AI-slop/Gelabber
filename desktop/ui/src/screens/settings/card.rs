@@ -6,6 +6,7 @@ use egui::{
     Color32, Id, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use gelabber_client::{ProfilePatch, User};
+use gelabber_i18n::{common, settings as texts};
 
 use super::controls::{self, Picked};
 use super::profile::uploaded;
@@ -29,11 +30,11 @@ pub const DECORATIONS: [&str; 4] = ["ring", "glow", "rainbow", "stars"];
 
 pub fn decoration_label(d: &str) -> &'static str {
     match d {
-        "ring" => "Ring",
-        "glow" => "Leuchten",
-        "rainbow" => "Regenbogen",
-        "stars" => "Sterne",
-        _ => "Keiner",
+        "ring" => texts::card_decoration_ring(),
+        "glow" => texts::card_decoration_glow(),
+        "rainbow" => texts::card_decoration_rainbow(),
+        "stars" => texts::card_decoration_stars(),
+        _ => texts::card_decoration_none(),
     }
 }
 
@@ -195,7 +196,8 @@ pub fn paint_card(
     }
     if let Some(b) = about {
         y += 12.0;
-        Block::single(ui, "ÜBER MICH", ABOUT_HEAD, c.muted).paint(painter, pos2(x, y));
+        Block::single(ui, &texts::card_bio().to_uppercase(), ABOUT_HEAD, c.muted)
+            .paint(painter, pos2(x, y));
         y += ABOUT_HEAD.line_px() + 4.0;
         b.paint(painter, pos2(x, y));
     }
@@ -527,16 +529,16 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
     let mut discard = false;
     controls::column(ui, form_w, |ui| {
         // Banner.
-        controls::paint(ui, ui.cursor().min, "Banner", text::UI, c.text);
+        controls::paint(ui, ui.cursor().min, texts::card_banner(), text::UI, c.text);
         ui.add_space(layout_unit(text::UI.line_px()) + 6.0);
         controls::row(ui, 8.0, 32.0, |ui| {
             let uploading = s.running == Some("upload");
             if ui
                 .add(
-                    Button::new("Bannerbild hochladen")
+                    Button::new(texts::card_banner_upload())
                         .small()
                         .disabled(busy && !uploading)
-                        .pending(uploading.then_some("Lädt hoch…")),
+                        .pending(uploading.then_some(texts::profile_uploading())),
                 )
                 .clicked()
                 && !busy
@@ -544,7 +546,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
             {
                 s.picking = Some(controls::pick_file(
                     ui.ctx(),
-                    "Bannerbild auswählen",
+                    texts::card_banner_pick_label(),
                     &controls::IMAGE_FILTER,
                 ));
             }
@@ -552,11 +554,11 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
                 let removing = s.running == Some("remove");
                 if ui
                     .add(
-                        Button::new("Bannerbild entfernen")
+                        Button::new(texts::card_banner_remove())
                             .small()
                             .ghost()
                             .disabled(busy && !removing)
-                            .pending(removing.then_some("Entfernt…")),
+                            .pending(removing.then_some(texts::profile_removing())),
                     )
                     .clicked()
                     && !busy
@@ -571,7 +573,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
             }
             if s.banner_saved {
                 ui.add(InlineStatus::new(
-                    Some("Banner gespeichert."),
+                    Some(texts::card_banner_saved()),
                     StatusTone::Success,
                 ));
             }
@@ -579,13 +581,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         ui.add_space(6.0);
         match s.errors.field("banner_url") {
             Some(e) => controls::paragraph(ui, e, text::META, c.danger, form_w),
-            None => controls::paragraph(
-                ui,
-                "Wird auf 3 : 1 zugeschnitten und sofort gespeichert.",
-                text::META,
-                c.muted,
-                form_w,
-            ),
+            None => controls::paragraph(ui, texts::card_banner_hint(), text::META, c.muted, form_w),
         };
         ui.add_space(20.0);
 
@@ -597,8 +593,8 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         let fallback_banner = safe_color(Some(&form.accent_color));
         let mut h = 0.0_f32;
         for (i, (field, label)) in [
-            ("banner_color", "Bannerfarbe"),
-            ("accent_color", "Akzentfarbe"),
+            ("banner_color", texts::card_banner_color()),
+            ("accent_color", texts::card_accent_color()),
         ]
         .into_iter()
         .enumerate()
@@ -624,7 +620,13 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         ui.add_space(20.0);
 
         // Avatar decorations.
-        controls::paint(ui, ui.cursor().min, "Avatar-Rahmen", text::UI, c.text);
+        controls::paint(
+            ui,
+            ui.cursor().min,
+            texts::card_decoration(),
+            text::UI,
+            c.text,
+        );
         ui.add_space(layout_unit(text::UI.line_px()) + 8.0);
         let cols = ((form_w + 8.0) / (76.0 + 8.0)).floor().max(1.0);
         let cell = (form_w - 8.0 * (cols - 1.0)) / cols;
@@ -706,9 +708,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         ui.add_space(20.0);
 
         let pronouns = TextField::new("pronouns", &mut form.pronouns)
-            .label("Pronomen")
+            .label(texts::card_pronouns())
             .char_limit(PRONOUNS_MAX)
-            .placeholder("z. B. sie/ihr")
+            .placeholder(texts::card_pronouns_placeholder())
             .error(s.errors.field("pronouns"))
             .show(ui);
         if pronouns.response.changed() {
@@ -717,21 +719,22 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         }
         ui.add_space(20.0);
         let status = TextField::new("status_text", &mut form.status_text)
-            .label("Status")
+            .label(texts::card_status())
             .char_limit(STATUS_TEXT_MAX)
             .error(s.errors.field("status_text"))
-            .hint(Some("Steht in der Mitgliederliste unter deinem Namen."))
+            .hint(Some(texts::card_status_hint()))
             .show(ui);
         if status.response.changed() {
             s.saved = false;
             s.errors.clear_field("status_text");
         }
         ui.add_space(20.0);
-        controls::paint(ui, ui.cursor().min, "Über mich", text::UI, c.text);
+        controls::paint(ui, ui.cursor().min, texts::card_bio(), text::UI, c.text);
         ui.add_space(layout_unit(text::UI.line_px()) + 6.0);
         let len = form.bio.replace("\r\n", "\n").trim().chars().count();
         let invalid = s.errors.field("bio").is_some() || len > BIO_MAX;
-        if controls::textarea(ui, "bio", "Über mich", &mut form.bio, 100.0, invalid).changed() {
+        if controls::textarea(ui, "bio", texts::card_bio(), &mut form.bio, 100.0, invalid).changed()
+        {
             s.saved = false;
             s.errors.clear_field("bio");
         }
@@ -742,7 +745,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         ui.add_space(6.0);
         controls::paragraph(
             ui,
-            &format!("{len} / {BIO_MAX} Zeichen"),
+            &texts::card_bio_count(len, BIO_MAX),
             text::META,
             if len > BIO_MAX { c.danger } else { c.muted },
             form_w,
@@ -775,7 +778,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
                     rect.left() + 17.0,
                     rect.center().y - text::UI.line_px() / 2.0,
                 ),
-                "Ungespeicherte Änderungen",
+                texts::card_unsaved(),
                 text::UI,
                 c.text,
             );
@@ -792,20 +795,23 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
                     ui.spacing_mut().item_spacing.x = 12.0;
                     save_clicked = ui
                         .add(
-                            Button::new("Speichern")
+                            Button::new(common::save())
                                 .primary()
                                 .disabled(busy && !saving)
-                                .pending(saving.then_some("Speichern…")),
+                                .pending(saving.then_some(texts::profile_saving())),
                         )
                         .clicked();
                     discard = ui
-                        .add(Button::new("Verwerfen").ghost().disabled(saving))
+                        .add(Button::new(texts::card_discard()).ghost().disabled(saving))
                         .clicked();
                 },
             );
             ui.advance_cursor_after_rect(Rect::from_min_size(natural, vec2(form_w, bar_h)));
         } else if s.saved {
-            ui.add(InlineStatus::new(Some("Gespeichert."), StatusTone::Success));
+            ui.add(InlineStatus::new(
+                Some(common::saved()),
+                StatusTone::Success,
+            ));
         }
     });
     let form_bottom = ui.cursor().min.y;
@@ -907,7 +913,11 @@ fn color_field(
     let shown = value.trim().to_lowercase();
     let text_block = Block::single(
         ui,
-        if shown.is_empty() { "Standard" } else { &shown },
+        if shown.is_empty() {
+            texts::card_color_unset()
+        } else {
+            &shown
+        },
         controls::HINT,
         c.muted,
     );
@@ -922,9 +932,16 @@ fn color_field(
         );
         if ui
             .add(
-                IconButton::new(Icon::Close, &format!("{label} zurücksetzen"))
-                    .size(32.0)
-                    .at(reset),
+                IconButton::new(
+                    Icon::Close,
+                    if field == "banner_color" {
+                        texts::card_banner_color_reset_label()
+                    } else {
+                        texts::card_accent_color_reset_label()
+                    },
+                )
+                .size(32.0)
+                .at(reset),
             )
             .clicked()
         {
