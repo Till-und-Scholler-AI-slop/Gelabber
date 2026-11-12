@@ -120,6 +120,16 @@ describe("sending", () => {
     expect(queryClient.getQueryState(status)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(list)?.isInvalidated).toBe(true);
   });
+
+  it("finishes the send after the dialog that sent it is gone", async () => {
+    const queryClient = new QueryClient();
+    const onSent = vi.fn();
+    remote.sendFeedback.mockResolvedValue({ id: "entry" });
+    // A static render keeps no observer: as a dialog closed mid-send.
+    const send = hookOf(queryClient, () => useSendFeedback(onSent));
+    await send.mutateAsync({ kind: "idea", text: "Ja", image: null, context });
+    expect(onSent).toHaveBeenCalledOnce();
+  });
 });
 
 const entry = (id: string, overrides: Partial<FeedbackEntry> = {}) =>

@@ -5,6 +5,7 @@
 
 import {
   useInfiniteQuery,
+  useIsMutating,
   useMutation,
   useQuery,
   useQueryClient,
@@ -88,15 +89,30 @@ export type FeedbackSend = {
   context: FeedbackContext;
 };
 
-/** "Senden": the image goes up first, then the entry is created. */
-export function useSendFeedback() {
+/** Every send of the dialog, so a dialog opened again sees one in flight. */
+const SEND_FEEDBACK_KEY = ["feedback", "send"] as const;
+
+/** A send is under way, from this dialog or one closed since. */
+export function useFeedbackSending(): boolean {
+  return useIsMutating({ mutationKey: SEND_FEEDBACK_KEY }) > 0;
+}
+
+/**
+ * "Senden": the image goes up first, then the entry is created. `onSent`
+ * runs here, not per call, so it runs even when the dialog that sent has
+ * gone meanwhile; and only while the same person is signed in.
+ */
+export function useSendFeedback(onSent?: () => void) {
   const client = useQueryClient();
   return useMutation({
+    mutationKey: SEND_FEEDBACK_KEY,
     mutationFn: ({ kind, text, image, context }: FeedbackSend) =>
       remote.sendFeedback({ kind, text: text.trim(), context }, image),
     onMutate: () => takeStamp(),
     onSuccess: (_entry, _input, stamp) => {
-      if (stampHolds(stamp)) refreshFeedback(client, stamp);
+      if (!stampHolds(stamp)) return;
+      refreshFeedback(client, stamp);
+      onSent?.();
     },
   });
 }

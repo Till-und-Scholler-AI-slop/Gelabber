@@ -65,6 +65,7 @@ export const feedback = defineCatalog(
     "thread.reply": "Antworten",
     "thread.replyLabel": "Deine Antwort",
     "thread.replySent": "Antwort gesendet.",
+    "thread.full": "Dieser Verlauf ist voll (200 Nachrichten).",
   },
   {
     "dialog.title": "Give feedback",
@@ -125,5 +126,6 @@ export const feedback = defineCatalog(
     "thread.reply": "Reply",
     "thread.replyLabel": "Your reply",
     "thread.replySent": "Reply sent.",
+    "thread.full": "This thread is full (200 messages).",
   },
 );
