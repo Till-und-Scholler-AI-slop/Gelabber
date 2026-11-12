@@ -10,7 +10,7 @@ import { KEY, value } from "./keys.ts";
 import { Brand, PublicFrame } from "./PublicFrame.tsx";
 import { If } from "./Template.tsx";
 import { SELF_HOST_COMMANDS, textsIn } from "./text.ts";
-import { LEGAL_PAGES, landingUrl, legalUrl } from "./urls.ts";
+import { feedbackUrl, LEGAL_PAGES, landingUrl, legalUrl } from "./urls.ts";
 
 const FEATURES = ["lives", "open", "private"] as const;
 
@@ -147,6 +147,9 @@ export function LandingPage({
                 <a href={legalUrl(locale, page)}>{text(`legal.${page}`)}</a>
               </If>
             ))}
+            <If when={KEY.feedback}>
+              <a href={feedbackUrl(locale)}>{text("feedback.link")}</a>
+            </If>
             <a href={value(KEY.sourceUrl)}>{text("landing.nav.source")}</a>
             <span className="public-footer__languages">
               {LOCALES.map((lang) => (

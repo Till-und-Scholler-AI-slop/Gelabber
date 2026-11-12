@@ -1,7 +1,7 @@
 import { defineCatalog } from "../catalog.ts";
 
-// The public pages an instance can publish (src/public): the landing page
-// and the legal pages. They are static HTML built at build time in both
+// The public pages an instance can publish (src/public): the landing page,
+// the legal pages and the feedback form. They are static HTML built at build time in both
 // languages, so every text here ends up in a file, never in the app.
 // `public` is reserved in strict code, so the binding has another name and
 // the export carries the file's.
@@ -65,6 +65,38 @@ const publicPages = defineCatalog(
     "legal.reportText":
       "Rechtswidrige Inhalte meldest du über „{action}“ am Server oder an <link>{email}</link>.",
     "legal.onlyOtherLanguage": "Dieser Text liegt nur auf Englisch vor.",
+
+    "meta.feedbackTitle": "Feedback zu Gelabber",
+    "meta.feedbackDescription":
+      "Eine Idee, ein Problem oder Lob an die Betreiber dieser Gelabber-Instanz.",
+    "feedback.link": "Feedback",
+    "feedback.title": "Feedback zu Gelabber",
+    "feedback.lead":
+      "Kein Konto, aber etwas zu sagen? Schreib den Betreibern dieser Instanz eine Idee, ein Problem oder Lob. Wir schicken dir einen Bestätigungslink; erst damit kommt dein Feedback an.",
+    "feedback.kind.legend": "Worum geht es?",
+    "feedback.kind.idea": "Idee",
+    "feedback.kind.problem": "Problem",
+    "feedback.kind.praise": "Lob",
+    "feedback.text.label": "Deine Nachricht",
+    "feedback.text.hint": "Höchstens 4.000 Zeichen.",
+    "feedback.email.label": "Deine E-Mail-Adresse",
+    "feedback.email.hint":
+      "Nur für die Bestätigung und eine Antwort. Sie wird nirgends gezeigt.",
+    "feedback.honeypot": "Website (leer lassen)",
+    "feedback.privacy": "Mehr dazu unter <link>Datenschutz</link>.",
+    "feedback.submit": "Feedback senden",
+    "feedback.sent.title": "Fast geschafft.",
+    "feedback.sent.body":
+      "Wir haben dir eine Mail geschickt. Öffne den Link darin innerhalb von 24 Stunden, dann kommt dein Feedback bei den Betreibern an. Keine Mail da? Schau im Spam-Ordner nach oder <link>schick das Formular noch einmal</link>.",
+    "feedback.thanks.title": "Danke!",
+    "feedback.thanks.body":
+      "Dein Feedback ist bei den Betreibern angekommen. Wenn sie antworten, bekommst du eine Mail.",
+    "feedback.expired.title": "Link abgelaufen.",
+    "feedback.expired.body":
+      "Dieser Link ist ungültig oder älter als 24 Stunden, und dein Feedback wurde nicht verschickt. <link>Schick es bitte noch einmal</link>.",
+    "feedback.error.title": "Das hat nicht geklappt.",
+    "feedback.error.body":
+      "Dein Feedback wurde nicht verschickt. Vielleicht kamen von deinem Anschluss gerade zu viele Nachrichten, oder eine Angabe fehlte. <link>Versuch es später noch einmal</link>.",
   },
   {
     "meta.landingTitle":
@@ -121,6 +153,38 @@ const publicPages = defineCatalog(
     "legal.reportText":
       "Report unlawful content with “{action}” on the server or to <link>{email}</link>.",
     "legal.onlyOtherLanguage": "This text is only available in German.",
+
+    "meta.feedbackTitle": "Feedback on Gelabber",
+    "meta.feedbackDescription":
+      "An idea, a problem or praise for the operators of this Gelabber instance.",
+    "feedback.link": "Feedback",
+    "feedback.title": "Feedback on Gelabber",
+    "feedback.lead":
+      "No account, but something to say? Send the operators of this instance an idea, a problem or praise. We'll send you a confirmation link; your feedback only arrives once you open it.",
+    "feedback.kind.legend": "What is it about?",
+    "feedback.kind.idea": "Idea",
+    "feedback.kind.problem": "Problem",
+    "feedback.kind.praise": "Praise",
+    "feedback.text.label": "Your message",
+    "feedback.text.hint": "At most 4,000 characters.",
+    "feedback.email.label": "Your email address",
+    "feedback.email.hint":
+      "Only for the confirmation and a reply. It is not shown anywhere.",
+    "feedback.honeypot": "Website (leave empty)",
+    "feedback.privacy": "More under <link>Privacy</link>.",
+    "feedback.submit": "Send feedback",
+    "feedback.sent.title": "Almost there.",
+    "feedback.sent.body":
+      "We've sent you an email. Open the link in it within 24 hours and your feedback reaches the operators. No email? Check your spam folder or <link>send the form again</link>.",
+    "feedback.thanks.title": "Thank you!",
+    "feedback.thanks.body":
+      "Your feedback has reached the operators. If they reply, you'll get an email.",
+    "feedback.expired.title": "Link expired.",
+    "feedback.expired.body":
+      "This link is invalid or older than 24 hours, and your feedback was not sent. <link>Please send it again</link>.",
+    "feedback.error.title": "That didn't work.",
+    "feedback.error.body":
+      "Your feedback was not sent. Perhaps too many messages came from your connection just now, or something was missing. <link>Please try again later</link>.",
   },
 );
 
