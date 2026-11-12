@@ -13,8 +13,10 @@ import {
 import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import { useSession } from "../auth/store.ts";
 import * as remote from "./api.ts";
+import { ApiError } from "../api/client.ts";
 import type {
   AccountQuery,
+  FeedbackQuery,
   InvitationQuery,
   ReportQuery,
   ServerQuery,
@@ -35,6 +37,10 @@ export const operatorKeys = {
     ["user", userId, generation, "operator", "invitations", query] as const,
   usage: (userId: string, generation: number) =>
     ["user", userId, generation, "operator", "usage"] as const,
+  feedback: (userId: string, generation: number, query: FeedbackQuery) =>
+    ["user", userId, generation, "operator", "feedback", query] as const,
+  feedbackEntry: (userId: string, generation: number, id: string) =>
+    ["user", userId, generation, "operator", "feedbackEntry", id] as const,
 };
 
 /** The reports badge refreshes this often while the area is open. */
@@ -108,6 +114,29 @@ export function useOperatorUsage() {
     queryKey: operatorKeys.usage(userId, generation),
     queryFn: ({ signal }) => remote.getUsage(signal),
     enabled,
+  });
+}
+
+export function useOperatorFeedback(query: FeedbackQuery) {
+  const { userId, generation, enabled } = useOperatorScope();
+  return useQuery({
+    queryKey: operatorKeys.feedback(userId, generation, query),
+    queryFn: ({ signal }) => remote.listFeedback(query, signal),
+    enabled,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** One entry, for the link in an operator mail (`?entry=`). */
+export function useOperatorFeedbackEntry(id: string | undefined) {
+  const { userId, generation, enabled } = useOperatorScope();
+  return useQuery({
+    queryKey: operatorKeys.feedbackEntry(userId, generation, id ?? ""),
+    queryFn: ({ signal }) => remote.getFeedback(id ?? "", signal),
+    enabled: enabled && id !== undefined,
+    // A deleted entry stays deleted; say so at once.
+    retry: (count, error) =>
+      count < 2 && !(error instanceof ApiError && error.code === "not_found"),
   });
 }
 

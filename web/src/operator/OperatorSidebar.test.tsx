@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setLocale } from "../i18n/locale.ts";
 
 const fixture = vi.hoisted(() => ({
-  overview: undefined as { open_reports: number } | undefined,
+  overview: undefined as
+    { open_reports: number; open_feedback?: number } | undefined,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -57,6 +58,7 @@ describe("operator sidebar", () => {
       ["/betrieb/konten", "Konten"],
       ["/betrieb/server", "Server"],
       ["/betrieb/meldungen", "Meldungen"],
+      ["/betrieb/feedback", "Feedback"],
       ["/betrieb/auslastung", "Auslastung"],
     ]);
     // The user panel stays at the bottom, as in every sidebar.
@@ -70,6 +72,22 @@ describe("operator sidebar", () => {
       /data-to="\/betrieb\/meldungen"[^>]*><span>Meldungen<\/span><span class="ui-badge ui-badge--count operator-nav-count" aria-hidden="true">2<\/span><span class="sr-only">2 offene Meldungen<\/span>/,
     );
     expect(html.match(/ui-badge--count/g)).toHaveLength(1);
+  });
+
+  it("counts open feedback on Feedback, as on Meldungen", () => {
+    fixture.overview = { open_reports: 0, open_feedback: 1 };
+    let html = render();
+    expect(html).toMatch(
+      /data-to="\/betrieb\/feedback"[^>]*><span>Feedback<\/span><span class="ui-badge ui-badge--count operator-nav-count" aria-hidden="true">1<\/span><span class="sr-only">1 offener Eintrag im Feedback<\/span>/,
+    );
+    expect(html.match(/ui-badge--count/g)).toHaveLength(1);
+    fixture.overview = { open_reports: 2, open_feedback: 120 };
+    html = render();
+    expect(html.match(/ui-badge--count/g)).toHaveLength(2);
+    expect(html).toContain("120 offene Einträge im Feedback");
+    expect(html).toContain('aria-hidden="true">99+</span>');
+    setLocale("en", { persist: false });
+    expect(render()).toContain("120 open feedback entries");
   });
 
   it("shows no count without open reports, and caps it at 99+", () => {
@@ -89,6 +107,7 @@ describe("operator sidebar", () => {
       "Accounts",
       "Servers",
       "Reports",
+      "Feedback",
       "Usage",
     ]);
     expect(html).toContain('<span class="sr-only">1 open report</span>');

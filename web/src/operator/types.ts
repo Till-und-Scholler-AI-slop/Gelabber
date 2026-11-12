@@ -1,6 +1,8 @@
 // What `/api/operator/*` serves (backend/api/src/operator), the instance
 // operators' area "Betrieb" (v0.10, #517).
 
+import type { EntryContext, FeedbackKind } from "../feedback/types.ts";
+
 export type RegistrationMode = "open" | "invitation";
 
 /** `GET /api/operator`: the area's bootstrap and the reports badge. */
@@ -9,6 +11,8 @@ export type OperatorOverview = {
   /** Account mail is configured, so an invitation can be mailed. */
   mail: boolean;
   open_reports: number;
+  /** Feedback entries with status `open`. */
+  open_feedback: number;
 };
 
 export type Person = { id: string; name: string };
@@ -197,4 +201,61 @@ export type Usage = {
     in_voice: number;
     live: number;
   };
+};
+
+// ---------------------------------------------------------------------------
+// Feedback
+
+export type FeedbackListStatus = "open" | "done";
+
+/** Who sent an entry: an account, a visitor of the public form, or an
+ * account that is gone. */
+export type FeedbackSender =
+  | {
+      type: "account";
+      id: string;
+      name: string;
+      email: string;
+      avatar_url: string | null;
+    }
+  | { type: "visitor"; email: string; locale: "de" | "en" }
+  | { type: "deleted" };
+
+/** How an operator reply to a visitor went out by mail. */
+export type FeedbackMailState = "pending" | "sent" | "failed";
+
+export type OperatorFeedbackMessage = {
+  id: string;
+  from: "person" | "operator";
+  /** `null` once that account is gone. */
+  author: Person | null;
+  text: string;
+  created_at: string;
+  /** Set on operator replies to a visitor, else `null`. */
+  mail: FeedbackMailState | null;
+};
+
+export type OperatorFeedback = {
+  id: string;
+  kind: FeedbackKind;
+  status: FeedbackListStatus;
+  created_at: string;
+  last_activity_at: string;
+  done_at: string | null;
+  done_by: Person | null;
+  sender: FeedbackSender;
+  text: string;
+  image: { url: string; content_type: string; size: number } | null;
+  context: EntryContext;
+  /** The last word is the sender's: nobody has answered it yet. */
+  awaiting_reply: boolean;
+  messages: OperatorFeedbackMessage[];
+};
+
+export type OperatorFeedbackPage = Page & { entries: OperatorFeedback[] };
+
+export type FeedbackQuery = {
+  status?: FeedbackListStatus;
+  kind?: FeedbackKind;
+  offset?: number;
 };
