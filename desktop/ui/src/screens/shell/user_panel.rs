@@ -172,19 +172,35 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
         app.nav.navigate("/settings/darstellung");
     }
     let menu_open = state::with(ui.ctx(), |s| s.user_menu);
+    // Feedback (#542): the item while the instance takes it, and the dot on
+    // the item and the chevron while a reply is unread.
+    let feedback = crate::screens::feedback::enabled(ui.ctx(), app) == Some(true);
+    let unread = feedback && crate::screens::feedback::unread(ui.ctx(), app) > 0;
     let chevron_response = icon_button(
         ui,
         chevron,
         Icon::Chevron,
         18.0,
-        shell::user_panel_menu_label(),
+        if unread {
+            shell::user_panel_menu_unread_label()
+        } else {
+            shell::user_panel_menu_label()
+        },
         true,
     );
+    if unread {
+        // `.user-panel-menu > summary > .unread-dot`: top 4px, right 2px.
+        crate::screens::feedback::dialog::dot(
+            ui.painter(),
+            pos2(chevron.right() - 2.0 - 4.0, chevron.top() + 4.0 + 4.0),
+            c.accent,
+        );
+    }
     if chevron_response.clicked() {
         state::with(ui.ctx(), |s| s.user_menu = !s.user_menu);
     }
     if menu_open {
-        user_menu(ui, app, chevron);
+        user_menu(ui, app, chevron, feedback, unread);
     }
 
     if draft.open {
@@ -213,7 +229,7 @@ fn icon_button(
     turned: bool,
 ) -> egui::Response {
     let theme = Theme::of(ui.ctx());
-    let response = common::click(ui, rect, Id::unique(("user-panel", label)));
+    let response = common::click(ui, rect, icon_id(icon));
     let response = if turned {
         response
     } else {
@@ -235,6 +251,11 @@ fn icon_button(
     response
 }
 
+/// The panel's icon buttons keep their id while their names change.
+fn icon_id(icon: Icon) -> Id {
+    Id::unique(("user-panel", icon))
+}
+
 /// What an item of the user menu does.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MenuItem {
@@ -244,15 +265,21 @@ enum MenuItem {
     Operator,
     SwitchServer,
     SignOut,
+    /// While the instance takes feedback: the "Feedback geben" dialog.
+    Feedback,
 }
 
-/// The menu's items, in the web's order; "Betrieb" follows
-/// "Einstellungen" for operators.
-fn menu_items(operator: bool) -> Vec<(MenuItem, &'static str)> {
+/// The menu's items, in the web's order; "Feedback geben" follows
+/// "Einstellungen" while the instance takes feedback, then "Betrieb" for
+/// operators.
+fn menu_items(operator: bool, feedback: bool) -> Vec<(MenuItem, &'static str)> {
     let mut items = vec![
         (MenuItem::Profile, shell::user_panel_edit_profile()),
         (MenuItem::Settings, shell::user_panel_settings()),
     ];
+    if feedback {
+        items.push((MenuItem::Feedback, shell::user_panel_feedback()));
+    }
     if operator {
         items.push((MenuItem::Operator, shell::user_panel_operator()));
     }
@@ -263,10 +290,16 @@ fn menu_items(operator: bool) -> Vec<(MenuItem, &'static str)> {
 }
 
 /// The account menu above the chevron: panel colour, 37px items.
-fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
+fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect, feedback: bool, unread: bool) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let items = menu_items(app.session.operator());
+    let items = menu_items(app.session.operator(), feedback);
+    // The unread item's name carries the web's sr-only suffix.
+    let feedback_label = format!(
+        "{}, {}",
+        shell::user_panel_feedback(),
+        shell::user_panel_feedback_unread()
+    );
     let width = 180.0;
     let height = 2.0 + 16.0 + 37.0 * items.len() as f32 + 3.0 * (items.len() - 1) as f32;
     let frame = Rect::from_min_max(
@@ -298,8 +331,13 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 let item =
                     Rect::from_min_size(pos2(frame.left() + 9.0, y), Vec2::new(width - 18.0, 37.0));
                 let response = common::click(ui, item, Id::unique(("user-menu-item", i)));
-                response
-                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *label));
+                let dotted = unread && *action == MenuItem::Feedback;
+                let name = if dotted {
+                    feedback_label.as_str()
+                } else {
+                    label
+                };
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
                 let response = if *action == MenuItem::SwitchServer {
                     response.on_hover_text(format!(
                         "{}+{}+S",
@@ -314,6 +352,15 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 }
                 let block = Block::single(ui, label, text::BODY, c.text);
                 block.paint(ui.painter(), pos2(item.left() + 10.0, item.top() + 8.0));
+                if dotted {
+                    // `.unread-dot` with `margin-left: auto`: at the item's
+                    // right padding, centred on the line.
+                    crate::screens::feedback::dialog::dot(
+                        ui.painter(),
+                        pos2(item.right() - 10.0 - 4.0, item.center().y),
+                        c.accent,
+                    );
+                }
                 if response.clicked() {
                     picked = Some(*action);
                 }
@@ -342,6 +389,12 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
         ),
         Some(MenuItem::SwitchServer) => crate::setup::switch_server(ui.ctx()),
         Some(MenuItem::SignOut) => log_out(ui.ctx(), app),
+        Some(MenuItem::Feedback) => {
+            // The menu closes, and its chevron takes the focus back from the
+            // dialog (UserPanel.tsx).
+            crate::widgets::opener::opened_from(ui.ctx(), icon_id(Icon::Chevron));
+            crate::screens::feedback::open_dialog(ui.ctx(), app);
+        }
         None => {}
     }
 }
