@@ -39,9 +39,10 @@ use crate::mail::Mail;
 use crate::state::AppState;
 use crate::token;
 
-/// Largest form body: 4,000 characters of text, percent-encoded, and the
-/// other fields fit with room to spare.
-const BODY_MAX: usize = 32 * 1024;
+/// Largest form body. Browsers percent-encode every byte of a non-ASCII
+/// character, so 4,000 emoji are 48,000 bytes on the wire; the other
+/// fields fit in the rest. The text check still counts characters.
+const BODY_MAX: usize = 64 * 1024;
 /// How long a confirmation link holds.
 const CONFIRM_HOURS: i32 = 24;
 /// How often the sweeper runs.
