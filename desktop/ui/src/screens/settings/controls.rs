@@ -772,6 +772,38 @@ pub fn textarea(
     height: f32,
     invalid: bool,
 ) -> Response {
+    textarea_with(
+        ui,
+        id,
+        label,
+        value,
+        height,
+        invalid,
+        TextareaExtras::default(),
+    )
+}
+
+/// What a [`textarea_with`] adds to the plain one.
+#[derive(Clone, Copy, Default)]
+pub struct TextareaExtras<'a> {
+    /// `placeholder`, in `--lr-subtle`.
+    pub placeholder: Option<&'a str>,
+    /// `maxLength`, in characters.
+    pub char_limit: Option<usize>,
+    /// `readOnly`: the text stays as it is.
+    pub read_only: bool,
+}
+
+/// [`textarea`] with a placeholder, a length limit or read-only.
+pub fn textarea_with(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    value: &mut String,
+    height: f32,
+    invalid: bool,
+    extras: TextareaExtras<'_>,
+) -> Response {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let width = ui.available_width();
@@ -806,7 +838,7 @@ pub fn textarea(
         ui.fonts_mut(|f| f.layout_job(job))
     };
     let inner = rect.shrink(1.0);
-    let edit = TextEdit::multiline(value)
+    let mut edit = TextEdit::multiline(value)
         .id(field)
         .frame(Frame::NONE.inner_margin(Margin {
             left: 11,
@@ -817,6 +849,18 @@ pub fn textarea(
         .desired_width(inner.width())
         .min_size(inner.size())
         .layouter(&mut layouter);
+    if let Some(placeholder) = extras.placeholder {
+        edit = edit.hint_text(LayoutJob::single_section(
+            placeholder.to_owned(),
+            text::BODY.format(c.subtle),
+        ));
+    }
+    if let Some(limit) = extras.char_limit {
+        edit = edit.char_limit(limit);
+    }
+    if extras.read_only {
+        edit = edit.interactive(false);
+    }
     let response = ui
         .scope_builder(UiBuilder::new().max_rect(inner), |ui| {
             egui::ScrollArea::vertical()

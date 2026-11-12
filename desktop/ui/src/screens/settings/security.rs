@@ -132,7 +132,7 @@ fn state_cell(ui: &mut Ui, message: &str, failed: bool, pending: bool, rows: usi
 // -------------------------------------------------------------- devices
 
 /// Product and system names are the same in every language.
-fn os_name(os: DeviceOs) -> Option<&'static str> {
+pub(crate) fn os_name(os: DeviceOs) -> Option<&'static str> {
     match os {
         DeviceOs::Linux => Some("Linux"),
         DeviceOs::Windows => Some("Windows"),
