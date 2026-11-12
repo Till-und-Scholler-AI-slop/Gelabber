@@ -1096,6 +1096,15 @@ pub fn dropped_image(ctx: &egui::Context) -> Option<ImageFile> {
     Some(ImageFile::Path(file.path().to_path_buf()))
 }
 
+/// [`dropped_image`] for a settings page: none while a dialog covers it,
+/// whose drop it is ("Feedback geben" takes an image too).
+pub fn dropped_image_on_page(ctx: &egui::Context) -> Option<ImageFile> {
+    if crate::widgets::modal::any_open(ctx) {
+        return None;
+    }
+    dropped_image(ctx)
+}
+
 /// `prepareAvatar` / `prepareBanner`: a centred crop to `w`×`h`, encoded
 /// as JPEG (opaque) or PNG. Errors are the web's two messages.
 fn prepare_image(bytes: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, &'static str), String> {

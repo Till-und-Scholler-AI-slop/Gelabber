@@ -10,6 +10,7 @@ use serde_json::json;
 
 use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace};
 use crate::platform::paths::testing::TempConfig;
+use crate::screens::auth::tests::type_into;
 
 type App = egui_kittest::Harness<'static, crate::Launcher>;
 
@@ -111,6 +112,23 @@ fn drop_file(harness: &mut App, path: std::path::PathBuf) {
         .push(Arc::new(Dropped(path)));
 }
 
+/// An image refusal: under "Bild anhängen", and said by the polite status
+/// line as the web's `refuseImage` does.
+fn wait_for_refusal(harness: &mut App, message: &str) {
+    wait_for(harness, message, |h| {
+        h.query_by_role_and_label(Role::Alert, message).is_some()
+            && h.query_by_role_and_label(Role::Status, message).is_some()
+    });
+}
+
+/// The label of "Senden", or of its pending state.
+fn submit_label(harness: &egui_kittest::Harness<'_, crate::Launcher>) -> Option<String> {
+    harness
+        .query_all_by_role(Role::Button)
+        .filter_map(|n| n.accesskit_node().label())
+        .find(|l| l == "Senden" || l == "Wird gesendet…")
+}
+
 /// What goes along is shown as it is sent: the app, this build's system,
 /// the version, the language and the page.
 #[test]
@@ -203,7 +221,7 @@ fn sending_uploads_the_image_first_then_creates_the_entry() {
     let gif = config.dir.join("bild.gif");
     std::fs::write(&gif, b"GIF89a\x01\0\x01\0\0\0\0;").expect("gif");
     drop_file(&mut harness, gif);
-    wait_for_label(&mut harness, "Nur PNG, JPEG oder WebP.");
+    wait_for_refusal(&mut harness, "Nur PNG, JPEG oder WebP.");
 
     // One byte over 5 MiB, a PNG by its first bytes.
     let large = config.dir.join("gross.png");
@@ -211,7 +229,7 @@ fn sending_uploads_the_image_first_then_creates_the_entry() {
     bytes.resize(gelabber_client::FEEDBACK_IMAGE_MAX_BYTES + 1, 0);
     std::fs::write(&large, &bytes).expect("large");
     drop_file(&mut harness, large);
-    wait_for_label(&mut harness, "Das Bild ist größer als 5 MB.");
+    wait_for_refusal(&mut harness, "Das Bild ist größer als 5 MB.");
 
     let png = config.dir.join("bild.png");
     image::RgbaImage::from_pixel(40, 20, image::Rgba([200, 40, 40, 255]))
@@ -325,4 +343,236 @@ fn files_are_checked_by_their_first_bytes() {
     assert_eq!(sniff(b"GIF89a"), None);
     assert_eq!(sniff(b"<svg/>"), None);
     assert_eq!(sniff(b"RIFF\0\0\0\0WAVE"), None);
+}
+
+/// The hint says what the app takes: a file dropped on the window, not a
+/// pasted image (the web's hint ends on pasting).
+#[test]
+fn the_hint_offers_dropping_and_a_dropped_image_attaches() {
+    let config = TempConfig::new("feedback-drop");
+    let api = api(0, Arc::default());
+    let mut harness = launcher(&api, &format!("/s/{HOME}"));
+    open_dialog(&mut harness);
+    harness.get_by_label(
+        "PNG, JPEG oder WebP, höchstens 5 MB. Du kannst ein Bild auch hierher ziehen.",
+    );
+    let png = config.dir.join("bild.png");
+    image::RgbaImage::from_pixel(40, 20, image::Rgba([200, 40, 40, 255]))
+        .save(&png)
+        .expect("png");
+    drop_file(&mut harness, png);
+    wait_for(&mut harness, "the image", |h| {
+        h.query_by_role_and_label(Role::Image, "Angehängtes Bild")
+            .is_some()
+            && h.query_by_role_and_label(Role::Status, "Bild angehängt.")
+                .is_some()
+    });
+}
+
+/// A drop on the dialog is the dialog's: the chat's composer under it
+/// takes nothing.
+#[test]
+fn a_drop_on_the_dialog_does_not_reach_the_composer_under_it() {
+    let config = TempConfig::new("feedback-drop-chat");
+    // Lena may write and send files in allgemein.
+    let api = FakeApi::start(true, |method, path, _| match (method, path) {
+        ("GET", "/feedback/status") => Some(Reply::json(json!({"enabled": true, "unread": 0}))),
+        ("GET", p) if p == format!("/servers/{HOME}") => workspace(method, path).map(|mut r| {
+            r.body["permissions"] = json!(["manage_server", "send_messages", "send_files"]);
+            r
+        }),
+        _ => workspace(method, path),
+    });
+    let mut harness = launcher(
+        &api,
+        &format!("/s/{HOME}/c/{}", crate::app::testkit::ALLGEMEIN),
+    );
+    wait_for_label(&mut harness, "Datei anhängen");
+    open_dialog(&mut harness);
+    let png = config.dir.join("bild.png");
+    image::RgbaImage::from_pixel(40, 20, image::Rgba([200, 40, 40, 255]))
+        .save(&png)
+        .expect("png");
+    drop_file(&mut harness, png);
+    wait_for_label(&mut harness, "Bild entfernen");
+    harness.run_steps(20);
+    harness
+        .get_by_role_and_label(Role::Button, "Abbrechen")
+        .click();
+    wait_for(&mut harness, "closed", |h| {
+        h.query_by_label("Wird mitgeschickt").is_none()
+    });
+    harness.run_steps(20);
+    assert!(harness.query_by_label("Anhang entfernen").is_none());
+    assert!(harness.query_by_label_contains("bild.png").is_none());
+}
+
+/// A send runs on when the dialog closes: the toast with "Ansehen", the
+/// empty draft and a fresh status follow. A dialog opened again meanwhile
+/// shows "Senden" pending and sends nothing twice.
+#[test]
+fn a_send_finishes_after_the_dialog_closed() {
+    let _config = TempConfig::new("feedback-send-closed");
+    let posts: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = Mutex::new(gate);
+    let kept = posts.clone();
+    let api = FakeApi::start(true, move |method, path, body| match (method, path) {
+        ("GET", "/feedback/status") => Some(Reply::json(json!({"enabled": true, "unread": 0}))),
+        ("POST", "/feedback") => {
+            kept.lock().push((path.to_owned(), body.to_owned()));
+            let _ = gate.lock().recv();
+            Some(Reply::status(201, entry()))
+        }
+        _ => workspace(method, path),
+    });
+    let mut harness = launcher(&api, &format!("/s/{HOME}"));
+    open_dialog(&mut harness);
+    type_text(&mut harness, "Bitte dunkler.");
+    harness
+        .get_by_role_and_label(Role::Button, "Senden")
+        .click();
+    wait_for(&mut harness, "the send", |_| api.saw("POST /feedback"));
+    // "Wird gesendet…" is wider: "Abbrechen" moves once it shows.
+    wait_for(&mut harness, "pending", |h| {
+        submit_label(h).as_deref() == Some("Wird gesendet…")
+    });
+    harness
+        .get_by_role_and_label(Role::Button, "Abbrechen")
+        .click();
+    wait_for(&mut harness, "closed while sending", |h| {
+        h.query_by_label("Wird mitgeschickt").is_none()
+    });
+
+    // Opened again while it sends: "Wird gesendet…", and a press sends
+    // nothing more.
+    open_dialog(&mut harness);
+    assert_eq!(submit_label(&harness).as_deref(), Some("Wird gesendet…"));
+    harness
+        .get_by_role_and_label(Role::Button, "Wird gesendet…")
+        .click();
+    harness.run_steps(5);
+    harness
+        .get_by_role_and_label(Role::Button, "Abbrechen")
+        .click();
+    wait_for(&mut harness, "closed again", |h| {
+        h.query_by_label("Wird mitgeschickt").is_none()
+    });
+
+    let reads = |api: &FakeApi| {
+        api.seen
+            .lock()
+            .iter()
+            .filter(|r| *r == "GET /feedback/status")
+            .count()
+    };
+    let before = reads(&api);
+    release.send(()).expect("release");
+    wait_for_label(&mut harness, "Danke! Dein Feedback ist angekommen.");
+    harness.get_by_role_and_label(Role::Button, "Ansehen");
+    wait_for(&mut harness, "the status read again", |_| {
+        reads(&api) > before
+    });
+    assert!(harness.query_by_label("Wird mitgeschickt").is_none());
+    assert_eq!(posts.lock().len(), 1);
+    open_dialog(&mut harness);
+    assert_eq!(submit_label(&harness).as_deref(), Some("Senden"));
+    assert_eq!(
+        text_field(&harness).accesskit_node().value().as_deref(),
+        Some("")
+    );
+}
+
+/// A dialog left open when the session ends neither opens again nor
+/// offers its draft to the next sign-in, the same account's included.
+#[test]
+fn a_dialog_left_open_stays_with_its_sign_in() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _config = TempConfig::new("feedback-sign-out");
+    let signed_in = Arc::new(AtomicBool::new(true));
+    let flag = signed_in.clone();
+    let api = FakeApi::start(true, move |method, path, _| {
+        let user = if flag.load(Ordering::SeqCst) {
+            crate::app::testkit::lena()
+        } else {
+            serde_json::Value::Null
+        };
+        match (method, path) {
+            ("GET", "/feedback/status") => Some(Reply::json(json!({"enabled": true, "unread": 0}))),
+            ("GET", "/auth/session") => {
+                Some(Reply::json(json!({"user": user, "csrf_token": "csrf"})))
+            }
+            ("POST", "/auth/logout") => {
+                flag.store(false, Ordering::SeqCst);
+                Some(Reply::json(json!({"csrf_token": "csrf"})))
+            }
+            ("POST", "/auth/login") => {
+                flag.store(true, Ordering::SeqCst);
+                Some(Reply::json(json!({
+                    "user": crate::app::testkit::lena(), "csrf_token": "csrf"
+                })))
+            }
+            _ => workspace(method, path),
+        }
+    });
+    let mut harness = launcher(&api, &format!("/s/{HOME}"));
+    open_dialog(&mut harness);
+    type_text(&mut harness, "Von der letzten Sitzung.");
+    harness.state_mut().app().unwrap().client().logout();
+    wait_for(&mut harness, "signed out", |_| {
+        !signed_in.load(Ordering::SeqCst)
+    });
+    wait_for_label(&mut harness, "E-Mail-Adresse");
+    assert!(harness.query_by_label("Wird mitgeschickt").is_none());
+    type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
+    type_into(&mut harness, "Passwort", "parity-pass-123");
+    harness
+        .get_by_role_and_label(Role::Button, "Anmelden")
+        .click();
+    wait_for(&mut harness, "the workspace", |h| {
+        h.query_by_label("Benutzermenü").is_some()
+    });
+    harness.run_steps(10);
+    assert!(harness.query_by_label("Wird mitgeschickt").is_none());
+    open_dialog(&mut harness);
+    assert_eq!(
+        text_field(&harness).accesskit_node().value().as_deref(),
+        Some("")
+    );
+}
+
+/// A refused context field has no control in the dialog: the form's line
+/// says it. A refused image from the server is said like one refused here.
+#[test]
+fn refusals_without_a_field_show_for_the_form() {
+    let _config = TempConfig::new("feedback-context-refused");
+    let refusal = Arc::new(Mutex::new(json!({"page": "invalid"})));
+    let answer = refusal.clone();
+    let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+        ("GET", "/feedback/status") => Some(Reply::json(json!({"enabled": true, "unread": 0}))),
+        ("POST", "/feedback/images") => Some(Reply::status(201, json!({"image": IMAGE}))),
+        ("POST", "/feedback") => Some(Reply::status(
+            422,
+            json!({"error": "validation_failed", "message": "x",
+                   "fields": answer.lock().clone()}),
+        )),
+        _ => workspace(method, path),
+    });
+    let mut harness = launcher(&api, &format!("/s/{HOME}"));
+    open_dialog(&mut harness);
+    type_text(&mut harness, "Hallo.");
+    harness
+        .get_by_role_and_label(Role::Button, "Senden")
+        .click();
+    let page = crate::rules::field_message("page", "invalid");
+    wait_for_label(&mut harness, &page);
+
+    *refusal.lock() = json!({"image": "invalid"});
+    harness
+        .get_by_role_and_label(Role::Button, "Senden")
+        .click();
+    wait_for_refusal(
+        &mut harness,
+        "Das Bild ließ sich nicht verwenden. Versuch ein anderes.",
+    );
 }

@@ -90,7 +90,8 @@ pub(super) struct Dialog {
     path: String,
     draft: Draft,
     errors: FormErrors,
-    /// "Bild angehängt." / "Bild ersetzt." for screen readers.
+    /// "Bild angehängt." / "Bild ersetzt.", or why an image was refused,
+    /// for screen readers (the web's polite status line).
     note: Option<&'static str>,
     sending: Option<Answer<FeedbackEntry>>,
     picking: Option<Picked>,
@@ -201,10 +202,12 @@ fn read(source: Source) -> Result<Attached, Refused> {
 }
 
 /// `sendFieldErrors`: a failed send under its fields, else for the form.
-fn send_errors(errors: &mut FormErrors, error: &ApiError) {
+/// Returns the image's refusal, which the status line also says.
+fn send_errors(errors: &mut FormErrors, error: &ApiError) -> Option<&'static str> {
     if error.status() == Some(413) {
-        errors.set_fields(vec![("image", texts::image_too_large().to_owned())]);
-        return;
+        let message = texts::image_too_large();
+        errors.set_fields(vec![("image", message.to_owned())]);
+        return Some(message);
     }
     let failure = Failure::from_api(error);
     if failure.code == "validation_failed" {
@@ -212,18 +215,36 @@ fn send_errors(errors: &mut FormErrors, error: &ApiError) {
         match failure.fields.get("text").map(String::as_str) {
             Some("required") => fields.push(("text", texts::text_required().to_owned())),
             Some("too_long") => fields.push(("text", texts::text_too_long().to_owned())),
+            Some("too_many") => fields.push(("text", texts::thread_full().to_owned())),
             Some(code) => fields.push(("text", field_message("text", code))),
             None => {}
         }
-        if failure.fields.contains_key("image") {
-            fields.push(("image", texts::image_invalid().to_owned()));
+        let image = failure
+            .fields
+            .contains_key("image")
+            .then(texts::image_invalid);
+        if let Some(message) = image {
+            fields.push(("image", message.to_owned()));
         }
         if !fields.is_empty() {
             errors.set_fields(fields);
-            return;
+            return image;
         }
     }
     errors.from_failure(&failure, &["text", "image"]);
+    None
+}
+
+/// The form's line: its own error, else a refused field the dialog has no
+/// control for (a context field such as `page`), as the web's `otherError`.
+fn form_error(errors: &FormErrors) -> Option<&str> {
+    errors.form.as_deref().or_else(|| {
+        errors
+            .fields
+            .iter()
+            .find(|(field, _)| !matches!(field.as_str(), "text" | "image"))
+            .map(|(_, message)| message.as_str())
+    })
 }
 
 /// Takes what finished: a chosen file, a read image, a send. Runs every
@@ -255,7 +276,8 @@ fn take(ctx: &egui::Context, app: &mut AppCtx, s: &mut State) {
                 d.draft.image = Some(image);
             }
             Err(refused) => {
-                d.note = None;
+                // Shown under the button and said by the status line.
+                d.note = Some(refused.message());
                 d.errors
                     .set_fields(vec![("image", refused.message().to_owned())]);
             }
@@ -277,7 +299,11 @@ fn take(ctx: &egui::Context, app: &mut AppCtx, s: &mut State) {
                 s.sent += 1;
                 ctx.request_repaint();
             }
-            Err(error) => send_errors(&mut d.errors, &error),
+            Err(error) => {
+                if let Some(refused) = send_errors(&mut d.errors, &error) {
+                    d.note = Some(refused);
+                }
+            }
         }
     }
 }
@@ -285,8 +311,11 @@ fn take(ctx: &egui::Context, app: &mut AppCtx, s: &mut State) {
 /// The dialog, while open; call once per frame from the shell.
 pub fn show(ctx: &egui::Context, app: &mut AppCtx) {
     let unread = super::unread(ctx, app);
+    let account = super::account(app);
     let state = super::shared(ctx);
     let mut s = state.lock();
+    // Signed out, or another sign-in: nothing of the last one stays.
+    super::follow_account(&mut s, account);
     take(ctx, app, &mut s);
     if !s.dialog.open {
         return;
@@ -539,7 +568,7 @@ fn body(ui: &mut Ui, d: &mut Dialog, unread: u32) -> Action {
 
     sent_along(ui, d);
 
-    if let Some(message) = &d.errors.form {
+    if let Some(message) = form_error(&d.errors) {
         ui.add(FormError::new(message).on(c.elevated));
     }
 

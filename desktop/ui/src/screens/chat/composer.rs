@@ -114,9 +114,13 @@ fn suggestions_for(state: &ComposerState, input: &ComposerInput) -> Vec<Suggesti
 }
 
 /// Files hover the window while they are dragged over it: the pane says
-/// where they go ("Loslassen zum Anhängen").
+/// where they go ("Loslassen zum Anhängen"). Not under a dialog: a drop
+/// there is the dialog's.
 pub fn dropping(ctx: &egui::Context, input: &ComposerInput) -> bool {
-    input.can_send && input.can_send_files && ctx.input(|i| !i.raw.hovered_files.is_empty())
+    input.can_send
+        && input.can_send_files
+        && ctx.input(|i| !i.raw.hovered_files.is_empty())
+        && !crate::widgets::modal::any_open(ctx)
 }
 
 const NOTE: TextStyle = TextStyle::new(12.0, 400.0, 1.5);
@@ -806,8 +810,13 @@ pub fn show(
         state.focus = true;
     }
     if input.can_send_files {
-        // Files dropped on the window attach like the paperclip.
-        let dropped = ui.input(|i| i.raw.dropped_files.clone());
+        // Files dropped on the window attach like the paperclip, unless a
+        // dialog covers the chat.
+        let dropped = if crate::widgets::modal::any_open(ui.ctx()) {
+            Vec::new()
+        } else {
+            ui.input(|i| i.raw.dropped_files.clone())
+        };
         for file in dropped {
             sources.push(files::Source::Path(file.path().to_path_buf()));
             state.focus = true;

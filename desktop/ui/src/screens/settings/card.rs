@@ -497,7 +497,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         }
     }
     if s.running.is_none()
-        && let Some(file) = controls::dropped_image(ui.ctx())
+        && let Some(file) = controls::dropped_image_on_page(ui.ctx())
     {
         prepare_banner(ui.ctx(), s, file);
     }

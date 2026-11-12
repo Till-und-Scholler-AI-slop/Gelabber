@@ -38,9 +38,14 @@ struct StatusCache {
     again: bool,
 }
 
+/// The signed-in account and the store's epoch, which every sign-out
+/// moves: the web's `scopeGeneration`, so that the same account signing in
+/// again starts afresh too.
+type Scope = (Uuid, u64);
+
 #[derive(Default)]
 struct State {
-    account: Option<Uuid>,
+    account: Option<Scope>,
     status: StatusCache,
     dialog: dialog::Dialog,
     /// Entries sent from the dialog so far: Einstellungen → Feedback reads
@@ -63,12 +68,14 @@ fn with<R>(ctx: &egui::Context, f: impl FnOnce(&mut State) -> R) -> R {
     f(&mut s)
 }
 
-fn account(app: &AppCtx) -> Option<Uuid> {
-    app.client.with_state(|s| s.me().map(|m| m.id))
+fn account(app: &AppCtx) -> Option<Scope> {
+    app.client.with_state(|s| s.me().map(|m| (m.id, s.epoch())))
 }
 
-/// Another account: its status and its draft are not this one's.
-fn follow_account(s: &mut State, account: Option<Uuid>) {
+/// Another sign-in (`dropStaleFeedbackDialog`): its status, its dialog and
+/// its draft, and a send on its way, are not this one's. A dialog left open
+/// when the session ended does not open again for the next account.
+fn follow_account(s: &mut State, account: Option<Scope>) {
     if s.account != account {
         *s = State {
             account,

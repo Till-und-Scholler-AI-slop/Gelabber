@@ -200,4 +200,4 @@ pub fn quiet(theme: &Theme) -> Color32 {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
