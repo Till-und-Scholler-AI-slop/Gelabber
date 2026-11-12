@@ -494,7 +494,11 @@
   }
 }
 
-/* Feedback: one card per entry; its header opens it. */
+/* Feedback: one card per entry; its header opens it. The two filter
+   groups stand apart. */
+.operator-toolbar--feedback {
+  column-gap: var(--lr-space-6);
+}
 .operator-feedback-list {
   display: flex;
   flex-direction: column;
@@ -530,6 +534,10 @@
 }
 .operator-feedback-head:hover {
   background: var(--lr-hover);
+}
+.operator-feedback.is-open .operator-feedback-head {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
 }
 .operator-feedback-head:focus-visible {
   outline: 2px solid var(--lr-focus);

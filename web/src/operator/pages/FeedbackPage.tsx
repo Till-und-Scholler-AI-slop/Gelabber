@@ -82,7 +82,7 @@ export function FeedbackPage({ entry }: { entry?: string }) {
       {entry ? (
         <MailEntry key={entry} id={entry} mail={mail} refresh={refresh} />
       ) : null}
-      <div className="operator-toolbar">
+      <div className="operator-toolbar operator-toolbar--feedback">
         <ChipGroup
           label={t("feedback.statusLabel")}
           options={FEEDBACK_STATUSES.map((value) => ({
@@ -144,7 +144,7 @@ function MailEntry({
   const box = useRef<HTMLElement>(null);
   const loaded = query.data !== undefined;
   useEffect(() => {
-    if (loaded) box.current?.scrollIntoView?.({ block: "start" });
+    if (loaded && box.current) revealInPage(box.current);
   }, [loaded]);
   const gone =
     query.error instanceof ApiError && query.error.code === "not_found";
@@ -185,6 +185,22 @@ function MailEntry({
       )}
     </section>
   );
+}
+
+/** Room above the mail's entry once it is scrolled to. */
+const MAIL_ENTRY_MARGIN = 16;
+
+/**
+ * Scrolls the page's own scroller until `element` starts in view. Not
+ * `scrollIntoView`, which also scrolls the shell and hides a phone's top bar.
+ */
+function revealInPage(element: HTMLElement) {
+  const scroller = element.closest(".operator-scroll");
+  if (!scroller) return;
+  const top =
+    element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  if (top < 0 || top > scroller.clientHeight / 2)
+    scroller.scrollTop += top - MAIL_ENTRY_MARGIN;
 }
 
 /**
