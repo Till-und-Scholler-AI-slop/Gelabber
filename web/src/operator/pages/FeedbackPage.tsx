@@ -13,7 +13,7 @@ import { ImageIcon } from "../../components/Icons.tsx";
 import { ImageLightbox } from "../../components/ImageLightbox.tsx";
 import { LoadError } from "../../components/LoadError.tsx";
 import { SubmitButton } from "../../components/SubmitButton.tsx";
-import { notify } from "../../components/toasts.ts";
+import { notify, notifyError } from "../../components/toasts.ts";
 import { Badge } from "../../components/ui/Badge.tsx";
 import { Button } from "../../components/ui/Button.tsx";
 import { ChipGroup } from "../../components/ui/ChipGroup.tsx";
@@ -64,7 +64,9 @@ const WHEN: Intl.DateTimeFormatOptions = {
 
 export function FeedbackPage({ entry }: { entry?: string }) {
   const t = useT(operator);
-  const mail = useOperatorOverview().data?.mail ?? false;
+  const overview = useOperatorOverview();
+  // Unknown until the overview is in: no reply form is offered or refused.
+  const mail = overview.data?.mail ?? (overview.isError ? false : undefined);
   const refresh = useOperatorRefresh();
   const [status, setStatus] = useState<FeedbackListStatus>("open");
   const [kind, setKind] = useState<FeedbackKindFilter>("all");
@@ -135,7 +137,7 @@ function MailEntry({
   refresh,
 }: {
   id: string;
-  mail: boolean;
+  mail: boolean | undefined;
   refresh: () => void;
 }) {
   const t = useT(operator);
@@ -215,8 +217,8 @@ export function FeedbackCard({
   onDeleted,
 }: {
   entry: OperatorFeedback;
-  /** Account mail is on (`GET /api/operator`). */
-  mail: boolean;
+  /** Account mail is on (`GET /api/operator`); undefined until known. */
+  mail: boolean | undefined;
   refresh: () => void;
   defaultOpen?: boolean;
   onDeleted?: () => void;
@@ -229,7 +231,7 @@ export function FeedbackCard({
   return (
     <article
       className={`operator-feedback${open ? " is-open" : ""}`}
-      aria-labelledby={`${id}-head`}
+      aria-labelledby={`${id}-line`}
     >
       <h3 className="operator-feedback-heading">
         <button
@@ -238,9 +240,11 @@ export function FeedbackCard({
           className="operator-feedback-head"
           aria-expanded={open}
           aria-controls={open ? bodyId : undefined}
+          // Named by its line only: the excerpt can be 4,000 characters.
+          aria-labelledby={`${id}-line`}
           onClick={() => setOpen((value) => !value)}
         >
-          <span className="operator-feedback-line">
+          <span id={`${id}-line`} className="operator-feedback-line">
             <Badge>{t(`feedback.kind.${entry.kind}`)}</Badge>
             <span className="operator-feedback-sender">
               {entry.sender.type === "deleted" ? (
@@ -288,7 +292,9 @@ export function FeedbackCard({
               ))}
             </ol>
           ) : null}
-          <ReplyForm entry={entry} mail={mail} refresh={refresh} />
+          {mail === undefined ? null : (
+            <ReplyForm entry={entry} mail={mail} refresh={refresh} />
+          )}
           <EntryActions entry={entry} refresh={refresh} onDeleted={onDeleted} />
         </div>
       ) : null}
@@ -395,7 +401,8 @@ function ReplyForm({
   const [pending, setPending] = useState(false);
   const { errors, clearField, setFields, fromError, cooldown } =
     useFormErrors(form);
-  const fieldId = `operator-feedback-reply-${entry.id}`;
+  // The mail's entry can be open in the list too: ids stay apart.
+  const fieldId = `operator-feedback-reply-${useId()}`;
   const { form: shown, note } = replyNote(entry, mail);
   if (!shown) return <p className="operator-notice">{note}</p>;
 
@@ -413,7 +420,10 @@ function ReplyForm({
       notify(t("toasts.feedbackReplied"));
     } catch (error) {
       const fields = sendFieldErrors(error);
-      if (fields) setFields(fields);
+      // Deleted meanwhile: the refresh takes the card, so a toast says it.
+      if (error instanceof ApiError && error.code === "not_found")
+        notifyError(error, undefined, t("toasts.feedbackGone"));
+      else if (fields) setFields(fields);
       else fromError(error);
     } finally {
       setPending(false);

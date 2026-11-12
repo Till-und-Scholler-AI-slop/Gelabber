@@ -75,7 +75,14 @@ export function authorName(
 ): string {
   if (message.from === "person" && entry.sender.type === "visitor")
     return translate(operator, "feedback.visitor");
-  return message.author?.name ?? translate(operator, "feedback.deleted");
+  if (message.author) return message.author.name;
+  // A gone operator's reply stays told apart from the sender's messages.
+  return translate(
+    operator,
+    message.from === "operator"
+      ? "feedback.deletedOperator"
+      : "feedback.deleted",
+  );
 }
 
 /**

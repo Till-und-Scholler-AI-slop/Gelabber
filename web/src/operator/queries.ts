@@ -14,6 +14,7 @@ import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import { useSession } from "../auth/store.ts";
 import * as remote from "./api.ts";
 import { ApiError } from "../api/client.ts";
+import { mailPendingRefetch } from "./feedbackMail.ts";
 import type {
   AccountQuery,
   FeedbackQuery,
@@ -124,6 +125,8 @@ export function useOperatorFeedback(query: FeedbackQuery) {
     queryFn: ({ signal }) => remote.listFeedback(query, signal),
     enabled,
     placeholderData: keepPreviousData,
+    refetchInterval: ({ state }) =>
+      mailPendingRefetch(state.data?.entries ?? []),
   });
 }
 
@@ -134,6 +137,8 @@ export function useOperatorFeedbackEntry(id: string | undefined) {
     queryKey: operatorKeys.feedbackEntry(userId, generation, id ?? ""),
     queryFn: ({ signal }) => remote.getFeedback(id ?? "", signal),
     enabled: enabled && id !== undefined,
+    refetchInterval: ({ state }) =>
+      mailPendingRefetch(state.data ? [state.data] : []),
     // A deleted entry stays deleted; say so at once.
     retry: (count, error) =>
       count < 2 && !(error instanceof ApiError && error.code === "not_found"),

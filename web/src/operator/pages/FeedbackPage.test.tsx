@@ -189,7 +189,15 @@ describe("Feedback page", () => {
     expect(text(cards[2] ?? "")).toMatch(/^Lob Gelöschtes Konto Antwort offen/);
     // Closed: a header button, nothing behind it yet.
     expect(cards[0]).toMatch(
-      /<button type="button" id="[^"]+-head" class="operator-feedback-head" aria-expanded="false">/,
+      /<button type="button" id="[^"]+-head" class="operator-feedback-head" aria-expanded="false" aria-labelledby="([^"]+-line)">/,
+    );
+    // Named by its line, not by the excerpt of up to 4,000 characters.
+    const line = /aria-labelledby="([^"]+-line)"/.exec(cards[0] ?? "")?.[1];
+    expect(cards[0]).toContain(
+      `<span id="${line}" class="operator-feedback-line">`,
+    );
+    expect(cards[0]).toMatch(
+      new RegExp(`^<article[^>]*aria-labelledby="${line}"`),
     );
     expect(html).not.toContain("operator-feedback-body");
     expect(html).toContain('class="operator-feedback-excerpt"');
@@ -321,6 +329,10 @@ describe("an open feedback card", () => {
     );
     // The note describes the field.
     expect(card()).toMatch(/<textarea[^>]*aria-describedby="[^"]+-hint"/);
+    // Until GET /api/operator is in, neither the form nor the refusal.
+    const unknown = card({ entry: visitor, mail: undefined });
+    expect(unknown).not.toContain("<textarea");
+    expect(unknown).not.toContain("Ohne Account-Mail");
   });
 
   it("offers Erledigt on an open entry and Wieder öffnen on a done one", () => {
