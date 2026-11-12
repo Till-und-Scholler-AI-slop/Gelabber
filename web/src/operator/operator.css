@@ -609,7 +609,7 @@
   margin-top: 0;
 }
 .operator-feedback-details code {
-  font-family: var(--lr-font-mono, monospace);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 .operator-feedback-thread {
   display: flex;
