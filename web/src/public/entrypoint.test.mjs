@@ -604,6 +604,24 @@ describe.skipIf(process.platform === "win32")("public pages at start", () => {
         expect(result.read(file), file).not.toContain("/feedback");
     });
 
+    it("is dropped, and unlinked, when the landing page cannot be written", () => {
+      const broken = brokenTemplates();
+      writeFileSync(join(broken, "en", "index.html"), "<!--end:X-->\n");
+      const result = publish({
+        ...ON,
+        ...OPERATOR,
+        GELABBER_PUBLIC_TEMPLATES: broken,
+      });
+      expect(result.log).toMatch(/cannot write the landing page/);
+      expect(result.files).not.toContain("de/index.html");
+      expect(written(result)).toEqual([]);
+      for (const file of result.files)
+        expect(result.read(file), file).not.toContain("/feedback");
+      expect(result.log.trim().split("\n").at(-1)).toMatch(
+        /published: imprint$/,
+      );
+    });
+
     it("keeps crawlers off the form while the landing page is on", () => {
       const robots = publish(ON).read("robots.txt").split("\n");
       expect(robots).toContain("Disallow: /de/feedback");

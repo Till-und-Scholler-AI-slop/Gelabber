@@ -295,6 +295,7 @@ done
 # only is shown under both, with a notice in the other. A page that cannot be
 # written is dropped and the others rendered again, so none links to it.
 # PAGE_FEEDBACK is set first: the legal pages and the landing page link it.
+# The landing page comes last, with the final flags.
 while :; do
     for page in $LEGAL_PAGES; do
         case " $published " in
@@ -349,20 +350,28 @@ while :; do
             dropped=1
         fi
     fi
+    # The landing page links both. Without it the form is dropped too: the
+    # landing page is its front door.
+    if [ "$landing" = true ] && ! { render de index && render en index; }; then
+        rm -f "$OUT/de/index.html" "$OUT/en/index.html"
+        landing=false
+        log "warning: cannot write the landing page to $OUT; it is not published $SEE"
+        if [ "$feedback" = true ]; then
+            rm -rf "$OUT/de/feedback.html" "$OUT/de/feedback" \
+                "$OUT/en/feedback.html" "$OUT/en/feedback"
+            log "the feedback form is not published: the landing page is off $SEE"
+            feedback=false
+            dropped=1
+        fi
+    fi
     [ -n "$dropped" ] || break
 done
 
 if [ "$landing" = true ]; then
-    if render de index && render en index; then
-        case " $published " in
-        *" imprint "*) ;;
-        *) log "warning: the landing page is published without an Impressum $SEE" ;;
-        esac
-    else
-        rm -f "$OUT/de/index.html" "$OUT/en/index.html"
-        landing=false
-        log "warning: cannot write the landing page to $OUT; it is not published $SEE"
-    fi
+    case " $published " in
+    *" imprint "*) ;;
+    *) log "warning: the landing page is published without an Impressum $SEE" ;;
+    esac
 fi
 
 # /public-pages.json, read by the sign-in pages and the desktop app.
