@@ -23,7 +23,7 @@ use crate::task::{Pending, poll};
 /// the person anyway.
 const STALE: Duration = Duration::from_secs(5 * 60);
 
-type Answer<T> = Pending<Result<T, ApiError>>;
+pub(crate) type Answer<T> = Pending<Result<T, ApiError>>;
 
 /// `GET /api/feedback/status` for the signed-in account.
 #[derive(Default)]
@@ -43,6 +43,9 @@ struct State {
     account: Option<Uuid>,
     status: StatusCache,
     dialog: dialog::Dialog,
+    /// Entries sent from the dialog so far: Einstellungen → Feedback reads
+    /// its list again when this moves (the web invalidates the list).
+    sent: u64,
 }
 
 fn shared(ctx: &egui::Context) -> Arc<Mutex<State>> {
@@ -164,6 +167,12 @@ fn stale(status: &mut StatusCache) {
     } else {
         status.read_at = None;
     }
+}
+
+/// How many entries the dialog has sent: a list read before a change of
+/// this number is out of date.
+pub fn sent(ctx: &egui::Context) -> u64 {
+    with(ctx, |s| s.sent)
 }
 
 /// "Feedback geben": opens the dialog on the page shown now, with the draft

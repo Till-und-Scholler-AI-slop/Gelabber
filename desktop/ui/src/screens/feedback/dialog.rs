@@ -274,6 +274,7 @@ fn take(ctx: &egui::Context, app: &mut AppCtx, s: &mut State) {
                     "/settings/feedback",
                 );
                 super::stale(&mut s.status);
+                s.sent += 1;
                 ctx.request_repaint();
             }
             Err(error) => send_errors(&mut d.errors, &error),
@@ -766,7 +767,7 @@ fn sent_along(ui: &mut Ui, d: &mut Dialog) {
 }
 
 /// Chromium's `▼` / `▶` marker in front of a summary of `line` height.
-fn triangle(painter: &egui::Painter, min: Pos2, line: f32, open: bool, color: Color32) {
+pub(crate) fn triangle(painter: &egui::Painter, min: Pos2, line: f32, open: bool, color: Color32) {
     let cy = min.y + line / 2.0;
     let x = min.x + 1.0;
     let points = if open {

@@ -2,7 +2,7 @@
 //! composer (web components/MessagePane.tsx, pages/ChannelPage.tsx,
 //! pages/DmChannelPage.tsx).
 
-mod attachments;
+pub(crate) mod attachments;
 pub mod clipboard;
 mod composer;
 mod content;
