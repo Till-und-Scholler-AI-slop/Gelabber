@@ -157,6 +157,14 @@ crate::strings! {
     user_panel_operator = "Betrieb" | "Operations";
     /// The rail's tile to the directory, while the instance runs one.
     rail_discover = "Entdecken" | "Discover";
+    /// The user menu's item to the feedback dialog, while the instance
+    /// takes feedback (#542).
+    user_panel_feedback = "Feedback geben" | "Give feedback";
+    /// The item's accessible suffix while a reply is unread.
+    user_panel_feedback_unread = "neue Antwort auf dein Feedback" | "new reply to your feedback";
+    /// The chevron's accessible label while a reply is unread.
+    user_panel_menu_unread_label = "Benutzermenü, neue Antwort auf dein Feedback"
+        | "User menu, new reply to your feedback";
 }
 
 /// The desktop app's own: the server turned the upgrade down, with why
