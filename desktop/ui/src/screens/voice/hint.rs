@@ -5,6 +5,7 @@
 //! it and watches (or, in another call, opens it).
 
 use egui::{Id, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
+use gelabber_i18n::voice as texts;
 use uuid::Uuid;
 
 use super::{session, summary};
@@ -33,7 +34,7 @@ fn entries(app: &AppCtx, server: Uuid) -> (Vec<Entry>, bool, Option<(Uuid, Uuid)
         let name_of = |u: &Uuid| {
             detail
                 .and_then(|d| d.members.iter().find(|m| m.user_id == *u))
-                .map_or("Jemand".to_owned(), |m| m.name.clone())
+                .map_or(texts::people_someone().to_owned(), |m| m.name.clone())
         };
         let allowed = s
             .server(server)
@@ -48,7 +49,7 @@ fn entries(app: &AppCtx, server: Uuid) -> (Vec<Entry>, bool, Option<(Uuid, Uuid)
                         let own = me.is_some_and(|m| people.contains(&m));
                         let mut who: Vec<String> = Vec::new();
                         if own {
-                            who.push("Du".into());
+                            who.push(summary::you_name());
                         }
                         who.extend(people.iter().filter(|u| Some(**u) != me).map(name_of));
                         Entry {
@@ -92,20 +93,17 @@ fn measure(ui: &Ui, app: &AppCtx, server: Uuid, max_width: f32) -> Option<Pill> 
     let style = TextStyle::new(12.0, 400.0, 1.5);
     let badge = Block::single(ui, "LIVE", badge_style, c.on_live);
     let more = list.len() - 1;
-    let place = first
-        .name
-        .as_ref()
-        .map(|n| format!(" in {n}"))
-        .unwrap_or_default();
-    let link_text = format!(
-        "{}{place}{}",
-        summary::name_list(&first.who),
-        if more > 0 {
-            format!(" +{more}")
-        } else {
-            String::new()
-        }
-    );
+    let who = summary::name_list(&first.who);
+    let sentence = summary::live_sentence(&first.who, first.own);
+    let (who, title) = match &first.name {
+        Some(n) => (texts::hint_in(&who, n), texts::hint_in(&sentence, n)),
+        None => (who, sentence),
+    };
+    let link_text = if more > 0 {
+        format!("{who} +{more}")
+    } else {
+        who
+    };
     let action = (!first.here && allowed && !first.others.is_empty()).then_some(watch_label(
         joined,
         server,
@@ -126,7 +124,7 @@ fn measure(ui: &Ui, app: &AppCtx, server: Uuid, max_width: f32) -> Option<Pill> 
     Some(Pill {
         channel: first.channel,
         others: first.others.clone(),
-        title: format!("{}{place}", summary::live_sentence(&first.who, first.own)),
+        title,
         badge,
         link,
         link_text,
@@ -197,8 +195,8 @@ pub(crate) fn watch_label(
     channel: Uuid,
 ) -> &'static str {
     match joined {
-        Some(here) if here != (server, channel) => "Zum Kanal",
-        _ => "Zuschauen",
+        Some(here) if here != (server, channel) => texts::watch_to_channel(),
+        _ => texts::watch_watch(),
     }
 }
 
@@ -329,17 +327,25 @@ pub fn strip(ui: &mut Ui, app: &mut AppCtx, server: Uuid, rect: Rect) {
         paint_mid(&painter, &badge, b.left() + 6.0, b.center().y);
         x = b.right() + 8.0;
         let sentence = summary::live_sentence(&entry.who, entry.own);
-        let text = Block::single(ui, &sentence, STRIP, c.text);
-        paint_mid(&painter, &text, x, mid);
-        x += text.width();
-        if let Some(name) = &entry.name {
-            let lead = Block::single(ui, " in ", STRIP, c.text);
-            paint_mid(&painter, &lead, x, mid);
-            x += lead.width();
-            let link = Block::single(ui, name, STRIP.weight(600.0), c.text);
+        // The template is split before the names go in, so a name cannot
+        // add a link.
+        let template = match &entry.name {
+            Some(_) => texts::hint_sentence_in("{sentence}", "{channel}"),
+            None => texts::hint_sentence("{sentence}"),
+        };
+        for piece in gelabber_i18n::pieces(&template) {
+            let Some(name) = entry.name.as_ref().filter(|_| piece.tag.is_some()) else {
+                let text = piece.text.replace("{sentence}", &sentence);
+                let block = Block::single(ui, &text, STRIP, c.text);
+                paint_mid(&painter, &block, x, mid);
+                x += block.width();
+                continue;
+            };
+            let name = piece.text.replace("{channel}", name);
+            let link = Block::single(ui, &name, STRIP.weight(600.0), c.text);
             let r = Rect::from_min_size(pos2(x, mid - 10.0), vec2(link.width(), 20.0));
             let response = common::click(ui, r, Id::unique(("live-strip-link", entry.channel)));
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, name));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, &name));
             paint_mid(&painter, &link, x, mid);
             // `text-underline-offset: 2px`.
             painter.hline(
@@ -353,8 +359,6 @@ pub fn strip(ui: &mut Ui, app: &mut AppCtx, server: Uuid, rect: Rect) {
             }
             x += link.width();
         }
-        let stop = Block::single(ui, ".", STRIP, c.text);
-        paint_mid(&painter, &stop, x, mid);
         if !entry.here && allowed && !entry.others.is_empty() {
             let label = watch_label(joined, server, entry.channel);
             let style = TextStyle::new(12.0, 650.0, 1.5);

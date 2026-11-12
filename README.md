@@ -50,7 +50,8 @@ friends. What that means for you:
 - Releases are frequent; see the
   [release notes](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases).
   Each one says what was checked and what was not.
-- The interface is German today. English is being added in v0.10.
+- Both clients, web and desktop, speak German and English; each account
+  chooses its language.
 - Calls with more than a handful of people and communities beyond the
   authors' own have not been measured.
 - The Windows installer is not code-signed, so SmartScreen warns on the

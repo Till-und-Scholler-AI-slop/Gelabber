@@ -66,9 +66,9 @@ impl Presence {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Online => "Online",
-            Self::Away => "Abwesend",
-            Self::Offline => "Offline",
+            Self::Online => gelabber_i18n::common::online(),
+            Self::Away => gelabber_i18n::chat::presence_away(),
+            Self::Offline => gelabber_i18n::common::offline(),
         }
     }
 }

@@ -114,7 +114,7 @@ impl super::Backend for Backend {
 
     fn show(&self, notice: Notice) -> Result<(), String> {
         if self.state(Duration::ZERO) == Some(false) {
-            return Err("no notification service on the session bus".into());
+            return Err("no notification service on the session bus".into()); // i18n-ok
         }
         self.send(Command::Show(notice));
         Ok(())
@@ -149,7 +149,7 @@ fn connect(bus: Option<String>) -> Result<(Connection, bool, bool), String> {
     let capabilities: Vec<String> = conn
         .call_method(Some(SERVICE), PATH, Some(SERVICE), "GetCapabilities", &())
         .and_then(|m| m.body().deserialize())
-        .map_err(|e| format!("no notification service: {e}"))?;
+        .map_err(|e| format!("no notification service: {e}"))?; // i18n-ok
     let can = |what: &str| capabilities.iter().any(|c| c == what);
     Ok((conn.clone(), can("body-markup"), can("actions")))
 }
@@ -255,7 +255,7 @@ fn work(
                     notice.body.clone()
                 };
                 let actions: Vec<&str> = if actions {
-                    vec!["default", "Öffnen"]
+                    vec!["default", gelabber_i18n::app::notify_open()]
                 } else {
                     Vec::new()
                 };

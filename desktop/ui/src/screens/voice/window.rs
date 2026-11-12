@@ -12,7 +12,9 @@ use gelabber_call::{Call, CallStatus, VideoKey};
 use super::video::{self, Fit};
 
 /// What the tile says when its window did not open.
-pub const FAILED: &str = "Das Videofenster konnte nicht geöffnet werden.";
+pub fn failed_text() -> &'static str {
+    gelabber_i18n::voice::window_failed()
+}
 
 #[derive(Clone, Default)]
 struct Windows {
@@ -59,6 +61,19 @@ pub fn toggle(ctx: &egui::Context, key: VideoKey, label: &str) {
         w.failed = None;
         if w.open.remove(&key).is_none() {
             w.open.insert(key, title(label));
+        }
+    });
+}
+
+/// Keeps an open window's title in the interface's language: its tile
+/// passes its label each time it draws.
+pub fn retitle(ctx: &egui::Context, key: VideoKey, label: &str) {
+    with(ctx, |w| {
+        if let Some(open) = w.open.get_mut(&key) {
+            let now = title(label);
+            if *open != now {
+                *open = now;
+            }
         }
     });
 }
@@ -223,6 +238,18 @@ mod tests {
             Some("Jonas — Live – Gelabber")
         );
         assert!(is_open(&harness.ctx, key));
+        // The tile's label in another language retitles the open window.
+        retitle(&harness.ctx, key, "Jonas — Live (English)");
+        harness.step();
+        let title_now = harness
+            .output()
+            .viewport_output
+            .get(&viewport_id(key))
+            .and_then(|o| o.builder.title.clone());
+        assert_eq!(
+            title_now.as_deref(),
+            Some("Jonas — Live (English) – Gelabber")
+        );
         // "Fenster schließen" takes it away again.
         toggle(&harness.ctx, key, "Jonas — Live");
         harness.step();
@@ -248,7 +275,10 @@ mod tests {
         harness.step();
         assert!(failed(&harness.ctx, key));
         assert!(!is_open(&harness.ctx, key));
-        assert_eq!(FAILED, "Das Videofenster konnte nicht geöffnet werden.");
+        assert_eq!(
+            failed_text(),
+            "Das Videofenster konnte nicht geöffnet werden."
+        );
     }
 
     /// The camera going off, then the call ending, close the window: it

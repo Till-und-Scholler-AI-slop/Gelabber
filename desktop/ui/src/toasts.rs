@@ -86,7 +86,10 @@ pub fn error_text(error: &ApiError) -> Option<String> {
             return Some(detail.join(" "));
         }
     }
-    Some(crate::rules::error_message(code).to_owned())
+    Some(crate::rules::failure_message(
+        &crate::rules::Failure::from_api(error),
+        chrono::Utc::now(),
+    ))
 }
 
 #[derive(Default)]
@@ -291,7 +294,7 @@ impl Toasts {
                         Vec2::splat(32.0),
                     );
                     let button = ui.add(
-                        IconButton::new(Icon::Close, "Schließen")
+                        IconButton::new(Icon::Close, gelabber_i18n::common::close())
                             .size(32.0)
                             .at(close),
                     );

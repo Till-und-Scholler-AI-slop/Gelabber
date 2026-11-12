@@ -22,6 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use egui::{Color32, Context, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Vec2, pos2};
 use gelabber_client::Client;
+use gelabber_i18n::app as texts;
 use parking_lot::Mutex;
 use serde::Deserialize;
 
@@ -56,8 +57,9 @@ const MAX_DOWNLOAD: u64 = 512 << 20;
 /// in one, as media.rs `BUSY_AFTER`: a quick rejoin is not cut off.
 pub const BUSY_AFTER: Duration = Duration::from_secs(60);
 /// The Tauri app's refusal of an install during a call.
-pub const IN_CALL: &str =
-    "Während eines Anrufs startet Gelabber nicht neu. Das Update kommt nach dem Auflegen.";
+pub fn in_call() -> &'static str {
+    gelabber_i18n::app::update_in_call()
+}
 
 /// The releases' key, or the build's own (`GELABBER_UPDATER_PUBKEY`, CI
 /// test builds); the 0.8 Tauri apps check their updates with the same key.
@@ -166,10 +168,10 @@ pub fn verify(data: &[u8], signature: &str, pubkey: &str, version: &str) -> Resu
         .trusted_comment()
         .split('\t')
         .find_map(|field| field.strip_prefix("version:"))
-        .ok_or("signed without a version")?;
+        .ok_or_else(texts::update_signed_without_version)?;
     (signed.trim_start_matches('v') == version.trim_start_matches('v'))
         .then_some(())
-        .ok_or_else(|| format!("signed for {signed}, not {version}"))
+        .ok_or_else(|| texts::update_signed_for(signed, version))
 }
 
 /// `auto_check` of the Tauri app's `update.json`, on unless switched off.
@@ -212,16 +214,16 @@ pub struct SetupView {
 impl SetupView {
     /// setup.js `showUpdates`.
     pub fn line(&self) -> String {
-        let mut line = format!("Installiert: {}.", self.current);
+        let mut line = texts::update_line_installed(&self.current);
         if self.checking {
-            line += " Suche läuft …";
+            line += texts::update_line_checking();
         } else if let Some(available) = &self.available {
-            line += &format!(" Verfügbar: {available}.");
+            line += &texts::update_line_available(available);
         } else if self.checked {
-            line += " Das ist die neueste Version.";
+            line += texts::update_line_latest();
         }
         if let Some(error) = &self.error {
-            line += &format!(" Letzte Suche: {error}");
+            line += &texts::update_line_error(error);
         }
         line
     }
@@ -401,7 +403,7 @@ async fn download_capped(
     if !response.status().is_success() {
         return Err(format!("{}: {}", file_name(url), response.status()));
     }
-    let too_big = || format!("{}: das Update ist zu groß", file_name(url));
+    let too_big = || texts::update_too_large(&file_name(url));
     let total = response.content_length();
     if total.is_some_and(|total| total > cap) {
         return Err(too_big());
@@ -415,8 +417,7 @@ async fn download_capped(
         bytes.extend_from_slice(&chunk);
         progress(bytes.len() as u64, total);
     }
-    verify(&bytes, signature, pubkey, version)
-        .map_err(|e| format!("Die Signatur des Updates stimmt nicht: {e}"))?;
+    verify(&bytes, signature, pubkey, version).map_err(|e| texts::update_bad_signature(&e))?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join(file_name(url));
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
@@ -542,7 +543,7 @@ fn start_installer(installer: &Path, parameters: &str) -> Result<(), String> {
     };
     // Values up to 32 are errors.
     if result as isize <= 32 {
-        return Err(format!("ShellExecuteW: {}", result as isize));
+        return Err(format!("ShellExecuteW: {}", result as isize)); // i18n-ok
     }
     Ok(())
 }
@@ -550,7 +551,7 @@ fn start_installer(installer: &Path, parameters: &str) -> Result<(), String> {
 #[cfg(not(windows))]
 fn start_installer(installer: &Path, _parameters: &str) -> Result<(), String> {
     Err(format!(
-        "{}: only the Windows setup installs",
+        "{}: only the Windows setup installs", // i18n-ok
         installer.display()
     ))
 }
@@ -663,36 +664,34 @@ impl Notice {
     pub fn text(&self) -> String {
         match &self.phase {
             Phase::Offer => match self.offer {
-                Offer::Restart => format!(
-                    "Gelabber {} ist da. Zum Installieren startet die App neu.",
-                    self.version
-                ),
-                Offer::Download => format!("Gelabber {} ist da.", self.version),
-                Offer::PackageManager => format!(
-                    "Gelabber {} ist da. Updates kommen über pacman (Paket {PACMAN_PACKAGE}).",
-                    self.version
-                ),
+                Offer::Restart => texts::update_offer_restart(&self.version),
+                Offer::Download => texts::update_offer_download(&self.version),
+                Offer::PackageManager => {
+                    texts::update_offer_package_manager(&self.version, PACMAN_PACKAGE)
+                }
             },
             Phase::Downloading { downloaded, total } => {
                 let percent = total
                     .filter(|t| *t > 0)
-                    .map(|t| format!(" {} %", 100 * downloaded / t))
+                    .map(|t| {
+                        let n = (100 * downloaded / t).to_string();
+                        format!(" {}", gelabber_i18n::diagnostics::percent(&n))
+                    })
                     .unwrap_or_default();
-                format!("Update wird geladen …{percent}")
+                texts::update_downloading(&percent)
             }
-            Phase::Ready | Phase::Installing => {
-                "Update wird installiert, Gelabber startet neu …".to_owned()
-            }
+            Phase::Ready | Phase::Installing => texts::update_installing().to_owned(),
             Phase::Failed(reason) => reason.clone(),
         }
     }
 
     /// The buttons, the primary first.
-    pub fn buttons(&self) -> &'static [(&'static str, Click)] {
+    pub fn buttons(&self) -> Vec<(&'static str, Click)> {
+        let later = (texts::update_later(), Click::Later);
         match self.offer {
-            Offer::Restart => &[("Neu starten", Click::Restart), ("Später", Click::Later)],
-            Offer::Download => &[("Herunterladen", Click::Download), ("Später", Click::Later)],
-            Offer::PackageManager => &[("Später", Click::Later)],
+            Offer::Restart => vec![(texts::update_restart(), Click::Restart), later],
+            Offer::Download => vec![(texts::update_download(), Click::Download), later],
+            Offer::PackageManager => vec![later],
         }
     }
 
@@ -1036,7 +1035,7 @@ impl Updater {
         if self.requested {
             self.requested = false;
             if self.locked {
-                self.phase = Phase::Failed(IN_CALL.into());
+                self.phase = Phase::Failed(in_call().into());
             } else if self.ready.is_some() {
                 // The installer refused by a call is not loaded again.
                 self.phase = Phase::Ready;
@@ -1050,7 +1049,7 @@ impl Updater {
             // A call that began during the download refuses, as in the Tauri
             // app: the installer stays for the next "Neu starten".
             if self.locked {
-                self.phase = Phase::Failed(IN_CALL.into());
+                self.phase = Phase::Failed(in_call().into());
             } else {
                 *PENDING.lock() = Some((installer, dir.clone()));
                 self.phase = Phase::Installing;
@@ -1267,11 +1266,16 @@ mod tests {
         assert_eq!(verify(INSTALLER, SIG_B, KEY_B, "0.9.1"), Ok(()));
         // Wrong version: an older installer announced as a newer one.
         let older = verify(INSTALLER, SIG_A, KEY_A, "0.9.2").unwrap_err();
-        assert!(older.contains("signed for 0.9.1"), "{older}");
+        assert!(older.contains("signiert für 0.9.1"), "{older}");
+        {
+            let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+            let older = verify(INSTALLER, SIG_A, KEY_A, "0.9.2").unwrap_err();
+            assert_eq!(older, "signed for 0.9.1, not 0.9.2");
+        }
         // requireSignedVersion: a signature that names no version is refused.
         assert_eq!(
             verify(INSTALLER, SIG_A_NO_VERSION, KEY_A, "0.9.1"),
-            Err("signed without a version".into())
+            Err("ohne Version signiert".into())
         );
         // Tampered: one bit, one byte more, one less.
         let mut tampered = INSTALLER.to_vec();
@@ -1719,6 +1723,10 @@ mod tests {
             total: Some(47),
         };
         assert_eq!(notice.text(), "Update wird geladen … 40 %");
+        {
+            let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+            assert_eq!(notice.text(), "Downloading the update… 40%");
+        }
         assert!(banner.contains("`Update wird geladen …${percent}`"));
         assert!(!notice.enabled());
         assert_eq!(notice.progress(), Some(19.0 / 47.0));
@@ -1749,7 +1757,7 @@ mod tests {
         assert_eq!(link.buttons()[0].0, "Herunterladen");
         let pacman = Notice::new("0.9.1", Offer::PackageManager);
         assert!(pacman.text().contains("pacman (Paket gelabber-desktop)"));
-        assert_eq!(pacman.buttons(), &[("Später", Click::Later)]);
+        assert_eq!(pacman.buttons(), [("Später", Click::Later)]);
     }
 
     #[test]
@@ -1787,13 +1795,13 @@ mod tests {
         updater.phase = Phase::Ready;
         assert!(!updater.tick(&client, Instant::now(), true));
         assert_eq!(*PENDING.lock(), None);
-        assert_eq!(updater.phase, Phase::Failed(IN_CALL.into()));
+        assert_eq!(updater.phase, Phase::Failed(in_call().into()));
         // A minute after the call the notice says so, and nothing installs.
         updater.lock.last_busy = Some(Instant::now() - BUSY_AFTER);
         assert!(!updater.tick(&client, Instant::now(), false));
         assert_eq!(*PENDING.lock(), None);
         let notice = updater.notice().unwrap();
-        assert_eq!(notice.text(), IN_CALL);
+        assert_eq!(notice.text(), in_call());
         assert!(notice.enabled());
         // "Neu starten" again: the loaded installer, into the same folder.
         updater.requested = true;

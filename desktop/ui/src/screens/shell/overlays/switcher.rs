@@ -4,6 +4,7 @@
 
 use egui::{Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::{Badge, ChannelKind};
+use gelabber_i18n::shell;
 use uuid::Uuid;
 
 use super::picker::{self, PickerState, Row, RowIcon};
@@ -60,7 +61,7 @@ fn entries(app: &AppCtx, current: Option<Uuid>) -> (Vec<Entry>, Vec<Uuid>) {
             out.push(Entry {
                 kind: Kind::Dm,
                 label: dm.peer.name.clone(),
-                detail: "Direktnachricht".into(),
+                detail: shell::switcher_dm_detail().into(),
                 target: Target::Dm(dm.id),
                 badge: s.channel_badge(dm.id, now),
                 avatar: dm.peer.avatar_url.clone(),
@@ -99,7 +100,7 @@ fn entries(app: &AppCtx, current: Option<Uuid>) -> (Vec<Entry>, Vec<Uuid>) {
             out.push(Entry {
                 kind: Kind::Server,
                 label: server.name.clone(),
-                detail: "Server".into(),
+                detail: shell::switcher_server_detail().into(),
                 target: Target::Server(server.id),
                 badge: total,
                 avatar: server.icon_url.clone(),
@@ -180,9 +181,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut Switcher) -> bool {
             },
         })
         .collect();
-    let empty = format!("Nichts gefunden für „{}“.", s.picker.query.trim());
+    let empty = shell::switcher_empty(s.picker.query.trim());
     let mut picked = None;
-    let output = Modal::new("quick-switcher", "Wechseln zu").show(
+    let output = Modal::new("quick-switcher", shell::switcher_title()).show(
         &ctx,
         |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -191,20 +192,15 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut Switcher) -> bool {
                 app.images,
                 "quick-switcher",
                 &mut s.picker,
-                "Server, Kanal oder Unterhaltung",
-                "Server, Kanal oder Unterhaltung suchen",
+                shell::switcher_label(),
+                shell::switcher_placeholder(),
                 &rows,
                 &empty,
                 false,
             );
             // The hint: body gap 20 + margin-top 12.
             ui.add_space(32.0);
-            text::label(
-                ui,
-                "↑ ↓ auswählen · Enter öffnen · Esc schließen",
-                text::META,
-                theme.c.muted,
-            );
+            text::label(ui, shell::switcher_hint(), text::META, theme.c.muted);
         },
         None,
     );
@@ -246,60 +242,40 @@ pub type Shortcut = (Vec<String>, &'static str);
 /// Leertaste). `push_to_talk` is the key push-to-talk holds, when on.
 pub fn shortcut_groups(push_to_talk: Option<&str>) -> Vec<(&'static str, Vec<Shortcut>)> {
     let keys = |k: &[&str]| k.iter().map(|k| (*k).to_owned()).collect::<Vec<_>>();
+    let (ctrl, alt, shift) = (shell::keys_ctrl(), shell::keys_alt(), shell::keys_shift());
     let mut voice = vec![
-        (
-            keys(&["Strg", "Umschalt", "M"]),
-            "Stummschaltung ein oder aus",
-        ),
-        (
-            keys(&["Strg", "Umschalt", "D"]),
-            "Taubschaltung ein oder aus",
-        ),
+        (keys(&[ctrl, shift, "M"]), shell::shortcuts_mute()),
+        (keys(&[ctrl, shift, "D"]), shell::shortcuts_deafen()),
     ];
     if let Some(key) = push_to_talk {
-        voice.push((vec![key.to_owned()], "Zum Sprechen gedrückt halten"));
+        voice.push((vec![key.to_owned()], shell::shortcuts_push_to_talk()));
     }
-    voice.push((keys(&["K"]), "Kino ein oder aus"));
+    voice.push((keys(&["K"]), shell::shortcuts_cinema()));
     voice.push((
-        keys(&["M / Leertaste"]),
-        "Im Vollbild: Stummschaltung ein oder aus",
+        keys(&[shell::shortcuts_fullscreen_mute_keys()]),
+        shell::shortcuts_fullscreen_mute(),
     ));
     vec![
         (
-            "Allgemein",
+            shell::shortcuts_general(),
             vec![
+                (keys(&[ctrl, "K"]), shell::shortcuts_switcher()),
+                (keys(&[ctrl, "F"]), shell::shortcuts_search()),
+                (keys(&[alt, "↑ / ↓"]), shell::shortcuts_channel()),
                 (
-                    keys(&["Strg", "K"]),
-                    "Server, Kanal oder Unterhaltung öffnen",
+                    keys(&[alt, shift, "↑ / ↓"]),
+                    shell::shortcuts_unread_channel(),
                 ),
-                (keys(&["Strg", "F"]), "In der Unterhaltung suchen"),
-                (keys(&["Alt", "↑ / ↓"]), "Vorheriger oder nächster Kanal"),
-                (
-                    keys(&["Alt", "Umschalt", "↑ / ↓"]),
-                    "Vorheriger oder nächster ungelesener Kanal",
-                ),
-                (
-                    keys(&["Strg", "Alt", "↑ / ↓"]),
-                    "Vorheriger oder nächster Server",
-                ),
+                (keys(&[ctrl, alt, "↑ / ↓"]), shell::shortcuts_server()),
                 // Whatever is open takes Esc first (chat `overlay_open`).
-                (
-                    keys(&["Esc"]),
-                    "Schließen, sonst Unterhaltung als gelesen markieren",
-                ),
-                (
-                    keys(&["Umschalt", "Esc"]),
-                    "Ganzen Server als gelesen markieren",
-                ),
+                (keys(&["Esc"]), shell::shortcuts_escape()),
+                (keys(&[shift, "Esc"]), shell::shortcuts_server_read()),
                 // The desktop app's own (setup.rs), as "Server wechseln …".
-                (
-                    keys(&["Strg", "Umschalt", "S"]),
-                    "Mit einem anderen Gelabber-Server verbinden",
-                ),
-                (keys(&["Strg", "/"]), "Diese Übersicht"),
+                (keys(&[ctrl, shift, "S"]), shell::shortcuts_switch_server()),
+                (keys(&[ctrl, "/"]), shell::shortcuts_help()),
             ],
         ),
-        ("Im Sprachkanal", voice),
+        (shell::shortcuts_voice(), voice),
     ]
 }
 
@@ -312,7 +288,7 @@ pub fn shortcut_sheet(ui: &mut Ui) -> bool {
     let ctx = ui.ctx().clone();
     let push_to_talk = crate::screens::settings::media::push_to_talk_key_name(&ctx);
     let groups = shortcut_groups(push_to_talk.as_deref());
-    let output = Modal::new("shortcuts", "Tastenkürzel").show(
+    let output = Modal::new("shortcuts", shell::shortcuts_title()).show(
         &ctx,
         |ui| {
             let theme = Theme::of(ui.ctx());

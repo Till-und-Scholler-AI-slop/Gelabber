@@ -65,6 +65,7 @@ fn harness_at(
                     session: &mut session,
                     account_mail: None,
                     toasts: &mut toasts,
+                    public_pages: None,
                 };
                 draw(ui, &mut app);
             }))
@@ -408,6 +409,7 @@ fn the_own_live_says_what_becomes_of_its_sound() {
                 false,
                 false,
                 1.0,
+                None,
             );
         });
         h.run_steps(6);
@@ -485,6 +487,7 @@ fn camera_stage(embed: bool) -> H {
             false,
             false,
             1.0,
+            None,
         );
         crate::screens::voice::dialogs::show(ui, app);
     })
@@ -520,7 +523,7 @@ fn a_video_opens_in_a_window_of_its_own() {
     h.get_by_label("Eigenes Fenster").click();
     h.run_steps(6);
     assert!(!window::is_open(&h.ctx, key));
-    h.get_by_label(window::FAILED);
+    h.get_by_label(window::failed_text());
 }
 
 #[test]
@@ -563,6 +566,43 @@ fn an_unread_row_marks_a_draft() {
     });
     h.run_steps(6);
     assert_eq!(h.query_all_by_label("Entwurf").count(), 1);
+}
+
+#[test]
+fn the_call_bar_speaks_english() {
+    let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Unavailable));
+    let mut h = harness(client, call.clone(), bar);
+    h.run_steps(6);
+    h.get_by_label("Leave");
+    h.get_by_label("Go Live");
+    assert!(h.query_by_label("Call settings").is_none());
+    assert!(h.query_by_label("Verlassen").is_none());
+    h.get_by_label("No microphone").click();
+    h.run_steps(6);
+    h.get_by_label("Microphone not found or in use.");
+    h.get_by_label("Choose microphone…");
+    h.get_by_label("Try again");
+    call.set_state(in_sofa(MicStatus::Live));
+    h.run_steps(6);
+    h.get_by_label("Mute");
+}
+
+#[test]
+fn the_voice_dialog_speaks_english() {
+    use crate::screens::voice::dialogs::{self, Tab};
+    let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let (client, call) = offline();
+    let mut h = harness(client, call, dialogs::show);
+    dialogs::open_settings(&h.ctx, Tab::Diagnose);
+    h.run_steps(6);
+    h.get_by_label("Diagnostics");
+    h.get_by_label("Video & Live");
+    h.get_by_label("For troubleshooting");
+    h.get_by_label("Done").click();
+    h.run_steps(6);
+    assert!(!dialogs::open(&h.ctx));
 }
 
 #[test]
@@ -666,6 +706,15 @@ fn the_notice_is_a_row_of_the_bar() {
     assert!(h.query_by_label(text).is_none());
     assert_eq!(
         h.get_by_label("Verlassen").rect().top(),
+        800.0 - 56.0 + 1.0 + 8.0 + 1.5
+    );
+    // Put away, it stays away in the other language.
+    let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    h.run_steps(4);
+    h.get_by_label("Leave");
+    assert!(h.query_by_label_contains("Live audio").is_none());
+    assert_eq!(
+        h.get_by_label("Leave").rect().top(),
         800.0 - 56.0 + 1.0 + 8.0 + 1.5
     );
 }
@@ -795,6 +844,7 @@ fn watching_from_outside_joins_watches_or_only_opens() {
         session: &mut signed_in,
         account_mail: None,
         toasts: &mut toasts,
+        public_pages: None,
     };
     let label = |channel| hint::watch_label(call.with_state(session::joined), SERVER, channel);
     let sofa_page = format!("/s/{SERVER}/c/{SOFA}");
@@ -909,6 +959,7 @@ fn the_large_view_has_the_video_to_itself() {
             false,
             false,
             1.0,
+            None,
         );
     });
     h.run_steps(2);
@@ -944,6 +995,7 @@ fn only_a_live_offers_to_reload_a_missing_picture() {
                 false,
                 false,
                 1.0,
+                None,
             );
         });
         // Past `FRAME_STALLED` (8 s) at 60 frames a second.
@@ -954,4 +1006,183 @@ fn only_a_live_offers_to_reload_a_missing_picture() {
             "live: {live}"
         );
     }
+}
+
+/// The page of `room` under `state`, as the channel's page draws it at
+/// 1280×800 with the member list open.
+fn page(state: CallState, room: crate::screens::voice::session::Room) -> H {
+    let (client, call) = offline();
+    call.set_state(state);
+    let mut h = harness(client, call, move |ui, app| {
+        let rect = Rect::from_min_size(pos2(288.0, 0.0), vec2(744.0, 744.0));
+        crate::screens::voice::page::draw(ui, app, &room, rect);
+    });
+    h.run_steps(4);
+    h
+}
+
+/// In the call the header carries the facts, the view switch and Kino;
+/// the stage has no bar of its own.
+#[test]
+fn the_header_holds_the_facts_the_view_and_kino() {
+    use crate::screens::voice::{page as room_page, session};
+    let mut state = super::joined();
+    state.camera = true;
+    state.participants[1].camera = Some(VideoKey(7));
+    state.participants[2].live = Some(VideoKey(8));
+    let mut s = super::state();
+    s.live.insert(SERVER, [(SOFA, vec![super::MIRA])].into());
+    let room = session::build(&s, &state, SERVER, SOFA).expect("room");
+    assert_eq!(
+        room_page::facts(&room).as_deref(),
+        Some("3 im Kanal · 1 Live")
+    );
+    let h = page(state, room);
+    for label in ["Raster", "Fokus", "Kino"] {
+        let rect = h.get_by_label(label).rect();
+        assert!(rect.bottom() < 52.0, "{label} in the header: {rect:?}");
+    }
+    // Kino comes after the view switch, right before the members.
+    assert!(h.get_by_label("Fokus").rect().right() < h.get_by_label("Kino").rect().left());
+}
+
+/// A call of two or more without pictures: the people fill the stage in
+/// the pictures' grid, and the header says who is there.
+#[test]
+fn the_people_fill_the_stage_without_pictures() {
+    use crate::screens::voice::{page as room_page, session, stage};
+    let state = super::joined();
+    let room = session::build(&super::state(), &state, SERVER, SOFA).expect("room");
+    assert!(room_page::people_stage(&room));
+    assert_eq!(
+        room_page::facts(&room).as_deref(),
+        Some("Du bist hier mit Jonas und Mira.")
+    );
+    let h = page(state, room);
+    // 744 wide under the 52 header: the stage is 696×648 from (312, 72).
+    let rects = stage::raster_rects(3, 696, 648);
+    for (name, rect) in ["Lena", "Jonas", "Mira"].iter().zip(rects) {
+        let tile = rect.on(pos2(312.0, 72.0));
+        let avatar = h.get_by_label(&format!("Profil von {name}")).rect();
+        assert!(
+            (avatar.center().x - tile.center().x).abs() < 1.0,
+            "{name}: {avatar:?} in {tile:?}"
+        );
+        assert_eq!(avatar.width(), stage::person_tile(tile.height()).0);
+    }
+    // No pictures: no view to switch, no Kino.
+    assert!(h.query_by_label("Raster").is_none());
+    assert!(h.query_by_label("Kino").is_none());
+}
+
+/// The call bar has no settings gear; the connection's bars and word are
+/// one button, and its "Verbindung" carries the call's volumes.
+#[test]
+fn the_bar_has_no_gear_and_its_status_opens_the_volumes() {
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call, bar);
+    h.run_steps(4);
+    assert!(h.query_by_label("Anrufeinstellungen").is_none());
+    let label = "Verbindung: wird gemessen … – Details anzeigen";
+    // The bars (36) and "Verbunden" after them.
+    let status = h.get_by_label(label).rect();
+    assert!(status.width() > 36.0 + 8.0 + 50.0, "{status:?}");
+    h.get_by_label(label).click();
+    h.run_steps(4);
+    h.get_by_label("Lautstärke");
+    h.get_by_label("Gespräche");
+    h.get_by_label("Live-Ton");
+    h.get_by_label("Live-Ton stummschalten");
+    h.get_by_label("Alle Details");
+}
+
+/// In a call the user panel's gear opens the call's quick settings;
+/// outside one it is the way to the settings.
+#[test]
+fn in_a_call_the_user_panels_gear_opens_the_call_settings() {
+    let (client, call) = offline();
+    let mut h = harness(client, call.clone(), crate::screens::shell::show);
+    h.run_steps(6);
+    h.get_by_label("Einstellungen");
+    assert!(h.query_by_label("Anrufeinstellungen").is_none());
+    call.set_state(in_sofa(MicStatus::Live));
+    h.run_steps(6);
+    assert!(h.query_by_label("Einstellungen").is_none());
+    h.get_by_label("Anrufeinstellungen").click();
+    h.run_steps(6);
+    h.get_by_label("Alle Einstellungen …");
+    h.get_by_label("Gespräche");
+}
+
+/// Mira's Live with Jonas watching, Lena in the call.
+fn mira_live() -> (CallState, crate::screens::voice::session::Room) {
+    let mut state = super::joined();
+    state.participants[2].live = Some(VideoKey(8));
+    state.participants[2].watching = false;
+    let mut s = super::state();
+    s.live.insert(SERVER, [(SOFA, vec![super::MIRA])].into());
+    s.watches
+        .insert(SERVER, [(SOFA, [(JONAS, vec![super::MIRA])].into())].into());
+    let room = crate::screens::voice::session::build(&s, &state, SERVER, SOFA).expect("room");
+    (state, room)
+}
+
+/// A Live's caption counts who watches; the count lists them, and the
+/// others in the channel apart. Fokus's row says who is live and who
+/// watches the Live in front.
+#[test]
+fn a_lives_count_lists_who_watches() {
+    let (state, room) = mira_live();
+    let mut h = page(state, room);
+    // No Live tag of its own: the caption has the badge.
+    h.get_by_label("Schaut zu");
+    h.get_by_label("Ist live");
+    h.get_by_label("1 schaut zu – Liste anzeigen").click();
+    h.run_steps(4);
+    h.get_by_label("1 schaut zu");
+    h.get_by_label("Live von Mira in Sofa");
+    h.get_by_label("Jonas");
+    h.get_by_label("Im Kanal, schaut nicht zu");
+    h.get_by_label("Lena (du)");
+    // Only the own Live's list ends it.
+    assert!(h.query_by_label("Live beenden").is_none());
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    assert!(h.query_by_label("1 schaut zu").is_none());
+}
+
+/// While live the call bar's button counts who watches; its list has the
+/// watchers, the others, "Live beenden" and "Ton mitsenden".
+#[test]
+fn the_own_live_button_lists_who_watches() {
+    use crate::screens::voice::session;
+    let mut state = super::joined();
+    state.live = true;
+    let mut s = super::state();
+    s.live.insert(SERVER, [(SOFA, vec![LENA])].into());
+    s.watches
+        .insert(SERVER, [(SOFA, [(JONAS, vec![LENA])].into())].into());
+    let room = session::build(&s, &state, SERVER, SOFA).expect("room");
+    assert_eq!(room.watchers[&LENA], (vec![JONAS], vec![super::MIRA]));
+    let (client, call) = offline();
+    call.set_state(state);
+    let mut h = harness(client, call, bar);
+    h.ctx
+        .data_mut(|d| d.insert_temp(call_bar::test_room_id(), room));
+    h.run_steps(4);
+    // Still "Live gehen", pressed; wider for the count.
+    let live = h.get_by_label("Live gehen").rect();
+    assert!(live.width() > 100.0, "{live:?}");
+    h.get_by_label("Live gehen").click();
+    h.run_steps(4);
+    h.get_by_label("1 schaut zu");
+    h.get_by_label("Dein Live in Sofa");
+    h.get_by_label("Jonas");
+    h.get_by_label("Im Kanal, schaut nicht zu");
+    h.get_by_label("Mira");
+    h.get_by_label("Ton mitsenden");
+    h.get_by_label("Live beenden").click();
+    h.run_steps(4);
+    assert!(h.query_by_label("Dein Live in Sofa").is_none());
 }

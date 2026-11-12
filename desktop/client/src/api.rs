@@ -77,15 +77,8 @@ impl Http {
         password: &str,
         name: &str,
     ) -> Result<RegisterResponse> {
-        if self.csrf_token().is_none() {
-            self.session().await?;
-        }
-        self.send(
-            Method::POST,
-            "/auth/register",
-            &json!({"email": email, "password": password, "name": name}),
-        )
-        .await
+        self.register_with(&RegisterBody::new(email, password, name))
+            .await
     }
 
     pub async fn logout(&self) -> Result<CsrfResponse> {
@@ -150,6 +143,140 @@ impl Http {
         .await
     }
 
+    /// `GET /api/auth/providers`: the sign-in providers the instance offers.
+    pub async fn auth_providers(&self) -> Result<Vec<AuthProvider>> {
+        self.get::<AuthProviders>("/auth/providers")
+            .await
+            .map(|answer| answer.providers)
+    }
+
+    /// `POST /api/auth/oidc/{provider}/start`, desktop variant: the URL of
+    /// the provider's sign-in page for the system browser. The flow in
+    /// `oidc.rs` makes `desktop` and runs the rest.
+    pub async fn oidc_start(
+        &self,
+        provider: &str,
+        start: &OidcStart,
+        desktop: &OidcDesktop,
+    ) -> Result<String> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            #[serde(flatten)]
+            start: &'a OidcStart,
+            desktop: &'a OidcDesktop,
+        }
+        let answer: OidcStartResponse = self
+            .send(
+                Method::POST,
+                &format!("/auth/oidc/{}/start", encode_component(provider)),
+                &Body { start, desktop },
+            )
+            .await?;
+        Ok(answer.url)
+    }
+
+    /// `POST /api/auth/oidc/desktop/exchange`: trades the code the loopback
+    /// receiver got, proven by the flow's PKCE verifier. `signed_in` puts
+    /// the session cookie into the jar and rotates CSRF, as [`Self::sign_in`].
+    pub async fn oidc_exchange(&self, code: &str, verifier: &str) -> Result<OidcExchange> {
+        self.send(
+            Method::POST,
+            "/auth/oidc/desktop/exchange",
+            &json!({"code": code, "verifier": verifier}),
+        )
+        .await
+    }
+
+    /// `POST /api/auth/oidc/pending`: the first sign-in a name-step token
+    /// stands for; does not use it up.
+    pub async fn oidc_pending(&self, token: &str) -> Result<OidcPending> {
+        self.send(Method::POST, "/auth/oidc/pending", &json!({"token": token}))
+            .await
+    }
+
+    /// `POST /api/auth/oidc/complete` with the desktop flow's verifier:
+    /// creates the account with its chosen name and signs it in.
+    pub async fn oidc_complete(
+        &self,
+        token: &str,
+        name: &str,
+        verifier: &str,
+    ) -> Result<OidcCompleteResponse> {
+        self.send(
+            Method::POST,
+            "/auth/oidc/complete",
+            // The language the app shows becomes the account's.
+            &json!({
+                "token": token,
+                "name": name,
+                "verifier": verifier,
+                "locale": gelabber_i18n::get().as_str(),
+            }),
+        )
+        .await
+    }
+
+    /// `GET /api/auth/methods`: password and providers of the account.
+    pub async fn sign_in_methods(&self) -> Result<SignInMethods> {
+        self.get("/auth/methods").await
+    }
+
+    /// Detaches a provider; `409 password_required` without a password.
+    pub async fn disconnect_provider(&self, provider: &str) -> Result<SignInMethods> {
+        self.send_empty(
+            Method::DELETE,
+            &format!("/auth/oidc/{}", encode_component(provider)),
+        )
+        .await
+    }
+
+    /// The first password of an account that signs in only through a
+    /// provider (no `current_password`). Needs a recent sign-in
+    /// (`403 reauth_required`); like [`Self::change_password`], this client
+    /// gets a fresh session and all others are revoked.
+    pub async fn set_password(&self, password: &str) -> Result<SessionResponse> {
+        self.send(
+            Method::POST,
+            "/auth/password",
+            &json!({"password": password}),
+        )
+        .await
+    }
+
+    /// `GET /api/auth/registration`: whether registering needs a code.
+    pub async fn registration_mode(&self) -> Result<RegistrationMode> {
+        self.get::<RegistrationStatus>("/auth/registration")
+            .await
+            .map(|status| status.mode)
+    }
+
+    /// [`Self::register`] with the whole body, e.g. with the codes that
+    /// admit a new account on an invitation-only instance.
+    pub async fn register_with(&self, body: &RegisterBody) -> Result<RegisterResponse> {
+        if self.csrf_token().is_none() {
+            self.session().await?;
+        }
+        self.send(Method::POST, "/auth/register", body).await
+    }
+
+    /// `GET /api/auth/sessions`: the account's live sessions, this one
+    /// first, then by last use.
+    pub async fn sessions(&self) -> Result<Vec<DeviceSession>> {
+        self.get::<DeviceSessions>("/auth/sessions")
+            .await
+            .map(|answer| answer.sessions.0)
+    }
+
+    /// Signs one session of the account out. Another one: `204`, its
+    /// sockets close. This app's own: a logout (`200 {"csrf_token"}`, the
+    /// cookie cleared). `404` for one that is gone already.
+    pub async fn revoke_session(&self, id: Uuid) -> Result<()> {
+        let _: serde_json::Value = self
+            .send_empty(Method::DELETE, &format!("/auth/sessions/{id}"))
+            .await?;
+        Ok(())
+    }
+
     // --------------------------------------------------------------- me
 
     pub async fn me(&self) -> Result<User> {
@@ -158,6 +285,14 @@ impl Http {
 
     pub async fn update_me(&self, patch: &ProfilePatch) -> Result<User> {
         self.send(Method::PATCH, "/me", patch).await
+    }
+
+    /// The account's language, `de` or `en` (v0.10 servers).
+    pub async fn set_locale(&self, locale: &str) -> Result<LocaleBody> {
+        let body = LocaleBody {
+            locale: locale.to_owned(),
+        };
+        self.send(Method::PUT, "/me/locale", &body).await
     }
 
     /// Raw PNG/JPEG/WebP, at most 256×256 and 512 KiB.
@@ -184,6 +319,45 @@ impl Http {
     /// when another device saved meanwhile.
     pub async fn put_themes(&self, doc: &ThemeDocument) -> Result<ThemeDocument> {
         self.send(Method::PUT, "/me/themes", doc).await
+    }
+
+    /// `GET /api/me/export`.
+    pub async fn export_status(&self) -> Result<ExportStatus> {
+        self.get("/me/export").await
+    }
+
+    /// `POST /api/me/export` (202): a new archive, replacing a failed or
+    /// day-old one. `409 export_pending` while one is being built,
+    /// `429 rate_limited` (with `retry_after`) within a day of the last.
+    pub async fn request_export(&self) -> Result<ExportStatus> {
+        self.send_empty(Method::POST, "/me/export").await
+    }
+
+    /// `DELETE /api/me`. `202` ends the account and this session (the
+    /// server clears the cookie); `409 owns_servers` names the servers in
+    /// the way. Field codes as `password`/`email`: `required`, `wrong`.
+    pub async fn delete_account(
+        &self,
+        confirmation: &DeleteConfirmation,
+    ) -> Result<AccountDeletion> {
+        let refusal = match self
+            .send_keeping_refusal::<_, serde_json::Value>(Method::DELETE, "/me", confirmation)
+            .await
+        {
+            Ok(_) => return Ok(AccountDeletion::Deleted),
+            Err(refusal) => refusal,
+        };
+        let (error, body) = *refusal;
+        if error.code() != "owns_servers" {
+            return Err(error);
+        }
+        let servers = body
+            .get("servers")
+            .cloned()
+            .and_then(|list| serde_json::from_value::<Lenient<OwnedServer>>(list).ok())
+            .map(|Lenient(list)| list)
+            .unwrap_or_default();
+        Ok(AccountDeletion::OwnsServers(servers))
     }
 
     // ---------------------------------------------------------- servers
@@ -266,6 +440,18 @@ impl Http {
             .await
     }
 
+    /// `POST /api/servers/{id}/transfer` (owner only): `user` becomes the
+    /// owner; the answer is the list row as the caller now sees it
+    /// (`role: member`).
+    pub async fn transfer_server(&self, server: Uuid, user: Uuid) -> Result<Server> {
+        self.send(
+            Method::POST,
+            &format!("/servers/{server}/transfer"),
+            &json!({"user_id": user}),
+        )
+        .await
+    }
+
     // ---------------------------------------------- categories, channels
 
     pub async fn create_category(&self, server: Uuid, name: &str) -> Result<Category> {
@@ -293,12 +479,15 @@ impl Http {
     }
 
     /// `kind` is text or voice; text names are normalised by the server.
+    /// `role_ids` limits the new channel to those roles; `None` or `[]`:
+    /// everyone.
     pub async fn create_channel(
         &self,
         server: Uuid,
         name: &str,
         kind: ChannelKind,
         category: Option<Uuid>,
+        role_ids: Option<&[Uuid]>,
     ) -> Result<Channel> {
         let kind = match kind {
             ChannelKind::Voice => "voice",
@@ -306,12 +495,12 @@ impl Http {
         };
         // The web always sends `category_id`, "" for none.
         let category = category.map(|c| c.to_string()).unwrap_or_default();
-        self.send(
-            Method::POST,
-            &format!("/servers/{server}/channels"),
-            &json!({"name": name, "kind": kind, "category_id": category}),
-        )
-        .await
+        let mut body = json!({"name": name, "kind": kind, "category_id": category});
+        if let Some(role_ids) = role_ids {
+            body["role_ids"] = json!(role_ids);
+        }
+        self.send(Method::POST, &format!("/servers/{server}/channels"), &body)
+            .await
     }
 
     pub async fn update_channel(&self, id: Uuid, patch: &ChannelPatch) -> Result<Channel> {
@@ -635,5 +824,598 @@ impl Http {
     pub async fn media_ticket(&self, channel: Uuid) -> Result<MediaTicket> {
         self.send_empty(Method::POST, &format!("/channels/{channel}/media-ticket"))
             .await
+    }
+
+    // ------------------------------------------------------------- roles
+
+    /// Needs `manage_server`; the role lands after the others.
+    pub async fn create_role(&self, server: Uuid, role: &NewRole) -> Result<ServerRole> {
+        self.send(Method::POST, &format!("/servers/{server}/roles"), role)
+            .await
+    }
+
+    pub async fn update_role(&self, id: Uuid, patch: &RolePatch) -> Result<ServerRole> {
+        self.send(Method::PATCH, &format!("/roles/{id}"), patch)
+            .await
+    }
+
+    /// Its assignments go too; channels limited to it stay limited.
+    pub async fn delete_role(&self, id: Uuid) -> Result<()> {
+        self.send_empty(Method::DELETE, &format!("/roles/{id}"))
+            .await
+    }
+
+    /// Full replacement of a member's custom roles.
+    pub async fn set_member_roles(
+        &self,
+        server: Uuid,
+        user: Uuid,
+        role_ids: &[Uuid],
+    ) -> Result<MemberRoles> {
+        self.send(
+            Method::PUT,
+            &format!("/servers/{server}/members/{user}/roles"),
+            &json!({"role_ids": role_ids}),
+        )
+        .await
+    }
+
+    // --------------------------------------------------------- directory
+
+    /// Whether the directory is on, with each language's listing count.
+    pub async fn directory_status(&self) -> Result<DirectoryStatus> {
+        self.get("/directory").await
+    }
+
+    /// One page of the search, as the web's `listingsPath`: an empty `q`
+    /// or `language` and offset 0 are left out.
+    pub async fn listings(
+        &self,
+        q: Option<&str>,
+        language: Option<&str>,
+        offset: u32,
+    ) -> Result<ListingPage> {
+        let qs = query(&[
+            ("q", q.filter(|q| !q.is_empty()).map(str::to_owned)),
+            (
+                "language",
+                language.filter(|l| !l.is_empty()).map(str::to_owned),
+            ),
+            ("offset", (offset > 0).then(|| offset.to_string())),
+        ]);
+        self.get(&format!("/directory/listings{qs}")).await
+    }
+
+    /// An open server: the caller becomes a member; the answer is the list
+    /// row. Also `200` when already a member.
+    pub async fn join_listing(&self, server: Uuid) -> Result<Server> {
+        self.send_empty(Method::POST, &format!("/directory/listings/{server}/join"))
+            .await
+    }
+
+    /// "Beitritt anfragen" with an optional message (≤ 300 characters).
+    pub async fn request_join(&self, server: Uuid, message: &str) -> Result<RequestAnswer> {
+        self.send(
+            Method::POST,
+            &format!("/directory/listings/{server}/request"),
+            &json!({"message": message}),
+        )
+        .await
+    }
+
+    // ------------------------------------------------------ public pages
+
+    /// `GET /public-pages.json`: not under `/api` (the web container serves
+    /// it next to the pages) and a read, so no CSRF header. A 404, an
+    /// unreachable server, invalid JSON or another version all mean that
+    /// nothing is published (web `fetchPublicPages`); this never fails.
+    pub async fn public_pages(&self) -> Result<PublicPages> {
+        let Ok(res) = self
+            .reqwest()
+            .get(self.url("/public-pages.json"))
+            .send()
+            .await
+        else {
+            return Ok(PublicPages::default());
+        };
+        if !res.status().is_success() {
+            return Ok(PublicPages::default());
+        }
+        let Ok(bytes) = res.bytes().await else {
+            return Ok(PublicPages::default());
+        };
+        Ok(serde_json::from_slice::<serde_json::Value>(&bytes)
+            .map(|json| PublicPages::parse(&json))
+            .unwrap_or_default())
+    }
+
+    pub async fn withdraw_request(&self, server: Uuid) -> Result<()> {
+        self.send_empty(
+            Method::DELETE,
+            &format!("/directory/listings/{server}/request"),
+        )
+        .await
+    }
+
+    /// Operator's report route, open to members and to whoever sees the
+    /// listing.
+    pub async fn report_listing(&self, server: Uuid, body: &ReportBody) -> Result<ReportFiled> {
+        self.send(Method::POST, &format!("/servers/{server}/reports"), body)
+            .await
+    }
+
+    pub async fn listing_settings(&self, server: Uuid) -> Result<ListingSettings> {
+        self.get(&format!("/servers/{server}/listing")).await
+    }
+
+    /// Only the owner may save.
+    pub async fn put_listing_settings(
+        &self,
+        server: Uuid,
+        body: &ListingSettingsBody,
+    ) -> Result<ListingSettings> {
+        self.send(Method::PUT, &format!("/servers/{server}/listing"), body)
+            .await
+    }
+
+    /// The pending requests, oldest first (owner or `moderate_members`).
+    pub async fn join_requests(&self, server: Uuid) -> Result<Vec<JoinRequest>> {
+        self.get(&format!("/servers/{server}/join-requests"))
+            .await
+            .map(|Lenient(v)| v)
+    }
+
+    pub async fn accept_join_request(&self, server: Uuid, user: Uuid) -> Result<()> {
+        self.send_empty(
+            Method::POST,
+            &format!("/servers/{server}/join-requests/{user}/accept"),
+        )
+        .await
+    }
+
+    pub async fn decline_join_request(&self, server: Uuid, user: Uuid) -> Result<()> {
+        self.send_empty(
+            Method::POST,
+            &format!("/servers/{server}/join-requests/{user}/decline"),
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+
+    use parking_lot::Mutex;
+
+    use super::*;
+
+    /// Answers every connection with `reply` and keeps the request heads.
+    fn serve(reply: &'static str) -> (String, std::sync::Arc<parking_lot::Mutex<Vec<String>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                log.lock()
+                    .push(String::from_utf8_lossy(&buf[..n]).into_owned());
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn fetch(base: &str) -> PublicPages {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let http = Http::new(base).unwrap();
+        runtime.block_on(http.public_pages()).unwrap()
+    }
+
+    #[test]
+    fn public_pages_come_from_the_instance_root() {
+        let body = r#"{"version":1,"landing":true,"legal":{"privacy":{"de":"/de/datenschutz","en":"/en/privacy"}}}"#;
+        let reply: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_boxed_str(),
+        );
+        let (base, seen) = serve(reply);
+        let pages = fetch(&base);
+        assert!(pages.landing);
+        assert_eq!(pages.legal.len(), 1);
+        assert_eq!(pages.legal[0].0, LegalPageKind::Privacy);
+        let head = seen.lock()[0].clone();
+        assert!(head.starts_with("GET /public-pages.json "), "{head}");
+        assert!(
+            !head.to_ascii_lowercase().contains("x-csrf-token"),
+            "{head}"
+        );
+    }
+
+    #[test]
+    fn public_pages_fall_back_to_nothing() {
+        let (missing, _) =
+            serve("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        assert_eq!(fetch(&missing), PublicPages::default());
+        let (broken, _) = serve(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 9\r\nConnection: close\r\n\r\n<!doctype",
+        );
+        assert_eq!(fetch(&broken), PublicPages::default());
+        // Nobody listens there.
+        let closed = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://{}", listener.local_addr().unwrap())
+        };
+        assert_eq!(fetch(&closed), PublicPages::default());
+    }
+
+    /// One request as the fake API saw it: request line and body.
+    type Seen = Arc<Mutex<Vec<(String, String)>>>;
+
+    /// A fake API: the session route hands out a CSRF token, `answer`
+    /// gives status and body for the rest by request line.
+    fn fake_api(answer: fn(&str) -> (&'static str, String)) -> (String, Seen) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen: Seen = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut data = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    // The head, then as much body as it announces.
+                    let (head, body) = loop {
+                        let n = stream.read(&mut buf).unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        data.extend_from_slice(&buf[..n]);
+                        let text = String::from_utf8_lossy(&data).into_owned();
+                        let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                            continue;
+                        };
+                        let length = head
+                            .lines()
+                            .find_map(|l| {
+                                let (k, v) = l.split_once(':')?;
+                                k.eq_ignore_ascii_case("content-length")
+                                    .then(|| v.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= length {
+                            break (head.to_owned(), body.to_owned());
+                        }
+                    };
+                    let line = head.lines().next().unwrap_or("").to_owned();
+                    let (status, reply) = if line.starts_with("GET /api/auth/session ") {
+                        ("200 OK", r#"{"user":null,"csrf_token":"t"}"#.to_owned())
+                    } else {
+                        log.lock().push((line.clone(), body));
+                        answer(&line)
+                    };
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                            reply.len()
+                        )
+                        .as_bytes(),
+                    );
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn server_row(id: Uuid) -> String {
+        serde_json::json!({
+            "id": id, "name": "Filmclub", "owner_id": Uuid::from_u128(9), "icon_url": null,
+            "created_at": "2026-10-01T00:00:00Z", "role": "member",
+            "permissions": [], "member_permissions": [],
+        })
+        .to_string()
+    }
+
+    /// The search's query, as the web's `listingsPath` writes it.
+    #[test]
+    fn the_search_leaves_out_what_is_not_set() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = fake_api(|line| {
+            let body = if line.starts_with("GET /api/directory ") {
+                r#"{"enabled":true,"languages":[{"code":"de","name":"Deutsch","listings":3}]}"#
+            } else {
+                r#"{"listings":[],"next_offset":null}"#
+            };
+            ("200 OK", body.to_owned())
+        });
+        let http = Http::new(&base).unwrap();
+        let status = runtime.block_on(http.directory_status()).unwrap();
+        assert_eq!(status.languages[0].listings, 3);
+        for (q, language, offset) in [
+            (None, None, 0),
+            (Some(""), Some(""), 0),
+            (Some("rust & co"), None, 0),
+            (None, Some("en"), 30),
+            (Some("50%_"), Some("de"), 60),
+        ] {
+            let page = runtime
+                .block_on(http.listings(q, language, offset))
+                .unwrap();
+            assert!(page.listings.is_empty() && page.next_offset.is_none());
+        }
+        let lines: Vec<String> = seen.lock().iter().map(|(l, _)| l.clone()).collect();
+        assert_eq!(
+            lines,
+            [
+                "GET /api/directory HTTP/1.1",
+                "GET /api/directory/listings HTTP/1.1",
+                "GET /api/directory/listings HTTP/1.1",
+                "GET /api/directory/listings?q=rust+%26+co HTTP/1.1",
+                "GET /api/directory/listings?language=en&offset=30 HTTP/1.1",
+                "GET /api/directory/listings?q=50%25_&language=de&offset=60 HTTP/1.1",
+            ]
+        );
+    }
+
+    /// Every write goes to its route with the web's body.
+    #[test]
+    fn the_writes_go_to_their_routes() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = fake_api(|line| {
+            let server = Uuid::from_u128(1);
+            match line.split(' ').take(2).collect::<Vec<_>>().as_slice() {
+                [_, path] if path.ends_with("/join") => ("200 OK", server_row(server)),
+                ["POST", path] if path.ends_with("/request") => {
+                    ("201 Created", r#"{"request":"pending"}"#.to_owned())
+                }
+                ["POST", path] if path.ends_with("/reports") => (
+                    "201 Created",
+                    r#"{"id":"00000000-0000-0000-0000-000000000004","created_at":"2026-11-10T10:00:00Z"}"#
+                        .to_owned(),
+                ),
+                [_, path] if path.ends_with("/listing") => (
+                    "200 OK",
+                    r#"{"listed":true,"description":"Filme.","language":"de","join_mode":"open","delisted":false,"listed_at":"2026-11-10T10:00:00Z"}"#
+                        .to_owned(),
+                ),
+                ["GET", path] if path.ends_with("/join-requests") => (
+                    "200 OK",
+                    r#"[{"user_id":"00000000-0000-0000-0000-000000000003","name":"Kai","avatar_url":null,"message":"","created_at":"2026-11-10T10:00:00Z"}]"#
+                        .to_owned(),
+                ),
+                _ => ("204 No Content", String::new()),
+            }
+        });
+        let http = Http::new(&base).unwrap();
+        let (server, kai) = (Uuid::from_u128(1), Uuid::from_u128(3));
+        runtime.block_on(async {
+            assert_eq!(http.join_listing(server).await.unwrap().id, server);
+            let answer = http.request_join(server, "Hallo!").await.unwrap();
+            assert_eq!(answer.request, RequestState::Pending);
+            http.withdraw_request(server).await.unwrap();
+            let report = ReportBody {
+                reason: ReportReason::Other,
+                details: Some("Werbung".into()),
+            };
+            assert_eq!(
+                http.report_listing(server, &report).await.unwrap().id,
+                Uuid::from_u128(4)
+            );
+            assert!(http.listing_settings(server).await.unwrap().listed);
+            let form = ListingSettingsBody {
+                listed: true,
+                description: "Filme.".into(),
+                language: "de".into(),
+                join_mode: JoinMode::Open,
+            };
+            let saved = http.put_listing_settings(server, &form).await.unwrap();
+            assert_eq!(saved.join_mode, JoinMode::Open);
+            assert_eq!(http.join_requests(server).await.unwrap()[0].user_id, kai);
+            http.accept_join_request(server, kai).await.unwrap();
+            http.decline_join_request(server, kai).await.unwrap();
+        });
+        let s = "00000000-0000-0000-0000-000000000001";
+        let u = "00000000-0000-0000-0000-000000000003";
+        let expected = [
+            (format!("POST /api/directory/listings/{s}/join"), ""),
+            (
+                format!("POST /api/directory/listings/{s}/request"),
+                r#"{"message":"Hallo!"}"#,
+            ),
+            (format!("DELETE /api/directory/listings/{s}/request"), ""),
+            (
+                format!("POST /api/servers/{s}/reports"),
+                r#"{"reason":"other","details":"Werbung"}"#,
+            ),
+            (format!("GET /api/servers/{s}/listing"), ""),
+            (
+                format!("PUT /api/servers/{s}/listing"),
+                r#"{"listed":true,"description":"Filme.","language":"de","join_mode":"open"}"#,
+            ),
+            (format!("GET /api/servers/{s}/join-requests"), ""),
+            (
+                format!("POST /api/servers/{s}/join-requests/{u}/accept"),
+                "",
+            ),
+            (
+                format!("POST /api/servers/{s}/join-requests/{u}/decline"),
+                "",
+            ),
+        ];
+        let seen = seen.lock();
+        assert_eq!(seen.len(), expected.len(), "{seen:?}");
+        for ((line, body), (want_line, want_body)) in seen.iter().zip(expected) {
+            assert_eq!(line, &format!("{want_line} HTTP/1.1"));
+            assert_eq!(body, want_body, "{line}");
+        }
+    }
+
+    /// The directory's refusals keep their codes and copy.
+    #[test]
+    fn the_directory_codes_are_known() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, _) = fake_api(|_| {
+            (
+                "409 Conflict",
+                r#"{"error":"join_request_declined","message":"declined","retry_after":3600}"#
+                    .to_owned(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let error = runtime
+            .block_on(http.request_join(Uuid::from_u128(1), ""))
+            .unwrap_err();
+        assert_eq!(error.code(), "join_request_declined");
+        assert_eq!(error.retry_after(), Some(3600.0));
+        let _german = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::De);
+        for (code, text) in [
+            (
+                "join_request_required",
+                "Diesem Server trittst du nur auf Anfrage bei.",
+            ),
+            (
+                "join_request_declined",
+                "Deine Anfrage wurde nicht angenommen. Du kannst in ein paar Tagen wieder anfragen.",
+            ),
+            (
+                "join_requests_full",
+                "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen.",
+            ),
+            ("already_member", "Du bist schon Mitglied dieses Servers."),
+        ] {
+            assert_eq!(crate::http::error_message(code), text);
+        }
+        drop(_german);
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(
+            crate::http::error_message("already_member"),
+            "You are already a member of this server."
+        );
+    }
+
+    /// Devices, export, deletion and transfer go to their routes with the
+    /// web's bodies (#519).
+    #[test]
+    fn the_account_calls_go_to_their_routes() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = fake_api(|line| {
+            let export = r#"{"export":{"state":"pending","requested_at":"2026-11-11T10:00:00Z","finished_at":null,"expires_at":null,"size_bytes":null},"mail":true}"#;
+            match line.split(' ').take(2).collect::<Vec<_>>().as_slice() {
+                ["GET", "/api/auth/sessions"] => (
+                    "200 OK",
+                    r#"{"sessions":[{"id":"00000000-0000-0000-0000-000000000001","client":"desktop","os":"windows","created_at":"2026-11-01T18:00:00Z","last_used_at":"2026-11-10T19:02:00Z","current":true},{"id":"x"}]}"#
+                        .to_owned(),
+                ),
+                ["DELETE", path] if path.starts_with("/api/auth/sessions/") => {
+                    ("204 No Content", String::new())
+                }
+                ["GET", "/api/me/export"] => ("200 OK", r#"{"export":null,"mail":false}"#.to_owned()),
+                ["POST", "/api/me/export"] => ("202 Accepted", export.to_owned()),
+                ["DELETE", "/api/me"] => ("202 Accepted", r#"{"csrf_token":"n"}"#.to_owned()),
+                ["POST", path] if path.ends_with("/transfer") => {
+                    ("200 OK", server_row(Uuid::from_u128(1)))
+                }
+                _ => ("500 Internal Server Error", String::new()),
+            }
+        });
+        let http = Http::new(&base).unwrap();
+        let (server, kai) = (Uuid::from_u128(1), Uuid::from_u128(3));
+        runtime.block_on(async {
+            let sessions = http.sessions().await.unwrap();
+            assert_eq!(sessions.len(), 1, "the unreadable row is left out");
+            assert_eq!(sessions[0].os, DeviceOs::Windows);
+            http.revoke_session(Uuid::from_u128(2)).await.unwrap();
+            assert!(http.export_status().await.unwrap().export.is_none());
+            assert!(http.request_export().await.unwrap().building());
+            let deleted = http
+                .delete_account(&DeleteConfirmation::Password("pw".into()))
+                .await
+                .unwrap();
+            assert_eq!(deleted, AccountDeletion::Deleted);
+            assert_eq!(http.csrf_token().as_deref(), Some("n"));
+            let row = http.transfer_server(server, kai).await.unwrap();
+            assert_eq!(row.id, server);
+        });
+        let s = "00000000-0000-0000-0000-000000000001";
+        let expected = [
+            ("GET /api/auth/sessions".to_owned(), String::new()),
+            (
+                "DELETE /api/auth/sessions/00000000-0000-0000-0000-000000000002".to_owned(),
+                String::new(),
+            ),
+            ("GET /api/me/export".to_owned(), String::new()),
+            ("POST /api/me/export".to_owned(), String::new()),
+            (
+                "DELETE /api/me".to_owned(),
+                r#"{"password":"pw"}"#.to_owned(),
+            ),
+            (
+                format!("POST /api/servers/{s}/transfer"),
+                r#"{"user_id":"00000000-0000-0000-0000-000000000003"}"#.to_owned(),
+            ),
+        ];
+        let seen = seen.lock();
+        assert_eq!(seen.len(), expected.len(), "{seen:?}");
+        for ((line, body), (want_line, want_body)) in seen.iter().zip(expected) {
+            assert_eq!(line, &format!("{want_line} HTTP/1.1"));
+            assert_eq!(body, &want_body, "{line}");
+        }
+    }
+
+    /// `409 owns_servers` is an answer, not a failure: it names the servers
+    /// in the way. Other refusals stay errors with their field codes.
+    #[test]
+    fn a_deletion_names_the_servers_in_the_way() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, _) = fake_api(|_| {
+            (
+                "409 Conflict",
+                r#"{"error":"owns_servers","message":"Transfer or delete your servers first.","servers":[{"id":"00000000-0000-0000-0000-000000000007","name":"Wohnzimmer","member_count":5}]}"#
+                    .to_owned(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let answer = runtime
+            .block_on(http.delete_account(&DeleteConfirmation::Email("lena@example.test".into())))
+            .unwrap();
+        assert_eq!(
+            answer,
+            AccountDeletion::OwnsServers(vec![OwnedServer {
+                id: Uuid::from_u128(7),
+                name: "Wohnzimmer".into(),
+                member_count: Some(5),
+            }])
+        );
+        let (base, _) = fake_api(|_| {
+            (
+                "422 Unprocessable Entity",
+                r#"{"error":"validation_failed","message":"x","fields":{"password":"wrong"}}"#
+                    .to_owned(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let error = runtime
+            .block_on(http.delete_account(&DeleteConfirmation::Password("nope".into())))
+            .unwrap_err();
+        assert_eq!(error.field("password"), Some("wrong"));
+        let (base, _) = fake_api(|_| {
+            (
+                "409 Conflict",
+                r#"{"error":"export_pending","message":"x"}"#.to_owned(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let error = runtime.block_on(http.request_export()).unwrap_err();
+        assert_eq!(error.code(), "export_pending");
     }
 }

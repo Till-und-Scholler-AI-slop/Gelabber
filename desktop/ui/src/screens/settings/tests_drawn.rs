@@ -84,6 +84,7 @@ pub fn harness(
                     session,
                     account_mail: None,
                     toasts,
+                    public_pages: None,
                 };
                 draw(ui, &mut app);
             }))
@@ -186,4 +187,193 @@ fn the_media_dialog_over_its_own_page_keeps_its_controls_apart() {
             assert!(dialogs::open(&h.ctx));
         });
     }
+}
+
+/// Darstellung in English: the settings navigation names the area
+/// "Appearance", and the language section names itself and its options in
+/// the interface's language, each option in its own.
+#[test]
+fn the_language_section_follows_the_interface_language() {
+    within(30, || {
+        use gelabber_i18n::Locale;
+        let _config = crate::platform::paths::testing::TempConfig::new("language-english");
+        let _locale = gelabber_i18n::on_this_thread(Locale::De);
+        // The navigation column beside the page, as the shell lays them out.
+        let mut page = settings_page("darstellung");
+        let (mut h, world, _client, _call) = harness("/settings/darstellung", move |ui, app| {
+            let column = ui.max_rect();
+            let (nav, rest) = column.split_left_right_at_x(column.left() + 240.0);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(nav), |ui| {
+                super::sidebar(ui, app, Some("darstellung"));
+            });
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rest), |ui| page(ui, app));
+        });
+        {
+            let mut world = world.borrow_mut();
+            let mut user = world.session.user().cloned().unwrap();
+            user["locale"] = "de".into();
+            world.session.adopt(&serde_json::json!({ "user": user }));
+        }
+        h.run_steps(4);
+        assert!(h.query_by_label("Darstellung").is_some());
+        assert!(h.query_by_label("Sprache").is_some());
+        assert!(h.query_by_label("Language").is_none());
+        gelabber_i18n::set(Locale::En);
+        h.run_steps(4);
+        assert!(h.query_by_label("Appearance").is_some());
+        assert!(h.query_by_label("Darstellung").is_none());
+        assert!(h.query_by_label("Language").is_some());
+        assert!(h.query_by_label("Sprache").is_none());
+        // The area's controls speak English too.
+        assert!(h.query_by_label("More themes").is_some());
+        assert!(h.query_by_label("Weitere Themes").is_none());
+        // Each language is named in its own language on its option.
+        assert!(h.query_by_label("Deutsch").is_some());
+        assert!(h.query_by_label("English").is_some());
+    });
+}
+
+// ------------------------------------------------- Sicherheit: Anmeldung
+
+fn sign_in_methods(password: bool, connected: bool) -> gelabber_client::SignInMethods {
+    serde_json::from_value(serde_json::json!({
+        "password": password,
+        "providers": [{
+            "id": "google", "name": "Google", "configured": true,
+            "connected": connected.then(|| serde_json::json!({
+                "email": "lena@example.test", "since": "2026-11-10T10:00:00Z"
+            }))
+        }]
+    }))
+    .expect("methods")
+}
+
+/// Sicherheit with these sign-in methods.
+fn security_with(methods: gelabber_client::SignInMethods) -> H {
+    let (mut h, _world, _client, _call) = harness("/settings/konto", settings_page("konto"));
+    h.run_steps(2);
+    super::page_state(&h.ctx).lock().security.sign_in =
+        super::sign_in::SignInState::with_methods(methods);
+    h.run_steps(4);
+    h
+}
+
+fn is_disabled(h: &H, label: &str) -> bool {
+    use egui_kittest::kittest::NodeT;
+    h.get_by_role_and_label(egui::accesskit::Role::Button, label)
+        .accesskit_node()
+        .is_disabled()
+}
+
+/// The rows of hosted-security.png: Passwort with "Ändern", Google
+/// connected with "Trennen"; Ändern opens today's form in a dialog.
+#[test]
+fn anmeldung_lists_the_password_and_a_connected_provider() {
+    within(30, || {
+        let _config = crate::platform::paths::testing::TempConfig::new("sign-in-connected");
+        let mut h = security_with(sign_in_methods(true, true));
+        assert!(h.query_by_label("Anmeldung").is_some());
+        assert!(h.query_by_label("Passwort").is_some());
+        assert!(
+            h.query_by_label("Zum Anmelden mit deiner E-Mail-Adresse.")
+                .is_some()
+        );
+        assert!(h.query_by_label("Google").is_some());
+        assert!(
+            h.query_by_label(
+                "Verbunden mit lena@example.test. Trennen geht nur, solange ein Passwort gesetzt ist."
+            )
+            .is_some()
+        );
+        assert!(!is_disabled(&h, "Trennen"));
+        // Today's form is gone from the page; it is in the dialog.
+        assert!(h.query_by_label("Aktuelles Passwort").is_none());
+        assert!(h.query_by_label("Auf allen Geräten abmelden").is_some());
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Ändern")
+            .click();
+        h.run_steps(4);
+        // The dialog's title and its submit button.
+        assert_eq!(h.query_all_by_label("Passwort ändern").count(), 2);
+        assert!(h.query_by_label("Aktuelles Passwort").is_some());
+        assert!(h.query_by_label("Neues Passwort").is_some());
+        // "Trennen" asks first.
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Abbrechen")
+            .click();
+        h.run_steps(4);
+        assert!(h.query_by_label("Aktuelles Passwort").is_none());
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Trennen")
+            .click();
+        h.run_steps(4);
+        assert!(h.query_by_label("Google trennen?").is_some());
+    });
+}
+
+/// Not connected: "Verbinden", which with a password asks for it first.
+#[test]
+fn connecting_with_a_password_asks_for_it() {
+    within(30, || {
+        let _config = crate::platform::paths::testing::TempConfig::new("sign-in-open");
+        let mut h = security_with(sign_in_methods(true, false));
+        assert!(h.query_by_label("Nicht verbunden.").is_some());
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Verbinden")
+            .click();
+        h.run_steps(4);
+        assert!(h.query_by_label("Google verbinden").is_some());
+        assert!(h.query_by_label("Aktuelles Passwort").is_some());
+        // Without it the dialog says what is missing and goes nowhere.
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Weiter zu Google")
+            .click();
+        h.run_steps(4);
+        assert!(h.query_by_label("Google verbinden").is_some());
+        assert!(h.query_by_label("Weiter zu Google…").is_none());
+    });
+}
+
+/// Google only: "Festlegen" names the provider, and "Trennen" is off
+/// until a password is set.
+#[test]
+fn without_a_password_trennen_waits_for_festlegen() {
+    within(30, || {
+        let _config = crate::platform::paths::testing::TempConfig::new("sign-in-google-only");
+        let mut h = security_with(sign_in_methods(false, true));
+        assert!(
+            h.query_by_label("Noch keins gesetzt. Du meldest dich mit Google an.")
+                .is_some()
+        );
+        assert!(is_disabled(&h, "Trennen"));
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Festlegen")
+            .click();
+        h.run_steps(4);
+        // The dialog's title and its submit button.
+        assert_eq!(h.query_all_by_label("Passwort festlegen").count(), 2);
+        assert!(h.query_by_label("Aktuelles Passwort").is_none());
+        assert!(h.query_by_label("Neues Passwort").is_some());
+    });
+}
+
+/// Against the stand-in API: the methods load, "Trennen" confirmed
+/// disconnects, and the row says so.
+#[test]
+fn disconnecting_a_provider_after_the_question() {
+    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for_label, workspace};
+    let _config = crate::platform::paths::testing::TempConfig::new("sign-in-disconnect");
+    let api = FakeApi::start(true, |method, path, _| match (method, path) {
+        ("GET", "/auth/methods") => Some(Reply::json(
+            serde_json::to_value(sign_in_methods(true, true)).expect("json"),
+        )),
+        ("DELETE", "/auth/oidc/google") => Some(Reply::json(
+            serde_json::to_value(sign_in_methods(true, false)).expect("json"),
+        )),
+        _ => workspace(method, path),
+    });
+    let mut h = launcher(&api, "/settings/konto");
+    wait_for_label(&mut h, "Trennen");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Trennen")
+        .click();
+    wait_for_label(&mut h, "Google trennen?");
+    super::controls::answer_for_test(&h.ctx, "disconnect-provider-google", true);
+    wait_for_label(&mut h, "Getrennt.");
+    assert!(api.saw("DELETE /auth/oidc/google"));
+    wait_for_label(&mut h, "Nicht verbunden.");
+    wait_for_label(&mut h, "Verbinden");
 }

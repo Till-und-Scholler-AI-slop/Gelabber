@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use egui::{Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use gelabber_client::Message;
+use gelabber_i18n::{chat as texts, common};
 use uuid::Uuid;
 
 use super::attachments::{self, Media, MediaAction, Previews};
@@ -52,13 +53,13 @@ impl SendState {
     /// `SendStatus`: the words in place of the time.
     pub fn status(&self) -> &'static str {
         match self {
-            Self::Sending { .. } => "Wird gesendet…",
+            Self::Sending { .. } => texts::row_sending(),
             Self::Failed {
                 uncertain: false, ..
-            } => "Nicht gesendet",
+            } => texts::row_not_sent(),
             Self::Failed {
                 uncertain: true, ..
-            } => "Status unklar – Verlauf prüfen",
+            } => texts::row_unclear(),
         }
     }
 
@@ -67,9 +68,7 @@ impl SendState {
         match self {
             Self::Sending { .. } => None,
             Self::Failed { error, uncertain } => Some(if *uncertain {
-                format!(
-                    "{error} Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf, bevor du sie erneut sendest."
-                )
+                format!("{error} {}", texts::row_uncertain_hint())
             } else {
                 error.clone()
             }),
@@ -80,7 +79,7 @@ impl SendState {
 /// `attempt.error`: "{stage} fehlgeschlagen." and the uploads the server
 /// turned down, by file name.
 pub fn failure_line(pending: &gelabber_client::PendingMessage) -> String {
-    let mut line = format!("{} fehlgeschlagen.", pending.stage.label());
+    let mut line = pending.stage.failed().to_owned();
     if let Some(error) = &pending.failed
         && let Some(rejected) = gelabber_client::store::rejected_uploads(error)
     {
@@ -230,7 +229,12 @@ pub fn readable_mentions(text: &str, names: &HashMap<String, String>) -> String 
         {
             let id = tail[..id_len].to_ascii_lowercase();
             out.push('@');
-            out.push_str(names.get(&id).map(String::as_str).unwrap_or("Unbekannt"));
+            out.push_str(
+                names
+                    .get(&id)
+                    .map(String::as_str)
+                    .unwrap_or(texts::mention_unknown()),
+            );
             rest = &tail[id_len + 1..];
         } else {
             out.push_str("<@");
@@ -249,9 +253,9 @@ fn system_text(msg: &Message) -> String {
                 .get("voice_name")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
-            format!("{} ist live in {voice}.", msg.author.name)
+            texts::system_live_started(&msg.author.name, voice)
         }
-        _ => format!("Systemnachricht von {}", msg.author.name),
+        _ => texts::system_unknown(&msg.author.name),
     }
 }
 
@@ -314,12 +318,7 @@ pub fn layout(ui: &Ui, cx: &RowCx, width: f32) -> RowLayout {
                 ReplyLine {
                     deleted,
                     author: None,
-                    excerpt: Block::single(
-                        ui,
-                        "Die ursprüngliche Nachricht wurde gelöscht.",
-                        style,
-                        c.muted,
-                    ),
+                    excerpt: Block::single(ui, texts::row_reply_deleted(), style, c.muted),
                     clip: false,
                     target: r.id,
                 }
@@ -338,7 +337,7 @@ pub fn layout(ui: &Ui, cx: &RowCx, width: f32) -> RowLayout {
                         if r.has_gif {
                             "GIF".into()
                         } else if r.has_attachment {
-                            "Anhang".into()
+                            texts::row_reply_attachment().into()
                         } else {
                             String::new()
                         }
@@ -582,25 +581,25 @@ pub fn bar_buttons(cx: &RowCx) -> Vec<BarButton> {
         out.push(BarButton {
             icon: Icon::Smile,
             size: 16.0,
-            label: "Reaktion hinzufügen",
+            label: texts::reactions_add(),
         });
         out.push(BarButton {
             icon: Icon::Reply,
             size: 14.0,
-            label: "Antworten",
+            label: texts::row_reply(),
         });
     }
     if show_edit {
         out.push(BarButton {
             icon: Icon::Pencil,
             size: 14.0,
-            label: "Nachricht bearbeiten",
+            label: texts::row_edit_label(),
         });
     }
     out.push(BarButton {
         icon: Icon::More,
         size: 14.0,
-        label: "Weitere Aktionen",
+        label: texts::row_more_label(),
     });
     out
 }
@@ -880,13 +879,13 @@ pub fn paint(
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         ui2.spacing_mut().item_spacing.x = 6.0;
-        if failure.retry && ui2.add(Button::new("Erneut senden").small()).clicked() {
+        if failure.retry && ui2.add(Button::new(texts::row_resend()).small()).clicked() {
             actions.push(RowAction::Retry(msg.id));
         }
         if failure.edit
             && ui2
                 .add(
-                    Button::new("Bearbeiten")
+                    Button::new(texts::row_edit())
                         .small()
                         .variant(ButtonVariant::Ghost),
                 )
@@ -896,7 +895,7 @@ pub fn paint(
         }
         if ui2
             .add(
-                Button::new("Verwerfen")
+                Button::new(texts::row_discard())
                     .small()
                     .variant(ButtonVariant::Ghost),
             )
@@ -1086,14 +1085,14 @@ fn paint_editor(
     let y = line + 4.0;
     let hint = Block::single(
         ui,
-        "Esc bricht ab · Enter speichert",
+        texts::row_edit_hint(),
         TextStyle::new(12.0, 400.0, 1.5),
         c.muted,
     );
     hint.paint(ui.painter(), pos2(rect.left(), y));
     let label = TextStyle::new(12.0, 600.0, 1.5);
-    let save = Block::single(ui, "Speichern", label, c.accent_ink);
-    let cancel = Block::single(ui, "Abbrechen", label, c.text);
+    let save = Block::single(ui, common::save(), label, c.accent_ink);
+    let cancel = Block::single(ui, common::cancel(), label, c.text);
     let save_rect = Rect::from_min_size(
         pos2(rect.right() - save.width() - 20.0, line),
         vec2(save.width() + 20.0, 26.0),
@@ -1126,7 +1125,7 @@ fn paint_editor(
         },
     );
     r_save.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::Role::Button, error.is_none(), "Speichern")
+        egui::WidgetInfo::labeled(egui::Role::Button, error.is_none(), common::save())
     });
     if r_cancel.clicked() {
         actions.push(RowAction::CancelEdit);

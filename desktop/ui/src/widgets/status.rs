@@ -151,13 +151,16 @@ pub fn load_error(ui: &mut Ui, message: &str, pending: bool) -> bool {
         ))
         .rect_filled(box_rect, corner(theme.radius.sm), c.danger);
     block.paint(&painter, pos2(rect.left() + 15.0, rect.top() + 10.0));
-    let button = super::Button::new("Erneut versuchen")
+    let button = super::Button::new(gelabber_i18n::common::try_again())
         .small()
-        .pending(pending.then_some("Wird geladen…"));
+        .pending(pending.then_some(gelabber_i18n::common::loading()));
     let at = pos2(rect.left() + 15.0, rect.top() + 10.0 + text_h + 12.0);
     let clicked = ui
         .put(
-            Rect::from_min_size(at, Vec2::new(button_width(ui, "Erneut versuchen"), 32.0)),
+            Rect::from_min_size(
+                at,
+                Vec2::new(button_width(ui, gelabber_i18n::common::try_again()), 32.0),
+            ),
             button,
         )
         .clicked();

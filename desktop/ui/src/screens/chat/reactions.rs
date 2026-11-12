@@ -2,6 +2,7 @@
 //! messages/reactions.ts, chat.css `.lr-reactions`, `.lr-reaction`).
 
 use egui::{Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2};
+use gelabber_i18n::chat as texts;
 use uuid::Uuid;
 
 use crate::text::{Block, TextStyle};
@@ -64,7 +65,7 @@ pub fn reactor_names(users: &[Uuid], name_of: impl Fn(Uuid) -> Option<String>, m
         .iter()
         .filter_map(|u| {
             if *u == me {
-                Some("du".into())
+                Some(texts::reactions_you().into())
             } else {
                 name_of(*u)
             }
@@ -75,9 +76,9 @@ pub fn reactor_names(users: &[Uuid], name_of: impl Fn(Uuid) -> Option<String>, m
     let listed: Vec<String> = names.into_iter().take(shown).collect();
     let text = match listed.len() {
         0 => return String::new(),
-        _ if rest > 0 => format!("{} und {rest} weitere", listed.join(", ")),
+        _ if rest > 0 => texts::reactions_names_and_more(&listed.join(", "), rest as u64),
         1 => listed[0].clone(),
-        n => format!("{} und {}", listed[..n - 1].join(", "), listed[n - 1]),
+        n => texts::reactions_names_and(&listed[..n - 1].join(", "), &listed[n - 1]),
     };
     let mut chars = text.chars();
     match chars.next() {
@@ -156,12 +157,7 @@ pub fn paint(
             },
         );
         let n = shown.users.len();
-        let label = format!(
-            "{}: {n} {}{}",
-            shown.emoji,
-            if n == 1 { "Reaktion" } else { "Reaktionen" },
-            if mine { ", du hast reagiert" } else { "" }
-        );
+        let label = texts::reactions_chip_label(&shown.emoji, n as u64, mine);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
         let hovered = enabled && response.hovered();
         let (fill, border) = if mine {

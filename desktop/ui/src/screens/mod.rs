@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod chat;
+pub mod discover;
 pub mod layout;
 pub mod server_settings;
 pub mod settings;
@@ -23,6 +24,7 @@ pub enum ScreenState {
     ResetPassword(auth::reset_password::State),
     VerifyEmail(auth::verify_email::State),
     Invite(auth::invite::State),
+    SignInName(auth::sign_in_name::State),
 }
 
 impl ScreenState {
@@ -40,6 +42,9 @@ impl ScreenState {
                 Self::VerifyEmail(auth::verify_email::State::new(&location.fragment))
             }
             Route::Invite(code) => Self::Invite(auth::invite::State::new(code)),
+            Route::SignInName => {
+                Self::SignInName(auth::sign_in_name::State::new(&location.fragment))
+            }
             _ => Self::None,
         }
     }
@@ -53,8 +58,20 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, state: &mut ScreenState) {
         ScreenState::ResetPassword(s) => auth::reset_password::show(ui, app, s),
         ScreenState::VerifyEmail(s) => auth::verify_email::show(ui, app, s),
         ScreenState::Invite(s) => auth::invite::show(ui, app, s),
+        ScreenState::SignInName(s) => auth::sign_in_name::show(ui, app, s),
         ScreenState::None => match app.nav.route() {
             Route::NotFound(_) => auth::not_found::show(ui, app),
+            // Only for an operator: everyone else meets "not found", as on
+            // the web.
+            Route::Operator(_) if !app.session.operator() => auth::not_found::show(ui, app),
+            // An unknown page of the area is not found either (`requireOperator`).
+            Route::Operator(page) if !shell::operator::is_page(page.as_deref()) => {
+                auth::not_found::show(ui, app)
+            }
+            // Off, the directory has no page (the web's `notFound()`).
+            Route::Discover(_) if discover::guard(ui.ctx(), app) == Some(false) => {
+                auth::not_found::show(ui, app)
+            }
             _ => shell::show(ui, app),
         },
     }

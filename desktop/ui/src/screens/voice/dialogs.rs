@@ -7,6 +7,7 @@
 
 use egui::{Color32, Id, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use gelabber_call::{MicTest, MicTestPhase};
+use gelabber_i18n::{common, voice_settings as texts};
 
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
@@ -15,7 +16,7 @@ use crate::text::{self, Block};
 use crate::theme::{Theme, corner};
 use crate::widgets::{Button, Modal, ModalWidth};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
     Audio,
     Video,
@@ -27,9 +28,9 @@ impl Tab {
 
     fn label(self) -> &'static str {
         match self {
-            Tab::Audio => "Audio",
-            Tab::Video => "Video & Live",
-            Tab::Diagnose => "Diagnose",
+            Tab::Audio => texts::tabs_audio(),
+            Tab::Video => texts::tabs_video(),
+            Tab::Diagnose => texts::tabs_diagnostics(),
         }
     }
 }
@@ -101,15 +102,19 @@ fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
     let mut done = false;
     let focus_tab = with(&ctx, |o| std::mem::take(&mut o.focus_tab));
     let mut footer = |ui: &mut Ui| {
-        let w = Block::single(ui, "Fertig", text::UI.weight(600.0), Color32::WHITE).width() + 34.0;
-        if ui.add(Button::new("Fertig").ghost().width(w)).clicked() {
+        let w = Block::single(ui, common::done(), text::UI.weight(600.0), Color32::WHITE).width()
+            + 34.0;
+        if ui
+            .add(Button::new(common::done()).ghost().width(w))
+            .clicked()
+        {
             done = true;
         }
     };
     // The body scrolls without a gutter of its own, as in the browser.
     let saved = ctx.global_style().spacing.scroll;
     ctx.all_styles_mut(|s| s.spacing.scroll.floating_allocated_width = 0.0);
-    let output = Modal::new("voice-settings", "Audio & Video")
+    let output = Modal::new("voice-settings", texts::dialog_title())
         .width(ModalWidth::Large)
         .show(
             &ctx,
@@ -159,7 +164,8 @@ fn tabs(ui: &mut Ui, current: Tab, width: f32, focus: bool) -> Option<Tab> {
     let top = ui.cursor().min;
     let mut x = top.x;
     let mut chosen = None;
-    let tab_id = |tab: Tab| Id::unique(("gelabber-voice-tab", tab.label()));
+    // By the tab, not its label, so a language switch keeps the focus.
+    let tab_id = |tab: Tab| Id::unique(("gelabber-voice-tab", tab));
     // The keys first, so the tab they choose is the focusable one this frame.
     let mut current = current;
     let mut focus = focus;
@@ -266,9 +272,9 @@ fn tabs(ui: &mut Ui, current: Tab, width: f32, focus: bool) -> Option<Tab> {
 
 /// `.voice-microphone-test meter`, styled as `.voice-quick-level`: a 6px
 /// round track in the border colour, the level in green over it.
-fn meter(ui: &mut Ui, value: f64, width: f32) {
+pub(super) fn meter(ui: &mut Ui, value: f64, width: f32) -> egui::Response {
     let theme = Theme::of(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 6.0), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 6.0), Sense::hover());
     let round = corner(theme.radius.full);
     ui.painter().rect_filled(rect, round, theme.c.border);
     let filled = (value.clamp(0.0, 100.0) / 100.0) as f32 * width;
@@ -279,6 +285,7 @@ fn meter(ui: &mut Ui, value: f64, width: f32) {
             theme.c.online_text,
         );
     }
+    response
 }
 
 fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
@@ -292,7 +299,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
     let mut close = false;
     // Opened from the settings, the settings page's form look reaches it.
     let framed = matches!(app.nav.route(), crate::route::Route::Settings(_));
-    let output = Modal::new("mic-test", "Mikrofon testen").show(
+    let output = Modal::new("mic-test", texts::mic_test_title()).show(
         &ctx,
         |ui| {
             let theme = Theme::of(ui.ctx());
@@ -303,28 +310,27 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             icons::paint(ui.painter(), Icon::Mic, r.min, 36.0, c.accent_text);
             ui.add_space(14.0);
             // The native test only meters: nothing is recorded (no A/B clips).
-            controls::paragraph(
-                ui,
-                "Der Test läuft lokal, ohne Aufnahme oder Übertragung.",
-                text::BODY,
-                c.muted,
-                width,
-            );
+            controls::paragraph(ui, texts::mic_test_local_only(), text::BODY, c.muted, width);
             ui.add_space(14.0);
             for (label, value) in [
-                ("Eingangspegel", test.input),
-                ("Nach Verarbeitung", test.processed),
+                (texts::mic_test_input_level(), test.input),
+                (texts::mic_test_processed(), test.processed),
             ] {
                 // Each meter sits close under its label (6px), apart from the next.
                 controls::paragraph(ui, label, text::BODY, c.text, width);
                 ui.add_space(6.0);
-                meter(ui, value, width);
+                let _ = meter(ui, value, width);
                 ui.add_space(14.0);
             }
             // The fieldset: its legend, then the modes in a wrapping row. In
             // the settings their fieldset look applies: a framed box with
             // the legend on its edge and 36px rows.
-            let legend = Block::single(ui, "Verarbeitung", text::UI.weight(600.0), c.text);
+            let legend = Block::single(
+                ui,
+                texts::mic_test_processing(),
+                text::UI.weight(600.0),
+                c.text,
+            );
             let frame_top = ui.cursor().min;
             let (pad, row_h, legend_h) = if framed {
                 // The frame's top edge runs through the legend's middle.
@@ -340,6 +346,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             let inner = width - 2.0 * pad;
             let (mut x, mut y) = (top.x, top.y);
             for (mode, label, _) in media::PROCESSING_MODES {
+                let label = label();
                 let block = Block::single(ui, label, text::UI.weight(400.0), c.text);
                 let w = 20.0 + 8.0 + block.width();
                 if x > top.x && x + w > top.x + inner {
@@ -405,11 +412,9 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             }
             ui.add_space(14.0);
             let message = match &test.phase {
-                MicTestPhase::Idle if stopped => {
-                    "Test beendet. Mikrofon und Aufnahmen wurden freigegeben.".to_owned()
-                }
-                MicTestPhase::Idle => "Prüfe dein Mikrofon und vergleiche die Verarbeitung.".into(),
-                MicTestPhase::Pending => "Mikrofon wird gestartet.".into(),
+                MicTestPhase::Idle if stopped => texts::mic_test_stopped().to_owned(),
+                MicTestPhase::Idle => texts::mic_test_intro().into(),
+                MicTestPhase::Pending => texts::mic_test_starting().into(),
                 MicTestPhase::Active => super::diagnostics::processing_text(
                     &p.processing_mode,
                     test.device.as_deref(),
@@ -420,20 +425,14 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             controls::paragraph(ui, &message, text::BODY, c.text, width);
             if test.clipping {
                 ui.add_space(14.0);
-                controls::paragraph(
-                    ui,
-                    "Übersteuerung erkannt. Verringere die Mikrofonverstärkung oder den Gerätepegel.",
-                    text::BODY,
-                    c.text,
-                    width,
-                );
+                controls::paragraph(ui, texts::mic_test_clipping(), text::BODY, c.text, width);
             }
             ui.add_space(14.0);
             let top = ui.cursor().min;
             let primary = if running {
-                "Test beenden"
+                texts::mic_test_stop()
             } else {
-                "Test starten"
+                texts::mic_test_start()
             };
             let pw = Block::single(ui, primary, text::UI.weight(600.0), c.text).width() + 34.0;
             let start = Rect::from_min_size(top, vec2(pw, 36.0));
@@ -445,9 +444,10 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             if ui.put(start, button).clicked() {
                 action = Some(!running);
             }
-            let cw = Block::single(ui, "Schließen", text::UI.weight(600.0), c.text).width() + 34.0;
+            let cw =
+                Block::single(ui, common::close(), text::UI.weight(600.0), c.text).width() + 34.0;
             let close_rect = Rect::from_min_size(pos2(start.right() + 8.0, top.y), vec2(cw, 36.0));
-            let ghost = Button::new("Schließen").ghost();
+            let ghost = Button::new(common::close()).ghost();
             let ghost = if framed {
                 ghost.text_color(c.accent_text)
             } else {

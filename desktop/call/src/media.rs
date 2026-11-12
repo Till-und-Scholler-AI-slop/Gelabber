@@ -345,6 +345,8 @@ pub(crate) fn watch(inner: &Arc<Inner>, user: Uuid, on: bool) {
         if let Some(seat) = &st.seat {
             seat.queue_watch(user, on);
         }
+        // The gateway tells the room who watches; queued in the same order.
+        inner.client().voice_watch(user, on);
     }
     if !on {
         // Off drops the stream and its sound at once.
@@ -476,7 +478,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
         .flatten();
         let (engine, device) = match started {
             Some(Ok(started)) => started,
-            _ => return fail(&inner, logic::MIC_TEST_FAILED),
+            _ => return fail(&inner, logic::mic_test_failed()),
         };
         if inner.mic_test_turn() != turn {
             let _ = blocking(move || engine.monitor_audio(None)).await;
@@ -498,7 +500,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
             let reader = engine.clone();
             let levels = blocking(move || reader.audio_levels()).await;
             let Some(Ok(levels)) = levels else {
-                fail(&inner, logic::MIC_TEST_NO_LEVELS);
+                fail(&inner, logic::mic_test_no_levels());
                 let engine = engine.clone();
                 let _ = blocking(move || engine.monitor_audio(None)).await;
                 return;
@@ -514,7 +516,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
                     t.clipping = levels["clipping"].as_bool().unwrap_or(false);
                 });
             } else if now.duration_since(moved) >= MIC_TEST_STALL {
-                fail(&inner, logic::MIC_TEST_STALLED);
+                fail(&inner, logic::mic_test_stalled());
                 let engine = engine.clone();
                 let _ = blocking(move || engine.monitor_audio(None)).await;
                 return;
@@ -881,7 +883,7 @@ impl Session {
                 if transient {
                     self.schedule_rebuild(generation);
                 } else {
-                    self.give_up(Leave::Refused(error.german().into()));
+                    self.give_up(Leave::Refused(error.text().into()));
                 }
                 return;
             }
@@ -1182,7 +1184,7 @@ impl Session {
         self.stop_video(kind).await;
         inner.notify(if kind == Kind::S && error.code() == "forbidden" {
             // The seat's ticket predates a go-live grant: only a new one has it.
-            logic::LIVE_NEEDS_REJOIN
+            logic::live_needs_rejoin()
         } else {
             logic::media_error_message(error.code())
         });
@@ -1218,9 +1220,9 @@ impl Session {
                         };
                     });
                     inner.notify(if denied {
-                        logic::MIC_DENIED
+                        logic::mic_denied()
                     } else {
-                        logic::MIC_NOT_FOUND
+                        logic::mic_not_found()
                     });
                 }
                 return None;
@@ -1298,7 +1300,7 @@ impl Session {
                     && self.live()
                 {
                     if self.st.lock().mic.is_some() {
-                        inner.notify(logic::MIC_SWITCH_FAILED);
+                        inner.notify(logic::mic_switch_failed());
                     } else {
                         let denied = logic::mic_refused(&e);
                         inner.write(|s| {
@@ -1432,7 +1434,7 @@ impl Session {
                     }
                     inner.drop_frame(VideoKey::camera(self.me));
                     self.publish_participants();
-                    inner.notify(logic::CAMERA_UNAVAILABLE);
+                    inner.notify(logic::camera_unavailable());
                 }
                 return;
             }
@@ -2029,7 +2031,7 @@ impl Session {
         let mine = user == self.me;
         match sig.t {
             SigKind::J => {
-                let mut confirmed = (false, false);
+                let mut confirmed = (false, false, false);
                 {
                     let mut st = self.st.lock();
                     if !mine {
@@ -2052,6 +2054,7 @@ impl Session {
                         confirmed = (
                             std::mem::take(&mut st.sound_on_join),
                             std::mem::take(&mut st.republish_on_join),
+                            true,
                         );
                     }
                 }
@@ -2060,6 +2063,9 @@ impl Session {
                 }
                 if confirmed.1 {
                     self.reannounce();
+                } else if confirmed.2 {
+                    // A new seat on the gateway holds no watches yet.
+                    self.announce_watches();
                 }
             }
             SigKind::L => {
@@ -2192,7 +2198,7 @@ impl Session {
             inner
                 .runtime()
                 .spawn(async move { session.stop_video(Kind::S).await });
-            inner.notify(logic::LIVE_FORBIDDEN_MESSAGE);
+            inner.notify(logic::live_forbidden_message());
         }
     }
 
@@ -2218,6 +2224,17 @@ impl Session {
             if audio {
                 self.announce(Kind::Sa, true);
             }
+        }
+        self.announce_watches();
+    }
+
+    /// `w` on the gateway for every Live this client watches.
+    fn announce_watches(&self) {
+        let Some(inner) = self.inner() else { return };
+        let mut watching: Vec<Uuid> = self.st.lock().watching.iter().copied().collect();
+        watching.sort();
+        for owner in watching {
+            inner.client().voice_watch(owner, true);
         }
     }
 
@@ -2450,7 +2467,7 @@ impl Session {
         let (message, lost) = match why {
             Leave::Refused(message) => (message, None),
             Leave::Lost => (
-                logic::LOST_CALL_MESSAGE.to_owned(),
+                logic::lost_call_message().to_owned(),
                 Some((self.server, self.channel)),
             ),
             Leave::LostWith(message) => (message, Some((self.server, self.channel))),
@@ -4041,6 +4058,103 @@ mod tests {
         // Without a connect under way, a lost media socket is rebuilt.
         session.on_ready();
         assert_eq!(session.st.lock().attempts, 1);
+        session.stop();
+    }
+    /// The `w` requests this client sent on the gateway: waits for `count`
+    /// of them, then a little longer for any more.
+    fn watch_frames(
+        sent: &Mutex<Vec<gelabber_client::ClientFrame>>,
+        count: usize,
+    ) -> Vec<(Uuid, bool)> {
+        let frames = || -> Vec<(Uuid, bool)> {
+            sent.lock()
+                .iter()
+                .filter_map(|frame| match frame {
+                    gelabber_client::ClientFrame::Sig {
+                        t: SigKind::W,
+                        k: Some(gelabber_client::TrackKind::S),
+                        o: Some(owner),
+                        on: Some(on),
+                        ..
+                    } => Some((*owner, *on)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let start = Instant::now();
+        while frames().len() < count && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        frames()
+    }
+
+    #[test]
+    fn watches_are_announced_on_the_gateway_once_per_change_and_again_on_a_new_seat() {
+        let call = offline();
+        let session = session(&call);
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let tap = sent.clone();
+        call.client().set_frame_tap(Some(Arc::new(
+            move |frame: &gelabber_client::ClientFrame| {
+                tap.lock().push(frame.clone());
+            },
+        )));
+        call.client().voice_join(session.server, session.channel);
+        let (ada, bea) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        call.watch(ada, true);
+        call.watch(ada, true);
+        call.watch(bea, true);
+        call.watch(bea, false);
+        call.watch(bea, false);
+        // Watching oneself is no watch.
+        call.watch(session.me, true);
+        assert_eq!(
+            watch_frames(&sent, 3),
+            vec![(ada, true), (bea, true), (bea, false)]
+        );
+
+        // The gateway's new seat after a reconnect: the watches again.
+        sent.lock().clear();
+        session.st.lock().awaiting_join = true;
+        session.on_sig(&SigFrame {
+            t: SigKind::J,
+            s: session.server,
+            c: Some(session.channel),
+            u: Some(session.me),
+            k: None,
+            on: None,
+            m: None,
+            d: None,
+            snap: None,
+            replay: false,
+            w: None,
+        });
+        assert_eq!(watch_frames(&sent, 1), vec![(ada, true)]);
+        // Only the first answer of a seat: an echo later sends nothing.
+        sent.lock().clear();
+        session.on_sig(&SigFrame {
+            t: SigKind::J,
+            s: session.server,
+            c: Some(session.channel),
+            u: Some(session.me),
+            k: None,
+            on: None,
+            m: None,
+            d: None,
+            snap: None,
+            replay: false,
+            w: None,
+        });
+        // A marker behind it in the queue: whatever came is in by then.
+        let marker = Uuid::from_u128(9);
+        call.client().voice_watch(marker, false);
+        assert_eq!(watch_frames(&sent, 1), vec![(marker, false)]);
+        sent.lock().clear();
+
+        // The media still runs: the publications and the watches.
+        session.reannounce();
+        assert_eq!(watch_frames(&sent, 1), vec![(ada, true)]);
         session.stop();
     }
 }

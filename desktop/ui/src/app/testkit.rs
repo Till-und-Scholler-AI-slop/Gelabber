@@ -173,9 +173,25 @@ fn default(method: &str, path: &str, signed_in: &Mutex<bool>) -> Reply {
 
 pub const HOME: &str = "00000000-0000-4000-8000-0000000000a0";
 pub const ALLGEMEIN: &str = "00000000-0000-4000-8000-0000000000c1";
+pub const SPIELE: &str = "00000000-0000-4000-8000-0000000000c3";
+pub const MODERATION: &str = "00000000-0000-4000-8000-0000000000d1";
+pub const STAMMGAESTE: &str = "00000000-0000-4000-8000-0000000000d2";
+
+/// The custom roles of the parity seed: Moderation (blue) and Stammgäste
+/// (green), by position.
+pub fn roles() -> Value {
+    json!([
+        {"id": MODERATION, "server_id": HOME, "name": "Moderation", "color": "blue",
+         "permissions": ["moderate_members", "manage_messages", "mention_everyone"],
+         "position": 0, "created_at": "2026-01-01T00:00:00Z"},
+        {"id": STAMMGAESTE, "server_id": HOME, "name": "Stammgäste", "color": "green",
+         "permissions": [], "position": 1, "created_at": "2026-01-01T00:00:00Z"}
+    ])
+}
 
 /// Wohnzimmer as the parity fixture has it: Lena owns it; Textkanäle
 /// (allgemein), Sprachkanäle (Wohnzimmer), Plaudern (spiele, musik).
+/// spiele is limited to Moderation and Stammgäste.
 pub fn workspace(method: &str, path: &str) -> Option<Reply> {
     let server = json!({
         "id": HOME, "name": "Wohnzimmer", "owner_id": LENA, "icon_url": null,
@@ -188,9 +204,16 @@ pub fn workspace(method: &str, path: &str) -> Option<Reply> {
                "name": name, "created_at": "2026-01-01T00:00:00Z"})
     };
     let channel = |n: u8, category: u8, name: &str, kind: &str| {
-        json!({"id": format!("00000000-0000-4000-8000-0000000000c{n}"), "server_id": HOME,
+        let id = format!("00000000-0000-4000-8000-0000000000c{n}");
+        let role_ids = if id == SPIELE {
+            json!([MODERATION, STAMMGAESTE])
+        } else {
+            json!([])
+        };
+        json!({"id": id, "server_id": HOME,
                "category_id": format!("00000000-0000-4000-8000-0000000000b{category}"),
-               "name": name, "kind": kind, "created_at": "2026-01-01T00:00:00Z"})
+               "name": name, "kind": kind, "created_at": "2026-01-01T00:00:00Z",
+               "limited": id == SPIELE, "role_ids": role_ids})
     };
     match (method, path) {
         ("GET", "/servers") => Some(Reply::json(json!([server]))),
@@ -210,8 +233,10 @@ pub fn workspace(method: &str, path: &str) -> Option<Reply> {
             detail["members"] = json!([{
                 "user_id": LENA, "name": "Lena", "avatar_url": null,
                 "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
-                "accent_color": null, "avatar_decoration": null, "role": "owner"
+                "accent_color": null, "avatar_decoration": null, "role": "owner",
+                "role_ids": []
             }]);
+            detail["roles"] = roles();
             Some(Reply::json(detail))
         }
         ("GET", p) if p.starts_with("/channels/") && p.ends_with("/messages") => {

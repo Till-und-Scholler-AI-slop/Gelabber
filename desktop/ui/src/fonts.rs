@@ -15,10 +15,10 @@ use std::sync::{Arc, OnceLock};
 use egui::{FontData, FontDefinitions, FontFamily};
 
 pub const INTER: &str = "Inter";
-pub const INTER_ITALIC: &str = "Inter Italic";
-const BOLD: &str = "Gelabber Bold";
-const SYSTEM_UI: &str = "System UI";
-const SYSTEM_UI_BOLD: &str = "System UI Bold";
+pub const INTER_ITALIC: &str = "Inter Italic"; // i18n-ok
+const BOLD: &str = "Gelabber Bold"; // i18n-ok
+const SYSTEM_UI: &str = "System UI"; // i18n-ok
+const SYSTEM_UI_BOLD: &str = "System UI Bold"; // i18n-ok
 
 /// Inter's vertical metrics (unitsPerEm 2048: ascender 1984, descender 494).
 pub const INTER_METRICS: Metrics = Metrics {

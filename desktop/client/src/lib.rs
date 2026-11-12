@@ -8,6 +8,7 @@ mod commands;
 pub mod gateway;
 pub mod http;
 pub mod models;
+pub mod oidc;
 pub mod store;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -19,7 +20,7 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 pub use api::HistoryQuery;
 pub use commands::SettingTarget;
 pub use gateway::{Gateway, GatewayConfig, GatewayEvent, GatewayStatus};
-pub use http::{ApiError, Download, Http, error_message};
+pub use http::{ApiError, Download, DownloadError, Http, error_message};
 pub use models::*;
 pub use store::{
     ChannelMessages, Notice, OpState, OutgoingFile, PendingMessage, Session, State, View,
@@ -36,6 +37,10 @@ pub type EventTap = Arc<dyn Fn(&EventFrame) + Send + Sync>;
 /// Sees the gateway's `ready`, `sig` and `err` after the state took them
 /// in, for the call (gelabber-call), which keeps its own room state.
 pub type VoiceHook = Arc<dyn Fn(&GatewayEvent) + Send + Sync>;
+
+/// Sees every frame this client sends on the gateway socket, whether or not
+/// one is open (tests of the call, which has no socket).
+pub type FrameTap = Arc<dyn Fn(&models::ClientFrame) + Send + Sync>;
 
 /// A voice command, run in the order the commands were given.
 type VoiceJob = Box<dyn FnOnce(&Client) + Send>;
@@ -73,6 +78,10 @@ struct Inner {
     repaint: RwLock<Option<Repaint>>,
     voice_hook: RwLock<Option<VoiceHook>>,
     voice_jobs: Mutex<Option<tokio::sync::mpsc::UnboundedSender<VoiceJob>>>,
+    /// The socket dropped and the next one's `Ready` has not sent the join
+    /// yet: a `w` before the `J` would be refused as a failed join. The
+    /// call resends its watches when the join is confirmed.
+    voice_unseated: Mutex<bool>,
     state: RwLock<State>,
     gateway: Mutex<Option<Gateway>>,
     gateway_config: Mutex<GatewayConfig>,
@@ -87,6 +96,12 @@ struct Inner {
     /// already replaced are dropped.
     gateway_generation: AtomicU64,
     event_tap: RwLock<Option<EventTap>>,
+    /// Counts language changes: only the newest speaks for the account.
+    locale_change: AtomicU64,
+    /// What the server confirmed for an older change while a newer one was
+    /// still on its way, with the account's epoch.
+    locale_meanwhile: Mutex<Option<(u64, String)>>,
+    frame_tap: RwLock<Option<FrameTap>>,
 }
 
 impl Drop for Inner {
@@ -124,6 +139,7 @@ impl Client {
                 repaint: RwLock::new(None),
                 voice_hook: RwLock::new(None),
                 voice_jobs: Mutex::new(None),
+                voice_unseated: Mutex::new(false),
                 state: RwLock::new(State::default()),
                 gateway: Mutex::new(None),
                 gateway_config: Mutex::new(GatewayConfig::default()),
@@ -134,6 +150,9 @@ impl Client {
                 unread_generation: AtomicU64::new(0),
                 gateway_generation: AtomicU64::new(0),
                 event_tap: RwLock::new(None),
+                locale_change: AtomicU64::new(0),
+                locale_meanwhile: Mutex::new(None),
+                frame_tap: RwLock::new(None),
             }),
         };
         let weak = Arc::downgrade(&client.inner);
@@ -170,6 +189,10 @@ impl Client {
 
     pub fn set_event_tap(&self, tap: Option<EventTap>) {
         *self.inner.event_tap.write() = tap;
+    }
+
+    pub fn set_frame_tap(&self, tap: Option<FrameTap>) {
+        *self.inner.frame_tap.write() = tap;
     }
 
     pub fn set_repaint(&self, repaint: Repaint) {
@@ -256,6 +279,15 @@ impl Client {
                 s.session = Session::Authenticated(Box::new(user));
             });
         }
+        Ok(())
+    }
+
+    /// `PUT /api/me/locale` before the first frame (the parity tool); on
+    /// success the session user carries the language.
+    pub fn set_locale_blocking(&self, locale: &str) -> Result<(), ApiError> {
+        let http = self.inner.http.clone();
+        let saved = self.block_on(async move { http.set_locale(locale).await })?;
+        self.write(|s| commands::record_locale(s, saved.locale));
         Ok(())
     }
 
@@ -583,5 +615,44 @@ mod tests {
             )),
             "{notices:?}"
         );
+    }
+
+    /// The access-changed event (`{"k":"a"}`, no channel) reads the
+    /// server's detail and the list again; another server event does not.
+    #[test]
+    fn an_access_change_fetches_the_server_and_the_list_again() {
+        let (url, seen) = recording_server("kaputt");
+        let client = Client::new(&url).unwrap();
+        let server = uuid::Uuid::from_u128(3);
+        let event = |k: &str| EventFrame {
+            t: EventKind::E,
+            s: server,
+            c: None,
+            n: 1,
+            ep: None,
+            i: None,
+            d: Some(serde_json::json!({"k": k})),
+            r: None,
+        };
+        let fetches = || {
+            let seen = seen.lock();
+            (
+                seen.iter()
+                    .filter(|l| l.starts_with("GET /api/servers "))
+                    .count(),
+                seen.iter()
+                    .filter(|l| l.starts_with(&format!("GET /api/servers/{server} ")))
+                    .count(),
+            )
+        };
+        client.on_gateway(GatewayEvent::Event(event("x")));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(fetches(), (0, 0));
+        client.on_gateway(GatewayEvent::Event(event("a")));
+        let start = Instant::now();
+        while fetches() != (1, 1) && start.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(fetches(), (1, 1), "{:?}", seen.lock());
     }
 }

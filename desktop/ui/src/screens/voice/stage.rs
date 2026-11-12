@@ -459,6 +459,25 @@ pub fn kino(ctx: &Context) -> bool {
     load(ctx).kino
 }
 
+/// `PERSON_TILE`: a call without pictures puts its people on the stage,
+/// each in a tile of [`raster_rects`]' size: the avatar a third of the
+/// tile's height, between 36 and 96 pixels; below 180 pixels high a
+/// smaller name and no status line.
+pub const PERSON_AVATAR_MIN: f32 = 36.0;
+pub const PERSON_AVATAR_MAX: f32 = 96.0;
+pub const PERSON_AVATAR_SHARE: f32 = 0.34;
+pub const PERSON_SMALL_BELOW: f32 = 180.0;
+
+/// `personTile`: the avatar's diameter on a people stage tile this high,
+/// and whether the tile is the small one.
+pub fn person_tile(height: f32) -> (f32, bool) {
+    let avatar = js_round(f64::from(height * PERSON_AVATAR_SHARE)) as f32;
+    (
+        avatar.clamp(PERSON_AVATAR_MIN, PERSON_AVATAR_MAX),
+        height < PERSON_SMALL_BELOW,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,5 +631,27 @@ mod tests {
         set_kino(&ctx, true);
         assert!(choices(&ctx, call, Some(call)).kino);
         assert!(kino(&ctx));
+    }
+
+    /// The people stage of the references: 696×648 at 1280×800 with the
+    /// member list open.
+    #[test]
+    fn people_stage_matches_the_web() {
+        let two = raster_rects(2, 696, 648);
+        assert_eq!(two, vec![r(66, 0, 565, 318), r(66, 330, 565, 318)]);
+        assert_eq!(person_tile(318.0), (96.0, false));
+        let four = raster_rects(4, 696, 648);
+        assert!(four.iter().all(|t| (t.w, t.h) == (342, 318)));
+        assert_eq!(four[3], r(354, 330, 342, 318));
+        let many = raster_rects(25, 696, 648);
+        assert!(many.iter().all(|t| (t.w, t.h) == (129, 120)));
+        let mut rows: Vec<i32> = many.iter().map(|t| t.y).collect();
+        rows.dedup();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(person_tile(120.0), (41.0, true));
+        assert_eq!(person_tile(60.0).0, 36.0);
+        assert_eq!(person_tile(179.0), (61.0, true));
+        assert_eq!(person_tile(180.0), (61.0, false));
+        assert_eq!(person_tile(400.0).0, 96.0);
     }
 }

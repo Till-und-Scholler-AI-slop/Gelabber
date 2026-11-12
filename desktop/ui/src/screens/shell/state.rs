@@ -89,6 +89,12 @@ pub enum Dialog {
         name: String,
         category: Option<Uuid>,
         error: Option<String>,
+        /// "Zugriff": `None` is "Alle Mitglieder" (`AccessSelection`).
+        access: Option<Vec<Uuid>>,
+        /// The name and access it opened with, for the dirty check and
+        /// to send `role_ids` only when the access changed.
+        initial_name: String,
+        initial_access: Option<Vec<Uuid>>,
     },
     Category {
         server: Uuid,

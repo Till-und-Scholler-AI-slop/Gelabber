@@ -55,11 +55,12 @@ pub enum Icon {
     Eye,
     EyeOff,
     Lock,
+    Stop,
     Compass,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 52] = [
+    pub const ALL: [Icon; 53] = [
         Icon::Hash,
         Icon::Speaker,
         Icon::Plus,
@@ -111,6 +112,7 @@ impl Icon {
         Icon::Eye,
         Icon::EyeOff,
         Icon::Lock,
+        Icon::Stop,
         Icon::Compass,
     ];
 
@@ -168,6 +170,7 @@ impl Icon {
             Icon::Eye => include_bytes!("../assets/icons/eye.svg"),
             Icon::EyeOff => include_bytes!("../assets/icons/eye-off.svg"),
             Icon::Lock => include_bytes!("../assets/icons/lock.svg"),
+            Icon::Stop => include_bytes!("../assets/icons/stop.svg"),
             Icon::Compass => include_bytes!("../assets/icons/compass.svg"),
         }
     }

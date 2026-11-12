@@ -3,7 +3,8 @@
 //! activation or push-to-talk, and the way to all settings. Width 312.
 
 use egui::{Id, Rect, Response, Sense, Ui, UiBuilder, vec2};
-use gelabber_call::Device;
+use gelabber_call::{CallStatus, Device, MicStatus, logic};
+use gelabber_i18n::voice_settings as texts;
 
 use crate::app::AppCtx;
 use crate::screens::settings::{controls, prefs};
@@ -14,7 +15,7 @@ use crate::widgets::Popover;
 /// The device choices: the system default, then what the call lists. The
 /// desktop app names the default "Systemstandard" (`deviceChoices`).
 pub fn device_options(list: &[Device]) -> Vec<(String, String)> {
-    std::iter::once((String::new(), "Systemstandard".to_owned()))
+    std::iter::once((String::new(), texts::devices_system_default().to_owned()))
         .chain(list.iter().map(|d| (d.id.clone(), d.label.clone())))
         .collect()
 }
@@ -25,6 +26,16 @@ fn open_id() -> Id {
 
 /// Opens and closes the popover from the gear `response` at `anchor`.
 pub fn button(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect) {
+    toggle(ui, app, response, anchor, true);
+}
+
+/// [`button`] for the user panel's gear in a call: the popover opens over
+/// it from its start (`top-start`).
+pub fn panel_button(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect) {
+    toggle(ui, app, response, anchor, false);
+}
+
+fn toggle(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect, end: bool) {
     let ctx = ui.ctx().clone();
     let open: Option<Rect> = ctx.data(|d| d.get_temp(open_id())).flatten();
     let same = open.is_some_and(|r| (r.center() - anchor.center()).length() < 1.0);
@@ -36,10 +47,13 @@ pub fn button(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect) {
     if !same {
         return;
     }
-    let shown = Popover::new("voice-quick", anchor)
-        .align_end()
-        .min_width(312.0)
-        .show(&ctx, |ui| content(ui, app));
+    let popover = Popover::new("voice-quick", anchor).min_width(312.0);
+    let popover = if end {
+        popover.align_end()
+    } else {
+        popover.above()
+    };
+    let shown = popover.show(&ctx, |ui| content(ui, app));
     match shown {
         Some(false) => {}
         Some(true) | None => {
@@ -66,85 +80,106 @@ pub fn sound_button(ui: &mut Ui, response: Response, anchor: Rect, deafened: boo
         .align_end()
         .min_width(264.0)
         .show(&ctx, |ui| {
-            let theme = Theme::of(ui.ctx());
-            let c = theme.c;
-            let width = 264.0 - 18.0 - 12.0;
             ui.set_width(264.0 - 18.0);
-            let mut p = prefs::get(ui.ctx());
-            let before = p.clone();
-            let rect = Rect::from_min_size(ui.cursor().min + vec2(6.0, 6.0), vec2(width, 400.0));
-            let used = controls::place(ui, UiBuilder::new().max_rect(rect), |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                let voices = &mut p.output_volume;
-                volume(
-                    ui,
-                    "sound-voices",
-                    "Gespräche",
-                    voices,
-                    deafened,
-                    width,
-                    0.0,
-                );
-                ui.add_space(14.0);
-                let stream_muted = p.source_audio_muted;
-                let row_top = ui.cursor().min.y;
-                let off = deafened || stream_muted;
-                let stream = &mut p.source_audio_volume;
-                volume(ui, "sound-stream", "Live-Ton", stream, off, width, 38.0);
-                // The 30px mute after the percentage, reaching into the gaps.
-                let toggle = Rect::from_min_size(
-                    egui::pos2(rect.right() - 30.0, row_top + 16.8 / 2.0 - 15.0),
-                    vec2(30.0, 30.0),
-                );
-                let label = if stream_muted {
-                    "Live-Ton wieder einschalten"
-                } else {
-                    "Live-Ton stummschalten"
-                };
-                let hit = ui.interact(toggle, Id::unique("sound-stream-mute"), Sense::click());
-                hit.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::Role::Button, true, "Live-Ton stummschalten")
-                });
-                let hit = hit.on_hover_text(label);
-                let (fill, fg) = if stream_muted {
-                    (c.danger_bg.gamma_multiply(0.16), c.danger)
-                } else if hit.hovered() {
-                    (c.hover, c.text)
-                } else {
-                    (egui::Color32::TRANSPARENT, c.muted)
-                };
-                ui.painter()
-                    .rect_filled(toggle, crate::theme::corner(theme.radius.md), fill);
-                crate::icons::paint_centered(
-                    ui.painter(),
-                    if stream_muted {
-                        crate::icons::Icon::SpeakerOff
-                    } else {
-                        crate::icons::Icon::Speaker
-                    },
-                    toggle,
-                    16.0,
-                    fg,
-                );
-                if hit.clicked() {
-                    p.source_audio_muted = !stream_muted;
-                }
-                if deafened {
-                    ui.add_space(14.0 - 6.0);
-                    let b = Block::single(ui, "Taubgeschaltet.", text::META, c.muted);
-                    let (r, _) = ui.allocate_exact_size(vec2(width, b.height()), Sense::hover());
-                    b.paint(ui.painter(), r.min);
-                }
-                ui.min_rect()
-            });
+            let rect = Rect::from_min_size(
+                ui.cursor().min + vec2(6.0, 6.0),
+                vec2(264.0 - 18.0 - 12.0, 400.0),
+            );
+            let used = call_sound(ui, rect, deafened);
             ui.allocate_exact_size(vec2(264.0 - 18.0, used.height() + 8.0), Sense::hover());
-            if p != before {
-                prefs::update(ui.ctx(), |q| *q = p);
-            }
         });
     if shown.is_none() {
         ctx.data_mut(|d| d.insert_temp(id, false));
     }
+}
+
+/// `CallSound`: the call's volume and the stream's, with the stream's mute
+/// after its percentage, and why both are off while deafened; drawn into
+/// `rect` (its width is the rows'). Returns the rect it used.
+pub fn call_sound(ui: &mut Ui, rect: Rect, deafened: bool) -> Rect {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let width = rect.width();
+    let mut p = prefs::get(ui.ctx());
+    let before = p.clone();
+    let used = controls::place(ui, UiBuilder::new().max_rect(rect), |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let voices = &mut p.output_volume;
+        volume(
+            ui,
+            "sound-voices",
+            texts::output_calls(),
+            voices,
+            deafened,
+            width,
+            0.0,
+        );
+        ui.add_space(14.0);
+        let stream_muted = p.source_audio_muted;
+        let row_top = ui.cursor().min.y;
+        let off = deafened || stream_muted;
+        let stream = &mut p.source_audio_volume;
+        volume(
+            ui,
+            "sound-stream",
+            texts::output_live_sound(),
+            stream,
+            off,
+            width,
+            38.0,
+        );
+        // The 30px mute after the percentage, reaching into the gaps.
+        let toggle = Rect::from_min_size(
+            egui::pos2(rect.right() - 30.0, row_top + 16.8 / 2.0 - 15.0),
+            vec2(30.0, 30.0),
+        );
+        let label = if stream_muted {
+            texts::quick_unmute_live_sound()
+        } else {
+            texts::output_mute_live_sound()
+        };
+        let hit = ui.interact(toggle, Id::unique("sound-stream-mute"), Sense::click());
+        hit.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, true, texts::output_mute_live_sound())
+        });
+        let hit = hit.on_hover_text(label);
+        // A `.voice-control-compact` outside the dock: the surface in a
+        // border, the danger colour while muted.
+        let fill = if hit.hovered() { c.hover } else { c.surface };
+        let fg = if stream_muted { c.danger } else { c.text };
+        ui.painter().rect(
+            toggle,
+            crate::theme::corner(theme.radius.md),
+            fill,
+            egui::Stroke::new(1.0, c.border),
+            egui::StrokeKind::Inside,
+        );
+        crate::icons::paint_centered(
+            ui.painter(),
+            if stream_muted {
+                crate::icons::Icon::SpeakerOff
+            } else {
+                crate::icons::Icon::Speaker
+            },
+            toggle,
+            16.0,
+            fg,
+        );
+        if hit.clicked() {
+            p.source_audio_muted = !stream_muted;
+        }
+        if deafened {
+            ui.add_space(14.0 - 6.0);
+            let b = Block::single(ui, texts::quick_deafened(), text::META, c.muted);
+            let (r, _) = ui.allocate_exact_size(vec2(width, b.height()), Sense::hover());
+            b.paint(ui.painter(), r.min);
+        }
+        ui.min_rect()
+    });
+    if p != before {
+        prefs::update(ui.ctx(), |q| *q = p);
+    }
+    used
 }
 
 /// The fields; returns true once "Alle Einstellungen …" was pressed.
@@ -171,7 +206,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
             b.paint(ui.painter(), r.min);
             ui.add_space(6.0);
         };
-        label(ui, "Mikrofon");
+        label(ui, texts::input_microphone());
         if controls::select(
             ui,
             "quick-mic",
@@ -182,8 +217,29 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
             app.call
                 .set_input(Some(p.audio_input_id.clone()).filter(|s| !s.is_empty()));
         }
+        // `SendLevel`: what the call sends, while joined with the mic live.
+        let (joined, live) = app.call.with_state(|s| {
+            (
+                s.status == CallStatus::Connected,
+                !s.muted && s.mic == MicStatus::Live,
+            )
+        });
+        if joined && live {
+            ui.add_space(6.0);
+            let me = app.client.with_state(|s| s.me().map(|m| m.id));
+            let level = me
+                .and_then(|id| app.call.levels().get(&id).copied())
+                .unwrap_or(0.0);
+            let value = (f64::from(level) * logic::NATIVE_METER_SCALE)
+                .round()
+                .min(100.0);
+            super::dialogs::meter(ui, value, width).widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Meter, true, texts::quick_send_level())
+            });
+            ctx.request_repaint_after(logic::SPEAKING_POLL);
+        }
         ui.add_space(14.0);
-        label(ui, "Lautsprecher");
+        label(ui, texts::output_speaker());
         if controls::select(
             ui,
             "quick-speaker",
@@ -195,7 +251,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
                 .set_output(Some(p.audio_output_id.clone()).filter(|s| !s.is_empty()));
         }
         ui.add_space(14.0);
-        label(ui, "Kamera");
+        label(ui, texts::camera_title());
         if controls::select(
             ui,
             "quick-camera",
@@ -210,7 +266,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         volume(
             ui,
             "quick-voices",
-            "Gespräche",
+            texts::output_calls(),
             &mut p.output_volume,
             false,
             width,
@@ -221,7 +277,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         volume(
             ui,
             "quick-stream",
-            "Live-Ton",
+            texts::output_live_sound(),
             &mut p.source_audio_volume,
             muted,
             width,
@@ -232,7 +288,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         if let Some(i) = controls::chips(
             ui,
             "quick-mode",
-            &["Sprachaktivierung", "Push-to-Talk"],
+            &[texts::ptt_activity(), texts::ptt_ptt()],
             selected,
             32.0,
             None,
@@ -241,13 +297,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         }
         if p.voice_input == "ptt" && p.ptt_key.is_empty() {
             ui.add_space(14.0 - 6.0);
-            let b = Block::wrapped(
-                ui,
-                "Keine Taste festgelegt. Das Mikrofon bleibt stumm.",
-                text::META,
-                c.muted,
-                width,
-            );
+            let b = Block::wrapped(ui, texts::quick_no_key(), text::META, c.muted, width);
             let (r, _) = ui.allocate_exact_size(vec2(width, b.height()), Sense::hover());
             b.paint(ui.painter(), r.min);
         }
@@ -255,7 +305,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         let top = ui.cursor().min;
         crate::widgets::rule_h(ui.painter(), c.border, top.x..=top.x + width, top.y);
         // Full width under a rule, square, the label at the start.
-        if super::chips::ghost_row(ui, "Alle Einstellungen …", top.x, width).clicked() {
+        if super::chips::ghost_row(ui, texts::quick_all_settings(), top.x, width).clicked() {
             more = true;
         }
         ui.min_rect()
@@ -286,11 +336,12 @@ fn volume(
 ) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let (row, _) = ui.allocate_exact_size(vec2(width, 16.8), Sense::hover());
+    let (row, response) = ui.allocate_exact_size(vec2(width, 16.8), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, label));
     Block::single(ui, label, text::META.weight(600.0), c.muted).paint(ui.painter(), row.min);
     let pct = Block::single(
         ui,
-        &format!("{} %", (*value * 100.0).round() as i64),
+        &texts::percent(&((*value * 100.0).round() as i64).to_string()),
         text::META,
         c.text,
     );

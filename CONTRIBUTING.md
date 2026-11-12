@@ -69,8 +69,9 @@ A few habits of this repository:
 
 - A fix comes with a test that fails without it, where the code can be
   tested.
-- Interface text is German today and informal ("du"); match the wording
-  around it. English arrives with v0.10.
+- Both clients speak German and English: interface text goes into the
+  catalogs in both languages ([docs/i18n.md](docs/i18n.md)). The German is
+  informal ("du"); match the wording around it.
 - Say only what was measured about performance.
 - Shipped database migrations are never edited; add a new one.
 

@@ -39,7 +39,8 @@ impl Location {
             })
             .collect();
         Self {
-            route: Route::parse(path),
+            // With its query: `/discover` keeps its search in the route.
+            route: Route::parse(rest),
             path: path.to_owned(),
             query,
             fragment: fragment.to_owned(),
@@ -256,6 +257,8 @@ pub struct Session {
     check: Option<Pending<Result<Value, ApiError>>>,
     failures: usize,
     retry_at: Option<f64>,
+    /// `SessionResponse.operator`: the account may open "Betrieb".
+    operator: bool,
 }
 
 impl Session {
@@ -265,7 +268,13 @@ impl Session {
             check: None,
             failures: 0,
             retry_at: None,
+            operator: false,
         }
+    }
+
+    /// Signed in as an instance operator (the session store's `operator`).
+    pub fn operator(&self) -> bool {
+        self.operator && self.user().is_some()
     }
 
     pub fn user(&self) -> Option<&Value> {
@@ -302,6 +311,13 @@ impl Session {
     /// Adopts a `SessionResponse` (login, register, reset, verify).
     pub fn adopt(&mut self, response: &Value) {
         self.failures = 0;
+        let id = |user: Option<&Value>| user.and_then(|u| u.get("id")).cloned();
+        let same = id(self.user()).is_some() && id(self.user()) == id(response.get("user"));
+        self.operator = match response.get("operator").and_then(Value::as_bool) {
+            Some(operator) => operator,
+            // A changed profile (`{"user": …}` alone) keeps the account's flag.
+            None => same && self.operator,
+        };
         self.status = match response.get("user") {
             Some(user) if !user.is_null() => SessionStatus::Authenticated(user.clone()),
             _ => SessionStatus::Anonymous,
@@ -321,6 +337,27 @@ impl Session {
     }
 }
 
+/// The signed-in account's id and language as the server last confirmed
+/// it; `None` signed out and from a server older than v0.10. The client's
+/// user follows the `lc` frames and saves; the session's answer is there
+/// before the client knows the account.
+pub fn account_locale(session: &Session, client: &Client) -> Option<(String, String)> {
+    let user = session.user()?;
+    let id = user.get("id").and_then(Value::as_str)?.to_owned();
+    let locale = client
+        .with_state(|s| {
+            s.me()
+                .filter(|me| me.id.to_string() == id)
+                .and_then(|me| me.locale.clone())
+        })
+        .or_else(|| {
+            user.get("locale")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })?;
+    Some((id, locale))
+}
+
 /// What a screen gets each frame.
 pub struct AppCtx<'a> {
     pub client: &'a Client,
@@ -333,6 +370,9 @@ pub struct AppCtx<'a> {
     /// until known.
     pub account_mail: Option<bool>,
     pub toasts: &'a mut Toasts,
+    /// `/public-pages.json`: the legal pages under the sign-in card; `None`
+    /// until known, which shows none.
+    pub public_pages: Option<gelabber_client::PublicPages>,
 }
 
 pub struct GelabberApp {
@@ -357,6 +397,8 @@ pub struct GelabberApp {
     video_ready: bool,
     /// The theme's page colour, for the window's clear colour.
     background: std::cell::Cell<egui::Color32>,
+    /// The signed-in account and the language it was last seen with.
+    account_locale: Option<(String, String)>,
 }
 
 impl GelabberApp {
@@ -380,11 +422,11 @@ impl GelabberApp {
             screens::voice::window::wake(&repaint_ctx);
         }));
         let images = Images::new(client.clone());
-        // The artwork of the signed-out pages is large; start early.
-        images.get(ctx, screens::auth::layout::ARTWORK);
         let mut session = Session::new();
         session.check(&client);
         let mail_check = Some(mail_check(&client));
+        // The legal links under the sign-in card.
+        client.load_public_pages();
         Self {
             nav: Nav::new(route.as_deref().unwrap_or("/")),
             call: gelabber_call::Call::new(client.clone()),
@@ -401,6 +443,7 @@ impl GelabberApp {
             expired: false,
             video_ready: false,
             background: std::cell::Cell::new(Theme::dark().c.bg),
+            account_locale: None,
         }
     }
 
@@ -466,16 +509,23 @@ impl GelabberApp {
     /// and follows the client when the server ends the session.
     fn sync_workspace(&mut self) {
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
-        let (client_signed_in, expired) = self.client.with_state(|s| {
+        let (client_signed_in, expired, deleted) = self.client.with_state(|s| {
             (
                 matches!(s.session, gelabber_client::Session::Authenticated(_)),
                 s.session_expired,
+                s.account_deleted,
             )
         });
         if signed_in && self.client_signed_in && !client_signed_in {
             self.session.adopt(&Value::Null);
             self.workspace = false;
             self.expired = expired;
+            // Deleted from Sicherheit (`deleteAndLeave`): the call ends and
+            // the sign-in page says why.
+            if deleted {
+                self.call.leave();
+                self.nav.navigate("/login?reason=deleted");
+            }
         } else if signed_in && !self.workspace {
             self.workspace = true;
             self.expired = false;
@@ -488,6 +538,27 @@ impl GelabberApp {
             self.workspace = false;
         }
         self.client_signed_in = client_signed_in;
+    }
+
+    /// Shows the account's language whenever the signed-in account or its
+    /// language changes: signing in, the `lc` frame of another device, a
+    /// saved change (`followAccountLocale`). Signing out keeps the last one;
+    /// a server older than v0.10 names none, and the app keeps its own.
+    fn follow_account_locale(&mut self, ctx: &egui::Context) {
+        if self.session.user().is_none() {
+            self.account_locale = None;
+            return;
+        }
+        let Some(seen) = account_locale(&self.session, &self.client) else {
+            return;
+        };
+        if self.account_locale.as_ref() == Some(&seen) {
+            return;
+        }
+        if let Some(locale) = gelabber_i18n::Locale::parse(&seen.1) {
+            screens::settings::prefs::show_locale(ctx, locale);
+        }
+        self.account_locale = Some(seen);
     }
 
     fn frame(&mut self, ui: &mut Ui) {
@@ -568,6 +639,7 @@ impl GelabberApp {
                 session: &mut self.session,
                 account_mail: self.account_mail,
                 toasts: &mut self.toasts,
+                public_pages: self.client.with_state(|s| s.public_pages.clone()),
             };
             if app.session.failed() {
                 screens::auth::recovery::show(ui, &mut app);
@@ -578,6 +650,10 @@ impl GelabberApp {
         }
 
         self.sync_workspace();
+        self.follow_account_locale(&ctx);
+        screens::settings::appearance::settle_language(&ctx, &self.client, || {
+            account_locale(&self.session, &self.client).map(|(_, l)| l)
+        });
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
         screens::voice::sync::sync(&ctx, &self.call, &mut self.toasts, signed_in);
         self.guard();
@@ -593,6 +669,7 @@ impl GelabberApp {
             session: &mut self.session,
             account_mail: self.account_mail,
             toasts: &mut self.toasts,
+            public_pages: self.client.with_state(|s| s.public_pages.clone()),
         };
         if !is_workspace(app.nav.route()) {
             content_anchor(ui, screen.min);
@@ -635,7 +712,7 @@ fn skip_link(ui: &mut Ui) -> SkipLink {
     // A jump no page took up (a screen without content) does not linger.
     ui.ctx().data_mut(|d| d.remove_temp::<bool>(skip_target()));
     let focused = ui.memory(|m| m.has_focus(id));
-    let label = "Zum Inhalt springen";
+    let label = gelabber_i18n::app::skip_link();
     let style = crate::text::TextStyle::new(16.0, 400.0, 1.5);
     let block = crate::text::Block::single(ui, label, style, egui::Color32::PLACEHOLDER);
     // padding 12px 18px at left 12px, top 12px.
@@ -702,7 +779,7 @@ impl SkipLink {
         crate::widgets::focus_ring(&painter, self.rect, theme.radius.md, &theme);
         let block = crate::text::Block::single(
             ui,
-            "Zum Inhalt springen",
+            gelabber_i18n::app::skip_link(),
             crate::text::TextStyle::new(16.0, 400.0, 1.5),
             theme.c.accent_ink,
         );
@@ -740,9 +817,9 @@ fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
     // "Überall abmelden" left for /login at once; until the server confirms,
     // the other devices are still signed in, and the retry repeats it.
     let message = if client.http().unconfirmed_sign_out_everywhere() {
-        "Die Abmeldung auf allen Geräten konnte nicht bestätigt werden. Bitte versuche es erneut."
+        gelabber_i18n::auth::session_logout_everywhere_unconfirmed()
     } else {
-        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut."
+        gelabber_i18n::auth::session_logout_unconfirmed()
     };
     let screen = ui.ctx().content_rect();
     // margin 12px 16px, padding 12px 16px, the 3px warning bar on the left.
@@ -783,9 +860,9 @@ fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
             );
             let retry = ui.put(
                 button,
-                crate::widgets::Button::new("Erneut abmelden")
+                crate::widgets::Button::new(gelabber_i18n::app::recovery_sign_out_again())
                     .small()
-                    .pending(pending.then_some("Wird abgemeldet…")),
+                    .pending(pending.then_some(gelabber_i18n::app::recovery_signing_out())),
             );
             if retry.clicked() && !pending {
                 client.logout();
@@ -805,6 +882,8 @@ pub fn is_workspace(route: &Route) -> bool {
             | Route::Dms
             | Route::Dm(_)
             | Route::Profile
+            | Route::Discover(_)
+            | Route::Operator(_)
     )
 }
 
@@ -999,5 +1078,46 @@ mod tests {
             client.with_state(|s| s.detail(home).is_some()),
             "the loaded server was thrown away"
         );
+    }
+    /// The directory's search lives in the address, and the page is for
+    /// signed-in people only.
+    #[test]
+    fn discover_keeps_its_search_in_the_location() {
+        let l = Location::parse("/discover?q=rust&lang=en");
+        assert_eq!(
+            l.route,
+            Route::Discover(crate::route::DiscoverSearch::new(Some("rust"), Some("en")))
+        );
+        assert_eq!(l.href(), "/discover?q=rust&lang=en");
+        assert!(is_workspace(&l.route));
+        let mut nav = Nav::new("/discover");
+        nav.navigate_route(&Route::Discover(crate::route::DiscoverSearch::new(
+            Some("film"),
+            None,
+        )));
+        assert_eq!(nav.location().query("q"), Some("film"));
+    }
+
+    /// The session keeps `operator` next to the user (auth/session.ts): a
+    /// profile change keeps it, another account or a sign-out drops it.
+    #[test]
+    fn the_session_keeps_the_operator_flag() {
+        let lena = serde_json::json!({"id": "a", "name": "Lena"});
+        let mut session = Session::new();
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena, "csrf_token": "x", "operator": true}));
+        assert!(session.operator());
+        session.adopt(&serde_json::json!({"user": {"id": "a", "name": "Lena B."}}));
+        assert!(session.operator());
+        session.adopt(&serde_json::json!({"user": {"id": "b", "name": "Tom"}}));
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena, "operator": true}));
+        session.adopt(&Value::Null);
+        assert!(!session.operator());
+        session.adopt(&serde_json::json!({"user": lena}));
+        assert!(!session.operator());
+        // An older server leaves it out: no operator.
+        session.adopt(&serde_json::json!({"user": lena, "operator": false}));
+        assert!(!session.operator());
     }
 }

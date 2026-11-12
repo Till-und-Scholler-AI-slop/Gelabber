@@ -3,6 +3,7 @@
 //! "Server erstellen" and "Server beitreten".
 
 use egui::{Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
+use gelabber_i18n::{common, shell};
 
 use super::state::{self, Place};
 use crate::app::AppCtx;
@@ -85,7 +86,7 @@ pub fn loading(ctx: &egui::Context, app: &AppCtx) -> bool {
 fn welcome_error(ui: &mut Ui, app: &mut AppCtx, left: f32, top: f32, width: f32) -> f32 {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let message = "Die Server konnten nicht geladen werden.";
+    let message = shell::welcome_load_failed();
     let block = Block::single(ui, message, text::BODY, c.danger);
     let width = width.min(2.0 * 360.0 + 16.0);
     let rect = Rect::from_min_size(pos2(left, top), Vec2::new(width, 10.0 + 32.0 + 10.0));
@@ -112,7 +113,7 @@ fn welcome_error(ui: &mut Ui, app: &mut AppCtx, left: f32, top: f32, width: f32)
     let pending = app
         .client
         .with_state(|s| matches!(s.op("bootstrap"), Some(gelabber_client::OpState::Pending)));
-    let label = "Erneut versuchen";
+    let label = common::try_again();
     let bw = Block::single(ui, label, text::UI, c.text).width() + 26.0;
     let button = Rect::from_min_size(
         pos2(rect.left() + 15.0 + block.width() + 12.0, rect.top() + 10.0),
@@ -123,7 +124,7 @@ fn welcome_error(ui: &mut Ui, app: &mut AppCtx, left: f32, top: f32, width: f32)
             button,
             Button::new(label)
                 .small()
-                .pending(pending.then_some("Wird geladen…")),
+                .pending(pending.then_some(common::loading())),
         )
         .clicked()
         && !pending
@@ -140,8 +141,8 @@ pub fn welcome(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     ui.painter().rect_filled(rect, 0.0, c.bg);
     let name = app.client.with_state(|s| s.me().map(|m| m.name.clone()));
     let title = match name {
-        Some(name) => format!("Willkommen, {name}"),
-        None => "Willkommen".to_owned(),
+        Some(name) => shell::welcome_title_named(&name),
+        None => shell::welcome_title().to_owned(),
     };
     let left = rect.left() + 32.0;
     let width = rect.width() - 64.0;
@@ -169,11 +170,11 @@ pub fn welcome(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         let inner = card.shrink(21.0);
         let (h2, p) = if i == 0 {
             (
-                "Eigenen Server erstellen",
-                Some("Mit #allgemein und einem Sprachkanal."),
+                shell::welcome_create_title(),
+                Some(shell::welcome_create_lead()),
             )
         } else {
-            ("Server beitreten", None)
+            (shell::welcome_join_title(), None)
         };
         let block = Block::single(ui, h2, text::TITLE_SM, c.text);
         block.paint(ui.painter(), inner.min);
@@ -188,7 +189,7 @@ pub fn welcome(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         if i == 0 {
             if child
                 .add(
-                    Button::new("Server erstellen")
+                    Button::new(shell::welcome_create_action())
                         .primary()
                         .size(ButtonSize::Lg)
                         .fill(),
@@ -198,7 +199,11 @@ pub fn welcome(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
                 super::dialogs::open_add(ui.ctx(), state::AddStep::Create);
             }
         } else if child
-            .add(Button::new("Server beitreten").size(ButtonSize::Lg).fill())
+            .add(
+                Button::new(shell::welcome_join_title())
+                    .size(ButtonSize::Lg)
+                    .fill(),
+            )
             .clicked()
         {
             super::dialogs::open_add(ui.ctx(), state::AddStep::Join);

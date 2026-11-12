@@ -42,7 +42,7 @@ impl Smoke {
         let reached = matches!(screen, "setup" | "Login") && self.frames >= MIN_FRAMES;
         let code = if reached { 0 } else { 1 };
         println!(
-            "gelabber smoke: {} on {screen} after {now:.1} s and {} frames",
+            "gelabber smoke: {} on {screen} after {now:.1} s and {} frames", // i18n-ok
             if reached { "ok" } else { "FAILED" },
             self.frames
         );

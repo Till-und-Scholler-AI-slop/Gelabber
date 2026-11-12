@@ -10,6 +10,7 @@
 
 use egui::{Id, Key, Modifiers, Rect, Sense, Ui, Vec2, pos2};
 use gelabber_client::{Category, Channel, ChannelKind, NotificationLevel, SettingScope};
+use gelabber_i18n::{notifications, shell};
 use uuid::Uuid;
 
 use super::common::{self, paint_mid};
@@ -30,6 +31,9 @@ pub enum Owner {
     Dm(Uuid, String),
     /// The rail's home tile: every conversation.
     AllDms,
+    /// A server in Entdecken: its id, name and whether the caller's
+    /// request to join is pending.
+    Listing(Uuid, String, bool),
 }
 
 impl Owner {
@@ -40,6 +44,7 @@ impl Owner {
             Owner::Category(_, cat) => cat.id,
             Owner::Server(id, _) | Owner::Dm(id, _) => *id,
             Owner::AllDms => Uuid::nil(),
+            Owner::Listing(id, ..) => *id,
         }
     }
 
@@ -53,6 +58,7 @@ impl Owner {
             Owner::Server(id, name) => Some(Target::server(*id, name)),
             Owner::Dm(id, name) => Some(Target::dm(*id, name.clone())),
             Owner::AllDms => Some(Target::all_dms()),
+            Owner::Listing(..) => None,
         }
     }
 
@@ -61,9 +67,10 @@ impl Owner {
         match self {
             Owner::Channel(_, ch) if ch.kind == ChannelKind::Text => format!("#{}", ch.name),
             Owner::Channel(_, ch) => ch.name.clone(),
-            Owner::Category(_, cat) => format!("Kategorie {}", cat.name),
+            Owner::Category(_, cat) => shell::row_menu_category_label(&cat.name),
             Owner::Server(_, name) | Owner::Dm(_, name) => name.clone(),
-            Owner::AllDms => "Direktnachrichten".into(),
+            Owner::AllDms => shell::rail_dms().into(),
+            Owner::Listing(_, name, _) => gelabber_i18n::discovery::actions_more(name),
         }
     }
 }
@@ -129,6 +136,9 @@ enum Act {
     AddChannel,
     RenameCategory,
     DeleteCategory,
+    /// Entdecken: "Melden" and "Anfrage zurückziehen".
+    Report,
+    Withdraw,
 }
 
 #[derive(Clone, Debug)]
@@ -194,9 +204,9 @@ fn notification_entries(
     now: chrono::DateTime<chrono::Utc>,
 ) -> Vec<Entry> {
     let label = if target.all_dms {
-        "Alle Direktnachrichten als gelesen markieren"
+        shell::row_menu_mark_all_dms_read()
     } else {
-        "Als gelesen markieren"
+        shell::row_menu_mark_read()
     };
     let mut entries = vec![Entry::Leaf(Leaf::Item {
         label: label.to_owned(),
@@ -211,7 +221,7 @@ fn notification_entries(
     }
     entries.push(if own.is_muted(now) {
         Entry::Leaf(Leaf::Item {
-            label: "Stummschaltung aufheben".into(),
+            label: shell::row_menu_unmute().into(),
             // Where "Stummschalten" was, with its icon: the levels keep
             // the bell.
             icon: Some(Icon::BellOff),
@@ -222,12 +232,12 @@ fn notification_entries(
         })
     } else {
         Entry::Sub {
-            label: "Stummschalten",
+            label: shell::row_menu_mute(),
             icon: Icon::BellOff,
             entries: notify::MUTES
                 .iter()
                 .map(|(label, _, minutes)| Leaf::Item {
-                    label: (*label).to_owned(),
+                    label: label().to_owned(),
                     icon: None,
                     hint: None,
                     danger: false,
@@ -242,17 +252,16 @@ fn notification_entries(
         let mut levels = Vec::new();
         if let Some(server) = server {
             levels.push(Leaf::Radio {
-                label: format!(
-                    "Wie der Server ({})",
-                    notify::level_name(server.level.unwrap_or_default())
-                ),
+                label: notifications::level_inherit(notify::level_name(
+                    server.level.unwrap_or_default(),
+                )),
                 checked: own.level.is_none(),
                 act: Act::Level(None),
             });
         }
         for (level, label, _) in notify::LEVELS {
             levels.push(Leaf::Radio {
-                label: label.to_owned(),
+                label: label().to_owned(),
                 checked: if server.is_some() {
                     own.level == Some(level)
                 } else {
@@ -262,13 +271,13 @@ fn notification_entries(
             });
         }
         entries.push(Entry::Sub {
-            label: "Benachrichtigungen",
+            label: shell::row_menu_notifications(),
             icon: Icon::Bell,
             entries: levels,
         });
     }
     entries.push(item(
-        "Benachrichtigungseinstellungen…",
+        shell::row_menu_notification_settings(),
         Icon::Gear,
         Act::Settings,
     ));
@@ -329,19 +338,57 @@ fn entries(app: &AppCtx, owner: &Owner) -> Vec<Entry> {
             if !out.is_empty() {
                 out.push(Entry::Leaf(Leaf::Separator));
             }
-            out.push(item("Kanal bearbeiten", Icon::Pencil, Act::EditChannel));
+            out.push(item(
+                shell::row_menu_edit_channel(),
+                Icon::Pencil,
+                Act::EditChannel,
+            ));
             out.push(Entry::Leaf(Leaf::Separator));
-            out.push(danger("Kanal löschen", Act::DeleteChannel));
+            out.push(danger(
+                shell::channels_delete_channel_confirm(),
+                Act::DeleteChannel,
+            ));
         }
         Owner::Category(..) => {
-            out.push(item("Kanal hier erstellen", Icon::Plus, Act::AddChannel));
             out.push(item(
-                "Kategorie umbenennen",
+                shell::row_menu_create_channel_here(),
+                Icon::Plus,
+                Act::AddChannel,
+            ));
+            out.push(item(
+                shell::row_menu_rename_category(),
                 Icon::Pencil,
                 Act::RenameCategory,
             ));
             out.push(Entry::Leaf(Leaf::Separator));
-            out.push(danger("Kategorie löschen", Act::DeleteCategory));
+            out.push(danger(
+                shell::channels_delete_category_confirm(),
+                Act::DeleteCategory,
+            ));
+        }
+        // `listingMenuActions`: "Melden" always, also to members, and
+        // "Anfrage zurückziehen" while a request waits.
+        Owner::Listing(_, _, pending) => {
+            let plain = |label: &str, act| {
+                Entry::Leaf(Leaf::Item {
+                    label: label.to_owned(),
+                    icon: None,
+                    hint: None,
+                    danger: false,
+                    disabled: false,
+                    act,
+                })
+            };
+            out.push(plain(
+                gelabber_i18n::discovery::actions_report(),
+                Act::Report,
+            ));
+            if *pending {
+                out.push(plain(
+                    gelabber_i18n::discovery::actions_withdraw(),
+                    Act::Withdraw,
+                ));
+            }
         }
         _ => {}
     }
@@ -714,6 +761,12 @@ fn run(ctx: &egui::Context, app: &mut AppCtx, owner: &Owner, act: Act) {
         }
         (Owner::Category(server, cat), Act::DeleteCategory) => {
             super::dialogs::confirm_delete_category(ctx, *server, cat)
+        }
+        (Owner::Listing(server, name, _), Act::Report) => {
+            crate::screens::discover::open_report(ctx, *server, name)
+        }
+        (Owner::Listing(server, ..), Act::Withdraw) => {
+            crate::screens::discover::withdraw(ctx, app, *server)
         }
         _ => {}
     }

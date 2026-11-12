@@ -172,7 +172,7 @@ pub fn claim() -> Claim {
         .filter(|d| d.is_absolute() && d.is_dir())
         .or_else(super::paths::config_dir);
     let Some(dir) = dir else {
-        return unguarded(std::io::Error::other("no runtime or config directory"));
+        return unguarded(std::io::Error::other("no runtime or config directory")); // i18n-ok
     };
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return unguarded(e);
@@ -193,7 +193,7 @@ fn claim_at(path: &std::path::Path) -> Claim {
                         return Claim::Running;
                     }
                     // An app listens but does not answer: its socket stays.
-                    return unguarded(std::io::Error::other("the running app does not answer"));
+                    return unguarded(std::io::Error::other("the running app does not answer")); // i18n-ok
                 }
                 // Left by an app that ended without cleaning up.
                 Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
@@ -255,7 +255,7 @@ fn listen_tcp(file: &std::path::Path) -> Claim {
         Err(e) => return unguarded(e),
     };
     let Ok(port) = listener.local_addr().map(|a| a.port()) else {
-        return unguarded(std::io::Error::other("no port"));
+        return unguarded(std::io::Error::other("no port")); // i18n-ok
     };
     let secret = uuid::Uuid::new_v4().simple().to_string();
     if let Err(e) = super::paths::write_atomic(file, format!("{port} {secret}").as_bytes(), true) {
@@ -318,7 +318,7 @@ fn wait_for_running(
 #[cfg(windows)]
 pub fn claim() -> Claim {
     let Some(file) = super::paths::file(&format!("{}.instance", name())) else {
-        return unguarded(std::io::Error::other("no config directory"));
+        return unguarded(std::io::Error::other("no config directory")); // i18n-ok
     };
     match first_by_mutex(&name()) {
         Ok(true) => listen_tcp(&file),
@@ -353,10 +353,10 @@ fn not_responding() {
         MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MessageBoxW,
     };
     let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
-    let text = wide(
-        "Gelabber läuft schon, reagiert aber nicht. Beende Gelabber im Task-Manager \
-         und starte es dann noch einmal.",
-    );
+    // This start ends here, before main() chose the language: the running
+    // app's, as it would start.
+    crate::setup::start_locale();
+    let text = wide(gelabber_i18n::app::instance_not_responding());
     let caption = wide("Gelabber");
     // No owner window: in front, or it may open behind other windows.
     // SAFETY: NUL-terminated UTF-16 strings that outlive the call.

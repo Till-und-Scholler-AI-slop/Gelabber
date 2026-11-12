@@ -21,6 +21,8 @@ pub mod tray;
 pub mod update;
 pub mod webview;
 
+#[cfg(test)]
+pub(crate) use open::testing as open_testing;
 pub use open::{open_url, open_url_logged};
 
 use std::sync::Arc;
@@ -400,6 +402,7 @@ impl Platform {
     fn show_unread(&mut self, ctx: &Context, unread: tray::Unread) {
         if let Some(tray) = &mut self.tray {
             tray.set_unread(unread);
+            tray.set_locale(gelabber_i18n::get());
         }
         let title = unread.title();
         if self.title != title {

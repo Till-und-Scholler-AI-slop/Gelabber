@@ -3,11 +3,14 @@
 //! then the room. Before joining: who is there, their cards, free seats,
 //! "Beitreten" with the microphone test and the quick settings. Inside: the
 //! cards, or the stage while pictures run (Raster, Fokus, Kino with K and
-//! Esc), the people without a camera under it, and the fullscreen view.
+//! Esc), the people without a camera under it, and the fullscreen view. In
+//! a call of two or more without pictures the people fill the stage. In the
+//! call the header carries the room's facts, the view switch and Kino.
 
 use std::sync::Arc;
 
 use egui::{Color32, Id, Rect, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2};
+use gelabber_i18n::voice as texts;
 use uuid::Uuid;
 
 use super::look::VIDEO_BG;
@@ -15,7 +18,7 @@ use super::session::{self, Person, Picture, Room};
 use super::stage::{self, Kind, KinoKey, PicId, StageRect, Thumb, View};
 use super::tile::{self, Place};
 use super::video::{self, Fit};
-use super::{chips, hint, quick, summary};
+use super::{chips, hint, quick, summary, watchers};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::screens::layout;
@@ -42,6 +45,22 @@ pub fn kino(ctx: &egui::Context, app: &AppCtx, server: Uuid, channel: Uuid) -> b
         && session::room(app, server, channel).is_some_and(|r| r.staged() && r.here)
 }
 
+/// `narrow` (640px): a phone's column of pictures, always Raster.
+fn narrow(ctx: &egui::Context) -> bool {
+    ctx.content_rect().width() <= 640.0
+}
+
+/// The stage's view: Raster when `narrow`, else `stageViewFor`.
+fn view_of(ctx: &egui::Context, room: &Room, picked: Option<View>) -> View {
+    if narrow(ctx) {
+        return View::Raster;
+    }
+    stage::view_for(
+        picked,
+        room.shares.iter().any(|t| Some(t.id.user) != room.me),
+    )
+}
+
 /// Draws the page into `ui.max_rect()`.
 pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
     let theme = Theme::of(ui.ctx());
@@ -51,6 +70,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
     let Some(room) = session::room(app, server, channel) else {
         return;
     };
+    draw(ui, app, &room, page);
+}
+
+/// The page of `room` in `page` (tests build the room by hand).
+pub(super) fn draw(ui: &mut Ui, app: &mut AppCtx, room: &Room, page: Rect) {
+    let (server, channel) = (room.server, room.channel);
     let joined = app.call.with_state(session::joined);
     let call = (server, channel);
     let choices = stage::choices(ui.ctx(), call, joined);
@@ -67,25 +92,60 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
     }
     if kino {
         let body = page;
-        stage_room(ui, app, &room, body, choices, true);
+        stage_room(ui, app, room, body, choices, true);
     } else {
-        header(ui, app, page, &room.channel_name, room.server, channel);
+        header(ui, app, page, room, choices, can_kino);
         let body = Rect::from_min_max(pos2(page.left(), page.top() + HEADER), page.max);
         if staged {
-            stage_room(ui, app, &room, body, choices, false);
+            stage_room(ui, app, room, body, choices, false);
+        } else if people_stage(room) {
+            people_room(ui, app, room, body);
         } else {
-            plain_room(ui, app, &room, body);
+            plain_room(ui, app, room, body);
         }
     }
-    tile::participant_menu(ui, app, &room);
-    fullscreen(ui, app, &room);
+    tile::participant_menu(ui, app, room);
+    watchers::show(ui, app, room);
+    fullscreen(ui, app, room);
 }
 
-/// The header (`.lr-channel-header`): the speaker and the name, the
-/// members toggle at the end.
-fn header(ui: &mut Ui, app: &mut AppCtx, page: Rect, name: &str, server: Uuid, channel: Uuid) {
+/// No pictures, and company: the people fill the stage, in the grid the
+/// pictures use. Alone, the card and the invite stay.
+pub(super) fn people_stage(room: &Room) -> bool {
+    room.here && !room.staged() && room.occupants.len() >= 2
+}
+
+/// The header's facts in the call: with pictures how many are there and
+/// what runs, else who is there; nothing outside the call.
+pub(super) fn facts(room: &Room) -> Option<String> {
+    if !room.here {
+        return None;
+    }
+    Some(if room.staged() {
+        summary::stage_facts(
+            room.occupants.len(),
+            room.cameras.len(),
+            room.occupants.iter().filter(|p| p.live).count(),
+        )
+    } else {
+        summary::room_summary(&room.others, true, &[])
+    })
+}
+
+/// The header (`.lr-channel-header`): the speaker and the name, in the
+/// call the room's facts after it (else the Live pill), the view switch
+/// while pictures run and Kino, the members toggle at the end; gap 10.
+fn header(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    page: Rect,
+    room: &Room,
+    choices: stage::Choices,
+    can_kino: bool,
+) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
+    let (name, server, channel) = (&room.channel_name, room.server, room.channel);
     let rect = Rect::from_min_size(page.min, vec2(page.width(), HEADER));
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, c.bg);
@@ -103,27 +163,57 @@ fn header(ui: &mut Ui, app: &mut AppCtx, page: Rect, name: &str, server: Uuid, c
         pos2(rect.right() - 12.0 - 32.0, mid - 16.0),
         Vec2::splat(32.0),
     );
-    let max = toggle.left() - 10.0 - x - 28.0;
+    // Kino, then the view switch, right to left before the members.
+    let ctx = ui.ctx().clone();
+    let mut end = toggle.left();
+    if can_kino {
+        let (r, pressed) = chips::kino_button(ui, end - 10.0, mid);
+        if pressed {
+            stage::set_kino(&ctx, true);
+        }
+        end = r.left();
+    }
+    // A phone keeps its column of pictures (`narrow`, 640px).
+    if room.staged() && !narrow(&ctx) {
+        let view = view_of(&ctx, room, choices.view);
+        let (frame, chosen) = chips::view_switch(ui, end - 10.0, mid, view);
+        if let Some(v) = chosen {
+            stage::choose_view(&ctx, (server, channel), v);
+        }
+        end = frame.left();
+    }
+    // A room limited to roles: the lock after its name (14, gap 10).
+    let limited = crate::screens::shell::access::is_limited(app, server, channel);
+    let lock_room = if limited { 14.0 + 10.0 } else { 0.0 };
+    let max = end - 10.0 - x - 28.0 - lock_room;
     let mut job = text::job(name, TITLE, c.text, Some(max.max(40.0)));
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     let title = Block::new(ui, job, TITLE);
     title.paint(ui.painter(), pos2(x + 28.0, mid - TITLE.line_px() / 2.0));
-    // Who is live on the server, right after the name (`LiveHint pill`).
-    hint::pill(
-        ui,
-        app,
-        server,
-        x + 28.0 + title.width() + 10.0,
-        mid,
-        toggle.left() - 20.0,
-    );
+    let mut after = x + 28.0 + title.width() + 10.0;
+    if limited {
+        let id = Id::unique(("gelabber-voice-title", channel));
+        let lock = crate::screens::shell::access::lock(ui, ui.painter(), id, after, mid);
+        after = lock.right() + 10.0;
+    }
+    if let Some(facts) = facts(room) {
+        // `.voice-header-facts`: 13/500 muted, one line with an ellipsis.
+        let room_for = end - 10.0 - after;
+        if room_for > 0.0 {
+            let block = common::line(ui, &facts, text::UI, c.muted, room_for);
+            common::paint_mid(ui.painter(), &block, after, mid);
+        }
+    } else {
+        // Who is live on the server, right after the name (`LiveHint pill`).
+        hint::pill(ui, app, server, after, mid, end - 20.0);
+    }
 
     let on = layout::members_visible(ui.ctx());
     let label = if on {
-        "Mitgliederliste ausblenden"
+        texts::members_hide()
     } else {
-        "Mitgliederliste einblenden"
+        texts::members_show()
     };
     let id = Id::unique(("gelabber-voice-members", channel));
     let response = ui.interact(toggle, id, Sense::click());
@@ -169,6 +259,28 @@ fn plain_room(ui: &mut Ui, app: &mut AppCtx, room: &Room, body: Rect) {
         });
 }
 
+/// The people stage (`.voice-room[data-stage="people"]`): inset 20 24 24,
+/// at least 360 high, every occupant in a tile of the pictures' grid.
+fn people_room(ui: &mut Ui, app: &mut AppCtx, room: &Room, body: Rect) {
+    let inner = Rect::from_min_max(
+        pos2(body.left() + 24.0, body.top() + 20.0),
+        pos2(
+            body.right() - 24.0,
+            (body.bottom() - 24.0).max(body.top() + 360.0 - 24.0),
+        ),
+    );
+    let rects = stage::raster_rects(
+        room.occupants.len(),
+        inner.width().floor() as i32,
+        inner.height().floor() as i32,
+    );
+    let mut child = ui.new_child(UiBuilder::new().max_rect(body));
+    child.set_clip_rect(body.intersect(ui.clip_rect()));
+    for (p, rect) in room.occupants.iter().zip(rects) {
+        tile::person_tile(&mut child, app, rect.on(inner.min), room.server, p);
+    }
+}
+
 /// The not-staged room from `top`; returns its bottom (padding included).
 pub(super) fn room_content(
     ui: &mut Ui,
@@ -186,10 +298,14 @@ pub(super) fn room_content(
     let left = left + 28.0;
     let w = (width - 56.0).max(0.0);
     let mut y = top + if compact { 16.0 } else { 20.0 };
-    let line = summary::room_summary(&room.others, room.here, &room.others_live);
-    let block = Block::wrapped(ui, &line, text::BODY, c.muted, w);
-    block.paint(ui.painter(), pos2(left, y + 2.0));
-    y += 2.0 + block.height();
+    // In the call the header carries the facts, and a card alone starts
+    // where the people stage does.
+    if !room.here {
+        let line = summary::room_summary(&room.others, room.here, &room.others_live);
+        let block = Block::wrapped(ui, &line, text::BODY, c.muted, w);
+        block.paint(ui.painter(), pos2(left, y + 2.0));
+        y += 2.0 + block.height();
+    }
 
     let free = if room.here || !room.allowed {
         0
@@ -200,7 +316,9 @@ pub(super) fn room_content(
     };
     let count = room.occupants.len() + free;
     if count > 0 {
-        y += 16.0;
+        if !room.here {
+            y += 16.0;
+        }
         let grid_w = w.min(1100.0);
         let cols = (((grid_w + 12.0) / 212.0).floor() as usize).max(1);
         let tile_w = (grid_w - 12.0 * (cols as f32 - 1.0)) / cols as f32;
@@ -230,12 +348,10 @@ pub(super) fn room_content(
         y += 16.0;
         let note = Block::wrapped(
             ui,
-            &format!(
-                "Du verlässt dabei {}.",
-                room.elsewhere_name
-                    .as_deref()
-                    .unwrap_or("deinen Sprachkanal")
-            ),
+            &match room.elsewhere_name.as_deref() {
+                Some(name) => texts::room_switch_note(name),
+                None => texts::room_switch_note_unnamed().to_owned(),
+            },
             text::META,
             c.muted,
             w,
@@ -261,9 +377,9 @@ pub(super) fn room_content(
 fn invite_prompt(ui: &mut Ui, app: &AppCtx, room: &Room, left: f32, top: f32, width: f32) -> f32 {
     let theme = Theme::of(ui.ctx());
     let row_h = 32.0;
-    let ask = Block::single(ui, "Fehlt noch jemand?", text::BODY, theme.c.muted);
+    let ask = Block::single(ui, texts::room_ask_company(), text::BODY, theme.c.muted);
     // The small button: its label, the 16px icon and gap 8, padding 12.
-    let label = Block::single(ui, "Einladen", text::UI, theme.c.text);
+    let label = Block::single(ui, texts::room_invite(), text::UI, theme.c.text);
     let button_w = label.width() + 24.0 + 24.0;
     let wraps = ask.width() + 16.0 + button_w > width;
     common::paint_mid(ui.painter(), &ask, left, top + row_h / 2.0);
@@ -276,7 +392,7 @@ fn invite_prompt(ui: &mut Ui, app: &AppCtx, room: &Room, left: f32, top: f32, wi
         pos2(bx, by),
         vec2(button_w.max(200.0), row_h),
     )));
-    let button = Button::new("Einladen").small().icon(Icon::Link);
+    let button = Button::new(texts::room_invite()).small().icon(Icon::Link);
     if child.add(button).clicked() {
         let name = app.client.with_state(|s| {
             s.server(room.server)
@@ -303,9 +419,9 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     let mut x = left;
     if room.allowed {
         let label = if room.elsewhere {
-            "Hierher wechseln"
+            texts::room_switch_here()
         } else {
-            "Beitreten"
+            texts::room_join()
         };
         let join = chips::join_button(
             ui,
@@ -321,7 +437,7 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     } else {
         let p = Block::single(
             ui,
-            "Keine Berechtigung für Sprachkanäle.",
+            texts::room_no_permission(),
             text::UI.weight(400.0),
             c.muted,
         );
@@ -332,7 +448,7 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     if ui
         .put(
             mic,
-            IconButton::new(Icon::Mic, "Mikrofon testen")
+            IconButton::new(Icon::Mic, texts::room_test_microphone())
                 .secondary()
                 .icon_size(18.0),
         )
@@ -343,16 +459,19 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
         gear,
-        IconButton::new(Icon::Gear, "Anrufeinstellungen")
-            .secondary()
-            .icon_size(17.0),
+        IconButton::new(
+            Icon::Gear,
+            gelabber_i18n::voice_settings::quick_call_settings(),
+        )
+        .secondary()
+        .icon_size(17.0),
     );
     quick::button(ui, app, response, gear);
     top + 44.0
 }
 
-/// The room with pictures: the stage bar, the stage, the people without a
-/// camera under it; in Kino the stage alone on the video background.
+/// The room with pictures: the stage, the people without a camera under
+/// it; in Kino the stage alone on the video background.
 fn stage_room(
     ui: &mut Ui,
     app: &mut AppCtx,
@@ -361,17 +480,12 @@ fn stage_room(
     choices: stage::Choices,
     kino: bool,
 ) {
-    let theme = Theme::of(ui.ctx());
-    let c = theme.c;
     let ctx = ui.ctx().clone();
     let call = (room.server, room.channel);
     let now = ui.input(|i| i.time);
     let pinned = choices.pinned;
     let id_of = |p: &Picture| p.id;
-    let view = stage::view_for(
-        choices.view,
-        room.shares.iter().any(|t| Some(t.id.user) != room.me),
-    );
+    let view = view_of(&ctx, room, choices.view);
     let focus = (view == View::Fokus || kino)
         .then(|| stage::focus_of(&room.shares, &room.cameras, pinned, room.me, id_of))
         .flatten();
@@ -392,6 +506,13 @@ fn stage_room(
     } else {
         Vec::new()
     };
+    // The row says who watches the Live in front; a camera in front, nobody.
+    let watching_focus: Vec<Uuid> = focus
+        .as_ref()
+        .filter(|f| f.id.kind == Kind::Live)
+        .and_then(|f| room.watchers.get(&f.id.user))
+        .map(|(w, _)| w.clone())
+        .unwrap_or_default();
 
     // The room box.
     let (stage_rect, people_top) = if kino {
@@ -405,35 +526,7 @@ fn stage_room(
                 (body.bottom() - 16.0).max(body.top() + 360.0 - 16.0),
             ),
         );
-        // The stage bar.
-        let cy = inner.top() + 18.0;
-        let mut right = inner.right();
-        if roomy(ui) {
-            let (r, pressed) = chips::kino_button(ui, right, cy);
-            if pressed {
-                stage::set_kino(&ctx, true);
-            }
-            right = r.left() - 12.0;
-        }
-        let (frame, chosen) = chips::view_switch(ui, right, cy, view);
-        if let Some(v) = chosen {
-            stage::choose_view(&ctx, call, v);
-        }
-        let facts = summary::stage_facts(
-            room.occupants.len(),
-            room.cameras.len(),
-            &room.others_live,
-            room.own_live,
-        );
-        let block = common::line(
-            ui,
-            &facts,
-            text::UI.weight(400.0),
-            c.muted,
-            frame.left() - 12.0 - inner.left(),
-        );
-        common::paint_mid(ui.painter(), &block, inner.left(), cy);
-        let stage_top = inner.top() + 36.0 + 12.0;
+        let stage_top = inner.top();
         let mut stage_bottom = inner.bottom();
         let mut people_top = None;
         if focus.is_none() && !without_camera.is_empty() {
@@ -530,6 +623,7 @@ fn stage_room(
                 pinned == Some(pic.id),
                 awake,
                 opacity,
+                (pic.id.kind == Kind::Live).then(|| watchers::count(room, pic.id.user)),
             );
             if out.pin {
                 stage::pin(
@@ -561,7 +655,16 @@ fn stage_room(
             } else {
                 1.0
             };
-            tile::strip_person(ui, app, rect, room.server, p, kino, opacity);
+            tile::strip_person(
+                ui,
+                app,
+                rect,
+                room.server,
+                p,
+                kino,
+                opacity,
+                watching_focus.contains(&p.id),
+            );
         }
     }
     if let Some((top, rows)) = people_top {
@@ -587,10 +690,6 @@ fn stage_room(
             stage::set_kino(&ctx, false);
         }
     }
-}
-
-fn roomy(ui: &Ui) -> bool {
-    ui.ctx().content_rect().width() > 800.0
 }
 
 /// The chips of the people without a camera, wrapped into rows.
@@ -758,18 +857,8 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
                     0.0,
                 );
             }
-            // The Live badge stays in the large view (`.voice-video-live`).
-            if pic.id.kind == Kind::Live {
-                let theme = Theme::of(ui.ctx());
-                let style = TextStyle::new(11.0, 600.0, 1.3);
-                let label = Block::single(ui, "Live", style, theme.c.on_live);
-                let badge = Rect::from_min_size(
-                    screen.min + vec2(8.0, 8.0),
-                    vec2(label.width() + 12.0, label.height() + 4.0),
-                );
-                painter.rect_filled(badge, corner(theme.radius.xs), theme.c.live);
-                label.paint(&painter, badge.min + vec2(6.0, 2.0));
-            }
+            // No Live tag: on the stage a Live's caption carries the badge,
+            // and the large view hides the caption (`immersive`).
             leave |= watch_strip(ui, app, room, &pic, screen, &state);
         });
     if leave {
@@ -791,18 +880,22 @@ fn watch_strip(
     let white = Color32::WHITE;
     let label = Block::single(ui, &pic.label, text::UI.weight(600.0), white);
     let button_label = |ui: &Ui, s: &str| Block::single(ui, s, text::UI, white);
-    let end = button_label(ui, "Vollbild beenden");
+    let end = button_label(ui, texts::tile_exit_fullscreen());
     let stop = (pic.id.kind == Kind::Live && pic.watching)
-        .then(|| button_label(ui, "Nicht mehr zuschauen"));
+        .then(|| button_label(ui, texts::tile_stop_watching()));
     let toggles = room.here;
     // `StreamVolume`: someone else's Live has the stream sound beside it.
     let stream_sound = pic.id.kind == Kind::Live && !pic.own;
-    let mut w = 14.0 + label.width() + 4.0 + 8.0;
+    // `.voice-control-compact`: 9px padding and a 1px border around the
+    // 17px icon make 37, past its 36px minimum.
+    const COMPACT: f32 = 1.0 + 9.0 + 17.0 + 9.0 + 1.0;
+    // The strip's 1px border on both sides, then its padding and children.
+    let mut w = 2.0 + 14.0 + label.width() + 4.0 + 8.0;
     if toggles {
-        w += 1.0 + 8.0 + 36.0 + 4.0 + 36.0 + 8.0;
+        w += 1.0 + 8.0 + COMPACT + 4.0 + COMPACT + 8.0;
     }
     if stream_sound {
-        w += 1.0 + 8.0 + 36.0 + 4.0 + 112.0 + 8.0;
+        w += 1.0 + 8.0 + COMPACT + 4.0 + 112.0 + 8.0;
     }
     if let Some(s) = &stop {
         w += 12.0 + 16.0 + 6.0 + s.width() + 12.0 + 8.0;
@@ -846,7 +939,7 @@ fn watch_strip(
         for (icon, label, off, which) in [
             (
                 if off_mic { Icon::MicOff } else { Icon::Mic },
-                "Stummschalten",
+                texts::controls_mute(),
                 off_mic,
                 0,
             ),
@@ -856,13 +949,13 @@ fn watch_strip(
                 } else {
                     Icon::Headset
                 },
-                "Taubschalten",
+                texts::controls_deafen(),
                 state.deafened,
                 1,
             ),
         ] {
-            let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
-            x += 36.0 + 4.0;
+            let r = Rect::from_min_size(pos2(x, cy - 18.0), vec2(COMPACT, 36.0));
+            x += COMPACT + 4.0;
             let resp = common::click(ui, r, Id::unique(("watch-strip", which)));
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
             // The call bar's tooltip, icons only (`VoiceAudioToggles`).
@@ -907,15 +1000,20 @@ fn watch_strip(
         x += 9.0;
         let mut p = crate::screens::settings::prefs::get(ui.ctx());
         let muted = p.source_audio_muted;
-        let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
+        let r = Rect::from_min_size(pos2(x, cy - 18.0), vec2(COMPACT, 36.0));
         let resp = common::click(ui, r, Id::unique("watch-strip-stream-mute"));
         resp.widget_info(|| {
-            egui::WidgetInfo::selected(egui::Role::Button, true, muted, "Live-Ton stummschalten")
+            egui::WidgetInfo::selected(
+                egui::Role::Button,
+                true,
+                muted,
+                texts::tile_mute_live_sound(),
+            )
         });
         let resp = resp.on_hover_text(if muted {
-            "Live-Ton wieder einschalten"
+            texts::tile_unmute_live_sound()
         } else {
-            "Live-Ton stummschalten"
+            texts::tile_mute_live_sound()
         });
         let fill = if muted {
             c.danger_bg.gamma_multiply(0.45)
@@ -939,7 +1037,7 @@ fn watch_strip(
         if resp.clicked() {
             p.source_audio_muted = !muted;
         }
-        x += 36.0 + 4.0;
+        x += COMPACT + 4.0;
         let slider = Rect::from_min_size(pos2(x, cy - 10.0), vec2(112.0, 20.0));
         let mut pos = super::volume::position(p.source_audio_volume);
         let changed = crate::screens::settings::controls::place(
@@ -949,7 +1047,7 @@ fn watch_strip(
                 crate::screens::settings::controls::slider_named(
                     ui,
                     "watch-strip-stream-volume",
-                    "Live-Ton-Lautstärke",
+                    texts::tile_live_sound_volume(),
                     &mut pos,
                     (0.0, 200.0, 1.0),
                     muted || state.deafened,
@@ -981,11 +1079,17 @@ fn watch_strip(
         resp.clicked()
     };
     if let Some(s) = &stop
-        && pill_button(ui, &mut x, Icon::EyeOff, s, "Nicht mehr zuschauen")
+        && pill_button(ui, &mut x, Icon::EyeOff, s, texts::tile_stop_watching())
     {
         app.call.watch(pic.id.user, false);
     }
-    pill_button(ui, &mut x, Icon::Collapse, &end, "Vollbild beenden")
+    pill_button(
+        ui,
+        &mut x,
+        Icon::Collapse,
+        &end,
+        texts::tile_exit_fullscreen(),
+    )
 }
 
 #[cfg(test)]

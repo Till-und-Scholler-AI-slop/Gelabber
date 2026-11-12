@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use egui::{Color32, Id, Sense, Ui, UiBuilder, vec2};
+use gelabber_i18n::voice as texts;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -220,8 +221,8 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
     let body = TextStyle::new(14.0, 400.0, 1.5);
     // Row: label and value.
     let (row, _) = ui.allocate_exact_size(vec2(width, 21.0), Sense::hover());
-    Block::single(ui, "Lautstärke", body, c.text).paint(ui.painter(), row.min);
-    let pct = format!("{} %", (lv.volume * 100.0).round() as i64);
+    Block::single(ui, texts::user_volume_volume(), body, c.text).paint(ui.painter(), row.min);
+    let pct = texts::percent(&((lv.volume * 100.0).round() as i64).to_string());
     let value = Block::single(ui, &pct, body, c.muted);
     value.paint(
         ui.painter(),
@@ -234,7 +235,7 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
         controls::slider_named(
             ui,
             ("user-volume", user),
-            "Lautstärke",
+            texts::user_volume_volume(),
             &mut pos,
             (0.0, 200.0, 1.0),
             lv.muted,
@@ -253,9 +254,9 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
     );
     ui.put(
         check,
-        Checkbox::new(&mut lv.muted).label("Lokal stummschalten"),
+        Checkbox::new(&mut lv.muted).label(texts::user_volume_mute_locally()),
     );
-    let label = Block::single(ui, "Lokal stummschalten", body, c.text);
+    let label = Block::single(ui, texts::user_volume_mute_locally(), body, c.text);
     label.paint(ui.painter(), egui::pos2(row.left() + 28.0, row.top()));
     let mute_hit = ui.interact(
         egui::Rect::from_min_size(row.min + vec2(28.0, 0.0), vec2(label.width(), 21.0)),
@@ -271,7 +272,12 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
     } else {
         c.muted
     };
-    let reset = Block::single(ui, "Zurücksetzen", text::UI.weight(400.0), reset_color);
+    let reset = Block::single(
+        ui,
+        texts::user_volume_reset(),
+        text::UI.weight(400.0),
+        reset_color,
+    );
     let reset_rect = egui::Rect::from_min_size(
         egui::pos2(row.right() - reset.width(), row.top()),
         vec2(reset.width(), 21.0),
@@ -290,19 +296,17 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
         },
     );
     reset_hit.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::Role::Button, changed_level, "Zurücksetzen")
+        egui::WidgetInfo::labeled(
+            egui::Role::Button,
+            changed_level,
+            texts::user_volume_reset(),
+        )
     });
     if reset_hit.clicked() {
         lv = Level::default();
     }
     ui.add_space(10.0);
-    let hint = Block::wrapped(
-        ui,
-        "Nur für dich hörbar. Live-Ton bleibt unverändert.",
-        text::META,
-        c.muted,
-        width,
-    );
+    let hint = Block::wrapped(ui, texts::user_volume_hint(), text::META, c.muted, width);
     let (r, _) = ui.allocate_exact_size(vec2(width, hint.height()), Sense::hover());
     hint.paint(ui.painter(), r.min);
     if lv != before {
@@ -320,7 +324,7 @@ pub fn chip(ui: &Ui, painter: &egui::Painter, x: f32, center_y: f32, lv: Level) 
     let c = theme.c;
     let label = Block::single(
         ui,
-        &format!("{} %", (lv.volume * 100.0).round() as i64),
+        &texts::percent(&((lv.volume * 100.0).round() as i64).to_string()),
         text::META.weight(600.0),
         c.accent_text,
     );

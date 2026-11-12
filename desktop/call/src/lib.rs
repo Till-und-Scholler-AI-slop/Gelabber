@@ -678,8 +678,8 @@ impl Call {
         {
             let _ = (server, channel);
             self.inner
-                .write(|s| s.status = CallStatus::Failed(logic::NO_MEDIA_CORE.into()));
-            self.inner.notify(logic::NO_MEDIA_CORE);
+                .write(|s| s.status = CallStatus::Failed(logic::no_media_core().into()));
+            self.inner.notify(logic::no_media_core());
         }
     }
 
@@ -695,7 +695,7 @@ impl Call {
         self.inner.write(|s| {
             if let (Some(server), Some(channel)) = (s.server, s.channel) {
                 *s = CallState {
-                    status: CallStatus::Failed(logic::LOST_CALL_MESSAGE.into()),
+                    status: CallStatus::Failed(logic::lost_call_message().into()),
                     devices: std::mem::take(&mut s.devices),
                     push_to_talk_open: s.push_to_talk_open,
                     lost_call: Some((server, channel)),
@@ -764,7 +764,7 @@ impl Call {
         {
             let _ = turn;
             self.inner.set_mic_test(|t| {
-                t.phase = MicTestPhase::Error(logic::MIC_TEST_FAILED.into());
+                t.phase = MicTestPhase::Error(logic::mic_test_failed().into());
             });
         }
     }
@@ -1054,9 +1054,9 @@ mod tests {
         call.join(Uuid::new_v4(), Uuid::new_v4());
         assert_eq!(
             call.state().status,
-            CallStatus::Failed(logic::NO_MEDIA_CORE.into())
+            CallStatus::Failed(logic::no_media_core().into())
         );
-        assert_eq!(call.take_notices(), vec![logic::NO_MEDIA_CORE.to_owned()]);
+        assert_eq!(call.take_notices(), vec![logic::no_media_core().to_owned()]);
     }
 
     /// The last hold let go of on a frame's thread drops the call

@@ -4,6 +4,7 @@
 
 use egui::{Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{OpState, State};
+use gelabber_i18n::common;
 use uuid::Uuid;
 
 use crate::text::{self, Block, TextStyle};
@@ -86,9 +87,9 @@ pub fn load_error(ui: &mut Ui, at: egui::Pos2, width: f32, message: &str, pendin
     );
     child
         .add(
-            Button::new("Erneut versuchen")
+            Button::new(common::try_again())
                 .small()
-                .pending(pending.then_some("Wird geladen…")),
+                .pending(pending.then_some(common::loading())),
         )
         .clicked()
         && !pending

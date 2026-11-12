@@ -4,6 +4,7 @@
 
 use egui::text::TextWrapping;
 use egui::{Color32, CornerRadius, Id, Painter, Pos2, Rect, Response, Sense, Ui, Vec2, pos2};
+use gelabber_i18n::{chat, shell};
 
 use crate::images::{ImageState, Images};
 use crate::initials::{initials, person_tone};
@@ -16,10 +17,9 @@ use crate::widgets::Presence;
 /// the bold row alone says nothing to it.
 pub fn unread_label(badge: gelabber_client::Badge) -> Option<String> {
     match badge.count {
-        n if n > 99 => Some("Mehr als 99 ungelesene Benachrichtigungen".to_owned()),
-        1 => Some("1 ungelesene Benachrichtigung".to_owned()),
-        n if n > 0 => Some(format!("{n} ungelesene Benachrichtigungen")),
-        _ => badge.dot.then(|| "Ungelesene Nachrichten".to_owned()),
+        n if n > 99 => Some(chat::unread_notifications_many().to_owned()),
+        n if n > 0 => Some(chat::unread_notifications(n as u64)),
+        _ => badge.dot.then(|| chat::unread_messages().to_owned()),
     }
 }
 
@@ -117,8 +117,13 @@ impl Roved {
 }
 
 /// The hints the web reads once per list (sr-only).
-pub const LIST_HINT: &str = "Pfeiltasten hoch und runter wechseln zwischen den Einträgen.";
-pub const ROW_HINT: &str = "Pfeiltasten hoch und runter wechseln zwischen den Einträgen, links und rechts zwischen einem Eintrag und seinen Aktionen. Pos1 und Ende springen an den Anfang und das Ende der Zeile.";
+pub fn list_hint_text() -> &'static str {
+    shell::channels_key_hint()
+}
+
+pub fn row_hint_text() -> &'static str {
+    shell::channels_key_hint_actions()
+}
 
 /// A whole list is one Tab stop: ↑/↓ move between its rows, ←/→/Pos1/Ende
 /// within a row (`moveWithinList`, `moveWithinRow`, `listStop`). The stop

@@ -32,7 +32,7 @@ pub(super) fn base_dir() -> Option<PathBuf> {
     if cfg!(windows) {
         var("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {
-        var("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
+        var("HOME").map(|h| PathBuf::from(h).join("Library/Application Support")) // i18n-ok
     } else {
         var("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -175,7 +175,7 @@ pub fn read_json(name: &str) -> serde_json::Value {
 }
 
 pub fn write_json(name: &str, value: &serde_json::Value, private: bool) -> io::Result<()> {
-    let path = file(name).ok_or_else(|| io::Error::other("no config directory"))?;
+    let path = file(name).ok_or_else(|| io::Error::other("no config directory"))?; // i18n-ok
     let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     write_atomic(&path, &bytes, private)
 }

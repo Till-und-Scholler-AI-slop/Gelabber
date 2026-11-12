@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::StandardItem;
 
-use super::{Event, Events, Picture, Unread};
+use super::{Event, Events, Picture, Unread, menu_labels};
 
 struct Item {
     events: Events,
@@ -15,6 +15,8 @@ struct Item {
     picture: Option<Picture>,
     unread: Unread,
     online: Arc<AtomicBool>,
+    /// Open and quit, in the interface's language.
+    labels: [&'static str; 2],
 }
 
 impl Item {
@@ -70,15 +72,16 @@ impl ksni::Tray for Item {
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        let [open, quit] = self.labels;
         vec![
             StandardItem {
-                label: "Gelabber öffnen".into(),
+                label: open.into(),
                 activate: Box::new(|item: &mut Self| item.send(Event::Show)),
                 ..Default::default()
             }
             .into(),
             StandardItem {
-                label: "Beenden".into(),
+                label: quit.into(),
                 activate: Box::new(|item: &mut Self| item.send(Event::Quit)),
                 ..Default::default()
             }
@@ -111,6 +114,7 @@ impl Sni {
             picture: Picture::app(64),
             unread: Unread::default(),
             online: online.clone(),
+            labels: menu_labels(),
         };
         match item.spawn() {
             Ok(handle) => Some(Self { handle, online }),
@@ -127,6 +131,12 @@ impl Sni {
 
     pub fn set_unread(&self, unread: Unread) {
         self.handle.update(|item| item.unread = unread);
+    }
+
+    /// The host asks for the menu and tooltip again after an update.
+    pub fn relabel(&self, _unread: Unread) {
+        let labels = menu_labels();
+        self.handle.update(|item| item.labels = labels);
     }
 }
 

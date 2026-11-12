@@ -8,15 +8,16 @@ use egui::{
     pos2,
 };
 
+use gelabber_client::{Http, LegalPageKind, PublicPages};
+use gelabber_i18n::auth;
+
 use crate::app::AppCtx;
-use crate::images::{self, ImageState};
+use crate::images;
 use crate::text::{self, Block, Rich, TextStyle};
 use crate::theme::{Theme, corner, space};
 use crate::widgets::field::layout_unit;
 use crate::widgets::{Link, link};
 
-/// The approved artwork (public/images/living-room).
-pub const ARTWORK: &str = "/images/living-room/community-banner.png";
 const ICON: &[u8] = include_bytes!("../../../assets/images/icon-192.png");
 
 /// `.lr-auth-card h1`: `--lr-type-page`, letter-spacing −0.03em.
@@ -24,17 +25,41 @@ pub const HEADING: TextStyle = text::PAGE.tracking(-0.03);
 /// `.auth-brand`: 700 20px/1.2, −0.02em.
 const BRAND: TextStyle = TextStyle::new(20.0, 700.0, 1.2).tracking(-0.02);
 
+/// `.auth-legal`: `--lr-type-meta` at 13px.
+const LEGAL: TextStyle = text::META.size(13.0);
+
 /// The page: artwork, brand and a card whose content `card` lays out in a
-/// 318px column (the card's padding is 32px, its border 1px).
+/// 318px column (the card's padding is 32px, its border 1px), and under
+/// it the links to the legal pages the instance published.
 pub fn frame(ui: &mut Ui, app: &mut AppCtx, id: &str, card: impl FnOnce(&mut Ui, &mut AppCtx)) {
-    // Loaded only where it shows.
-    let artwork = match wide(ui.ctx()).then(|| app.images.get(ui.ctx(), ARTWORK)) {
-        Some(ImageState::Ready(texture)) => Some(texture),
-        _ => None,
-    };
-    if page(ui, id, artwork.as_ref(), true, |ui| card(ui, app)) {
+    // Decoded only where it shows.
+    let artwork = wide(ui.ctx()).then(|| bundled_artwork(ui.ctx())).flatten();
+    let legal = app
+        .public_pages
+        .as_ref()
+        .map(|pages| legal_links(pages, app.client.http()))
+        .unwrap_or_default();
+    if page(ui, id, artwork.as_ref(), true, &legal, |ui| card(ui, app)) {
         app.nav.navigate("/");
     }
+}
+
+/// The published legal pages as (label, absolute URL), in the interface's
+/// language where the page has one (AuthLayout.tsx `LegalLinks`).
+pub fn legal_links(pages: &PublicPages, http: &Http) -> Vec<(&'static str, String)> {
+    let locale = gelabber_i18n::get();
+    pages
+        .legal
+        .iter()
+        .filter_map(|(kind, page)| {
+            let label = match kind {
+                LegalPageKind::Imprint => auth::legal_imprint(),
+                LegalPageKind::Privacy => auth::legal_privacy(),
+                LegalPageKind::Terms => auth::legal_terms(),
+            };
+            Some((label, http.url(page.path(locale)?)))
+        })
+        .collect()
 }
 
 /// Whether the window is wide enough for the artwork (auth.css `@media
@@ -43,9 +68,11 @@ pub fn wide(ctx: &egui::Context) -> bool {
     ctx.content_rect().width() >= 800.0
 }
 
-/// The app's own copy of the artwork (a JPEG of public/images/living-room)
-/// for the setup screen, which has no server yet to load it from.
-const BUNDLED_ARTWORK: &[u8] = include_bytes!("../../../assets/images/community-banner.jpg");
+/// The app's own copy of the approved artwork, the WebP the web's sign-in
+/// pages draw (public/images/living-room/community-banner.webp): the
+/// setup screen has no server to load it from, and a server older than
+/// v0.9.3 has no WebP.
+const BUNDLED_ARTWORK: &[u8] = include_bytes!("../../../assets/images/community-banner.webp");
 
 /// The bundled artwork, decoded once per window.
 pub fn bundled_artwork(ctx: &egui::Context) -> Option<egui::TextureHandle> {
@@ -53,12 +80,14 @@ pub fn bundled_artwork(ctx: &egui::Context) -> Option<egui::TextureHandle> {
 }
 
 /// [`frame`] without an app: `artwork` behind it on wide screens, the
-/// brand a link only with `brand_link`. True when the brand was clicked.
+/// brand a link only with `brand_link`, and `legal` (label, absolute URL)
+/// under the card, opened in the browser. True when the brand was clicked.
 pub fn page(
     ui: &mut Ui,
     id: &str,
     artwork: Option<&egui::TextureHandle>,
     brand_link: bool,
+    legal: &[(&str, String)],
     card: impl FnOnce(&mut Ui),
 ) -> bool {
     let ctx = ui.ctx().clone();
@@ -114,13 +143,81 @@ pub fn page(
             }
 
             let card_rect = card_box(ui, pos2(left, brand.bottom() + space::S6), width, card);
-            let measured = 40.0 + space::S6 + card_rect.height();
-            if (measured - column_h).abs() > 0.01 {
+            let mut measured = 40.0 + space::S6 + card_rect.height();
+            // `.auth-column`'s gap above the links; no row without one.
+            if !legal.is_empty() {
+                let top = card_rect.bottom() + space::S6;
+                measured += space::S6 + legal_row(ui, legal, left, top, width);
+            }
+            // Half a pixel, as the modal's: the 1/64 px layout units round
+            // by where the column starts, so a column centred by its own
+            // height can measure 1/32 px apart every other frame.
+            if (measured - column_h).abs() > 0.5 {
                 ctx.data_mut(|d| d.insert_temp(height_id, measured));
-                ctx.request_discard("auth column height");
+                ctx.request_discard("auth column height"); // i18n-ok
             }
         });
     brand_clicked
+}
+
+/// `.auth-legal` from `top`: centred lines that wrap within `width`, 4px
+/// between lines and 18px between links, muted and underlined, the text
+/// colour on hover. Its height.
+fn legal_row(ui: &mut Ui, legal: &[(&str, String)], left: f32, top: f32, width: f32) -> f32 {
+    const GAP_X: f32 = 18.0;
+    const GAP_Y: f32 = space::S1;
+    let theme = Theme::of(ui.ctx());
+    let blocks: Vec<Block> = legal
+        .iter()
+        .map(|(label, _)| Block::single(ui, label, LEGAL, theme.c.muted))
+        .collect();
+    // Flex wrap: as many links per line as fit.
+    let mut lines: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut line_w = 0.0;
+    for (i, block) in blocks.iter().enumerate() {
+        let line = lines.last_mut().expect("one line");
+        let w = if line.is_empty() {
+            block.width()
+        } else {
+            line_w + GAP_X + block.width()
+        };
+        if !line.is_empty() && w > width {
+            lines.push(vec![i]);
+            line_w = block.width();
+        } else {
+            line.push(i);
+            line_w = w;
+        }
+    }
+    let line_h = LEGAL.line_px();
+    let height = lines.len() as f32 * line_h + (lines.len() - 1) as f32 * GAP_Y;
+    // `<nav aria-label="Rechtliches">` around the links.
+    let row = Rect::from_min_size(pos2(left, top), Vec2::new(width, height));
+    let nav = ui.interact(row, Id::unique("gelabber-auth-legal"), Sense::hover());
+    crate::widgets::announce(&nav, egui::Role::Navigation, auth::legal_label());
+    for (n, line) in lines.iter().enumerate() {
+        let w =
+            line.iter().map(|&i| blocks[i].width()).sum::<f32>() + (line.len() - 1) as f32 * GAP_X;
+        let mut x = left + (width - w) / 2.0;
+        let y = top + n as f32 * (line_h + GAP_Y);
+        for &i in line {
+            let (label, url) = &legal[i];
+            let rect = Rect::from_min_size(pos2(x, y), Vec2::new(blocks[i].width(), line_h));
+            let response = Link::interact(ui, rect, Id::unique(("gelabber-auth-legal", i)), label);
+            let color = if response.hovered() {
+                theme.c.text
+            } else {
+                theme.c.muted
+            };
+            Block::single(ui, label, LEGAL, color).paint(ui.painter(), rect.min);
+            link::underline(ui.painter(), LEGAL, y, rect.left(), rect.right(), color);
+            if response.clicked() {
+                crate::platform::open_url_logged(url);
+            }
+            x += blocks[i].width() + GAP_X;
+        }
+    }
+    height
 }
 
 /// `.lr-auth-card` with its top-left at `min`: the panel box (painted
@@ -338,7 +435,7 @@ pub fn placeholder(ui: &mut Ui) {
     let theme = Theme::of(&ctx);
     let screen = ctx.content_rect();
     let word = Block::single(ui, "Gelabber", BRAND, theme.c.text);
-    let status = Block::single(ui, "Verbinde…", text::UI, theme.c.muted);
+    let status = Block::single(ui, auth::layout_connecting(), text::UI, theme.c.muted);
     let total = 48.0 + 12.0 + word.height() + 12.0 + status.height();
     let top = screen.center().y - total / 2.0;
     if let Some(icon) = images::bundled(&ctx, "icon-192", ICON) {
@@ -358,4 +455,193 @@ pub fn placeholder(ui: &mut Ui) {
         ui.painter(),
         pos2(screen.center().x - status.width() / 2.0, y),
     );
+}
+
+/// Google's standard colour "G" (the web's inline SVG in
+/// components/ProviderButton.tsx), drawn untinted.
+const GOOGLE_MARK: &[u8] = include_bytes!("../../../assets/images/google-g.svg");
+
+/// The Google mark at `size` px, rasterised once per physical size.
+fn google_mark(ctx: &egui::Context, size: f32) -> Option<egui::TextureHandle> {
+    use resvg::{tiny_skia, usvg};
+    let px = (size * ctx.pixels_per_point()).round().max(1.0) as u32;
+    let id = Id::unique(("gelabber-google-mark", px));
+    if let Some(texture) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(texture);
+    }
+    let tree = usvg::Tree::from_data(GOOGLE_MARK, &usvg::Options::default()).ok()?;
+    let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
+    let scale = px as f32 / 48.0;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let image =
+        egui::ColorImage::from_rgba_premultiplied([px as usize, px as usize], pixmap.data());
+    let texture = ctx.load_texture(
+        format!("google-mark-{px}"),
+        image,
+        egui::TextureOptions::LINEAR,
+    );
+    ctx.data_mut(|d| d.insert_temp(id, texture.clone()));
+    Some(texture)
+}
+
+/// `.auth-provider--google`: 500 14px/20px, letter-spacing 0.25px, in
+/// Google's own colours (its font is not bundled; the app's stands in, as
+/// on the web).
+const GOOGLE_LABEL: TextStyle = TextStyle::new(14.0, 500.0, 20.0 / 14.0).tracking(0.25 / 14.0);
+
+/// `<ProviderButton>`: a full-width `size="lg"` button that leaves for the
+/// provider. Google's keeps Google's light or dark button after the page's
+/// tone on every theme; any other provider is a transparent secondary
+/// button with its initial in a ring. `pending` swaps the label and keeps
+/// the look (`aria-busy`); `disabled` fades it.
+pub fn provider_button(
+    ui: &mut Ui,
+    provider: &gelabber_client::AuthProvider,
+    pending: Option<&str>,
+    disabled: bool,
+) -> egui::Response {
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
+    let google = provider.id == "google";
+    let own_label;
+    let label = match pending {
+        Some(label) => label,
+        None if google => auth::oidc_sign_in_with_google(),
+        None => {
+            own_label = auth::oidc_sign_in_with(&provider.name);
+            &own_label
+        }
+    };
+    let enabled = pending.is_none() && !disabled;
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), crate::theme::control::LG),
+        sense,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let hovered = enabled && response.hovered();
+    // (fill, hover fill, border, text)
+    let (fill, hover, border, ink) = if !google {
+        (Color32::TRANSPARENT, c.hover, c.border_strong, c.text)
+    } else if crate::theme::is_dark_tone(c.bg) {
+        let (bg, ink) = (
+            Color32::from_rgb(0x13, 0x13, 0x14),
+            Color32::from_rgb(0xe3, 0xe3, 0xe3),
+        );
+        (
+            bg,
+            crate::theme::mix(bg, ink, 0.08),
+            Color32::from_rgb(0x8e, 0x91, 0x8f),
+            ink,
+        )
+    } else {
+        let (bg, ink) = (Color32::WHITE, Color32::from_rgb(0x1f, 0x1f, 0x1f));
+        (
+            bg,
+            crate::theme::mix(bg, ink, 0.08),
+            Color32::from_rgb(0x74, 0x77, 0x75),
+            ink,
+        )
+    };
+    let fill = crate::widgets::eased(ui.ctx(), response.id.with("hover"), hovered, fill, hover);
+    // `opacity: 0.6` over the card while another provider's flow runs.
+    let faded = |color: Color32| {
+        if disabled && pending.is_none() {
+            color.gamma_multiply(0.6)
+        } else {
+            color
+        }
+    };
+    let painter = ui.painter();
+    let box_rect = crate::widgets::snap(ui.ctx(), rect);
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring(painter, box_rect, theme.radius.sm, &theme);
+    }
+    painter.rect(
+        box_rect,
+        corner(theme.radius.sm),
+        faded(fill),
+        Stroke::new(1.0, faded(border)),
+        StrokeKind::Inside,
+    );
+    let style = if google {
+        GOOGLE_LABEL
+    } else {
+        text::UI.size(14.0).weight(600.0)
+    };
+    let block = Block::single(ui, label, style, faded(ink));
+    // `gap: 10px` for Google's mark, the button's 8px otherwise.
+    let gap = if google { 10.0 } else { 8.0 };
+    let content = 20.0 + gap + block.width();
+    let left = (rect.center().x - content / 2.0).round();
+    let mark = Rect::from_min_size(
+        pos2(left, (rect.center().y - 10.0).round()),
+        Vec2::splat(20.0),
+    );
+    if google {
+        if let Some(texture) = google_mark(ui.ctx(), 20.0) {
+            painter.image(
+                texture.id(),
+                mark,
+                Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+                faded(Color32::WHITE),
+            );
+        }
+    } else {
+        // `.auth-provider__mark`: the initial in a 1.5px ring.
+        painter.circle_stroke(mark.center(), 9.25, Stroke::new(1.5, faded(ink)));
+        let initial: String = provider
+            .name
+            .chars()
+            .next()
+            .map(|ch| ch.to_uppercase().collect())
+            .unwrap_or_default();
+        let letter = Block::single(ui, &initial, TextStyle::new(11.0, 700.0, 1.0), faded(ink));
+        letter.paint(painter, mark.center() - letter.size() / 2.0);
+    }
+    block.paint(
+        painter,
+        pos2(left + 20.0 + gap, rect.center().y - style.line_px() / 2.0),
+    );
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    } else if pending.is_some() && response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Progress);
+    }
+    response
+}
+
+/// `.auth-divider`: "oder" between two hairlines, `--lr-type-meta`, muted,
+/// 12px apart.
+pub fn divider(ui: &mut Ui) {
+    let theme = Theme::of(ui.ctx());
+    let block = Block::single(ui, auth::oidc_or(), text::META, theme.c.muted);
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), layout_unit(block.height())),
+        Sense::hover(),
+    );
+    let left = rect.center().x - block.width() / 2.0;
+    block.paint(ui.painter(), pos2(left, rect.top()));
+    // The rules' 1px top borders, centred on the line box.
+    let y = (rect.center().y - 0.5).round();
+    let line = |from: f32, to: f32| {
+        ui.painter().rect_filled(
+            Rect::from_min_max(pos2(from, y), pos2(to, y + 1.0)),
+            0.0,
+            theme.c.border,
+        );
+    };
+    line(rect.left(), left - space::S3);
+    line(left + block.width() + space::S3, rect.right());
 }

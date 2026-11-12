@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use egui::{Color32, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{ApiError, Client, ThemeColors, ThemeDocument};
+use gelabber_i18n::{Text, common, themes as texts};
 use parking_lot::Mutex;
 
 use super::controls::{self, Confirm, Picked, Status};
@@ -69,7 +70,7 @@ fn build_presets() -> Vec<Definition> {
         ),
         def(
             "catppuccin-latte",
-            "Catppuccin Latte",
+            "Catppuccin Latte", // i18n-ok
             Light,
             Soft,
             [
@@ -96,7 +97,7 @@ fn build_presets() -> Vec<Definition> {
         ),
         def(
             "tokyo-night",
-            "Tokyo Night",
+            "Tokyo Night", // i18n-ok
             Dark,
             Clear,
             [
@@ -123,7 +124,7 @@ fn build_presets() -> Vec<Definition> {
         ),
         def(
             "rose-pine",
-            "Rosé Pine Dawn",
+            "Rosé Pine Dawn", // i18n-ok
             Light,
             Soft,
             [
@@ -132,7 +133,7 @@ fn build_presets() -> Vec<Definition> {
         ),
         def(
             "flexoki-light",
-            "Flexoki Light",
+            "Flexoki Light", // i18n-ok
             Light,
             Clear,
             [
@@ -141,7 +142,7 @@ fn build_presets() -> Vec<Definition> {
         ),
         def(
             "osaka-jade",
-            "Osaka Jade",
+            "Osaka Jade", // i18n-ok
             Dark,
             Terminal,
             [
@@ -150,7 +151,7 @@ fn build_presets() -> Vec<Definition> {
         ),
         def(
             "matte-black",
-            "Matte Black",
+            "Matte Black", // i18n-ok
             Dark,
             Clear,
             [
@@ -276,7 +277,7 @@ fn resolve(ctx: &egui::Context, doc: &ThemeDocument, id: &str) -> Definition {
 /// The name of `id` as the gallery says it.
 pub fn theme_name(doc: &ThemeDocument, id: &str) -> String {
     if id == "system" {
-        return "System".into();
+        return texts::system_name().into();
     }
     presets()
         .into_iter()
@@ -288,7 +289,7 @@ pub fn theme_name(doc: &ThemeDocument, id: &str) -> String {
                 .find(|t| t.id == id)
                 .map(|t| t.name.clone())
         })
-        .unwrap_or_else(|| "Gelabber Dunkel".into())
+        .unwrap_or_else(|| "Gelabber Dunkel".into()) // i18n-ok
 }
 
 // ------------------------------------------------------------------ sync
@@ -307,7 +308,7 @@ fn apply_op(doc: &ThemeDocument, op: &Op) -> Result<ThemeDocument, String> {
         Op::Save(t) => {
             next.custom_themes.retain(|x| x.id != t.id);
             if next.custom_themes.len() >= MAX_THEMES {
-                return Err("Du kannst höchstens 50 eigene Themes speichern.".into());
+                return Err(texts::error_too_many().into());
             }
             next.custom_themes.push((**t).clone());
             next.active = t.id.clone();
@@ -321,7 +322,7 @@ fn apply_op(doc: &ThemeDocument, op: &Op) -> Result<ThemeDocument, String> {
         Op::Apply(id) => next.active = id.clone(),
     }
     if !is_builtin(&next.active) && !next.custom_themes.iter().any(|t| t.id == next.active) {
-        return Err("Das ausgewählte Theme ist nicht mehr verfügbar.".into());
+        return Err(texts::error_unavailable().into());
     }
     Ok(next)
 }
@@ -379,9 +380,6 @@ impl Sync {
     }
 }
 
-/// The account's themes did not load with the workspace.
-const LOAD_FAILED: &str = "Themes konnten nicht geladen werden. Bitte erneut versuchen.";
-
 /// What the pages read about the account's themes.
 pub struct SyncView {
     pub doc: ThemeDocument,
@@ -407,9 +405,9 @@ fn poll_sync(client: &Client, s: &mut Sync) {
             client.clear_op("themes");
             s.saving = false;
             s.error = Some(if e.status() == Some(409) {
-                "Auf einem anderen Gerät geändert. Deine Änderung bleibt erhalten. Erneut anwenden übernimmt sie auf den aktuellen Stand.".into()
+                texts::error_conflict().into()
             } else {
-                "Noch nicht synchronisiert. Deine Änderung ist hier gespeichert.".into()
+                texts::error_offline().into()
             });
         }
         _ => {}
@@ -436,10 +434,9 @@ fn poll_sync(client: &Client, s: &mut Sync) {
                 }
             }
             // theme/account.ts: a document it cannot read is the server's.
-            Err(ApiError::Decode(_)) => {
-                s.error = Some("Unbekanntes Theme-Format vom Server.".into())
-            }
-            Err(_) => s.error = Some(LOAD_FAILED.into()),
+            Err(ApiError::Decode(_)) => s.error = Some(texts::error_server_format().into()),
+            // The account's themes did not load with the workspace.
+            Err(_) => s.error = Some(texts::error_load_failed().into()),
         }
     }
 }
@@ -464,7 +461,7 @@ pub fn sync_state(ctx: &egui::Context, app: &AppCtx) -> SyncView {
         error: s
             .error
             .clone()
-            .or_else(|| missing.then(|| LOAD_FAILED.into())),
+            .or_else(|| missing.then(|| texts::error_load_failed().into())),
         ready: loaded && s.pending.is_none() && s.reload.is_none(),
         pending: s.pending.is_some(),
     }
@@ -492,7 +489,7 @@ pub fn change(ctx: &egui::Context, app: &AppCtx, op: Op) -> bool {
         }
         Err(e) => {
             s.error = Some(if e.is_empty() {
-                "Theme konnte nicht gespeichert werden.".into()
+                texts::error_save_failed().into()
             } else {
                 e
             });
@@ -609,10 +606,10 @@ fn paint_preview(ui: &Ui, rect: Rect, def: &Definition, small: bool, clip: Rect)
     let line = |s: &str, st: TextStyle, color: Color32, pos: Pos2| {
         Block::single(ui, s, st, color).paint(&clip, pos);
     };
-    line("Gelabber", style(f(16.0, 8.0), 700.0), c.text, pos2(x, y));
+    line("Gelabber", style(f(16.0, 8.0), 700.0), c.text, pos2(x, y)); // i18n-ok
     y += style(f(16.0, 8.0), 700.0).line_px() + gap;
     let small_st = style(f(10.0, 5.0), 400.0);
-    line("KANÄLE", small_st, c.muted, pos2(x, y));
+    line(texts::preview_channels(), small_st, c.muted, pos2(x, y));
     y += small_st.line_px() + gap;
     // The selected "Übersicht" row.
     let sel_st = style(f(11.0, 6.0), 700.0);
@@ -634,13 +631,16 @@ fn paint_preview(ui: &Ui, rect: Rect, def: &Definition, small: bool, clip: Rect)
         c.accent_text,
     );
     line(
-        "Übersicht",
+        texts::preview_overview(),
         sel_st,
         c.accent_text,
         pos2(x + px + icon + 4.0, y + py),
     );
     y += sel.height() + gap;
-    for (ic, label) in [(Icon::Hash, "allgemein"), (Icon::Speaker, "Wohnzimmer")] {
+    for (ic, label) in [
+        (Icon::Hash, texts::preview_general()),
+        (Icon::Speaker, texts::preview_living_room()),
+    ] {
         let center = y + small_st.line_px() / 2.0;
         icons::paint(&clip, ic, pos2(x, center - icon / 2.0), icon, c.muted);
         line(label, small_st, c.muted, pos2(x + icon + 4.0, y));
@@ -664,21 +664,27 @@ fn paint_preview(ui: &Ui, rect: Rect, def: &Definition, small: bool, clip: Rect)
         hicon,
         c.text,
     );
-    Block::single(ui, "allgemein", head, c.text).paint(&clip, pos2(x + hicon + 4.0, y));
+    Block::single(ui, texts::preview_general(), head, c.text)
+        .paint(&clip, pos2(x + hicon + 4.0, y));
     y += head.line_px();
     if !small {
         y += 4.0;
-        Block::single(ui, "Allgemeiner Chat", style(10.0, 400.0), c.muted).paint(&clip, pos2(x, y));
+        Block::single(ui, texts::preview_topic(), style(10.0, 400.0), c.muted)
+            .paint(&clip, pos2(x, y));
         y += 15.0;
     }
     y += f(16.0, 7.0);
+    let question = ("MA", "Mara", "18:42", texts::preview_question());
+    let answer = (
+        texts::preview_you_initials(),
+        texts::preview_you(),
+        "18:43",
+        texts::preview_answer(),
+    );
     let msgs: &[(&str, &str, &str, &str)] = if small {
-        &[("MA", "Mara", "18:42", "Wer ist heute Abend dabei?")]
+        &[question]
     } else {
-        &[
-            ("MA", "Mara", "18:42", "Wer ist heute Abend dabei?"),
-            ("DU", "Du", "18:43", "Bin im Wohnzimmer."),
-        ]
+        &[question, answer]
     };
     let msg = style(f(11.0, 6.0), 400.0);
     let ava = style(f(9.0, 5.0), 400.0);
@@ -716,11 +722,11 @@ fn paint_preview(ui: &Ui, rect: Rect, def: &Definition, small: bool, clip: Rect)
         Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
-    Block::single(ui, "Nachricht an #allgemein", comp, c.muted).paint(
+    Block::single(ui, texts::preview_composer(), comp, c.muted).paint(
         &clip,
         pos2(crect.left() + 1.0 + cpad, crect.top() + 1.0 + cpad),
     );
-    let send = Block::single(ui, "Senden", comp.weight(700.0), c.accent_text);
+    let send = Block::single(ui, texts::preview_send(), comp.weight(700.0), c.accent_text);
     send.paint(
         &clip,
         pos2(
@@ -744,11 +750,11 @@ fn paint_preview(ui: &Ui, rect: Rect, def: &Definition, small: bool, clip: Rect)
         let fs = style(10.0, 400.0);
         let cy = foot.top() + 1.0 + 10.0 + 12.5;
         painter.circle_filled(pos2(foot.left() + 10.0 + 3.0, cy), 3.0, c.online);
-        Block::single(ui, "Verbunden · Wohnzimmer", fs, c.text).paint(
+        Block::single(ui, texts::preview_connected(), fs, c.text).paint(
             &painter,
             pos2(foot.left() + 10.0 + 6.0 + 4.0, cy - fs.line_px() / 2.0),
         );
-        let pill = Block::single(ui, "Mikrofon an", fs.weight(500.0), c.accent_ink);
+        let pill = Block::single(ui, texts::preview_mic_on(), fs.weight(500.0), c.accent_ink);
         let prect = Rect::from_min_size(
             pos2(foot.right() - 10.0 - pill.width() - 16.0, cy - 12.5),
             vec2(pill.width() + 16.0, 25.0),
@@ -818,15 +824,15 @@ impl PanelState {
     }
 }
 
-const COLOR_LABELS: [&str; 8] = [
-    "Hintergrund",
-    "Seitenleiste",
-    "Flächen",
-    "Serverleiste",
-    "Text",
-    "Sekundärtext",
-    "Akzent",
-    "Rahmen",
+const COLOR_LABELS: [Text; 8] = [
+    texts::color_background,
+    texts::color_panel,
+    texts::color_surface,
+    texts::color_rail,
+    texts::color_text,
+    texts::color_muted,
+    texts::color_accent,
+    texts::color_border,
 ];
 
 fn color_slot(c: &mut ThemeColors, i: usize) -> &mut String {
@@ -846,18 +852,18 @@ fn copy_theme(d: &Definition) -> gelabber_client::Theme {
     let mut t = stored_of(d);
     t.id = format!("custom-{}", uuid::Uuid::new_v4());
     let name: String = d.name.chars().take(48).collect();
-    t.name = format!("{name} – Eigene");
+    t.name = texts::copy_name(&name);
     t
 }
 
 /// `importTheme`: the strict format of `isTheme`, with a fresh id.
 fn import_theme(bytes: &[u8]) -> Result<gelabber_client::Theme, String> {
     if bytes.len() > MAX_IMPORT_BYTES {
-        return Err("Die Datei darf höchstens 64 KiB groß sein.".into());
+        return Err(texts::error_file_too_large().into());
     }
-    let invalid = || "Das Theme-Format ist ungültig oder wird noch nicht unterstützt.".to_owned();
-    let value: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|_| "Die Datei enthält kein gültiges JSON.".to_owned())?;
+    let invalid = || texts::error_invalid_format().to_owned();
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| texts::error_invalid_json().to_owned())?;
     let obj = value.as_object().ok_or_else(invalid)?;
     let keys = ["version", "id", "name", "mode", "style", "colors"];
     if obj.len() != keys.len() || !keys.iter().all(|k| obj.contains_key(*k)) {
@@ -900,7 +906,7 @@ fn export_theme(ctx: &egui::Context, t: &gelabber_client::Theme) {
         .collect();
     let file = format!("{name}.gelabber-theme.json");
     let json = serde_json::to_string_pretty(t).unwrap_or_default();
-    controls::save_file(ctx, "Theme exportieren", &file, json.into_bytes());
+    controls::save_file(ctx, texts::action_export_title(), &file, json.into_bytes());
 }
 
 /// Settings area "Themes".
@@ -958,7 +964,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         && change(&ctx, app, Op::Delete(chosen.id.clone()))
     {
         s.picked = None;
-        s.keep_after_save = Some("Theme gelöscht.");
+        s.keep_after_save = Some(texts::notice_deleted());
     }
     if let Some(true) = controls::answer(&ctx, "theme-account") {
         discard_pending(&ctx, app);
@@ -970,7 +976,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         if sync_view.error.is_none() {
             s.notice.success(ui, message);
         } else {
-            s.notice.error(ui, "Nicht gespeichert – erneut versuchen");
+            s.notice.error(ui, common::not_saved());
         }
     }
 
@@ -989,7 +995,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
     controls::row(ui, 8.0, 32.0, |ui| {
         if ui
             .add(
-                Button::new("+ Eigenes Theme")
+                Button::new(texts::action_create())
                     .small()
                     .disabled(!can_create || blocked),
             )
@@ -1000,7 +1006,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         }
         if ui
             .add(
-                Button::new("Importieren")
+                Button::new(texts::action_import())
                     .small()
                     .disabled(!can_create || blocked),
             )
@@ -1009,7 +1015,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         {
             s.importing = Some(controls::pick_file(
                 &ctx,
-                "Theme-Datei importieren",
+                texts::action_import_label(),
                 &["*.json"],
             ));
         }
@@ -1018,7 +1024,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
     if sync_view.saving || sync_view.error.is_some() {
         ui.add_space(16.0);
         let msg = if sync_view.saving {
-            "Wird mit deinem Konto synchronisiert …".to_owned()
+            texts::sync_saving().to_owned()
         } else {
             sync_view.error.clone().unwrap_or_default()
         };
@@ -1063,25 +1069,25 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     let label = if sync_view.pending {
-                        "Erneut anwenden"
+                        texts::action_retry_apply()
                     } else {
-                        "Erneut versuchen"
+                        common::try_again()
                     };
                     if ui.add(Button::new(label).small()).clicked() {
                         retry(&ctx, app);
                     }
                     if sync_view.pending
                         && ui
-                            .add(Button::new("Gespeicherten Stand laden").small())
+                            .add(Button::new(texts::action_load_saved()).small())
                             .clicked()
                     {
                         controls::ask(
                             &ctx,
                             Confirm::danger(
                                 "theme-account",
-                                "Lokale Änderung verwerfen?",
-                                Some("Gelabber lädt dann wieder den Theme-Stand deines Kontos."),
-                                "Gespeicherten Stand laden",
+                                texts::discard_pending_title(),
+                                Some(texts::discard_pending_message()),
+                                texts::action_load_saved(),
                             ),
                         );
                     }
@@ -1095,7 +1101,12 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         s.notice.ui(ui, width);
     }
     ui.add_space(20.0);
-    let filters = ["Alle", "Hell", "Dunkel", "Eigene"];
+    let filters = [
+        texts::filter_all(),
+        texts::filter_light(),
+        texts::filter_dark(),
+        texts::filter_own(),
+    ];
     let order = [Filter::All, Filter::Light, Filter::Dark, Filter::Own];
     let current = order.iter().position(|f| *f == s.filter).unwrap_or(0);
     if let Some(i) = controls::chips(ui, "theme-filter", &filters, current, 32.0, None) {
@@ -1166,14 +1177,14 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
                 Block::single(ui, &d.name, TextStyle::new(13.0, 700.0, 1.5), c.text)
                     .paint(ui.painter(), pos2(x, desc_top + 13.0));
                 let mode = if d.mode == Mode::Dark {
-                    "Dunkel"
+                    texts::mode_dark()
                 } else {
-                    "Hell"
+                    texts::mode_light()
                 };
                 let style = match d.style {
-                    Style::Clear => "Klar",
-                    Style::Soft => "Weich",
-                    Style::Terminal => "Terminal",
+                    Style::Clear => texts::style_clear(),
+                    Style::Soft => texts::style_soft(),
+                    Style::Terminal => texts::style_terminal(),
                 };
                 Block::single(ui, &format!("{mode} · {style}"), controls::HINT, c.muted)
                     .paint(ui.painter(), pos2(x, desc_top + 13.0 + 19.5 + 4.0));
@@ -1197,9 +1208,14 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
                 let y = rect.top() + 1.0 + (card_h - 2.0 - content_h) / 2.0;
                 let x = rect.left() + 19.0;
                 icons::paint(ui.painter(), Icon::Screen, pos2(x, y), 32.0, c.accent_text);
-                Block::single(ui, "System", TextStyle::new(16.0, 700.0, 1.5), c.text)
-                    .paint(ui.painter(), pos2(x, y + 41.0));
-                Block::single(ui, "Folgt dem Gerät", controls::HINT, c.muted)
+                Block::single(
+                    ui,
+                    texts::system_name(),
+                    TextStyle::new(16.0, 700.0, 1.5),
+                    c.text,
+                )
+                .paint(ui.painter(), pos2(x, y + 41.0));
+                Block::single(ui, texts::system_hint(), controls::HINT, c.muted)
                     .paint(ui.painter(), pos2(x, y + 74.0));
             }
         }
@@ -1226,7 +1242,12 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
             icons::paint_centered(painter, Icon::Check, check, 14.0, c.accent_ink);
         }
         if *id == active {
-            let b = Block::single(ui, "Aktiv", TextStyle::new(11.0, 600.0, 1.5), c.accent_text);
+            let b = Block::single(
+                ui,
+                texts::gallery_active(),
+                TextStyle::new(11.0, 600.0, 1.5),
+                c.accent_text,
+            );
             b.paint(
                 painter,
                 pos2(
@@ -1271,7 +1292,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
     if s.filter == Filter::Own && doc.custom_themes.is_empty() {
         let b = Block::wrapped(
             ui,
-            "Keine eigenen Themes.",
+            texts::gallery_empty(),
             TextStyle::new(13.0, 400.0, 1.6),
             c.muted,
             gallery_w,
@@ -1310,7 +1331,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         ui.add_space(20.0);
         let natural = ui.cursor().min;
         let name = theme_name(&doc, &selected);
-        let back = format!("Zurück zu {}", theme_name(&doc, &active));
+        let back = texts::action_revert(&theme_name(&doc, &active));
         let h = 2.0 + 24.0 + 36.0;
         let y = natural
             .y
@@ -1326,10 +1347,17 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
             Stroke::new(1.0, c.border),
             StrokeKind::Inside,
         );
-        let rich = text::Rich::new(text::UI)
-            .push(&format!("„{name}“"), text::UI.weight(700.0), c.text)
-            .push(" wird angezeigt", text::UI, c.text)
-            .layout(ui);
+        // Split first, then the name goes in, so it cannot add tags.
+        let mut rich = text::Rich::new(text::UI);
+        for piece in gelabber_i18n::pieces(texts::preview_bar_showing()) {
+            let shown = piece.text.replace("{name}", &name);
+            let style = match piece.tag {
+                Some(_) => text::UI.weight(700.0),
+                None => text::UI,
+            };
+            rich = rich.push(&shown, style, c.text);
+        }
+        let rich = rich.layout(ui);
         rich.paint(
             ui.painter(),
             pos2(
@@ -1353,16 +1381,20 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
                     s.notice.clear();
                 }
                 if ui
-                    .add(Button::new("Behalten").primary().disabled(blocked))
+                    .add(
+                        Button::new(texts::action_keep())
+                            .primary()
+                            .disabled(blocked),
+                    )
                     .clicked()
                 {
                     let id = selected.clone();
-                    let message = format!("„{}“ angewendet.", theme_name(&doc, &id));
+                    let message = texts::notice_applied(&theme_name(&doc, &id));
                     if change(&ctx, app, Op::Apply(id)) {
                         s.picked = None;
                         s.notice.success(ui, message);
                     } else {
-                        s.notice.error(ui, "Nicht gespeichert – erneut versuchen");
+                        s.notice.error(ui, common::not_saved());
                     }
                 }
             },
@@ -1374,19 +1406,32 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
     ui.add_space(24.0);
     let foot = TextStyle::new(13.0, 400.0, 1.6);
     let lead = if sync_view.ready && sync_view.error.is_none() {
-        "Mit deinem Konto synchronisiert."
+        texts::footnote_synced()
     } else {
-        "Deine Themes gehören zu deinem Konto."
+        texts::footnote_account()
     };
-    let rich = text::Rich::new(foot)
-        .push(&format!("{lead} Paletten nach "), foot, c.muted)
-        .push("Omarchy", foot, c.muted)
-        .push(", für Gelabber angepasst.", foot, c.muted)
-        .wrap(width)
-        .layout(ui);
+    // The lead goes before the credit's first run (plain text in both
+    // languages); the link is a section of its own.
+    let mut rich = text::Rich::new(foot);
+    let mut link_section = None;
+    for (i, piece) in gelabber_i18n::pieces(texts::footnote_credit())
+        .into_iter()
+        .enumerate()
+    {
+        if piece.tag.is_some() {
+            link_section = Some(i);
+        }
+        let shown = if i == 0 {
+            format!("{lead} {}", piece.text)
+        } else {
+            piece.text.to_owned()
+        };
+        rich = rich.push(&shown, foot, c.muted);
+    }
+    let rich = rich.wrap(width).layout(ui);
     let at = ui.cursor().min;
     text::show(ui, &rich);
-    if let Some(r) = rich.section_rect(at, 1) {
+    if let Some(r) = link_section.and_then(|i| rich.section_rect(at, i)) {
         // Under the baseline, not at the bottom of the 1.6 line box.
         link::underline(ui.painter(), foot, r.top(), r.left(), r.right(), c.muted);
         if Link::interact(ui, r, Id::unique("gelabber-omarchy"), "Omarchy").clicked() {
@@ -1423,9 +1468,9 @@ fn ask_discard(ctx: &egui::Context) {
         ctx,
         Confirm::danger(
             "theme-discard",
-            "Ungespeicherten Theme-Entwurf verwerfen?",
-            Some("Deine Änderungen an diesem Theme gehen verloren."),
-            "Verwerfen",
+            texts::draft_discard_title(),
+            Some(texts::draft_discard_message()),
+            texts::draft_discard(),
         ),
     );
 }
@@ -1463,15 +1508,16 @@ fn workbench(
     let width = ui.available_width();
     let top = ui.cursor().min;
     let eyebrow = if s.draft.is_some() {
-        "DEIN ENTWURF"
+        texts::workbench_draft()
     } else {
-        "VORSCHAU"
-    };
-    Block::single(ui, eyebrow, EYEBROW, c.muted).paint(ui.painter(), pos2(top.x, top.y + 6.85));
+        texts::workbench_preview()
+    }
+    .to_uppercase();
+    Block::single(ui, &eyebrow, EYEBROW, c.muted).paint(ui.painter(), pos2(top.x, top.y + 6.85));
     let title = match &s.draft {
-        Some(d) if d.name.trim().is_empty() => "Neues Theme".to_owned(),
+        Some(d) if d.name.trim().is_empty() => texts::workbench_new_theme().to_owned(),
         Some(d) => d.name.clone(),
-        None if selected == "system" => "Wie dein Gerät".to_owned(),
+        None if selected == "system" => texts::system_title().to_owned(),
         None => chosen.name.clone(),
     };
     ui.add_space(24.0 + 4.0);
@@ -1497,7 +1543,7 @@ fn workbench(
         let backdrop = painter.add(egui::Shape::Noop);
         controls::paragraph(
             &mut child,
-            "Kontrast prüfen",
+            texts::contrast_title(),
             st.weight(700.0),
             c.text,
             width - 30.0,
@@ -1509,7 +1555,7 @@ fn workbench(
         }
         if let Some(d) = &draft_def
             && child
-                .add(Button::new("Kontraste verbessern").small())
+                .add(Button::new(texts::contrast_fix()).small())
                 .clicked()
         {
             let fixed = theme::fixed(d.clone());
@@ -1543,7 +1589,7 @@ fn workbench(
     controls::row(ui, 8.0, 32.0, |ui| {
         if ui
             .add(
-                Button::new("Als Vorlage verwenden")
+                Button::new(texts::action_template())
                     .small()
                     .disabled(!can_create || blocked),
             )
@@ -1554,14 +1600,14 @@ fn workbench(
         }
         if chosen.id.starts_with("custom-") && selected != "system" {
             if ui
-                .add(Button::new("Bearbeiten").small().disabled(blocked))
+                .add(Button::new(texts::action_edit()).small().disabled(blocked))
                 .clicked()
             {
                 open_draft(s, stored_of(chosen), false);
             }
             if ui
                 .add(
-                    Button::new("Löschen")
+                    Button::new(common::delete())
                         .small()
                         .variant(ButtonVariant::DangerOutline)
                         .disabled(blocked),
@@ -1572,14 +1618,17 @@ fn workbench(
                     &ctx,
                     Confirm::danger(
                         "theme-delete",
-                        format!("Theme „{}“ löschen?", chosen.name),
+                        texts::delete_title(&chosen.name),
                         None,
-                        "Löschen",
+                        common::delete(),
                     ),
                 );
             }
         }
-        if ui.add(Button::new("Exportieren").small()).clicked() {
+        if ui
+            .add(Button::new(texts::action_export()).small())
+            .clicked()
+        {
             export_theme(&ctx, &stored_of(chosen));
         }
     });
@@ -1647,7 +1696,7 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
     let Some(mut draft) = s.draft.take() else {
         return;
     };
-    controls::paint(ui, ui.cursor().min, "Name", label, c.text);
+    controls::paint(ui, ui.cursor().min, texts::editor_name(), label, c.text);
     ui.add_space(18.0 + 6.0);
     let mut name = draft.name.clone();
     if editor_field(ui, "theme-name", &mut name, false, 60).changed() {
@@ -1657,13 +1706,16 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
     let half = (width - 10.0) / 2.0;
     let top = ui.cursor().min;
     for (i, (title, options)) in [
-        ("Modus", vec![("dark", "Dunkel"), ("light", "Hell")]),
         (
-            "Stil",
+            texts::editor_mode(),
+            vec![("dark", texts::mode_dark()), ("light", texts::mode_light())],
+        ),
+        (
+            texts::editor_style(),
             vec![
-                ("clear", "Klar"),
-                ("soft", "Weich"),
-                ("terminal", "Terminal"),
+                ("clear", texts::style_clear()),
+                ("soft", texts::style_soft()),
+                ("terminal", texts::style_terminal()),
             ],
         ),
     ]
@@ -1694,7 +1746,7 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
     controls::paint(
         ui,
         ui.cursor().min,
-        "Farben",
+        texts::editor_colors(),
         TextStyle::new(13.0, 600.0, 1.5),
         c.text,
     );
@@ -1713,7 +1765,7 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
         );
         let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
         child.spacing_mut().item_spacing = egui::Vec2::ZERO;
-        controls::paint(&child, rect.min, name, label, c.text);
+        controls::paint(&child, rect.min, name(), label, c.text);
         child.add_space(18.0 + 6.0);
         let slot = color_slot(&mut draft.colors, i);
         let current = parse_hex(slot).unwrap_or(Color32::BLACK);
@@ -1791,12 +1843,12 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
     controls::row(ui, 8.0, 36.0, |ui| {
         save = ui
             .add(
-                Button::new("Speichern und anwenden")
+                Button::new(texts::editor_save())
                     .primary()
                     .disabled(blocked || draft.name.trim().is_empty()),
             )
             .clicked();
-        cancel = ui.add(Button::new("Abbrechen").ghost()).clicked();
+        cancel = ui.add(Button::new(common::cancel()).ghost()).clicked();
     });
     let dirty_now = match &s.baseline {
         Some(b) => *b != draft,
@@ -1808,7 +1860,7 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
         if change(&ctx, app, Op::Save(Box::new(t))) {
             s.picked = None;
             s.baseline = None;
-            s.keep_after_save = Some("Theme gespeichert und angewendet.");
+            s.keep_after_save = Some(texts::notice_saved());
             return;
         }
     }
@@ -1917,7 +1969,7 @@ mod tests {
             _ => None,
         });
         let mut harness = launcher(&api, "/settings/themes");
-        wait_for_label(&mut harness, LOAD_FAILED);
+        wait_for_label(&mut harness, texts::error_load_failed());
         up.store(true, Ordering::SeqCst);
         harness
             .get_by_role_and_label(Role::Button, "Erneut versuchen")
@@ -1927,7 +1979,7 @@ mod tests {
             sync(&h.ctx).lock().local.is_some()
         });
         harness.run_steps(2);
-        assert!(harness.query_by_label(LOAD_FAILED).is_none());
+        assert!(harness.query_by_label(texts::error_load_failed()).is_none());
     }
 
     /// Darstellung says the themes did not load, and loads them again.
