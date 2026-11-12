@@ -70,6 +70,12 @@ pub const FEEDBACK_REPLIES_PER_HOUR: u32 = 30;
 /// is an answer". Above [`MAIL_PER_ADDRESS_PER_HOUR`], since an operator
 /// hears about every entry of the instance.
 pub const FEEDBACK_NOTICES_PER_HOUR: u32 = 30;
+/// Posts of the public feedback form per client address and hour (handler
+/// bucket `feedback_public`).
+pub const FEEDBACK_PUBLIC_PER_HOUR: u32 = 5;
+/// Visitor entries waiting for their confirmation; while this many are
+/// pending, the public form takes no more.
+pub const FEEDBACK_PENDING_MAX: i64 = 1000;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 pub(crate) const HOUR: Duration = Duration::from_secs(3600);
@@ -605,7 +611,7 @@ fn is_per_account(key: &str) -> bool {
 /// The client address the rate limits are keyed by, with IPv6 grouped per
 /// /64: the rightmost `X-Forwarded-For` entry, which the Caddy next to the
 /// API wrote, or the TCP peer without one (`gelabber_shared::client_addr`).
-fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
+pub(crate) fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
     gelabber_shared::client_addr::client_key(
         headers
             .get_all("x-forwarded-for")

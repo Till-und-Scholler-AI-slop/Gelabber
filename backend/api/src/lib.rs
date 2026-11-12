@@ -55,6 +55,7 @@ pub fn app(state: AppState) -> Router {
     account::deletion::start(state.clone());
     account::export::start(state.clone());
     previews::start(state.clone());
+    feedback::public::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).
     let api = Router::new()
@@ -86,6 +87,9 @@ pub fn app(state: AppState) -> Router {
         .merge(health::router())
         .merge(metrics::router())
         .merge(gateway::router())
+        // The public feedback form is a plain HTML form, which cannot pass
+        // the CSRF check; it makes its own checks (`feedback::public`).
+        .merge(feedback::public::router())
         .merge(api)
         .layer(
             TraceLayer::new_for_http()

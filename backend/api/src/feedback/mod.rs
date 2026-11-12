@@ -15,6 +15,7 @@
 pub mod notify;
 pub mod operator;
 pub mod person;
+pub mod public;
 
 use std::time::SystemTime;
 
