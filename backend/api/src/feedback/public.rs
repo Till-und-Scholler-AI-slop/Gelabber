@@ -141,7 +141,11 @@ async fn submit(
     let Ok(form) = form else {
         return Ok(to(locale, Page::Error));
     };
-    if form.website.as_deref().is_some_and(|value| !value.is_empty()) {
+    if form
+        .website
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+    {
         info!("feedback form: honeypot");
         return Ok(to(locale, Page::Sent));
     }
@@ -158,11 +162,10 @@ async fn submit(
     if !limits::mail_allowed(&state, MailBudget::Feedback, &email) {
         return Ok(to(locale, Page::Sent));
     }
-    let pending: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM feedback WHERE status = 'pending'")
-            .fetch_one(&state.db)
-            .await
-            .inspect_err(|_| limits::mail_unsent(&state, MailBudget::Feedback, &email))?;
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM feedback WHERE status = 'pending'")
+        .fetch_one(&state.db)
+        .await
+        .inspect_err(|_| limits::mail_unsent(&state, MailBudget::Feedback, &email))?;
     if pending >= FEEDBACK_PENDING_MAX {
         limits::mail_unsent(&state, MailBudget::Feedback, &email);
         warn!("feedback: too many pending entries");
