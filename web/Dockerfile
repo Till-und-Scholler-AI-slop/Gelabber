@@ -31,8 +31,9 @@ RUN nginx -t \
  && nginx -t \
  && rm /etc/nginx/gelabber/storage-origin.map
 # The same for the public pages (#522): off, as on a self-hosted instance by
-# default, then on with an Impressum, which writes the landing map. Every
-# start writes them anew, so the image keeps none.
+# default, then on with an Impressum and the feedback form (#542), which
+# writes the landing map. Every start writes them anew, so the image keeps
+# none.
 RUN /docker-entrypoint.d/50-gelabber-public-pages.sh \
  && nginx -t \
  && test -f /usr/share/nginx/public-pages/public-pages.json \
@@ -43,10 +44,13 @@ RUN /docker-entrypoint.d/50-gelabber-public-pages.sh \
     GELABBER_OPERATOR_CITY="12345 Example City" \
     GELABBER_OPERATOR_EMAIL=operator@example.com \
     APP_PUBLIC_URL=https://gelabber.example.com \
+    GELABBER_ACCOUNT_MAIL=on \
+    GELABBER_FEEDBACK_OPERATORS=on \
     /docker-entrypoint.d/50-gelabber-public-pages.sh \
  && nginx -t \
  && test -f /usr/share/nginx/public-pages/de/index.html \
  && test -f /usr/share/nginx/public-pages/en/imprint.html \
+ && test -f /usr/share/nginx/public-pages/de/feedback/danke.html \
  && test -f /etc/nginx/gelabber/public/landing.map \
  && rm -r /usr/share/nginx/public-pages /etc/nginx/gelabber/public
 EXPOSE 80

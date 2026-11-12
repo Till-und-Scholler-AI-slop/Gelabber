@@ -286,7 +286,14 @@ describe("production nginx config", () => {
     }
     // Only `/` may fall back to the shell, besides `location = /` (through the
     // map) and the public pages, whose unpublished URLs are app routes.
-    const toShell = ["/", FRONT_MAP, "^~ /de/", "^~ /en/"];
+    const toShell = [
+      "/",
+      FRONT_MAP,
+      "^~ /de/",
+      "^~ /en/",
+      "^~ /de/feedback",
+      "^~ /en/feedback",
+    ];
     for (const [name, directives] of blocks) {
       if (toShell.includes(name)) continue;
       expect(directives.join("\n"), name).not.toContain("/index.html");
@@ -345,6 +352,8 @@ describe("production nginx config", () => {
         "= /",
         "^~ /de/",
         "^~ /en/",
+        "^~ /de/feedback",
+        "^~ /en/feedback",
         "= /public-pages.json",
         "= /robots.txt",
         "= /sitemap.xml",
@@ -417,7 +426,16 @@ describe("production nginx config", () => {
     // runs inline scripts of its own. The public pages have a policy of their
     // own (below).
     for (const [name, directives] of blocks) {
-      if (["= /index.html", "^~ /de/", "^~ /en/"].includes(name)) continue;
+      if (
+        [
+          "= /index.html",
+          "^~ /de/",
+          "^~ /en/",
+          "^~ /de/feedback",
+          "^~ /en/feedback",
+        ].includes(name)
+      )
+        continue;
       expect(
         directives.filter((line) => line.startsWith(CSP)),
         name,
@@ -675,6 +693,47 @@ describe("public pages in the nginx config (#522)", () => {
           expect.arrayContaining(["'unsafe-inline'"]),
         );
     }
+  });
+
+  it("lets only the feedback form post, and only to this origin (#542)", () => {
+    const formAction = (name) =>
+      policyOf(location(name).find((line) => line.startsWith(CSP))).get(
+        "form-action",
+      );
+    for (const lang of ["de", "en"]) {
+      const name = `^~ /${lang}/feedback`;
+      // The block of /de/ and /en/, with form-action 'self' as the one change.
+      expect(ownDirectives(name), name).toEqual(
+        ownDirectives(`^~ /${lang}/`).map((line) =>
+          line.replace("form-action 'none'", "form-action 'self'"),
+        ),
+      );
+      expect(formAction(name), name).toEqual(["'self'"]);
+      expect(formAction(`^~ /${lang}/`), lang).toEqual(["'none'"]);
+      const written = [
+        `${lang}/feedback.html`,
+        `${lang}/feedback/${lang === "de" ? "gesendet" : "sent"}.html`,
+      ];
+      expect(served(name, `/${lang}/feedback`, written)).toBe(
+        `/${lang}/feedback.html`,
+      );
+      expect(
+        served(
+          name,
+          `/${lang}/feedback/${lang === "de" ? "gesendet" : "sent"}`,
+          written,
+        ),
+      ).toBe(`/${written[1]}`);
+      // Not published: the app's not-found page, as for the other pages.
+      expect(served(name, `/${lang}/feedback`, [])).toBe("/index.html");
+    }
+    // Every other public page and the shell keep their policies.
+    const formActions = [...blocks]
+      .filter(([name]) => !name.endsWith("/feedback"))
+      .flatMap(([, directives]) => directives)
+      .filter((line) => line.startsWith(CSP))
+      .map((line) => policyOf(line).get("form-action"));
+    expect(formActions).toEqual([["'self'"], ["'none'"], ["'none'"]]);
   });
 
   it("answers 404 for public-pages.json, robots.txt and sitemap.xml until they are written", () => {

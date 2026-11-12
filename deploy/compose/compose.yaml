@@ -51,6 +51,10 @@ services:
       GELABBER_SOURCE_URL: ${GELABBER_SOURCE_URL:-}
       GELABBER_OPERATOR_GUIDE_URL: ${GELABBER_OPERATOR_GUIDE_URL:-}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
+      # Whether the API sends account mail and names operators: the public
+      # feedback form needs both (deploy/README.md, "Feedback").
+      GELABBER_ACCOUNT_MAIL: ${SMTP_HOST:+on}
+      GELABBER_FEEDBACK_OPERATORS: ${API_OPERATOR_EMAILS:+on}
     volumes:
       - ./legal:/etc/gelabber/legal:ro
     expose:
