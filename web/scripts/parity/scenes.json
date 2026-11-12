@@ -2572,6 +2572,87 @@
       "name": "login-deleted",
       "path": "/login?reason=deleted",
       "user": null
+    },
+    {
+      "name": "user-menu-feedback",
+      "path": "/s/{home}",
+      "user": "tom",
+      "actions": [
+        {
+          "click": "/^Benutzermenü/"
+        }
+      ]
+    },
+    {
+      "name": "user-menu-feedback-en",
+      "path": "/s/{home}",
+      "user": "tom",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "/^User menu/"
+        }
+      ]
+    },
+    {
+      "name": "feedback-dialog",
+      "path": "/s/{home}",
+      "user": "tom",
+      "actions": [
+        {
+          "click": "/^Benutzermenü/"
+        },
+        {
+          "click": "/^Feedback geben/"
+        }
+      ]
+    },
+    {
+      "name": "feedback-dialog-en",
+      "path": "/s/{home}",
+      "user": "tom",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "/^User menu/"
+        },
+        {
+          "click": "/^Give feedback/"
+        }
+      ]
+    },
+    {
+      "name": "settings-feedback",
+      "path": "/settings/feedback",
+      "user": "tom"
+    },
+    {
+      "name": "settings-feedback-en",
+      "path": "/settings/feedback",
+      "user": "tom",
+      "locale": "en"
+    },
+    {
+      "name": "settings-feedback-empty",
+      "path": "/settings/feedback",
+      "user": "ada"
+    },
+    {
+      "name": "operator-feedback",
+      "path": "/betrieb/feedback",
+      "user": "lena",
+      "webOnly": true
+    },
+    {
+      "name": "operator-feedback-open",
+      "path": "/betrieb/feedback",
+      "user": "lena",
+      "webOnly": true,
+      "actions": [
+        {
+          "click": "/^Tom/"
+        }
+      ]
     }
   ]
 }
