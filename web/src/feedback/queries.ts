@@ -146,25 +146,31 @@ function patchEntry(
 }
 
 /**
- * The entry's replies are seen: `POST /api/feedback/{id}/read`, then the
- * status is read again for the dot. The cached list forgets the entry's
- * "Neu" marks, so the next visit shows none; the page on screen keeps its
- * own (see `FeedbackArea`).
+ * The entry's replies up to message `through` are seen:
+ * `POST /api/feedback/{id}/read`, then the status is read again for the
+ * dot. The cached list forgets those "Neu" marks, so the next visit shows
+ * none; the page on screen keeps its own (see `FeedbackArea`). A reply
+ * after `through` stays new, on the server and here.
  */
 export async function markFeedbackRead(
   client: QueryClient,
   stamp: { userId: string; generation: number },
   id: string,
+  through: string,
 ): Promise<void> {
-  await remote.readFeedback(id);
+  await remote.readFeedback(id, through);
   if (!stampHolds(stamp)) return;
-  patchEntry(client, stamp, id, (entry) => ({
-    ...entry,
-    unread: false,
-    messages: entry.messages.map((message) =>
-      message.new ? { ...message, new: false } : message,
-    ),
-  }));
+  patchEntry(client, stamp, id, (entry) => {
+    const seen = entry.messages.findIndex((message) => message.id === through);
+    const messages = entry.messages.map((message, index) =>
+      message.new && index <= seen ? { ...message, new: false } : message,
+    );
+    return {
+      ...entry,
+      unread: messages.some((message) => message.new),
+      messages,
+    };
+  });
   void client.invalidateQueries({
     queryKey: feedbackKeys.status(stamp.userId, stamp.generation),
   });

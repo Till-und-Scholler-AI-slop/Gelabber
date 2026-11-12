@@ -217,14 +217,26 @@ describe("Einstellungen → Feedback", () => {
 });
 
 describe("the visit's read state", () => {
-  it("marks read only the entries with unread replies, once", () => {
+  it("marks read only the entries with unread replies, once, through the newest message", () => {
+    const reply = (id: string) => ({
+      id,
+      from: "operators" as const,
+      text: "Danke",
+      created_at: "2026-11-03T11:00:00Z",
+      new: true,
+    });
     const entries = [
-      entry({ id: "a", unread: true }),
+      entry({ id: "a", unread: true, messages: [reply("a1"), reply("a2")] }),
       entry({ id: "b" }),
-      entry({ id: "c", unread: true }),
+      entry({ id: "c", unread: true, messages: [reply("c1")] }),
     ];
-    expect(entriesToRead(entries, new Set())).toEqual(["a", "c"]);
-    expect(entriesToRead(entries, new Set(["a"]))).toEqual(["c"]);
+    expect(entriesToRead(entries, new Set())).toEqual([
+      { id: "a", through: "a2" },
+      { id: "c", through: "c1" },
+    ]);
+    expect(entriesToRead(entries, new Set(["a"]))).toEqual([
+      { id: "c", through: "c1" },
+    ]);
   });
 
   it("keeps the new replies it saw when a refetch says they are read", () => {
