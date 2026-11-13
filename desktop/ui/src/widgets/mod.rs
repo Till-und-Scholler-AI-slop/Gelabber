@@ -76,6 +76,18 @@ pub fn focus_ring(painter: &Painter, rect: Rect, radius: f32, theme: &Theme) {
     );
 }
 
+/// A text field's focus (index.css `.ui-field:focus-visible`): a flush 1px
+/// ring outside its 1px border, so the frame reads 2px in `color` with no
+/// gap and no second frame (#561). Paint it after the box.
+pub fn field_focus_ring(painter: &Painter, rect: Rect, radius: f32, color: Color32) {
+    painter.rect_stroke(
+        rect.expand(0.5),
+        corner(radius + 0.5),
+        Stroke::new(1.0, color),
+        StrokeKind::Middle,
+    );
+}
+
 /// An inside-the-box `outline-offset: -2px` ring (list rows, tabs).
 pub fn focus_ring_inset(painter: &Painter, rect: Rect, radius: f32, theme: &Theme) {
     painter.rect_stroke(

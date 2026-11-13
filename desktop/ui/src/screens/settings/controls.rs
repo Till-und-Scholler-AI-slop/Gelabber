@@ -553,16 +553,23 @@ pub fn select(
     let painter = ui.painter();
     let shown = snap(ui.ctx(), rect);
     let focused = response.has_focus() && keyboard_focus(ui.ctx());
-    if focused {
-        focus_ring(painter, shown, theme.radius.sm, &theme);
-    }
     painter.rect(
         shown,
         corner(theme.radius.sm),
         fill,
-        Stroke::new(1.0, if open { c.focus } else { c.border_strong }),
+        Stroke::new(
+            1.0,
+            if open || focused {
+                c.focus
+            } else {
+                c.border_strong
+            },
+        ),
         StrokeKind::Inside,
     );
+    if focused {
+        crate::widgets::field_focus_ring(painter, shown, theme.radius.sm, c.focus);
+    }
     let label = options
         .iter()
         .find(|(k, _)| k == value)
@@ -812,25 +819,23 @@ pub fn textarea_with(
     let focused = ui.memory(|m| m.has_focus(field));
     let painter = ui.painter().clone();
     let shown = snap(ui.ctx(), rect);
-    if focused {
-        focus_ring(&painter, shown, theme.radius.sm, &theme);
-    }
+    let border = if invalid {
+        c.danger
+    } else if focused {
+        c.focus
+    } else {
+        c.border_strong
+    };
     painter.rect(
         shown,
         corner(theme.radius.sm),
         c.bg,
-        Stroke::new(
-            1.0,
-            if invalid {
-                c.danger
-            } else if focused {
-                c.focus
-            } else {
-                c.border_strong
-            },
-        ),
+        Stroke::new(1.0, border),
         StrokeKind::Inside,
     );
+    if focused {
+        crate::widgets::field_focus_ring(&painter, shown, theme.radius.sm, border);
+    }
     let color = c.text;
     let mut layouter = move |ui: &Ui, buf: &dyn TextBuffer, wrap: f32| {
         let mut job = LayoutJob::single_section(buf.as_str().to_owned(), text::BODY.format(color));
