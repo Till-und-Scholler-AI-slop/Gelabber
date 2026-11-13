@@ -108,6 +108,8 @@ const DESKTOP = {
 // update.rs `update_state` reports it, and its notice, the BANNER script
 // the Tauri app put into every page. The install it starts stays at work.
 const BANNER = await readFile(join(repo, "desktop/parity/reference/update-banner.js"), "utf8");
+// Scenes with `desktop`: the app's own "Server wechseln …" in the user menu.
+const USER_MENU = await readFile(join(repo, "desktop/parity/reference/user-menu.js"), "utf8");
 const updateState = (update) => ({
   current: DESKTOP.media_info.version,
   supported: true,
@@ -272,6 +274,7 @@ for (const scene of scenes) {
         }
         ${BANNER}`,
       });
+    if (scene.desktop) await page.addInitScript({ content: USER_MENU });
     // The desktop-app toast comes after a delay, so only the longer scenes
     // caught it, and the app never shows it: mark it as shown (desktopApp.ts).
     await page.addInitScript(() => {
