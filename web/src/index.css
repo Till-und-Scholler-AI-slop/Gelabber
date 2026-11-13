@@ -250,7 +250,10 @@ summary {
    one frame, no gap (#561). Unlayered on purpose: the ring above is
    unlayered too and would beat any rule in @layer components. */
 .ui-field:focus-visible {
-  outline: none;
+  /* Transparent, not none: forced-colors mode drops box-shadow and paints
+     this outline instead, so the focus stays visible there. */
+  outline: 1px solid transparent;
+  outline-offset: 0;
   box-shadow: 0 0 0 1px var(--lr-focus);
 }
 .ui-field[aria-invalid="true"]:focus-visible {

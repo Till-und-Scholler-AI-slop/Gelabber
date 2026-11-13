@@ -33,7 +33,8 @@ describe("the primitives' stylesheet", () => {
     const body =
       /(?:^|\})\s*\.ui-field:focus-visible\s*\{([^}]*)\}/.exec(index)?.[1] ??
       "";
-    expect(body).toMatch(/outline:\s*none/);
+    expect(body).toMatch(/outline:\s*1px solid transparent/);
+    expect(body).toMatch(/outline-offset:\s*0/);
     expect(body).toMatch(/box-shadow:\s*0 0 0 1px var\(--lr-focus\)/);
   });
 
