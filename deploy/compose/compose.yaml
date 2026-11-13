@@ -7,7 +7,7 @@ name: gelabber
 
 services:
   proxy:
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.8-alpine
     ports:
       - "${GELABBER_HTTP_BIND:-127.0.0.1}:${GELABBER_HTTP_PORT:-80}:80"
     environment:
@@ -234,7 +234,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:8.10.1-alpine
+    image: redis:8.10.2-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
       - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"

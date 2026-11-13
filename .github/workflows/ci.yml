@@ -263,11 +263,11 @@ jobs:
           set -euo pipefail
           caddy_archive="$(mktemp)"
           trap 'rm -f "$caddy_archive"' EXIT
-          curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_amd64.tar.gz" -o "$caddy_archive"
+          curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.8/caddy_2.11.8_linux_amd64.tar.gz" -o "$caddy_archive"
           tar -xzf "$caddy_archive" -C /usr/local/bin caddy
           chmod +x /usr/local/bin/caddy
           caddy version
-          test "$(caddy version | cut -d ' ' -f 1)" = "v2.11.4"
+          test "$(caddy version | cut -d ' ' -f 1)" = "v2.11.8"
 
       # Also checks that every workflow action is pinned to a commit SHA.
       - name: Test deployment config

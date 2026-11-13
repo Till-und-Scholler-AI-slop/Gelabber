@@ -644,7 +644,7 @@ docker compose -f compose.yaml -f compose.observability.yaml up -d
 # Homelab: a third -f compose.homelab.yaml
 ```
 
-Grafana 13.2.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (user `GRAFANA_ADMIN_USER`, default `admin`, with the `GRAFANA_ADMIN_PASSWORD` from `.env`; anonymous viewer). File: `deploy/compose/grafana/dashboards/gelabber.json`. Prometheus v3.14.0: `http://127.0.0.1:9090`, scrapes `api:8080/metrics` and `media:8081/metrics`. Not behind Caddy. Process tracing is JSON on stdout (`RUST_LOG`), no Jaeger.
+Grafana 13.3.0: `http://127.0.0.1:3000/d/gelabber/gelabber` (user `GRAFANA_ADMIN_USER`, default `admin`, with the `GRAFANA_ADMIN_PASSWORD` from `.env`; anonymous viewer). File: `deploy/compose/grafana/dashboards/gelabber.json`. Prometheus v3.16.0: `http://127.0.0.1:9090`, scrapes `api:8080/metrics` and `media:8081/metrics`. Not behind Caddy. Process tracing is JSON on stdout (`RUST_LOG`), no Jaeger.
 
 ## Images and release gate
 
