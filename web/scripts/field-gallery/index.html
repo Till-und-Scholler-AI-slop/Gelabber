@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Felder</title>
+    <style>
+      /* Glyphs depend on the fonts a machine has; the gallery compares
+         frames and rings, so the text is laid out but not painted. */
+      [data-field] :is(input, textarea, select),
+      [data-field] :is(input, textarea)::placeholder {
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+      }
+      /* Tab selects a field's text; the highlight is as wide as the glyphs. */
+      [data-field] :is(input, textarea)::selection {
+        background: transparent;
+        color: transparent;
+        -webkit-text-fill-color: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./gallery.tsx"></script>
+  </body>
+</html>

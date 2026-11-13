@@ -1648,16 +1648,7 @@ fn editor_field(
     let rect = Rect::from_min_size(ui.cursor().min, vec2(width, 40.0));
     let fid = crate::widgets::field::field_id(id);
     let focused = ui.memory(|m| m.has_focus(fid));
-    if focused {
-        focus_ring(ui.painter(), rect, theme.radius.sm, &theme);
-    }
-    ui.painter().rect(
-        rect,
-        corner(theme.radius.sm),
-        c.panel,
-        Stroke::new(1.0, if focused { c.focus } else { c.border_strong }),
-        StrokeKind::Inside,
-    );
+    crate::widgets::field_box(ui.painter(), rect, &theme, focused, false);
     let st = if mono {
         TextStyle::new(11.0, 400.0, 1.5)
     } else {
@@ -1739,7 +1730,7 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
         } else {
             &mut draft.style
         };
-        controls::select(&mut child, ("theme-editor", i), &opts, value, c.panel);
+        controls::select(&mut child, ("theme-editor", i), &opts, value);
     }
     ui.advance_cursor_after_rect(Rect::from_min_size(top, vec2(width, 18.0 + 6.0 + 37.0)));
     ui.add_space(16.0);
@@ -1769,19 +1760,17 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
         child.add_space(18.0 + 6.0);
         let slot = color_slot(&mut draft.colors, i);
         let current = parse_hex(slot).unwrap_or(Color32::BLACK);
-        let sw = Rect::from_min_size(child.cursor().min + vec2(0.0, 2.0), vec2(32.0, 36.0));
+        // `.ui-color` (#561): a field box the swatch fills, 3px in.
+        let sw = Rect::from_min_size(child.cursor().min + vec2(0.0, 2.0), vec2(36.0, 36.0));
         let sid = Id::unique(("gelabber-theme-swatch", i));
         let resp = child.interact(sw, sid, Sense::click());
-        child.painter().rect(
-            sw,
-            corner(5.0),
-            c.panel,
-            Stroke::new(1.0, c.border_strong),
-            StrokeKind::Inside,
+        let keyboard = resp.has_focus() && crate::widgets::keyboard_focus(child.ctx());
+        crate::widgets::field_box(child.painter(), sw, &theme, keyboard, false);
+        child.painter().rect_filled(
+            sw.shrink(4.0),
+            corner((theme.field.radius - 3.0).max(0.0)),
+            current,
         );
-        child
-            .painter()
-            .rect_filled(sw.shrink2(vec2(5.0, 7.0)), 0.0, current);
         if resp.hovered() {
             ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }

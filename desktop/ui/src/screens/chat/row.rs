@@ -1009,15 +1009,10 @@ fn paint_editor(
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let Editing { draft, autofocus } = edit;
-    ui.painter().rect(
-        rect,
-        corner(7.0),
-        c.panel,
-        Stroke::new(1.0, c.accent),
-        StrokeKind::Inside,
-    );
     let edit_id = editor_id(id);
     let focused = ui.memory(|m| m.has_focus(edit_id));
+    // `.ui-field` (#561), the danger frame while the edit is not valid.
+    crate::widgets::field_box(ui.painter(), rect, &theme, focused, error.is_some());
     // Enter saves only what may be saved; it never breaks the line.
     if focused && ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) && error.is_none() {
         actions.push(RowAction::SaveEdit(id));

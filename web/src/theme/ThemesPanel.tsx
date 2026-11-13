@@ -4,6 +4,8 @@ import { useBlocker } from "@tanstack/react-router";
 import { confirmAction } from "../components/confirm.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
+import { Input } from "../components/ui/Input.tsx";
+import { Select } from "../components/ui/Select.tsx";
 import type { InlineStatusValue } from "../components/ui/useInlineStatus.ts";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { nextChipIndex } from "../components/ui/chipKeys.ts";
@@ -80,6 +82,7 @@ function ColorField({
       <div>
         <input
           type="color"
+          className="ui-color"
           aria-label={t("color.pickLabel", { name })}
           value={value}
           onChange={(e) => {
@@ -87,7 +90,7 @@ function ColorField({
             onChange(e.target.value);
           }}
         />
-        <input
+        <Input
           aria-label={t("color.hexLabel", { name })}
           value={editing ?? value}
           pattern="#[0-9a-fA-F]{6}"
@@ -440,7 +443,7 @@ export function ThemesPanel() {
             >
               <label>
                 {t("editor.name")}
-                <input
+                <Input
                   required
                   maxLength={60}
                   value={draft.name}
@@ -450,7 +453,7 @@ export function ThemesPanel() {
               <div className="theme-editor-pair">
                 <label>
                   {t("editor.mode")}
-                  <select
+                  <Select
                     value={draft.mode}
                     onChange={(e) =>
                       setDraft({
@@ -461,11 +464,11 @@ export function ThemesPanel() {
                   >
                     <option value="dark">{t("mode.dark")}</option>
                     <option value="light">{t("mode.light")}</option>
-                  </select>
+                  </Select>
                 </label>
                 <label>
                   {t("editor.style")}
-                  <select
+                  <Select
                     value={draft.style}
                     onChange={(e) =>
                       setDraft({
@@ -479,7 +482,7 @@ export function ThemesPanel() {
                         {t(`style.${style}`)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
               </div>
               <fieldset>

@@ -34,6 +34,7 @@ import { Button } from "./ui/Button.tsx";
 import { ChipGroup } from "./ui/ChipGroup.tsx";
 import { CopyButton } from "./ui/CopyButton.tsx";
 import { InlineStatus } from "./ui/InlineStatus.tsx";
+import { Input } from "./ui/Input.tsx";
 import { useInlineStatus } from "./ui/useInlineStatus.ts";
 import "./invite.css";
 
@@ -207,14 +208,14 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
   return (
     <div className="invite-panel">
       <div className="invite-panel__link">
-        <input
+        <Input
           readOnly
           value={making ? t("invite.making") : link}
           aria-label={t("invite.linkLabel")}
           aria-busy={making || undefined}
           onFocus={(event) => event.currentTarget.select()}
           onCopy={() => session.current?.handOut()}
-          className="ui-field invite-panel__url"
+          className="invite-panel__url"
         />
         {/* The status line below says it, with the link's terms. */}
         <CopyButton

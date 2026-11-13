@@ -14,6 +14,7 @@ import { common } from "../i18n/catalogs/common.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
 import type { Gif } from "../messages/types.ts";
 import { useDebouncedValue } from "./useDebouncedValue.ts";
+import { Input } from "./ui/Input.tsx";
 
 /** One GIF rendition through the server relay. With `playing` off it shows
  *  the first frame; without one, a labelled placeholder. */
@@ -132,7 +133,7 @@ export default function GifPicker({
       <label htmlFor={`${id}-search`} className="text-sm font-medium">
         {t("gif.search")}
       </label>
-      <input
+      <Input
         id={`${id}-search`}
         type="search"
         value={input}
@@ -142,7 +143,6 @@ export default function GifPicker({
         maxLength={100}
         autoFocus
         enterKeyHint="search"
-        className="rounded border border-neutral-300 p-2 dark:border-neutral-600"
       />
       <p role="status" className="text-xs text-neutral-500">
         {status}

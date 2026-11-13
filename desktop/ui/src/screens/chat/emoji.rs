@@ -146,14 +146,8 @@ pub fn show(
                 crate::text::label(ui, texts::picker_search(), LABEL, c.text);
                 let input_id = egui::Id::unique(("gelabber-emoji-search", id));
                 let (r, _) = ui.allocate_exact_size(vec2(width, 39.0), Sense::hover());
-                let border = if theme.is_dark() { c.muted } else { c.border };
-                ui.painter().rect(
-                    r,
-                    corner(4.0),
-                    Color32::TRANSPARENT,
-                    Stroke::new(1.0, border),
-                    StrokeKind::Inside,
-                );
+                let search_focused = ui.memory(|m| m.has_focus(input_id));
+                crate::widgets::field_box(ui.painter(), r, &theme, search_focused, false);
                 let color = c.text;
                 let mut layouter = move |ui: &Ui, buf: &dyn TextBuffer, _w: f32| {
                     let mut job = crate::text::job(buf.as_str(), INPUT, color, None);
@@ -173,9 +167,6 @@ pub fn show(
                         // The label above names the field (`<label for>`).
                         .accessible_name(texts::picker_search())
                 });
-                if ui.memory(|m| m.has_focus(input_id)) {
-                    crate::widgets::focus_ring(ui.painter(), r, 4.0, &theme);
-                }
                 if !state.mounted {
                     state.mounted = true;
                     ui.memory_mut(|m| m.request_focus(input_id));
@@ -190,13 +181,8 @@ pub fn show(
                     egui::Id::unique(("gelabber-emoji-group", id)),
                     Sense::click(),
                 );
-                ui.painter().rect(
-                    sel,
-                    corner(4.0),
-                    Color32::TRANSPARENT,
-                    Stroke::new(1.0, border),
-                    StrokeKind::Inside,
-                );
+                let sel_focused = resp.has_focus() && crate::widgets::keyboard_focus(ui.ctx());
+                crate::widgets::field_box(ui.painter(), sel, &theme, sel_focused, false);
                 let current = state
                     .group
                     .map_or(texts::picker_all_groups(), |g| d.groups[g].as_str());

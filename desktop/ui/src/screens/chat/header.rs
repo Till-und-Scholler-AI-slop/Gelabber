@@ -9,7 +9,7 @@ use crate::icons::{self, Icon};
 use crate::images::Images;
 use crate::screens::layout;
 use crate::text::{Block, TextStyle};
-use crate::theme::{Theme, corner, mix};
+use crate::theme::{Theme, corner};
 use crate::widgets::tooltip::{Side, Tooltip};
 use crate::widgets::{Avatar, Presence, eased};
 
@@ -190,20 +190,19 @@ pub fn show(
     // Clicking the frame focuses the input; Tab reaches only the input.
     let field_resp = ui.interact(field, id.with("box"), Sense::CLICK);
     let hot = field_resp.hovered() || focused || !search.is_empty();
-    let border = if focused {
-        mix(c.border, c.accent, 0.7)
-    } else if hot {
-        mix(c.border, c.text, 0.18)
-    } else {
-        c.border
-    };
+    // `.ui-field-shell` (#561): the field tokens, the flush ring in focus.
+    let f = theme.field;
+    let border = if focused { f.border_focus } else { f.border };
     ui.painter().rect(
         field,
-        corner(7.0),
-        c.panel,
+        corner(f.radius),
+        f.bg,
         Stroke::new(1.0, border),
         StrokeKind::Inside,
     );
+    if focused {
+        crate::widgets::field_focus_ring(ui.painter(), field, f.radius, border);
+    }
     icons::paint(
         ui.painter(),
         Icon::Search,

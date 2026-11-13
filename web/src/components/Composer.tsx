@@ -51,6 +51,8 @@ import { fromWire, toWire } from "../messages/mentions.ts";
 import { type ComposerHandle } from "./messagePaneContext.ts";
 import { T, useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
+import { FieldShell } from "./ui/FieldShell.tsx";
+import { Textarea } from "./ui/Textarea.tsx";
 
 export function Composer({
   handle,
@@ -352,7 +354,7 @@ export function Composer({
         <label className="sr-only" htmlFor={`compose-${channelId}`}>
           {t("composer.messageTo", { target: `${mention}${channelName}` })}
         </label>
-        <div className="lr-composer-field">
+        <FieldShell className="lr-composer-field">
           {replyTarget ? (
             <div className="lr-composer-reply">
               <ReplyIcon size={14} />
@@ -446,7 +448,8 @@ export function Composer({
                 </button>
               </>
             ) : null}
-            <textarea
+            <Textarea
+              bare
               ref={composerInput}
               id={`compose-${channelId}`}
               value={draft}
@@ -511,7 +514,7 @@ export function Composer({
               <SendIcon size={17} />
             </button>
           </div>
-        </div>
+        </FieldShell>
         <div className="lr-composer-status" role="status">
           {remaining < 200 ? (
             <span

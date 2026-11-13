@@ -33,3 +33,6 @@ dump.rdb
 
 # Operator texts for the public pages (deploy/compose/legal/README.md).
 deploy/compose/legal/*.html
+
+# web/scripts/field-gallery.mjs: pictures of a mismatch.
+web/field-gallery-out/

@@ -29,13 +29,27 @@ describe("the primitives' stylesheet", () => {
   });
 
   it("gives a field one frame in focus: no offset ring around .ui-field (#561)", () => {
-    const index = unlayered.find(({ file }) => file === "index.css").css;
     const body =
-      /(?:^|\})\s*\.ui-field:focus-visible\s*\{([^}]*)\}/.exec(index)?.[1] ??
-      "";
+      /\.ui-field:focus-visible,\s*\.ui-field-shell:has\(\.ui-field-bare:focus\)\s*\{([^}]*)\}/.exec(
+        ui,
+      )?.[1] ?? "";
     expect(body).toMatch(/outline:\s*1px solid transparent/);
     expect(body).toMatch(/outline-offset:\s*0/);
-    expect(body).toMatch(/box-shadow:\s*0 0 0 1px var\(--lr-focus\)/);
+    expect(body).toMatch(
+      /box-shadow:\s*0 0 0 1px var\(--lr-field-border-focus\)/,
+    );
+  });
+
+  it("keeps the default ring in the base layer, below every component (#561)", () => {
+    const index = unlayered
+      .find(({ file }) => file === "index.css")
+      .css.replace(/\s+/g, " ")
+      .replace(/\( /g, "(")
+      .replace(/ \)/g, ")");
+    expect(index).toMatch(
+      /@layer base \{ :where\(button, a, input, textarea, select, summary, \[tabindex\]\):focus-visible/,
+    );
+    expect(index.split(":where(button, a, input").length).toBe(2);
   });
 
   it("drops the global ring's page-coloured shadow wherever a field drops its outline (#561)", () => {

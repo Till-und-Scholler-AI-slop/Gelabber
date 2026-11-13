@@ -48,6 +48,11 @@
   --lr-radius-sm: 5px;
   --lr-radius-md: 7px;
   --lr-radius-lg: 10px;
+  /* The app's field tokens (theme/model.ts, dark preset). */
+  --lr-field-bg: #1d2021;
+  --lr-field-border: #717475;
+  --lr-field-border-focus: #f3b752;
+  --lr-field-radius: 7px;
   --lr-shadow-2: 0 18px 48px rgb(0 0 0 / 0.5);
 
   --lr-space-1: 4px;
@@ -503,9 +508,9 @@ a {
 .feedback-field input {
   width: 100%;
   padding: 10px var(--lr-space-3);
-  border: 1px solid var(--lr-border-strong);
-  border-radius: var(--lr-radius-md);
-  background: var(--lr-rail);
+  border: 1px solid var(--lr-field-border);
+  border-radius: var(--lr-field-radius);
+  background: var(--lr-field-bg);
   color: var(--lr-text);
   font: inherit;
 }
@@ -513,10 +518,14 @@ a {
   min-height: 160px;
   resize: vertical;
 }
+/* One frame, as in the app (ui.css .ui-field): the border plus a flush
+   ring; the transparent outline is what forced-colors mode shows. */
 .feedback-field textarea:focus-visible,
 .feedback-field input:focus-visible {
+  outline: 1px solid transparent;
   outline-offset: 0;
-  border-color: var(--lr-focus);
+  border-color: var(--lr-field-border-focus);
+  box-shadow: 0 0 0 1px var(--lr-field-border-focus);
 }
 .feedback-hint {
   margin-top: 6px;
