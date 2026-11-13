@@ -78,6 +78,20 @@ fn german(mail: &Mail, base: &str, instance: &str) -> (String, String) {
         Mail::ExportReady { expires_at } => {
             super::account::export_ready(Locale::De, base, instance, *expires_at)
         }
+        Mail::FeedbackConfirm { link } => super::feedback::confirm(Locale::De, instance, link),
+        Mail::FeedbackNotice {
+            kind,
+            reply,
+            sender,
+            excerpt,
+            link,
+        } => super::feedback::notice(Locale::De, instance, *kind, *reply, sender, excerpt, link),
+        Mail::FeedbackAnswered => super::feedback::answered(Locale::De, base, instance),
+        Mail::FeedbackReply {
+            kind,
+            sent_on,
+            text,
+        } => super::feedback::reply(Locale::De, base, instance, *kind, *sent_on, text),
     }
 }
 
@@ -146,6 +160,20 @@ fn english(mail: &Mail, base: &str, instance: &str) -> (String, String) {
         Mail::ExportReady { expires_at } => {
             super::account::export_ready(Locale::En, base, instance, *expires_at)
         }
+        Mail::FeedbackConfirm { link } => super::feedback::confirm(Locale::En, instance, link),
+        Mail::FeedbackNotice {
+            kind,
+            reply,
+            sender,
+            excerpt,
+            link,
+        } => super::feedback::notice(Locale::En, instance, *kind, *reply, sender, excerpt, link),
+        Mail::FeedbackAnswered => super::feedback::answered(Locale::En, base, instance),
+        Mail::FeedbackReply {
+            kind,
+            sent_on,
+            text,
+        } => super::feedback::reply(Locale::En, base, instance, *kind, *sent_on, text),
     }
 }
 
@@ -156,7 +184,7 @@ mod tests {
     const BASE: &str = "https://chat.example.org";
     const INSTANCE: &str = "chat.example.org";
 
-    fn mails() -> [Mail; 5] {
+    fn mails() -> [Mail; 9] {
         [
             Mail::ConfirmEmail {
                 token: "abc".into(),
@@ -171,6 +199,22 @@ mod tests {
             Mail::ProviderConnected {
                 provider_name: "Google".into(),
             },
+            Mail::FeedbackConfirm {
+                link: format!("{BASE}/api/public/feedback/confirm?token=abc"),
+            },
+            Mail::FeedbackNotice {
+                kind: crate::feedback::Kind::Problem,
+                reply: false,
+                sender: "Tom (tom@example.org)".into(),
+                excerpt: "Es hakt".into(),
+                link: format!("{BASE}/betrieb/feedback?entry=abc"),
+            },
+            Mail::FeedbackAnswered,
+            Mail::FeedbackReply {
+                kind: crate::feedback::Kind::Idea,
+                sent_on: chrono::Utc::now(),
+                text: "Danke".into(),
+            },
         ]
     }
 
@@ -180,10 +224,11 @@ mod tests {
             let (de_subject, de_body) = render(Locale::De, &mail, BASE, INSTANCE);
             let (en_subject, en_body) = render(Locale::En, &mail, BASE, INSTANCE);
             assert_ne!(de_subject, en_subject);
+            // The reply to a visitor links the form in the mail's language.
             let links = |body: &str| -> Vec<String> {
                 body.split_whitespace()
                     .filter(|word| word.starts_with(BASE))
-                    .map(str::to_owned)
+                    .map(|word| word.replace(&format!("{BASE}/de/"), &format!("{BASE}/en/")))
                     .collect()
             };
             assert!(!links(&de_body).is_empty(), "{de_body}");
@@ -204,7 +249,7 @@ mod tests {
 
     #[test]
     fn english_texts() {
-        let [confirm, reset, already, invitation, connected] = mails();
+        let [confirm, reset, already, invitation, connected, ..] = mails();
         assert_eq!(
             render(Locale::En, &confirm, BASE, INSTANCE),
             (

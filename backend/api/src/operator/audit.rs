@@ -1,5 +1,6 @@
 //! The operator audit trail (`operator_audit`). Every operator route except
-//! the area bootstrap (`GET /api/operator`) writes exactly one row: a
+//! the area bootstrap (`GET /api/operator`) and the feedback image
+//! (`GET /api/operator/feedback/{id}/image`) writes exactly one row: a
 //! mutation inside its own transaction, a read after it succeeded. There is
 //! no read API; `deploy/README.md` documents the SQL.
 
@@ -27,6 +28,12 @@ pub enum Action {
     ReportsList,
     ReportsResolve,
     UsageRead,
+    FeedbackList,
+    FeedbackRead,
+    FeedbackReply,
+    FeedbackDone,
+    FeedbackReopen,
+    FeedbackDelete,
 }
 
 impl Action {
@@ -46,6 +53,12 @@ impl Action {
             Self::ReportsList => "reports.list",
             Self::ReportsResolve => "reports.resolve",
             Self::UsageRead => "usage.read",
+            Self::FeedbackList => "feedback.list",
+            Self::FeedbackRead => "feedback.read",
+            Self::FeedbackReply => "feedback.reply",
+            Self::FeedbackDone => "feedback.done",
+            Self::FeedbackReopen => "feedback.reopen",
+            Self::FeedbackDelete => "feedback.delete",
         }
     }
 }
@@ -57,6 +70,7 @@ pub struct Targets {
     pub server: Option<Uuid>,
     pub report: Option<Uuid>,
     pub invitation: Option<Uuid>,
+    pub feedback: Option<Uuid>,
 }
 
 /// Writes one audit row on `conn` and logs it.
@@ -69,8 +83,8 @@ pub async fn record(
 ) -> Result<(), ApiError> {
     sqlx::query(
         "INSERT INTO operator_audit (operator_id, operator_email, action, target_user, \
-             target_server, target_report, target_invitation, detail) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             target_server, target_report, target_invitation, detail, target_feedback) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
     )
     .bind(op.user.id)
     .bind(&op.user.email)
@@ -80,6 +94,7 @@ pub async fn record(
     .bind(targets.report)
     .bind(targets.invitation)
     .bind(&detail)
+    .bind(targets.feedback)
     .execute(&mut *conn)
     .await?;
     info!(
@@ -89,6 +104,7 @@ pub async fn record(
         target_server = ?targets.server,
         target_report = ?targets.report,
         target_invitation = ?targets.invitation,
+        target_feedback = ?targets.feedback,
         "operator action"
     );
     Ok(())
@@ -115,11 +131,18 @@ mod tests {
             Action::ReportsList,
             Action::ReportsResolve,
             Action::UsageRead,
+            Action::FeedbackList,
+            Action::FeedbackRead,
+            Action::FeedbackReply,
+            Action::FeedbackDone,
+            Action::FeedbackReopen,
+            Action::FeedbackDelete,
         ];
         let names: std::collections::HashSet<_> = all.iter().map(|a| a.as_str()).collect();
         assert_eq!(names.len(), all.len());
         assert!(names.contains("servers.block"));
         assert!(names.contains("usage.read"));
+        assert!(names.contains("feedback.delete"));
         assert!(names.iter().all(|name| name.split('.').count() == 2));
     }
 }

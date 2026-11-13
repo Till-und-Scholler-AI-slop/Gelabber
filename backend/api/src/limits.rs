@@ -60,6 +60,28 @@ pub const DIRECTORY_JOIN_PER_HOUR: u32 = 10;
 /// Directory searches per account and minute (handler bucket `dir_search`,
 /// also on GET): far above the debounced search box and its paging.
 pub const DIRECTORY_SEARCH_PER_MIN: u32 = 60;
+/// Feedback entries per account and hour (handler bucket `feedback`).
+pub const FEEDBACK_PER_HOUR: u32 = 5;
+/// A person's replies to their feedback per account and hour (handler
+/// bucket `feedback_reply`).
+pub const FEEDBACK_REPLIES_PER_HOUR: u32 = 30;
+/// Feedback notices per address and hour (mail budget `mail_notice`): the
+/// operators' mails about new entries and replies, and the sender's "there
+/// is an answer". Above [`MAIL_PER_ADDRESS_PER_HOUR`], since an operator
+/// hears about every entry of the instance.
+pub const FEEDBACK_NOTICES_PER_HOUR: u32 = 30;
+/// Posts of the public feedback form per client address and hour (handler
+/// bucket `feedback_public`).
+pub const FEEDBACK_PUBLIC_PER_HOUR: u32 = 5;
+/// Visitor entries waiting for their confirmation; while this many are
+/// pending, the public form takes no more.
+pub const FEEDBACK_PENDING_MAX: i64 = 200;
+/// Posts the public form accepts per hour over all visitors (each one a
+/// stored entry and a confirmation mail), counted from `feedback`.
+pub const FEEDBACK_FORM_PER_HOUR: i64 = 20;
+/// Posts the public form accepts per 24 hours over all visitors, counted
+/// the same way: at most this many confirmation mails a day.
+pub const FEEDBACK_FORM_PER_DAY: i64 = 100;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 pub(crate) const HOUR: Duration = Duration::from_secs(3600);
@@ -346,10 +368,7 @@ pub async fn gate(
             MINUTE,
         )
     } else {
-        let upload = (request.method() == Method::POST && path.ends_with("/attachments"))
-            || (request.method() == Method::PUT
-                && (matches!(path, "/api/me/avatar" | "/api/me/banner")
-                    || (path.starts_with("/api/servers/") && path.ends_with("/icon"))));
+        let upload = is_upload(request.method(), path);
         let message = request.method() == Method::POST && path.ends_with("/messages");
         let raw = cookies::get(request.headers(), SESSION_COOKIE)
             .filter(|raw| crate::token::is_valid(raw));
@@ -434,6 +453,15 @@ fn session_buckets(
         state.limits.api_per_min,
         MINUTE,
     )
+}
+
+/// Requests that store a file and count in the `up` bucket.
+fn is_upload(method: &Method, path: &str) -> bool {
+    (*method == Method::POST && path.ends_with("/attachments"))
+        || (*method == Method::PUT
+            && (matches!(path, "/api/me/avatar" | "/api/me/banner")
+                || (path.starts_with("/api/servers/") && path.ends_with("/icon"))))
+        || (*method == Method::POST && path == "/api/feedback/images")
 }
 
 /// Routes an anonymous caller uses to sign in or to make the API send mail;
@@ -521,6 +549,11 @@ pub enum MailBudget {
     /// Beta invitations an operator mails (`operator::invitations`), kept
     /// apart so they never use up the invitee's confirmation mails.
     Invitation,
+    /// Confirmation links of the public feedback form (#542), kept apart
+    /// so the form cannot use up a stranger's registration mails.
+    Feedback,
+    /// Feedback notices to operators and senders (#542).
+    Notice,
 }
 
 impl MailBudget {
@@ -529,6 +562,18 @@ impl MailBudget {
             Self::Registration => "mail",
             Self::Reset => "mail_reset",
             Self::Invitation => "mail_invite",
+            Self::Feedback => "mail_feedback",
+            Self::Notice => "mail_notice",
+        }
+    }
+
+    /// Mails per address and hour this budget allows.
+    pub fn per_hour(self) -> u32 {
+        match self {
+            Self::Registration | Self::Reset | Self::Invitation | Self::Feedback => {
+                MAIL_PER_ADDRESS_PER_HOUR
+            }
+            Self::Notice => FEEDBACK_NOTICES_PER_HOUR,
         }
     }
 }
@@ -540,7 +585,7 @@ pub fn mail_allowed(state: &AppState, budget: MailBudget, email: &str) -> bool {
     let bucket = budget.bucket();
     let allowed = state
         .limiter
-        .hit(bucket, &account_key(email), MAIL_PER_ADDRESS_PER_HOUR, HOUR)
+        .hit(bucket, &account_key(email), budget.per_hour(), HOUR)
         .is_ok();
     if !allowed {
         state.metrics.rate_limited(bucket);
@@ -565,12 +610,14 @@ fn is_per_account(key: &str) -> bool {
         || key.starts_with("mail:")
         || key.starts_with("mail_reset:")
         || key.starts_with("mail_invite:")
+        || key.starts_with("mail_feedback:")
+        || key.starts_with("mail_notice:")
 }
 
 /// The client address the rate limits are keyed by, with IPv6 grouped per
 /// /64: the rightmost `X-Forwarded-For` entry, which the Caddy next to the
 /// API wrote, or the TCP peer without one (`gelabber_shared::client_addr`).
-fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
+pub(crate) fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
     gelabber_shared::client_addr::client_key(
         headers
             .get_all("x-forwarded-for")
@@ -736,6 +783,27 @@ mod tests {
     }
 
     #[test]
+    fn uploads_count_in_the_up_bucket() {
+        for (method, path) in [
+            (Method::POST, "/api/channels/x/attachments"),
+            (Method::PUT, "/api/me/avatar"),
+            (Method::PUT, "/api/me/banner"),
+            (Method::PUT, "/api/servers/x/icon"),
+            (Method::POST, "/api/feedback/images"),
+        ] {
+            assert!(is_upload(&method, path), "{method} {path}");
+        }
+        for (method, path) in [
+            (Method::POST, "/api/feedback"),
+            (Method::PUT, "/api/feedback/images"),
+            (Method::POST, "/api/feedback/x/messages"),
+            (Method::POST, "/api/me/avatar"),
+        ] {
+            assert!(!is_upload(&method, path), "{method} {path}");
+        }
+    }
+
+    #[test]
     fn a_signed_in_caller_is_keyed_by_account() {
         let id = Uuid::new_v4();
         let key = actor_key(Some(id), "192.0.2.7");
@@ -812,6 +880,36 @@ mod tests {
         assert!(limiter.blocked("login", "victim", 2).is_some());
         assert!(limiter.hit("mail", "victim", 1, HOUR).is_err());
         assert!(limiter.hit("mail_reset", "victim", 1, HOUR).is_err());
+    }
+
+    #[test]
+    fn feedback_mail_budgets_are_spared_by_eviction() {
+        for bucket in [MailBudget::Feedback.bucket(), MailBudget::Notice.bucket()] {
+            assert!(is_per_account(&format!("{bucket}:victim")), "{bucket}");
+        }
+        let limiter = Limiter::with_caps(8, 64);
+        limiter.hit("mail_feedback", "victim", 1, HOUR).unwrap();
+        limiter.hit("mail_notice", "victim", 1, HOUR).unwrap();
+        for i in 0..640 {
+            limiter.hit("up", &i.to_string(), 5, HOUR).unwrap();
+        }
+        assert!(limiter.hit("mail_feedback", "victim", 1, HOUR).is_err());
+        assert!(limiter.hit("mail_notice", "victim", 1, HOUR).is_err());
+    }
+
+    #[test]
+    fn mail_budgets_allow_their_hourly_count() {
+        for budget in [
+            MailBudget::Registration,
+            MailBudget::Reset,
+            MailBudget::Invitation,
+            MailBudget::Feedback,
+        ] {
+            assert_eq!(budget.per_hour(), MAIL_PER_ADDRESS_PER_HOUR, "{budget:?}");
+        }
+        assert_eq!(MailBudget::Notice.per_hour(), 30);
+        assert_eq!(MailBudget::Feedback.bucket(), "mail_feedback");
+        assert_eq!(MailBudget::Notice.bucket(), "mail_notice");
     }
 
     #[test]

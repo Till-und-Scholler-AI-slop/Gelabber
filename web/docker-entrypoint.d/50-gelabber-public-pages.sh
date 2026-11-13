@@ -1,5 +1,6 @@
 #!/bin/sh
-# Publishes the public pages (#522): fills the templates the build wrote
+# Publishes the public pages (#522) and the feedback form (#542): fills the
+# templates the build wrote
 # (src/public/render.tsx) from the GELABBER_* values and the operator's texts
 # in /etc/gelabber/legal, and writes public-pages.json, robots.txt and
 # sitemap.xml. A page whose required values or texts are missing is left out,
@@ -16,6 +17,9 @@ LEGAL=${GELABBER_LEGAL_DIR:-/etc/gelabber/legal}
 MAP=${GELABBER_LANDING_MAP:-/etc/nginx/gelabber/public/landing.map}
 SEE='(deploy/README.md, "Public pages")'
 LEGAL_PAGES="imprint privacy terms"
+# The feedback form and its four answer pages, per language.
+FEEDBACK_DE="feedback feedback/gesendet feedback/danke feedback/abgelaufen feedback/fehler"
+FEEDBACK_EN="feedback feedback/sent feedback/thanks feedback/expired feedback/error"
 
 log() {
     [ -n "${NGINX_ENTRYPOINT_QUIET_LOGS:-}" ] || echo "$ME: $*"
@@ -121,9 +125,9 @@ END { if (broken || depth != 0) exit 1 }
 '
 
 # render LANG FILE [TEXT]: one page from its template, with the operator's
-# TEXT at its fragment marker.
+# TEXT at its fragment marker. FILE may sit in a folder (feedback/danke).
 render() {
-    mkdir -p "$OUT/$1" 2>/dev/null &&
+    mkdir -p "$(dirname "$OUT/$1/$2.html")" 2>/dev/null &&
         PUBLIC_FRAGMENT=${3:-} LC_ALL=C awk "$FILL" "$TEMPLATES/$1/$2.html" \
             >"$OUT/$1/$2.html" 2>/dev/null
 }
@@ -235,6 +239,35 @@ else
     log "the landing page is off: GELABBER_LANDING is not true $SEE"
 fi
 
+feedback_pages() {
+    if [ "$1" = de ]; then echo "$FEEDBACK_DE"; else echo "$FEEDBACK_EN"; fi
+}
+
+# The feedback form needs the landing page as its front door, and an API that
+# sends account mail and names operators; Compose derives the last two from
+# SMTP_HOST and API_OPERATOR_EMAILS.
+feedback=false
+reason=
+[ "$landing" = true ] || reason="the landing page is off"
+[ -n "$(clean "${GELABBER_ACCOUNT_MAIL:-}")" ] ||
+    reason="${reason:+$reason, }GELABBER_ACCOUNT_MAIL is empty"
+[ -n "$(clean "${GELABBER_FEEDBACK_OPERATORS:-}")" ] ||
+    reason="${reason:+$reason, }GELABBER_FEEDBACK_OPERATORS is empty"
+missing_template=
+for lang in de en; do
+    for file in $(feedback_pages "$lang"); do
+        [ -r "$TEMPLATES/$lang/$file.html" ] ||
+            missing_template=1
+    done
+done
+[ -z "$missing_template" ] ||
+    reason="${reason:+$reason, }its templates are missing in $TEMPLATES"
+if [ -n "$reason" ]; then
+    log "the feedback form is not published: $reason $SEE"
+else
+    feedback=true
+fi
+
 published=
 for page in $LEGAL_PAGES; do
     reason=
@@ -258,9 +291,11 @@ for page in $LEGAL_PAGES; do
     fi
 done
 
-# The legal pages. The operator's text in one language only is shown under
-# both, with a notice in the other. A page that cannot be written is dropped
-# and the others rendered again, so none links to it.
+# The legal pages and the feedback form. The operator's text in one language
+# only is shown under both, with a notice in the other. A page that cannot be
+# written is dropped and the others rendered again, so none links to it.
+# PAGE_FEEDBACK is set first: the legal pages and the landing page link it.
+# The landing page comes last, with the final flags.
 while :; do
     for page in $LEGAL_PAGES; do
         case " $published " in
@@ -269,6 +304,11 @@ while :; do
         esac
         set_value "PAGE_$(echo "$page" | tr 'a-z' 'A-Z')" "$on"
     done
+    if [ "$feedback" = true ]; then
+        set_value PAGE_FEEDBACK 1
+    else
+        set_value PAGE_FEEDBACK ""
+    fi
     dropped=
     for page in $published; do
         ok=1
@@ -293,20 +333,45 @@ while :; do
             dropped=1
         fi
     done
+    # The form links the privacy page, so it is written after the legal
+    # pages, with their final flags.
+    if [ "$feedback" = true ]; then
+        ok=1
+        for lang in de en; do
+            for file in $(feedback_pages "$lang"); do
+                render "$lang" "$file" || ok=
+            done
+        done
+        if [ -z "$ok" ]; then
+            rm -rf "$OUT/de/feedback.html" "$OUT/de/feedback" \
+                "$OUT/en/feedback.html" "$OUT/en/feedback"
+            log "warning: cannot write the feedback form to $OUT; it is not published $SEE"
+            feedback=false
+            dropped=1
+        fi
+    fi
+    # The landing page links both. Without it the form is dropped too: the
+    # landing page is its front door.
+    if [ "$landing" = true ] && ! { render de index && render en index; }; then
+        rm -f "$OUT/de/index.html" "$OUT/en/index.html"
+        landing=false
+        log "warning: cannot write the landing page to $OUT; it is not published $SEE"
+        if [ "$feedback" = true ]; then
+            rm -rf "$OUT/de/feedback.html" "$OUT/de/feedback" \
+                "$OUT/en/feedback.html" "$OUT/en/feedback"
+            log "the feedback form is not published: the landing page is off $SEE"
+            feedback=false
+            dropped=1
+        fi
+    fi
     [ -n "$dropped" ] || break
 done
 
 if [ "$landing" = true ]; then
-    if render de index && render en index; then
-        case " $published " in
-        *" imprint "*) ;;
-        *) log "warning: the landing page is published without an Impressum $SEE" ;;
-        esac
-    else
-        rm -f "$OUT/de/index.html" "$OUT/en/index.html"
-        landing=false
-        log "warning: cannot write the landing page to $OUT; it is not published $SEE"
-    fi
+    case " $published " in
+    *" imprint "*) ;;
+    *) log "warning: the landing page is published without an Impressum $SEE" ;;
+    esac
 fi
 
 # /public-pages.json, read by the sign-in pages and the desktop app.
@@ -335,7 +400,8 @@ fi
             echo "Allow: /en/$(slug en "$page")"
         done
         for path in /login /register /forgot-password /reset-password \
-            /verify-email /invite/ /s/ /d /settings /api/ /media/ /ws; do
+            /verify-email /invite/ /s/ /d /settings /api/ /media/ /ws \
+            /de/feedback /en/feedback; do
             echo "Disallow: $path"
         done
         [ -z "$public_url" ] || echo "Sitemap: $public_url/sitemap.xml"
@@ -369,5 +435,6 @@ if [ "$landing" = true ]; then
         log "warning: cannot write $MAP; / stays the app $SEE"
     fi
 fi
+[ "$feedback" = false ] || published="$published feedback"
 log "published:${published:- no legal pages}"
 exit 0

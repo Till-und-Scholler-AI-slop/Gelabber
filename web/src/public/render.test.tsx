@@ -21,6 +21,29 @@ const PUBLIC_URLS = [
   "/en/imprint",
   "/en/privacy",
   "/en/terms",
+  "/de/feedback",
+  "/en/feedback",
+  "/de/feedback/gesendet",
+  "/de/feedback/danke",
+  "/de/feedback/abgelaufen",
+  "/de/feedback/fehler",
+  "/en/feedback/sent",
+  "/en/feedback/thanks",
+  "/en/feedback/expired",
+  "/en/feedback/error",
+];
+
+const FEEDBACK_FILES = [
+  "de/feedback.html",
+  "de/feedback/abgelaufen.html",
+  "de/feedback/danke.html",
+  "de/feedback/fehler.html",
+  "de/feedback/gesendet.html",
+  "en/feedback.html",
+  "en/feedback/error.html",
+  "en/feedback/expired.html",
+  "en/feedback/sent.html",
+  "en/feedback/thanks.html",
 ];
 
 const LEGAL_BLOCKS: Record<string, string> = {
@@ -30,6 +53,8 @@ const LEGAL_BLOCKS: Record<string, string> = {
   "/en/privacy": KEY.privacy,
   "/de/nutzungsbedingungen": KEY.terms,
   "/en/terms": KEY.terms,
+  "/de/feedback": KEY.feedback,
+  "/en/feedback": KEY.feedback,
 };
 
 const decode = (html: string) =>
@@ -60,17 +85,20 @@ function blockLines(html: string): { line: string; keys: string[] }[] {
 }
 
 describe("public page templates", () => {
-  it("are the landing page and the three legal pages in both languages", () => {
-    expect(templates.map((t) => t.file).sort()).toEqual([
-      "de/datenschutz.html",
-      "de/impressum.html",
-      "de/index.html",
-      "de/nutzungsbedingungen.html",
-      "en/imprint.html",
-      "en/index.html",
-      "en/privacy.html",
-      "en/terms.html",
-    ]);
+  it("are the landing page, the three legal pages and the feedback pages in both languages", () => {
+    expect(templates.map((t) => t.file).sort()).toEqual(
+      [
+        "de/datenschutz.html",
+        "de/impressum.html",
+        "de/index.html",
+        "de/nutzungsbedingungen.html",
+        "en/imprint.html",
+        "en/index.html",
+        "en/privacy.html",
+        "en/terms.html",
+        ...FEEDBACK_FILES,
+      ].sort(),
+    );
   });
 
   it.each(templates)(
@@ -99,7 +127,16 @@ describe("public page templates", () => {
 
   it.each(templates)(
     "$file keeps every optional part in its block",
-    ({ html }) => {
+    ({ file, html }) => {
+      // The feedback pages are published only together, so they link each
+      // other freely.
+      const blocks = FEEDBACK_FILES.includes(file)
+        ? Object.fromEntries(
+            Object.entries(LEGAL_BLOCKS).filter(
+              ([, key]) => key !== KEY.feedback,
+            ),
+          )
+        : LEGAL_BLOCKS;
       const optional: Record<string, string> = {
         [KEY.publicUrl]: KEY.publicUrl,
         [KEY.operatorPhone]: KEY.operatorPhone,
@@ -114,8 +151,7 @@ describe("public page templates", () => {
         // The language switch of a legal page links to the page itself.
         if (line.includes('hrefLang="')) continue;
         for (const href of anchors(line))
-          if (LEGAL_BLOCKS[href])
-            expect(keys, href).toContain(LEGAL_BLOCKS[href]);
+          if (blocks[href]) expect(keys, href).toContain(blocks[href]);
       }
     },
   );
@@ -213,6 +249,153 @@ describe("public page templates", () => {
     expect(html).not.toContain("[");
     expect(page("de/datenschutz.html")).not.toContain(
       `{{${KEY.operatorName}}}`,
+    );
+  });
+});
+
+describe("feedback pages", () => {
+  const form = (locale: "de" | "en") => page(`${locale}/feedback.html`);
+  const attributes = (html: string, tag: string, name: string) =>
+    html.match(new RegExp(`<${tag}\\b[^>]*\\bname="${name}"[^>]*>`))?.[0] ?? "";
+
+  it.each(FEEDBACK_FILES)("%s is kept out of search engines", (file) => {
+    const html = page(file);
+    expect(html).toContain('<meta name="robots" content="noindex">');
+    expect(html).not.toContain('hreflang="x-default"');
+    expect(html).toContain('<header class="legal-top">');
+    expect(html).toContain('<a href="/login">');
+  });
+
+  it("is noindex only there", () => {
+    for (const { file, html } of templates)
+      if (!FEEDBACK_FILES.includes(file))
+        expect(html, file).not.toContain('name="robots"');
+  });
+
+  it.each(["de", "en"] as const)(
+    "the %s form posts its five fields to the API",
+    (locale) => {
+      const html = form(locale);
+      const forms = html.match(/<form\b[^>]*>/g) ?? [];
+      expect(forms).toHaveLength(1);
+      for (const attribute of [
+        'method="post"',
+        'action="/api/public/feedback"',
+        'accept-charset="utf-8"',
+      ])
+        expect(forms[0]).toContain(attribute);
+      expect(html).toContain(
+        `<input type="hidden" name="lang" value="${locale}"/>`,
+      );
+      const kinds = [
+        ...html.matchAll(/<input type="radio" name="kind"[^>]*>/g),
+      ].map(([input]) => input);
+      expect(
+        kinds.map((input) => input.match(/value="([a-z]+)"/)?.[1]),
+      ).toEqual(["idea", "problem", "praise"]);
+      expect(kinds.map((input) => input.includes('checked=""'))).toEqual([
+        true,
+        false,
+        false,
+      ]);
+      const text = attributes(html, "textarea", "text");
+      expect(text).toContain('id="feedback-text"');
+      expect(text).toContain("required");
+      expect(text).toContain('maxLength="4000"');
+      expect(text).toContain('aria-describedby="feedback-text-hint"');
+      const email = attributes(html, "input", "email");
+      expect(email).toContain('type="email"');
+      expect(email).toContain("required");
+      expect(email).toContain('maxLength="254"');
+      expect(email).toContain('autoComplete="email"');
+      expect(html).toContain('<label for="feedback-text">');
+      expect(html).toContain('<label for="feedback-email">');
+      expect(html).toContain('id="feedback-text-hint"');
+      expect(html).toContain('id="feedback-email-hint"');
+      expect(html).toContain('<button type="submit" class="public-button">');
+      expect(decode(html)).toContain(publicPages[locale]["feedback.lead"]);
+    },
+  );
+
+  it("hides the honeypot from people, not from bots", () => {
+    const html = form("de");
+    expect(html).toContain('<div class="feedback-hp" aria-hidden="true">');
+    const website = attributes(html, "input", "website");
+    expect(website).toContain('type="text"');
+    expect(website).toContain('tabindex="-1"');
+    expect(website).toContain('autoComplete="off"');
+    expect(website).not.toContain("hidden");
+    // public.css moves it off-screen (publicCss.test.mjs).
+  });
+
+  it("links the privacy page only while it is published", () => {
+    for (const locale of ["de", "en"] as const) {
+      const privacy = locale === "de" ? "/de/datenschutz" : "/en/privacy";
+      const lines = blockLines(form(locale)).filter(({ line }) =>
+        line.includes(`href="${privacy}"`),
+      );
+      expect(lines).toHaveLength(1);
+      expect(lines[0].keys).toEqual([KEY.privacy]);
+    }
+  });
+
+  it("links the form from the landing footer and the legal nav, inside PAGE_FEEDBACK", () => {
+    for (const file of [
+      "de/index.html",
+      "en/index.html",
+      "de/impressum.html",
+      "en/terms.html",
+    ]) {
+      const href = `/${file.slice(0, 2)}/feedback`;
+      const lines = blockLines(page(file)).filter(({ line }) =>
+        line.includes(`href="${href}"`),
+      );
+      expect(lines, file).toHaveLength(1);
+      expect(lines[0].keys, file).toEqual([KEY.feedback]);
+    }
+    expect(page("de/index.html")).toMatch(
+      /<footer[\s\S]*href="\/de\/feedback"[\s\S]*<\/footer>/,
+    );
+    expect(page("de/datenschutz.html")).toMatch(
+      /<nav class="legal-nav"[\s\S]*<li><a href="\/de\/feedback">Feedback<\/a><\/li>[\s\S]*<\/nav>/,
+    );
+  });
+
+  it.each([
+    ["de/feedback/gesendet.html", "sent", "/de/feedback"],
+    ["en/feedback/sent.html", "sent", "/en/feedback"],
+    ["de/feedback/abgelaufen.html", "expired", "/de/feedback"],
+    ["en/feedback/expired.html", "expired", "/en/feedback"],
+    ["de/feedback/fehler.html", "error", "/de/feedback"],
+    ["en/feedback/error.html", "error", "/en/feedback"],
+    ["de/feedback/danke.html", "thanks", null],
+    ["en/feedback/thanks.html", "thanks", null],
+  ] as const)("%s says what happened", (file, state, back) => {
+    const locale = file.slice(0, 2) as "de" | "en";
+    const html = decode(page(file));
+    const texts = publicPages[locale];
+    expect(html).toContain(`<h1>${texts[`feedback.${state}.title`]}</h1>`);
+    expect(html).toContain(
+      texts[`feedback.${state}.body`].replace(/<\/?link>/g, "").split(".")[0],
+    );
+    expect(html).not.toContain("<form");
+    const links = anchors(html).filter((href) => href.includes("/feedback"));
+    // The language switch goes to the same page in the other language.
+    const other = links.filter((href) => !href.startsWith(`/${locale}/`));
+    expect(other).toHaveLength(1);
+    if (back) expect(links).toContain(back);
+    else
+      expect(links.filter((href) => href.startsWith(`/${locale}/`))).toEqual(
+        [],
+      );
+  });
+
+  it("switches the language to the same feedback page", () => {
+    expect(page("de/feedback/gesendet.html")).toContain(
+      '<a href="/en/feedback/sent" hrefLang="en" lang="en">',
+    );
+    expect(page("en/feedback.html")).toContain(
+      '<a href="/de/feedback" hrefLang="de" lang="de">',
     );
   });
 });

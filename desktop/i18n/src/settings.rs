@@ -42,6 +42,12 @@ crate::strings! {
         | "What closing the window does.";
     /// The desktop app's "App" area with updates but no tray.
     area_app_description_updates = "Updates dieser App." | "Updates for this app.";
+    /// While the instance takes feedback (#542).
+    area_feedback_label = "Feedback" | "Feedback";
+    area_feedback_description = "Was du geschickt hast und die Antworten darauf."
+        | "What you sent and the replies to it.";
+    /// The nav row's accessible suffix while a reply is unread.
+    area_feedback_unread = "neue Antwort" | "new reply";
 
     appearance_color_scheme = "Farbschema" | "Colour scheme";
     appearance_mode_light = "Hell" | "Light";

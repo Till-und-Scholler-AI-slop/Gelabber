@@ -8,6 +8,7 @@ pub mod csrf;
 pub mod directory;
 pub mod dms;
 pub mod error;
+pub mod feedback;
 pub mod gateway;
 pub mod gifs;
 pub mod health;
@@ -54,6 +55,7 @@ pub fn app(state: AppState) -> Router {
     account::deletion::start(state.clone());
     account::export::start(state.clone());
     previews::start(state.clone());
+    feedback::public::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).
     let api = Router::new()
@@ -73,6 +75,7 @@ pub fn app(state: AppState) -> Router {
         .merge(operator::router())
         .merge(directory::router())
         .merge(account::router())
+        .merge(feedback::router())
         // CSRF runs first: a refused cross-site post must not use up the
         // visitor's address window (the outer layer runs first).
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate))
@@ -84,6 +87,9 @@ pub fn app(state: AppState) -> Router {
         .merge(health::router())
         .merge(metrics::router())
         .merge(gateway::router())
+        // The public feedback form is a plain HTML form, which cannot pass
+        // the CSRF check; it makes its own checks (`feedback::public`).
+        .merge(feedback::public::router())
         .merge(api)
         .layer(
             TraceLayer::new_for_http()

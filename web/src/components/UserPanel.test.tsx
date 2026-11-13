@@ -10,6 +10,7 @@ const fixture = vi.hoisted(() => ({
     user: null as Record<string, unknown> | null,
     operator: false,
   },
+  feedback: undefined as { enabled: boolean; unread: number } | undefined,
 }));
 vi.mock("../voice/session.ts", () => ({
   useVoice: Object.assign(
@@ -27,6 +28,9 @@ vi.mock("../auth/session.ts", () => ({
     select({ pending: 0 }),
   claimProfileWrite: () => null,
   updateProfile: vi.fn(),
+}));
+vi.mock("../feedback/queries.ts", () => ({
+  useFeedbackStatus: () => ({ data: fixture.feedback }),
 }));
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
@@ -155,6 +159,63 @@ describe("user menu", () => {
   it("has no Betrieb for anyone else", () => {
     fixture.session = { user: lena, operator: false };
     expect(menu()).toEqual(["Profil bearbeiten", "Einstellungen", "Abmelden"]);
+  });
+});
+
+describe("Feedback geben in the user menu", () => {
+  beforeEach(() => {
+    fixture.session = { user: lena, operator: true };
+  });
+  afterEach(() => {
+    fixture.session = { user: null, operator: false };
+    fixture.feedback = undefined;
+  });
+  const html = () => renderToStaticMarkup(<UserPanel />);
+  const labels = () =>
+    [
+      ...(
+        html().match(/<nav aria-label="Benutzerkonto">(.*?)<\/nav>/)?.[1] ?? ""
+      ).matchAll(/<(?:a|button)[^>]*>([^<]+)</g),
+    ].map(([, label]) => label);
+
+  it("sits between Einstellungen and Betrieb while feedback is on", () => {
+    fixture.feedback = { enabled: true, unread: 0 };
+    expect(labels()).toEqual([
+      "Profil bearbeiten",
+      "Einstellungen",
+      "Feedback geben",
+      "Betrieb",
+      "Abmelden",
+    ]);
+    expect(html()).toContain(
+      '<button type="button" class="user-panel-feedback">Feedback geben</button>',
+    );
+  });
+
+  it("is missing while feedback is off or its status is not loaded", () => {
+    for (const status of [undefined, { enabled: false, unread: 0 }]) {
+      fixture.feedback = status;
+      expect(labels()).not.toContain("Feedback geben");
+      expect(html()).not.toContain("unread-dot");
+    }
+  });
+
+  it("carries the dot, on the item and on the chevron, while a reply is unread", () => {
+    fixture.feedback = { enabled: true, unread: 2 };
+    const markup = html();
+    expect(markup).toContain(
+      'Feedback geben<span class="sr-only">, neue Antwort auf dein Feedback</span><span class="unread-dot" aria-hidden="true"></span></button>',
+    );
+    expect(markup).toMatch(
+      /<summary class="shell-icon-button" aria-label="Benutzermenü, neue Antwort auf dein Feedback"><svg[^]*?<\/svg><span class="unread-dot" aria-hidden="true"><\/span><\/summary>/,
+    );
+  });
+
+  it("leaves the chevron's name alone without an unread reply", () => {
+    fixture.feedback = { enabled: true, unread: 0 };
+    expect(html()).toContain(
+      '<summary class="shell-icon-button" aria-label="Benutzermenü">',
+    );
   });
 });
 

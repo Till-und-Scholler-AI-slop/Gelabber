@@ -386,6 +386,8 @@ export type RequestOptions = {
   logoutUserId?: string | null;
   /** Explicit credentials/logout are intents independent of cookie identity. */
   authIntent?: () => boolean;
+  /** Replaces `REQUEST_TIMEOUT_MS` for this request (a large upload). */
+  timeoutMs?: number;
 };
 
 type ErrorBody = {
@@ -749,7 +751,10 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
     headers.set("X-CSRF-Token", csrfToken);
   }
 
-  const signal = timeoutSignal(REQUEST_TIMEOUT_MS, options.signal);
+  const signal = timeoutSignal(
+    options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+    options.signal,
+  );
 
   try {
     const response = await fetch(`${API_BASE}${path}`, {

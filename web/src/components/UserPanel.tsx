@@ -32,6 +32,9 @@ import { useT } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { DEFAULT_OPERATOR_PAGE } from "../operator/areas.ts";
+import { openFeedbackDialog } from "../feedback/dialogStore.ts";
+import { useFeedbackStatus } from "../feedback/queries.ts";
+import "../feedback/feedback.css";
 
 export function UserPanel({ contextId }: { contextId?: string }) {
   const t = useT(shell);
@@ -45,6 +48,9 @@ export function UserPanel({ contextId }: { contextId?: string }) {
   const profileButton = useRef<HTMLButtonElement>(null);
   const [statusOpen, setStatusOpen] = useState(false);
   const inCall = useVoice((state) => state.status === "joined");
+  const feedbackStatus = useFeedbackStatus().data;
+  const feedback = feedbackStatus?.enabled === true;
+  const unread = feedback && feedbackStatus.unread > 0;
   if (!user) return null;
 
   return (
@@ -101,9 +107,12 @@ export function UserPanel({ contextId }: { contextId?: string }) {
         <details ref={menu} className="user-panel-menu">
           <summary
             className="shell-icon-button"
-            aria-label={t("userPanel.menuLabel")}
+            aria-label={t(
+              unread ? "userPanel.menuUnreadLabel" : "userPanel.menuLabel",
+            )}
           >
             <ChevronIcon size={18} />
+            {unread ? <span className="unread-dot" aria-hidden="true" /> : null}
           </summary>
           <nav aria-label={t("userPanel.accountLabel")}>
             <Link to="/settings/$area" params={{ area: "profil" }}>
@@ -112,6 +121,33 @@ export function UserPanel({ contextId }: { contextId?: string }) {
             <Link to="/settings/$area" params={{ area: "darstellung" }}>
               {t("userPanel.settings")}
             </Link>
+            {feedback ? (
+              <button
+                type="button"
+                className="user-panel-feedback"
+                onClick={(event) => {
+                  // The menu closes first, and its chevron holds focus, so
+                  // the dialog hands focus back there when it closes.
+                  const details = event.currentTarget.closest("details");
+                  details?.removeAttribute("open");
+                  details
+                    ?.querySelector<HTMLElement>(":scope > summary")
+                    ?.focus();
+                  openFeedbackDialog();
+                }}
+              >
+                {t("userPanel.feedback")}
+                {unread ? (
+                  <>
+                    <span className="sr-only">
+                      {", "}
+                      {t("userPanel.feedbackUnread")}
+                    </span>
+                    <span className="unread-dot" aria-hidden="true" />
+                  </>
+                ) : null}
+              </button>
+            ) : null}
             {operator ? (
               <Link
                 to="/betrieb/$page"

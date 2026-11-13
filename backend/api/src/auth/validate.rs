@@ -232,6 +232,13 @@ pub fn avatar_decoration(raw: &str, errors: &mut FieldErrors) -> Option<Option<S
     Some(Some(value.to_owned()))
 }
 
+/// Text a person typed: no control characters but line breaks and tabs.
+/// Postgres refuses NUL, which would otherwise answer 500.
+pub fn has_control(text: &str) -> bool {
+    text.chars()
+        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+}
+
 pub fn finish(errors: FieldErrors) -> Result<(), ApiError> {
     if errors.is_empty() {
         Ok(())

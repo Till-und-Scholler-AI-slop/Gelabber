@@ -947,6 +947,13 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
     let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
     assert_eq!(frame, json!({ "op": "jq", "s": keller, "n": 1 }));
 
+    // Keep the row from being purged while the checks before the purge run.
+    let mut hold = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('account-purge'), hashtext($1::text))")
+        .bind(lena_id)
+        .execute(&mut *hold)
+        .await
+        .unwrap();
     let res = delete_me(&mut lena, json!({ "password": PASSWORD })).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
@@ -971,4 +978,93 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
         left,
         vec![(Uuid::parse_str(&werkstatt).unwrap(), "declined".to_owned())]
     );
+    hold.rollback().await.unwrap();
+}
+
+/// Feedback outlives its sender's account (#542): the entry stays for the
+/// operators, unlinked and without its image; an operator's deleted
+/// account leaves its replies as operator replies without an author.
+#[sqlx::test]
+async fn feedback_stays_unlinked_and_its_image_is_queued(pool: PgPool) {
+    let mut state = common::state(pool.clone());
+    state.operators = std::sync::Arc::new(std::collections::HashSet::from([
+        "lena@example.com".to_owned(),
+        "max@example.com".to_owned(),
+    ]));
+    let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
+    let mut lena = signed_up(&state, "lena@example.com", "Lena").await;
+    let mut max = signed_up(&state, "max@example.com", "Max").await;
+    let ada_id: Uuid = ada.user_id().parse().unwrap();
+    let lena_id: Uuid = lena.user_id().parse().unwrap();
+
+    let key = format!("feedback/{ada_id}/{}", Uuid::new_v4());
+    let entry: Uuid = sqlx::query_scalar(
+        "INSERT INTO feedback (kind, user_id, client, os, app_version, locale, page, body, \
+             image_key, image_type, image_bytes) \
+         VALUES ('idea', $1, 'web', 'linux', '0.10.0', 'de', '/', 'Bitte mehr', $2, \
+             'image/png', 100) RETURNING id",
+    )
+    .bind(ada_id)
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let res = lena
+        .send(
+            Method::POST,
+            &format!("/api/operator/feedback/{entry}/messages"),
+            Some(json!({ "text": "Danke" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    let res = delete_me(&mut ada, json!({ "password": PASSWORD })).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    purged(&state, ada_id).await;
+    let (user_id, image_key): (Option<Uuid>, Option<String>) =
+        sqlx::query_as("SELECT user_id, image_key FROM feedback WHERE id = $1")
+            .bind(entry)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((user_id, image_key), (None, None));
+    let queued: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM storage_cleanup WHERE object_key = $1)")
+            .bind(&key)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(queued);
+    let res = max
+        .send(
+            Method::GET,
+            &format!("/api/operator/feedback/{entry}"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["sender"], json!({ "type": "deleted" }));
+    assert_eq!(res.body["image"], Value::Null);
+    assert_eq!(res.body["text"], "Bitte mehr");
+
+    let res = delete_me(&mut lena, json!({ "password": PASSWORD })).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    purged(&state, lena_id).await;
+    let res = max
+        .send(
+            Method::GET,
+            &format!("/api/operator/feedback/{entry}"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["messages"][0]["from"], "operator");
+    assert_eq!(res.body["messages"][0]["author"], Value::Null);
+    let kind: String =
+        sqlx::query_scalar("SELECT author_kind FROM feedback_messages WHERE feedback_id = $1")
+            .bind(entry)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kind, "operator");
 }

@@ -33,6 +33,42 @@ export function legalUrl(locale: Locale, page: LegalPageId): string {
   return `/${locale}/${legalSlug(locale, page)}`;
 }
 
+/** The public feedback form (#542) and the four pages the API's answer
+ * leads to. */
+export type FeedbackState = "form" | "sent" | "thanks" | "expired" | "error";
+
+export const FEEDBACK_STATES: readonly FeedbackState[] = [
+  "form",
+  "sent",
+  "thanks",
+  "expired",
+  "error",
+];
+
+export const FEEDBACK_SLUGS: Record<Locale, Record<FeedbackState, string>> = {
+  de: {
+    form: "feedback",
+    sent: "feedback/gesendet",
+    thanks: "feedback/danke",
+    expired: "feedback/abgelaufen",
+    error: "feedback/fehler",
+  },
+  en: {
+    form: "feedback",
+    sent: "feedback/sent",
+    thanks: "feedback/thanks",
+    expired: "feedback/expired",
+    error: "feedback/error",
+  },
+};
+
+export function feedbackUrl(
+  locale: Locale,
+  state: FeedbackState = "form",
+): string {
+  return `/${locale}/${FEEDBACK_SLUGS[locale][state]}`;
+}
+
 export function otherLocale(locale: Locale): Locale {
   return locale === "de" ? "en" : "de";
 }

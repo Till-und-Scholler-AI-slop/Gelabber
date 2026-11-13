@@ -286,6 +286,7 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
         attachment_path.as_str(),
         dm_file.as_str(),
         "reactions.json",
+        "feedback.json",
     ];
     expected.sort();
     assert_eq!(names, expected);
@@ -651,4 +652,129 @@ async fn an_export_claimed_too_often_fails(pool: PgPool) {
     assert!(view["export"]["finished_at"].is_string());
     let res = request(&mut ada).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+}
+
+/// A feedback entry of `user` written straight to the table, with an image
+/// under `key` when given.
+async fn feedback_entry(pool: &PgPool, user: Uuid, text: &str, image: Option<(&str, i32)>) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO feedback (kind, user_id, client, os, app_version, locale, page, body, \
+             image_key, image_type, image_bytes, created_at) \
+         VALUES ('problem', $1, 'desktop', 'windows', '0.10.0', 'en', '/settings/darstellung', \
+             $2, $3, CASE WHEN $3 IS NOT NULL THEN 'image/png' END, $4, clock_timestamp()) \
+         RETURNING id",
+    )
+    .bind(user)
+    .bind(text)
+    .bind(image.map(|(key, _)| key))
+    .bind(image.map(|(_, size)| size))
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test]
+async fn the_archive_holds_the_persons_feedback_with_its_replies(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
+    let lena = signed_up(&state, "lena@example.com", "Lena").await;
+    let ada_id = uuid(ada.user_id());
+    let lena_id = uuid(lena.user_id());
+
+    let key = format!("feedback/{ada_id}/{}", Uuid::new_v4());
+    state
+        .store
+        .put(&key, "image/png", PNG.to_vec())
+        .await
+        .unwrap();
+    let with_image = feedback_entry(&pool, ada_id, "Es hakt", Some((&key, PNG.len() as i32))).await;
+    let plain = feedback_entry(&pool, ada_id, "Toll", None).await;
+    feedback_entry(&pool, lena_id, "Not Ada's", None).await;
+    for (author_kind, author, text) in [
+        ("operator", lena_id, "Danke, schauen wir uns an"),
+        ("person", ada_id, "Gerne"),
+    ] {
+        sqlx::query(
+            "INSERT INTO feedback_messages (feedback_id, author_kind, author_id, body, created_at) \
+             VALUES ($1, $2, $3, $4, clock_timestamp())",
+        )
+        .bind(with_image)
+        .bind(author_kind)
+        .bind(author)
+        .bind(text)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    request(&mut ada).await;
+    assert_eq!(built(&state, ada_id).await, "ready");
+    let entries = download(&mut ada).await;
+    assert_eq!(entries[&format!("feedback/{with_image}.png")], PNG);
+    let readme = String::from_utf8(entries["README.txt"].clone()).unwrap();
+    assert!(readme.contains("feedback.json / feedback/"), "{readme}");
+    let feedback = json_entry(&entries, "feedback.json");
+    assert_eq!(
+        feedback,
+        json!([
+            {
+                "id": with_image,
+                "kind": "problem",
+                "status": "open",
+                "created_at": feedback[0]["created_at"],
+                "text": "Es hakt",
+                "context": {
+                    "client": "desktop",
+                    "os": "windows",
+                    "app_version": "0.10.0",
+                    "locale": "en",
+                    "page": "/settings/darstellung",
+                },
+                "image": format!("feedback/{with_image}.png"),
+                "messages": [
+                    {
+                        "from": "operators",
+                        "text": "Danke, schauen wir uns an",
+                        "created_at": feedback[0]["messages"][0]["created_at"],
+                    },
+                    {
+                        "from": "you",
+                        "text": "Gerne",
+                        "created_at": feedback[0]["messages"][1]["created_at"],
+                    },
+                ],
+            },
+            {
+                "id": plain,
+                "kind": "problem",
+                "status": "open",
+                "created_at": feedback[1]["created_at"],
+                "text": "Toll",
+                "context": {
+                    "client": "desktop",
+                    "os": "windows",
+                    "app_version": "0.10.0",
+                    "locale": "en",
+                    "page": "/settings/darstellung",
+                },
+                "image": null,
+                "messages": [],
+            },
+        ])
+    );
+    assert!(!feedback.to_string().contains("Lena"));
+}
+
+/// Feedback images count toward the size check before the build.
+#[sqlx::test]
+async fn feedback_images_count_toward_the_size_limit(pool: PgPool) {
+    let mut state = common::state(pool.clone());
+    state.export_max_bytes = 100_000;
+    let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
+    let ada_id = uuid(ada.user_id());
+    let key = format!("feedback/{ada_id}/{}", Uuid::new_v4());
+    feedback_entry(&pool, ada_id, "Groß", Some((&key, 100_001))).await;
+    request(&mut ada).await;
+    assert_eq!(built(&state, ada_id).await, "failed");
+    assert_eq!(attempts(&pool).await, 1);
 }

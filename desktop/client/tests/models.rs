@@ -831,3 +831,127 @@ fn devices_export_and_deletion() {
     .unwrap();
     assert_eq!(bans[0].banned_by, None);
 }
+
+/// Feedback (#542): the person's entries as `feedback/mod.rs` serialises
+/// them, the status, and the bodies the app sends.
+#[test]
+fn feedback_entries_status_and_bodies() {
+    use serde_json::json;
+
+    let status: FeedbackStatus =
+        serde_json::from_value(json!({"enabled": true, "unread": 1})).unwrap();
+    assert_eq!(
+        status,
+        FeedbackStatus {
+            enabled: true,
+            unread: 1
+        }
+    );
+    assert_eq!(FeedbackStatus::OFF, FeedbackStatus::default());
+
+    let entry = json!({
+        "id": "00000000-0000-0000-0000-000000000001", "kind": "problem", "status": "open",
+        "text": "Beim Bildschirm teilen bleibt das Vorschaubild schwarz.",
+        "created_at": "2026-11-12T09:00:00Z", "last_activity_at": "2026-11-12T10:00:00Z",
+        "image": {"url": "/api/feedback/00000000-0000-0000-0000-000000000001/image",
+            "content_type": "image/png", "size": 482113},
+        "context": {"client": "web", "os": "linux", "app_version": "0.10.0", "locale": "de",
+            "page": "/s/x/c/y"},
+        "unread": true,
+        "messages": [
+            {"id": "00000000-0000-0000-0000-000000000002", "from": "operators",
+                "text": "Danke, Tom! Welchen Browser nutzt du?",
+                "created_at": "2026-11-12T10:00:00Z", "new": true},
+            {"id": "00000000-0000-0000-0000-000000000003", "from": "you", "text": "Firefox.",
+                "created_at": "2026-11-12T10:05:00Z", "new": false}
+        ]
+    });
+    let page = json!({"entries": [entry, {"id": "broken"}], "total": 1});
+    let read: FeedbackPage = serde_json::from_value(page).unwrap();
+    assert_eq!(read.entries.len(), 1, "the unreadable entry is left out");
+    assert_eq!(read.total, 1);
+    let first = &read.entries[0];
+    assert_eq!(serde_json::to_value(first).unwrap(), entry);
+    assert_eq!(first.kind, FeedbackKind::Problem);
+    assert_eq!(first.status, FeedbackState::Open);
+    assert_eq!(first.context.os, Some(DeviceOs::Linux));
+    assert_eq!(first.image.as_ref().unwrap().size, 482_113);
+    assert_eq!(first.messages[0].from, FeedbackAuthor::Operators);
+    assert!(first.messages[0].new && !first.messages[1].new);
+
+    // The public form's context as the API sends it; no image.
+    let form: FeedbackEntryContext = serde_json::from_value(json!({"client": "form",
+        "os": null, "app_version": null, "locale": "en", "page": null}))
+    .unwrap();
+    assert_eq!(form.client, FeedbackClient::Form);
+    assert!(form.os.is_none() && form.page.is_none());
+
+    let reply: FeedbackMessage = serde_json::from_value(json!({
+        "id": "00000000-0000-0000-0000-000000000004", "from": "you", "text": "Noch was.",
+        "created_at": "2026-11-12T11:00:00Z", "new": false}))
+    .unwrap();
+    assert_eq!(reply.from, FeedbackAuthor::You);
+
+    let staged: ImageStaged =
+        serde_json::from_value(json!({"image": "00000000-0000-0000-0000-000000000005"})).unwrap();
+    let context = FeedbackContext {
+        client: FeedbackClient::Desktop,
+        os: DeviceOs::Windows,
+        app_version: "0.10.0".into(),
+        locale: "en".into(),
+        page: "/settings/darstellung".into(),
+    };
+    let with_image = NewFeedback {
+        kind: FeedbackKind::Idea,
+        text: "Mehr Themes".into(),
+        image: Some(staged.image),
+        context: context.clone(),
+    };
+    assert_eq!(
+        serde_json::to_value(&with_image).unwrap(),
+        json!({"kind": "idea", "text": "Mehr Themes",
+            "image": "00000000-0000-0000-0000-000000000005",
+            "context": {"client": "desktop", "os": "windows", "app_version": "0.10.0",
+                "locale": "en", "page": "/settings/darstellung"}})
+    );
+    let without = NewFeedback {
+        kind: FeedbackKind::Praise,
+        text: "Toll".into(),
+        image: None,
+        context,
+    };
+    let body = serde_json::to_value(&without).unwrap();
+    assert!(body.get("image").is_none(), "{body}");
+    assert_eq!(body["kind"], "praise");
+}
+
+/// What the app sends along: this build's system and version, the
+/// interface's language, and the route without query or fragment.
+#[test]
+fn the_feedback_context_of_this_app() {
+    let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let context = FeedbackContext::desktop("/betrieb/feedback?entry=1#x");
+    assert_eq!(context.client, FeedbackClient::Desktop);
+    assert_eq!(context.os, DeviceOs::THIS_BUILD);
+    assert_eq!(context.app_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(context.locale, "en");
+    assert_eq!(context.page, "/betrieb/feedback");
+    let expected = if cfg!(target_os = "windows") {
+        "(windows)"
+    } else if cfg!(target_os = "macos") {
+        "(macos)"
+    } else {
+        "(linux)"
+    };
+    assert!(gelabber_client::http::USER_AGENT.ends_with(expected));
+    assert_eq!(
+        serde_json::to_value(DeviceOs::THIS_BUILD).unwrap(),
+        expected.trim_matches(['(', ')'])
+    );
+
+    assert_eq!(feedback_page("/s/a/c/b#m"), "/s/a/c/b");
+    assert_eq!(feedback_page("//evil"), "/");
+    assert_eq!(feedback_page("settings"), "/");
+    let long = format!("/{}", "ä".repeat(400));
+    assert_eq!(feedback_page(&long).chars().count(), FEEDBACK_PAGE_MAX);
+}

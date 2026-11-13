@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod chat;
 pub mod discover;
+pub mod feedback;
 pub mod layout;
 pub mod server_settings;
 pub mod settings;

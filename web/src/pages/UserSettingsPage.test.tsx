@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ params: { area: "darstellung" } }));
+const fixture = vi.hoisted(() => ({
+  params: { area: "darstellung" },
+  feedback: undefined as { enabled: boolean; unread: number } | undefined,
+}));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a href="#">{children}</a>,
   Navigate: () => null,
@@ -23,6 +26,10 @@ vi.mock("./ProfilePage.tsx", () => ({
 }));
 vi.mock("./SecurityArea.tsx", () => ({ SecurityArea: () => null }));
 vi.mock("../components/UserPanel.tsx", () => ({ UserPanel: () => null }));
+vi.mock("../feedback/FeedbackArea.tsx", () => ({ FeedbackArea: () => null }));
+vi.mock("../feedback/queries.ts", () => ({
+  useFeedbackStatus: () => ({ data: fixture.feedback }),
+}));
 vi.mock("../messages/notificationPrivacy.ts", () => ({
   useNotificationPrivacy: () => ({ data: { hide_content: false } }),
   useChangeNotificationPrivacy: () => vi.fn(),
@@ -39,6 +46,7 @@ describe("user settings page", () => {
   beforeAll(() => SettingsAreaPart.preload());
   beforeEach(() => {
     fixture.params = { area: "darstellung" };
+    fixture.feedback = undefined;
   });
 
   it("titles the area with a heading that takes focus", () => {
@@ -105,5 +113,40 @@ describe("user settings page", () => {
     expect(html.indexOf(">Konto<")).toBeLessThan(html.indexOf(">Profil<"));
     expect(html.indexOf(">Sicherheit<")).toBeLessThan(html.indexOf(">App<"));
     expect(html.indexOf(">App<")).toBeLessThan(html.indexOf(">Darstellung<"));
+  });
+
+  it("lists Feedback under Konto only while the instance takes it", () => {
+    const sidebar = () => renderToStaticMarkup(<SettingsSidebar />);
+    expect(sidebar()).not.toContain(">Feedback<");
+    fixture.feedback = { enabled: false, unread: 0 };
+    expect(sidebar()).not.toContain(">Feedback<");
+
+    fixture.feedback = { enabled: true, unread: 0 };
+    const html = sidebar();
+    expect(html.indexOf(">Sicherheit<")).toBeLessThan(
+      html.indexOf(">Feedback<"),
+    );
+    expect(html.indexOf(">Feedback<")).toBeLessThan(html.indexOf(">App<"));
+    expect(html).not.toContain("unread-dot");
+  });
+
+  it("puts a dot on the Feedback row while a reply is unread", () => {
+    fixture.feedback = { enabled: true, unread: 2 };
+    const html = renderToStaticMarkup(<SettingsSidebar />);
+    expect(html).toMatch(
+      /<span>Feedback<\/span><span class="sr-only">, neue Antwort<\/span><span class="unread-dot" aria-hidden="true"><\/span>/,
+    );
+    expect(html.match(/unread-dot/g)).toHaveLength(1);
+  });
+
+  it("titles the Feedback area like every other", () => {
+    fixture.feedback = { enabled: true, unread: 0 };
+    fixture.params = { area: "feedback" };
+    const html = page();
+    expect(html).toContain('tabindex="-1">Feedback</h2>');
+    expect(html).toContain(
+      "<p>Was du geschickt hast und die Antworten darauf.</p>",
+    );
+    expect(html).toContain("Für dein Konto");
   });
 });

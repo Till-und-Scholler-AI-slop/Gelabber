@@ -12,10 +12,13 @@
 //!    new DM is announced (`op: "dm"`), so its list reloads without it;
 //! 3. uploads not bound to a message;
 //! 4. last, the avatar and banner objects (queued in `storage_cleanup`), the
-//!    upload ledger, and the row: reactions, read state, settings, themes,
-//!    identities and bans of the person cascade, `banned_by` of the bans
-//!    they issued becomes `NULL`. With account mail on, the address it had
-//!    then gets [`Mail::AccountDeleted`] in the language it had.
+//!    images of the person's feedback (unset, so the `feedback_image_cleanup`
+//!    trigger queues them), the upload ledger, and the row: reactions, read
+//!    state, settings, themes, identities and bans of the person cascade,
+//!    `banned_by` of the bans they issued becomes `NULL`, and their feedback
+//!    stays for the operators with `user_id`, `author_id` and `done_by`
+//!    `NULL`. With account mail on, the address it had then gets
+//!    [`Mail::AccountDeleted`] in the language it had.
 //!
 //! Every batch takes `pg_try_advisory_xact_lock` on the account, so two API
 //! processes never work on one account at the same time. The worker holds
@@ -255,7 +258,7 @@ pub async fn purge(state: &AppState, user_id: Uuid) -> Result<bool, ApiError> {
         .await?;
     tx.commit().await?;
 
-    // 4. Profile images, the upload ledger and the row.
+    // 4. Profile and feedback images, the upload ledger and the row.
     let Some(mut tx) = begin(state, user_id).await? else {
         return Ok(false);
     };
@@ -282,6 +285,15 @@ pub async fn purge(state: &AppState, user_id: Uuid) -> Result<bool, ApiError> {
         .execute(&mut *tx)
         .await?;
     }
+    // Feedback images go with the account; the entries stay. Staged images
+    // under `feedback/{user}/` already have their pending cleanup rows.
+    sqlx::query(
+        "UPDATE feedback SET image_key = NULL, image_type = NULL, image_bytes = NULL \
+         WHERE user_id = $1 AND image_key IS NOT NULL",
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
     // Queued deletions of the person's uploads still carry the bytes they
     // reserved; with the ledger gone there is nothing to settle them
     // against, so they are released and the objects simply deleted.

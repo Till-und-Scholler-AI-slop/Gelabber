@@ -430,18 +430,20 @@ impl Http {
         body: Option<Body>,
         session: Option<&str>,
     ) -> Result<Vec<u8>, ApiError> {
-        self.execute_keeping(method, path, body, session, &mut None)
+        self.execute_keeping(method, path, body, session, None, &mut None)
             .await
     }
 
     /// [`Self::execute_as`]; the body of a refusal also lands in `refusal`,
     /// for codes that carry more than the envelope (`owns_servers`).
+    /// `timeout` replaces [`REQUEST_TIMEOUT`] for this one request.
     async fn execute_keeping(
         &self,
         method: Method,
         path: &str,
         body: Option<Body>,
         session: Option<&str>,
+        timeout: Option<Duration>,
         refusal: &mut Option<Vec<u8>>,
     ) -> Result<Vec<u8>, ApiError> {
         let write = method != Method::GET && method != Method::HEAD;
@@ -455,6 +457,9 @@ impl Http {
                 .request(method.clone(), self.url(&format!("/api{path}")));
             if write && let Some(token) = self.csrf.read().clone() {
                 req = req.header("X-CSRF-Token", token);
+            }
+            if let Some(timeout) = timeout {
+                req = req.timeout(timeout);
             }
             // The interface's language, as the browser sends its own: Klipy
             // picks the GIF locale from it.
@@ -516,7 +521,14 @@ impl Http {
             .map_err(|e| Box::new((ApiError::Decode(e.to_string()), serde_json::Value::Null)))?;
         let mut refusal = None;
         let answer = self
-            .execute_keeping(method, path, Some(Body::Json(json)), None, &mut refusal)
+            .execute_keeping(
+                method,
+                path,
+                Some(Body::Json(json)),
+                None,
+                None,
+                &mut refusal,
+            )
             .await;
         let bytes = answer.map_err(|error| {
             let body = refusal
@@ -562,6 +574,26 @@ impl Http {
             data,
         };
         let bytes = self.execute(method, path, Some(body)).await?;
+        decode(path, &bytes)
+    }
+
+    /// [`Self::send_bytes`] with `timeout` instead of [`REQUEST_TIMEOUT`]:
+    /// images of several megabytes need [`UPLOAD_TIMEOUT`] on a slow line.
+    pub async fn send_bytes_within<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        content_type: &str,
+        data: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<T, ApiError> {
+        let body = Body::Raw {
+            content_type: content_type.to_owned(),
+            data,
+        };
+        let bytes = self
+            .execute_keeping(method, path, Some(body), None, Some(timeout), &mut None)
+            .await?;
         decode(path, &bytes)
     }
 
@@ -1398,5 +1430,53 @@ mod tests {
             api("export_pending").text(),
             "Your export is already being prepared."
         );
+    }
+
+    /// `send_bytes_within` sets its own timeout on that one request (the
+    /// feedback image takes `UPLOAD_TIMEOUT` instead of the client's 10 s).
+    #[test]
+    fn a_byte_upload_keeps_its_own_timeout() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let (delay, body) = if head.starts_with("GET /api/auth/session ") {
+                        (0, r#"{"user":null,"csrf_token":"t"}"#)
+                    } else {
+                        (1500, r#"{"image":"00000000-0000-0000-0000-000000000005"}"#)
+                    };
+                    std::thread::sleep(Duration::from_millis(delay));
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                });
+            }
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let http = Http::new(&format!("http://{addr}")).unwrap();
+        let upload = |timeout| {
+            runtime.block_on(http.send_bytes_within::<serde_json::Value>(
+                Method::POST,
+                "/feedback/images",
+                "image/png",
+                b"PNG".to_vec(),
+                timeout,
+            ))
+        };
+        let error = upload(Duration::from_millis(300)).unwrap_err();
+        assert_eq!(error.code(), "timeout");
+        let answer = upload(Duration::from_secs(5)).unwrap();
+        assert_eq!(answer["image"], "00000000-0000-0000-0000-000000000005");
     }
 }

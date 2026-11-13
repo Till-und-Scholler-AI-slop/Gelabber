@@ -18,6 +18,14 @@ describe("public.css", () => {
         expect(value.replace(/\s+/g, " ").trim(), name).toBe(theme[name]);
   });
 
+  it("moves the feedback form's honeypot off-screen, not out of the page", () => {
+    // Some bots skip fields that are display:none (#542).
+    const rule = css().match(/\.feedback-hp \{([^}]*)\}/)?.[1] ?? "";
+    expect(rule).toContain("position: absolute;");
+    expect(rule).toContain("left: -10000px;");
+    expect(rule).not.toMatch(/display|visibility/);
+  });
+
   it("has no transition or animation", () => {
     expect(css()).not.toMatch(/\b(transition|animation)\s*:/);
   });

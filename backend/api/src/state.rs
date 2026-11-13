@@ -94,6 +94,8 @@ pub struct AppState {
     /// Wakes the data export worker (`account::export`).
     pub(crate) account_export: Arc<tokio::sync::Notify>,
     pub(crate) export_worker_started: Arc<AtomicBool>,
+    /// The sweeper of the public feedback form (`feedback::public`).
+    pub(crate) feedback_worker_started: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -221,6 +223,7 @@ impl AppState {
             export_max_bytes: config.export_max_bytes,
             account_export: Arc::new(tokio::sync::Notify::new()),
             export_worker_started: Arc::new(AtomicBool::new(false)),
+            feedback_worker_started: Arc::new(AtomicBool::new(false)),
         })
     }
 

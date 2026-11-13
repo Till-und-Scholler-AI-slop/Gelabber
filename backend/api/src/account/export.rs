@@ -29,9 +29,10 @@
 //! The archive holds only what the person wrote or owns (layout in
 //! `docs/native/protocol-rest-auth.md`): `README.txt`, `account.json`,
 //! `profile/` images, their own messages per channel under `messages/`,
-//! `reactions.json` and the files they sent under `files/`. Push endpoints,
-//! the password hash, session tokens and other people's messages are never
-//! part of it.
+//! `reactions.json`, the files they sent under `files/`, and their feedback
+//! with the replies to it in `feedback.json`, its images under `feedback/`
+//! (#542). Push endpoints, the password hash, session tokens, other
+//! people's messages and the names of operators are never part of it.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -192,13 +193,15 @@ pub async fn run_once(state: &AppState) -> Result<bool, ApiError> {
     Ok(true)
 }
 
-/// The bytes of the files the person sent, all of which go into the
-/// archive.
+/// The bytes of the files the person sent and of their feedback images,
+/// all of which go into the archive.
 async fn sent_bytes(db: &PgPool, user_id: Uuid) -> Result<u64, ApiError> {
     let sum: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(a.size_bytes), 0)::bigint \
-         FROM attachments a JOIN messages m ON m.id = a.message_id \
-         WHERE m.author_id = $1 AND a.uploader_id = $1",
+        "SELECT (SELECT COALESCE(SUM(a.size_bytes), 0) \
+                 FROM attachments a JOIN messages m ON m.id = a.message_id \
+                 WHERE m.author_id = $1 AND a.uploader_id = $1)::bigint \
+              + (SELECT COALESCE(SUM(image_bytes), 0) FROM feedback \
+                 WHERE user_id = $1 AND image_key IS NOT NULL)::bigint",
     )
     .bind(user_id)
     .fetch_one(db)
@@ -581,6 +584,7 @@ impl Archive {
         )?;
         self.messages()?;
         self.reactions()?;
+        self.feedback()?;
         Ok(())
     }
 
@@ -799,6 +803,187 @@ impl Archive {
             user_id: self.user_id,
         };
         self.json_stream("reactions.json", &reactions)
+    }
+
+    /// `feedback/` with the images of the person's feedback, then
+    /// `feedback.json` with the entries and the replies to them.
+    fn feedback(&mut self) -> Result<(), ApiError> {
+        let user_id = self.user_id;
+        let db = self.db.clone();
+        let mut copied = HashSet::new();
+        let mut after: Option<(DateTime<Utc>, Uuid)> = None;
+        loop {
+            let page: Vec<FeedbackImage> = self.wait(
+                sqlx::query_as(
+                    "SELECT id, created_at, image_key, image_type, image_bytes FROM feedback \
+                     WHERE user_id = $1 AND image_key IS NOT NULL \
+                       AND ($2::timestamptz IS NULL OR (created_at, id) > ($2, $3)) \
+                     ORDER BY created_at, id LIMIT $4",
+                )
+                .bind(user_id)
+                .bind(after.map(|(at, _)| at))
+                .bind(after.map(|(_, id)| id))
+                .bind(PAGE)
+                .fetch_all(&db),
+            )?;
+            let Some(last) = page.last() else {
+                break;
+            };
+            after = Some((last.created_at, last.id));
+            let full = page.len() as i64 == PAGE;
+            for image in page {
+                let path = feedback_image_path(image.id, &image.image_type);
+                let size = u64::try_from(image.image_bytes).unwrap_or(0);
+                if self.object(&path, &image.image_key, size)? {
+                    copied.insert(image.id);
+                }
+            }
+            if !full {
+                break;
+            }
+        }
+        let entries = FeedbackPages {
+            db: self.db.clone(),
+            handle: self.handle.clone(),
+            user_id,
+            copied: &copied,
+        };
+        self.json_stream("feedback.json", &entries)
+    }
+}
+
+/// Where a feedback image goes in the archive.
+fn feedback_image_path(id: Uuid, content_type: &str) -> String {
+    format!("feedback/{id}.{}", image_extension(content_type))
+}
+
+#[derive(FromRow)]
+struct FeedbackImage {
+    id: Uuid,
+    created_at: DateTime<Utc>,
+    image_key: String,
+    image_type: String,
+    image_bytes: i32,
+}
+
+#[derive(FromRow)]
+struct FeedbackRow {
+    id: Uuid,
+    kind: String,
+    status: String,
+    created_at: DateTime<Utc>,
+    body: String,
+    client: String,
+    os: Option<String>,
+    app_version: Option<String>,
+    locale: String,
+    page: Option<String>,
+    image_type: Option<String>,
+}
+
+#[derive(FromRow)]
+struct FeedbackMessageRow {
+    feedback_id: Uuid,
+    author_kind: String,
+    body: String,
+    created_at: DateTime<Utc>,
+}
+
+/// The person's feedback in `(created_at, id)` order with its thread, read
+/// page by page while serialized. Operators stay unnamed. An image's
+/// `path` is set when it was copied into the archive (`copied`).
+struct FeedbackPages<'a> {
+    db: PgPool,
+    handle: Handle,
+    user_id: Uuid,
+    copied: &'a HashSet<Uuid>,
+}
+
+impl Serialize for FeedbackPages<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(None)?;
+        let mut after: Option<(DateTime<Utc>, Uuid)> = None;
+        loop {
+            let page: Vec<FeedbackRow> = self
+                .handle
+                .block_on(
+                    sqlx::query_as(
+                        "SELECT id, kind, status, created_at, body, client, os, app_version, \
+                                locale, page, image_type \
+                         FROM feedback \
+                         WHERE user_id = $1 \
+                           AND ($2::timestamptz IS NULL OR (created_at, id) > ($2, $3)) \
+                         ORDER BY created_at, id LIMIT $4",
+                    )
+                    .bind(self.user_id)
+                    .bind(after.map(|(at, _)| at))
+                    .bind(after.map(|(_, id)| id))
+                    .bind(PAGE)
+                    .fetch_all(&self.db),
+                )
+                .map_err(S::Error::custom)?;
+            let Some(last) = page.last() else {
+                break;
+            };
+            after = Some((last.created_at, last.id));
+            let full = page.len() as i64 == PAGE;
+            let ids: Vec<Uuid> = page.iter().map(|entry| entry.id).collect();
+            let messages: Vec<FeedbackMessageRow> = self
+                .handle
+                .block_on(
+                    sqlx::query_as(
+                        "SELECT feedback_id, author_kind, body, created_at \
+                         FROM feedback_messages WHERE feedback_id = ANY($1) \
+                         ORDER BY created_at, id",
+                    )
+                    .bind(&ids)
+                    .fetch_all(&self.db),
+                )
+                .map_err(S::Error::custom)?;
+            for entry in page {
+                let thread: Vec<Value> = messages
+                    .iter()
+                    .filter(|message| message.feedback_id == entry.id)
+                    .map(|message| {
+                        let from = if message.author_kind == "operator" {
+                            "operators"
+                        } else {
+                            "you"
+                        };
+                        json!({
+                            "from": from,
+                            "text": message.body,
+                            "created_at": message.created_at,
+                        })
+                    })
+                    .collect();
+                let image = entry
+                    .image_type
+                    .as_deref()
+                    .filter(|_| self.copied.contains(&entry.id))
+                    .map(|content_type| feedback_image_path(entry.id, content_type));
+                seq.serialize_element(&json!({
+                    "id": entry.id,
+                    "kind": entry.kind,
+                    "status": entry.status,
+                    "created_at": entry.created_at,
+                    "text": entry.body,
+                    "context": {
+                        "client": entry.client,
+                        "os": entry.os,
+                        "app_version": entry.app_version,
+                        "locale": entry.locale,
+                        "page": entry.page,
+                    },
+                    "image": image,
+                    "messages": thread,
+                }))?;
+            }
+            if !full {
+                break;
+            }
+        }
+        seq.end()
     }
 }
 
