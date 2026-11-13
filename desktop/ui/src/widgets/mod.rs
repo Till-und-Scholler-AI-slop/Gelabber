@@ -6,6 +6,8 @@ pub mod avatar;
 pub mod badge;
 pub mod button;
 pub mod field;
+#[cfg(test)]
+mod gallery;
 pub mod link;
 pub mod modal;
 pub mod opener;

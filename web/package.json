@@ -31,7 +31,8 @@
     "test:audio-dsp": "node scripts/audio/benchmark-rnnoise.mjs",
     "test:e2e-chat-workflows": "node scripts/e2e/chat-workflows.mjs",
     "test:reactions-smoke": "node scripts/smoke-reactions.mjs",
-    "test:e2e-search-context": "node scripts/e2e/search-context.mjs"
+    "test:e2e-search-context": "node scripts/e2e/search-context.mjs",
+    "test:field-gallery": "node scripts/field-gallery.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.106.1",
