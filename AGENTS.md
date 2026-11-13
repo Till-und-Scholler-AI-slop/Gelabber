@@ -5,7 +5,7 @@ Mandatory for every coding agent. Read this before changing the repo.
 ## Hosting
 
 `origin` is GitHub (`Till-und-Scholler-AI-slop/Gelabber`). Push there and use
-`gh` for PRs and releases.
+`gh` for PRs. Releases are published by `release.yml` (see below).
 
 ## Branches and pull requests
 
@@ -36,23 +36,18 @@ The **shipped line** is the latest release tag on `main`.
 ## Planning
 
 Work is tracked in the organization project
-[Gelabber](https://github.com/orgs/Till-und-Scholler-AI-slop/projects/2):
-Status Backlog → Planned → In progress → Done, with the views Board,
-Who's on what and Releases.
+[Gelabber](https://github.com/orgs/Till-und-Scholler-AI-slop/projects/2).
 
 - **Issue first:** all work has an issue. If there is none, open one (type
-  Bug, Feature or Task) before the branch. New issues join the project by
-  themselves, in Backlog.
+  Bug, Feature or Task) before the branch.
 - **Assignee** means "working on it now". When you start, assign the issue to
-  the person who asked for the work (`rafiistcool` or `SilasSch`), not to the
-  author of the PR. When you stop without finishing, remove the assignee and
-  say on the issue why.
+  the person who asked for the work, not to the author of the PR. When you
+  stop without finishing, remove the assignee and say on the issue why.
 - **Milestone** is the release the work ships in. Use an open milestone; if it
-  is unclear which one, ask. Never create, rename or close a milestone unless
-  asked.
-- **Pull requests** say `Closes #<n>` for their issue. Linking moves the issue
-  to In progress; merging or closing it moves it to Done. Planned is set by
-  hand.
+  is unclear which one, ask. Create, rename or close milestones only when
+  asked or as part of a release (below).
+- **Pull requests** say `Closes #<n>` for their issue, so merging the PR
+  closes it.
 - **Each milestone** states the release goal in its description, in one to
   three sentences. After a release: close its milestone, move open issues to
   the next one, write that one's goal.
@@ -77,7 +72,7 @@ Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
 `npm test`, `npm run test:checks`, `npm run build`.
 
 Desktop (`desktop/`) is its own Cargo workspace and needs a prebuilt libwebrtc
-package; see `desktop/README.md` ("Native app" for the 0.9 app's build,
+package; see `desktop/README.md` ("Native app" for the native egui app's build,
 smoke test, parity and packages).
 
 ## CI workflows (`.github/workflows`)
@@ -95,7 +90,7 @@ Keep CI lean. Pull requests check only what is needed to merge safely.
 - **Slow build outputs** that the cache quota would evict are kept where nothing evicts them: the libwebrtc packages are assets of the `libwebrtc-packages` release, stored by pushes and fetched on a cache miss (`desktop-native.yml`); the app images' layer cache is each image's `buildcache` tag in the registry, written by `publish-images.yml`.
 - **A release build** (`desktop-native.yml` with `release_tag`) builds, packages, makes one loopback call and tests the installed package, but runs the other code checks no more: CI on `main` ran them on the same commit.
 - **`libwebrtc-packages` and `build-deps` stay pre-releases.** If one became "Latest", `releases/latest/download/latest-native.json` (the apps' updater) and the web client's download links would point at it. A stored libwebrtc package is fetched only when `desktop/native/libwebrtc-packages.sha256` lists its SHA-256.
-- **Runners** are named by version (`ubuntu-24.04`, `ubuntu-26.04`, `windows-2022`), never `-latest`.
+- **Runners** are named by version, never `-latest`.
 - **Comments** in workflows are one or two lines saying why. Longer reasoning and history go in commit messages or `docs/`.
 
 ## Product
