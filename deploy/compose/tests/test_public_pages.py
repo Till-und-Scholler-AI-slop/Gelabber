@@ -20,8 +20,13 @@ SETTINGS = {
     'GELABBER_INVITE_REQUEST', 'GELABBER_SOURCE_URL', 'GELABBER_OPERATOR_GUIDE_URL',
     'APP_PUBLIC_URL',
 }
+# Derived by Compose from the API's keys (#542): only whether they are set,
+# never the addresses.
+DERIVED = {'GELABBER_ACCOUNT_MAIL': '${SMTP_HOST:+on}',
+           'GELABBER_FEEDBACK_OPERATORS': '${API_OPERATOR_EMAILS:+on}'}
 PUBLIC_PATHS = ('/', '/de/', '/en/', '/de/impressum', '/en/privacy', '/robots.txt',
-                '/sitemap.xml', '/public-pages.json')
+                '/sitemap.xml', '/public-pages.json', '/de/feedback',
+                '/en/feedback/thanks')
 WEB_UPSTREAMS = {'Caddyfile': 'web:80',
                  'Caddyfile.homelab': '{$GELABBER_WEB_UPSTREAM:127.0.0.1:8088}'}
 
@@ -65,7 +70,28 @@ class PublicPages(unittest.TestCase):
 
     def test_the_start_script_reads_only_these_settings(self):
         read = set(re.findall(r'\$\{((?:GELABBER_|APP_)[A-Z0-9_]*)', SCRIPT.read_text()))
-        self.assertEqual(sorted(read - SCRIPT_TEST_ONLY), sorted(SETTINGS))
+        self.assertEqual(sorted(read - SCRIPT_TEST_ONLY), sorted(SETTINGS | DERIVED.keys()))
+
+    def test_web_learns_only_whether_mail_and_operators_are_on(self):
+        env = web_environment()
+        for key, value in DERIVED.items():
+            with self.subTest(key=key):
+                self.assertEqual(env.get(key), value)
+        # No other value of web reads the mail or operator settings.
+        for key, value in env.items():
+            if key in DERIVED:
+                continue
+            with self.subTest(key=key):
+                self.assertNotRegex(value, r'SMTP_|API_OPERATOR_EMAILS')
+
+    def test_the_api_route_of_the_form_goes_to_the_api(self):
+        for name in WEB_UPSTREAMS:
+            handles = site_handles((ROOT / name).read_text())
+            with self.subTest(caddyfile=name):
+                first = next(target for paths, target in handles
+                             if paths is None
+                             or any(caddy_path_matches(p, '/api/public/feedback') for p in paths))
+                self.assertNotEqual(first, WEB_UPSTREAMS[name])
 
     def test_web_mounts_the_legal_texts_read_only(self):
         self.assertIn('      - ./legal:/etc/gelabber/legal:ro\n', web_service())

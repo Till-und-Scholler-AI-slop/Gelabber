@@ -1,12 +1,13 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { scopeGeneration } from "./auth/scope.ts";
 import { useSession } from "./auth/session.ts";
 import { directoryKeys } from "./discover/queries.ts";
 import { validateDiscoverSearch } from "./discover/search.ts";
+import { feedbackKeys } from "./feedback/queries.ts";
 import { OPERATOR_PAGES } from "./operator/areas.ts";
 import { SETTINGS_AREAS } from "./pages/settingsAreas.ts";
 import { router, signedInTarget, validateAuthSearch } from "./routes.tsx";
@@ -387,5 +388,69 @@ describe("the directory route", () => {
     expect(validateDiscoverSearch({ q: 1984 })).toEqual({ q: "1984" });
     expect(validateDiscoverSearch({ q: "   ", lang: "english" })).toEqual({});
     expect(validateDiscoverSearch({ q: "x".repeat(150) }).q).toHaveLength(100);
+  });
+});
+
+describe("the feedback settings area", () => {
+  async function guardFeedback() {
+    try {
+      await router.routesById["/workspace/settings/$area"].options.beforeLoad?.(
+        { params: { area: "feedback" } } as never,
+      );
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  }
+  const status = (enabled: boolean) =>
+    queryClient.setQueryData(feedbackKeys.status("u1", scopeGeneration()), {
+      enabled,
+      unread: 0,
+    });
+  beforeEach(() => {
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Tom", email: "tom@example.test" } as never,
+    });
+    setQueryScope("u1", scopeGeneration());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    queryClient.clear();
+    setQueryScope(null, 0);
+    useSession.setState({ status: "anonymous", user: null });
+  });
+
+  it("is not found while the instance takes no feedback", async () => {
+    status(false);
+    expect(isNotFound(await guardFeedback())).toBe(true);
+  });
+
+  it("opens while it does", async () => {
+    status(true);
+    expect(await guardFeedback()).toBeUndefined();
+  });
+
+  it("is not found where the API has no status route", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ error: "not_found", message: "Not found." }),
+            { status: 404, headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+      ),
+    );
+    expect(isNotFound(await guardFeedback())).toBe(true);
+  });
+
+  it("waits for nothing in the other areas", () => {
+    const beforeLoad =
+      router.routesById["/workspace/settings/$area"].options.beforeLoad;
+    expect(
+      beforeLoad?.({ params: { area: "konto" } } as never),
+    ).toBeUndefined();
   });
 });

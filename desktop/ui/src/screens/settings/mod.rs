@@ -6,6 +6,7 @@ pub mod appearance;
 pub mod card;
 pub mod controls;
 pub mod desktop_app;
+pub mod feedback;
 pub mod media;
 pub mod notifications;
 pub mod prefs;
@@ -40,7 +41,7 @@ pub struct Area {
     pub scope: Option<Scope>,
 }
 
-pub const AREAS: [Area; 9] = [
+pub const AREAS: [Area; 10] = [
     Area {
         id: "profil",
         group: "konto",
@@ -60,6 +61,14 @@ pub const AREAS: [Area; 9] = [
         group: "konto",
         label: texts::area_konto_label,
         description: texts::area_konto_description,
+        scope: Some(Scope::Account),
+    },
+    // While the instance takes feedback (#542).
+    Area {
+        id: "feedback",
+        group: "konto",
+        label: texts::area_feedback_label,
+        description: texts::area_feedback_description,
         scope: Some(Scope::Account),
     },
     Area {
@@ -135,6 +144,7 @@ pub(crate) struct PageState {
     pub media: media::State,
     pub notifications: notifications::State,
     pub desktop_app: desktop_app::State,
+    pub feedback: feedback::State,
     /// A navigation that waits for a "discard?" answer.
     pub leave_to: Option<String>,
     /// A new area moves focus to its heading (UserSettingsPage).
@@ -265,12 +275,27 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         // "App" holds the desktop app's updates and window: listed whenever
         // it has them (`visibleSettingsAreas` hid it in the Tauri app).
         let app_area = current == "app" || desktop_app::has_content(ui.ctx());
-        let shown = |a: &&Area| a.group == *group && (a.id != "app" || app_area);
+        // "Feedback" while the instance takes it (`visibleSettingsAreas`).
+        let feedback_area = crate::screens::feedback::enabled(ui.ctx(), app) == Some(true);
+        let unread = feedback_area && crate::screens::feedback::unread(ui.ctx(), app) > 0;
+        let shown = |a: &&Area| {
+            a.group == *group
+                && (a.id != "app" || app_area)
+                && (a.id != "feedback" || feedback_area)
+        };
         for a in AREAS.iter().filter(shown) {
             let rect = Rect::from_min_size(pos2(x, y), vec2(width, 34.0));
             let id = Id::unique(("gelabber-settings-nav", a.id));
             let response = ui.interact(rect, id, Sense::click());
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, (a.label)()));
+            let dot = a.id == "feedback" && unread;
+            response.widget_info(|| {
+                let label = if dot {
+                    format!("{}, {}", (a.label)(), texts::area_feedback_unread())
+                } else {
+                    (a.label)().to_owned()
+                };
+                egui::WidgetInfo::labeled(egui::Role::Link, true, label)
+            });
             let on = a.id == current;
             let hover = eased(
                 ui.ctx(),
@@ -313,6 +338,13 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             };
             Block::single(ui, (a.label)(), style, color)
                 .paint(painter, pos2(rect.left() + 10.0, rect.top() + 6.5));
+            if dot {
+                crate::screens::feedback::dialog::dot(
+                    painter,
+                    pos2(rect.right() - 10.0 - 4.0, rect.center().y),
+                    c.accent,
+                );
+            }
             if response.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
@@ -368,7 +400,19 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
     let ctx = ui.ctx().clone();
     ensure_workspace(app, &ctx);
     apply_preferences(&ctx, app.client);
-    let info = area_of(area);
+    let mut info = area_of(area);
+    // "Feedback" only while the instance takes it; until the status is
+    // known the page waits, as the web's route guard does.
+    if info.id == "feedback" {
+        match crate::screens::feedback::enabled(&ctx, app) {
+            Some(true) => {}
+            Some(false) => info = area_of(None),
+            None => {
+                controls::header(ui, ui.max_rect(), "", None);
+                return;
+            }
+        }
+    }
     // `/settings` goes on to the default area (`<Navigate replace>`).
     if area.is_none_or(|a| a != info.id) {
         app.nav.replace(&format!("/settings/{}", info.id));
@@ -443,6 +487,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             "video" => media::video(&mut child, app, &mut st.media),
             "benachrichtigungen" => notifications::area(&mut child, app, &mut st.notifications),
             "app" => desktop_app::area(&mut child, &mut st.desktop_app),
+            "feedback" => feedback::area(&mut child, app, &mut st.feedback),
             _ => {}
         }
         let used = child.min_rect();

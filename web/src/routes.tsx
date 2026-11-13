@@ -47,6 +47,7 @@ import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
 import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
 import { DiscoverPage } from "./pages/DiscoverPage.tsx";
 import { ensureDirectoryStatus } from "./discover/queries.ts";
+import { ensureFeedbackStatus } from "./feedback/queries.ts";
 import { validateDiscoverSearch } from "./discover/search.ts";
 import { queryClient } from "./queryClient.ts";
 import { placeFromPath, useLastPlace } from "./servers/lastPlace.ts";
@@ -316,6 +317,8 @@ const userSettingsAreaRoute = createRoute({
   path: "/settings/$area",
   beforeLoad: ({ params }) => {
     if (!isSettingsArea(params.area)) throw notFound();
+    // Only Feedback waits: it exists while the instance takes feedback.
+    if (params.area === "feedback") return requireFeedback();
   },
   component: UserSettingsPage,
 });
@@ -362,11 +365,12 @@ const operatorPageRoute = createRoute({
   beforeLoad: ({ params }) => requireOperator(params.page),
   component: function OperatorPageRoute() {
     const { page } = operatorPageRoute.useParams();
-    const { q } = operatorPageRoute.useSearch();
+    const { q, entry } = operatorPageRoute.useSearch();
     return isOperatorPage(page) ? (
       <OperatorArea.Component
         page={page}
         q={q}
+        entry={entry}
         fallback={<MainSkeleton kind="list" />}
       />
     ) : null;
@@ -383,6 +387,22 @@ async function requireDirectory() {
     if (!status.enabled) throw notFound();
   } catch (error) {
     // An API from before the directory has no status route.
+    if (error instanceof ApiError && error.code === "not_found")
+      throw notFound();
+    throw error;
+  }
+}
+
+/** Einstellungen → Feedback exists only while the instance takes feedback. */
+async function requireFeedback() {
+  await ensureSession();
+  const stamp = takeStamp();
+  if (!stamp) return;
+  try {
+    const status = await ensureFeedbackStatus(queryClient, stamp);
+    if (!status.enabled) throw notFound();
+  } catch (error) {
+    // An API from before feedback has no status route.
     if (error instanceof ApiError && error.code === "not_found")
       throw notFound();
     throw error;

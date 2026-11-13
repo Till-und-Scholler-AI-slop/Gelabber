@@ -2,7 +2,7 @@
 // (desktop/parity): people, two servers, channels, messages, a DM, and
 // roles with a channel limited to them, and, when the API runs with
 // API_OPERATOR_EMAILS=lena@example.test (desktop/README.md "Parity"), beta
-// invitations and a report for the "Betrieb" scenes. The directory
+// invitations, a report and feedback for the "Betrieb" and feedback scenes. The directory
 // "Entdecken" needs API_DIRECTORY=true: listings by Ada, Mira, Tom, Jonas and
 // Lena, and Kai's request to join Lena's Wohnzimmer.
 // Run in web/: node scripts/parity/seed.mjs [base-url] [out.json]
@@ -212,6 +212,43 @@ if (operator) {
     reason: "spam",
     details: "Im Kanal allgemein werden ständig Links zu einem Gewinnspiel gepostet.",
   });
+}
+
+// Feedback (v0.10), for the feedback scenes: Tom's problem with Lena's reply
+// (Tom has one unread reply), Jonas' idea without one, and Mira's praise that
+// Lena marked done. Only when feedback is on (API_OPERATOR_EMAILS names Lena).
+const feedbackStatus = await tom.call("GET", "/feedback/status");
+if (!feedbackStatus.enabled) {
+  console.warn(
+    "warning: feedback is off (API_OPERATOR_EMAILS=lena@example.test); seeded no feedback",
+  );
+} else {
+  const context = (page) => ({
+    client: "web",
+    os: "linux",
+    app_version: "0.10.0",
+    locale: "de",
+    page,
+  });
+  const problem = await tom.call("POST", "/feedback", {
+    kind: "problem",
+    text: "Beim Bildschirm teilen bleibt das Vorschaubild schwarz.",
+    context: context(`/s/${home.id}/c/${sofa.id}`),
+  });
+  await lena.call("POST", `/operator/feedback/${problem.id}/messages`, {
+    text: "Danke, Tom! Welchen Browser nutzt du?",
+  });
+  await jonas.call("POST", "/feedback", {
+    kind: "idea",
+    text: "Eine Abstimmung im Chat wäre praktisch, um den Spieleabend zu planen.",
+    context: context(`/s/${home.id}/c/${g}`),
+  });
+  const praise = await mira.call("POST", "/feedback", {
+    kind: "praise",
+    text: "Die Sprachqualität im Sofa ist richtig gut geworden!",
+    context: context(`/s/${home.id}/c/${sofa.id}`),
+  });
+  await lena.call("POST", `/operator/feedback/${praise.id}/done`);
 }
 
 // Entdecken (v0.10), as in directory.png: Ada's, Mira's and Tom's servers

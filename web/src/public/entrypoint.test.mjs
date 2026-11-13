@@ -4,6 +4,7 @@
 /* global URL, process */
 import { execFileSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -82,6 +83,13 @@ function publish(values = {}, texts = {}) {
     json: JSON.parse(read("public-pages.json")),
     map: existsSync(map) ? readFileSync(map, "utf8") : null,
   };
+}
+
+/** A copy of the templates, to break one of them. */
+function brokenTemplates() {
+  const broken = mkdtempSync(join(root, "broken-templates-"));
+  cpSync(templates, broken, { recursive: true });
+  return broken;
 }
 
 /** Nothing of the template's format is left on a published page. */
@@ -334,18 +342,14 @@ describe.skipIf(process.platform === "win32")("public pages at start", () => {
 
   it("links no legal page that could not be written", () => {
     // A broken privacy template makes its render fail after the flags are set.
-    const broken = mkdtempSync(join(root, "broken-templates-"));
-    for (const lang of ["de", "en"]) {
-      mkdirSync(join(broken, lang));
-      for (const file of readdirSync(join(templates, lang)))
-        writeFileSync(
-          join(broken, lang, file),
-          readFileSync(join(templates, lang, file)),
-        );
-    }
+    const broken = brokenTemplates();
     writeFileSync(join(broken, "en", "privacy.html"), "<!--end:X-->\n");
     const result = publish(
-      { ...OPERATOR, GELABBER_LANDING: "true", GELABBER_PUBLIC_TEMPLATES: broken },
+      {
+        ...OPERATOR,
+        GELABBER_LANDING: "true",
+        GELABBER_PUBLIC_TEMPLATES: broken,
+      },
       { "privacy.en.html": "<p>p</p>", "terms.en.html": "<p>t</p>" },
     );
     expect(result.log).toMatch(/cannot write the privacy page/);
@@ -483,5 +487,150 @@ describe.skipIf(process.platform === "win32")("public pages at start", () => {
         encoding: "utf8",
       }),
     ).toMatch(/cannot write/);
+  });
+  describe("the feedback form (#542)", () => {
+    const ON = {
+      GELABBER_LANDING: "true",
+      GELABBER_ACCOUNT_MAIL: "on",
+      GELABBER_FEEDBACK_OPERATORS: "on",
+    };
+    const FEEDBACK_FILES = [
+      "de/feedback.html",
+      "de/feedback/abgelaufen.html",
+      "de/feedback/danke.html",
+      "de/feedback/fehler.html",
+      "de/feedback/gesendet.html",
+      "en/feedback.html",
+      "en/feedback/error.html",
+      "en/feedback/expired.html",
+      "en/feedback/sent.html",
+      "en/feedback/thanks.html",
+    ];
+    const written = (result) =>
+      FEEDBACK_FILES.filter((file) => result.read(file) !== null);
+
+    it("is published with the landing page, account mail and operators", () => {
+      const result = publish(
+        { ...ON, ...OPERATOR, APP_PUBLIC_URL: "https://gelabber.example.org" },
+        { "privacy.de.html": "<p>p</p>" },
+      );
+      expect(written(result)).toEqual(FEEDBACK_FILES);
+      for (const file of FEEDBACK_FILES) expectFilled(result.read(file));
+      // The form links the privacy page while it is published.
+      expect(result.read("de/feedback.html")).toContain(
+        '<a href="/de/datenschutz">Datenschutz</a>',
+      );
+      expect(result.read("en/feedback/sent.html")).toContain(
+        '<a href="/en/feedback">send the form again</a>',
+      );
+      expect(result.log).not.toMatch(/feedback form is not published/);
+      expect(result.log.trim().split("\n").at(-1)).toMatch(
+        /published: imprint privacy feedback$/,
+      );
+      // public-pages.json and the sitemap stay as they were.
+      expect(Object.keys(result.json)).toEqual(["version", "landing", "legal"]);
+      expect(result.read("sitemap.xml")).not.toContain("feedback");
+    });
+
+    it("is linked from the landing page and every legal page while it is published", () => {
+      const on = publish(
+        { ...ON, ...OPERATOR },
+        { "terms.en.html": "<p>t</p>" },
+      );
+      for (const [file, href] of [
+        ["de/index.html", "/de/feedback"],
+        ["en/index.html", "/en/feedback"],
+        ["de/impressum.html", "/de/feedback"],
+        ["en/terms.html", "/en/feedback"],
+      ])
+        expect(on.read(file), file).toContain(`<a href="${href}">Feedback</a>`);
+      expect(on.read("de/feedback.html")).not.toContain("/de/datenschutz");
+
+      const off = publish(
+        { ...ON, ...OPERATOR, GELABBER_FEEDBACK_OPERATORS: "" },
+        { "terms.en.html": "<p>t</p>" },
+      );
+      expect(written(off)).toEqual([]);
+      for (const file of off.files)
+        if (file.endsWith(".html"))
+          expect(off.read(file), file).not.toContain("/feedback");
+    });
+
+    it.each([
+      ["GELABBER_LANDING", "the landing page is off"],
+      ["GELABBER_ACCOUNT_MAIL", "GELABBER_ACCOUNT_MAIL is empty"],
+      ["GELABBER_FEEDBACK_OPERATORS", "GELABBER_FEEDBACK_OPERATORS is empty"],
+    ])("is not published without %s, and says why", (key, reason) => {
+      const result = publish({ ...ON, [key]: " " });
+      expect(written(result)).toEqual([]);
+      expect(result.log).toContain(
+        `the feedback form is not published: ${reason} (deploy/README.md, "Public pages")`,
+      );
+      expect(result.log).not.toMatch(/published:.*feedback/);
+    });
+
+    it("names every missing part at once", () => {
+      expect(publish().log).toContain(
+        "the feedback form is not published: the landing page is off, GELABBER_ACCOUNT_MAIL is empty, GELABBER_FEEDBACK_OPERATORS is empty (",
+      );
+    });
+
+    it("is not published while a template is missing", () => {
+      const broken = brokenTemplates();
+      rmSync(join(broken, "en", "feedback", "thanks.html"));
+      const result = publish({ ...ON, GELABBER_PUBLIC_TEMPLATES: broken });
+      expect(written(result)).toEqual([]);
+      expect(result.log).toMatch(
+        /the feedback form is not published: its templates are missing in /,
+      );
+      expect(result.read("de/index.html")).not.toContain("/de/feedback");
+    });
+
+    it("is dropped, and unlinked, when it cannot be written", () => {
+      const broken = brokenTemplates();
+      writeFileSync(
+        join(broken, "de", "feedback", "danke.html"),
+        "<!--end:X-->\n",
+      );
+      const result = publish({
+        ...ON,
+        ...OPERATOR,
+        GELABBER_PUBLIC_TEMPLATES: broken,
+      });
+      expect(result.log).toMatch(/cannot write the feedback form/);
+      expect(written(result)).toEqual([]);
+      expect(result.files).not.toContain("de/feedback");
+      for (const file of result.files)
+        expect(result.read(file), file).not.toContain("/feedback");
+    });
+
+    it("is dropped, and unlinked, when the landing page cannot be written", () => {
+      const broken = brokenTemplates();
+      writeFileSync(join(broken, "en", "index.html"), "<!--end:X-->\n");
+      const result = publish({
+        ...ON,
+        ...OPERATOR,
+        GELABBER_PUBLIC_TEMPLATES: broken,
+      });
+      expect(result.log).toMatch(/cannot write the landing page/);
+      expect(result.files).not.toContain("de/index.html");
+      expect(written(result)).toEqual([]);
+      for (const file of result.files)
+        expect(result.read(file), file).not.toContain("/feedback");
+      expect(result.log.trim().split("\n").at(-1)).toMatch(
+        /published: imprint$/,
+      );
+    });
+
+    it("keeps crawlers off the form while the landing page is on", () => {
+      const robots = publish(ON).read("robots.txt").split("\n");
+      expect(robots).toContain("Disallow: /de/feedback");
+      expect(robots).toContain("Disallow: /en/feedback");
+      expect(robots).not.toContain("Allow: /de/feedback");
+      // Also when the form itself is off.
+      expect(
+        publish({ GELABBER_LANDING: "true" }).read("robots.txt"),
+      ).toContain("Disallow: /en/feedback\n");
+    });
   });
 });

@@ -7,7 +7,7 @@ name: gelabber
 
 services:
   proxy:
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.8-alpine
     ports:
       - "${GELABBER_HTTP_BIND:-127.0.0.1}:${GELABBER_HTTP_PORT:-80}:80"
     environment:
@@ -23,13 +23,13 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.10.0}
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.10.1}
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.10.0
+        - gelabber/web:v0.10.1
     environment:
       # The same values as the API's: the app shell's Content-Security-Policy
       # allows uploads and attachments on this origin only (#288), or on the
@@ -51,6 +51,10 @@ services:
       GELABBER_SOURCE_URL: ${GELABBER_SOURCE_URL:-}
       GELABBER_OPERATOR_GUIDE_URL: ${GELABBER_OPERATOR_GUIDE_URL:-}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
+      # Whether the API sends account mail and names operators: the public
+      # feedback form needs both (deploy/README.md, "Feedback").
+      GELABBER_ACCOUNT_MAIL: ${SMTP_HOST:+on}
+      GELABBER_FEEDBACK_OPERATORS: ${API_OPERATOR_EMAILS:+on}
     volumes:
       - ./legal:/etc/gelabber/legal:ro
     expose:
@@ -58,13 +62,13 @@ services:
     restart: unless-stopped
 
   api:
-    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.10.0}
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.10.1}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: backend/api/Dockerfile
       tags:
-        - gelabber/api:v0.10.0
+        - gelabber/api:v0.10.1
     environment:
       API_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see deploy/README.md)}@postgres:5432/${POSTGRES_DB:-gelabber}
@@ -156,13 +160,13 @@ services:
     restart: unless-stopped
 
   media:
-    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.10.0}
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.10.1}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: backend/media/Dockerfile
       tags:
-        - gelabber/media:v0.10.0
+        - gelabber/media:v0.10.1
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
@@ -230,7 +234,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:8.10.1-alpine
+    image: redis:8.10.2-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
       - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"

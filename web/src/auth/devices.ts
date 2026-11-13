@@ -77,7 +77,7 @@ export async function signOutDevice(
 }
 
 // Product and system names are the same in every language.
-const OS_NAMES: Record<Exclude<DeviceOs, "other">, string> = {
+export const OS_NAMES: Record<Exclude<DeviceOs, "other">, string> = {
   linux: "Linux",
   windows: "Windows",
   macos: "macOS",

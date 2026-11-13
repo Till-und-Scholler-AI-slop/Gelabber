@@ -21,6 +21,8 @@ export type FrameProps = {
   defaultPath?: string;
   /** A picture for link previews, as a path. */
   image?: string;
+  /** Keeps search engines from listing the page (the feedback pages). */
+  noindex?: boolean;
   children: ReactNode;
 };
 
@@ -34,6 +36,7 @@ function head({
   paths,
   defaultPath,
   image,
+  noindex,
 }: Omit<FrameProps, "children">): string {
   const origin = value(KEY.publicUrl);
   const tag = (name: string, attributes: Record<string, string>) =>
@@ -65,6 +68,7 @@ function head({
     tag("meta", { name: "theme-color", content: defaults.dark.background }),
     `<title>${escapeHtml(title)}</title>`,
     tag("meta", { name: "description", content: description }),
+    ...(noindex ? [tag("meta", { name: "robots", content: "noindex" })] : []),
     tag("link", {
       rel: "icon",
       type: "image/png",

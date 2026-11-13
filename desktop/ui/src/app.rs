@@ -695,7 +695,10 @@ impl GelabberApp {
                 self.toasts.notify(text);
             }
         }
-        self.toasts.show(ui, !is_workspace(self.nav.route()));
+        // A toast's action ("Ansehen") opens its page.
+        if let Some(href) = self.toasts.show(ui, !is_workspace(self.nav.route())) {
+            self.nav.navigate(&href);
+        }
         crate::widgets::opener::restore(&ctx);
     }
 }

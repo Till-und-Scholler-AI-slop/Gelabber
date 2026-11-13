@@ -8,7 +8,7 @@ use gelabber_client::ApiError;
 use crate::icons::{self, Icon};
 use crate::text::{self, Block};
 use crate::theme::{Theme, corner};
-use crate::widgets::IconButton;
+use crate::widgets::{Button, IconButton};
 
 /// `INFO_MS`, `ERROR_MS`.
 const INFO: f64 = 4.0;
@@ -27,6 +27,8 @@ struct Toast {
     counted: Option<f64>,
     hover: bool,
     focus: bool,
+    /// A button such as "Ansehen": its label and the address it opens.
+    action: Option<(String, String)>,
 }
 
 impl Toast {
@@ -101,12 +103,23 @@ pub struct Toasts {
 impl Toasts {
     /// `notify(text)`: an info toast.
     pub fn notify(&mut self, text: impl Into<String>) {
-        self.push(text.into(), false);
+        self.push(text.into(), false, None);
+    }
+
+    /// `notify(text, {action})`: an info toast with a button that opens
+    /// `href` in the app (the web's action navigates).
+    pub fn notify_action(
+        &mut self,
+        text: impl Into<String>,
+        label: impl Into<String>,
+        href: impl Into<String>,
+    ) {
+        self.push(text.into(), false, Some((label.into(), href.into())));
     }
 
     /// `notifyError`: an error toast with the warning icon.
     pub fn error(&mut self, text: impl Into<String>) {
-        self.push(text.into(), true);
+        self.push(text.into(), true, None);
     }
 
     /// `notifyError(error, failed)`: `failed` names the change that did not
@@ -122,12 +135,14 @@ impl Toasts {
         }
     }
 
-    fn push(&mut self, text: String, error: bool) {
+    fn push(&mut self, text: String, error: bool, action: Option<(String, String)>) {
         // A burst of the same notice shows once; a fourth error is dropped.
-        if self
-            .items
-            .iter()
-            .any(|t| t.text == text && t.error == error)
+        // One with an action is its own.
+        if action.is_none()
+            && self
+                .items
+                .iter()
+                .any(|t| t.text == text && t.error == error && t.action.is_none())
         {
             return;
         }
@@ -143,6 +158,7 @@ impl Toasts {
             counted: None,
             hover: false,
             focus: false,
+            action,
         });
     }
 
@@ -177,14 +193,15 @@ impl Toasts {
     }
 
     /// Paints the stack; `outside_workspace` puts it 16px over the bottom
-    /// (auth pages), else 12px.
-    pub fn show(&mut self, ui: &Ui, outside_workspace: bool) {
+    /// (auth pages), else 12px. Returns the address of an action pressed
+    /// this frame, for the app to open.
+    pub fn show(&mut self, ui: &Ui, outside_workspace: bool) -> Option<String> {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
         self.advance(now);
         if self.items.is_empty() {
             set_space(&ctx, 0.0);
-            return;
+            return None;
         }
         let theme = Theme::of(&ctx);
         let c = theme.c;
@@ -199,6 +216,7 @@ impl Toasts {
         };
         let right = composer.map_or(screen.right(), |r| r.right()) - 16.0;
         let mut closed = None;
+        let mut acted = None;
         let mut holds = Vec::new();
         let mut span: Option<(f32, f32)> = None;
         // Info toasts sit above the error toasts.
@@ -222,7 +240,14 @@ impl Toasts {
                     } else {
                         13.0
                     };
-                    let text_w = width - left_pad - 12.0 - 32.0 - 9.0;
+                    // `.ui-toast__action`: a small ghost button in the accent's
+                    // text colour, 12px before the close button.
+                    let action = toast.action.as_ref().map(|(label, href)| {
+                        let button = Button::new(label).ghost().small().text_color(c.accent_text);
+                        (button.natural_width(ui), label, href)
+                    });
+                    let action_w = action.as_ref().map_or(0.0, |(w, _, _)| w + 12.0);
+                    let text_w = width - left_pad - 12.0 - 32.0 - 9.0 - action_w;
                     let block = Block::wrapped(ui, &toast.text, text::BODY, c.text, text_w);
                     // The 32px close button overhangs by 6px top and bottom.
                     let height = block.height().max(32.0 - 12.0) + 24.0 + 2.0;
@@ -301,9 +326,31 @@ impl Toasts {
                     if button.clicked() {
                         closed = Some(toast.id);
                     }
-                    // The close button covers part of the card: either holds it.
-                    let hover = card.contains_pointer() || button.hovered();
-                    holds.push((toast.id, hover, button.has_focus()));
+                    let mut hover = button.hovered();
+                    let mut focus = button.has_focus();
+                    if let Some((w, label, href)) = action {
+                        let at = Rect::from_min_size(
+                            pos2(close.left() - 12.0 - w, rect.center().y - 16.0),
+                            Vec2::new(w, 32.0),
+                        );
+                        let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(at));
+                        let pressed = slot.add(
+                            Button::new(label)
+                                .ghost()
+                                .small()
+                                .width(w)
+                                .text_color(c.accent_text),
+                        );
+                        if pressed.clicked() {
+                            acted = Some(href.clone());
+                            closed = Some(toast.id);
+                        }
+                        hover |= pressed.hovered();
+                        focus |= pressed.has_focus();
+                    }
+                    // The buttons cover part of the card: any of them holds it.
+                    let hover = card.contains_pointer() || hover;
+                    holds.push((toast.id, hover, focus));
                     span = Some(span.map_or((rect.top(), rect.bottom()), |(t, b)| {
                         (t.min(rect.top()), b.max(rect.bottom()))
                     }));
@@ -331,6 +378,7 @@ impl Toasts {
         {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(next.max(0.0)));
         }
+        acted
     }
 }
 
@@ -416,6 +464,35 @@ mod tests {
         assert_eq!(toasts.borrow().texts().len(), 1, "runs on where it stopped");
         harness.run_steps(10);
         assert!(toasts.borrow().texts().is_empty());
+    }
+
+    /// `notify(…, {action})`: the action's button closes the toast and
+    /// hands its address to the app; a toast with an action is its own.
+    #[test]
+    fn an_action_opens_its_page_and_closes_the_toast() {
+        use egui_kittest::kittest::Queryable as _;
+        let toasts = std::cell::RefCell::new(Toasts::default());
+        let opened = std::cell::RefCell::new(None);
+        toasts.borrow_mut().notify("Danke!");
+        toasts
+            .borrow_mut()
+            .notify_action("Danke!", "Ansehen", "/settings/feedback");
+        assert_eq!(toasts.borrow().texts(), ["Danke!", "Danke!"]);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(800.0, 400.0))
+            .with_step_dt(0.1)
+            .build_ui(|ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), Theme::dark());
+                if let Some(href) = toasts.borrow_mut().show(ui, true) {
+                    *opened.borrow_mut() = Some(href);
+                }
+            });
+        harness.run_steps(2);
+        harness.get_by_label("Ansehen").click();
+        harness.run_steps(2);
+        assert_eq!(opened.borrow().as_deref(), Some("/settings/feedback"));
+        assert_eq!(toasts.borrow().texts(), ["Danke!"]);
     }
 
     #[test]

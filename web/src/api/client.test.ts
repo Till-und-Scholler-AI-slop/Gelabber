@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApiError,
+  REQUEST_TIMEOUT_MS,
   api,
   getCsrfToken,
   serverNow,
@@ -305,6 +306,23 @@ describe("api client", () => {
       expect((late.reason as DOMException).name).toBe("TimeoutError");
     } finally {
       if (any) Object.defineProperty(AbortSignal, "any", any);
+    }
+  });
+
+  it("takes timeoutMs instead of the default timeout", async () => {
+    install(() => jsonResponse(200, { ok: true }));
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await api("/me");
+      expect(timeout).toHaveBeenLastCalledWith(REQUEST_TIMEOUT_MS);
+      await api("/feedback/images", {
+        method: "POST",
+        body: new Blob(["x"], { type: "image/png" }),
+        timeoutMs: 180_000,
+      });
+      expect(timeout).toHaveBeenLastCalledWith(180_000);
+    } finally {
+      timeout.mockRestore();
     }
   });
 

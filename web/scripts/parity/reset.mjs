@@ -5,7 +5,9 @@
 // (say.mjs theme), notification settings, the language (a scene's
 // `locale`) and Google sign-in (say.mjs oidc-*) go back to the seeded ones too,
 // Lena's and Mira's signed-in devices to the reference's fixed ones, and no
-// fixture account has a data export (say.mjs export).
+// fixture account has a data export (say.mjs export). Feedback goes back to the
+// seeded entries and threads: anything a scene added is deleted, and Tom's
+// reply is unread again.
 // Run in web/: node scripts/parity/reset.mjs
 // GELABBER_PARITY_PSQL is the psql command line (default: the gnative-pg
 // container of the local stack).
@@ -24,6 +26,8 @@ const uuid = (v) => {
 };
 const lena = uuid(fixture.users.lena.id);
 const mira = uuid(fixture.users.mira.id);
+const tom = uuid(fixture.users.tom.id);
+const jonas = uuid(fixture.users.jonas.id);
 const allgemein = uuid(fixture.servers.home.channels.allgemein);
 const people = Object.values(fixture.users)
   .map((u) => uuid(u.id))
@@ -62,5 +66,24 @@ values (sha256(convert_to('parity-lena-firefox', 'UTF8')), ${lena}, now() - inte
         now() - interval '12 days', now() + interval '14 days', 'desktop', 'windows');
 -- A data export (say.mjs export); the trigger queues its archive key.
 delete from account_exports where user_id in (${people});
+-- Feedback (seed.mjs): Tom's problem with Lena's one reply, unread; Jonas'
+-- idea; Mira's praise, done. Anything else a scene added goes.
+delete from feedback where not ((user_id = ${tom} and kind = 'problem')
+                             or (user_id = ${jonas} and kind = 'idea')
+                             or (user_id = ${mira} and kind = 'praise'));
+delete from feedback_messages m using feedback f
+where m.feedback_id = f.id
+  and (f.user_id <> ${tom}
+       or m.id <> (select id from feedback_messages where feedback_id = f.id
+                   order by created_at, id limit 1));
+update feedback f set last_activity_at = coalesce(
+  (select max(created_at) from feedback_messages where feedback_id = f.id), f.created_at);
+update feedback f set status = 'open', done_at = null, done_by = null,
+  person_unread_since = (select min(created_at) from feedback_messages
+                         where feedback_id = f.id and author_kind = 'operator')
+where user_id in (${tom}, ${jonas});
+update feedback set status = 'done', done_at = coalesce(done_at, last_activity_at),
+  done_by = coalesce(done_by, ${lena}), person_unread_since = null
+where user_id = ${mira};
 `;
 execFileSync(psql[0], psql.slice(1), { input: sql, stdio: ["pipe", "inherit", "inherit"] });

@@ -15,7 +15,14 @@ use crate::widgets::Button;
 pub const DEFAULT_PAGE: &str = "server";
 
 /// The area's pages (`OPERATOR_PAGES` in web/src/operator/areas.ts).
-pub const PAGES: [&str; 5] = ["einladungen", "konten", "server", "meldungen", "auslastung"];
+pub const PAGES: [&str; 6] = [
+    "einladungen",
+    "konten",
+    "server",
+    "meldungen",
+    "feedback",
+    "auslastung",
+];
 
 /// `isOperatorPage`: `/betrieb` itself, or one of [`PAGES`]; any other
 /// page is "not found", as on the web.
@@ -49,11 +56,24 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, page: Rect, path: &str) {
 
 #[cfg(test)]
 mod tests {
-    /// `/betrieb` and its five pages have the hand-off card; any other
+    /// `/betrieb` and its six pages have the hand-off card; any other
     /// page is "not found", as `requireOperator` answers on the web.
     #[test]
     fn only_the_areas_pages_are_known() {
+        assert_eq!(
+            super::PAGES,
+            [
+                "einladungen",
+                "konten",
+                "server",
+                "meldungen",
+                "feedback",
+                "auslastung"
+            ]
+        );
         assert!(super::is_page(None));
+        // The operator mail's link (#542).
+        assert!(super::is_page(Some("feedback")));
         for page in super::PAGES {
             assert!(super::is_page(Some(page)), "{page}");
         }

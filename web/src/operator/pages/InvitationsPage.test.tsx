@@ -65,6 +65,7 @@ const overview = (overrides: Partial<OperatorOverview> = {}) =>
     registration: "invitation",
     mail: true,
     open_reports: 0,
+    open_feedback: 0,
     ...overrides,
   }) satisfies OperatorOverview;
 

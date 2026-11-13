@@ -50,6 +50,13 @@ pub fn dialog_shown(ctx: &Context, layer: LayerId) {
     });
 }
 
+/// A dialog asked for from a menu item that goes away with its menu: focus
+/// goes back to `id` (the menu's button) when the dialog closes.
+pub fn opened_from(ctx: &Context, id: Id) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(clicked_key(), (id, frame + 1)));
+}
+
 /// At the end of a frame: a dialog not drawn in it has closed, and focus
 /// left inside it goes back to its opener. Closed by a key, the opener
 /// shows its ring, as `:focus-visible` does after a keyboard close.

@@ -1438,6 +1438,203 @@ pub enum AccountDeletion {
     OwnsServers(Vec<OwnedServer>),
 }
 
+// ------------------------------------------------------------------ feedback
+
+/// `GET /api/feedback/status` (#542). Off, `unread` is 0; an API without
+/// the routes counts as off ([`FeedbackStatus::OFF`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedbackStatus {
+    pub enabled: bool,
+    /// The caller's entries with an operator reply they have not seen.
+    #[serde(default)]
+    pub unread: u32,
+}
+
+impl FeedbackStatus {
+    pub const OFF: Self = Self {
+        enabled: false,
+        unread: 0,
+    };
+}
+
+/// Idee, Problem or Lob.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FeedbackKind {
+    Idea,
+    Problem,
+    Praise,
+}
+
+impl FeedbackKind {
+    /// In the order of the dialog's chips (web `FEEDBACK_KINDS`).
+    pub const ALL: [FeedbackKind; 3] = [Self::Idea, Self::Problem, Self::Praise];
+}
+
+/// Which client sent an entry; `form` is the public form's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FeedbackClient {
+    Web,
+    Desktop,
+    Form,
+}
+
+/// The longest `page` the API takes (web `PAGE_MAX`).
+pub const FEEDBACK_PAGE_MAX: usize = 300;
+/// The longest text of an entry or a reply, in characters.
+pub const FEEDBACK_TEXT_MAX: usize = 4000;
+/// The API's `IMAGE_MAX_BYTES`: 5 MiB.
+pub const FEEDBACK_IMAGE_MAX_BYTES: usize = 5 * 1024 * 1024;
+
+/// What a client sends along with an entry, and nothing else.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedbackContext {
+    /// `desktop` from this app.
+    pub client: FeedbackClient,
+    pub os: DeviceOs,
+    pub app_version: String,
+    /// `de` or `en`.
+    pub locale: String,
+    /// The path, without query and fragment, at most
+    /// [`FEEDBACK_PAGE_MAX`] characters.
+    pub page: String,
+}
+
+impl FeedbackContext {
+    /// What this app sends along from the route `path` it shows, in the
+    /// interface's language right now.
+    pub fn desktop(path: &str) -> Self {
+        Self {
+            client: FeedbackClient::Desktop,
+            os: DeviceOs::THIS_BUILD,
+            app_version: env!("CARGO_PKG_VERSION").to_owned(),
+            locale: gelabber_i18n::get().as_str().to_owned(),
+            page: feedback_page(path),
+        }
+    }
+}
+
+/// A path without query and fragment, cut to what the API takes (web
+/// `feedbackPage`); anything that is not a path is `/`.
+pub fn feedback_page(path: &str) -> String {
+    let bare = path.split(['?', '#']).next().unwrap_or_default();
+    let page = if bare.starts_with('/') && !bare.starts_with("//") {
+        bare
+    } else {
+        "/"
+    };
+    page.chars().take(FEEDBACK_PAGE_MAX).collect()
+}
+
+impl DeviceOs {
+    /// The system this build is for, as `USER_AGENT` names it.
+    pub const THIS_BUILD: Self = if cfg!(target_os = "windows") {
+        Self::Windows
+    } else if cfg!(target_os = "macos") {
+        Self::Macos
+    } else {
+        Self::Linux
+    };
+}
+
+/// The context as an entry carries it back: `os`, `app_version` and
+/// `page` are `null` only for the public form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedbackEntryContext {
+    pub client: FeedbackClient,
+    #[serde(default)]
+    pub os: Option<DeviceOs>,
+    #[serde(default)]
+    pub app_version: Option<String>,
+    pub locale: String,
+    #[serde(default)]
+    pub page: Option<String>,
+}
+
+/// An entry's image, read through its own route ([`FeedbackImage::url`]
+/// is under `/api`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedbackImage {
+    pub url: String,
+    pub content_type: String,
+    pub size: u64,
+}
+
+/// Who wrote a message. Operators stay unnamed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FeedbackAuthor {
+    You,
+    Operators,
+}
+
+/// One message of a thread.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedbackMessage {
+    pub id: Uuid,
+    pub from: FeedbackAuthor,
+    pub text: String,
+    pub created_at: Timestamp,
+    /// An operator reply the person had not seen when the list was read.
+    #[serde(default)]
+    pub new: bool,
+}
+
+/// Whether the operators still work on an entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FeedbackState {
+    Open,
+    Done,
+}
+
+/// An entry as its sender sees it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedbackEntry {
+    pub id: Uuid,
+    pub kind: FeedbackKind,
+    pub status: FeedbackState,
+    pub text: String,
+    pub created_at: Timestamp,
+    pub last_activity_at: Timestamp,
+    #[serde(default)]
+    pub image: Option<FeedbackImage>,
+    pub context: FeedbackEntryContext,
+    #[serde(default)]
+    pub unread: bool,
+    #[serde(default, deserialize_with = "lenient_vec")]
+    pub messages: Vec<FeedbackMessage>,
+}
+
+/// `GET /api/feedback?offset=`: [`FEEDBACK_PAGE_SIZE`] entries a page,
+/// latest activity first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedbackPage {
+    #[serde(deserialize_with = "lenient_list")]
+    pub entries: Vec<FeedbackEntry>,
+    pub total: u64,
+}
+
+/// Entries per page of `GET /api/feedback`.
+pub const FEEDBACK_PAGE_SIZE: u32 = 20;
+
+/// `POST /api/feedback`. `image` is the id of a staged upload.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NewFeedback {
+    pub kind: FeedbackKind,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<Uuid>,
+    pub context: FeedbackContext,
+}
+
+/// `POST /api/feedback/images`: the staged upload's id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageStaged {
+    pub image: Uuid,
+}
+
 // ------------------------------------------------------------------ gateway
 
 /// Presence as the gateway spells it.

@@ -25,6 +25,8 @@ export const KEY = {
   imprint: "PAGE_IMPRINT",
   privacy: "PAGE_PRIVACY",
   terms: "PAGE_TERMS",
+  // Set while the public feedback form is published (#542).
+  feedback: "PAGE_FEEDBACK",
   // The language of the operator's text on this page, and whether it is
   // the other language's because this one has none.
   fragmentLang: "FRAGMENT_LANG",

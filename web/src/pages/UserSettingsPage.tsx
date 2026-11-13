@@ -19,6 +19,7 @@ import { IconButton } from "../components/ui/IconButton.tsx";
 import { SkeletonRows } from "../components/ui/Skeleton.tsx";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { UserPanel } from "../components/UserPanel.tsx";
+import { useFeedbackStatus } from "../feedback/queries.ts";
 import { useT } from "../i18n/catalog.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
 import { useInstallation } from "../pwa/install.ts";
@@ -52,7 +53,13 @@ function SettingsNavigation({
   list?: boolean;
 }) {
   const t = useT(settings);
-  const areas = visibleSettingsAreas(useInstallable(), current);
+  const feedback = useFeedbackStatus().data;
+  const areas = visibleSettingsAreas(
+    useInstallable(),
+    current,
+    feedback?.enabled === true,
+  );
+  const unread = feedback?.enabled === true && feedback.unread > 0;
   return (
     <nav
       className={list ? "settings-nav settings-nav--list" : "settings-nav"}
@@ -75,6 +82,15 @@ function SettingsNavigation({
                     className="settings-nav-link"
                   >
                     <span>{t(`area.${area.id}.label`)}</span>
+                    {area.id === "feedback" && unread ? (
+                      <>
+                        <span className="sr-only">
+                          {", "}
+                          {t("area.feedback.unread")}
+                        </span>
+                        <span className="unread-dot" aria-hidden="true" />
+                      </>
+                    ) : null}
                     {list ? <ChevronIcon size={18} /> : null}
                   </Link>
                 </li>

@@ -20,6 +20,10 @@ export const settings = defineCatalog(
     "area.profilkarte.description": "So sehen dich andere.",
     "area.konto.label": "Sicherheit",
     "area.konto.description": "Anmeldung, Geräte und Kontodaten.",
+    "area.feedback.label": "Feedback",
+    "area.feedback.description":
+      "Was du geschickt hast und die Antworten darauf.",
+    "area.feedback.unread": "neue Antwort",
     "area.darstellung.label": "Darstellung",
     "area.darstellung.description":
       "Sprache, Farbschema, Textgröße und Bewegung.",
@@ -160,6 +164,9 @@ export const settings = defineCatalog(
     "area.profilkarte.description": "How others see you.",
     "area.konto.label": "Security",
     "area.konto.description": "Sign-in, devices and account data.",
+    "area.feedback.label": "Feedback",
+    "area.feedback.description": "What you sent and the replies to it.",
+    "area.feedback.unread": "new reply",
     "area.darstellung.label": "Appearance",
     "area.darstellung.description":
       "Language, colour scheme, text size and motion.",

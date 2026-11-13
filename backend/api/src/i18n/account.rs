@@ -93,6 +93,8 @@ pub fn export_readme(locale: Locale) -> &'static str {
              messages/dms/           deine Direktnachrichten, je Unterhaltung\n\
              reactions.json          deine Reaktionen\n\
              files/                  die Dateien, die du gesendet hast\n\
+             feedback.json / feedback/\n\
+             \x20                       dein Feedback und die Antworten darauf, mit Bildern\n\
              \n\
              Nachrichten anderer Personen sind nicht enthalten. Die JSON-Dateien sind\n\
              UTF-8, alle Zeiten sind UTC (RFC 3339).\n"
@@ -110,6 +112,8 @@ pub fn export_readme(locale: Locale) -> &'static str {
              messages/dms/           your direct messages, per conversation\n\
              reactions.json          your reactions\n\
              files/                  the files you sent\n\
+             feedback.json / feedback/\n\
+             \x20                       your feedback and the replies to it, with images\n\
              \n\
              Other people's messages are not included. The JSON files are UTF-8, and\n\
              all times are UTC (RFC 3339).\n"
@@ -179,6 +183,8 @@ mod tests {
                 "messages/dms/",
                 "reactions.json",
                 "files/",
+                "feedback.json",
+                "feedback/",
                 "RFC 3339",
             ] {
                 assert!(readme.contains(part), "{locale:?} {part}");

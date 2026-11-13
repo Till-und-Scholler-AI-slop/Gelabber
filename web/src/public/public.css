@@ -1,4 +1,4 @@
-/* The public landing and legal pages (render.tsx). Static pages without
+/* The public landing, legal and feedback pages (render.tsx). Static pages without
    script, so no theme runtime: always the default dark theme "Gelabber
    Dunkel". The colours below are its values (theme/defaults.json through
    themeVariables() in theme/model.ts); render.test.tsx holds them equal.
@@ -426,6 +426,116 @@ a {
   font-weight: 600;
 }
 
+/* The feedback form and its answer pages (FeedbackPage.tsx): one column
+   under the legal pages' top bar. */
+.feedback-form {
+  max-width: 560px;
+  padding-block: 56px 96px;
+}
+.feedback-form h1 {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+.feedback-lead {
+  margin-top: var(--lr-space-3);
+  color: var(--lr-muted);
+}
+.feedback-lead a,
+.feedback-hint a {
+  color: var(--lr-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.feedback-form form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--lr-space-6);
+  margin-top: var(--lr-space-8);
+}
+.feedback-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lr-space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.feedback-kinds legend,
+.feedback-field label {
+  margin-bottom: var(--lr-space-2);
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.feedback-kinds label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  min-height: 36px;
+  padding: 0 14px 0 var(--lr-space-3);
+  border: 1px solid var(--lr-border-strong);
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.feedback-kinds label:hover {
+  background: var(--lr-hover);
+}
+.feedback-kinds label:has(:checked) {
+  border-color: var(--lr-accent);
+  background: var(--lr-selected);
+}
+.feedback-kinds input {
+  margin: 0;
+  accent-color: var(--lr-accent);
+}
+.feedback-field {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+}
+.feedback-field textarea,
+.feedback-field input {
+  width: 100%;
+  padding: 10px var(--lr-space-3);
+  border: 1px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-rail);
+  color: var(--lr-text);
+  font: inherit;
+}
+.feedback-field textarea {
+  min-height: 160px;
+  resize: vertical;
+}
+.feedback-field textarea:focus-visible,
+.feedback-field input:focus-visible {
+  outline-offset: 0;
+  border-color: var(--lr-focus);
+}
+.feedback-hint {
+  margin-top: 6px;
+  color: var(--lr-muted);
+  font-size: 13px;
+}
+.feedback-form button {
+  font-family: inherit;
+  cursor: pointer;
+}
+/* The honeypot: off-screen, not display:none, which some bots skip. */
+.feedback-hp {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
 @media (max-width: 799px) {
   .landing-features,
   .landing-host {
@@ -496,8 +606,12 @@ a {
   .landing-lead {
     font-size: 16px;
   }
-  .legal-content h1 {
+  .legal-content h1,
+  .feedback-form h1 {
     font-size: 30px;
+  }
+  .feedback-form {
+    padding-block: var(--lr-space-8) 72px;
   }
 }
 
@@ -506,7 +620,8 @@ a {
   .public-nav a,
   .public-footer a,
   .legal-nav a,
-  .public-button {
+  .public-button,
+  .feedback-kinds label {
     min-height: 44px;
   }
   .public-nav a:not(.public-button),

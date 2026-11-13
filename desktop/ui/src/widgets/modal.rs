@@ -239,6 +239,13 @@ impl<'a> Modal<'a> {
     }
 }
 
+/// A dialog was open in the last frame. Like a modal `<dialog>`, it covers
+/// the page: a file dropped on the window is the dialog's, never the
+/// chat's or the settings page's under it.
+pub fn any_open(ctx: &egui::Context) -> bool {
+    ctx.memory(|m| m.top_modal_layer().is_some())
+}
+
 /// The top-left of a centred box of `size` inside `screen`.
 pub fn centered(screen: Rect, size: Vec2) -> Pos2 {
     screen.center() - size / 2.0

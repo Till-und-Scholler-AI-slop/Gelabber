@@ -13,6 +13,7 @@ import { Brand, PublicFrame } from "./PublicFrame.tsx";
 import { FragmentSlot, If } from "./Template.tsx";
 import { textsIn } from "./text.ts";
 import {
+  feedbackUrl,
   LEGAL_PAGES,
   legalUrl,
   otherLocale,
@@ -24,6 +25,31 @@ const PAGE_KEYS = {
   privacy: KEY.privacy,
   terms: KEY.terms,
 } as const;
+
+/** The top bar: the brand, this page in the other language, and sign-in.
+ * The feedback pages (FeedbackPage.tsx) share it. */
+export function LegalTop({
+  locale,
+  otherPath,
+}: {
+  locale: Locale;
+  otherPath: string;
+}) {
+  const other = otherLocale(locale);
+  return (
+    <header className="legal-top">
+      <div className="public-container public-bar">
+        <Brand />
+        <div className="public-nav">
+          <a href={otherPath} hrefLang={other} lang={other}>
+            {translateIn(other, language, `option.${other}`)}
+          </a>
+          <a href="/login">{textsIn(locale)("legal.signIn")}</a>
+        </div>
+      </div>
+    </header>
+  );
+}
 
 export function LegalPage({
   locale,
@@ -49,17 +75,7 @@ export function LegalPage({
       stylesheet={stylesheet}
       paths={{ de: legalUrl("de", page), en: legalUrl("en", page) }}
     >
-      <header className="legal-top">
-        <div className="public-container public-bar">
-          <Brand />
-          <div className="public-nav">
-            <a href={legalUrl(other, page)} hrefLang={other} lang={other}>
-              {translateIn(other, language, `option.${other}`)}
-            </a>
-            <a href="/login">{text("legal.signIn")}</a>
-          </div>
-        </div>
-      </header>
+      <LegalTop locale={locale} otherPath={legalUrl(other, page)} />
       <div className="public-container legal-layout">
         <nav className="legal-nav" aria-label={text("legal.navLabel")}>
           <ul>
@@ -75,6 +91,11 @@ export function LegalPage({
                 </li>
               </If>
             ))}
+            <If when={KEY.feedback}>
+              <li>
+                <a href={feedbackUrl(locale)}>{text("feedback.link")}</a>
+              </li>
+            </If>
           </ul>
         </nav>
         <main className="legal-content">

@@ -130,7 +130,7 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
     }
     if s.running.is_none()
         && s.preparing.is_none()
-        && let Some(file) = controls::dropped_image(ui.ctx())
+        && let Some(file) = controls::dropped_image_on_page(ui.ctx())
     {
         prepare(ui.ctx(), s, file);
     }

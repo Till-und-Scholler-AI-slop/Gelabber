@@ -11,6 +11,7 @@ import { useNotificationSettingsBridge } from "../messages/notificationSettings.
 import { useSession } from "../auth/session.ts";
 import { useAccountLocaleBridge } from "../i18n/account.ts";
 import { useDirectoryBridge } from "../discover/queries.ts";
+import { FeedbackDialog } from "../feedback/FeedbackDialog.tsx";
 import { useVoice } from "../voice/session.ts";
 import { useLiveNotices } from "../voice/useLiveNotices.ts";
 import { useCallWakeLock } from "../voice/wakeLock.ts";
@@ -122,6 +123,7 @@ export function AppShell() {
         <NotificationSettingsHost key={`notifications-${user.id}`} />
       ) : null}
       {user ? <InvitePromptHost /> : null}
+      {user ? <FeedbackDialog key={`feedback-${user.id}`} /> : null}
       {user ? <VoiceSessionControls /> : null}
     </div>
   );

@@ -1,7 +1,7 @@
 //! Outgoing account mail (#195): address confirmation, password reset, the
 //! notice for a registration with a known address, beta invitations
 //! (#517), the notice after an account was deleted and the one when a data
-//! export is ready (#519).
+//! export is ready (#519), and the mails around feedback (#542).
 //!
 //! Mail goes to the operator's SMTP relay (`SMTP_*`), plain text, in the
 //! account's language (`crate::i18n::mail` holds the texts). Sending runs in
@@ -20,6 +20,7 @@ use lettre::transport::smtp::extension::ClientId;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
 use crate::config::{MailConfig, SmtpSecurity};
+use crate::feedback::Kind;
 use crate::i18n::{self, Locale};
 
 /// Per connection step; a hanging relay must not pile up tasks.
@@ -79,6 +80,32 @@ pub enum Mail {
     ExportReady {
         expires_at: chrono::DateTime<chrono::Utc>,
     },
+    /// A visitor sent the public feedback form with this address (#542);
+    /// `link` confirms the entry. It never quotes the visitor's text.
+    FeedbackConfirm {
+        link: String,
+    },
+    /// To an operator: a new feedback entry, or with `reply` a new reply
+    /// from its sender (#542). `sender` is `Name (address)` or a visitor's
+    /// address, `excerpt` the start of the text, `link` the entry in
+    /// Betrieb.
+    FeedbackNotice {
+        kind: Kind,
+        reply: bool,
+        sender: String,
+        excerpt: String,
+        link: String,
+    },
+    /// To the sender's account: the operators replied (#542). Without the
+    /// reply; it links to the settings.
+    FeedbackAnswered,
+    /// To a visitor: an operator's reply `text` to the entry of `kind` they
+    /// sent on `sent_on` (#542).
+    FeedbackReply {
+        kind: Kind,
+        sent_on: chrono::DateTime<chrono::Utc>,
+        text: String,
+    },
 }
 
 impl Mailer {
@@ -132,6 +159,11 @@ impl Mailer {
             instance: public_url.host_str().unwrap_or("Gelabber").to_owned(),
             transport,
         }
+    }
+
+    /// The public URL links in mails start with, without a trailing slash.
+    pub fn public_url(&self) -> &str {
+        &self.public_url
     }
 
     /// Mails the memory transport took so far (empty for SMTP).
@@ -196,6 +228,10 @@ impl Mail {
             Self::ProviderConnected { .. } => "provider_connected",
             Self::AccountDeleted => "account_deleted",
             Self::ExportReady { .. } => "export_ready",
+            Self::FeedbackConfirm { .. } => "feedback_confirm",
+            Self::FeedbackNotice { .. } => "feedback_notice",
+            Self::FeedbackAnswered => "feedback_answered",
+            Self::FeedbackReply { .. } => "feedback_reply",
         }
     }
 }
@@ -232,6 +268,37 @@ mod tests {
             sent[0].body
         );
         assert!(sent[0].body.contains("chat.example.org"));
+    }
+
+    #[test]
+    fn feedback_mails_have_their_kinds() {
+        let now = chrono::Utc::now();
+        let mails = [
+            Mail::FeedbackConfirm { link: "x".into() },
+            Mail::FeedbackNotice {
+                kind: Kind::Idea,
+                reply: false,
+                sender: "x".into(),
+                excerpt: "x".into(),
+                link: "x".into(),
+            },
+            Mail::FeedbackAnswered,
+            Mail::FeedbackReply {
+                kind: Kind::Idea,
+                sent_on: now,
+                text: "x".into(),
+            },
+        ];
+        let kinds: Vec<&str> = mails.iter().map(Mail::kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                "feedback_confirm",
+                "feedback_notice",
+                "feedback_answered",
+                "feedback_reply"
+            ]
+        );
     }
 
     #[test]

@@ -12,10 +12,16 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { LOCALES } from "../i18n/locale.ts";
+import { FeedbackPage } from "./FeedbackPage.tsx";
 import { ImprintBody } from "./ImprintBody.tsx";
 import { LandingPage } from "./LandingPage.tsx";
 import { LegalPage } from "./LegalPage.tsx";
-import { LEGAL_PAGES, legalSlug } from "./urls.ts";
+import {
+  FEEDBACK_SLUGS,
+  FEEDBACK_STATES,
+  LEGAL_PAGES,
+  legalSlug,
+} from "./urls.ts";
 
 export type PublicTemplate = { file: string; html: string };
 
@@ -43,8 +49,9 @@ function document(element: ReactElement): string {
 
 /**
  * Every public page in both languages: `de/index.html`,
- * `de/impressum.html` … `en/terms.html`. `stylesheet` is the built
- * public.css.
+ * `de/impressum.html` … `en/terms.html`, and the feedback form with its
+ * four answer pages, `de/feedback.html` and `de/feedback/gesendet.html` …
+ * `en/feedback/error.html`. `stylesheet` is the built public.css.
  */
 export function renderPublicTemplates({
   stylesheet,
@@ -62,6 +69,12 @@ export function renderPublicTemplates({
         <LegalPage locale={locale} page={page} stylesheet={stylesheet}>
           {page === "imprint" ? <ImprintBody locale={locale} /> : null}
         </LegalPage>,
+      ),
+    })),
+    ...FEEDBACK_STATES.map((state) => ({
+      file: `${locale}/${FEEDBACK_SLUGS[locale][state]}.html`,
+      html: document(
+        <FeedbackPage locale={locale} state={state} stylesheet={stylesheet} />,
       ),
     })),
   ]);

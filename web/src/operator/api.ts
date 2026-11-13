@@ -7,9 +7,13 @@ import type {
   AccountPage,
   AccountQuery,
   CreateInvitationInput,
+  FeedbackQuery,
   Invitation,
   InvitationPage,
   InvitationQuery,
+  OperatorFeedback,
+  OperatorFeedbackMessage,
+  OperatorFeedbackPage,
   OperatorOverview,
   Report,
   ReportPage,
@@ -91,3 +95,28 @@ export const revokeInvitation = (id: string) =>
 
 export const getUsage = (signal?: AbortSignal) =>
   api<Usage>("/operator/usage", { signal });
+
+export const listFeedback = (query: FeedbackQuery, signal?: AbortSignal) =>
+  api<OperatorFeedbackPage>(`/operator/feedback${searchOf(query)}`, {
+    signal,
+  });
+
+export const getFeedback = (id: string, signal?: AbortSignal) =>
+  api<OperatorFeedback>(`/operator/feedback/${id}`, { signal });
+
+/** A reply to a visitor goes out by mail; to an account, it waits in
+ * Einstellungen → Feedback. */
+export const replyFeedback = (id: string, text: string) =>
+  api<OperatorFeedbackMessage>(`/operator/feedback/${id}/messages`, {
+    method: "POST",
+    body: { text },
+  });
+
+export const markFeedbackDone = (id: string) =>
+  api<OperatorFeedback>(`/operator/feedback/${id}/done`, { method: "POST" });
+
+export const reopenFeedback = (id: string) =>
+  api<OperatorFeedback>(`/operator/feedback/${id}/reopen`, { method: "POST" });
+
+export const deleteFeedback = (id: string) =>
+  api<null>(`/operator/feedback/${id}`, { method: "DELETE" });
