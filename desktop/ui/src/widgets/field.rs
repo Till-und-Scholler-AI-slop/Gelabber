@@ -9,7 +9,7 @@ use egui::{
     Ui, UiBuilder, Vec2, pos2,
 };
 
-use super::{IconButton, focus_ring, snap};
+use super::{IconButton, field_focus_ring, snap};
 use crate::icons::Icon;
 use crate::text::{self, Block};
 use crate::theme::{Theme, corner, space};
@@ -160,9 +160,6 @@ impl<'a> TextField<'a> {
         } else {
             c.border_strong
         };
-        if focused {
-            focus_ring(&painter, box_rect, theme.radius.sm, &theme);
-        }
         painter.rect(
             box_rect,
             corner(theme.radius.sm),
@@ -170,6 +167,9 @@ impl<'a> TextField<'a> {
             Stroke::new(1.0, border),
             StrokeKind::Inside,
         );
+        if focused {
+            field_focus_ring(&painter, box_rect, theme.radius.sm, border);
+        }
 
         let right_pad = if self.password { 48.0 } else { 11.0 };
         let color = if self.disabled { c.subtle } else { c.text };

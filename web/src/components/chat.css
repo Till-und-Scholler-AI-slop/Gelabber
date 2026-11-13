@@ -69,9 +69,18 @@
   padding: 0;
   border: 0;
   outline: 0;
+  /* The frame around it shows focus. Without these the global ring's
+     page-coloured box-shadow and Chromium's search box paint a square box
+     inside the rounded frame (#561). */
+  box-shadow: none;
+  appearance: none;
   background: transparent;
   color: var(--lr-text);
   font: inherit;
+}
+.lr-header-search > input::-webkit-search-decoration,
+.lr-header-search > input::-webkit-search-results-decoration {
+  appearance: none;
 }
 /* A hint must not read as typed text: --lr-muted is close to --lr-text in
    several themes. --lr-subtle is fainter and still 4.5:1 (model.ts). */
@@ -925,6 +934,8 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   border: 1px solid var(--lr-accent);
   border-radius: var(--lr-radius);
   outline: none;
+  /* Not the global ring's page-coloured halo either (#561). */
+  box-shadow: none;
   background: var(--lr-panel);
   color: var(--lr-text);
   font: inherit;
@@ -1470,6 +1481,13 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   height: 34px;
   border-radius: var(--lr-radius);
   color: var(--lr-muted);
+}
+/* Inside the composer's frame an offset ring with its page-coloured gap
+   reads as a second box: draw it inside the button instead (#561). */
+.lr-composer-icon:focus-visible,
+.lr-composer-send:focus-visible {
+  outline-offset: -2px;
+  box-shadow: none;
 }
 .lr-composer-icon:hover {
   background: var(--lr-hover);

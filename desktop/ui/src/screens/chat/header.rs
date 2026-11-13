@@ -222,8 +222,9 @@ pub fn show(
         vec2(kbd.width() + 12.0, 18.5),
     );
     let input_left = field.left() + 11.0 + 16.0 + 8.0;
-    // Chromium's search input while it is focused and holds text: its box
-    // in the page colour over the frame's edge, and the clear control.
+    // Chromium's search input while it is focused and holds text shows its
+    // clear control. The input has no box of its own: the frame is the one
+    // surface (#561).
     let filled = focused && !search.is_empty();
     let clear = Rect::from_center_size(pos2(field.right() - 18.5, mid - 0.5), vec2(14.0, 14.0));
     let input_right = if search.is_empty() {
@@ -234,13 +235,6 @@ pub fn show(
         field.right() - 11.0
     };
     if filled {
-        let frame = Rect::from_min_max(
-            pos2(field.left() + 33.0, field.top()),
-            pos2(field.right() - 9.0, field.bottom()),
-        );
-        ui.painter().rect_filled(frame, 0.0, c.bg);
-        ui.painter()
-            .rect_filled(frame.shrink2(vec2(2.0, 1.0)), 0.0, c.panel);
         let ink = if theme.is_dark() {
             Color32::WHITE
         } else {

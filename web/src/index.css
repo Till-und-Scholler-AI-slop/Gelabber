@@ -246,6 +246,19 @@ summary {
   /* A page-coloured gap keeps the ring apart from an amber fill. */
   box-shadow: 0 0 0 2px var(--lr-bg);
 }
+/* A field shows focus in its own border, thickened to 2px by a flush ring:
+   one frame, no gap (#561). Unlayered on purpose: the ring above is
+   unlayered too and would beat any rule in @layer components. */
+.ui-field:focus-visible {
+  /* Transparent, not none: forced-colors mode drops box-shadow and paints
+     this outline instead, so the focus stays visible there. */
+  outline: 1px solid transparent;
+  outline-offset: 0;
+  box-shadow: 0 0 0 1px var(--lr-focus);
+}
+.ui-field[aria-invalid="true"]:focus-visible {
+  box-shadow: 0 0 0 1px var(--lr-danger);
+}
 :where(input, textarea, select) {
   accent-color: var(--lr-accent);
 }
