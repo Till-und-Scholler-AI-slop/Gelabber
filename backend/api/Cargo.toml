@@ -50,4 +50,4 @@ gelabber-shared.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
-tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "handshake"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
