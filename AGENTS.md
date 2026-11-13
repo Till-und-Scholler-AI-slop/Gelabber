@@ -31,7 +31,8 @@ The **shipped line** is the latest release tag on `main`.
   (PR required, same reviews as `main`); every change reaches `main` and `v*`
   through a PR. A new version branch name must match that pattern, or gets the
   same protection by hand before its first commit.
-- **Review:** SilasSch reviews product PRs.
+- **Review:** a product PR is reviewed by a maintainer other than the person
+  who asked for the work.
 
 ## Planning
 
