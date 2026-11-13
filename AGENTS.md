@@ -33,6 +33,30 @@ The **shipped line** is the latest release tag on `main`.
   same protection by hand before its first commit.
 - **Review:** SilasSch reviews product PRs.
 
+## Planning
+
+Work is tracked in the organization project
+[Gelabber](https://github.com/orgs/Till-und-Scholler-AI-slop/projects/2):
+Status Backlog → Planned → In progress → Done, with the views Board,
+Who's on what and Releases.
+
+- **Issue first:** all work has an issue. If there is none, open one (type
+  Bug, Feature or Task) before the branch. New issues join the project by
+  themselves, in Backlog.
+- **Assignee** means "working on it now". When you start, assign the issue to
+  the person who asked for the work (`rafiistcool` or `SilasSch`), not to the
+  author of the PR. When you stop without finishing, remove the assignee and
+  say on the issue why.
+- **Milestone** is the release the work ships in. Use an open milestone; if it
+  is unclear which one, ask. Never create, rename or close a milestone unless
+  asked.
+- **Pull requests** say `Closes #<n>` for their issue. Linking moves the issue
+  to In progress; merging or closing it moves it to Done. Planned is set by
+  hand.
+- **Each milestone** states the release goal in its description, in one to
+  three sentences. After a release: close its milestone, move open issues to
+  the next one, write that one's goal.
+
 ## Commands
 
 Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
