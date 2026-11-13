@@ -31,10 +31,11 @@ const ORIGIN = "https://fields.test";
 const UPDATE = Boolean(process.env.UPDATE_FIELD_GALLERY);
 /** A pixel differs when a channel moves by more than this. */
 const CHANNEL = 64;
-/** Up to this share of a picture may differ: text antialiasing between
- * machines and browser builds, not a frame (a lost 1px ring around a
- * field is about 4%). */
-const SHARE = 0.02;
+/** Up to this share of a picture may differ: edge antialiasing between
+ * browser builds, not a frame (a lost 1px ring around a field is 2-5%).
+ * Text is not painted (see field-gallery/index.html), since glyphs depend
+ * on the machine's fonts. */
+const SHARE = 0.005;
 
 const out = await mkdtemp(join(tmpdir(), "field-gallery-"));
 let browser;
