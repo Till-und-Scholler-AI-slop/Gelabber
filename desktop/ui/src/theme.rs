@@ -635,10 +635,108 @@ pub const fn role_color(color: gelabber_client::RoleColor) -> Color32 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn h(c: Color32) -> String {
         format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+    }
+
+    /// The `--lr-*` tokens of `theme` that web/src/theme/tokens.test.ts
+    /// writes to tokens.fixture.json: hex colours and px radii.
+    fn css_tokens(t: &Theme) -> BTreeMap<String, String> {
+        let c = &t.c;
+        let px = |r: f32| format!("{r}px");
+        let mut out: BTreeMap<String, String> = [
+            ("accent", h(c.accent)),
+            ("accent-ink", h(c.accent_ink)),
+            ("accent-text", h(c.accent_text)),
+            ("bg", h(c.bg)),
+            ("border", h(c.border)),
+            ("border-strong", h(c.border_strong)),
+            ("danger", h(c.danger)),
+            ("danger-bg", h(c.danger_bg)),
+            ("elevated", h(c.elevated)),
+            ("focus", h(c.focus)),
+            ("hover", h(c.hover)),
+            ("live", h(c.live)),
+            ("live-text", h(c.live_text)),
+            ("muted", h(c.muted)),
+            ("on-danger", h(c.on_danger)),
+            ("on-live", h(c.on_live)),
+            ("online", h(c.online)),
+            ("online-text", h(c.online_text)),
+            ("panel", h(c.panel)),
+            ("rail", h(c.rail)),
+            ("selected", h(c.selected)),
+            ("subtle", h(c.subtle)),
+            ("surface", h(c.surface)),
+            ("text", h(c.text)),
+            ("warning", h(c.warning)),
+            ("radius", px(t.radius.md)),
+            ("radius-xs", px(t.radius.xs)),
+            ("radius-sm", px(t.radius.sm)),
+            ("radius-small", px(t.radius.sm)),
+            ("radius-md", px(t.radius.md)),
+            ("radius-lg", px(t.radius.lg)),
+            ("radius-xl", px(t.radius.xl)),
+        ]
+        .into_iter()
+        .map(|(k, v)| (format!("--lr-{k}"), v))
+        .collect();
+        for (i, tile) in c.tiles.iter().enumerate() {
+            out.insert(format!("--lr-tile-{}", i + 1), h(*tile));
+        }
+        out
+    }
+
+    // Every preset derives the web's tokens (#561). The fixture is written
+    // by web/src/theme/tokens.test.ts; see there to update it.
+    #[test]
+    fn tokens_match_the_web() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../web/src/theme/tokens.fixture.json"))
+                .expect("tokens.fixture.json");
+        let fixture = fixture.as_object().expect("an object of themes");
+        let presets = crate::screens::settings::themes::presets();
+        let mut ids: Vec<&str> = presets.iter().map(|p| p.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            fixture.keys().map(String::as_str).collect::<Vec<_>>(),
+            "the presets"
+        );
+        for preset in presets {
+            let web = &fixture[&preset.id];
+            let base = &web["colors"];
+            let c = preset.colors;
+            for (key, got) in [
+                ("background", c.background),
+                ("panel", c.panel),
+                ("surface", c.surface),
+                ("rail", c.rail),
+                ("text", c.text),
+                ("muted", c.muted),
+                ("accent", c.accent),
+                ("border", c.border),
+            ] {
+                assert_eq!(
+                    Some(h(got).as_str()),
+                    base[key].as_str().map(str::to_lowercase).as_deref(),
+                    "{} colors.{key}",
+                    preset.id
+                );
+            }
+            let want: BTreeMap<String, String> = web["tokens"]
+                .as_object()
+                .expect("tokens")
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_owned()))
+                .collect();
+            let got = css_tokens(&Theme::from_definition(preset.clone()));
+            assert_eq!(got, want, "{}", preset.id);
+        }
     }
 
     // Hints, timestamps and disabled labels read on every surface they sit
