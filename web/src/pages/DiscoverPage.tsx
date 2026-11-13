@@ -221,7 +221,9 @@ export function DiscoverPage({ q, lang }: DiscoverSearch) {
                     }
                   />
                 </div>
-              ) : listings.hasNextPage ? (
+              ) : listings.hasNextPage && !listings.isPlaceholderData ? (
+                // While a new search loads, the rows and their next page
+                // are the previous search's (keepPreviousData).
                 <div className="discover-more">
                   <Button
                     pending={listings.isFetchingNextPage}
