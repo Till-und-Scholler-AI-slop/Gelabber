@@ -13,6 +13,14 @@ The **development line** is the newest version branch on `origin`:
 `git branch -r --list 'origin/v[0-9]*' --sort=-version:refname | head -1`.
 The **shipped line** is the latest release tag on `main`.
 
+- **Branch names** say what kind of work the branch holds, not who or what
+  wrote it: `<type>/<issue>-<short-description>`, lowercase with hyphens,
+  e.g. `fix/123-reconnect-after-sleep` or `feature/124-message-search`. The
+  type follows the issue: `feature/` (Feature), `fix/` (Bug), and for a Task
+  the closest of `docs/`, `ci/`, `refactor/` or `chore/` (dependencies,
+  cleanup). Without an issue, open one first (see Planning). Release work uses `release/vX.Y.Z`,
+  `hotfix/vX.Y.Z-<short-description>` and `sync/main-into-vX.Y`. Only version
+  branches start with `v`. Dependabot keeps its own names.
 - **Features:** branch off the development line; the PR targets it. Older
   version branches are complete.
 - **Releases:** a release branch from the development line with `origin/main`
