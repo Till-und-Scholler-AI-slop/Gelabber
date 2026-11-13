@@ -3,10 +3,10 @@
 // tokens.fixture.json, so neither can drift from the other unnoticed (#561).
 //
 // After a deliberate change to model.ts or the presets:
-//   UPDATE_THEME_TOKENS=1 npx vitest run src/theme/tokens.test.ts
+//   UPDATE_THEME_TOKENS=1 npx vitest run src/theme/tokens.test.mjs
 // and the Rust test (theme::tests::tokens_match_the_web) then tells whether
 // theme.rs follows.
-/* global process */
+/* global process, URL */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";

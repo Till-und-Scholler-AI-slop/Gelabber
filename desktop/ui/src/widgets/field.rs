@@ -153,22 +153,23 @@ impl<'a> TextField<'a> {
         let painter = ui.painter().clone();
         let box_rect = snap(ui.ctx(), field_rect);
         let focused = ui.memory(|m| m.has_focus(self.id));
+        let f = theme.field;
         let border = if self.error.is_some() {
             c.danger
         } else if focused {
-            c.focus
+            f.border_focus
         } else {
-            c.border_strong
+            f.border
         };
         painter.rect(
             box_rect,
-            corner(theme.radius.sm),
-            if self.disabled { c.surface } else { c.bg },
+            corner(f.radius),
+            if self.disabled { c.surface } else { f.bg },
             Stroke::new(1.0, border),
             StrokeKind::Inside,
         );
         if focused {
-            field_focus_ring(&painter, box_rect, theme.radius.sm, border);
+            field_focus_ring(&painter, box_rect, f.radius, border);
         }
 
         let right_pad = if self.password { 48.0 } else { 11.0 };

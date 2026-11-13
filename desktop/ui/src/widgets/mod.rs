@@ -88,6 +88,43 @@ pub fn field_focus_ring(painter: &Painter, rect: Rect, radius: f32, color: Color
     );
 }
 
+/// A text field's box on the field tokens (`.ui-field`, #561): the field
+/// background, a 1px border in the focus (or danger) colour while focused,
+/// and the flush focus ring.
+pub fn field_box(painter: &Painter, rect: Rect, theme: &Theme, focused: bool, invalid: bool) {
+    let f = theme.field;
+    let border = if invalid {
+        theme.c.danger
+    } else if focused {
+        f.border_focus
+    } else {
+        f.border
+    };
+    painter.rect(
+        rect,
+        corner(f.radius),
+        f.bg,
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
+    if focused {
+        field_focus_ring(painter, rect, f.radius, border);
+    }
+}
+
+/// The 2px ring along a button's own edge (`outline-offset: -2px`): a
+/// button inside a field (password eye, composer icons) rings inside
+/// itself, as an offset ring would cross the field's frame (#561). Paint
+/// it after the button's fill.
+pub fn focus_ring_edge(painter: &Painter, rect: Rect, radius: f32, theme: &Theme) {
+    painter.rect_stroke(
+        rect.shrink(1.0),
+        corner((radius - 1.0).max(0.0)),
+        Stroke::new(2.0, theme.c.focus),
+        StrokeKind::Middle,
+    );
+}
+
 /// An inside-the-box `outline-offset: -2px` ring (list rows, tabs).
 pub fn focus_ring_inset(painter: &Painter, rect: Rect, radius: f32, theme: &Theme) {
     painter.rect_stroke(

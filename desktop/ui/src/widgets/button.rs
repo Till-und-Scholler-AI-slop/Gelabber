@@ -463,7 +463,8 @@ impl Widget for IconButton<'_> {
             Rect::from_center_size(rect.center(), rect.size() * scale),
         );
         let painter = ui.painter();
-        if response.has_focus() && keyboard_focus(ui.ctx()) {
+        let ring = response.has_focus() && keyboard_focus(ui.ctx());
+        if ring && !self.plain {
             focus_ring(painter, shown, theme.radius.sm, &theme);
         }
         painter.rect(
@@ -473,6 +474,10 @@ impl Widget for IconButton<'_> {
             Stroke::new(1.0, border),
             StrokeKind::Inside,
         );
+        // Inside a field (the password eye): ring along its own edge.
+        if ring && self.plain {
+            super::focus_ring_edge(painter, shown, theme.radius.sm, &theme);
+        }
         icons::paint_centered(painter, self.icon, rect, self.icon_size * scale, fg);
         if hovered {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

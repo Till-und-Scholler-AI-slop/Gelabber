@@ -136,6 +136,18 @@ pub struct Radii {
     pub full: f32,
 }
 
+/// `--lr-field-*` (#561): every text field's frame, as theme/model.ts
+/// derives it. Paint the box with [`FieldTokens::bg`], a 1px [`FieldTokens::border`]
+/// (`border_focus` while focused) and, in focus,
+/// [`crate::widgets::field_focus_ring`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldTokens {
+    pub bg: Color32,
+    pub border: Color32,
+    pub border_focus: Color32,
+    pub radius: f32,
+}
+
 /// A CSS radius in px as an egui corner radius.
 pub fn corner(r: f32) -> CornerRadius {
     CornerRadius::same(r.round().clamp(0.0, 255.0) as u8)
@@ -147,6 +159,8 @@ pub struct Theme {
     pub definition: Definition,
     pub c: Colors,
     pub radius: Radii,
+    /// `--lr-field-*`: text fields.
+    pub field: FieldTokens,
     /// `--lr-shadow-1`: menus, popovers, tooltips.
     pub shadow_1: Shadow,
     /// `--lr-shadow-2`: dialogs, toasts, sticky bars.
@@ -298,6 +312,12 @@ impl Theme {
         };
         Self {
             c: colors,
+            field: FieldTokens {
+                bg: colors.panel,
+                border: colors.border_strong,
+                border_focus: colors.accent_text,
+                radius: md,
+            },
             radius: Radii {
                 xs,
                 sm,
@@ -681,6 +701,10 @@ mod tests {
             ("radius-md", px(t.radius.md)),
             ("radius-lg", px(t.radius.lg)),
             ("radius-xl", px(t.radius.xl)),
+            ("field-bg", h(t.field.bg)),
+            ("field-border", h(t.field.border)),
+            ("field-border-focus", h(t.field.border_focus)),
+            ("field-radius", px(t.field.radius)),
         ]
         .into_iter()
         .map(|(k, v)| (format!("--lr-{k}"), v))

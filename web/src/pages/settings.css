@@ -253,15 +253,14 @@
   align-items: center;
   gap: 10px;
 }
+/* A .ui-color field (#561), wider than tall. */
 .settings-color-swatch {
   width: 48px;
   height: 36px;
   flex-shrink: 0;
-  padding: 2px;
-  border: 1px solid var(--lr-border-strong);
-  border-radius: var(--lr-radius-sm);
-  background: transparent;
-  cursor: pointer;
+}
+.settings-color-swatch[aria-invalid="true"] {
+  border-color: var(--lr-danger);
 }
 /* Unset, the swatch shows what the card uses instead (ProfileCardForm). */
 .settings-color-swatch.is-unset::-webkit-color-swatch {
@@ -309,6 +308,13 @@
 .settings-mode-option:has(:focus-visible) {
   outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
+}
+/* The card shows focus; the radio inside does not ring again (#561). */
+.settings-mode-option :focus-visible,
+.settings-language-options .ui-radio-card :focus-visible,
+.deco-option input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 .settings-mode-option .ui-check {
   grid-row: 2;
@@ -639,8 +645,6 @@
 .settings-area .media-settings-form select {
   min-width: 0;
   width: 100%;
-  background: var(--lr-surface);
-  border-color: var(--lr-border-strong);
 }
 .settings-area .media-settings-form button {
   min-height: 36px;

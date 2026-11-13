@@ -31,4 +31,29 @@ export default tseslint.config(
     plugins: { gelabber: { rules: { "no-literal-ui-text": noLiteralUiText } } },
     rules: { "gelabber/no-literal-ui-text": "error" },
   },
+  // Text fields come from components/ui (Input, Textarea, Select, with
+  // FieldShell around several parts), so every field has the same one
+  // frame and one focus style on the --lr-field-* tokens (#561).
+  // Checkboxes, radios, sliders, file and colour pickers stay native.
+  // The prerendered public pages ship without ui.css and style their few
+  // fields in public.css on the same tokens.
+  {
+    files: ["src/**/*.tsx"],
+    ignores: ["**/*.test.*", "src/components/ui/**", "src/public/**"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "JSXOpeningElement[name.name='input']:not(:has(JSXAttribute[name.name='type'][value.value=/^(checkbox|radio|range|file|color|hidden)$/]))",
+          message:
+            "A text field is <Input> from components/ui (bare inside a <FieldShell>), #561.",
+        },
+        {
+          selector: "JSXOpeningElement[name.name=/^(textarea|select)$/]",
+          message: "Use <Textarea> or <Select> from components/ui, #561.",
+        },
+      ],
+    },
+  },
 );

@@ -193,27 +193,111 @@
   .ui-field-error {
     color: var(--lr-danger);
   }
+  /* Fields (#561). Every text field has one frame drawn from the
+     --lr-field-* tokens (theme/model.ts; the desktop mirrors them in
+     theme.rs `Theme::field`):
+     - `.ui-field`: the input itself is the frame.
+     - `.ui-field-shell`: a container is the frame (icon, input, badge,
+       buttons); the input inside is `.ui-field-bare`, with no frame,
+       background or ring of its own.
+     In focus the frame takes the focus colour and a flush 1px ring
+     outside it: 2px, no gap, no second box (WCAG 2.2 2.4.13). */
+  .ui-field,
+  .ui-field-shell {
+    border: 1px solid var(--lr-field-border);
+    border-radius: var(--lr-field-radius);
+    background: var(--lr-field-bg);
+    color: var(--lr-text);
+    transition:
+      border-color var(--lr-dur-fast) var(--lr-ease),
+      box-shadow var(--lr-dur-fast) var(--lr-ease);
+  }
   .ui-field {
     width: 100%;
     min-width: 0;
     min-height: var(--lr-control-md);
     padding: 7px 11px;
-    border: 1px solid var(--lr-border-strong);
-    border-radius: var(--lr-radius-sm);
-    background: var(--lr-bg);
-    color: var(--lr-text);
     font: var(--lr-type-body);
-    transition: border-color var(--lr-dur-fast) var(--lr-ease);
   }
-  .ui-field::placeholder {
+  .ui-field-bare {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+  }
+  /* type="search": no WebKit box, no magnifier; the clear button stays. */
+  .ui-field,
+  .ui-field-bare {
+    appearance: none;
+  }
+  :is(.ui-field, .ui-field-bare)::-webkit-search-decoration,
+  :is(.ui-field, .ui-field-bare)::-webkit-search-results-decoration {
+    appearance: none;
+  }
+  :is(.ui-field, .ui-field-bare)::placeholder {
     color: var(--lr-subtle);
     opacity: 1;
   }
-  .ui-field:focus {
-    border-color: var(--lr-focus);
+  .ui-field:focus,
+  .ui-field-shell:has(.ui-field-bare:focus) {
+    border-color: var(--lr-field-border-focus);
   }
-  .ui-field[aria-invalid="true"] {
+  .ui-field:focus-visible,
+  .ui-field-shell:has(.ui-field-bare:focus) {
+    /* Transparent, not none: forced-colors mode drops box-shadow and
+       paints this outline instead, so focus stays visible there. */
+    outline: 1px solid transparent;
+    outline-offset: 0;
+    box-shadow: 0 0 0 1px var(--lr-field-border-focus);
+  }
+  .ui-field-bare:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+  .ui-field[aria-invalid="true"],
+  .ui-field-shell[data-invalid],
+  .ui-field-shell[data-invalid]:has(.ui-field-bare:focus) {
     border-color: var(--lr-danger);
+  }
+  .ui-field[aria-invalid="true"]:focus-visible,
+  .ui-field-shell[data-invalid]:has(.ui-field-bare:focus) {
+    box-shadow: 0 0 0 1px var(--lr-danger);
+  }
+  /* A button inside a field (password eye, composer icons) rings inside
+     itself: an offset ring would cross the field's frame. */
+  :is(.ui-field-shell, .ui-password) :is(button, a):focus-visible {
+    outline-offset: -2px;
+    box-shadow: none;
+  }
+  /* A colour picker drawn as a field: the swatch fills it, no inner box. */
+  .ui-color {
+    appearance: none;
+    padding: 3px;
+    border: 1px solid var(--lr-field-border);
+    border-radius: var(--lr-field-radius);
+    background: var(--lr-field-bg);
+    cursor: pointer;
+  }
+  .ui-color::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+  .ui-color::-webkit-color-swatch {
+    border: 0;
+    border-radius: max(0px, calc(var(--lr-field-radius) - 3px));
+  }
+  .ui-color::-moz-color-swatch {
+    border: 0;
+    border-radius: max(0px, calc(var(--lr-field-radius) - 3px));
+  }
+  .ui-color:focus-visible {
+    outline: 1px solid transparent;
+    outline-offset: 0;
+    border-color: var(--lr-field-border-focus);
+    box-shadow: 0 0 0 1px var(--lr-field-border-focus);
   }
   .ui-field:disabled,
   .ui-field[readonly] {
