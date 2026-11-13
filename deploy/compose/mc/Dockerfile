@@ -7,7 +7,7 @@
 
 ARG MC_RELEASE=RELEASE.2025-08-13T08-35-41Z
 
-FROM golang:1.27.2-alpine AS compile
+FROM golang:1.27.3-alpine AS compile
 RUN apk add --no-cache git ca-certificates
 WORKDIR /src
 ARG MC_RELEASE
