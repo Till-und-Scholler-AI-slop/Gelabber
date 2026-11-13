@@ -663,7 +663,7 @@ mod tests {
         format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
     }
 
-    /// The `--lr-*` tokens of `theme` that web/src/theme/tokens.test.ts
+    /// The `--lr-*` tokens of `theme` that web/src/theme/tokens.test.mjs
     /// writes to tokens.fixture.json: hex colours and px radii.
     fn css_tokens(t: &Theme) -> BTreeMap<String, String> {
         let c = &t.c;
@@ -716,7 +716,7 @@ mod tests {
     }
 
     // Every preset derives the web's tokens (#561). The fixture is written
-    // by web/src/theme/tokens.test.ts; see there to update it.
+    // by web/src/theme/tokens.test.mjs; see there to update it.
     #[test]
     fn tokens_match_the_web() {
         let fixture: serde_json::Value =

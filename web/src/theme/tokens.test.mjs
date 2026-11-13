@@ -55,4 +55,24 @@ describe("theme tokens shared with the desktop app", () => {
     const fixture = JSON.parse(readFileSync(FIXTURE, "utf8"));
     expect(now).toEqual(fixture);
   });
+
+  it("match the field tokens public.css copies from the dark theme", () => {
+    // The public pages load without the theme runtime, so public.css
+    // carries the dark preset's field tokens as literals.
+    const css = readFileSync(
+      fileURLToPath(new URL("../public/public.css", import.meta.url)),
+      "utf8",
+    );
+    const copied = Object.fromEntries(
+      [...css.matchAll(/(--lr-field-[\w-]+):\s*([^;]+);/g)].map(
+        ([, name, value]) => [name, value.trim().toLowerCase()],
+      ),
+    );
+    const dark = JSON.parse(readFileSync(FIXTURE, "utf8")).dark.tokens;
+    const expected = Object.fromEntries(
+      Object.entries(dark).filter(([name]) => name.startsWith("--lr-field-")),
+    );
+    expect(Object.keys(expected).length).toBeGreaterThan(0);
+    expect(copied).toEqual(expected);
+  });
 });
