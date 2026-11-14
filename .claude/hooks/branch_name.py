@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: blocks a git command that creates or pushes a branch whose
-name breaks the rule in AGENTS.md ("Branches and pull requests").
+"""PreToolUse hook: blocks a `git push` of a branch whose name breaks the rule
+in AGENTS.md ("Branches and pull requests"). The rule is about branches on
+origin, so local branches (e.g. one fetched to review a PR) stay free.
 
 Reads the hook input from stdin; exit code 2 blocks the command and shows
 stderr to Claude. Anything it cannot parse is let through.
@@ -27,7 +28,7 @@ RULE = (
     "feature, fix, docs, ci, refactor, chore (e.g. fix/123-reconnect-after-sleep). "
     "Release work uses release/vX.Y.Z, hotfix/vX.Y.Z-<short-description> and "
     "sync/main-into-vX.Y. Without an issue, open one first. There is no exception "
-    "for names a tool suggests. Rename with `git branch -m <new-name>` and use that."
+    "for names a tool suggests. Rename the branch with `git branch -m <new-name>` and push that."
 )
 
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.S)
@@ -36,10 +37,6 @@ SEPARATORS = {';', '&&', '||', '|', '&', '(', ')'}
 GIT_VALUE_OPTIONS = {'-C', '-c', '--git-dir', '--work-tree', '--namespace'}
 PUSH_VALUE_OPTIONS = {'-o', '--push-option', '--repo', '--receive-pack', '--exec'}
 PUSH_SKIP = {'--delete', '-d', '--tags', '--all', '--mirror', '--prune'}
-BRANCH_SKIP = {'-d', '-D', '--delete', '-l', '--list', '-a', '--all', '-r', '--remotes',
-               '--show-current', '-v', '-vv', '--verbose', '--contains', '--no-contains',
-               '--merged', '--no-merged', '--points-at', '--edit-description',
-               '-u', '--set-upstream-to', '--unset-upstream', '-c', '-C', '--copy'}
 
 
 def commands(text):
@@ -104,52 +101,32 @@ def positionals(args, value_options=()):
     return result
 
 
-def created_or_pushed(options, sub, args):
-    """The branch names this git call creates or pushes."""
-    if sub == 'checkout' or sub == 'switch':
-        flags = {'-b', '-B', '--orphan'} if sub == 'checkout' else {'-c', '-C', '--create', '--force-create', '--orphan'}
-        for flag, value in zip(args, args[1:]):
-            if flag in flags:
-                return [value]
-        for arg in args:
-            for flag in flags:
-                if flag.startswith('--') and arg.startswith(flag + '='):
-                    return [arg.split('=', 1)[1]]
+def pushed(options, sub, args):
+    """The branch names this git call pushes."""
+    if sub != 'push' or any(arg in PUSH_SKIP for arg in args):
         return []
-    if sub == 'branch':
-        if any(arg in BRANCH_SKIP or arg.startswith(('--set-upstream-to=', '--contains=', '--merged=', '--format', '--sort'))
-               for arg in args):
-            return []
-        names = positionals(args)
-        if any(arg in ('-m', '-M', '--move') for arg in args):
-            return names[-1:]
-        return names[:1]
-    if sub == 'push':
-        if any(arg in PUSH_SKIP for arg in args):
-            return []
-        refs = positionals(args, PUSH_VALUE_OPTIONS)[1:]
-        if not refs:
-            refs = ['HEAD']
-        names = []
-        for ref in refs:
-            ref = ref.lstrip('+')
-            source, colon, target = ref.partition(':')
-            if colon and not source:
-                continue  # `:<branch>` deletes it
-            target = target if colon else source
-            if not target or target.startswith('refs/tags/'):
+    refs = positionals(args, PUSH_VALUE_OPTIONS)[1:]
+    if not refs:
+        refs = ['HEAD']
+    names = []
+    for ref in refs:
+        ref = ref.lstrip('+')
+        source, colon, target = ref.partition(':')
+        if colon and not source:
+            continue  # `:<branch>` deletes it
+        target = target if colon else source
+        if not target or target.startswith('refs/tags/'):
+            continue
+        if target == 'HEAD':
+            target = git(options, 'rev-parse', '--abbrev-ref', 'HEAD')
+            if not target or target == 'HEAD':
                 continue
-            if target == 'HEAD':
-                target = git(options, 'rev-parse', '--abbrev-ref', 'HEAD')
-                if not target or target == 'HEAD':
-                    continue
-            target = target.removeprefix('refs/heads/')
-            if (git(options, 'rev-parse', '--verify', '--quiet', 'refs/tags/' + target)
-                    and not git(options, 'rev-parse', '--verify', '--quiet', 'refs/heads/' + target)):
-                continue
-            names.append(target)
-        return names
-    return []
+        target = target.removeprefix('refs/heads/')
+        if (git(options, 'rev-parse', '--verify', '--quiet', 'refs/tags/' + target)
+                and not git(options, 'rev-parse', '--verify', '--quiet', 'refs/heads/' + target)):
+            continue
+        names.append(target)
+    return names
 
 
 def violations(command):
@@ -157,7 +134,7 @@ def violations(command):
     for tokens in commands(command):
         call = git_call(tokens)
         if call:
-            bad += [name for name in created_or_pushed(*call) if not NAME.match(name)]
+            bad += [name for name in pushed(*call) if not NAME.match(name)]
     return bad
 
 

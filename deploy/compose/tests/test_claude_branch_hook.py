@@ -41,23 +41,27 @@ class Names(unittest.TestCase):
 
 
 class Commands(unittest.TestCase):
-    def test_blocks_creating_and_pushing_a_bad_name(self):
-        for command in ('git checkout -b claude/x origin/v0.10', 'git switch -c claude/x',
-                        'git switch --create=claude/x', 'git branch claude/x',
-                        'git branch -m claude/x', 'git push -u origin claude/x',
+    def test_blocks_pushing_a_bad_name(self):
+        for command in ('git push -u origin claude/x', 'git push origin claude/x:claude/x',
                         'cd repo && git push origin HEAD:refs/heads/claude/x',
                         'git -C repo push --force-with-lease origin +claude/x',
-                        'git fetch origin && git checkout -B claude/x FETCH_HEAD'):
+                        'git fetch origin && git push origin fix/1-x:claude/x'):
             with self.subTest(command=command):
                 self.assertEqual(hook.violations(command), ['claude/x'])
 
     def test_lets_other_git_calls_through(self):
-        for command in ('git push -u origin fix/1-x', 'git checkout fix/1-x', 'git branch -a',
-                        'git branch -D claude/x', 'git push origin --delete claude/x',
-                        'git push origin :claude/x', 'git push --tags', 'git log --oneline',
-                        'echo "git checkout -b claude/x"', 'git status; ls',
-                        "git commit -F - <<'EOF'\nmention git checkout -b claude/x\nEOF\n",
-                        'git checkout -b "unclosed'):
+        for command in ('git push -u origin fix/1-x', 'git push origin claude/x:fix/1-x',
+                        'git push origin --delete claude/x', 'git push origin :claude/x',
+                        'git push --tags', 'git log --oneline', 'echo "git push origin claude/x"',
+                        'git status; ls', "git commit -F - <<'EOF'\nmention git push origin claude/x\nEOF\n",
+                        'git push "unclosed'):
+            with self.subTest(command=command):
+                self.assertEqual(hook.violations(command), [])
+
+    def test_local_branches_stay_free(self):
+        # The rule is about branches on origin, e.g. a PR fetched for review.
+        for command in ('git checkout -B pr-123 FETCH_HEAD', 'git switch -c claude/x',
+                        'git branch claude/x', 'git branch -m claude/x'):
             with self.subTest(command=command):
                 self.assertEqual(hook.violations(command), [])
 

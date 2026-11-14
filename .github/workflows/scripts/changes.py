@@ -19,7 +19,7 @@ AREAS = {
                 # theme.rs checks its tokens against the web's (#561).
                 'web/src/theme/tokens.fixture.json'),
     # The deployment tests also read the backend's build, both versions and
-    # the workflows, and test the Claude Code hooks.
+    # the workflows. They test the Claude Code hooks too, so .claude/ is here.
     'deploy': ('deploy/', 'backend/', 'desktop/Cargo.toml', 'rust-toolchain.toml', '.dockerignore',
                '.claude/'),
     'minio': ('deploy/compose/minio/', 'deploy/compose/mc/', 'deploy/compose/minio-init.sh',
