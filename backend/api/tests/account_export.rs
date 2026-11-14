@@ -233,7 +233,12 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
     let second = post(
         &mut ada,
         &channel_id,
-        json!({ "content": "mit bild", "attachment_ids": [file_id], "reply_to": id_of(&bobs) }),
+        json!({
+            "content": "mit bild",
+            "attachment_ids": [file_id],
+            "attachment_descriptions": { file_id.clone(): "Eine graue Katze" },
+            "reply_to": id_of(&bobs),
+        }),
     )
     .await;
     let res = ada
@@ -335,6 +340,7 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
             "filename": "../sub\\cat.png",
             "content_type": "image/png",
             "size_bytes": PNG.len(),
+            "description": "Eine graue Katze",
             "path": attachment_path,
         }])
     );
