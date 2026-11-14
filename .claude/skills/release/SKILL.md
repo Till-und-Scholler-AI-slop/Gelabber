@@ -36,7 +36,9 @@ is the order of the work; check each step's result before the next one.
    Never `gh release create`.
 7. **Desktop packages.** The pacman repository job waits for the
    `github-pages` environment approval. A maintainer approves it, not an
-   agent.
+   agent. The `libwebrtc-packages` and `build-deps` releases stay
+   pre-releases: as "Latest", the apps' updater and the web client's
+   download links would point at them.
 8. **Planning.** Close the milestone, move its open issues to the next one,
    and write the next milestone's goal if it has none.
 9. **Sync** `main` into the development line: branch `sync/main-into-vX.Y`,
