@@ -26,8 +26,9 @@ if ! curl -fs http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
   if command -v docker >/dev/null; then
     docker info >/dev/null 2>&1 || { (dockerd >/tmp/dockerd.log 2>&1 &); sleep 5; }
     docker rm -f gelabber-test-minio >/dev/null 2>&1 || true
+    env_value() { sed -n "s/^$1=//p" backend/api/.env.example | head -1; }
     docker run -d --name gelabber-test-minio -p 127.0.0.1:9000:9000 \
-      -e MINIO_ROOT_USER=gelabber -e MINIO_ROOT_PASSWORD=gelabbergelabber \
+      -e MINIO_ROOT_USER="$(env_value MINIO_ROOT_USER)" -e MINIO_ROOT_PASSWORD="$(env_value MINIO_ROOT_PASSWORD)" \
       "$minio_image" server /data >/dev/null
     for _ in $(seq 30); do curl -fs http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && break; sleep 1; done
   else

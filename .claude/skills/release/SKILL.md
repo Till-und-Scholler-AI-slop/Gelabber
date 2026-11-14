@@ -23,10 +23,17 @@ is the order of the work; check each step's result before the next one.
 4. **Notes.** `.github/release-notes/vX.Y.Z.md`, in the shape of the previous
    notes: what changed for people using it, what operators must do on
    upgrade, and anything that breaks older clients. Source:
-   `git log --merges --format='%s%n%b' <last tag>..HEAD`.
+   `git log --merges --format='%s%n%b' <last tag>..HEAD`. Check the upgrade
+   traps that came up before: image pins that must move together, new
+   required `.env` variables, and migrations that cannot be undone.
 5. **Pull request** `release: vX.Y.Z` to `main`, reviewed by a maintainer
-   other than the person who asked for the release. Until the release is
-   out, nothing else is merged into `main`.
+   other than the person who asked for the release. **Merging it deploys
+   production:** `release.yml` moves `latest` and the server's Watchtower
+   pulls it. So the merge needs an explicit go from a person, never only an
+   agent's approval, and before it the operator takes a backup
+   (`deploy/backup.sh`, see `deploy/README.md` "Backup") or pauses
+   Watchtower. With a migration in the notes, rollback is only through that
+   backup. Until the release is out, nothing else is merged into `main`.
 6. **After the merge** the chain runs by itself: CI (push) on `main`, then
    "Publish app images", then `release.yml`, which tags, publishes and starts
    `desktop-native.yml` for the tag. Watch it with
