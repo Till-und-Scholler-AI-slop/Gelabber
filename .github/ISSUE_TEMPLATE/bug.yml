@@ -5,7 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        A security problem does not belong in a public issue: see SECURITY.md.
+        A security problem does not belong in a public issue: see the
+        [security policy](https://github.com/Till-und-Scholler-AI-slop/Gelabber/security/policy).
   - type: input
     id: version
     attributes:
