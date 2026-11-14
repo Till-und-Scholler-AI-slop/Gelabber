@@ -461,7 +461,7 @@ function ColorField({
           onChange={(event) => onChange(event.target.value)}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : `${id}-value`}
-          className={`settings-color-swatch${value ? "" : " is-unset"}`}
+          className={`ui-color settings-color-swatch${value ? "" : " is-unset"}`}
           style={
             value
               ? undefined

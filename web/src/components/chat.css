@@ -43,6 +43,7 @@
 /* The conversation search field (#377): typing filters the history in
    place, Strg/⌘+F focuses it. */
 .lr-header-search {
+  /* The frame, background and focus come from .ui-field-shell (#561). */
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -51,54 +52,29 @@
   height: 30px;
   margin-left: auto;
   padding: 0 10px;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius);
-  background: var(--lr-panel);
   color: var(--lr-muted);
   font-size: 13px;
   cursor: text;
-  transition: width var(--lr-dur-micro) var(--lr-ease-standard);
+  transition:
+    width var(--lr-dur-micro) var(--lr-ease-standard),
+    border-color var(--lr-dur-fast) var(--lr-ease),
+    box-shadow var(--lr-dur-fast) var(--lr-ease);
 }
 .lr-header-search > svg {
   flex-shrink: 0;
 }
 .lr-header-search > input {
   flex: 1;
-  min-width: 0;
   height: 100%;
-  padding: 0;
-  border: 0;
-  outline: 0;
-  /* The frame around it shows focus. Without these the global ring's
-     page-coloured box-shadow and Chromium's search box paint a square box
-     inside the rounded frame (#561). */
-  box-shadow: none;
-  appearance: none;
-  background: transparent;
-  color: var(--lr-text);
-  font: inherit;
-}
-.lr-header-search > input::-webkit-search-decoration,
-.lr-header-search > input::-webkit-search-results-decoration {
-  appearance: none;
-}
-/* A hint must not read as typed text: --lr-muted is close to --lr-text in
-   several themes. --lr-subtle is fainter and still 4.5:1 (model.ts). */
-.lr-header-search > input::placeholder {
-  color: var(--lr-subtle);
 }
 .lr-header-search:hover,
 .lr-header-search:focus-within,
 .lr-header-search[data-active] {
   color: var(--lr-text);
-  border-color: color-mix(in srgb, var(--lr-border), var(--lr-text) 18%);
 }
 .lr-header-search:focus-within,
 .lr-header-search[data-active] {
   width: 260px;
-}
-.lr-header-search:focus-within {
-  border-color: color-mix(in srgb, var(--lr-accent) 70%, var(--lr-border));
 }
 
 .lr-message-pane {
@@ -924,21 +900,13 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   gap: 6px;
   margin-top: 4px;
 }
+/* A .ui-field (#561); only its size differs. */
 .lr-message-edit textarea {
-  width: 100%;
   min-height: 3.5em;
   max-height: calc(var(--lr-100dvh) * 0.5);
   field-sizing: content;
   resize: none;
   padding: 8px 10px;
-  border: 1px solid var(--lr-accent);
-  border-radius: var(--lr-radius);
-  outline: none;
-  /* Not the global ring's page-coloured halo either (#561). */
-  box-shadow: none;
-  background: var(--lr-panel);
-  color: var(--lr-text);
-  font: inherit;
   font-size: 14.5px;
   line-height: 1.5;
 }
@@ -1403,15 +1371,11 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-muted);
   font-size: 13px;
 }
-/* An input like every other field: the strong border (3:1, ui.css .ui-field). */
+/* A field like every other (ui.css .ui-field-shell, #561). Its radius is
+   the field radius plus the row's padding, so the 34px buttons inside sit
+   concentric with it. */
 .lr-composer-field {
-  border: 1px solid var(--lr-border-strong);
-  border-radius: calc(var(--lr-radius) + 4px);
-  background: var(--lr-panel);
-  transition: border-color 0.12s;
-}
-.lr-composer-field:focus-within {
-  border-color: color-mix(in srgb, var(--lr-accent) 70%, var(--lr-border));
+  border-radius: calc(var(--lr-field-radius) + 4px);
 }
 /* A file dragged over the conversation: the pane outlines, the field says
    what letting go does. */
@@ -1437,27 +1401,12 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-composer-row textarea {
   flex: 1;
-  min-width: 0;
   max-height: 160px;
   min-height: 34px;
   resize: none;
   padding: 6px 6px;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--lr-text);
-  font: inherit;
   font-size: 14.5px;
   line-height: 22px;
-}
-/* Fainter than the draft, like the header search's hint. */
-.lr-composer-row textarea::placeholder {
-  color: var(--lr-subtle);
-}
-.lr-composer-row textarea:focus-visible {
-  /* The field around it shows focus. */
-  outline: none;
-  box-shadow: none;
 }
 @media (pointer: coarse) {
   /* Phones show the whole draft, up to max-height. Browsers without
@@ -1481,13 +1430,6 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   height: 34px;
   border-radius: var(--lr-radius);
   color: var(--lr-muted);
-}
-/* Inside the composer's frame an offset ring with its page-coloured gap
-   reads as a second box: draw it inside the button instead (#561). */
-.lr-composer-icon:focus-visible,
-.lr-composer-send:focus-visible {
-  outline-offset: -2px;
-  box-shadow: none;
 }
 .lr-composer-icon:hover {
   background: var(--lr-hover);

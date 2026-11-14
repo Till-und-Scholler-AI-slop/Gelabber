@@ -347,16 +347,10 @@
   gap: 6px;
   font-size: 12px;
 }
-.theme-editor input:not([type="color"]),
-.theme-editor select {
-  min-width: 0;
-  width: 100%;
+/* .ui-field (#561); the editor's fields are a little taller. */
+.theme-editor .ui-field {
   min-height: 40px;
-  border: 1px solid var(--lr-border-strong);
-  border-radius: var(--lr-radius-small);
   padding: 8px;
-  background: var(--lr-panel);
-  color: var(--lr-text);
   font: inherit;
 }
 .theme-editor fieldset {
@@ -380,23 +374,18 @@
   gap: 5px;
   align-items: center;
 }
-.theme-color-field input[type="color"] {
-  width: 32px;
+.theme-color-field .ui-color {
+  width: 36px;
   height: 36px;
-  padding: 2px;
-  background: var(--lr-panel);
-  border: 1px solid var(--lr-border-strong);
-  border-radius: 5px;
   flex: none;
-  cursor: pointer;
 }
-.theme-color-field input:not([type="color"]) {
+.theme-color-field .ui-field {
   font-family: ui-monospace, monospace;
   font-size: 11px;
   padding: 5px;
 }
 @media (pointer: coarse) {
-  .theme-color-field input[type="color"] {
+  .theme-color-field .ui-color {
     width: 44px;
     height: 44px;
   }

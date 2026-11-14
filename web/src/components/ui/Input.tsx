@@ -6,16 +6,20 @@ import "./ui.css";
 export type InputProps = InputHTMLAttributes<HTMLInputElement> & {
   /** Marks the field invalid: a danger border and `aria-invalid`. */
   invalid?: boolean;
+  /** Inside a {@link FieldShell}: no frame of its own, the shell draws it. */
+  bare?: boolean;
   ref?: Ref<HTMLInputElement>;
 };
 
 /** `autoFocus` also picks the field a modal dialog opens on. */
-export function Input({ invalid, className, ref, ...rest }: InputProps) {
+export function Input({ invalid, bare, className, ref, ...rest }: InputProps) {
   const focus = dialogInitialFocus(rest.autoFocus);
   return (
     <input
       aria-invalid={invalid || undefined}
-      className={["ui-field", className].filter(Boolean).join(" ")}
+      className={[bare ? "ui-field-bare" : "ui-field", className]
+        .filter(Boolean)
+        .join(" ")}
       {...rest}
       ref={
         focus.ref && ref

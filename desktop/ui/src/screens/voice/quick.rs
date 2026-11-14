@@ -212,7 +212,6 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
             "quick-mic",
             &device_options(&devices.inputs),
             &mut p.audio_input_id,
-            c.surface,
         ) {
             app.call
                 .set_input(Some(p.audio_input_id.clone()).filter(|s| !s.is_empty()));
@@ -245,7 +244,6 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
             "quick-speaker",
             &device_options(&devices.outputs),
             &mut p.audio_output_id,
-            c.surface,
         ) {
             app.call
                 .set_output(Some(p.audio_output_id.clone()).filter(|s| !s.is_empty()));
@@ -257,7 +255,6 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
             "quick-camera",
             &device_options(&devices.cameras),
             &mut p.video_input_id,
-            c.surface,
         ) {
             app.call
                 .set_camera_device(Some(p.video_input_id.clone()).filter(|s| !s.is_empty()));

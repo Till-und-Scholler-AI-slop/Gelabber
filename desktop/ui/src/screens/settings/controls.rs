@@ -538,7 +538,6 @@ pub fn select(
     id: impl std::hash::Hash + std::fmt::Debug + Clone,
     options: &[(String, String)],
     value: &mut String,
-    fill: Color32,
 ) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
@@ -553,22 +552,15 @@ pub fn select(
     let painter = ui.painter();
     let shown = snap(ui.ctx(), rect);
     let focused = response.has_focus() && keyboard_focus(ui.ctx());
-    painter.rect(
-        shown,
-        corner(theme.radius.sm),
-        fill,
-        Stroke::new(
-            1.0,
-            if open || focused {
-                c.focus
-            } else {
-                c.border_strong
-            },
-        ),
-        StrokeKind::Inside,
-    );
-    if focused {
-        crate::widgets::field_focus_ring(painter, shown, theme.radius.sm, c.focus);
+    // `.ui-field` (#561); open, its border shows the focus colour too.
+    crate::widgets::field_box(painter, shown, &theme, focused, false);
+    if open && !focused {
+        painter.rect_stroke(
+            shown,
+            corner(theme.field.radius),
+            Stroke::new(1.0, theme.field.border_focus),
+            StrokeKind::Inside,
+        );
     }
     let label = options
         .iter()
@@ -819,23 +811,7 @@ pub fn textarea_with(
     let focused = ui.memory(|m| m.has_focus(field));
     let painter = ui.painter().clone();
     let shown = snap(ui.ctx(), rect);
-    let border = if invalid {
-        c.danger
-    } else if focused {
-        c.focus
-    } else {
-        c.border_strong
-    };
-    painter.rect(
-        shown,
-        corner(theme.radius.sm),
-        c.bg,
-        Stroke::new(1.0, border),
-        StrokeKind::Inside,
-    );
-    if focused {
-        crate::widgets::field_focus_ring(&painter, shown, theme.radius.sm, border);
-    }
+    crate::widgets::field_box(&painter, shown, &theme, focused, invalid);
     let color = c.text;
     let mut layouter = move |ui: &Ui, buf: &dyn TextBuffer, wrap: f32| {
         let mut job = LayoutJob::single_section(buf.as_str().to_owned(), text::BODY.format(color));

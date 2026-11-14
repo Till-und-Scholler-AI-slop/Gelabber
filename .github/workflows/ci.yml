@@ -312,6 +312,20 @@ jobs:
       - name: Test E2E harness and scripts
         run: npm run test:checks
 
+      # Every field state in four themes against its pictures (#561).
+      - name: Field gallery
+        run: |
+          npx playwright install --with-deps chromium-headless-shell
+          npm run test:field-gallery
+
+      - name: Field gallery pictures
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: field-gallery
+          path: web/field-gallery-out/
+          if-no-files-found: ignore
+
       - name: Build
         run: npm run build
 

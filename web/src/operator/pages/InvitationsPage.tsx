@@ -14,6 +14,7 @@ import { Button } from "../../components/ui/Button.tsx";
 import { Checkbox } from "../../components/ui/Checkbox.tsx";
 import { ChipGroup } from "../../components/ui/ChipGroup.tsx";
 import { CopyButton } from "../../components/ui/CopyButton.tsx";
+import { Input } from "../../components/ui/Input.tsx";
 import { SkeletonRows } from "../../components/ui/Skeleton.tsx";
 import { useT } from "../../i18n/catalog.ts";
 import { operator } from "../../i18n/catalogs/operator.ts";
@@ -299,9 +300,8 @@ export function CreatedLink({
         {t("invitations.created.linkLabel")}
       </label>
       <div className="operator-created-link">
-        <input
+        <Input
           id="operator-invitation-link"
-          className="ui-field"
           readOnly
           value={link}
           onFocus={(event) => event.currentTarget.select()}

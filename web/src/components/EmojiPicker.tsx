@@ -5,6 +5,8 @@ import { useCurrentLocale } from "../i18n/locale.ts";
 import data from "../messages/emoji-data.json";
 import { useEmojiNames } from "./emojiNames.ts";
 import { useMissingEmoji } from "./emojiSupport.ts";
+import { Input } from "./ui/Input.tsx";
+import { Select } from "./ui/Select.tsx";
 
 const groups = [...new Set(data.emoji.map((entry) => entry.group))];
 const allEmoji = data.emoji.map((entry) => entry.emoji);
@@ -53,7 +55,7 @@ export default function EmojiPicker({
       <label htmlFor={`${id}-search`} className="text-sm font-medium">
         {t("picker.search")}
       </label>
-      <input
+      <Input
         id={`${id}-search`}
         type="search"
         value={query}
@@ -62,19 +64,17 @@ export default function EmojiPicker({
           setLimit(80);
         }}
         autoFocus
-        className="rounded border border-neutral-300 p-2 dark:border-neutral-600"
       />
       <label htmlFor={`${id}-group`} className="text-sm font-medium">
         {t("picker.group")}
       </label>
-      <select
+      <Select
         id={`${id}-group`}
         value={group}
         onChange={(event) => {
           setGroup(event.target.value);
           setLimit(80);
         }}
-        className="rounded border border-neutral-300 p-2 dark:border-neutral-600"
       >
         <option value="">{t("picker.allGroups")}</option>
         {groups.map((value) => (
@@ -82,7 +82,7 @@ export default function EmojiPicker({
             {names?.groups[value] ?? value}
           </option>
         ))}
-      </select>
+      </Select>
       <p role="status" className="text-xs text-neutral-500">
         {t("picker.found", { count: matches.length })}
       </p>

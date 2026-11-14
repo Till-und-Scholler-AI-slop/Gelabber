@@ -43,6 +43,7 @@ import {
 } from "./MessageActionSheet.tsx";
 import { longPressGesture, swallowNextClick } from "./longPress.ts";
 import { Button } from "./ui/Button.tsx";
+import { Textarea } from "./ui/Textarea.tsx";
 import { copyText } from "../servers/clipboard.ts";
 import { notify, notifyError } from "./toasts.ts";
 import { AttachmentList } from "./Attachments.tsx";
@@ -469,8 +470,9 @@ export function MessageRow({
             }}
           >
             {editSuggestions.list}
-            <textarea
+            <Textarea
               ref={editInput}
+              invalid={Boolean(error)}
               value={draft}
               {...editSuggestions.fieldProps}
               onChange={(e) => {

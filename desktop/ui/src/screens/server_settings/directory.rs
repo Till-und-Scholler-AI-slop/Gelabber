@@ -379,7 +379,7 @@ fn listing(
             .chain(languages.iter().map(|l| (l.code.clone(), l.name.clone())))
             .collect();
     let select_id = ui.next_auto_id();
-    if controls::select(ui, "directory-language", &options, &mut form.language, c.bg) {
+    if controls::select(ui, "directory-language", &options, &mut form.language) {
         edited = true;
         d.errors.clear_field("language");
     }
