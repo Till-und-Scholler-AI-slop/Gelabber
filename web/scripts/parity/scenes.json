@@ -1169,11 +1169,6 @@
       "page": "desktop/parity/reference/setup/index.html"
     },
     {
-      "name": "setup-dark",
-      "page": "desktop/parity/reference/setup/index.html",
-      "scheme": "dark"
-    },
-    {
       "name": "setup-switch",
       "page": "desktop/parity/reference/setup/index.html",
       "query": "?server=http%3A%2F%2F127.0.0.1%3A5180"
@@ -1544,7 +1539,7 @@
     {
       "name": "invite-invalid",
       "path": "/invite/xyz",
-      "user": null
+      "user": "lena"
     },
     {
       "name": "not-found",
@@ -2001,7 +1996,7 @@
     {
       "name": "invite-invalid-en",
       "path": "/invite/xyz",
-      "user": null,
+      "user": "lena",
       "locale": "en"
     },
     {
@@ -2362,6 +2357,7 @@
       "name": "user-menu-operator",
       "path": "/s/{home}",
       "user": "lena",
+      "desktop": true,
       "actions": [
         {
           "click": "Benutzermenü"
@@ -2531,7 +2527,7 @@
     {
       "name": "settings-konto-delete",
       "path": "/settings/konto",
-      "user": "mira",
+      "user": "kai",
       "desktop": true,
       "userAgent": "Gelabber-Desktop/0.10.0 (linux)",
       "actions": [
@@ -2577,6 +2573,7 @@
       "name": "user-menu-feedback",
       "path": "/s/{home}",
       "user": "tom",
+      "desktop": true,
       "actions": [
         {
           "click": "/^Benutzermenü/"
@@ -2587,6 +2584,7 @@
       "name": "user-menu-feedback-en",
       "path": "/s/{home}",
       "user": "tom",
+      "desktop": true,
       "locale": "en",
       "actions": [
         {
