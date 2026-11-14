@@ -828,6 +828,20 @@ Limits (`attachments/validate.rs:7-35`; web `messages/rules.ts:7-14`): file ≤ 
    The pending upload expires after 1 h (`PENDING_TTL`).
 2. `PUT {upload_url}` with the raw file bytes and **every** header from `headers` (the browser skips `Content-Length` because fetch sets it from the body; a native client must send the exact length) (`putPresigned`, `api.ts:71-109`). No cookies to MinIO. In proxy mode the request carries the session cookie and the listed `X-CSRF-Token`. Success = any 2xx (proxy answers `204`). Proxy errors: `404` (not your pending upload, older than 600 s, or proxy mode off), `422 content_type: invalid` (header ≠ presigned type), `422 size: invalid` (Content-Length or body length ≠ declared). Web error copy (`messages/api.ts:93-108`): timeout (120 s) `Der Upload hat zu lange gedauert und wurde abgebrochen.`, abort `Der Upload wurde abgebrochen.`, any other fetch failure → `ApiError("network")` = `Keine Verbindung zum Server.`, non-2xx `Der Upload ist fehlgeschlagen.` (the response body is not read).
 3. `POST /api/channels/{id}/messages` with `attachment_ids` in the order they should appear. The server HEADs each object and checks size and magic bytes (`mismatch`).
+   For pictures (`image/jpeg|png|gif|webp`) the server then reads the whole file once (`attachments/media.rs`, `prepare`): it removes privacy metadata from the original in place, without re-encoding (`attachments/metadata.rs`: GPS/EXIF except the orientation, XMP, IPTC, comments, MPF and data after the JPEG's end such as motion-photo video; PNG `tEXt`/`zTXt`/`iTXt`/`tIME`; WebP `EXIF`/`XMP `; ICC profiles stay), so the bound attachment's `size` can be smaller than the upload's. GIFs stay as uploaded.
+
+### 9.1a Picture fields (#574)
+
+The `Attachment` JSON of a picture carries, when known:
+
+| Field | Meaning |
+|---|---|
+| `width`, `height` | size as shown (EXIF orientation applied), set at binding from the header; reserve the box before any byte loads |
+| `placeholder`, `placeholder_version` | version 1: average colour `#rrggbb`, shown while the picture loads; ignore versions you don't know |
+| `animated` | `true` when the file has more than one frame (GIF, APNG, animated WebP); omitted when false |
+| `thumbnail` | `true` once `?size=400` / `?size=800` answer with a thumbnail; omitted when false |
+
+All of them are omitted when unknown: pictures from before #574 get them from the backfill, a picture that does not decode never gets `thumbnail`/`placeholder`. The media worker makes them a few seconds after the message is sent; no event announces it (the next fetch of the message shows them).
 
 ### 9.2 Download
 
@@ -835,6 +849,7 @@ Limits (`attachments/validate.rs:7-35`; web `messages/rules.ts:7-14`): file ≤ 
 
 - Auth: session cookie; pending uploads only for the uploader; bound ones for any member of the channel/DM; else `404`.
 - `download=1` or a non-inline type → `Content-Disposition: attachment; filename…`; inline types → `inline`.
+- `size=400|800` (pictures, #574): the thumbnail with that long edge, upright, no metadata but the ICC profile; JPEG (quality 80), or lossless WebP for transparent pictures (`Content-Type` says which). Same auth and caching as the original. Until the thumbnail exists (or when the picture has none) the original is served with `Cache-Control: private, no-store`, so the thumbnail URL is never cached with the original's bytes. Any other `size` → `422 size: invalid`. Thumbnails are deleted with their attachment.
 - Redirect mode: `307 Temporary Redirect` to a presigned MinIO GET URL (signed per 30-min window, valid 60 min), `Vary: Cookie`, `Cache-Control: private, max-age=<seconds left in window>` (inline) or `private, no-store` (download). Follow the redirect **without** cookies/Authorization.
 - Proxy mode: `200`/`206` stream with `Content-Type` (text types served as `text/plain`), `Cache-Control: private, max-age=3600` or `private, no-store`, `Vary: Cookie`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Accept-Ranges: bytes`, `Content-Length`, `Content-Range` for ranges; `416` with `Content-Range: bytes */<size>`.
 - The web reads text attachments with a plain `fetch(attachmentUrl(id))` and decodes the bytes (`components/Attachments.tsx:272-300`).

@@ -20,6 +20,10 @@ pub const ALLOWED_TYPES: &[&str] = &[
     "image/png",
     "image/gif",
     "image/webp",
+    // Android camera photos (#574): kept as a plain file, never shown
+    // inline (no HEIF decoder), see `is_image`.
+    "image/heic",
+    "image/heif",
     "application/pdf",
     "text/plain",
     "text/markdown",

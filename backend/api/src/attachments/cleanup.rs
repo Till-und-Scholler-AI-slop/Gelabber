@@ -58,7 +58,7 @@ struct Upload {
 /// a failed HEAD leaves metadata/reservation intact for a later retry.
 pub async fn expire_pending(state: &AppState, limit: i64) -> Result<(), ApiError> {
     let uploads = sqlx::query_as::<_, Upload>(
-        "SELECT id, object_key, size_bytes, clock_timestamp() >= expires_at + interval '15 minutes' AS grace_over FROM attachments \
+        "SELECT id, object_key, COALESCE(stripped_size, size_bytes) AS size_bytes, clock_timestamp() >= expires_at + interval '15 minutes' AS grace_over FROM attachments \
          WHERE message_id IS NULL AND expires_at <= now() AND expiry_retry_at <= now() \
          ORDER BY expiry_retry_at, expires_at, id LIMIT $1",
     )
@@ -80,7 +80,7 @@ pub async fn discard_mismatches(
     ids: &[Uuid],
 ) -> Result<(), ApiError> {
     let uploads = sqlx::query_as::<_, Upload>(
-        "SELECT id, object_key, size_bytes, clock_timestamp() >= expires_at + interval '15 minutes' AS grace_over FROM attachments \
+        "SELECT id, object_key, COALESCE(stripped_size, size_bytes) AS size_bytes, clock_timestamp() >= expires_at + interval '15 minutes' AS grace_over FROM attachments \
          WHERE id=ANY($1) AND channel_id=$2 AND uploader_id=$3 AND message_id IS NULL",
     )
     .bind(ids)
