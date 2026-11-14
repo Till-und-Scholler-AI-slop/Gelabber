@@ -62,6 +62,13 @@ Work is tracked in the organization project
   three sentences. After a release: close its milestone, move open issues to
   the next one, write that one's goal.
 
+## Procedures
+
+Repeatable procedures are skills in `.claude/skills/<name>/SKILL.md`; the
+`description` of each says when it applies. Before such a procedure, read its
+skill and follow it. When a procedure changes, change its skill in the same
+pull request.
+
 ## Commands
 
 Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
