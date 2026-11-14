@@ -105,9 +105,11 @@ pub fn matches(content_type: &str, head: &[u8]) -> bool {
         // ISO base media with a HEIF brand.
         "image/heic" | "image/heif" => {
             at(4, b"ftyp")
-                && [b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1"]
-                    .iter()
-                    .any(|brand| at(8, *brand))
+                && [
+                    b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1",
+                ]
+                .iter()
+                .any(|brand| at(8, *brand))
         }
         // Older QuickTime files may open with another top-level atom.
         "video/quicktime" => [b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip"]
