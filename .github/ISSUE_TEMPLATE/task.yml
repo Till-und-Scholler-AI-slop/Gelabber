@@ -1,0 +1,18 @@
+name: Task
+description: Work that is neither a bug nor a new feature, such as docs, CI, a refactor or dependencies.
+type: Task
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What has to be done
+      description: The outcome, and how to tell it is done.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What it fixes, unblocks or makes easier.
+    validations:
+      required: true
