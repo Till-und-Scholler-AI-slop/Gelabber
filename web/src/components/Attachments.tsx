@@ -5,6 +5,7 @@
 import {
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -16,7 +17,8 @@ import {
   attachmentUrl,
   thumbnailUrl,
 } from "../messages/api.ts";
-import { isPendingId } from "../messages/queries.ts";
+import { isPendingId, useEditAltText } from "../messages/queries.ts";
+import { takeStamp } from "../auth/scope.ts";
 import {
   decodeText,
   formatSize,
@@ -28,7 +30,9 @@ import {
 } from "../messages/rules.ts";
 import type { Attachment } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
-import { useT } from "../i18n/catalog.ts";
+import { translate, useT } from "../i18n/catalog.ts";
+import { AltTextDialog } from "./AltTextDialog.tsx";
+import { notifyError } from "./toasts.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { useDownload } from "./download.ts";
 import { CheckIcon, PaperclipIcon } from "./Icons.tsx";
@@ -44,14 +48,38 @@ import { reloadMedia } from "./mediaReload.ts";
 import { OpenImage } from "./openImage.ts";
 import { isPlainClick } from "./plainClick.ts";
 
-export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
+/** Where my own message's alt texts are changed (#575). */
+export type AltTextTarget = { messageId: string; channelId: string };
+
+export function AttachmentList({
+  attachments,
+  editAlt,
+}: {
+  attachments: Attachment[];
+  /** Set on my own sent message: its pictures' alt texts can be edited. */
+  editAlt?: AltTextTarget;
+}) {
+  const [editing, setEditing] = useState<Attachment | null>(null);
   const files = asAttachmentList(attachments);
   if (files.length === 0) return null;
   const images = files.filter((a) => isImageType(a.content_type));
   const others = files.filter((a) => !isImageType(a.content_type));
   return (
     <div className="lr-attachments">
-      {images.length > 0 ? <Pictures pictures={images} /> : null}
+      {images.length > 0 ? (
+        <Pictures
+          pictures={images}
+          onEditAlt={editAlt ? setEditing : undefined}
+        />
+      ) : null}
+      {editAlt && editing ? (
+        <AltTextEditor
+          key={editing.id}
+          target={editAlt}
+          attachment={editing}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
       {others.map((attachment) => {
         const type = attachment.content_type;
         if (isVideoType(type) || isAudioType(type))
@@ -69,10 +97,22 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
 /** One picture in its own shape, or several as a mosaic by count (#574):
  *  1 / 2 halves / 1 big and 2 / 2×2 / 2 and 3 / 3×2, the last tile "+N"
  *  past six. Every box is known before a byte loads (imageBox.ts). */
-function Pictures({ pictures }: { pictures: Attachment[] }) {
+function Pictures({
+  pictures,
+  onEditAlt,
+}: {
+  pictures: Attachment[];
+  onEditAlt?: (attachment: Attachment) => void;
+}) {
   const t = useT(chat);
   if (pictures.length === 1)
-    return <AttachmentImage attachment={pictures[0]!} gallery={pictures} />;
+    return (
+      <AttachmentImage
+        attachment={pictures[0]!}
+        gallery={pictures}
+        onEditAlt={onEditAlt}
+      />
+    );
   const layout = mosaic(pictures.length);
   const shown = pictures.slice(0, layout.tiles);
   const hidden = pictures.length - shown.length;
@@ -84,6 +124,7 @@ function Pictures({ pictures }: { pictures: Attachment[] }) {
           attachment={attachment}
           gallery={pictures}
           tile
+          onEditAlt={onEditAlt}
           more={
             index === shown.length - 1 && hidden > 0
               ? t("attachment.more", { count: String(hidden) })
@@ -164,6 +205,7 @@ function AttachmentImage({
   tile = false,
   more,
   moreCount = 0,
+  onEditAlt,
 }: {
   attachment: Attachment;
   gallery: Attachment[];
@@ -171,6 +213,7 @@ function AttachmentImage({
   /** "+N" over the last tile, for the pictures the mosaic leaves out. */
   more?: string;
   moreCount?: number;
+  onEditAlt?: (attachment: Attachment) => void;
 }) {
   const t = useT(chat);
   const openImage = useContext(OpenImage);
@@ -224,67 +267,199 @@ function AttachmentImage({
     .filter(Boolean)
     .join(" ");
   return (
-    <a
-      href={original}
-      // The link stays for "open in new tab"; a click shows the
-      // picture here, also where no new tab exists (desktop app,
-      // installed web app).
-      onClick={(event) => {
-        if (!isPlainClick(event)) return;
-        event.preventDefault();
-        if (isPendingId(attachment.id)) return;
-        openImage(
-          lightboxImage(attachment),
-          gallery
-            .filter((picture) => !isPendingId(picture.id))
-            .map(lightboxImage),
-        );
-      }}
-      aria-label={t("attachment.enlargeLabel", { name: attachment.filename })}
-      className={className}
-      style={{
-        ...sized,
-        ...(colour ? { backgroundColor: colour } : {}),
-      }}
-    >
-      <img
-        key={attempt}
-        src={src}
-        srcSet={srcSet}
-        sizes={sizes}
-        alt={attachment.filename}
-        decoding="async"
-        loading="lazy"
-        onLoad={(event) => {
-          if (knownImageSize(attachment)) return;
-          const { naturalWidth: width, naturalHeight: height } =
-            event.currentTarget;
-          if (width <= 0 || height <= 0) return;
-          rememberImageSize(attachment, { width, height });
-          setNatural((known) =>
-            known?.width === width && known.height === height
-              ? known
-              : { width, height },
+    <div className={tile ? "lr-picture is-tile" : "lr-picture"}>
+      <a
+        href={original}
+        // The link stays for "open in new tab"; a click shows the
+        // picture here, also where no new tab exists (desktop app,
+        // installed web app).
+        onClick={(event) => {
+          if (!isPlainClick(event)) return;
+          event.preventDefault();
+          if (isPendingId(attachment.id)) return;
+          openImage(
+            lightboxImage(attachment),
+            gallery
+              .filter((picture) => !isPendingId(picture.id))
+              .map(lightboxImage),
           );
         }}
-        // A picture that cannot load (storage unreachable, link expired,
-        // file gone) says so instead of leaving an empty box (#348), after
-        // one more try of its own.
-        onError={() => {
-          if (attempt === 0) setAttempt(1);
-          else setFailed(true);
+        aria-label={t("attachment.enlargeLabel", {
+          name: attachment.description ?? attachment.filename,
+        })}
+        className={className}
+        style={{
+          ...sized,
+          ...(colour ? { backgroundColor: colour } : {}),
         }}
+      >
+        <img
+          key={attempt}
+          src={src}
+          srcSet={srcSet}
+          sizes={sizes}
+          alt={attachment.description ?? attachment.filename}
+          decoding="async"
+          loading="lazy"
+          onLoad={(event) => {
+            if (knownImageSize(attachment)) return;
+            const { naturalWidth: width, naturalHeight: height } =
+              event.currentTarget;
+            if (width <= 0 || height <= 0) return;
+            rememberImageSize(attachment, { width, height });
+            setNatural((known) =>
+              known?.width === width && known.height === height
+                ? known
+                : { width, height },
+            );
+          }}
+          // A picture that cannot load (storage unreachable, link expired,
+          // file gone) says so instead of leaving an empty box (#348), after
+          // one more try of its own.
+          onError={() => {
+            if (attempt === 0) setAttempt(1);
+            else setFailed(true);
+          }}
+        />
+        {attachment.animated && !playsInline ? (
+          <span className="lr-attachment-badge">
+            {t("attachment.animated")}
+          </span>
+        ) : null}
+        {more && moreCount > 0 ? (
+          <span className="lr-attachment-more" aria-label={more}>
+            +{moreCount}
+          </span>
+        ) : null}
+        <UploadState attachment={attachment} />
+      </a>
+      <AltTextBadge
+        attachment={attachment}
+        onEdit={
+          onEditAlt && !isPendingId(attachment.id)
+            ? () => onEditAlt(attachment)
+            : undefined
+        }
       />
-      {attachment.animated && !playsInline ? (
-        <span className="lr-attachment-badge">{t("attachment.animated")}</span>
-      ) : null}
-      {more && moreCount > 0 ? (
-        <span className="lr-attachment-more" aria-label={more}>
-          +{moreCount}
+    </div>
+  );
+}
+
+/** "ALT" on a picture with an alt text: a hover with the mouse or a tap
+ *  shows it (#575). On my own pictures it also offers to add or change
+ *  it. The text itself reaches screen readers as the picture's `alt`. */
+function AltTextBadge({
+  attachment,
+  onEdit,
+}: {
+  attachment: Attachment;
+  onEdit?: () => void;
+}) {
+  const t = useT(chat);
+  const [open, setOpen] = useState(false);
+  const hovered = useRef(false);
+  const id = useId();
+  const text = attachment.description;
+  if (!text && !onEdit) return null;
+  if (!text)
+    return (
+      <button
+        type="button"
+        className="lr-alt-badge is-empty"
+        onClick={onEdit}
+        aria-label={`${t("altText.add")}: ${attachment.filename}`}
+        title={t("altText.add")}
+      >
+        {t("altText.badge")}
+      </button>
+    );
+  return (
+    <span
+      className="lr-alt"
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "mouse") return;
+        hovered.current = false;
+        setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="lr-alt-badge"
+        aria-expanded={open}
+        aria-controls={id}
+        aria-label={t("altText.show")}
+        onPointerEnter={(event) => {
+          if (event.pointerType !== "mouse") return;
+          hovered.current = true;
+          setOpen(true);
+        }}
+        // A mouse opened it on hover already: its click keeps it open.
+        onClick={() => setOpen((was) => (hovered.current ? true : !was))}
+      >
+        {t("altText.badge")}
+      </button>
+      {open ? (
+        <span id={id} className="lr-alt-text">
+          {/* Already read out as the picture's alt. */}
+          <span aria-hidden="true">{text}</span>
+          {onEdit ? (
+            <button type="button" onClick={onEdit}>
+              {t("altText.edit")}
+            </button>
+          ) : null}
         </span>
       ) : null}
-      <UploadState attachment={attachment} />
-    </a>
+    </span>
+  );
+}
+
+/** The alt text dialog for one of my sent pictures; saved as an edit. */
+function AltTextEditor({
+  target,
+  attachment,
+  onClose,
+}: {
+  target: AltTextTarget;
+  attachment: Attachment;
+  onClose: () => void;
+}) {
+  const edit = useEditAltText(target.channelId);
+  return (
+    <AltTextDialog
+      open
+      name={attachment.filename}
+      preview={
+        attachment.thumbnail
+          ? thumbnailUrl(attachment.id, 400)
+          : attachmentUrl(attachment.id)
+      }
+      initial={attachment.description ?? ""}
+      pending={edit.isPending}
+      onClose={onClose}
+      onSave={(text) => {
+        const scope = takeStamp();
+        if (!scope) return;
+        edit.mutate(
+          {
+            messageId: target.messageId,
+            attachmentId: attachment.id,
+            text,
+            scope,
+          },
+          {
+            onSuccess: onClose,
+            onError: (error) =>
+              notifyError(error, translate(chat, "altText.saveFailed")),
+          },
+        );
+      }}
+    />
   );
 }
 

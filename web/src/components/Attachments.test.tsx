@@ -8,6 +8,7 @@ import {
   DownloadLink,
 } from "./Attachments.tsx";
 import { rememberImageSize } from "./imageBox.ts";
+import { lightboxImage } from "./lightboxImage.ts";
 import { reloadMedia } from "./mediaReload.ts";
 
 const file = (
@@ -245,5 +246,57 @@ describe("picture that did not load (#348)", () => {
     );
     expect(html).toContain(">Erneut laden</button>");
     expect(html).not.toContain("Herunterladen");
+  });
+});
+
+describe("alt text (#575)", () => {
+  const described: Attachment = {
+    ...file("d1", "IMG_20261114_175312.jpg", "image/jpeg"),
+    description: 'Fehlerdialog: "Upload fehlgeschlagen (413)"',
+  };
+
+  it("reads the alt text instead of the file name and shows ALT", () => {
+    const html = renderToStaticMarkup(
+      <AttachmentList attachments={[described]} />,
+    );
+    expect(html).toContain(
+      'alt="Fehlerdialog: &quot;Upload fehlgeschlagen (413)&quot;"',
+    );
+    expect(html).not.toContain('alt="IMG_20261114_175312.jpg"');
+    expect(html).toContain('class="lr-alt-badge"');
+    expect(html).toContain('aria-label="Alt-Text anzeigen"');
+    expect(html).toContain('aria-expanded="false"');
+  });
+
+  it("keeps the file name and no badge without one", () => {
+    const html = renderToStaticMarkup(
+      <AttachmentList attachments={[file("n1", "katze.png", "image/png")]} />,
+    );
+    expect(html).toContain('alt="katze.png"');
+    expect(html).not.toContain("lr-alt-badge");
+  });
+
+  it("offers my own pictures an alt text, sent ones only", () => {
+    const target = { messageId: "m1", channelId: "c1" };
+    const mine = renderToStaticMarkup(
+      <AttachmentList
+        attachments={[file("o1", "hund.png", "image/png")]}
+        editAlt={target}
+      />,
+    );
+    expect(mine).toContain("lr-alt-badge is-empty");
+    expect(mine).toContain('aria-label="Alt-Text hinzufügen: hund.png"');
+    const sending = renderToStaticMarkup(
+      <AttachmentList
+        attachments={[file("tmp:1", "hund.png", "image/png")]}
+        editAlt={target}
+      />,
+    );
+    expect(sending).not.toContain("lr-alt-badge");
+  });
+
+  it("goes with the picture to the lightbox", () => {
+    expect(lightboxImage(described).alt).toBe(described.description);
+    expect(lightboxImage(file("x", "x.png", "image/png")).alt).toBeUndefined();
   });
 });
