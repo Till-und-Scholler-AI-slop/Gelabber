@@ -524,11 +524,20 @@ export async function sendMessageAttempt(
       requireAttempt(attempt);
       attempt = { ...attempt, stage: "upload" };
       saveAttempt(attempt);
+      // Whole percents only: every step re-renders the row.
+      let shown = -1;
+      const uploading = attempt.id;
       await remote.putPresigned(
         presign.upload_url,
         file,
         presign.headers,
         attempt.controller.signal,
+        (share) => {
+          const percent = Math.floor(share * 100);
+          if (percent === shown) return;
+          shown = percent;
+          markUpload(channelId, uploading, index, "uploading", percent / 100);
+        },
       );
       requireAttempt(attempt);
       arrived.set(file, {

@@ -69,24 +69,106 @@ describe("picture box", () => {
     const shot = file("s1", "zeile.png", "image/png");
     expect(
       renderToStaticMarkup(<AttachmentList attachments={[shot]} />),
-    ).toContain('class="lr-attachment-image"');
+    ).toContain('class="lr-attachment-image is-unsized"');
     rememberImageSize(shot, { width: 972, height: 114 });
     const html = renderToStaticMarkup(<AttachmentList attachments={[shot]} />);
     expect(html).toContain('class="lr-attachment-image is-sized"');
-    expect(html).toContain('style="width:358px;aspect-ratio:972 / 114"');
+    // Wider than 3:1: the box keeps 3:1 and crops.
+    expect(html).toContain("width:min(100%, 342px);aspect-ratio:342 / 114");
   });
 
-  it("keeps the grid's cells for several pictures", () => {
-    const shots = [
-      file("s2", "a.png", "image/png"),
-      file("s3", "b.png", "image/png"),
+  it("takes the size and placeholder colour the API sends (#574)", () => {
+    const photo: Attachment = {
+      ...file("api1", "IMG_2031.jpg", "image/jpeg", 6 * 1024 * 1024),
+      width: 3000,
+      height: 4000,
+      placeholder: "#7a6b5c",
+      placeholder_version: 1,
+      thumbnail: true,
+    };
+    const html = renderToStaticMarkup(<AttachmentList attachments={[photo]} />);
+    expect(html).toContain("width:min(100%, 300px);aspect-ratio:300 / 400");
+    expect(html).toContain("background-color:#7a6b5c");
+    // The thumbnail, not the 6 MB original, at both densities.
+    expect(html).toContain('src="/api/attachments/api1?size=400"');
+    expect(html).toContain(
+      'srcSet="/api/attachments/api1?size=400 400w, /api/attachments/api1?size=800 800w"',
+    );
+    expect(html).toContain('sizes="300px"');
+  });
+
+  it("shows the original until there is a thumbnail", () => {
+    const photo: Attachment = {
+      ...file("api2", "a.jpg", "image/jpeg"),
+      width: 10,
+      height: 10,
+    };
+    const html = renderToStaticMarkup(<AttachmentList attachments={[photo]} />);
+    expect(html).toContain('src="/api/attachments/api2"');
+    expect(html).not.toContain("srcSet");
+  });
+
+  it("plays small animations inline, large ones in the viewer", () => {
+    const gif = (id: string, size: number): Attachment => ({
+      ...file(id, "x.gif", "image/gif", size),
+      width: 100,
+      height: 100,
+      animated: true,
+      thumbnail: true,
+    });
+    const small = renderToStaticMarkup(
+      <AttachmentList attachments={[gif("g1", 1024 * 1024)]} />,
+    );
+    expect(small).toContain('src="/api/attachments/g1"');
+    expect(small).not.toContain("lr-attachment-badge");
+    const large = renderToStaticMarkup(
+      <AttachmentList attachments={[gif("g2", 8 * 1024 * 1024)]} />,
+    );
+    expect(large).toContain('src="/api/attachments/g2?size=400"');
+    expect(large).toContain('<span class="lr-attachment-badge">GIF</span>');
+  });
+
+  it("lays out several pictures as a mosaic by count", () => {
+    const shots = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        file(`m${n}-${i}`, "a.png", "image/png"),
+      );
+    const names: [number, string][] = [
+      [2, "is-two"],
+      [3, "is-three"],
+      [4, "is-four"],
+      [5, "is-five"],
+      [6, "is-six"],
+      [10, "is-six"],
     ];
-    for (const shot of shots)
-      rememberImageSize(shot, { width: 972, height: 114 });
-    const html = renderToStaticMarkup(<AttachmentList attachments={shots} />);
-    expect(html).toContain("lr-attachment-grid");
-    expect(html).not.toContain("is-sized");
-    expect(html).not.toContain("aspect-ratio");
+    for (const [count, name] of names) {
+      const html = renderToStaticMarkup(
+        <AttachmentList attachments={shots(count)} />,
+      );
+      expect(html).toContain(`lr-attachment-grid ${name}`);
+      expect(html.match(/lr-attachment-image is-tile/g)?.length).toBe(
+        Math.min(count, 6),
+      );
+      expect(html).not.toContain("is-sized");
+    }
+    const ten = renderToStaticMarkup(
+      <AttachmentList attachments={shots(10)} />,
+    );
+    expect(ten).toContain('aria-label="4 weitere Bilder">+4</span>');
+  });
+
+  it("shows upload progress in percent on the picture", () => {
+    const pending: Attachment = {
+      ...file("tmp:1", "a.png", "image/png"),
+      preview_url: "blob:x",
+      upload: "uploading",
+      progress: 0.42,
+    };
+    const html = renderToStaticMarkup(
+      <AttachmentList attachments={[pending]} />,
+    );
+    expect(html).toContain("Wird hochgeladen … 42 %");
+    expect(html).toContain("width:42%");
   });
 });
 

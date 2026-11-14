@@ -6,6 +6,8 @@ import {
   imageBoxHeight,
   imageFit,
   knownImageSize,
+  mosaic,
+  picturesHeight,
   rememberImageSize,
 } from "./imageBox.ts";
 
@@ -25,27 +27,55 @@ describe("picture box", () => {
     });
   });
 
-  it("scales a wide screenshot to the width, in its shape", () => {
+  it("scales a wide screenshot to the width, at most 3:1", () => {
     const { width, height } = imageFit({ width: 972, height: 114 });
-    expect(width).toBe(358);
-    expect(height).toBeCloseTo(41.99, 2);
+    expect(width).toBe(342);
+    expect(height).toBe(114);
+    // 4:1 is cropped to 3:1, then scaled to the width.
+    const banner = imageFit({ width: 1200, height: 300 });
+    expect(banner.width).toBe(400);
+    expect(banner.height).toBeCloseTo(133.33, 2);
   });
 
-  it("scales a tall or large picture to the height", () => {
-    expect(imageFit({ width: 300, height: 1200 })).toEqual({
-      width: 59.5,
-      height: 238,
+  it("scales a tall or large picture into 400×400", () => {
+    const tall = imageFit({ width: 300, height: 1200 });
+    expect(tall.width).toBeCloseTo(133.33, 2);
+    expect(tall.height).toBe(400);
+    expect(imageFit({ width: 1600, height: 1200 })).toEqual({
+      width: 400,
+      height: 300,
     });
-    expect(imageFit({ width: 1600, height: 1200 }).height).toBe(238);
-    expect(imageFit({ width: 10, height: 5000 }).height).toBeCloseTo(238);
+    expect(imageFit({ width: 3000, height: 4000 })).toEqual({
+      width: 300,
+      height: 400,
+    });
+    // A thin strip is cropped to 1:3, never enlarged.
+    expect(imageFit({ width: 10, height: 5000 })).toEqual({
+      width: 24,
+      height: 30,
+    });
   });
 
-  it("keeps the full height until the size is known", () => {
-    expect(imageBoxHeight(picture("unseen"))).toBe(240);
+  it("reserves a box until the size is known, the API's first", () => {
+    expect(imageBoxHeight(picture("unseen"))).toBe(300);
     rememberImageSize(picture("wide"), { width: 972, height: 114 });
-    expect(imageBoxHeight(picture("wide"))).toBeCloseTo(43.99, 2);
+    expect(imageBoxHeight(picture("wide"))).toBe(114);
     rememberImageSize(picture("dot"), { width: 1, height: 1 });
     expect(imageBoxHeight(picture("dot"))).toBe(24);
+    expect(
+      imageBoxHeight({ ...picture("api"), width: 4000, height: 3000 }),
+    ).toBe(300);
+  });
+
+  it("knows the height of a mosaic before it loads", () => {
+    const many = (n: number) =>
+      Array.from({ length: n }, (_, i) => picture(`many${i}`));
+    expect(picturesHeight(many(2))).toBe(204);
+    expect(picturesHeight(many(3))).toBe(271);
+    expect(picturesHeight(many(4))).toBe(404);
+    expect(picturesHeight(many(5))).toBe(337);
+    expect(picturesHeight(many(9))).toBe(271);
+    expect(mosaic(9).tiles).toBe(6);
   });
 
   it("knows a sent picture by its local preview after the server's id", () => {
