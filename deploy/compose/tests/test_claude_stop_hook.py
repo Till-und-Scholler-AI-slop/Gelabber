@@ -103,7 +103,7 @@ class Hook(unittest.TestCase):
             self.failing_repo(tmp)
             result = self.run_hook(tmp, {'stop_hook_active': True})
             self.assertEqual(result.returncode, 0)
-            self.assertIn('unpinned', result.stderr)
+            self.assertIn('unpinned', json.loads(result.stdout)['systemMessage'])
 
     def test_a_failing_check_blocks_with_its_output(self):
         with tempfile.TemporaryDirectory() as tmp:
