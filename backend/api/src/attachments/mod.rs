@@ -85,13 +85,16 @@ pub struct Attachment {
     /// `?size=400` and `?size=800` answer with a thumbnail.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub thumbnail: bool,
+    /// The picture's alt text (#575), set by the uploader.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// The attachment columns the JSON is made from.
 macro_rules! row_columns {
     () => {
         "id, message_id, filename, content_type, size_bytes, width, height, \
-         placeholder, placeholder_version, animated, thumb_type"
+         placeholder, placeholder_version, animated, thumb_type, description"
     };
 }
 
@@ -108,6 +111,7 @@ struct AttachmentRow {
     placeholder_version: Option<i16>,
     animated: bool,
     thumb_type: Option<String>,
+    description: Option<String>,
 }
 
 impl From<AttachmentRow> for Attachment {
@@ -123,6 +127,7 @@ impl From<AttachmentRow> for Attachment {
             placeholder_version: row.placeholder_version,
             animated: row.animated,
             thumbnail: row.thumb_type.is_some(),
+            description: row.description,
         }
     }
 }
@@ -288,6 +293,7 @@ async fn presign(
                 placeholder_version: None,
                 animated: false,
                 thumbnail: false,
+                description: None,
             },
         }),
     ))
@@ -801,6 +807,47 @@ pub async fn bind_to_message(
     }
     Ok(bound)
 }
+
+/// Sets the alt texts (#575) of pictures of `message_id`, which the caller
+/// has checked is the author's. Every id must be a picture of that message,
+/// else nothing is written. Returns whether a text changed.
+pub async fn describe(
+    tx: &mut Transaction<'_, Postgres>,
+    message_id: Uuid,
+    texts: &[(Uuid, Option<String>)],
+) -> Result<bool, ApiError> {
+    let mut changed = false;
+    for (id, text) in texts {
+        let before: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT description FROM attachments \
+             WHERE id = $1 AND message_id = $2 AND content_type = ANY($3) FOR UPDATE",
+        )
+        .bind(id)
+        .bind(message_id)
+        .bind(PICTURE_TYPES)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let Some(before) = before else {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "attachment_descriptions",
+                "invalid",
+            )])));
+        };
+        if before != *text {
+            sqlx::query("UPDATE attachments SET description = $2 WHERE id = $1")
+                .bind(id)
+                .bind(text)
+                .execute(&mut **tx)
+                .await?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// The types shown as pictures ([`validate::is_image`]): only they take an
+/// alt text.
+const PICTURE_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 pub(crate) fn store_internal(err: StoreError) -> ApiError {
     match err {
