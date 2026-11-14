@@ -56,8 +56,9 @@ a prebuilt libwebrtc package.
 - Commit messages say what changed, in the style of the history:
   `<area>: <what changed>`, then a few lines on why.
 
-[AGENTS.md](AGENTS.md) holds the full rules for branches, releases and CI.
-It is written for coding agents and binds people the same way.
+[AGENTS.md](AGENTS.md) holds the full rules for branches and releases, and
+[.claude/rules/ci-workflows.md](.claude/rules/ci-workflows.md) those for CI.
+They are written for coding agents and bind people the same way.
 
 ## Before you open a pull request
 

@@ -1,0 +1,24 @@
+---
+paths:
+  - ".github/workflows/**"
+---
+
+# CI workflows (`.github/workflows`)
+
+Claude Code loads this file when it works on a workflow; AGENTS.md points here for everyone else.
+
+Keep CI lean. Pull requests check only what is needed to merge safely.
+
+- **Pull requests:** fmt, clippy/lint, tests, build, and one representative integration check per area. Aim for under 15 minutes per workflow with a warm cache.
+- **Areas:** each top-level folder is one area (`backend/`, `web/`, `desktop/`, `deploy/`). `ci.yml` runs only the areas a pull request touches; `.github/workflows/scripts/changes.py` maps paths to areas. `ci-ok` is the one required check; a new job joins its `needs`.
+- **After merge (push to `main`/`v*`) and releases:** packaging, installers, package repositories, signing and uploads.
+- **Manual diagnostics** (fault matrices, soak and stability loops) go in their own workflow, started by hand or by a PR label, outside the PR gate (see `e2e-extended.yml`: label `e2e-extended`).
+- **Lists of scripts** go behind one entry point (e.g. `npm run test:checks`). CI and developers run the same command.
+- **New check:** say what it catches that existing checks miss. Add it to an existing job unless a parallel job saves wall time. Remove checks that a new one replaces.
+- **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`deploy/compose/tests/test_workflow_pins.py`).
+- **Caches** are saved only by pushes (`save-if`, `cache-to`). Pull requests only read them, because per-PR copies exceed the repository's cache quota.
+- **Slow build outputs** that the cache quota would evict are kept where nothing evicts them: the libwebrtc packages are assets of the `libwebrtc-packages` release, stored by pushes and fetched on a cache miss (`desktop-native.yml`); the app images' layer cache is each image's `buildcache` tag in the registry, written by `publish-images.yml`.
+- **A release build** (`desktop-native.yml` with `release_tag`) builds, packages, makes one loopback call and tests the installed package, but runs the other code checks no more: CI on `main` ran them on the same commit.
+- **`libwebrtc-packages` and `build-deps` stay pre-releases.** If one became "Latest", `releases/latest/download/latest-native.json` (the apps' updater) and the web client's download links would point at it. A stored libwebrtc package is fetched only when `desktop/native/libwebrtc-packages.sha256` lists its SHA-256.
+- **Runners** are named by version, never `-latest`.
+- **Comments** in workflows are one or two lines saying why. Longer reasoning and history go in commit messages or `docs/`.
