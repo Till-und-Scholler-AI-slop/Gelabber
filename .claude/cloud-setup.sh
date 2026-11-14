@@ -10,11 +10,15 @@ cd "$(dirname "$0")/.."
 node_version=$(python3 -c 'import json,re; print(re.sub(r"[^0-9.]", "", json.load(open("web/package.json"))["engines"]["node"]))')
 node_dir=/opt/node-v$node_version
 if [ ! -x "$node_dir/bin/node" ]; then
-  archive=$(mktemp)
-  curl -fsSL "https://nodejs.org/dist/v$node_version/node-v$node_version-linux-x64.tar.xz" -o "$archive"
+  download=$(mktemp -d)
+  tarball=node-v$node_version-linux-x64.tar.xz
+  curl -fsSL "https://nodejs.org/dist/v$node_version/$tarball" -o "$download/$tarball"
+  # The release's published checksums, not only HTTPS.
+  curl -fsSL "https://nodejs.org/dist/v$node_version/SHASUMS256.txt" -o "$download/SHASUMS256.txt"
+  (cd "$download" && grep " $tarball\$" SHASUMS256.txt | sha256sum --check --quiet)
   mkdir -p "$node_dir"
-  tar -xJf "$archive" -C "$node_dir" --strip-components=1
-  rm -f "$archive"
+  tar -xJf "$download/$tarball" -C "$node_dir" --strip-components=1
+  rm -rf "$download"
 fi
 mkdir -p "$HOME/.local/bin"
 for tool in node npm npx; do ln -sf "$node_dir/bin/$tool" "$HOME/.local/bin/$tool"; done
