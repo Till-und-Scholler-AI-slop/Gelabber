@@ -82,6 +82,29 @@ class Hook(unittest.TestCase):
                                     capture_output=True, text=True, env={'CLAUDE_PROJECT_DIR': tmp, 'PATH': '/usr/bin:/bin'})
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def failing_repo(self, tmp):
+        repo = Path(tmp)
+        git(repo, 'init', '-q')
+        git(repo, 'commit', '-q', '--allow-empty', '-m', 'x')
+        git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        tests = repo / 'deploy/compose/tests'
+        tests.mkdir(parents=True)
+        (tests / 'test_workflow_pins.py').write_text(
+            'import unittest\nclass T(unittest.TestCase):\n    def test(self):\n        self.fail("unpinned")\n')
+        (repo / '.github/workflows').mkdir(parents=True)
+        (repo / '.github/workflows/ci.yml').write_text('on: push\n')
+
+    def run_hook(self, tmp, data):
+        return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(data), capture_output=True, text=True,
+                              env={'CLAUDE_PROJECT_DIR': tmp, 'PATH': '/usr/bin:/bin'})
+
+    def test_a_second_stop_is_not_blocked_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.failing_repo(tmp)
+            result = self.run_hook(tmp, {'stop_hook_active': True})
+            self.assertEqual(result.returncode, 0)
+            self.assertIn('unpinned', result.stderr)
+
     def test_a_failing_check_blocks_with_its_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

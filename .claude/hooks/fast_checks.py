@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Stop hook: runs the fast checks of the areas with uncommitted or unpushed
 changes before Claude ends its turn. Exit code 2 sends Claude back to fix
-what failed (stderr shows why). Checks whose tools are missing are skipped,
+what failed (stderr shows why), once: when Claude stops again right after
+(`stop_hook_active`), a failure it could not fix lets it stop. Checks whose tools are missing are skipped,
 and the slow ones (clippy, test suites) stay with CI and AGENTS.md.
 """
 import json
@@ -61,9 +62,10 @@ def checks(root, paths):
 
 def main():
     try:
-        json.load(sys.stdin)
+        data = json.load(sys.stdin)
     except ValueError:
-        pass
+        data = {}
+    retried = isinstance(data, dict) and bool(data.get('stop_hook_active'))
     root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or '.').resolve()
     failures = []
     for name, args, cwd in checks(root, changed_files(root)):
@@ -74,6 +76,11 @@ def main():
             failures.append(f'## {name} failed: {" ".join(args)} (in {cwd.relative_to(root) or "."})\n'
                             + '\n'.join(out.splitlines()[-TAIL:]))
     if not failures:
+        return 0
+    if retried:
+        # Already sent back once; a failure the change did not cause must not loop.
+        print('Fast checks still fail; say so in your reply (.claude/hooks/fast_checks.py):\n\n'
+              + '\n\n'.join(failures), file=sys.stderr)
         return 0
     print('Fast checks failed on your changes; fix them before you finish '
           '(.claude/hooks/fast_checks.py):\n\n' + '\n\n'.join(failures), file=sys.stderr)
