@@ -21,7 +21,9 @@ The **shipped line** is the latest release tag on `main`.
   cleanup). Without an issue, open one first (see Planning). Release work
   uses `release/vX.Y.Z`, `hotfix/vX.Y.Z-<short-description>` and
   `sync/main-into-vX.Y`. Only version branches start with `v`. Dependabot
-  keeps its own names.
+  keeps its own names. Where the tool you work in sets the branch name (as
+  Claude cloud sessions do), keep that name; the PR still says
+  `Closes #<n>`.
 - **Features:** branch off the development line; the PR targets it. Older
   version branches are complete.
 - **Releases:** a release branch from the development line with `origin/main`
