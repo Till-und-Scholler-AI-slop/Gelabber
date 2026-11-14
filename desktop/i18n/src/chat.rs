@@ -102,6 +102,12 @@ crate::strings! {
     /// The desktop app's save dialog for a downloaded file.
     attachment_save_title = "Datei speichern" | "Save file";
     /// The desktop app decodes pictures itself and leaves out huge ones.
+    attachment_animated = "GIF" | "GIF";
+    lightbox_previous = "Vorheriges Bild" | "Previous picture";
+    lightbox_next = "Nächstes Bild" | "Next picture";
+    lightbox_zoom = "Zoomen" | "Zoom";
+    composer_filter_pictures = "Bilder" | "Pictures";
+    composer_filter_all = "Alle Dateien" | "All files";
     attachment_image_too_large = "Bild ist zu groß zum Anzeigen." | "The image is too large to show.";
 
     // Link previews.
@@ -376,6 +382,27 @@ pub fn attachment_enlarge_label(name: &str) -> String {
     match get() {
         Locale::De => format!("{name} vergrößern"),
         Locale::En => format!("Enlarge {name}"),
+    }
+}
+
+/// "{count} weitere Bilder" on the last tile of a mosaic.
+pub fn attachment_more(count: usize) -> String {
+    match get() {
+        Locale::De => format!("{count} weitere Bilder"),
+        Locale::En => format!("{count} more pictures"),
+    }
+}
+
+/// "{n} / {total}" in the lightbox.
+pub fn lightbox_count(n: usize, total: usize) -> String {
+    format!("{n} / {total}")
+}
+
+/// "Bild {n} von {total}: {name}", the lightbox's accessible name.
+pub fn lightbox_label(n: usize, total: usize, name: &str) -> String {
+    match get() {
+        Locale::De => format!("Bild {n} von {total}: {name}"),
+        Locale::En => format!("Picture {n} of {total}: {name}"),
     }
 }
 

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gelabber_i18n::app as texts;
+use gelabber_i18n::chat as texts_chat;
 use parking_lot::Mutex;
 
 /// What is asked for.
@@ -25,20 +26,37 @@ pub enum Mode {
 #[derive(Clone, Debug)]
 pub struct Request {
     pub title: String,
-    /// Glob patterns ("*.png"); none for any file.
-    pub filter: Vec<String>,
+    /// Named lists of glob patterns ("*.png") to choose between, the
+    /// first chosen at the start; none for any file.
+    pub filters: Vec<(String, Vec<String>)>,
     pub mode: Mode,
 }
 
 impl Request {
+    /// One filter, named as the dialog.
     fn new(title: &str, filter: &[&str], mode: Mode) -> Self {
+        let filters = if filter.is_empty() {
+            Vec::new()
+        } else {
+            vec![(title.to_owned(), owned(filter))]
+        };
         Self {
             title: title.to_owned(),
-            filter: filter.iter().map(|f| (*f).to_owned()).collect(),
+            filters,
             mode,
         }
     }
 }
+
+fn owned(patterns: &[&str]) -> Vec<String> {
+    patterns.iter().map(|p| (*p).to_owned()).collect()
+}
+
+/// The pictures the chat shows (#574), in both cases: not every chooser
+/// matches a pattern regardless of case.
+const PICTURES: &[&str] = &[
+    "*.jpg", "*.jpeg", "*.png", "*.gif", "*.webp", "*.JPG", "*.JPEG", "*.PNG", "*.GIF", "*.WEBP",
+];
 
 /// What a chooser said.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,7 +160,6 @@ pub fn choose(choosers: &Choosers, request: &Request) -> Choice {
 /// The dialog programs to try, with their arguments for `request`.
 fn programs(choosers: &Choosers, request: &Request) -> Vec<(String, Vec<String>)> {
     let title = request.title.clone();
-    let patterns = request.filter.join(" ");
     let many = request.mode == Mode::OpenMany;
     if cfg!(target_os = "macos") {
         if matches!(request.mode, Mode::Save { .. }) {
@@ -192,16 +209,22 @@ fn programs(choosers: &Choosers, request: &Request) -> Vec<(String, Vec<String>)
         Mode::Open | Mode::OpenMany => {
             let mut zenity = vec!["--file-selection".into(), format!("--title={title}")];
             let mut kdialog = vec!["--title".into(), title];
-            if !patterns.is_empty() {
-                zenity.push(format!("--file-filter={patterns}"));
+            for (name, patterns) in &request.filters {
+                zenity.push(format!("--file-filter={name} | {}", patterns.join(" ")));
             }
             if many {
                 zenity.extend(["--multiple".into(), "--separator=\n".into()]);
                 kdialog.extend(["--multiple".into(), "--separate-output".into()]);
             }
             kdialog.extend(["--getopenfilename".into(), ".".into()]);
-            if !patterns.is_empty() {
-                kdialog.push(patterns);
+            if !request.filters.is_empty() {
+                // KDE's filter: "patterns|name", one per line.
+                let filters: Vec<String> = request
+                    .filters
+                    .iter()
+                    .map(|(name, patterns)| format!("{}|{name}", patterns.join(" ")))
+                    .collect();
+                kdialog.push(filters.join("\n"));
             }
             (zenity, kdialog)
         }
@@ -248,15 +271,21 @@ fn portal(bus: Option<&str>, request: &Request) -> Option<Choice> {
         .build();
     let mut answers = MessageIterator::for_match_rule(rule, &conn, None).ok()?;
     let title = request.title.as_str();
-    let patterns: Vec<(u32, String)> = request.filter.iter().map(|p| (0u32, p.clone())).collect();
+    let filters: Vec<(String, Vec<(u32, String)>)> = request
+        .filters
+        .iter()
+        .map(|(name, patterns)| {
+            let globs = patterns.iter().map(|p| (0u32, p.clone())).collect();
+            (name.clone(), globs)
+        })
+        .collect();
     let mut options: HashMap<&str, Value<'_>> = HashMap::from([
         ("handle_token", Value::from(token)),
         ("modal", Value::from(true)),
     ]);
-    if !patterns.is_empty() {
-        let filters = vec![(title.to_owned(), patterns.clone())];
+    if let Some(first) = filters.first().cloned() {
         options.insert("filters", Value::from(filters.clone()));
-        options.insert("current_filter", Value::from(filters[0].clone()));
+        options.insert("current_filter", Value::from(first));
     }
     let method = match &request.mode {
         Mode::Open => "OpenFile",
@@ -377,12 +406,24 @@ mod native {
             }
             dialog.SetOptions(options)?;
             dialog.SetTitle(&title)?;
-            let spec = HSTRING::from(request.filter.join(";"));
-            if !request.filter.is_empty() {
-                let filters = [COMDLG_FILTERSPEC {
-                    pszName: PCWSTR(title.as_ptr()),
-                    pszSpec: PCWSTR(spec.as_ptr()),
-                }];
+            let named: Vec<(HSTRING, HSTRING)> = request
+                .filters
+                .iter()
+                .map(|(name, patterns)| {
+                    (
+                        HSTRING::from(name.as_str()),
+                        HSTRING::from(patterns.join(";")),
+                    )
+                })
+                .collect();
+            if !named.is_empty() {
+                let filters: Vec<COMDLG_FILTERSPEC> = named
+                    .iter()
+                    .map(|(name, spec)| COMDLG_FILTERSPEC {
+                        pszName: PCWSTR(name.as_ptr()),
+                        pszSpec: PCWSTR(spec.as_ptr()),
+                    })
+                    .collect();
                 dialog.SetFileTypes(&filters)?;
             }
             dialog.Show(None)?;
@@ -601,18 +642,29 @@ pub fn pick(ctx: &egui::Context, title: &str, filter: &[&str], slot: Picked) {
     });
 }
 
-/// Opens the file chooser for any number of files.
+/// Opens the file chooser for any number of files: any file, or only
+/// pictures (#574).
 pub fn pick_many(ctx: &egui::Context, title: &str) -> PickedMany {
     let slot: PickedMany = Arc::default();
     let out = slot.clone();
-    open(
-        ctx,
-        Request::new(title, &[], Mode::OpenMany),
-        move |paths| {
-            *out.lock() = Some(paths);
-        },
-    );
+    open(ctx, attach_request(title), move |paths| {
+        *out.lock() = Some(paths);
+    });
     slot
+}
+
+fn attach_request(title: &str) -> Request {
+    Request {
+        title: title.to_owned(),
+        filters: vec![
+            (texts_chat::composer_filter_all().to_owned(), owned(&["*"])),
+            (
+                texts_chat::composer_filter_pictures().to_owned(),
+                owned(PICTURES),
+            ),
+        ],
+        mode: Mode::OpenMany,
+    }
 }
 
 type Shared = Arc<Mutex<Option<InApp>>>;

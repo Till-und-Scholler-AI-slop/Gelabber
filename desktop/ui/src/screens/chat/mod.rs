@@ -15,6 +15,7 @@ pub mod markdown;
 mod mentions;
 mod notice;
 mod pane;
+pub(crate) mod pictures;
 mod reactions;
 mod row;
 mod search;
@@ -908,7 +909,12 @@ fn row_action(
             }
         },
         RowAction::Media(media) => match media {
-            attachments::MediaAction::Open(url, name) => pane.lightbox = Some((url, name)),
+            attachments::MediaAction::Open(url, name) => {
+                pane.lightbox = Some(attachments::Lightbox::single(url, name));
+            }
+            attachments::MediaAction::Gallery(items, index) => {
+                pane.lightbox = Some(attachments::Lightbox::new(items, index));
+            }
             attachments::MediaAction::External(url) => {
                 let full = if url.starts_with('/') {
                     client.http().url(&url)
@@ -1272,9 +1278,10 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
     }
     // A picture shown large.
     let pane = chat.panes.entry(channel).or_default();
-    if let Some((url, name)) = pane.lightbox.clone() {
-        let (close, download) = attachments::lightbox(&ctx, app.images, &url, &name);
-        if download {
+    if let Some(view) = pane.lightbox.as_mut() {
+        let (close, download) = attachments::lightbox(&ctx, app.images, view);
+        if let Some(shown) = view.current().filter(|_| download) {
+            let (url, name) = (shown.url.clone(), shown.name.clone());
             // An attachment as a download; a preview's picture as it is.
             let fetch = if url.starts_with("/api/attachments/") {
                 format!("{url}?download=1")
