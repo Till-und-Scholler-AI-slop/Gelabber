@@ -78,18 +78,27 @@ fn system_probe() -> Option<Box<dyn Probe>> {
 
 #[cfg(target_os = "linux")]
 fn system_probe() -> Option<Box<dyn Probe>> {
+    /// Which source answered, for the log.
+    #[derive(Debug)]
+    enum Source {
+        ExtIdleNotify,
+        X11ScreenSaver,
+        MutterIdleMonitor,
+    }
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
-    let found: Option<(&str, Box<dyn Probe>)> = if wayland {
+    let mutter =
+        || linux::mutter().map(|p| (Source::MutterIdleMonitor, Box::new(p) as Box<dyn Probe>));
+    let found = if wayland {
         linux::wayland()
-            .map(|p| ("ext-idle-notify-v1", Box::new(p) as Box<dyn Probe>))
-            .or_else(|| linux::mutter().map(|p| ("Mutter IdleMonitor", Box::new(p) as _)))
+            .map(|p| (Source::ExtIdleNotify, Box::new(p) as Box<dyn Probe>))
+            .or_else(mutter)
     } else {
         linux::x11()
-            .map(|p| ("X11 screen saver", Box::new(p) as Box<dyn Probe>))
-            .or_else(|| linux::mutter().map(|p| ("Mutter IdleMonitor", Box::new(p) as _)))
+            .map(|p| (Source::X11ScreenSaver, Box::new(p) as Box<dyn Probe>))
+            .or_else(mutter)
     };
-    let (name, probe) = found?;
-    tracing::debug!("system idle: {name}");
+    let (source, probe) = found?;
+    tracing::debug!("system idle: {source:?}");
     Some(probe)
 }
 
