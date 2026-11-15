@@ -86,6 +86,15 @@ async fn feed(
             format!("{{\"result\":true,\"pad\":\"{}\"}}", "x".repeat(3 << 20)),
         )
             .into_response(),
+        // Klipy's search slugs carry a per-search token since 2026-11-14.
+        ("search", "tracked") => axum::Json(json!({
+            "result": true,
+            "data": {
+                "data": [klipy.item("hello-hi-662--kgmD1VZja", title)],
+                "current_page": 1, "per_page": 24, "has_next": false
+            }
+        }))
+        .into_response(),
         ("trending" | "search", _) => axum::Json(json!({
             "result": true,
             "data": {
@@ -100,11 +109,13 @@ async fn feed(
                 .find(|(k, _)| k == "slugs")
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
-            let data: Vec<Value> = if slugs == "hello-hi-662" {
-                vec![klipy.item("hello-hi-662", "Hello")]
-            } else {
-                vec![]
-            };
+            // Like Klipy: only base slugs are known here, a search slug
+            // with its token (`--k…`) finds nothing on its own (#581).
+            let data: Vec<Value> = slugs
+                .split(',')
+                .filter(|slug| *slug == "hello-hi-662")
+                .map(|slug| klipy.item(slug, "Hello"))
+                .collect();
             axum::Json(json!({ "result": true, "data": { "data": data } })).into_response()
         }
         _ => StatusCode::NOT_FOUND.into_response(),
@@ -513,6 +524,64 @@ async fn a_gif_is_sent_as_its_own_message(pool: PgPool) {
     let body: Value = serde_json::from_str(share.splitn(4, ' ').nth(3).unwrap()).unwrap();
     assert_eq!(body["q"], "hallo");
     assert_eq!(body["customer_id"].as_str().unwrap().len(), 32);
+}
+
+/// #581: Klipy's search results name a GIF `<slug>--<token>`, which its
+/// items lookup does not know. A GIF picked from a search must still send,
+/// stored under its base slug; the share trigger keeps the token.
+#[sqlx::test]
+async fn a_gif_picked_from_search_results_is_sent(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool, Some(&klipy), &[]);
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    let channel = text_channel(&mut ada).await;
+
+    let res = ada
+        .send(Method::GET, "/api/gifs/search?q=tracked", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let picked = res.body["gifs"][0]["slug"].as_str().unwrap().to_owned();
+    assert_eq!(picked, "hello-hi-662--kgmD1VZja");
+
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "gif": { "slug": picked, "query": "tracked" } })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(res.body["gif"]["slug"], "hello-hi-662");
+    assert_eq!(
+        res.body["gif"]["url"],
+        format!("{}/media/hello-hi-662-hd.webp", klipy.origin)
+    );
+    let lookup = klipy
+        .seen()
+        .into_iter()
+        .find(|line| line.contains(" items "))
+        .expect("items lookup");
+    assert!(
+        lookup.contains("slugs=hello-hi-662,hello-hi-662--kgmD1VZja"),
+        "{lookup}"
+    );
+
+    let mut share = None;
+    for _ in 0..50 {
+        share = klipy
+            .seen()
+            .into_iter()
+            .find(|line| line.starts_with("SHARE"));
+        if share.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let share = share.expect("share trigger");
+    assert!(
+        share.starts_with(&format!("SHARE {KEY} hello-hi-662--kgmD1VZja ")),
+        "{share}"
+    );
 }
 
 #[sqlx::test]

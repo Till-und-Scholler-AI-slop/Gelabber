@@ -369,8 +369,10 @@ async fn create_message(
     .await?;
     tx.commit().await?;
     info!(channel_id = %channel_id, message_id = %message.id, "message created");
-    if let (Some(gif), Some(pick), Some(gifs)) = (&message.gif, &body.gif, &state.gifs) {
-        gifs.shared(&gif.slug, pick.query.trim(), user.id);
+    if let (Some(_), Some(pick), Some(gifs)) = (&message.gif, &body.gif, &state.gifs) {
+        // The slug as Klipy handed it out, search token included: the
+        // token ties the share to the search that found it.
+        gifs.shared(pick.slug.trim(), pick.query.trim(), user.id);
     }
     delivery::wake(&state);
     let server = match &access {
