@@ -660,8 +660,9 @@ fn paint_animated_badge(ui: &Ui, att: &Attachment, url: &str, rect: Rect) {
     }
     let block = Block::single(ui, texts::attachment_animated(), SIZE_STYLE, Color32::WHITE);
     let badge = Rect::from_min_size(
+        // Bottom right, as on the web: the top left belongs to "ALT".
         pos2(
-            rect.left() + 6.0,
+            rect.right() - 6.0 - block.width() - 8.0,
             rect.bottom() - 6.0 - block.height() - 2.0,
         ),
         vec2(block.width() + 8.0, block.height() + 2.0),
@@ -690,18 +691,23 @@ fn paint_alt_badge(
         vec2(block.width() + 10.0, block.height() + 2.0),
     );
     let focus_id = id.with("badge");
-    let focused = ui.memory(|m| m.has_focus(focus_id));
-    if text.is_none() && (message.is_none() || !(hovered || focused)) {
+    if text.is_none() && message.is_none() {
         return None;
     }
+    // Registered also while unseen, so Tab and AccessKit reach "add" on my
+    // own picture; drawn on hover or focus.
     let response = ui.interact(badge, focus_id, Sense::click());
     response.widget_info(|| {
+        // The text itself is already the picture's name.
         let label = match text {
-            Some(text) => format!("{}: {text}", texts::alt_show()),
+            Some(_) => texts::alt_show().to_owned(),
             None => format!("{}: {}", texts::alt_add(), att.filename),
         };
         egui::WidgetInfo::labeled(egui::Role::Button, true, label)
     });
+    if text.is_none() && !(hovered || response.hovered() || response.has_focus()) {
+        return None;
+    }
     let painter = ui.painter();
     if text.is_some() {
         painter.rect_filled(badge, corner(3.0), Color32::from_black_alpha(166));
@@ -1391,6 +1397,9 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
             .or_else(|| texture.as_ref().map(|t| t.size_vec2()))
             .map(|size| size / ppp);
         let mut image_rect = None;
+        // Where the alt caption was last frame: the wheel scrolls it there.
+        let caption_id = egui::Id::unique("gelabber-lightbox-alt-rect");
+        let caption_at: Option<Rect> = ctx.data(|d| d.get_temp(caption_id));
         if let (Some(t), Some(size)) = (texture, natural) {
             let fit = (stage.width() / size.x)
                 .min(stage.height() / size.y)
@@ -1406,7 +1415,9 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
                 view.zoom = to;
             };
             let scroll = ui.input(|i| i.smooth_scroll_delta.y + i.zoom_delta().ln() * 200.0);
-            if scroll != 0.0 && pointer.is_some_and(|p| stage.contains(p)) {
+            // The caption scrolls itself.
+            let over_caption = pointer.is_some_and(|p| caption_at.is_some_and(|c| c.contains(p)));
+            if scroll != 0.0 && !over_caption && pointer.is_some_and(|p| stage.contains(p)) {
                 zoom_at(view, view.zoom * (scroll * 0.004).exp(), pointer);
             }
             if zoom_in {
@@ -1469,6 +1480,9 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
             }
             image_rect = Some(r.intersect(stage));
         }
+        if item.alt.is_none() {
+            ctx.data_mut(|d| d.remove::<Rect>(caption_id));
+        }
         if let Some(alt) = &item.alt {
             // The alt text under the picture (#575); read out as its label.
             let width = 640f32.min(screen.width() - 32.0) - 24.0;
@@ -1479,7 +1493,10 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
                 Color32::WHITE,
                 width,
             );
-            let size = body.size() + vec2(24.0, 16.0);
+            // At most 30% of the window, then it scrolls (web: 30vh).
+            let max_body = (screen.height() * 0.3 - 16.0).max(40.0);
+            let shown = vec2(body.width(), body.height().min(max_body));
+            let size = shown + vec2(24.0, 16.0);
             let at = pos2(
                 screen.center().x - size.x / 2.0,
                 screen.bottom() - 16.0 - size.y,
@@ -1487,7 +1504,18 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
             let caption = Rect::from_min_size(at, size);
             ui.painter()
                 .rect_filled(caption, corner(7.0), Color32::from_black_alpha(178));
-            body.paint(ui.painter(), caption.min + vec2(12.0, 8.0));
+            let inner = Rect::from_min_size(caption.min + vec2(12.0, 8.0), shown);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("gelabber-lightbox-alt")
+                    .max_height(shown.y)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(body.size(), Sense::hover());
+                        body.paint(ui.painter(), rect.min);
+                    });
+            });
+            ctx.data_mut(|d| d.insert_temp(caption_id, caption));
         }
         let white = Color32::WHITE;
         let style = TextStyle::new(14.0, 400.0, 1.5);
@@ -2292,7 +2320,7 @@ mod tests {
         let (mut harness, _images) = harness(vec![described], None);
         harness.step();
         harness.get_by_label("Ein Hund am Strand vergrößern");
-        harness.get_by_label("Alt-Text anzeigen: Ein Hund am Strand");
+        harness.get_by_label("Alt-Text anzeigen");
         let (mut harness, _images) = harness_plain(vec![photo(0)]);
         harness.step();
         harness.get_by_label("p0.jpg vergrößern");

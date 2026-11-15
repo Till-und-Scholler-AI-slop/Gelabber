@@ -26,6 +26,8 @@ pub struct AltDialog {
     pub name: String,
     pub text: String,
     initial: String,
+    /// Sent to the server, answer not there yet.
+    pub saving: bool,
 }
 
 impl AltDialog {
@@ -36,6 +38,7 @@ impl AltDialog {
             name: name.to_owned(),
             initial: text.clone(),
             text,
+            saving: false,
         }
     }
 }

@@ -199,6 +199,7 @@ pub fn failure_text(op: &str) -> Option<&'static str> {
         "edit" => chat::row_edit_failed(),
         "delete" => chat::delete_failed(),
         "react" => chat::reactions_not_saved(),
+        "alt" => chat::alt_save_failed(),
         "dm" => dms::open_failed(),
         // A row menu's choices; the dialog shows its own failure.
         "notify_menu" => shell::row_menu_not_saved(),

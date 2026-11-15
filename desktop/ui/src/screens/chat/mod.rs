@@ -1326,10 +1326,30 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
     // An alt text being written (#575): for a composer file, or one of my
     // sent pictures.
     let pane = chat.panes.entry(channel).or_default();
+    // A save in flight keeps the dialog open: it closes once the server took
+    // the text, and stays with the text (and a toast) when it did not.
+    if let Some(dialog) = pane.alt.as_mut()
+        && let alt_text::AltTarget::Sent { message, .. } = dialog.target
+        && dialog.saving
+    {
+        let op = format!("alt:{message}");
+        match client.with_state(|s| s.op(&op).cloned()) {
+            Some(gelabber_client::OpState::Pending) => {}
+            Some(gelabber_client::OpState::Failed(_)) => {
+                dialog.saving = false;
+                client.clear_op(op);
+            }
+            _ => {
+                pane.alt = None;
+                client.clear_op(op);
+            }
+        }
+    }
     if let Some(dialog) = pane.alt.as_mut() {
         match alt_text::show(&ctx, dialog) {
             alt_text::AltOutcome::Open => {}
             alt_text::AltOutcome::Close => pane.alt = None,
+            alt_text::AltOutcome::Save(_) if dialog.saving => {}
             alt_text::AltOutcome::Save(text) => {
                 if let alt_text::AltTarget::Sent {
                     message,
@@ -1338,8 +1358,10 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                 {
                     let text = alt_text::normalised(&text).unwrap_or_default();
                     client.edit_alt_text(message, attachment, &text);
+                    dialog.saving = true;
+                } else {
+                    pane.alt = None;
                 }
-                pane.alt = None;
             }
         }
     }

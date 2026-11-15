@@ -1007,10 +1007,15 @@ impl Client {
     pub fn edit_alt_text(&self, id: Uuid, attachment: Uuid, text: &str) {
         let http = self.http().clone();
         let text = text.trim().to_owned();
+        // The text as shown goes along: a server from before #575 reads a
+        // PATCH without `content` as an empty text and would delete it.
+        let content = self
+            .with_state(|s| s.find_message(id).map(|m| m.content.clone()))
+            .unwrap_or_default();
         self.message_write(
             format!("alt:{id}"),
             id,
-            async move { http.edit_alt_text(id, attachment, &text).await },
+            async move { http.edit_alt_text(id, attachment, &content, &text).await },
             |s, m| s.apply_message(m),
         );
     }
