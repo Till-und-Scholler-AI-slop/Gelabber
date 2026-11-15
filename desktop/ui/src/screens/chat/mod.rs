@@ -241,6 +241,8 @@ struct Conversation {
     limited: bool,
     /// A DM that is still a message request (#563): its bar or note.
     request: Option<gelabber_client::DirectMessage>,
+    /// A DM nobody can write in (#565): its bar instead of the composer.
+    closed: Option<gelabber_client::DirectMessage>,
 }
 
 /// A server text channel: header and body, drawn into `ui.max_rect()`.
@@ -287,6 +289,7 @@ pub fn channel_page(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) 
                     .collect(),
                 limited: ch.limited,
                 request: None,
+                closed: None,
             }
         }))
     });
@@ -351,7 +354,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
                 name: dm.peer.name.clone(),
                 avatar: dm.peer.avatar_url.clone(),
             },
-            can_send: true,
+            can_send: !(dm.blocked || dm.closed),
             can_send_files: dm.request.is_none(),
             can_moderate: false,
             can_everyone: false,
@@ -361,6 +364,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
             limited: false,
             request: dm.request.is_some().then(|| dm.clone()),
+            closed: (dm.blocked || dm.closed).then(|| dm.clone()),
         })
     });
     // Each opening fetches the conversation itself (`useDm`), also one the
@@ -580,7 +584,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             )
         });
     let note_h = note.as_ref().map_or(0.0, |b| b.height() + 8.0);
-    let composer_h = if incoming.is_some() {
+    let composer_h = if incoming.is_some() || conv.closed.is_some() {
         crate::screens::shell::friends::BAR_HEIGHT
     } else {
         composer::height(ui.ctx(), composer_state, &composer_input, page.width()) + note_h
@@ -638,6 +642,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             now,
             images: app.images,
             http: client.http(),
+            fold: conv.server.is_some(),
         };
         let view = chat.contexts.get_mut(&channel).expect("context state");
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
@@ -680,6 +685,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             now,
             images: app.images,
             http: client.http(),
+            fold: conv.server.is_some(),
         };
         list_actions = pane::show(ui, list_rect, &input, pane_state);
     }
@@ -691,12 +697,16 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     // Composer.
     let composer_rect = Rect::from_min_max(pos2(page.left(), page.bottom() - composer_h), page.max);
     let composer_state = chat.composers.entry(channel).or_default();
-    let composer_actions = match incoming {
-        Some(dm) => {
+    let composer_actions = match (&conv.closed, incoming) {
+        (Some(dm), _) => {
+            crate::screens::shell::blocks::closed_bar(ui, app, composer_rect, dm);
+            Vec::new()
+        }
+        (None, Some(dm)) => {
             crate::screens::shell::friends::incoming_bar(ui, app, composer_rect, dm);
             Vec::new()
         }
-        None => {
+        (None, None) => {
             if let Some(note) = &note {
                 ui.painter().rect_filled(
                     Rect::from_min_size(composer_rect.min, vec2(page.width(), note_h)),

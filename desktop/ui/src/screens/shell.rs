@@ -6,6 +6,7 @@
 
 pub(crate) mod access;
 mod blocked;
+pub mod blocks;
 mod channel_sidebar;
 pub(crate) mod common;
 pub mod connection;

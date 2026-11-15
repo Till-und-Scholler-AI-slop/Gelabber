@@ -2,6 +2,7 @@
 // Opening one shows the conversation with "Annehmen" / "Ablehnen" in place
 // of the composer.
 
+import { BlockButton } from "../blocks/BlockButton.tsx";
 import { Link } from "@tanstack/react-router";
 
 import { LoadError } from "../components/LoadError.tsx";
@@ -88,11 +89,13 @@ export function RequestsPage() {
  */
 export function RequestBar({
   channelId,
+  peerId,
   peerName,
   incoming,
   remaining,
 }: {
   channelId: string;
+  peerId: string;
   peerName: string;
   incoming: boolean;
   remaining: number;
@@ -126,6 +129,7 @@ export function RequestBar({
         >
           {t("action.decline")}
         </Button>
+        <BlockButton userId={peerId} name={peerName} />
       </div>
     </div>
   );

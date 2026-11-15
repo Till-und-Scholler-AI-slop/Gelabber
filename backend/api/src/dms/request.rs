@@ -64,12 +64,15 @@ async fn row<'e, E: PgExecutor<'e>>(db: E, channel_id: Uuid) -> Result<Row, ApiE
 
 /// The early, read-only check before uploads and mentions are looked at:
 /// refuses what [`gate`] would refuse on the draft alone.
-pub async fn precheck<'e, E: PgExecutor<'e>>(
-    db: E,
+pub async fn precheck(
+    db: &sqlx::PgPool,
     channel_id: Uuid,
     user_id: Uuid,
     draft: &Draft<'_>,
 ) -> Result<(), ApiError> {
+    crate::blocks::in_dm(db, channel_id, user_id)
+        .await?
+        .refuse(ApiError::DmClosed)?;
     match row(db, channel_id).await?.request_by {
         None => Ok(()),
         Some(by) if by != user_id => Err(ApiError::MessageRequestPending),
@@ -86,6 +89,10 @@ pub async fn gate(
     user_id: Uuid,
     draft: &Draft<'_>,
 ) -> Result<Gate, ApiError> {
+    // Blocks are checked under the lock too: one may have come meanwhile.
+    crate::blocks::in_dm(&mut *tx, channel_id, user_id)
+        .await?
+        .refuse(ApiError::DmClosed)?;
     let current = row(&mut *tx, channel_id).await?;
     let Some(by) = current.request_by else {
         return Ok(Gate::Open);
@@ -141,6 +148,9 @@ pub async fn check_edit(
     user_id: Uuid,
     content: &str,
 ) -> Result<(), ApiError> {
+    crate::blocks::in_dm(&mut *tx, channel_id, user_id)
+        .await?
+        .refuse(ApiError::DmClosed)?;
     match row(&mut *tx, channel_id).await?.request_by {
         Some(by) if by == user_id => refuse(&Draft {
             content,

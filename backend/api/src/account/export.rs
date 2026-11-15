@@ -641,6 +641,10 @@ impl Archive {
             .bind(user_id)
             .fetch_all(&db),
         )?;
+        // Whom the person blocks (#565).
+        let blocks = self
+            .handle
+            .block_on(crate::blocks::blocked_by(&db, user_id))?;
         self.json(
             "account.json",
             &json!({
@@ -662,6 +666,7 @@ impl Archive {
                 "sessions": sessions,
                 "servers": servers,
                 "invites": invites,
+                "blocks": blocks,
             }),
         )?;
 

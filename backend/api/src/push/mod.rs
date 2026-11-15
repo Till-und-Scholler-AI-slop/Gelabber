@@ -340,8 +340,9 @@ async fn deliver(
     if recipients.is_empty() {
         return Ok(());
     }
-    // Live sessions only, and not where the conversation is muted or set
-    // to "nothing"; the channel's own level wins over its server's.
+    // Live sessions only, not from someone the recipient blocks (#565), and
+    // not where the conversation is muted or set to "nothing"; the
+    // channel's own level wins over its server's.
     let targets: Vec<Target> = sqlx::query_as(
         "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
                 u.notifications_hide_content AS hide_content, u.locale
@@ -355,11 +356,14 @@ async fn deliver(
          WHERE p.user_id=ANY($1)
            AND COALESCE(cs.level, ss.level, 'all')<>'none'
            AND NOT (cs.muted IS TRUE AND (cs.muted_until IS NULL OR cs.muted_until>now()))
-           AND NOT (ss.muted IS TRUE AND (ss.muted_until IS NULL OR ss.muted_until>now()))",
+           AND NOT (ss.muted IS TRUE AND (ss.muted_until IS NULL OR ss.muted_until>now()))
+           AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE b.blocker_id=p.user_id AND b.blocked_id=$4)",
     )
     .bind(&recipients)
     .bind(message.channel_id)
     .bind(server)
+    .bind(message.author.id)
     .fetch_all(&state.db)
     .await?;
     if targets.is_empty() {

@@ -744,6 +744,12 @@ pub struct DirectMessage {
     /// and from servers before v0.11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<DmRequest>,
+    /// The user blocks the peer (#565): the composer says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
+    /// The peer blocks the user: nothing can be sent, without saying why.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
 }
 
 /// A pending message request. `incoming`: the peer started it and waits
@@ -754,6 +760,18 @@ pub struct DmRequest {
     pub incoming: bool,
     #[serde(default)]
     pub remaining: i64,
+}
+
+// ------------------------------------------------------------------- blocks
+
+/// Someone the user blocks (`GET /api/users/me/blocks`, #565).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BlockedUser {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    pub created_at: Timestamp,
 }
 
 // ------------------------------------------------------------------ friends
@@ -1925,6 +1943,9 @@ pub enum ServerFrame {
     /// Incoming message requests changed (#563): fetch `/dms/requests`.
     #[serde(rename = "mr")]
     MessageRequests,
+    /// The user blocked or unblocked someone (#565): fetch the blocks.
+    #[serde(rename = "bl")]
+    Blocks,
     #[serde(other)]
     Unknown,
 }

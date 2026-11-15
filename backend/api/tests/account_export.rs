@@ -257,6 +257,15 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
     let dm = id_of(&res.body);
     let in_dm = post(&mut ada, &dm, json!({ "content": "hallo bob" })).await;
     post(&mut bob, &dm, json!({ "content": "bobs antwort" })).await;
+    // Whom Ada blocks goes with the account (#565).
+    let res = ada
+        .send(
+            Method::PUT,
+            &format!("/api/users/me/blocks/{}", bob.user_id()),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
 
     let res = request(&mut ada).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
@@ -316,6 +325,9 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
     assert!(account["sessions"][0].get("token_hash").is_none());
     assert!(account.get("password_hash").is_none());
     assert_eq!(account["invites"], json!([]));
+    assert_eq!(account["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(account["blocks"][0]["id"], bob.user_id());
+    assert_eq!(account["blocks"][0]["name"], "Bob");
 
     let channel = json_entry(&entries, &server_file);
     assert_eq!(channel["channel"]["id"], channel_id.as_str());

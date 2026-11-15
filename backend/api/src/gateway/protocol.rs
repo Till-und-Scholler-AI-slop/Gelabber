@@ -566,6 +566,11 @@ pub enum ServerFrame {
     /// `/api/dms/requests` again. Only to the recipient's sockets.
     #[serde(rename = "mr")]
     MessageRequests,
+    /// The account blocked or unblocked someone (issue #565): fetch
+    /// `/api/users/me/blocks` again. Only to the blocker's sockets; the
+    /// blocked person is not told.
+    #[serde(rename = "bl")]
+    Blocks,
 }
 
 /// A conversation's new read position and what is still unread after it.
@@ -731,6 +736,8 @@ pub enum UserFrame {
     Friends,
     #[serde(rename = "mr")]
     MessageRequests,
+    #[serde(rename = "bl")]
+    Blocks,
 }
 
 impl From<UserFrame> for ServerFrame {
@@ -743,6 +750,7 @@ impl From<UserFrame> for ServerFrame {
             UserFrame::JoinRequests { s, n } => Self::JoinRequests { s, n },
             UserFrame::Friends => Self::Friends,
             UserFrame::MessageRequests => Self::MessageRequests,
+            UserFrame::Blocks => Self::Blocks,
         }
     }
 }
@@ -1137,6 +1145,7 @@ mod tests {
             ),
             (super::UserFrame::Friends, r#"{"op":"fr"}"#),
             (super::UserFrame::MessageRequests, r#"{"op":"mr"}"#),
+            (super::UserFrame::Blocks, r#"{"op":"bl"}"#),
         ] {
             let raw = serde_json::to_string(&frame).unwrap();
             assert_eq!(raw, wire);

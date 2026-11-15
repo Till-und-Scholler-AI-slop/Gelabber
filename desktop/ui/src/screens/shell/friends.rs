@@ -137,7 +137,7 @@ fn empty(ui: &mut Ui, message: &str, width: f32) {
 
 /// One person's row: avatar, name with an optional detail, then the
 /// buttons from the right. Returns the index of the button clicked.
-fn person_row(
+pub(crate) fn person_row(
     ui: &mut Ui,
     app: &AppCtx,
     person: &FriendPerson,

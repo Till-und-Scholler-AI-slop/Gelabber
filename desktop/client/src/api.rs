@@ -612,6 +612,25 @@ impl Http {
             .await
     }
 
+    // ------------------------------------------------------------ blocks
+
+    /// Whom the user blocks, newest first (#565).
+    pub async fn blocks(&self) -> Result<Vec<BlockedUser>> {
+        self.get("/users/me/blocks").await.map(|Lenient(v)| v)
+    }
+
+    /// Idempotent.
+    pub async fn block_user(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::PUT, &format!("/users/me/blocks/{user}"))
+            .await
+    }
+
+    /// Idempotent.
+    pub async fn unblock_user(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::DELETE, &format!("/users/me/blocks/{user}"))
+            .await
+    }
+
     // ----------------------------------------------------------- friends
 
     pub async fn friends(&self) -> Result<FriendList> {

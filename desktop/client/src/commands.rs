@@ -404,6 +404,7 @@ impl Client {
             // For the sidebar's counts; their pages read them again.
             self.load_friends();
             self.load_dm_requests();
+            self.load_blocks();
             self.ensure_gateway();
             self.activity();
             self.sync_topics();
@@ -2338,6 +2339,7 @@ impl Client {
             ServerFrame::JoinRequests { s, n } => self.write(|st| st.set_join_requests(s, n)),
             ServerFrame::Friends => self.load_friends(),
             ServerFrame::MessageRequests => self.load_dm_requests(),
+            ServerFrame::Blocks => self.blocks_changed(),
             _ => {}
         }
     }

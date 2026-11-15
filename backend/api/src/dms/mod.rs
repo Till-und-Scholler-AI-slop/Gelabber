@@ -12,6 +12,11 @@
 //! Incoming requests are not in `GET /api/dms` but in
 //! `GET /api/dms/requests`, answered with `accept` or `decline`.
 //!
+//! A block (#565, `crate::blocks`) closes every DM path between the two
+//! both ways: no new DM, no writing into one that exists. The history stays
+//! readable; each DM says `blocked` (the user blocks the peer) or `closed`
+//! (the peer blocks the user).
+//!
 //! The protocol `s` field for a DM is the channel id itself, so subscribe
 //! / typing / events stay on the existing frames.
 
@@ -57,6 +62,13 @@ pub struct DirectMessage {
     /// Set while the DM is a message request (#563); absent once accepted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request: Option<DmRequest>,
+    /// The caller blocks the peer (#565): unblock to write.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
+    /// The caller cannot write here and is not told why (#565: the peer
+    /// blocks them).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
 }
 
 /// A pending message request as one side sees it.
@@ -85,6 +97,8 @@ struct DmRow {
     request_by: Option<Uuid>,
     /// Messages of the request's current round (0 once a decline cooled).
     request_sent: i64,
+    blocked: bool,
+    closed: bool,
 }
 
 impl From<DmRow> for DirectMessage {
@@ -102,6 +116,8 @@ impl From<DmRow> for DirectMessage {
                 name: row.peer_name,
                 avatar_url: row.peer_avatar_url,
             },
+            blocked: row.blocked,
+            closed: row.closed,
         }
     }
 }
@@ -114,7 +130,7 @@ macro_rules! request_columns {
                 OR c.dm_declined_at <= now() - interval '1 hour' THEN 0 \
               ELSE (SELECT count(*) FROM messages m WHERE m.channel_id = c.id \
                     AND m.author_id = c.dm_request_by AND m.created_at >= c.dm_request_since) \
-         END AS request_sent "
+         END AS request_sent,          EXISTS (SELECT 1 FROM user_blocks b                  WHERE b.blocker_id = me.user_id AND b.blocked_id = p.user_id) AS blocked,          EXISTS (SELECT 1 FROM user_blocks b                  WHERE b.blocker_id = p.user_id AND b.blocked_id = me.user_id) AS closed "
     };
 }
 
@@ -392,6 +408,11 @@ async fn open_or_create(
         tx.commit().await?;
         return Ok((existing, false));
     }
+    // A block closes the way in both directions (#565); the one blocked
+    // hears what a stranger would.
+    crate::blocks::between(&mut *tx, user_id, peer.id)
+        .await?
+        .refuse(ApiError::DmNotAllowed)?;
     let request = match relation(&mut *tx, user_id, peer.id).await? {
         Relation::Friends => false,
         Relation::SharedServer => true,
@@ -423,6 +444,8 @@ async fn open_or_create(
                 incoming: false,
                 remaining: request::MAX_MESSAGES,
             }),
+            blocked: false,
+            closed: false,
         },
         true,
     ))

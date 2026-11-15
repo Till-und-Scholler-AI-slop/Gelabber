@@ -531,6 +531,12 @@ export function errorMessage(code: ApiErrorCode): string {
       return translate(auth, "error.friendRequestDeclined");
     case "friend_requests_full":
       return translate(auth, "error.friendRequestsFull");
+    case "blocked":
+      return translate(auth, "error.blocked");
+    case "dm_closed":
+      return translate(auth, "error.dmClosed");
+    case "blocks_full":
+      return translate(auth, "error.blocksFull");
   }
 }
 
