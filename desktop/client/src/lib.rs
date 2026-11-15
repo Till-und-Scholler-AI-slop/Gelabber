@@ -9,6 +9,7 @@ pub mod gateway;
 pub mod http;
 pub mod models;
 pub mod oidc;
+pub mod presence;
 pub mod store;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -52,9 +53,7 @@ struct Local {
     /// The conversation my typing was announced in, `(s, c)`.
     typing: Option<(uuid::Uuid, uuid::Uuid)>,
     typing_sent: Option<Instant>,
-    last_activity: Option<Instant>,
-    last_pulse: Option<Instant>,
-    idle: bool,
+    presence: presence::Presence,
     focused: bool,
     in_front: bool,
     muted_before_deafen: bool,

@@ -203,7 +203,8 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                     debug!(user_id = %user.id, "ws silent death");
                     break;
                 }
-                if !idle && last_activity.elapsed() >= state.ws_idle {
+                let listening = state.gateway.listening(conn).await;
+                if idle_timer(&mut last_activity, idle, listening, state.ws_idle) {
                     idle = true;
                     let _ = state.gateway.set_conn_status(conn, PresenceStatus::Idle).await;
                 }
@@ -244,6 +245,22 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             .await;
     }
     debug!(user_id = %user.id, "ws disconnected");
+}
+
+/// The socket's own idle timer, each heartbeat: `true` when it goes idle
+/// now. A seat the user can hear in counts as activity (#566), so the timer
+/// starts when they leave or deafen. An explicit `st:i` still counts.
+fn idle_timer(
+    last_activity: &mut Instant,
+    idle: bool,
+    listening: bool,
+    limit: std::time::Duration,
+) -> bool {
+    if listening {
+        *last_activity = Instant::now();
+        return false;
+    }
+    !idle && last_activity.elapsed() >= limit
 }
 
 fn until(at: chrono::DateTime<chrono::Utc>) -> tokio::time::Instant {
@@ -922,6 +939,31 @@ mod tests {
             .map(|run| run.into_iter().map(|(_, json)| json).collect())
             .collect();
         assert_eq!(runs, expected);
+    }
+
+    /// The server's own idle timer leaves a socket in a call alone and
+    /// starts counting when the call ends (#566).
+    #[test]
+    fn idle_timer_waits_while_listening_in_voice() {
+        use std::time::Duration;
+        let limit = Duration::from_secs(300);
+        let long_ago = Instant::now() - Duration::from_secs(3600);
+
+        let mut last = long_ago;
+        assert!(idle_timer(&mut last, false, false, limit), "no call: idle");
+        let mut last = long_ago;
+        assert!(!idle_timer(&mut last, true, false, limit), "already idle");
+
+        let mut last = long_ago;
+        assert!(!idle_timer(&mut last, false, true, limit), "in a call");
+        assert!(
+            last.elapsed() < Duration::from_secs(1),
+            "the call counts as activity"
+        );
+        assert!(
+            !idle_timer(&mut last, false, false, limit),
+            "left: the five minutes start now"
+        );
     }
 
     /// Socket activity renews a session that is due, through the frame's

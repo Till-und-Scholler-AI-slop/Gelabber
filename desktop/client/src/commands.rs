@@ -15,6 +15,7 @@ use crate::api::HistoryQuery;
 use crate::gateway::{Gateway, GatewayEvent, GatewayStatus};
 use crate::http::ApiError;
 use crate::models::*;
+use crate::presence;
 use crate::store::{
     Notice, OpState, OutgoingFile, PAGE_SIZE, PendingMessage, SendStage, Session, State, View,
     VoiceSelf,
@@ -28,8 +29,6 @@ const SESSION_RETRY: [Duration; 4] = [
     Duration::from_millis(30_000),
 ];
 const TYPING_REFRESH: Duration = Duration::from_millis(3_000);
-const PRESENCE_PULSE: Duration = Duration::from_millis(10_000);
-const CLIENT_IDLE: Duration = Duration::from_secs(300);
 /// Recovery after a reconnect waits up to this long so clients spread out.
 const READY_SPREAD: Duration = Duration::from_millis(1_000);
 /// A failed recovery round is tried again after this, doubling up to the
@@ -1191,24 +1190,15 @@ impl Client {
         }
     }
 
-    /// Pointer or key input (`useIdlePresence`): active again after idle,
-    /// otherwise a presence pulse at most every 10 s.
+    /// Pointer or key input in the window (`useIdlePresence`): active again
+    /// after idle, otherwise a presence pulse at most every 10 s.
     pub fn activity(&self) {
-        let now = Instant::now();
         let (send, front) = {
             let mut local = self.inner.local.lock();
-            local.last_activity = Some(now);
-            let send = local.idle || local.last_pulse.is_none_or(|t| now - t >= PRESENCE_PULSE);
-            local.idle = false;
-            if send {
-                local.last_pulse = Some(now);
-            }
-            (send, local.focused)
+            (local.presence.window_input(Instant::now()), local.focused)
         };
-        if send {
-            self.send_frame(ClientFrame::Presence {
-                st: Some(PresenceStatus::Online),
-            });
+        if let Some(st) = send {
+            self.send_frame(ClientFrame::Presence { st: Some(st) });
         }
         self.update_front(front);
     }
@@ -1227,7 +1217,7 @@ impl Client {
     fn update_front(&self, focused: bool) {
         let front = {
             let mut local = self.inner.local.lock();
-            let front = focused && !local.idle;
+            let front = focused && !local.presence.window_idle(Instant::now());
             let changed = local.in_front != front;
             local.in_front = front;
             changed.then_some(front)
@@ -1262,7 +1252,10 @@ impl Client {
         if expired {
             self.write(|s| s.prune_typing(now));
         }
-        let (refresh, idle_now, focused) = {
+        // In a voice channel and able to hear it: never away (#566).
+        let in_call = self.with_state(|s| s.voice_self.channel.is_some() && !s.voice_self.deafened);
+        let system_input = presence::system_last_input();
+        let (refresh, presence, focused) = {
             let mut local = self.inner.local.lock();
             let refresh = match (local.typing, local.typing_sent) {
                 (Some(target), Some(sent)) if now - sent >= TYPING_REFRESH => {
@@ -1271,22 +1264,18 @@ impl Client {
                 }
                 _ => None,
             };
-            let idle_now =
-                !local.idle && local.last_activity.is_some_and(|t| now - t >= CLIENT_IDLE);
-            if idle_now {
-                local.idle = true;
-            }
-            (refresh, idle_now, local.focused)
+            let back = system_input.and_then(|at| local.presence.system_input(at, now));
+            let presence = local.presence.tick(now, in_call).or(back);
+            (refresh, presence, local.focused)
         };
         if let Some((s, c)) = refresh {
             self.send_frame(ClientFrame::Typing { s, c, on: true });
         }
-        if idle_now {
-            self.send_frame(ClientFrame::Presence {
-                st: Some(PresenceStatus::Idle),
-            });
-            self.update_front(focused);
+        if let Some(st) = presence {
+            self.send_frame(ClientFrame::Presence { st: Some(st) });
         }
+        // The window leaves the front five minutes after its last input.
+        self.update_front(focused);
     }
 
     // --------------------------------------------------------------- voice
@@ -2192,7 +2181,7 @@ impl Client {
             }
             GatewayEvent::Ready => {
                 // The server marks a new socket online; say so if we idle.
-                if self.inner.local.lock().idle {
+                if self.inner.local.lock().presence.idle() {
                     self.send_frame(ClientFrame::Presence {
                         st: Some(PresenceStatus::Idle),
                     });
