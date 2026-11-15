@@ -1940,8 +1940,11 @@ dependencies = [
  "tray-icon",
  "url",
  "uuid",
+ "wayland-client",
+ "wayland-protocols",
  "windows",
  "windows-sys 0.61.2",
+ "x11rb",
  "zbus",
 ]
 

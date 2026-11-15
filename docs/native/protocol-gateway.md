@@ -64,7 +64,7 @@ Server (env-configurable, defaults shown) — `backend/api/src/config.rs:20-25,8
 |---|---|---|---|---|
 | `ws_heartbeat` | `API_WS_HEARTBEAT_MS` | 15 000 ms | server sends `{"op":"h"}` every tick (first tick skipped, so first `h` at t+15 s) | `conn.rs:70-74,170-191` |
 | `ws_dead` | `API_WS_DEAD_MS` | 30 000 ms | server closes when nothing (text/ping/pong/binary) arrived for ≥ 30 s, checked on each heartbeat tick | `conn.rs:177-180` |
-| `ws_idle` | `API_WS_IDLE_MS` | 300 000 ms | without an *activity* frame for 5 min the server marks this socket idle (`i`) | `conn.rs:181-184` |
+| `ws_idle` | `API_WS_IDLE_MS` | 300 000 ms | without an *activity* frame for 5 min the server marks this socket idle (`i`); never while the socket holds a voice seat that is not deafened, and the 5 min start when it leaves or deafens (#566) | `conn.rs` `idle_timer` |
 | presence TTL | `API_WS_PRESENCE_TTL_MS` | 45 000 ms | Redis TTL of presence keys, refreshed by heartbeats | `config.rs:86`, `live.rs:241-248` |
 | typing TTL | `API_WS_TYPING_TTL_MS` | 6 000 ms | Redis TTL of a typing key. **The server sends no `on:false` at expiry** — the client must time out | `live.rs:441-485` |
 | replay buffer | `API_WS_REPLAY` | 256 events per topic | bounded Redis list for resume | `config.rs:84`, `event_log.rs:78` |
@@ -487,21 +487,26 @@ If the gateway socket dies the seat expires ≤ 5 s later and others see `l`
 ### 6.1 Presence
 
 Server: socket status is `o` on connect/subscribe, `i` after 300 s without
-activity or on `{"op":"p","st":"i"}`; aggregated per user across sockets;
+activity (not while the socket sits in a voice channel undeafened) or on
+`{"op":"p","st":"i"}`; aggregated per user across sockets;
 `x` when the last socket goes (`live.rs:221-240,564-575`). Broadcast as
 `{"op":"p","s","u","st"}` to each server the user is announced in. Snapshot
 per subscribe (§2.2 step 4); entries with missing keys come back as `x`
 (`live.rs:337-360,774`).
 
-Client (`web/src/ws/live.ts:8-77`, `web/src/ws/useLive.ts:48-90`):
+Client (`web/src/ws/idlePresence.ts`, `web/src/ws/useLive.ts`; native:
+`desktop/client/src/presence.rs`):
 
 | Constant | Value |
 |---|---|
 | `CLIENT_IDLE_MS` | 300 000 (5 min) |
 | `PRESENCE_PULSE_MS` | 10 000 |
+| `CALL_PULSE_MS` | 60 000 |
 | activity events | `pointerdown`, `keydown`, `mousemove` (not visibility) |
 
 - On sign-in and on each activity event: if idle → send `{"op":"p","st":"o"}`; else send it at most every 10 s. Re-arm a 5 min timer that sends `{"op":"p","st":"i"}` once.
+- In a voice channel and not deafened (#566): never send `i`; send `{"op":"p","st":"o"}` at once if idle, then every 60 s. Leaving or deafening re-arms the 5 min timer from that moment.
+- Native app only: input anywhere on the computer counts as activity (system idle time read every 30 s: Windows `GetLastInputInfo`, Wayland `ext-idle-notify-v1`, X11 MIT-SCREEN-SAVER, GNOME `org.gnome.Mutter.IdleMonitor`; without one, window input only). `f` (in front) still follows window input alone.
 - Store `byServer[s][u] = st`; `x` deletes the key. Snapshot replaces the server's map (dropping `x`). Unknown user ⇒ `x`.
 - Member list groups (`live.ts:157-177`): order `o` "Online", `i` "Abwesend", `x` "Offline"; each sorted by `name.localeCompare(b, "de")`; empty groups hidden.
 - Wire form: `sendPresence("o")` sends `{"op":"p","st":"o"}`, `sendPresence("i")` sends `{"op":"p","st":"i"}` (`client.ts:292-294`); frames while the socket is closed are dropped.

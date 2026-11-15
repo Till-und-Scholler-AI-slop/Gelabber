@@ -139,6 +139,17 @@ impl VoiceRoster {
             .get(&id)
             .is_some_and(|socket| socket.rooms.get(&c).is_some_and(|seat| seat.server_id == s))
     }
+    /// This socket holds a voice seat it can hear in (not deafened): its
+    /// user stays online without input (#566).
+    pub async fn listening(&self, id: ConnId) -> bool {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .is_some_and(|socket| socket.rooms.values().any(|seat| !seat.deafened))
+    }
     async fn write_seat(
         &self,
         _id: ConnId,
@@ -796,6 +807,26 @@ mod tests {
         assert_eq!((record.u, record.s, record.c), (u, expected.server_id, c));
         assert_eq!((record.m, record.d), (expected.muted, expected.deafened));
         assert_eq!(record.p, expected.pubs);
+    }
+
+    /// A seat keeps the user online while they can hear it (#566).
+    #[tokio::test]
+    async fn listening_follows_seat_and_deafen() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (id, _rx) = socket(&g, u).await;
+        assert!(!g.listening(id).await, "no seat");
+        g.join_voice(id, u, s, c).await.unwrap();
+        assert!(g.listening(id).await);
+        g.set_voice_mute(id, u, s, c, true).await.unwrap();
+        assert!(g.listening(id).await, "muted still hears");
+        g.set_voice_deafen(id, u, s, c, true).await.unwrap();
+        assert!(!g.listening(id).await, "deafened");
+        g.set_voice_deafen(id, u, s, c, false).await.unwrap();
+        assert!(g.listening(id).await);
+        g.leave_voice(id, u, s, c).await.unwrap();
+        assert!(!g.listening(id).await, "left");
+        g.detach(id).await;
     }
 
     #[tokio::test]

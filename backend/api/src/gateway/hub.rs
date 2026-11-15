@@ -1133,6 +1133,11 @@ impl Gateway {
         self.voice.in_voice(id, server_id, channel_id).await
     }
 
+    /// In a voice channel on this socket and not deafened (#566).
+    pub async fn listening(&self, id: ConnId) -> bool {
+        self.voice.listening(id).await
+    }
+
     /// Seat this socket in `channel_id`, leaving any other voice room first.
     /// Returns other members (and their pubs) so the handler can snapshot
     /// them onto this socket without waiting for Pub/Sub.
