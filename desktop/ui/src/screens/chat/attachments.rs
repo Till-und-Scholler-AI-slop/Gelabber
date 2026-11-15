@@ -100,12 +100,15 @@ impl MediaAction {
 }
 
 /// A picture the lightbox shows: the original, the 800 thumbnail to show
-/// while it loads, and the name it is saved under.
+/// while it loads, the name it is saved under, and its size in pixels as
+/// the server measured it (upright), which stays the same through the
+/// thumbnail → original swap.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Picture {
     pub url: String,
     pub preview: Option<String>,
     pub name: String,
+    pub size: Option<Vec2>,
     /// The uploader's alt text (#575), shown under the picture.
     pub alt: Option<String>,
 }
@@ -139,6 +142,7 @@ impl Lightbox {
                 url,
                 preview: None,
                 name,
+                size: None,
                 alt: None,
             }],
             0,
@@ -387,6 +391,7 @@ fn gallery(pictures: &[&Attachment]) -> Vec<Picture> {
             url: attachment_url(a.id),
             preview: pictures::preview_url(a),
             name: a.filename.clone(),
+            size: pictures::known_size(a),
             alt: a.description.clone(),
         })
         .collect()
@@ -444,7 +449,7 @@ pub fn layout(
         let a = pictures[0];
         let known = pictures::known_size(a);
         let (shape, _) = image_box(known, width);
-        let url = pictures::inline_url(a, shape.x, ppp);
+        let url = pictures::inline_url(a, shape, ppp);
         if failed(ui, images, a, &url) {
             // The box the picture would have had.
             let (size, _) = image_box(known, width);
@@ -480,7 +485,7 @@ pub fn layout(
             .zip(rects)
             .map(|(a, rect)| Cell {
                 att: (*a).clone(),
-                url: pictures::inline_url(a, rect.width(), ppp),
+                url: pictures::inline_url(a, rect.size(), ppp),
                 rect,
             })
             .collect();
@@ -761,6 +766,27 @@ fn paint_more(ui: &Ui, rect: Rect, hidden: usize) {
         Color32::WHITE,
     );
     text.paint(painter, rect.center() - text.size() / 2.0);
+}
+
+/// "+N" in the top right corner of a tile that failed to load, so the
+/// pictures past it are still announced and seen.
+fn paint_more_corner(ui: &Ui, rect: Rect, hidden: usize, id: egui::Id) {
+    let text = Block::single(
+        ui,
+        &format!("+{hidden}"),
+        TextStyle::new(13.0, 700.0, 1.2),
+        Color32::WHITE,
+    );
+    let pill = Rect::from_min_size(
+        pos2(rect.right() - 6.0 - text.width() - 12.0, rect.top() + 6.0),
+        text.size() + vec2(12.0, 4.0),
+    );
+    ui.painter()
+        .rect_filled(pill, CornerRadius::same(4), Color32::from_black_alpha(160));
+    text.paint(ui.painter(), pill.center() - text.size() / 2.0);
+    ui.interact(pill, id, Sense::hover()).widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Label, true, texts::attachment_more(hidden))
+    });
 }
 
 /// The global `:focus-visible` ring around a picture link, for example
@@ -1072,17 +1098,22 @@ impl Media {
                     for (i, cell) in cells.iter().enumerate() {
                         let Cell { att, url, rect } = cell;
                         let rect = rect.translate(vec2(origin.x, top));
+                        let hidden = if i == last { *more } else { 0 };
                         if failed(ui, images, att, url) {
                             let cell_id = id.with(("cell-failed", n, i));
                             if let Some(a) = paint_failed(ui, images, att, rect, cell_id) {
                                 action = Some(a);
+                            }
+                            // The error card keeps its buttons; the count
+                            // moves to a corner so it still says so.
+                            if hidden > 0 {
+                                paint_more_corner(ui, rect, hidden, cell_id.with("more"));
                             }
                             continue;
                         }
                         paint_image(ui, images, att, url, rect, true, play);
                         paint_animated_badge(ui, att, url, rect);
                         let hovered = ui.rect_contains_pointer(rect);
-                        let hidden = if i == last { *more } else { 0 };
                         if hidden > 0 {
                             paint_more(ui, rect, hidden);
                         }
@@ -1350,10 +1381,15 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
                     _ => None,
                 }),
         };
-        // The original's size, as the thumbnail is smaller.
-        let natural = images
-            .natural(ctx, &item.url, Fit::Full)
-            .or_else(|| texture.as_ref().map(|t| t.size_vec2()));
+        // The picture's own size in points: the server's, else the
+        // original's texture, as the thumbnail is smaller. Pixels are not
+        // points: on a 2x screen, actual size is half as many points.
+        let ppp = ctx.pixels_per_point();
+        let natural = item
+            .size
+            .or_else(|| images.natural(ctx, &item.url, Fit::Full))
+            .or_else(|| texture.as_ref().map(|t| t.size_vec2()))
+            .map(|size| size / ppp);
         let mut image_rect = None;
         if let (Some(t), Some(size)) = (texture, natural) {
             let fit = (stage.width() / size.x)
@@ -1402,18 +1438,27 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
                 egui::WidgetInfo::labeled(
                     egui::Role::Image,
                     true,
-                    texts::lightbox_label(view.index + 1, view.items.len(), name),
+                    if many {
+                        texts::lightbox_label(view.index + 1, view.items.len(), name)
+                    } else {
+                        name.to_owned()
+                    },
                 )
             });
             if picture.dragged() && view.zoom > 1.0 {
                 view.pan += picture.drag_delta();
             }
-            if picture.clicked() && fit < 1.0 {
-                // Fitted ↔ actual size, at the click.
-                let to = if view.zoom > 1.0 { 1.0 } else { 1.0 / fit };
+            if picture.clicked() {
+                // Fitted ↔ actual size, at the click; at least 2x, also
+                // for a picture that already fits (web's actualSize).
+                let to = if view.zoom > 1.0 {
+                    1.0
+                } else {
+                    (1.0 / fit).max(2.0).min(max)
+                };
                 zoom_at(view, to, picture.interact_pointer_pos());
             }
-            if picture.hovered() && fit < 1.0 {
+            if picture.hovered() {
                 ui.ctx().set_cursor_icon(if picture.dragged() {
                     egui::CursorIcon::Grabbing
                 } else if view.zoom > 1.0 {
@@ -2278,6 +2323,7 @@ mod tests {
                 url: format!("/p{i}"),
                 preview: None,
                 name: format!("p{i}"),
+                size: None,
                 alt: None,
             })
             .collect();

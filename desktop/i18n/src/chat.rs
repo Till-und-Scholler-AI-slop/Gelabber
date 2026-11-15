@@ -101,11 +101,9 @@ crate::strings! {
     attachment_preview_loading = "Vorschau wird geladen…" | "Loading preview…";
     /// The desktop app's save dialog for a downloaded file.
     attachment_save_title = "Datei speichern" | "Save file";
-    /// The desktop app decodes pictures itself and leaves out huge ones.
     attachment_animated = "GIF" | "GIF";
     lightbox_previous = "Vorheriges Bild" | "Previous picture";
     lightbox_next = "Nächstes Bild" | "Next picture";
-    lightbox_zoom = "Zoomen" | "Zoom";
     alt_badge = "ALT" | "ALT";
     alt_show = "Alt-Text anzeigen" | "Show alt text";
     alt_add = "Alt-Text hinzufügen" | "Add alt text";
@@ -115,6 +113,7 @@ crate::strings! {
     alt_save_failed = "Alt-Text nicht gespeichert." | "Alt text not saved.";
     composer_filter_pictures = "Bilder" | "Pictures";
     composer_filter_all = "Alle Dateien" | "All files";
+    /// The desktop app decodes pictures itself and leaves out huge ones.
     attachment_image_too_large = "Bild ist zu groß zum Anzeigen." | "The image is too large to show.";
 
     // Link previews.

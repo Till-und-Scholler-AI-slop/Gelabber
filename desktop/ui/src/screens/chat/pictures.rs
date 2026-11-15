@@ -148,21 +148,32 @@ pub fn original_url(att: &Attachment) -> String {
     format!("/api/attachments/{}", att.id)
 }
 
-/// The URL a picture is drawn from in a box `width` points wide at
+/// The URL a picture is drawn from in a box of `shown` points at
 /// `pixels_per_point`: the server's thumbnail of 400 or 800 once it has
 /// one, the original before, and the original of an animation small
 /// enough to play.
-pub fn inline_url(att: &Attachment, width: f32, pixels_per_point: f32) -> String {
+pub fn inline_url(att: &Attachment, shown: Vec2, pixels_per_point: f32) -> String {
     let plays = att.animated && att.size <= ANIMATED_INLINE_MAX;
     if !att.thumbnail || plays {
         return original_url(att);
     }
-    let edge = if width * pixels_per_point > 400.0 {
+    let edge = if needed_edge(att, shown) * pixels_per_point > 400.0 {
         800
     } else {
         400
     };
     format!("{}?size={edge}", original_url(att))
+}
+
+/// The long edge, in points, a picture needs to cover `shown` (cropped
+/// boxes and mosaic tiles are drawn with cover). The thumbnails are
+/// measured on the long edge; without a known size, the box's width.
+fn needed_edge(att: &Attachment, shown: Vec2) -> f32 {
+    let Some(size) = known_size(att) else {
+        return shown.x;
+    };
+    let long = size.x.max(size.y);
+    (shown.x * long / size.x).max(shown.y * long / size.y)
 }
 
 /// The lightbox's first picture: the 800 thumbnail while the original is
@@ -264,23 +275,51 @@ mod tests {
     fn thumbnails_follow_the_box_and_animations_play_the_original() {
         let mut a = picture(4000, 3000);
         let id = a.id;
-        assert_eq!(inline_url(&a, 400.0, 1.0), format!("/api/attachments/{id}"));
+        assert_eq!(
+            inline_url(&a, vec2(400.0, 300.0), 1.0),
+            format!("/api/attachments/{id}")
+        );
         a.thumbnail = true;
         assert_eq!(
-            inline_url(&a, 400.0, 1.0),
+            inline_url(&a, vec2(400.0, 300.0), 1.0),
             format!("/api/attachments/{id}?size=400")
         );
         assert_eq!(
-            inline_url(&a, 400.0, 2.0),
+            inline_url(&a, vec2(400.0, 300.0), 2.0),
             format!("/api/attachments/{id}?size=800")
         );
         a.animated = true;
-        assert_eq!(inline_url(&a, 400.0, 1.0), format!("/api/attachments/{id}"));
+        assert_eq!(
+            inline_url(&a, vec2(400.0, 300.0), 1.0),
+            format!("/api/attachments/{id}")
+        );
         a.size = ANIMATED_INLINE_MAX + 1;
         assert_eq!(
-            inline_url(&a, 400.0, 1.0),
+            inline_url(&a, vec2(400.0, 300.0), 1.0),
             format!("/api/attachments/{id}?size=400")
         );
+    }
+
+    #[test]
+    fn thumbnails_follow_the_long_edge_the_box_needs() {
+        let url = |w, h, shown: Vec2, ppp| {
+            let mut a = picture(w, h);
+            a.thumbnail = true;
+            inline_url(&a, shown, ppp)
+                .rsplit('=')
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        };
+        // A 2-picture tile at 2x: 396x400 px of a 4:3 photo needs 533 px.
+        assert_eq!(url(4000, 3000, vec2(198.0, 200.0), 2.0), "800");
+        // Portrait 3:4 at 1.25x: 375x500 px.
+        assert_eq!(url(3000, 4000, vec2(300.0, 400.0), 1.25), "800");
+        // A long screenshot cropped to 133x400: its width needs 133 px of
+        // 1080, so the long edge needs 739 px.
+        assert_eq!(url(1080, 6000, vec2(133.0, 400.0), 1.0), "800");
+        // A landscape single picture at 1x still fits 400.
+        assert_eq!(url(4000, 3000, vec2(400.0, 300.0), 1.0), "400");
     }
 
     #[test]
