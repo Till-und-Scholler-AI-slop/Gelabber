@@ -2098,9 +2098,6 @@ html[data-reduced-motion="true"] *::after {
     width: 44px;
     height: 44px;
   }
-  .user-account-menu > .shell-menu-item {
-    min-height: 44px;
-  }
 }
 /* A phone on its side has room for the call and the user panel only if the
    channel list gives up its minimum and scrolls. */
