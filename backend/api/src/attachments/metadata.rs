@@ -14,10 +14,15 @@
 //!   other application segment, comments, the MPF index and everything
 //!   after the main picture's end, where phones append gain maps and the
 //!   video of a "motion photo" (which carries its own location).
-//! - PNG: `eXIf` (except the orientation), `tEXt`, `zTXt`, `iTXt` (where
-//!   XMP lives) and `tIME`.
-//! - WebP: the `EXIF` (except the orientation) and `XMP ` chunks.
-//! - GIF stays as it is: it has no EXIF, and cameras do not write it.
+//! - PNG: every chunk but the ones that draw the picture (an allowlist),
+//!   so `eXIf` (except the orientation), text chunks (where XMP lives),
+//!   `tIME`, C2PA manifests (`caBX`) and unknown ones go.
+//! - WebP: every chunk but `VP8X`, `VP8 `, `VP8L`, `ALPH`, `ANIM`, `ANMF`
+//!   and `ICCP` (an allowlist); `EXIF` keeps only the orientation.
+//! - GIF: XMP application extensions. It has no EXIF.
+//! - HEIC/HEIF (stored, never decoded): the `Exif` item and XMP (`mime`
+//!   items of `application/rdf+xml`) are overwritten with zeros in place,
+//!   so no offset moves. Its orientation lives in `irot`/`imir`.
 //!
 //! A file these parsers do not understand is left as it is; the content
 //! check (`sniff`) already decided whether it may be attached at all.
@@ -85,13 +90,31 @@ pub fn animated(content_type: &str, bytes: &[u8]) -> bool {
 /// The picture without privacy metadata, or `None` when there was none to
 /// remove (or the file is not one these parsers read).
 pub fn strip(content_type: &str, bytes: &[u8]) -> Option<Vec<u8>> {
-    let stripped = match content_type {
+    let stripped = parsed_strip(content_type, bytes);
+    if stripped.is_none() && strips(content_type) {
+        tracing::debug!(content_type, "picture metadata not understood, kept as is");
+    }
+    let stripped = stripped?;
+    (stripped != bytes).then_some(stripped)
+}
+
+/// The types [`strip`] knows how to clean.
+pub fn strips(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "image/heic" | "image/heif"
+    )
+}
+
+fn parsed_strip(content_type: &str, bytes: &[u8]) -> Option<Vec<u8>> {
+    Some(match content_type {
         "image/jpeg" => strip_jpeg(bytes)?,
         "image/png" => strip_png(bytes)?,
         "image/webp" => strip_webp(bytes)?,
+        "image/gif" => strip_gif(bytes)?,
+        "image/heic" | "image/heif" => strip_heif(bytes)?,
         _ => return None,
-    };
-    (stripped != bytes).then_some(stripped)
+    })
 }
 
 // --- EXIF (TIFF) ---------------------------------------------------------
@@ -345,12 +368,19 @@ fn strip_png(bytes: &[u8]) -> Option<Vec<u8>> {
                     out.extend_from_slice(&crc.to_be_bytes());
                 }
             }
-            b"tEXt" | b"zTXt" | b"iTXt" | b"tIME" => {}
-            _ => out.extend_from_slice(chunk.raw),
+            kind if PNG_KEPT.contains(kind) => out.extend_from_slice(chunk.raw),
+            _ => {}
         }
     }
     Some(out)
 }
+
+/// PNG chunks that draw the picture; every other one goes. `eXIf` is
+/// handled on its own.
+const PNG_KEPT: &[[u8; 4]] = &[
+    *b"IHDR", *b"PLTE", *b"IDAT", *b"IEND", *b"tRNS", *b"gAMA", *b"cHRM", *b"sRGB", *b"iCCP",
+    *b"cICP", *b"sBIT", *b"bKGD", *b"pHYs", *b"acTL", *b"fcTL", *b"fdAT",
+];
 
 fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
@@ -397,7 +427,9 @@ fn webp_chunks(bytes: &[u8]) -> Option<Vec<Chunk<'_>>> {
 fn strip_webp(bytes: &[u8]) -> Option<Vec<u8>> {
     let chunks = webp_chunks(bytes)?;
     // Only the extended format (VP8X) carries metadata chunks.
-    if chunks.first().map(|c| &c.kind) != Some(b"VP8X") {
+    // VP8X is 10 bytes by the spec; its flags are written below.
+    let first = chunks.first()?;
+    if &first.kind != b"VP8X" || first.data.len() < 10 {
         return None;
     }
     let mut body = Vec::with_capacity(bytes.len());
@@ -413,14 +445,14 @@ fn strip_webp(bytes: &[u8]) -> Option<Vec<u8>> {
                     exif_kept = true;
                 }
             }
-            b"XMP " => {}
-            _ => {
+            kind if WEBP_KEPT.contains(kind) => {
                 body.extend_from_slice(chunk.raw);
                 if chunk.raw.len() < 8 + chunk.data.len() + (chunk.data.len() & 1) {
                     // A last chunk cut short of its padding.
                     body.push(0);
                 }
             }
+            _ => {}
         }
     }
     // VP8X's flags are the first byte of its data, right after the header.
@@ -437,7 +469,66 @@ fn strip_webp(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// WebP chunks that draw the picture; every other one goes (`XMP `,
+/// `C2PA`, unknown ones). `EXIF` is handled on its own.
+const WEBP_KEPT: &[[u8; 4]] = &[
+    *b"VP8X", *b"VP8 ", *b"VP8L", *b"ALPH", *b"ANIM", *b"ANMF", *b"ICCP",
+];
+
 // --- GIF -----------------------------------------------------------------
+
+/// The GIF without XMP application extensions ("XMP DataXMP"); `None`
+/// when it cannot be walked to its trailer.
+fn strip_gif(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !(bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
+        return None;
+    }
+    let flags = *bytes.get(10)?;
+    let mut at = 13;
+    if flags & 0x80 != 0 {
+        at += 3 << ((flags & 0x07) + 1);
+    }
+    let blocks_end = |mut at: usize| -> Option<usize> {
+        loop {
+            let len = usize::from(*bytes.get(at)?);
+            at += 1 + len;
+            if len == 0 {
+                return (at <= bytes.len()).then_some(at);
+            }
+        }
+    };
+    let mut out = bytes.get(..at)?.to_vec();
+    loop {
+        match *bytes.get(at)? {
+            0x21 => {
+                let end = blocks_end(at + 2)?;
+                let xmp = bytes.get(at + 1) == Some(&0xFF)
+                    && bytes.get(at + 2) == Some(&11)
+                    && bytes.get(at + 3..at + 14) == Some(b"XMP DataXMP");
+                if !xmp {
+                    out.extend_from_slice(&bytes[at..end]);
+                }
+                at = end;
+            }
+            0x2C => {
+                let local = *bytes.get(at + 9)?;
+                let mut end = at + 10;
+                if local & 0x80 != 0 {
+                    end += 3 << ((local & 0x07) + 1);
+                }
+                // LZW minimum code size, then the data sub-blocks.
+                let end = blocks_end(end + 1)?;
+                out.extend_from_slice(&bytes[at..end]);
+                at = end;
+            }
+            0x3B => {
+                out.push(0x3B);
+                return Some(out);
+            }
+            _ => return None,
+        }
+    }
+}
 
 /// Image descriptors up to the trailer, stopping at two.
 fn gif_frames(bytes: &[u8]) -> usize {
@@ -483,6 +574,153 @@ fn gif_frames(bytes: &[u8]) -> usize {
         }
     }
     frames
+}
+
+// --- HEIF ----------------------------------------------------------------
+
+/// A box: its type, its body, and where its body starts in the file.
+struct IsoBox<'a> {
+    kind: [u8; 4],
+    body: &'a [u8],
+    start: usize,
+}
+
+/// The boxes in `bytes[from..to]`; `None` when one runs past the end.
+fn iso_boxes(bytes: &[u8], from: usize, to: usize) -> Option<Vec<IsoBox<'_>>> {
+    let mut at = from;
+    let mut boxes = Vec::new();
+    while at + 8 <= to {
+        let size = u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?) as usize;
+        let kind: [u8; 4] = bytes.get(at + 4..at + 8)?.try_into().ok()?;
+        let (header, size) = match size {
+            0 => (8, to - at),
+            1 => {
+                let large = u64::from_be_bytes(bytes.get(at + 8..at + 16)?.try_into().ok()?);
+                (16, usize::try_from(large).ok()?)
+            }
+            n => (8, n),
+        };
+        let end = at.checked_add(size)?;
+        if size < header || end > to {
+            return None;
+        }
+        boxes.push(IsoBox {
+            kind,
+            body: &bytes[at + header..end],
+            start: at + header,
+        });
+        at = end;
+    }
+    Some(boxes)
+}
+
+/// A big-endian unsigned number of `n` bytes (0, 2, 4 or 8) at `*at`.
+fn be(bytes: &[u8], at: &mut usize, n: usize) -> Option<u64> {
+    let mut value = 0u64;
+    for byte in bytes.get(*at..at.checked_add(n)?)? {
+        value = (value << 8) | u64::from(*byte);
+    }
+    *at += n;
+    Some(value)
+}
+
+/// The ids of the `Exif` item and of XMP `mime` items, from `iinf`.
+fn heif_metadata_items(iinf: &[u8]) -> Option<Vec<u32>> {
+    let version = *iinf.first()?;
+    let mut at = 4;
+    let _count = be(iinf, &mut at, if version == 0 { 2 } else { 4 })?;
+    let mut ids = Vec::new();
+    for infe in iso_boxes(iinf, at, iinf.len())? {
+        if &infe.kind != b"infe" {
+            continue;
+        }
+        let b = infe.body;
+        let version = *b.first()?;
+        if version < 2 {
+            continue;
+        }
+        let mut at = 4;
+        let id = be(b, &mut at, if version == 2 { 2 } else { 4 })? as u32;
+        at += 2; // protection index
+        let kind = b.get(at..at + 4)?;
+        at += 4;
+        let xmp = kind == b"mime" && {
+            let rest = b.get(at..)?;
+            // item_name, then content_type, both NUL-terminated.
+            let mut parts = rest.split(|c| *c == 0);
+            let _name = parts.next();
+            parts.next() == Some(b"application/rdf+xml".as_slice())
+        };
+        if kind == b"Exif" || xmp {
+            ids.push(id);
+        }
+    }
+    Some(ids)
+}
+
+/// The file ranges of `items`, from `iloc` (offsets into this file only).
+fn heif_extents(iloc: &[u8], items: &[u32]) -> Option<Vec<(usize, usize)>> {
+    let version = *iloc.first()?;
+    if version > 2 {
+        return None;
+    }
+    let mut at = 4;
+    let sizes = be(iloc, &mut at, 1)? as usize;
+    let more = be(iloc, &mut at, 1)? as usize;
+    let (offset_size, length_size) = (sizes >> 4, sizes & 0x0F);
+    let base_size = more >> 4;
+    let index_size = if version == 0 { 0 } else { more & 0x0F };
+    let count = be(iloc, &mut at, if version < 2 { 2 } else { 4 })?;
+    let mut ranges = Vec::new();
+    for _ in 0..count {
+        let id = be(iloc, &mut at, if version < 2 { 2 } else { 4 })? as u32;
+        let method = if version == 0 {
+            0
+        } else {
+            be(iloc, &mut at, 2)? & 0x0F
+        };
+        let reference = be(iloc, &mut at, 2)?;
+        let base = be(iloc, &mut at, base_size)?;
+        let extents = be(iloc, &mut at, 2)?;
+        for _ in 0..extents {
+            be(iloc, &mut at, index_size)?;
+            let offset = be(iloc, &mut at, offset_size)?;
+            let length = be(iloc, &mut at, length_size)?;
+            if items.contains(&id) {
+                // Only data in this file; a length of 0 ("to the end")
+                // is not something a metadata item uses.
+                if method != 0 || reference != 0 || length == 0 {
+                    return None;
+                }
+                let start = usize::try_from(base.checked_add(offset)?).ok()?;
+                let len = usize::try_from(length).ok()?;
+                ranges.push((start, start.checked_add(len)?));
+            }
+        }
+    }
+    Some(ranges)
+}
+
+/// The HEIF with its `Exif` and XMP items zeroed in place.
+fn strip_heif(bytes: &[u8]) -> Option<Vec<u8>> {
+    let top = iso_boxes(bytes, 0, bytes.len())?;
+    if top.first().map(|b| &b.kind) != Some(b"ftyp") {
+        return None;
+    }
+    let meta = top.iter().find(|b| &b.kind == b"meta")?;
+    // A full box: version and flags first.
+    let children = iso_boxes(bytes, meta.start + 4, meta.start + meta.body.len())?;
+    let iinf = children.iter().find(|b| &b.kind == b"iinf")?;
+    let iloc = children.iter().find(|b| &b.kind == b"iloc")?;
+    let items = heif_metadata_items(iinf.body)?;
+    if items.is_empty() {
+        return Some(bytes.to_vec());
+    }
+    let mut out = bytes.to_vec();
+    for (start, end) in heif_extents(iloc.body, &items)? {
+        out.get_mut(start..end)?.fill(0);
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -588,6 +826,12 @@ mod tests {
         }
         assert_eq!(strip("image/png", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"), None);
         assert_eq!(strip("image/webp", b"RIFF\x04\0\0\0WEBP"), None);
+        // A VP8X shorter than its 10 bytes, alone or before a frame.
+        assert_eq!(strip("image/webp", b"RIFF\x0c\0\0\0WEBPVP8X\0\0\0\0"), None);
+        let mut short = webp_chunk(b"VP8X", b"");
+        short.extend(webp_chunk(b"VP8L", b"frame"));
+        assert_eq!(strip("image/webp", &riff(&short)), None);
+        assert_eq!(strip("image/heic", b"\0\0\0\x18ftypheic\0\0"), None);
         assert_eq!(strip("image/gif", b"GIF89a"), None);
         assert_eq!(orientation("image/jpeg", b"\xFF\xD8\xFF"), 1);
     }
@@ -612,6 +856,8 @@ mod tests {
         png.extend(png_chunk(b"eXIf", &exif_tiff(8, true)));
         png.extend(png_chunk(b"iTXt", b"XML:com.adobe.xmp\0GPS"));
         png.extend(png_chunk(b"tEXt", b"Comment\0GPS"));
+        png.extend(png_chunk(b"caBX", b"c2pa GPS"));
+        png.extend(png_chunk(b"zzZz", b"unknown GPS"));
         png.extend(png_chunk(b"IDAT", b"pixels"));
         png.extend(png_chunk(b"IEND", b""));
         assert_eq!(display_size("image/png", &png), Some((40, 30)));
@@ -652,6 +898,7 @@ mod tests {
         body.extend(webp_chunk(b"VP8 ", b"frame"));
         body.extend(webp_chunk(b"EXIF", &exif_tiff(1, true)));
         body.extend(webp_chunk(b"XMP ", b"<GPS/>"));
+        body.extend(webp_chunk(b"C2PA", b"GPS"));
         let source = riff(&body);
         let out = strip("image/webp", &source).unwrap();
         assert!(!out.windows(3).any(|w| w == b"GPS"));
@@ -664,6 +911,97 @@ mod tests {
             out.len() - 8
         );
         assert!(!animated("image/webp", &out));
+    }
+
+    #[test]
+    fn gif_loses_xmp_and_keeps_its_frames() {
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend_from_slice(&[1, 0, 1, 0, 0, 0, 0]);
+        let netscape = [
+            0x21, 0xFF, 11, b'N', b'E', b'T', b'S', b'C', b'A', b'P', b'E', b'2', b'.', b'0', 3, 1,
+            0, 0, 0,
+        ];
+        gif.extend_from_slice(&netscape);
+        gif.extend_from_slice(&[0x21, 0xFF, 11]);
+        gif.extend_from_slice(b"XMP DataXMP");
+        gif.extend_from_slice(&[4, b'G', b'P', b'S', b'!', 0]);
+        let frame = [0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4C, 0x01, 0];
+        gif.extend_from_slice(&frame);
+        gif.extend_from_slice(&frame);
+        gif.push(0x3B);
+        let out = strip("image/gif", &gif).unwrap();
+        assert!(!out.windows(3).any(|w| w == b"GPS"));
+        assert!(out.windows(8).any(|w| w == b"NETSCAPE"));
+        assert!(animated("image/gif", &out));
+        assert_eq!(out.last(), Some(&0x3B));
+        // Nothing to remove: left alone.
+        assert_eq!(strip("image/gif", &out), None);
+        // Cut short: left alone.
+        assert_eq!(strip("image/gif", &gif[..gif.len() - 4]), None);
+    }
+
+    fn iso(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        b.extend_from_slice(kind);
+        b.extend_from_slice(body);
+        b
+    }
+
+    /// A HEIC as a phone writes it: a picture item, an `Exif` item and an
+    /// XMP item, all in `mdat`, located by `iloc` version 1.
+    fn heic() -> (Vec<u8>, std::ops::Range<usize>) {
+        let infe = |id: u16, kind: &[u8; 4], extra: &[u8]| {
+            let mut b = vec![2, 0, 0, 0];
+            b.extend_from_slice(&id.to_be_bytes());
+            b.extend_from_slice(&[0, 0]);
+            b.extend_from_slice(kind);
+            b.extend_from_slice(extra);
+            iso(b"infe", &b)
+        };
+        let mut iinf = vec![0, 0, 0, 0, 0, 3];
+        iinf.extend(infe(1, b"hvc1", b"\0"));
+        iinf.extend(infe(2, b"Exif", b"\0"));
+        iinf.extend(infe(3, b"mime", b"\0application/rdf+xml\0"));
+        let pixels = b"PIXELS-PIXELS";
+        let exif = b"\0\0\0\x06Exif\0\0GPS 52.52 N";
+        let xmp = b"<x:xmpmeta>GPS</x:xmpmeta>";
+        let ftyp = iso(b"ftyp", b"heic\0\0\0\0mif1heic");
+        // iloc v1: offset 4, length 4, base 0, index 0; 3 items.
+        let iloc_len = 4 + 2 + 2 + 3 * (2 + 2 + 2 + 2 + 4 + 4) + 8;
+        let mut meta_body = vec![0, 0, 0, 0];
+        meta_body.extend(iso(b"hdlr", &[0; 24]));
+        meta_body.extend(iso(b"iinf", &iinf));
+        let meta_len = 8 + meta_body.len() + iloc_len;
+        let mdat_start = ftyp.len() + meta_len + 8;
+        let mut iloc = vec![1, 0, 0, 0, 0x44, 0x00, 0, 3];
+        let mut at = mdat_start;
+        for (id, len) in [(1u16, pixels.len()), (2, exif.len()), (3, xmp.len())] {
+            iloc.extend_from_slice(&id.to_be_bytes());
+            iloc.extend_from_slice(&[0, 0, 0, 0, 0, 1]);
+            iloc.extend_from_slice(&(at as u32).to_be_bytes());
+            iloc.extend_from_slice(&(len as u32).to_be_bytes());
+            at += len;
+        }
+        meta_body.extend(iso(b"iloc", &iloc));
+        let mut file = ftyp;
+        file.extend(iso(b"meta", &meta_body));
+        assert_eq!(file.len() + 8, mdat_start);
+        let mut mdat = pixels.to_vec();
+        mdat.extend_from_slice(exif);
+        mdat.extend_from_slice(xmp);
+        file.extend(iso(b"mdat", &mdat));
+        (file, mdat_start..mdat_start + pixels.len())
+    }
+
+    #[test]
+    fn heic_loses_exif_and_xmp_in_place() {
+        let (source, pixels) = heic();
+        assert!(super::super::sniff::matches("image/heic", &source));
+        let out = strip("image/heic", &source).unwrap();
+        assert_eq!(out.len(), source.len());
+        assert!(!out.windows(3).any(|w| w == b"GPS"));
+        assert_eq!(out[pixels.clone()], source[pixels]);
+        assert_eq!(strip("image/heic", &out), None);
     }
 
     #[test]

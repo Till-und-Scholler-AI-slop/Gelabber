@@ -318,15 +318,7 @@ async fn download(
     Query(params): Query<DownloadParams>,
     request_headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let DownloadRow { row, thumb_type } = sqlx::query_as::<_, DownloadRow>(
-        "SELECT id, message_id, channel_id, uploader_id, object_key, \
-                filename, content_type, size_bytes, thumb_type \
-         FROM attachments WHERE id = $1 AND (message_id IS NOT NULL OR expires_at > now())",
-    )
-    .bind(attachment_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound)?;
+    // Before the lookup: a stranger gets the same answer for any id.
     let edge = match params.size.as_deref() {
         None => None,
         Some("400") => Some(400),
@@ -337,6 +329,15 @@ async fn download(
             )])));
         }
     };
+    let DownloadRow { row, thumb_type } = sqlx::query_as::<_, DownloadRow>(
+        "SELECT id, message_id, channel_id, uploader_id, object_key, \
+                filename, content_type, size_bytes, thumb_type \
+         FROM attachments WHERE id = $1 AND (message_id IS NOT NULL OR expires_at > now())",
+    )
+    .bind(attachment_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
 
     // Pending (not yet on a message): only the uploader. Bound: any member
     // of the text channel. Foreign / unknown stays `404`.
@@ -360,6 +361,7 @@ async fn download(
         _ => None,
     };
     let interim = edge.is_some() && thumb.is_none() && !save;
+    let thumbnail = thumb.is_some();
     let (object_key, served) = match thumb {
         Some((key, kind)) => (key, kind),
         None => (row.object_key.clone(), served_type(&row.content_type)),
@@ -407,7 +409,10 @@ async fn download(
         Err(StoreError::NotFound) => Err(ApiError::NotFound),
         Err(StoreError::RangeNotSatisfiable) => {
             let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
-            if let Ok(value) = HeaderValue::from_str(&format!("bytes */{}", row.size_bytes)) {
+            // The original's length; a thumbnail's is not in the row.
+            if !thumbnail
+                && let Ok(value) = HeaderValue::from_str(&format!("bytes */{}", row.size_bytes))
+            {
                 response.headers_mut().insert(CONTENT_RANGE, value);
             }
             Ok(response)
@@ -708,7 +713,10 @@ pub async fn check_uploads(
             Err(StoreError::NotFound) => return Err(invalid()),
             Err(err) => return Err(store_internal(err)),
         };
-        if meta.size != row.stripped_size.unwrap_or(row.size_bytes) {
+        // The upload as declared, or what `prepare` wrote over it (it
+        // records the stripped size before it overwrites the object).
+        let original = meta.size == row.size_bytes;
+        if !original && row.stripped_size != Some(meta.size) {
             // The caller quarantines objects of the wrong size.
             return Err(ApiError::Validation(FieldErrors::from([(
                 "size", "invalid",
@@ -734,7 +742,10 @@ pub async fn check_uploads(
                 AT[index], "too_long",
             )])));
         }
-        if media::is_picture(&row.content_type) && row.stripped_size.is_none() {
+        // Not prepared yet, or maybe not to the end (a send cancelled or
+        // failed while it ran): the object may still be the original.
+        // Stripping a clean file again changes nothing.
+        if metadata::strips(&row.content_type) && (row.stripped_size.is_none() || original) {
             media::prepare(
                 db,
                 store,

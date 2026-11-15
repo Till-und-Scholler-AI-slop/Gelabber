@@ -50,6 +50,9 @@ const ATTEMPTS_MAX: i16 = 5;
 /// Whole originals in memory at once while binding: each is at most
 /// 25 MiB (`validate::FILE_SIZE_MAX`).
 static PREPARING: Semaphore = Semaphore::const_new(2);
+/// One decode at a time. The permit moves into the blocking task, so a
+/// decode past [`DECODE_TIMEOUT`] still holds it until it really ends.
+static DECODING: Semaphore = Semaphore::const_new(1);
 
 pub fn is_picture(content_type: &str) -> bool {
     matches!(
@@ -94,6 +97,9 @@ pub async fn prepare(
         Err(err) => return Err(store_internal(err)),
     };
     let kind = content_type.to_owned();
+    // What is stored now, which a concurrent send may already have
+    // stripped: recorded as is when there is nothing (more) to strip.
+    let read_len = bytes.len() as i64;
     let (shown, animated, stripped) = tokio::task::spawn_blocking(move || {
         let shown = metadata::display_size(&kind, &bytes);
         let animated = metadata::animated(&kind, &bytes);
@@ -105,13 +111,23 @@ pub async fn prepare(
     let stored_size = match stripped {
         Some(clean) => {
             let len = clean.len() as i64;
+            // Recorded first: if this request ends between the two, the
+            // object is either still the original or the stripped one, and
+            // `check_uploads` accepts both and finishes the job.
+            sqlx::query(
+                "UPDATE attachments SET stripped_size = $2 WHERE id = $1 AND message_id IS NULL",
+            )
+            .bind(id)
+            .bind(len)
+            .execute(db)
+            .await?;
             store
                 .put(object_key, content_type, clean)
                 .await
                 .map_err(store_internal)?;
             len
         }
-        None => size,
+        None => read_len,
     };
     let dimension = |value: u32| i32::try_from(value).ok().filter(|v| *v > 0);
     sqlx::query(
@@ -162,6 +178,10 @@ struct Job {
     content_type: String,
     size_bytes: i64,
     media_attempts: i16,
+    message_id: Option<Uuid>,
+    /// Sent in the last hour: clients may show it with `thumbnail: false`
+    /// right now. The backfill of old pictures sends no events.
+    fresh: bool,
 }
 
 /// Process the newest due picture. `Ok(false)` when none is due. Public
@@ -176,13 +196,21 @@ pub async fn run_once(state: &AppState) -> Result<bool, ApiError> {
          UPDATE attachments a SET media_retry_at = now() + interval '5 minutes', \
              media_attempts = media_attempts + 1 \
          FROM due WHERE a.id = due.id \
-         RETURNING a.id, a.object_key, a.content_type, a.size_bytes, a.media_attempts",
+         RETURNING a.id, a.object_key, a.content_type, a.size_bytes, a.media_attempts, \
+             a.message_id, a.created_at > now() - interval '1 hour' AS fresh",
     )
     .fetch_optional(&state.db)
     .await?;
     let Some(job) = job else {
         return Ok(false);
     };
+    // Claimed again and again without ever finishing: the process died
+    // while on it (out of memory, an abort). Not one more try.
+    if job.media_attempts > ATTEMPTS_MAX {
+        tracing::warn!(attachment = %job.id, "picture thumbnails given up after crashes");
+        finish_without_thumbnails(&state.db, job.id).await?;
+        return Ok(true);
+    }
     match process(state, &job).await {
         Ok(()) => {}
         Err(Failure::Picture(reason)) => {
@@ -239,9 +267,13 @@ async fn process(state: &AppState, job: &Job) -> Result<(), Failure> {
         Err(err) => return Err(Failure::Store(err)),
     };
     let kind = job.content_type.clone();
+    let permit = DECODING.acquire().await.expect("never closed");
     let rendered = tokio::time::timeout(
         DECODE_TIMEOUT,
-        tokio::task::spawn_blocking(move || render(&kind, &bytes)),
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            render(&kind, &bytes)
+        }),
     )
     .await
     .map_err(|_| Failure::Picture("decoding took too long".into()))?
@@ -274,6 +306,14 @@ async fn process(state: &AppState, job: &Job) -> Result<(), Failure> {
     .bind(MEDIA_VERSION)
     .execute(&state.db)
     .await?;
+    if updated.rows_affected() > 0
+        && job.fresh
+        && let Some(message_id) = job.message_id
+    {
+        crate::messages::attachments_ready(state, message_id)
+            .await
+            .map_err(Failure::Db)?;
+    }
     if updated.rows_affected() == 0 {
         // Deleted meanwhile: its cleanup may have run before these were
         // written, so they are queued again.
@@ -322,14 +362,30 @@ pub fn render(content_type: &str, bytes: &[u8]) -> Result<Rendered, String> {
     if u64::from(width) * u64::from(height) > pixels_max {
         return Err("too many pixels".into());
     }
+    // `into_decoder` checks the edges only; `decode` would check this,
+    // `from_decoder` does not (a 16-bit RGBA 8192² PNG is 512 MiB).
+    if decoder.total_bytes() > DECODE_ALLOC_MAX {
+        return Err("too large to decode".into());
+    }
     let orientation = decoder.orientation().map_err(|err| err.to_string())?;
-    let icc = decoder.icc_profile().ok().flatten();
-    let mut picture = DynamicImage::from_decoder(decoder).map_err(|err| err.to_string())?;
-    picture.apply_orientation(orientation);
-    let (width, height) = (picture.width(), picture.height());
-
-    let large = fit(&picture, 800);
-    let small = fit(&large, 400);
+    let icc = decoder
+        .icc_profile()
+        .ok()
+        .flatten()
+        .filter(|icc| rgb_profile(icc));
+    let picture = DynamicImage::from_decoder(decoder).map_err(|err| err.to_string())?;
+    // Turned upright on the small copies, not the full-size picture: the
+    // long edge is the same either way, and no second full-size copy.
+    let mut large = fit(&picture, 800);
+    drop(picture);
+    let mut small = fit(&large, 400);
+    large.apply_orientation(orientation);
+    small.apply_orientation(orientation);
+    let (width, height) = if turns_sideways(orientation) {
+        (height, width)
+    } else {
+        (width, height)
+    };
     let transparent = large.color().has_alpha() && large.to_rgba8().pixels().any(|p| p[3] < 255);
     let thumb_type = if transparent {
         "image/webp"
@@ -348,6 +404,21 @@ pub fn render(content_type: &str, bytes: &[u8]) -> Result<Rendered, String> {
         thumb_type,
         thumbs,
     })
+}
+
+fn turns_sideways(orientation: image::metadata::Orientation) -> bool {
+    use image::metadata::Orientation::{Rotate90, Rotate90FlipH, Rotate270, Rotate270FlipH};
+    matches!(
+        orientation,
+        Rotate90 | Rotate270 | Rotate90FlipH | Rotate270FlipH
+    )
+}
+
+/// Whether an ICC profile describes RGB data (its data colour space,
+/// bytes 16..20). Thumbnails are always RGB(A), so the profile of a
+/// grayscale or CMYK picture would not match them.
+fn rgb_profile(icc: &[u8]) -> bool {
+    icc.get(16..20) == Some(b"RGB ")
 }
 
 /// At most `edge` pixels on the long side; never enlarged.
