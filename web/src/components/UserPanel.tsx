@@ -59,7 +59,9 @@ export function UserPanel({ contextId }: { contextId?: string }) {
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
-          <span className="user-panel-avatar">
+          {/* The subtitle names the presence; the avatar adds nothing to the
+              button's name, which starts with the person's name. */}
+          <span className="user-panel-avatar" aria-hidden="true">
             <PresenceAvatar
               name={user.name}
               url={user.avatar_url}

@@ -240,9 +240,10 @@ describe("user panel", () => {
     fixture.feedback = { enabled: true, unread: 2 };
     const markup = html();
     expect(markup).toMatch(
-      /<span class="user-panel-avatar">[^]*?<span class="unread-dot" aria-hidden="true"><\/span><\/span>/,
+      /<span class="user-panel-avatar" aria-hidden="true">[^]*?<span class="unread-dot" aria-hidden="true"><\/span><\/span>/,
     );
-    // Inside the avatar's button, so its name ends with it.
+    // Inside the avatar's button, so its name ("Lena Online, neue Antwort
+    // …") ends with it; the avatar's presence label stays out of the name.
     const button = markup.slice(0, markup.indexOf("</button>"));
     expect(button).toContain(
       '<span class="sr-only">, neue Antwort auf dein Feedback</span>',
