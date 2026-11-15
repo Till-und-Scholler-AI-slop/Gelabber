@@ -741,6 +741,37 @@ pub(crate) async fn attach_previews(
     Ok(())
 }
 
+/// A picture of `message_id` got its thumbnails (#574): the message goes
+/// out again as an edit event, so clients that saw it arrive with
+/// `thumbnail: false` switch from the original to the thumbnail.
+pub(crate) async fn attachments_ready(state: &AppState, message_id: Uuid) -> Result<(), ApiError> {
+    let mut tx = state.db.begin().await?;
+    let channel: Option<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT c.id, COALESCE(c.server_id, c.id) FROM messages m \
+         JOIN channels c ON c.id = m.channel_id WHERE m.id = $1",
+    )
+    .bind(message_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((channel_id, server_id)) = channel else {
+        return Ok(());
+    };
+    delivery::lock_channel(&mut tx, channel_id).await?;
+    let Some(row) = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
+        .bind(message_id)
+        .fetch_optional(&mut *tx)
+        .await?
+    else {
+        return Ok(());
+    };
+    let mut message = Message::from(row);
+    message.attachments = attachments::for_message(&mut *tx, message_id).await?;
+    persist_event(&mut tx, server_id, EventKind::E, &mut message).await?;
+    tx.commit().await?;
+    delivery::wake(state);
+    Ok(())
+}
+
 /// Text channel (via server membership) or 1:1 DM (via channel_members).
 /// Voice is not a message resource.
 pub(crate) enum MessagingChannel {
