@@ -4,28 +4,28 @@
 //! mentions, refused here rather than shown unclickable, so phishing text
 //! never lands in an inbox. The recipient cannot write before accepting.
 //!
-//! A declined request is hidden from the recipient and says nothing to the
-//! sender. Messages sent within [`DECLINE_COOLDOWN_SECS`] of the decline are
-//! kept without a push; the first one after it starts a new round, which
-//! shows the request again and counts the limit afresh.
+//! The limit counts every message sent into the request
+//! (`channels.dm_request_sent`), deleted ones too, so deleting and sending
+//! again neither passes it nor repeats the push. A declined request is
+//! hidden from the recipient and says nothing to the sender: what is left
+//! of the limit can still be written, stored without a push, and the
+//! sender's view is the same as for a request nobody answers.
 
-use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgConnection, PgExecutor};
 use uuid::Uuid;
 
 use crate::error::{ApiError, FieldErrors};
 
 pub const MAX_MESSAGES: i64 = 3;
-pub const DECLINE_COOLDOWN_SECS: i64 = 3600;
 
 /// What a write into a DM may be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gate {
     /// An ordinary DM.
     Open,
-    /// A message request from the writer to `to`. `announce`: the round's
-    /// first message, which pushes "X wants to message you" and shows the
-    /// request; `silent`: written within the cooldown after a decline.
+    /// A message request from the writer to `to`. `announce`: the first
+    /// message, which pushes "X wants to message you" and shows the
+    /// request; `silent`: written after a decline.
     Request {
         to: Uuid,
         announce: bool,
@@ -43,20 +43,17 @@ pub struct Draft<'a> {
 #[derive(FromRow)]
 struct Row {
     request_by: Option<Uuid>,
-    request_since: Option<DateTime<Utc>>,
+    sent: i16,
     declined: bool,
-    cooled: bool,
 }
 
 async fn row<'e, E: PgExecutor<'e>>(db: E, channel_id: Uuid) -> Result<Row, ApiError> {
     sqlx::query_as::<_, Row>(
-        "SELECT dm_request_by AS request_by, dm_request_since AS request_since, \
-                dm_declined_at IS NOT NULL AS declined, \
-                COALESCE(dm_declined_at <= now() - make_interval(secs => $2), false) AS cooled \
+        "SELECT dm_request_by AS request_by, dm_request_sent AS sent, \
+                dm_declined_at IS NOT NULL AS declined \
          FROM channels WHERE id = $1",
     )
     .bind(channel_id)
-    .bind(DECLINE_COOLDOWN_SECS as f64)
     .fetch_optional(db)
     .await?
     .ok_or(ApiError::NotFound)
@@ -78,8 +75,7 @@ pub async fn precheck<'e, E: PgExecutor<'e>>(
 }
 
 /// Under the channel lock (`messages::lock_access`), right before the
-/// insert: the authoritative check, which also starts a new round after a
-/// decline has cooled down.
+/// insert: the authoritative check, which also counts the message.
 pub async fn gate(
     tx: &mut PgConnection,
     channel_id: Uuid,
@@ -94,32 +90,15 @@ pub async fn gate(
         return Err(ApiError::MessageRequestPending);
     }
     refuse(draft)?;
-    let (since, declined) = if current.declined && current.cooled {
-        let since: DateTime<Utc> = sqlx::query_scalar(
-            "UPDATE channels SET dm_request_since = now(), dm_declined_at = NULL \
-             WHERE id = $1 RETURNING dm_request_since",
-        )
-        .bind(channel_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        (since, false)
-    } else {
-        (
-            current.request_since.unwrap_or(DateTime::<Utc>::MIN_UTC),
-            current.declined,
-        )
-    };
-    let sent: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM messages WHERE channel_id = $1 AND author_id = $2 AND created_at >= $3",
-    )
-    .bind(channel_id)
-    .bind(user_id)
-    .bind(since)
-    .fetch_one(&mut *tx)
-    .await?;
+    let sent = i64::from(current.sent);
     if sent >= MAX_MESSAGES {
         return Err(ApiError::MessageRequestLimit);
     }
+    // In the insert's transaction: a send that fails later takes it back.
+    sqlx::query("UPDATE channels SET dm_request_sent = dm_request_sent + 1 WHERE id = $1")
+        .bind(channel_id)
+        .execute(&mut *tx)
+        .await?;
     let to: Uuid = sqlx::query_scalar(
         "SELECT user_id FROM channel_members WHERE channel_id = $1 AND user_id <> $2",
     )
@@ -129,8 +108,8 @@ pub async fn gate(
     .await?;
     Ok(Gate::Request {
         to,
-        announce: !declined && sent == 0,
-        silent: declined,
+        announce: !current.declined && sent == 0,
+        silent: current.declined,
     })
 }
 
@@ -181,14 +160,29 @@ pub fn has_mention(content: &str) -> bool {
 /// scheme (`https://`, `mailto:` …), `www.`, a host name like `evil.example`
 /// or `bit.ly/x`, or an IPv4 address. A dotted word without spaces such as
 /// `ende.Neu` counts too; that is the price of not letting `evil.com` through.
+/// Invisible format characters and markdown marks are dropped first, so
+/// `evil\u{200B}.com` or `evil**.**com`, which read as `evil.com`, count.
 pub fn has_link(content: &str) -> bool {
-    let lower = content.to_lowercase();
+    let lower: String = content
+        .chars()
+        .filter(|c| !invisible(*c) && !matches!(c, '*' | '_' | '~' | '`' | '|'))
+        .collect::<String>()
+        .to_lowercase();
     if lower.contains("://") || lower.contains("www.") || lower.contains("mailto:") {
         return true;
     }
     lower
         .split(|c: char| !(c.is_alphanumeric() || c == '.' || c == '-' || c == '_'))
         .any(host_like)
+}
+
+/// Format characters (Unicode `Cf`) a text can hide in: soft hyphen, zero
+/// width and joiners, direction marks and isolates, word joiner, BOM.
+fn invisible(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}'
+        | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}'
+        | '\u{2066}'..='\u{206F}' | '\u{FEFF}')
 }
 
 fn host_like(token: &str) -> bool {
@@ -225,6 +219,11 @@ mod tests {
             "10.0.0.1",
             "münchen.de",
             "Ende.Neu",
+            "evil\u{200B}.com",
+            "evil\u{00AD}.com",
+            "evil**.**com",
+            "`evil`.`com`",
+            "ev_il._com_",
         ] {
             assert!(has_link(text), "{text}");
         }

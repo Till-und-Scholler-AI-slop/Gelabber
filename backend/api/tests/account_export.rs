@@ -312,6 +312,14 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
     assert_eq!(account["servers"].as_array().unwrap().len(), 1);
     assert_eq!(account["servers"][0]["id"], server_id.as_str());
     assert_eq!(account["servers"][0]["owner"], false);
+    assert_eq!(account["friends"][0]["id"], bob.user_id());
+    assert_eq!(account["friends"][0]["name"], "Bob");
+    assert!(
+        account["friend_requests"]["incoming"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert!(account["sessions"][0]["client"].is_string());
     assert!(account["sessions"][0].get("token_hash").is_none());
     assert!(account.get("password_hash").is_none());

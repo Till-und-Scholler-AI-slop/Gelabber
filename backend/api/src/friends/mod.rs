@@ -3,8 +3,10 @@
 //! A friend request goes by friend code (anyone) or by user id (someone
 //! whose profile card the sender can see: a shared server or a DM). The
 //! recipient accepts or declines; a decline keeps the row for
-//! [`DECLINE_COOLDOWN_SECS`], during which the same sender cannot ask
-//! again. A request to someone who already asked the sender accepts theirs.
+//! [`COOLDOWN_SECS`], during which the same sender cannot ask again. A
+//! withdrawal keeps it as long: asking again within that time is quiet (no
+//! second push), so send and withdraw cannot ping someone over and over.
+//! A request to someone who already asked the sender accepts theirs.
 //! Friends may open an ordinary DM (`crate::dms`); becoming friends also
 //! accepts a pending message request between the two.
 //!
@@ -39,7 +41,7 @@ use crate::state::AppState;
 
 /// Outgoing pending requests one account may have at once.
 pub const MAX_OUTGOING: i64 = 50;
-pub const DECLINE_COOLDOWN_SECS: i64 = 3600;
+pub const COOLDOWN_SECS: i64 = 3600;
 /// Friend-code lookups per account and hour (limiter bucket `friend_code`),
 /// so codes cannot be guessed by trying.
 pub const CODE_LOOKUPS_PER_HOUR: u32 = 20;
@@ -263,7 +265,12 @@ async fn send_request(
         }
     };
 
-    let (outcome, created, dm) = request(&state.db, user.id, target).await?;
+    let Requested {
+        outcome,
+        created,
+        push,
+        dm,
+    } = request(&state.db, user.id, target).await?;
     let person: Person = sqlx::query_as("SELECT id, name, avatar_url FROM users WHERE id = $1")
         .bind(target)
         .fetch_one(&state.db)
@@ -271,6 +278,8 @@ async fn send_request(
     announce(&state, user.id, target, dm).await;
     if created {
         info!(user_id = %user.id, to = %target, "friend request sent");
+    }
+    if push {
         crate::push::invite(&state, target, &user.name, crate::push::Invite::Friend);
     }
     let status = if created {
@@ -288,10 +297,19 @@ async fn send_request(
         .into_response())
 }
 
+/// What [`request`] did.
+struct Requested {
+    outcome: Outcome,
+    /// A request is pending now that was not before.
+    created: bool,
+    /// It is new, not one taken back within the cooldown: push it.
+    push: bool,
+    /// A message request was accepted on the way.
+    dm: bool,
+}
+
 /// The friend-request write, in one transaction under the pair's lock.
-/// Returns the outcome, whether a new request was stored, and whether a
-/// message request was accepted on the way.
-async fn request(db: &PgPool, me: Uuid, them: Uuid) -> Result<(Outcome, bool, bool), ApiError> {
+async fn request(db: &PgPool, me: Uuid, them: Uuid) -> Result<Requested, ApiError> {
     let mut tx = db.begin().await?;
     lock_pair(&mut tx, me, them).await?;
     if !crate::servers::account_alive(&mut tx, them).await? {
@@ -312,33 +330,48 @@ async fn request(db: &PgPool, me: Uuid, them: Uuid) -> Result<(Outcome, bool, bo
         let dm = befriend(&mut tx, me, them).await?;
         tx.commit().await?;
         info!(user_id = %me, with = %them, "friend request answered by asking back");
-        return Ok((Outcome::Friends, false, dm));
+        return Ok(Requested {
+            outcome: Outcome::Friends,
+            created: false,
+            push: false,
+            dm,
+        });
     }
-    let mine: Option<(bool, i64)> = sqlx::query_as(
-        "SELECT status = 'pending', \
+    let mine: Option<(String, i64)> = sqlx::query_as(
+        "SELECT status, \
                 GREATEST(0, CEIL(EXTRACT(EPOCH FROM \
-                    COALESCE(declined_at, now()) + make_interval(secs => $3) - now())))::bigint \
+                    COALESCE(closed_at, now()) + make_interval(secs => $3) - now())))::bigint \
          FROM friend_requests WHERE sender_id = $1 AND recipient_id = $2",
     )
     .bind(me)
     .bind(them)
-    .bind(DECLINE_COOLDOWN_SECS as f64)
+    .bind(COOLDOWN_SECS as f64)
     .fetch_optional(&mut *tx)
     .await?;
-    match mine {
-        Some((true, _)) => {
+    let mut push = true;
+    match mine.as_ref().map(|(status, left)| (status.as_str(), *left)) {
+        Some(("pending", _)) => {
             tx.commit().await?;
-            return Ok((Outcome::Pending, false, false));
+            return Ok(Requested {
+                outcome: Outcome::Pending,
+                created: false,
+                push: false,
+                dm: false,
+            });
         }
-        Some((false, left)) if left > 0 => {
+        Some(("declined", left)) if left > 0 => {
             return Err(ApiError::FriendRequestDeclined {
                 retry_after: left as u64,
             });
         }
+        Some(("withdrawn", left)) if left > 0 => push = false,
         _ => {}
     }
     // Serialise this sender's requests so two at once cannot pass the cap.
-    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+    // `NO KEY UPDATE` does not conflict with the `KEY SHARE` that
+    // `account_alive` takes on a recipient's row, so crossing requests
+    // cannot deadlock.
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE")
         .bind(me)
         .execute(&mut *tx)
         .await?;
@@ -354,14 +387,19 @@ async fn request(db: &PgPool, me: Uuid, them: Uuid) -> Result<(Outcome, bool, bo
     sqlx::query(
         "INSERT INTO friend_requests (sender_id, recipient_id) VALUES ($1, $2) \
          ON CONFLICT (sender_id, recipient_id) DO UPDATE \
-         SET status = 'pending', created_at = now(), declined_at = NULL",
+         SET status = 'pending', created_at = now(), closed_at = NULL",
     )
     .bind(me)
     .bind(them)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok((Outcome::Pending, true, false))
+    Ok(Requested {
+        outcome: Outcome::Pending,
+        created: true,
+        push,
+        dm: false,
+    })
 }
 
 /// `POST /api/friends/requests/{id}/accept`: `{id}` asked the caller.
@@ -400,40 +438,51 @@ async fn decline(
     CurrentUser(user): CurrentUser,
     Id(sender): Id,
 ) -> Result<StatusCode, ApiError> {
+    let mut tx = state.db.begin().await?;
+    // As `accept` does, so the two cannot cross.
+    lock_pair(&mut tx, user.id, sender).await?;
     let declined = sqlx::query(
-        "UPDATE friend_requests SET status = 'declined', declined_at = now() \
+        "UPDATE friend_requests SET status = 'declined', closed_at = now() \
          WHERE sender_id = $1 AND recipient_id = $2 AND status = 'pending'",
     )
     .bind(sender)
     .bind(user.id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if declined == 0 {
         return Err(ApiError::NotFound);
     }
+    tx.commit().await?;
     info!(user_id = %user.id, from = %sender, "friend request declined");
     announce(&state, user.id, sender, false).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `DELETE /api/friends/requests/{id}`: the caller withdraws their request.
+/// The row stays for the cooldown, so asking again then pushes nothing.
 async fn withdraw(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(recipient): Id,
 ) -> Result<StatusCode, ApiError> {
+    let mut tx = state.db.begin().await?;
+    // As `accept` does: a withdrawal it already read cannot end in a
+    // friendship.
+    lock_pair(&mut tx, user.id, recipient).await?;
     let gone = sqlx::query(
-        "DELETE FROM friend_requests WHERE sender_id = $1 AND recipient_id = $2 AND status = 'pending'",
+        "UPDATE friend_requests SET status = 'withdrawn', closed_at = now() \
+         WHERE sender_id = $1 AND recipient_id = $2 AND status = 'pending'",
     )
     .bind(user.id)
     .bind(recipient)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if gone == 0 {
         return Err(ApiError::NotFound);
     }
+    tx.commit().await?;
     announce(&state, user.id, recipient, false).await;
     Ok(StatusCode::NO_CONTENT)
 }

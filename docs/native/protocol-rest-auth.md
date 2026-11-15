@@ -113,7 +113,7 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `error` | string code (table below) | always |
 | `message` | English fallback string | always |
 | `fields` | object `{field: field_code}` | only when non-empty (`skip_serializing_if = BTreeMap::is_empty`) |
-| `retry_after` | integer seconds | only for `rate_limited` and `upstream_quota`, where the same value is also sent as `Retry-After` header; and (v0.10) for `join_request_declined`, in the body only |
+| `retry_after` | integer seconds | only for `rate_limited` and `upstream_quota`, where the same value is also sent as `Retry-After` header; and (v0.10) for `join_request_declined`, (v0.11) `friend_request_declined`, in the body only |
 | `servers` | `[{id, name, member_count}]` | only for `owns_servers` (v0.10, §3.4) |
 
 | `error` | HTTP | `message` (server, English) | German UI text (`web/src/auth/rules.ts:369-413`) |
@@ -155,6 +155,12 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `already_member` | 409 | You are already a member of this server. | v0.10: `auth` `error.alreadyMember` |
 | `owns_servers` | 409 | Transfer or delete your servers first. (also `servers: [{id, name, member_count}]`, §3.4) | v0.10: the delete-account dialog lists the servers |
 | `export_pending` | 409 | Your data export is still being built. | v0.10: standard inline error |
+| `dm_not_allowed` | 403 | You can message friends and people you share a server with. Send a friend request instead. | v0.11 (#563, §5): `auth` `error.dmNotAllowed` |
+| `message_request_pending` | 403 | Accept the message request to reply. | v0.11: `auth` `error.messageRequestPending` |
+| `message_request_limit` | 409 | Wait until your message request is accepted to send more. | v0.11: `auth` `error.messageRequestLimit` |
+| `already_friends` | 409 | You are already friends. | v0.11: `auth` `error.alreadyFriends` |
+| `friend_request_declined` | 409 | You can send a new friend request later. (also `retry_after`: seconds until the cooldown ends, body only) | v0.11: `auth` `error.friendRequestDeclined` |
+| `friend_requests_full` | 409 | Too many open friend requests. Wait for some answers first. | v0.11: `auth` `error.friendRequestsFull` |
 | client-only `network` | 0 | Network error. | Keine Verbindung zum Server. |
 | client-only `timeout` | 0 | Request timed out. | Der Server antwortet nicht. Bitte noch einmal versuchen. |
 
@@ -352,7 +358,7 @@ All card keys are always present (serialised `null` when unset). Key order on th
 |---|---|---|---|---|
 | `GET /api/me` | not called by web (session payload is used) | — | `200 User` | 401 |
 | `PATCH /api/me` | `session.ts:425` | any subset of `{name, avatar_url, bio, pronouns, status_text, accent_color, banner_color, banner_url, avatar_decoration}` (all `Option<String>`, `profile.rs:26-39`). Absent or `null` = unchanged; `""` = clear (not allowed for `name`). | `200 User` (fresh row). Empty/no-op patch returns current user. | `422` codes: name required/too_long/invalid; avatar_url too_long(>2048)/invalid(not `https://host…`)/stale (an `/api/avatars/…` URL other than the current one); bio/pronouns/status_text too_long/invalid (control or bidi chars U+202A–202E, U+2066–2069); colours invalid; banner_url invalid/stale (only `""` or the current value accepted); avatar_decoration invalid. `401` if the row vanished. |
-| `GET /api/users/{id}` | `profile/queries.ts:22` (profile card dialog) | — | `200 PublicProfile` | `404` unless viewer is the user, shares a server, or has a DM with them (`auth/user.rs:53-88`) |
+| `GET /api/users/{id}` | `profile/queries.ts:22` (profile card dialog) | — | `200 PublicProfile` | `404` unless viewer is the user, shares a server, has a DM with them, or (v0.11) is their friend (`auth/user.rs`, `card_visible_to_viewer!`) |
 | `PUT /api/me/avatar` | `session.ts:450,460` | raw image bytes; web sends 256×256 WebP (quality 0.85), else JPEG 0.85 or PNG (`web/src/auth/avatarImage.ts:2-15,87-114`); `Content-Type` = blob type, server ignores it and sniffs | `200 User` with new `avatar_url` | `400 bad_request` not PNG/JPEG/WebP or declared size > 256×256; body > 512 KiB → 413 (plain text); `429` up bucket / `quota_exceeded`; not optimistic |
 | `PUT /api/me/banner` | `session.ts:455` | raw bytes, web 960×320 WebP/JPEG | `200 User` with new `banner_url` | as avatar, max 960×320, body ≤ 1 MiB |
 | `GET /api/avatars/{user}/{file}` | `<img src>` | cookie | `200` image bytes; `Content-Type` sniffed (`image/png|jpeg|webp`), `Cache-Control: private, max-age=31536000, immutable`, `X-Content-Type-Options: nosniff` (`avatars.rs:327-363`) | `401` without session; `404` unknown/oversized. Any signed-in user may load any avatar. |
@@ -416,7 +422,11 @@ account.json                                { id, email, name, created_at, email
                                               notification_settings: [ {scope_kind, scope_id, level, muted, muted_until, updated_at} ],
                                               sessions: [ {client, os, created_at, last_used_at} ],   live sessions only
                                               servers: [ {id, name, owner: bool, joined_at} ],
-                                              invites: [ {code, server_id, created_at, expires_at, max_uses, uses} ] }
+                                              invites: [ {code, server_id, created_at, expires_at, max_uses, uses} ],
+                                              friend_code: string | null,                               v0.11
+                                              friends: [ {id, name, at} ],                               at = since
+                                              friend_requests: { incoming: [ {id, name, at} ],
+                                                                 outgoing: [ {id, name, at} ] } }      pending only
 profile/avatar.<ext>, profile/banner.<ext>  uploaded images only; ext png | jpg | webp | gif | bin from the stored type
 messages/servers/<server-id>/<channel-id>.json
 messages/dms/<channel-id>.json
@@ -667,19 +677,49 @@ Shapes:
 
 ---
 
-## 5. Direct messages (`backend/api/src/dms/mod.rs`; web `web/src/dms/api.ts`, `web/src/dms/types.ts`)
+## 5. Direct messages, message requests and friends (`backend/api/src/dms/`, `backend/api/src/friends/`; web `web/src/dms/`, `web/src/friends/`)
 
-`DirectMessage`: `{id: uuid (the DM channel id), kind: "dm", created_at: ts, peer: {id, name, avatar_url: nullable}}`.
+`DirectMessage`: `{id: uuid (the DM channel id), kind: "dm", created_at: ts, peer: {id, name, avatar_url: nullable}, request?: {incoming: bool, remaining: int}}`. `request` is present only while the DM is a message request (v0.11, #563): `incoming: true` means the peer started it and the caller accepts or declines; otherwise the caller started it and may still send `remaining` messages (0 to 3).
+
+### 5.1 Who may open a DM (v0.11)
+
+- Friends open an ordinary DM.
+- People who share a server open a **message request**: the opener may send at most 3 messages of plain text, with no links (anything that reads as a host name, a scheme, `www.` or an IPv4 address, also when split by invisible characters or markdown marks), mentions, files or GIFs (`422` with `fields.content` `request_link` | `request_mention`, `fields.attachment_ids`/`fields.gif` `request_text_only`; an edit follows the same text rules). Every message sent counts, deleted ones too. The recipient can neither write nor react before accepting (`403 message_request_pending`). The fourth message is `409 message_request_limit`.
+- Anyone else gets `403 dm_not_allowed` and can only send a friend request by code (§5.3).
+- Every DM that existed before v0.11 counts as accepted. Removing a friend or leaving the shared server does not close a DM or a pending request.
+- A request nobody wrote into yet (opened, no message) goes to whoever writes first: when the other person calls `POST /api/dms`, the answer is the same channel with `request.incoming: false`.
+- Accepting does not make the two friends. Becoming friends accepts a pending request between them.
+- Declining is silent: the request leaves the recipient's list, whatever is left of the sender's 3 messages is stored without a push, and the sender's view (`remaining`) is the same as for a request nobody answers. The recipient may still accept it later.
+
+### 5.2 DM routes
 
 | Method & path | Web fn | Request | Success | Errors |
 |---|---|---|---|---|
-| `GET /api/dms` | `listDms` (4) | — | `200 DirectMessage[]` ordered by newest message time (or channel creation when empty) DESC, then id | 401 |
-| `GET /api/dms/{id}` | `getDm` (7) | — | `200 DirectMessage` | `404` not a participant |
-| `POST /api/dms` | `openDm` (10) | `{user_id: string}` | `201` newly created, `200` existing (idempotent per pair) | `422 user_id: required\|invalid` (also self); `404` unknown user |
+| `GET /api/dms` | `listDms` | — | `200 DirectMessage[]` ordered by newest message time (or channel creation when empty) DESC, then id. Requests sent **to** the caller are not in it | 401 |
+| `GET /api/dms/{id}` | `getDm` | — | `200 DirectMessage`, also an incoming request | `404` not a participant |
+| `POST /api/dms` | `openDm` | `{user_id: string}` | `201` newly created, `200` existing (idempotent per pair, whatever the relation is now) | `422 user_id: required\|invalid` (also self); `404` unknown user; `403 dm_not_allowed` (v0.11) for a new DM with a stranger |
+| `GET /api/dms/requests` | `listRequests` | — | `200 DirectMessage[]`: requests to the caller that were written into and not declined, newest message first | 401 |
+| `POST /api/dms/{id}/accept` | `acceptRequest` | — | `200 DirectMessage` without `request`; both sides get `{"op":"dm","c":<id>}` | `404` not an incoming request of the caller |
+| `POST /api/dms/{id}/decline` | `declineRequest` | — | `204` | `404` as accept |
 
-Messages, reads, notification settings and attachments of a DM use the channel routes below with the DM id as `{id}`; permissions do not apply in DMs (both participants may send/upload), and only the author may delete (`messages/mod.rs:713-724`).
+Messages, reads, notification settings and attachments of a DM use the channel routes below with the DM id as `{id}`; permissions do not apply in DMs (both participants may send/upload, within the request rules above), and only the author may delete (`messages/mod.rs`). The recipient of a request hears of it with its first message: `{"op":"mr"}` (protocol-gateway §3) and a push "X möchte dir schreiben" to `/d/requests`, once per request.
 
----
+### 5.3 Friends (v0.11, #563)
+
+`Person`: `{id, name, avatar_url: nullable}`. `FriendList`: `{friends: [{user: Person, since: ts, status?: "o"|"i"}], incoming: [{user: Person, created_at: ts}], outgoing: [{user: Person, created_at: ts}]}`, each newest first. `status` is the friend's presence when online or idle, read when the list is fetched (not live; the web reads the list again every 60 s while it is shown).
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/friends` | — | `200 FriendList` | 401 |
+| `POST /api/friends/requests` | `{user_id}` (someone whose card the caller can see) **or** `{code}` (`K7QX-M2PD`, case and dash optional) | `201 {status: "pending", peer: Person}` for a new request; `200` with `"pending"` when it was pending already, or `"friends"` when the other person had asked the caller (that accepts theirs) | `422` `user_id: required\|invalid\|self`, `code: invalid\|self\|exclusive` (both given); `404` unknown, deleted or not visible; `409 already_friends`; `409 friend_request_declined` with `retry_after` (1 h after a decline); `409 friend_requests_full` (50 outgoing pending); `429 rate_limited` for code lookups (20 per hour and account) |
+| `POST /api/friends/requests/{user}/accept` | — | `204`; a pending message request between the two is accepted too | `404` no pending request from `{user}` |
+| `POST /api/friends/requests/{user}/decline` | — | `204`; not silent, the request leaves both lists, and `{user}` may ask again after 1 h | `404` |
+| `DELETE /api/friends/requests/{user}` | — | `204`, the caller withdraws their request. Asking again within 1 h is quiet: no second push | `404` |
+| `DELETE /api/friends/{user}` | — | `204`; their DM stays usable | `404` not friends |
+| `GET /api/me/friend-code` | — | `200 {code}`, created on first use | 401 |
+| `POST /api/me/friend-code` | none (CSRF) | `200 {code}`, a new one; the old one stops working at once | 401 |
+
+Every change goes to both accounts' sockets as `{"op":"fr"}` (protocol-gateway §3), which read `GET /api/friends` again. A new request (not one re-sent within an hour of withdrawing it) pushes "X hat dir eine Freundschaftsanfrage geschickt" to `/d/friends`. Friend-request pushes belong to no channel, so channel notification settings do not hold them back.
 
 ## 6. Messages (`backend/api/src/messages/mod.rs`; web `web/src/messages/api.ts`, `types.ts`)
 
@@ -981,6 +1021,14 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 | DELETE | /api/servers/{id}/bans/{user_id} | yes | 4.3 |
 | GET, POST | /api/dms | yes | 5 |
 | GET | /api/dms/{id} | yes | 5 |
+| GET | /api/dms/requests | yes | 5.2 (v0.11) |
+| POST | /api/dms/{id}/accept, /api/dms/{id}/decline | yes | 5.2 (v0.11) |
+| GET | /api/friends | yes | 5.3 (v0.11) |
+| DELETE | /api/friends/{id} | yes | 5.3 (v0.11) |
+| POST | /api/friends/requests | yes | 5.3 (v0.11) |
+| DELETE | /api/friends/requests/{id} | yes | 5.3 (v0.11) |
+| POST | /api/friends/requests/{id}/accept, /api/friends/requests/{id}/decline | yes | 5.3 (v0.11) |
+| GET, POST | /api/me/friend-code | yes | 5.3 (v0.11) |
 | GET, POST | /api/channels/{id}/messages | yes | 6 |
 | PATCH, DELETE | /api/messages/{id} | yes | 6 |
 | DELETE | /api/messages/{id}/previews | yes | 6 |
