@@ -960,10 +960,15 @@ try {
     "four concurrent sources: a/v/s/sa actual RTP and two rendered videos",
   );
   stage = "device and DSP changes with four sources";
-  // In a call the user panel's gear holds the call settings.
+  // The call's settings are Settings → Audio (#570): the gear, then the
+  // area. The call goes on meanwhile.
   await owner.page
     .locator(".user-panel")
-    .getByRole("button", { name: "Anrufeinstellungen", exact: true })
+    .getByRole("link", { name: "Einstellungen", exact: true })
+    .click();
+  await owner.page
+    .getByRole("navigation", { name: "Einstellungsbereiche" })
+    .getByRole("link", { name: "Audio", exact: true })
     .click();
   const input = owner.page.locator("#audio-input");
   await input.waitFor();
@@ -1046,7 +1051,9 @@ try {
       owner.page.getByRole("radio", { name: /Verbesserte Sprache/ }).check(),
     true,
   );
-  await owner.page.getByRole("button", { name: "Fertig", exact: true }).click();
+  // Back to the voice room, past the settings' two pages.
+  await owner.page.goBack();
+  await owner.page.goBack();
   report.checks.push(
     "enumerated input-device and enhanced/Original DSP swaps: confirmed native audio with other three sources flowing",
   );

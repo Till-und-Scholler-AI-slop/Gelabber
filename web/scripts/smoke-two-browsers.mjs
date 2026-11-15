@@ -291,11 +291,17 @@ try {
     .locator(".voice-room")
     .getByRole("button", { name: "Beitreten", exact: true })
     .click();
+  // The camera and Live profiles are in Settings → Video (#570); the call
+  // goes on meanwhile.
   await a.page
-    .getByRole("button", { name: "Anrufeinstellungen" })
-    .first()
+    .locator(".user-panel")
+    .getByRole("link", { name: "Einstellungen", exact: true })
     .click();
-  const settings = a.page.getByRole("dialog", { name: "Audio & Video" });
+  await a.page
+    .getByRole("navigation", { name: "Einstellungsbereiche" })
+    .getByRole("link", { name: "Video", exact: true })
+    .click();
+  const settings = a.page.locator(".settings-area--video");
   await settings
     .locator("#camera-stream-profile-resolution")
     .selectOption("480");
@@ -305,7 +311,9 @@ try {
     .selectOption("2160");
   await settings.locator("#screen-stream-profile-fps").selectOption("60");
   await settings.getByLabel("Ton mitsenden", { exact: true }).check();
-  await settings.getByRole("button", { name: "Fertig" }).click();
+  // Back to the voice room, past the settings' two pages.
+  await a.page.goBack();
+  await a.page.goBack();
 
   await a.page
     .getByRole("button", { name: "Kamera", exact: true })
@@ -409,12 +417,21 @@ try {
     null,
     { timeout: 20_000 },
   );
-  assert.ok(
-    (await a.page
-      .locator("details")
-      .filter({ hasText: "Sprachdiagnose" })
-      .count()) > 0,
-  );
+  // The diagnostics close Settings → Audio.
+  await a.page
+    .locator(".user-panel")
+    .getByRole("link", { name: "Einstellungen", exact: true })
+    .click();
+  await a.page
+    .getByRole("navigation", { name: "Einstellungsbereiche" })
+    .getByRole("link", { name: "Audio", exact: true })
+    .click();
+  await a.page
+    .locator("#diagnostics")
+    .getByRole("region", { name: "Sprachdiagnose" })
+    .waitFor();
+  await a.page.goBack();
+  await a.page.goBack();
   console.log(
     "Two accounts, camera + Live with stereo source audio, explicit Watch, SFU media, relay ICE and shared sender budget passed.",
   );
