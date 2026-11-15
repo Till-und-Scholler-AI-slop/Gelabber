@@ -1,19 +1,19 @@
 //! The user panel at the bottom of the sidebar column
 //! (components/UserPanel.tsx, index.css `.user-panel`): your avatar with
-//! presence, name and status line, the settings gear and the user menu;
-//! a click on the name opens the status card.
+//! presence, name and status line, and the settings gear. A click on the
+//! name opens the account popover (#570): the status card, then the
+//! account's entries as a menu.
 
-use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
+use egui::{Id, Rect, Ui, Vec2, pos2};
 use gelabber_client::{OpState, PresenceStatus, ProfilePatch};
 use gelabber_i18n::shell;
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
-use super::state;
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::text::{self, Block};
-use crate::theme::{Theme, corner};
+use crate::theme::Theme;
 use crate::widgets::{Button, InlineStatus, Popover, StatusTone, TextField, hairline_h};
 
 /// `STATUS_TEXT_MAX` (auth/rules.ts).
@@ -93,19 +93,26 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
     let inner_top = rect.top() + 1.0;
     let center_y = inner_top + (rect.bottom() - inner_top) / 2.0;
     let right = rect.right() - 1.0 - 8.0;
-    let chevron = Rect::from_min_size(pos2(right - 30.0, center_y - 18.0), Vec2::new(30.0, 36.0));
-    let gear = Rect::from_min_size(
-        pos2(chevron.left() - 4.0 - 30.0, center_y - 18.0),
-        Vec2::new(30.0, 36.0),
-    );
+    let gear = Rect::from_min_size(pos2(right - 30.0, center_y - 18.0), Vec2::new(30.0, 36.0));
     let profile = Rect::from_min_max(
         pos2(rect.left() + 8.0, center_y - 21.75),
         pos2(gear.left() - 4.0, center_y + 21.75),
     );
+    // Feedback (#542): the entry while the instance takes it, and the dot
+    // on the avatar and the entry while a reply is unread.
+    let feedback = crate::screens::feedback::enabled(ui.ctx(), app) == Some(true);
+    let unread = feedback && crate::screens::feedback::unread(ui.ctx(), app) > 0;
 
     let mut draft: StatusDraft = ui.data(|d| d.get_temp(draft_id())).unwrap_or_default();
-    let response = common::click(ui, profile, Id::unique("user-panel-profile"));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+    let response = common::click(ui, profile, profile_id());
+    // The unread reply is part of the button's name (the web's sr-only).
+    let profile_label = if unread {
+        format!("{name}, {}", shell::user_panel_feedback_unread())
+    } else {
+        name.clone()
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &profile_label));
+    common::focus_visible(ui, &response, profile, theme.radius.md);
     if response.hovered() || draft.open {
         common::fill(&painter, profile, theme.radius.md, c.hover);
     }
@@ -129,6 +136,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
         under,
     );
     common::presence_dot(&painter, &theme, avatar, presence);
+    if unread {
+        // `.user-panel-avatar > .unread-dot`: top and right -1px, with a
+        // 2px ring in the panel's colour.
+        let center = pos2(avatar.right() + 1.0 - 4.0, avatar.top() - 1.0 + 4.0);
+        painter.circle_filled(center, 6.0, under);
+        crate::screens::feedback::dialog::dot(&painter, center, c.accent);
+    }
     let text_left = avatar.right() + 9.0;
     let text_max = profile.right() - 4.0 - text_left;
     let top = center_y - 19.75;
@@ -149,63 +163,16 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
         draft.focus = draft.open;
     }
 
-    // In a call the gear opens the call's quick settings; the app's
-    // settings stay in the chevron menu.
-    let in_call = app
-        .call
-        .with_state(|c| crate::screens::voice::session::joined(c).is_some());
-    let gear_response = icon_button(
-        ui,
-        gear,
-        Icon::Gear,
-        21.0,
-        if in_call {
-            shell::user_panel_call_settings()
-        } else {
-            shell::user_panel_settings()
-        },
-        false,
-    );
-    if in_call {
-        crate::screens::voice::quick::panel_button(ui, app, gear_response, gear);
-    } else if gear_response.clicked() {
+    // Always Settings, in a call too: the call's own settings are in the
+    // voice room and in Settings → Audio (#570).
+    let gear_response = icon_button(ui, gear, Icon::Gear, 21.0, shell::user_panel_settings());
+    if gear_response.clicked() {
         app.nav.navigate("/settings/darstellung");
-    }
-    let menu_open = state::with(ui.ctx(), |s| s.user_menu);
-    // Feedback (#542): the item while the instance takes it, and the dot on
-    // the item and the chevron while a reply is unread.
-    let feedback = crate::screens::feedback::enabled(ui.ctx(), app) == Some(true);
-    let unread = feedback && crate::screens::feedback::unread(ui.ctx(), app) > 0;
-    let chevron_response = icon_button(
-        ui,
-        chevron,
-        Icon::Chevron,
-        18.0,
-        if unread {
-            shell::user_panel_menu_unread_label()
-        } else {
-            shell::user_panel_menu_label()
-        },
-        true,
-    );
-    if unread {
-        // `.user-panel-menu > summary > .unread-dot`: top 4px, right 2px.
-        crate::screens::feedback::dialog::dot(
-            ui.painter(),
-            pos2(chevron.right() - 2.0 - 4.0, chevron.top() + 4.0 + 4.0),
-            c.accent,
-        );
-    }
-    if chevron_response.clicked() {
-        state::with(ui.ctx(), |s| s.user_menu = !s.user_menu);
-    }
-    if menu_open {
-        user_menu(ui, app, chevron, feedback, unread);
     }
 
     if draft.open {
         let current = status_text.clone().unwrap_or_default();
-        status_card(
+        account_popover(
             ui,
             app,
             profile,
@@ -214,28 +181,18 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
             presence,
             &current,
             &mut draft,
+            Entries { feedback, unread },
         );
     }
     ui.data_mut(|d| d.insert_temp(draft_id(), draft));
 }
 
 /// `.shell-icon-button` in the panel: 30×36, muted, hover fill.
-fn icon_button(
-    ui: &mut Ui,
-    rect: Rect,
-    icon: Icon,
-    size: f32,
-    label: &str,
-    turned: bool,
-) -> egui::Response {
+fn icon_button(ui: &mut Ui, rect: Rect, icon: Icon, size: f32, label: &str) -> egui::Response {
     let theme = Theme::of(ui.ctx());
-    let response = common::click(ui, rect, icon_id(icon));
-    let response = if turned {
-        response
-    } else {
-        response.on_hover_text(label)
-    };
+    let response = common::click(ui, rect, icon_id(icon)).on_hover_text(label);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    common::focus_visible(ui, &response, rect, theme.radius.md);
     let color = if response.hovered() {
         common::fill(ui.painter(), rect, theme.radius.md, theme.c.hover);
         theme.c.text
@@ -243,11 +200,7 @@ fn icon_button(
         theme.c.muted
     };
     let min = rect.center() - Vec2::splat(size / 2.0);
-    if turned {
-        icons::paint_rotated(ui.painter(), icon, min, size, color);
-    } else {
-        icons::paint(ui.painter(), icon, min, size, color);
-    }
+    icons::paint(ui.painter(), icon, min, size, color);
     response
 }
 
@@ -256,27 +209,30 @@ fn icon_id(icon: Icon) -> Id {
     Id::unique(("user-panel", icon))
 }
 
-/// What an item of the user menu does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The avatar and name: the account popover's button, and where the focus
+/// goes back to.
+fn profile_id() -> Id {
+    Id::unique("user-panel-profile")
+}
+
+/// What an entry of the account menu does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum MenuItem {
     Profile,
-    Settings,
+    /// While the instance takes feedback: the "Feedback geben" dialog.
+    Feedback,
     /// Operators only: the operator area, in the system browser.
     Operator,
     SwitchServer,
     SignOut,
-    /// While the instance takes feedback: the "Feedback geben" dialog.
-    Feedback,
 }
 
-/// The menu's items, in the web's order; "Feedback geben" follows
-/// "Einstellungen" while the instance takes feedback, then "Betrieb" for
-/// operators.
+/// The account menu's entries, in the web's order (`AccountMenu`):
+/// "Profil bearbeiten", "Feedback geben" while the instance takes feedback,
+/// "Betrieb" for operators, the app's own "Server wechseln …", and after a
+/// line "Abmelden". No "Einstellungen": the gear is beside the avatar.
 fn menu_items(operator: bool, feedback: bool) -> Vec<(MenuItem, &'static str)> {
-    let mut items = vec![
-        (MenuItem::Profile, shell::user_panel_edit_profile()),
-        (MenuItem::Settings, shell::user_panel_settings()),
-    ];
+    let mut items = vec![(MenuItem::Profile, shell::user_panel_edit_profile())];
     if feedback {
         items.push((MenuItem::Feedback, shell::user_panel_feedback()));
     }
@@ -289,113 +245,170 @@ fn menu_items(operator: bool, feedback: bool) -> Vec<(MenuItem, &'static str)> {
     items
 }
 
-/// The account menu above the chevron: panel colour, 37px items.
-fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect, feedback: bool, unread: bool) {
+fn item_id(item: MenuItem) -> Id {
+    Id::unique(("user-account-item", item))
+}
+
+/// The entry to focus after `key` on entry `at` of `count` (`accountStep`,
+/// components/accountKeys.ts): ↓ and ↑ round the ends, Home and End jump,
+/// ↑ on the first entry goes back to the status field (`Some(None)`).
+fn account_step(key: egui::Key, at: usize, count: usize) -> Option<Option<usize>> {
+    match key {
+        egui::Key::ArrowDown => Some(Some((at + 1) % count)),
+        egui::Key::ArrowUp => Some(at.checked_sub(1)),
+        egui::Key::Home => Some(Some(0)),
+        egui::Key::End => Some(Some(count - 1)),
+        _ => None,
+    }
+}
+
+/// What the account popover shows besides the card.
+#[derive(Clone, Copy)]
+struct Entries {
+    feedback: bool,
+    unread: bool,
+}
+
+/// `hr.shell-menu-separator`: 4px above and below a 1px line, 6px in.
+const SEPARATOR_H: f32 = 4.0 + 1.0 + 4.0;
+/// `.shell-menu-item`: `--lr-control-md` tall, 2px between the menu's rows.
+const ITEM_H: f32 = 36.0;
+const MENU_GAP: f32 = 2.0;
+
+/// The account's entries under the status card; returns the one chosen.
+fn account_menu(
+    ui: &mut Ui,
+    left: f32,
+    top: f32,
+    width: f32,
+    items: &[(MenuItem, &'static str)],
+    unread: bool,
+) -> Option<MenuItem> {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let items = menu_items(app.session.operator(), feedback);
-    // The unread item's name carries the web's sr-only suffix.
+    // The unread entry's name carries the web's sr-only suffix.
     let feedback_label = format!(
         "{}, {}",
         shell::user_panel_feedback(),
         shell::user_panel_feedback_unread()
     );
-    let width = 180.0;
-    let height = 2.0 + 16.0 + 37.0 * items.len() as f32 + 3.0 * (items.len() - 1) as f32;
-    let frame = Rect::from_min_max(
-        pos2(chevron.right() - width, chevron.bottom() - 43.0 - height),
-        pos2(chevron.right(), chevron.bottom() - 43.0),
-    );
+    let separator = |ui: &Ui, y: f32| {
+        hairline_h(
+            ui.painter(),
+            &theme,
+            left + 6.0..=left + width - 6.0,
+            y + 4.0,
+        );
+    };
     let mut picked = None;
-    let area = egui::Area::new(Id::unique("user-panel-menu"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(frame.min)
-        .show(ui.ctx(), |ui| {
-            let painter = ui.painter();
-            let shadow = egui::Shadow {
-                offset: [0, 8],
-                blur: 25,
-                spread: 0,
-                color: Color32::from_black_alpha(0x33),
-            };
-            painter.add(shadow.as_shape(frame, corner(theme.radius.md)));
-            painter.rect(
-                frame,
-                corner(theme.radius.md),
-                c.panel,
-                Stroke::new(1.0, c.border),
-                StrokeKind::Inside,
+    let mut y = top;
+    separator(ui, y);
+    y += SEPARATOR_H + MENU_GAP;
+    let last = items.len() - 1;
+    for (i, (action, label)) in items.iter().enumerate() {
+        if i == last {
+            separator(ui, y);
+            y += SEPARATOR_H + MENU_GAP;
+        }
+        let item = Rect::from_min_size(pos2(left, y), Vec2::new(width, ITEM_H));
+        let response = common::click(ui, item, item_id(*action));
+        let dotted = unread && *action == MenuItem::Feedback;
+        let name = if dotted {
+            feedback_label.as_str()
+        } else {
+            label
+        };
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MenuItem, true, name));
+        let response = if *action == MenuItem::SwitchServer {
+            response.on_hover_text(format!("{}+{}+S", shell::keys_ctrl(), shell::keys_shift()))
+        } else {
+            response
+        };
+        if response.hovered() {
+            common::fill(ui.painter(), item, theme.radius.sm, c.hover);
+        }
+        common::focus_visible(ui, &response, item, theme.radius.sm);
+        let block = Block::single(ui, label, text::UI, c.text);
+        paint_mid(ui.painter(), &block, item.left() + 10.0, item.center().y);
+        if dotted {
+            // `.unread-dot` with `margin-left: auto`: at the entry's right
+            // padding, centred on the line.
+            crate::screens::feedback::dialog::dot(
+                ui.painter(),
+                pos2(item.right() - 10.0 - 4.0, item.center().y),
+                c.accent,
             );
-            let mut y = frame.top() + 9.0;
-            for (i, (action, label)) in items.iter().enumerate() {
-                let item =
-                    Rect::from_min_size(pos2(frame.left() + 9.0, y), Vec2::new(width - 18.0, 37.0));
-                let response = common::click(ui, item, Id::unique(("user-menu-item", i)));
-                let dotted = unread && *action == MenuItem::Feedback;
-                let name = if dotted {
-                    feedback_label.as_str()
-                } else {
-                    label
-                };
-                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
-                let response = if *action == MenuItem::SwitchServer {
-                    response.on_hover_text(format!(
-                        "{}+{}+S",
-                        shell::keys_ctrl(),
-                        shell::keys_shift()
-                    ))
-                } else {
-                    response
-                };
-                if response.hovered() {
-                    common::fill(ui.painter(), item, theme.radius.sm, c.hover);
-                }
-                let block = Block::single(ui, label, text::BODY, c.text);
-                block.paint(ui.painter(), pos2(item.left() + 10.0, item.top() + 8.0));
-                if dotted {
-                    // `.unread-dot` with `margin-left: auto`: at the item's
-                    // right padding, centred on the line.
-                    crate::screens::feedback::dialog::dot(
-                        ui.painter(),
-                        pos2(item.right() - 10.0 - 4.0, item.center().y),
-                        c.accent,
-                    );
-                }
-                if response.clicked() {
-                    picked = Some(*action);
-                }
-                y += 37.0 + 3.0;
-            }
-            ui.allocate_rect(frame, egui::Sense::hover());
-        });
-    let outside = ui.input(|i| {
-        i.pointer.any_pressed()
-            && i.pointer
-                .interact_pos()
-                .is_some_and(|p| !area.response.rect.contains(p) && !chevron.contains(p))
-    });
-    // Used up, with or without Shift (consume_key ignores an extra Shift):
-    // the page under it (als gelesen markieren) does not also act.
-    let escape = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-    if picked.is_some() || outside || escape {
-        state::with(ui.ctx(), |s| s.user_menu = false);
+        }
+        if response.clicked() {
+            picked = Some(*action);
+        }
+        y += ITEM_H + MENU_GAP;
     }
-    match picked {
-        Some(MenuItem::Profile) => app.nav.navigate("/settings/profil"),
-        Some(MenuItem::Settings) => app.nav.navigate("/settings/darstellung"),
-        Some(MenuItem::Operator) => super::operator::open_in_browser(
+    picked
+}
+
+/// The height of [`account_menu`] for `count` entries.
+fn menu_height(count: usize) -> f32 {
+    2.0 * SEPARATOR_H + count as f32 * ITEM_H + (count + 1) as f32 * MENU_GAP
+}
+
+/// The popover's keys (`moveInAccount`): ↓ from the status field to the
+/// first entry, the arrows, Home and End within the menu.
+fn account_keys(ui: &Ui, items: &[(MenuItem, &'static str)], field: Id) {
+    let ids: Vec<Id> = items.iter().map(|(item, _)| item_id(*item)).collect();
+    let focused = ui.memory(|m| m.focused());
+    let at = focused.and_then(|f| ids.iter().position(|id| *id == f));
+    if let Some(at) = at {
+        // The arrows move between the entries instead of egui's focus.
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                ids[at],
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    ..Default::default()
+                },
+            )
+        });
+        let keys = [
+            egui::Key::ArrowDown,
+            egui::Key::ArrowUp,
+            egui::Key::Home,
+            egui::Key::End,
+        ];
+        let pressed = ui.input_mut(|i| {
+            keys.into_iter()
+                .find(|k| i.consume_key(egui::Modifiers::NONE, *k))
+        });
+        if let Some(step) = pressed.and_then(|k| account_step(k, at, ids.len())) {
+            let next = step.map_or(field, |n| ids[n]);
+            ui.memory_mut(|m| m.request_focus(next));
+            crate::widgets::set_keyboard_focus(ui.ctx(), true);
+        }
+    } else if focused == Some(field)
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown))
+    {
+        ui.memory_mut(|m| m.request_focus(ids[0]));
+        crate::widgets::set_keyboard_focus(ui.ctx(), true);
+    }
+}
+
+/// What a chosen entry does.
+fn pick(ui: &Ui, app: &mut AppCtx, item: MenuItem) {
+    match item {
+        MenuItem::Profile => app.nav.navigate("/settings/profil"),
+        MenuItem::Operator => super::operator::open_in_browser(
             app,
             &format!("/betrieb/{}", super::operator::DEFAULT_PAGE),
         ),
-        Some(MenuItem::SwitchServer) => crate::setup::switch_server(ui.ctx()),
-        Some(MenuItem::SignOut) => log_out(ui.ctx(), app),
-        Some(MenuItem::Feedback) => {
-            // The menu closes, and its chevron takes the focus back from the
-            // dialog (UserPanel.tsx).
-            crate::widgets::opener::opened_from(ui.ctx(), icon_id(Icon::Chevron));
+        MenuItem::SwitchServer => crate::setup::switch_server(ui.ctx()),
+        MenuItem::SignOut => log_out(ui.ctx(), app),
+        MenuItem::Feedback => {
+            // The popover closes, and the avatar takes the focus back from
+            // the dialog (UserPanel.tsx).
+            crate::widgets::opener::opened_from(ui.ctx(), profile_id());
             crate::screens::feedback::open_dialog(ui.ctx(), app);
         }
-        None => {}
     }
 }
 
@@ -429,10 +442,11 @@ pub fn sign_out(app: &mut AppCtx) {
     app.nav.navigate("/login");
 }
 
-/// "Dein Status": who you are, the status line with "Speichern", and the
-/// link to the profile (`StatusCard`): a 320px popover above the name.
+/// The account popover, 320px above the name: who you are and the status
+/// line with "Speichern" (`StatusCard`), then the account's entries
+/// (`AccountMenu`).
 #[allow(clippy::too_many_arguments)]
-fn status_card(
+fn account_popover(
     ui: &mut Ui,
     app: &mut AppCtx,
     anchor: Rect,
@@ -441,6 +455,7 @@ fn status_card(
     presence: crate::widgets::Presence,
     current: &str,
     draft: &mut StatusDraft,
+    entries: Entries,
 ) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -468,6 +483,8 @@ fn status_card(
         }
     }
     let changed = draft.text.trim() != current;
+    let items = menu_items(app.session.operator(), entries.feedback);
+    account_keys(ui, &items, field_id);
     let out = Popover::new("user-status", anchor)
         .min_width(320.0)
         .show(ui.ctx(), |ui| {
@@ -479,7 +496,9 @@ fn status_card(
             } else {
                 6.0
             };
-            let height = 4.0 + 44.8 + 12.0 + 17.55 + 6.0 + 37.0 + status_h + 12.0 + 36.0;
+            let card_h = 4.0 + 44.8 + 12.0 + 17.55 + 6.0 + 37.0 + status_h + 4.0;
+            // `.user-account`: 4px between the card and the menu.
+            let height = card_h + 4.0 + menu_height(items.len());
             let (card, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
             let left = card.left() + 4.0;
             let inner_w = width - 8.0;
@@ -548,38 +567,20 @@ fn status_card(
                         .max_rect(Rect::from_min_size(pos2(left, y), Vec2::new(inner_w, 20.0))),
                 );
                 status_ui.add(InlineStatus::new(Some(msg), tone));
-                y += 20.0;
             }
-            y += 12.0;
-            // "Profil bearbeiten" bleeds to the card's edges.
-            let link = Rect::from_min_max(pos2(card.left(), y), pos2(card.right(), y + 36.0));
-            let response = common::click(ui, link, Id::unique("user-status-profile"));
-            if response.hovered() {
-                let r = theme.radius.sm as u8;
-                ui.painter().rect_filled(
-                    link,
-                    egui::CornerRadius {
-                        nw: 0,
-                        ne: 0,
-                        sw: r,
-                        se: r,
-                    },
-                    c.hover,
-                );
-            }
-            hairline_h(ui.painter(), &theme, link.left()..=link.right(), link.top());
-            let block = Block::single(ui, shell::user_panel_edit_profile(), text::UI, c.text);
-            paint_mid(
-                ui.painter(),
-                &block,
-                link.left() + 8.0,
-                link.center().y + 0.5,
-            );
-            (save, response.clicked())
+            let menu_top = card.top() + card_h + 4.0;
+            let picked = account_menu(ui, card.left(), menu_top, width, &items, entries.unread);
+            (save, picked)
         });
     match out {
-        None => draft.open = false,
-        Some((save, profile)) => {
+        None => {
+            draft.open = false;
+            // Esc hands the focus back to the avatar (Popover.tsx).
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                ui.memory_mut(|m| m.request_focus(profile_id()));
+            }
+        }
+        Some((save, picked)) => {
             if save && changed && !saving {
                 draft.saving = true;
                 draft.saved = None;
@@ -588,9 +589,9 @@ fn status_card(
                     ..ProfilePatch::default()
                 });
             }
-            if profile {
+            if let Some(item) = picked {
                 draft.open = false;
-                app.nav.navigate("/settings/profil");
+                pick(ui, app, item);
             }
         }
     }
@@ -601,15 +602,36 @@ mod tests {
     use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT, Queryable};
 
-    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
+    use crate::app::testkit::{
+        FakeApi, Reply, account_button, launcher, open_account, wait_for, wait_for_label,
+    };
     use crate::platform::paths::testing::TempConfig;
 
-    fn open_menu(harness: &mut egui_kittest::Harness<'_, crate::Launcher>) {
-        wait_for_label(harness, "Benutzermenü");
+    type App<'a> = egui_kittest::Harness<'a, crate::Launcher>;
+
+    fn open_menu(harness: &mut App<'_>) {
+        open_account(harness, "Lena");
+    }
+
+    /// The account menu's entries, in order.
+    fn entries(harness: &App<'_>) -> Vec<String> {
         harness
-            .get_by_role_and_label(Role::Button, "Benutzermenü")
-            .click();
-        wait_for_label(harness, "Abmelden");
+            .query_all_by_role(Role::MenuItem)
+            .filter_map(|n| n.accesskit_node().label())
+            .collect()
+    }
+
+    /// Steps until the app is on `path`.
+    fn wait_for_path(harness: &mut App<'_>, path: &str) {
+        let start = std::time::Instant::now();
+        while harness.state_mut().app().unwrap().nav().route().path() != path {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(15),
+                "timed out waiting for {path}"
+            );
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     /// logOut: in a call it asks first; "Abbrechen" stays signed in.
@@ -627,7 +649,7 @@ mod tests {
             ..Default::default()
         });
         harness
-            .get_by_role_and_label(Role::Button, "Abmelden")
+            .get_by_role_and_label(Role::MenuItem, "Abmelden")
             .click();
         wait_for_label(&mut harness, "Abmelden und Anruf beenden?");
         assert!(
@@ -648,7 +670,7 @@ mod tests {
         // Confirmed: signed out, on the login page.
         open_menu(&mut harness);
         harness
-            .get_by_role_and_label(Role::Button, "Abmelden")
+            .get_by_role_and_label(Role::MenuItem, "Abmelden")
             .click();
         wait_for_label(&mut harness, "Abmelden und Anruf beenden?");
         let confirm = harness
@@ -667,8 +689,10 @@ mod tests {
         let _config = TempConfig::new("status-focus");
         let api = FakeApi::start(true, |_, _, _| None);
         let mut harness = launcher(&api, "/");
-        wait_for_label(&mut harness, "Benutzermenü");
-        harness.get_by_role_and_label(Role::Button, "Lena").click();
+        wait_for(&mut harness, "the user panel", |h| {
+            account_button(h, "Lena").is_some()
+        });
+        account_button(&harness, "Lena").unwrap().click();
         let field = crate::widgets::field::field_id("user-status-text");
         let mut seen = Vec::new();
         for _ in 0..6 {
@@ -696,7 +720,7 @@ mod tests {
         let mut harness = launcher(&api, "/");
         open_menu(&mut harness);
         harness
-            .get_by_role_and_label(Role::Button, "Abmelden")
+            .get_by_role_and_label(Role::MenuItem, "Abmelden")
             .click();
         let text =
             "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
@@ -826,6 +850,12 @@ mod tests {
                 "closed (shift: {shift})"
             );
             assert_eq!(reads(), before, "nothing marked read (shift: {shift})");
+            // The focus is back on the avatar (Popover.tsx).
+            assert_eq!(
+                harness.ctx.memory(|m| m.focused()),
+                Some(super::profile_id()),
+                "focus (shift: {shift})"
+            );
         }
     }
 
@@ -847,9 +877,10 @@ mod tests {
         })
     }
 
-    /// The items in the web's order: "Feedback geben" follows
-    /// "Einstellungen" while the instance takes feedback, then "Betrieb"
-    /// for operators; "Server wechseln …" is the app's own.
+    /// The entries in the web's order (`AccountMenu`): "Profil bearbeiten",
+    /// "Feedback geben" while the instance takes feedback, "Betrieb" for
+    /// operators, the app's own "Server wechseln …", then "Abmelden". No
+    /// "Einstellungen": the gear is beside the avatar.
     #[test]
     fn the_menu_keeps_the_web_order() {
         use super::MenuItem::*;
@@ -859,27 +890,39 @@ mod tests {
                 .map(|(item, _)| item)
                 .collect()
         };
-        assert_eq!(
-            order(false, false),
-            [Profile, Settings, SwitchServer, SignOut]
-        );
+        assert_eq!(order(false, false), [Profile, SwitchServer, SignOut]);
         assert_eq!(
             order(false, true),
-            [Profile, Settings, Feedback, SwitchServer, SignOut]
+            [Profile, Feedback, SwitchServer, SignOut]
         );
         assert_eq!(
             order(true, false),
-            [Profile, Settings, Operator, SwitchServer, SignOut]
+            [Profile, Operator, SwitchServer, SignOut]
         );
         assert_eq!(
             order(true, true),
-            [Profile, Settings, Feedback, Operator, SwitchServer, SignOut]
+            [Profile, Feedback, Operator, SwitchServer, SignOut]
         );
     }
 
-    /// Drawn: "Feedback geben" sits between "Einstellungen" and "Betrieb".
+    /// `accountStep`: round the ends, ↑ on the first back to the field.
     #[test]
-    fn feedback_sits_between_the_settings_and_betrieb() {
+    fn the_arrows_step_round_the_menu() {
+        use egui::Key;
+        let step = super::account_step;
+        assert_eq!(step(Key::ArrowDown, 0, 3), Some(Some(1)));
+        assert_eq!(step(Key::ArrowDown, 2, 3), Some(Some(0)));
+        assert_eq!(step(Key::ArrowUp, 2, 3), Some(Some(1)));
+        assert_eq!(step(Key::ArrowUp, 0, 3), Some(None));
+        assert_eq!(step(Key::Home, 2, 3), Some(Some(0)));
+        assert_eq!(step(Key::End, 0, 3), Some(Some(2)));
+        assert_eq!(step(Key::Enter, 0, 3), None);
+    }
+
+    /// Drawn: the status card on top, then the entries as menu items, with
+    /// "Feedback geben" after the profile; no "Einstellungen" among them.
+    #[test]
+    fn feedback_follows_the_profile() {
         use crate::app::testkit::HOME;
 
         let _config = TempConfig::new("menu-feedback");
@@ -891,23 +934,79 @@ mod tests {
         harness.run_steps(5);
         open_menu(&mut harness);
         wait_for_label(&mut harness, "Feedback geben");
-        let wanted = [
-            "Profil bearbeiten",
-            "Einstellungen",
-            "Feedback geben",
-            "Betrieb",
-            "Abmelden",
-        ];
-        let labels: Vec<String> = harness
-            .query_all_by_role(Role::Button)
-            .filter_map(|n| n.accesskit_node().label())
-            .filter(|l| wanted.contains(&l.as_str()))
-            .collect();
-        assert!(labels.ends_with(&wanted.map(String::from)), "{labels:?}");
+        assert_eq!(
+            entries(&harness),
+            [
+                "Profil bearbeiten",
+                "Feedback geben",
+                "Betrieb",
+                "Server wechseln …",
+                "Abmelden"
+            ]
+        );
+        assert!(harness.query_by_label("Speichern").is_some());
     }
 
-    /// "Betrieb" is in the menu for operators only, after "Einstellungen",
-    /// and opens /betrieb/server in the browser; the app stays where it was.
+    /// The keys (#570): ↓ from the status field to the first entry, the
+    /// arrows round the ends, Home and End, ↑ back into the field; Enter
+    /// takes the entry.
+    #[test]
+    fn the_arrows_move_through_the_menu() {
+        use super::MenuItem::*;
+        use crate::app::testkit::HOME;
+
+        let _config = TempConfig::new("menu-keys");
+        let api = operator_api(false);
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        open_menu(&mut harness);
+        harness.run_steps(4);
+        let field = crate::widgets::field::field_id("user-status-text");
+        let focused = |h: &App<'_>| h.ctx.memory(|m| m.focused());
+        assert_eq!(focused(&harness), Some(field));
+        for (key, want) in [
+            (egui::Key::ArrowDown, super::item_id(Profile)),
+            (egui::Key::ArrowDown, super::item_id(SwitchServer)),
+            (egui::Key::End, super::item_id(SignOut)),
+            (egui::Key::ArrowDown, super::item_id(Profile)),
+            (egui::Key::ArrowUp, field),
+            (egui::Key::ArrowDown, super::item_id(Profile)),
+        ] {
+            harness.key_press(key);
+            harness.run_steps(3);
+            assert_eq!(focused(&harness), Some(want), "{key:?}");
+        }
+        harness.key_press(egui::Key::Enter);
+        wait_for_path(&mut harness, "/settings/profil");
+    }
+
+    /// The gear is Settings, in a call too (#570), and the call goes on.
+    #[test]
+    fn the_gear_opens_the_settings_in_a_call() {
+        use crate::app::testkit::HOME;
+
+        let _config = TempConfig::new("gear-call");
+        let api = operator_api(false);
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for_label(&mut harness, "Einstellungen");
+        let call = harness.state_mut().app().unwrap().call().clone();
+        call.set_state(gelabber_call::CallState {
+            status: gelabber_call::CallStatus::Connected,
+            server: Some(uuid::Uuid::from_u128(1)),
+            channel: Some(uuid::Uuid::from_u128(2)),
+            ..Default::default()
+        });
+        harness.run_steps(4);
+        // The panel's gear keeps its name (the overview's room card has
+        // the call's own gear).
+        harness
+            .get_by_role_and_label(Role::Button, "Einstellungen")
+            .click();
+        wait_for_path(&mut harness, "/settings/darstellung");
+        assert_eq!(call.state().status, gelabber_call::CallStatus::Connected);
+    }
+
+    /// "Betrieb" is in the menu for operators only, after the profile, and
+    /// opens /betrieb/server in the browser; the app stays where it was.
     #[test]
     fn betrieb_shows_for_operators_and_opens_the_browser() {
         use crate::app::testkit::HOME;
@@ -922,24 +1021,17 @@ mod tests {
         let mut harness = launcher(&api, &format!("/s/{HOME}"));
         let opened = crate::platform::open_testing::Recording::start();
         open_menu(&mut harness);
-        let labels: Vec<String> = harness
-            .query_all_by_role(Role::Button)
-            .filter_map(|n| n.accesskit_node().label())
-            .filter(|l| {
-                ["Profil bearbeiten", "Einstellungen", "Betrieb", "Abmelden"].contains(&l.as_str())
-            })
-            .collect();
-        assert!(
-            labels.ends_with(&[
-                "Profil bearbeiten".into(),
-                "Einstellungen".into(),
-                "Betrieb".into(),
-                "Abmelden".into()
-            ]),
-            "{labels:?}"
+        assert_eq!(
+            entries(&harness),
+            [
+                "Profil bearbeiten",
+                "Betrieb",
+                "Server wechseln …",
+                "Abmelden"
+            ]
         );
         harness
-            .get_by_role_and_label(Role::Button, "Betrieb")
+            .get_by_role_and_label(Role::MenuItem, "Betrieb")
             .click();
         wait_for(&mut harness, "the browser", |_| !opened.opened().is_empty());
         assert_eq!(opened.opened(), [format!("{}/betrieb/server", api.origin)]);

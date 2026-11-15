@@ -47,28 +47,16 @@ fn api(unread: u32, posts: Arc<Mutex<Vec<(String, String)>>>) -> FakeApi {
 }
 
 fn open_dialog(harness: &mut App) {
-    wait_for(harness, "the menu item", |h| {
-        h.query_by_label("Benutzermenü").is_some()
-            || h.query_by_label_contains("Benutzermenü, ").is_some()
-    });
-    let chevron = harness
-        .query_all_by_role(Role::Button)
-        .find(|n| {
-            n.accesskit_node()
-                .label()
-                .is_some_and(|l| l.starts_with("Benutzermenü"))
-        })
-        .expect("the chevron");
-    chevron.click();
+    crate::app::testkit::open_account(harness, "Lena");
     wait_for(harness, "Feedback geben", |h| {
-        h.query_all_by_role(Role::Button).any(|n| {
+        h.query_all_by_role(Role::MenuItem).any(|n| {
             n.accesskit_node()
                 .label()
                 .is_some_and(|l| l.starts_with("Feedback geben"))
         })
     });
     harness
-        .query_all_by_role(Role::Button)
+        .query_all_by_role(Role::MenuItem)
         .find(|n| {
             n.accesskit_node()
                 .label()
@@ -161,16 +149,16 @@ fn the_dialog_lists_what_goes_along() {
     assert!(harness.query_by_label("Desktop-App").is_none());
 }
 
-/// An unread reply: the chevron and the item say so, and the dialog has
+/// An unread reply: the avatar and the item say so, and the dialog has
 /// the line with "Ansehen", which leaves for Einstellungen → Feedback.
 #[test]
 fn an_unread_reply_shows_in_the_menu_and_the_dialog() {
     let _config = TempConfig::new("feedback-unread");
     let api = api(1, Arc::default());
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
-    wait_for_label(&mut harness, "Benutzermenü, neue Antwort auf dein Feedback");
+    wait_for_label(&mut harness, "Lena, neue Antwort auf dein Feedback");
     harness
-        .get_by_role_and_label(Role::Button, "Benutzermenü, neue Antwort auf dein Feedback")
+        .get_by_role_and_label(Role::Button, "Lena, neue Antwort auf dein Feedback")
         .click();
     wait_for_label(
         &mut harness,
@@ -178,7 +166,7 @@ fn an_unread_reply_shows_in_the_menu_and_the_dialog() {
     );
     harness
         .get_by_role_and_label(
-            Role::Button,
+            Role::MenuItem,
             "Feedback geben, neue Antwort auf dein Feedback",
         )
         .click();
@@ -327,11 +315,9 @@ fn without_feedback_the_menu_has_no_item() {
         api.saw("GET /feedback/status")
     });
     harness.run_steps(5);
-    harness
-        .get_by_role_and_label(Role::Button, "Benutzermenü")
-        .click();
-    wait_for_label(&mut harness, "Abmelden");
+    crate::app::testkit::open_account(&mut harness, "Lena");
     assert!(harness.query_by_label_contains("Feedback geben").is_none());
+    assert!(harness.query_by_label_contains("neue Antwort").is_none());
 }
 
 #[test]
@@ -530,7 +516,7 @@ fn a_dialog_left_open_stays_with_its_sign_in() {
         .get_by_role_and_label(Role::Button, "Anmelden")
         .click();
     wait_for(&mut harness, "the workspace", |h| {
-        h.query_by_label("Benutzermenü").is_some()
+        crate::app::testkit::account_button(h, "Lena").is_some()
     });
     harness.run_steps(10);
     assert!(harness.query_by_label("Wird mitgeschickt").is_none());

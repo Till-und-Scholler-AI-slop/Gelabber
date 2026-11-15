@@ -162,31 +162,62 @@ fn recording_a_key_claims_the_side_buttons() {
     });
 }
 
-/// Audio or Video on the page with the call's "Alle Einstellungen …" over
-/// it: two copies of one form in a frame, each with ids of its own (debug
-/// builds panicked on the shared ones, release ones mixed the input).
+/// #570: the ways to the call's settings lead to the page, the
+/// diagnostics to their section at the end of Audio, scrolled to with the
+/// focus on its heading; Video has none.
 #[test]
-fn the_media_dialog_over_its_own_page_keeps_its_controls_apart() {
-    use crate::screens::voice::dialogs::{self, Tab};
-    for (area, tab) in [("audio", Tab::Audio), ("video", Tab::Video)] {
-        within(30, move || {
-            let _config = crate::platform::paths::testing::TempConfig::new("media-twice");
-            let mut page = settings_page(area);
-            let (mut h, _world, _client, _call) =
-                harness(&format!("/settings/{area}"), move |ui, app| {
-                    page(ui, app);
-                    dialogs::show(ui, app);
-                });
-            super::prefs::update(&h.ctx, |p| {
-                p.voice_input = "ptt".into();
-                p.video_upload_limit = 10_000_000.0;
-            });
-            h.run_steps(3);
-            dialogs::open_settings(&h.ctx, tab);
-            h.run_steps(6);
-            assert!(dialogs::open(&h.ctx));
+fn the_call_settings_links_lead_to_the_page() {
+    within(30, || {
+        let _config = crate::platform::paths::testing::TempConfig::new("media-links");
+        let mut page = settings_page("darstellung");
+        let (mut h, world, _client, _call) = harness("/settings/darstellung", move |ui, app| {
+            page(ui, app);
+            crate::screens::voice::dialogs::show(ui, app);
         });
-    }
+        let path = |world: &Rc<RefCell<World>>| world.borrow().nav.location().path.clone();
+        h.run_steps(3);
+        super::open_media(&h.ctx, super::MediaTarget::Video);
+        h.run_steps(4);
+        assert_eq!(path(&world), "/settings/video");
+        assert!(h.query_by_label("Diagnose").is_none());
+        super::open_media(&h.ctx, super::MediaTarget::Audio);
+        h.run_steps(4);
+        assert_eq!(path(&world), "/settings/audio");
+        // The section is there, but nobody asked for it: the page's own
+        // heading keeps the focus.
+        h.get_by_label("Diagnose");
+        assert_ne!(
+            h.ctx.memory(|m| m.focused()),
+            Some(super::media::diagnostics_heading_id())
+        );
+        // The settings' own button: the native test only meters.
+        assert_eq!(h.query_all_by_label("Mikrofon testen").count(), 1);
+        assert!(
+            h.query_by_label("Mikrofon testen und vergleichen")
+                .is_none()
+        );
+        super::open_media(&h.ctx, super::MediaTarget::Diagnostics);
+        h.run_steps(6);
+        assert_eq!(path(&world), "/settings/audio");
+        h.get_by_label("Für die Fehlersuche");
+        assert_eq!(
+            h.ctx.memory(|m| m.focused()),
+            Some(super::media::diagnostics_heading_id())
+        );
+    });
+}
+
+/// The diagnostics section in English.
+#[test]
+fn the_diagnostics_section_speaks_english() {
+    within(30, || {
+        let _config = crate::platform::paths::testing::TempConfig::new("media-links-english");
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let (mut h, _world, _client, _call) = harness("/settings/audio", settings_page("audio"));
+        h.run_steps(4);
+        h.get_by_label("Diagnostics");
+        h.get_by_label("For troubleshooting");
+    });
 }
 
 /// Darstellung in English: the settings navigation names the area

@@ -121,6 +121,56 @@ const GROUPS: [(&str, Text); 2] = [("konto", texts::group_konto), ("app", texts:
 /// Where `/settings` and the gear lead.
 pub const DEFAULT_AREA: &str = "darstellung";
 
+/// Where a way to the call's settings leads (#570, voice/mediaSettingsLink.ts):
+/// Settings → Audio or Video, the diagnostics a section at the end of
+/// Audio. The call goes on meanwhile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaTarget {
+    Audio,
+    Video,
+    Diagnostics,
+}
+
+fn media_link_id() -> Id {
+    Id::unique("gelabber-media-link")
+}
+
+fn diagnostics_wanted_id() -> Id {
+    Id::unique("gelabber-diagnostics-wanted")
+}
+
+/// Asks for Settings on `target`; the shell follows it this frame
+/// ([`follow_media_link`]), so a popover or a dialog can ask with only the
+/// context at hand.
+pub fn open_media(ctx: &egui::Context, target: MediaTarget) {
+    ctx.data_mut(|d| d.insert_temp(media_link_id(), Some(target)));
+}
+
+/// Goes where [`open_media`] asked, once.
+pub fn follow_media_link(ctx: &egui::Context, app: &mut AppCtx) {
+    let Some(target) = ctx
+        .data_mut(|d| d.remove_temp::<Option<MediaTarget>>(media_link_id()))
+        .flatten()
+    else {
+        return;
+    };
+    app.nav.navigate(match target {
+        MediaTarget::Video => "/settings/video",
+        MediaTarget::Audio | MediaTarget::Diagnostics => "/settings/audio",
+    });
+    if target == MediaTarget::Diagnostics {
+        let frame = ctx.cumulative_frame_nr();
+        ctx.data_mut(|d| d.insert_temp(diagnostics_wanted_id(), frame));
+    }
+}
+
+/// Whether the diagnostics were just asked for: for a few frames, while the
+/// page lays itself out, they scroll to the top and hold the focus.
+fn diagnostics_wanted(ctx: &egui::Context) -> bool {
+    let asked: Option<u64> = ctx.data(|d| d.get_temp(diagnostics_wanted_id()));
+    asked.is_some_and(|at| ctx.cumulative_frame_nr() <= at + 4)
+}
+
 fn area_of(id: Option<&str>) -> &'static Area {
     let id = id.unwrap_or(DEFAULT_AREA);
     AREAS
@@ -483,7 +533,10 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             "konto" => security::area(&mut child, app, &user, &mut st.security),
             "darstellung" => appearance::area(&mut child, app, &mut st.appearance),
             "themes" => themes::area(&mut child, app, &mut st.themes, viewport),
-            "audio" => media::audio(&mut child, app, &mut st.media),
+            "audio" => {
+                media::audio(&mut child, app, &mut st.media);
+                media::diagnostics(&mut child, app, diagnostics_wanted(&ctx));
+            }
             "video" => media::video(&mut child, app, &mut st.media),
             "benachrichtigungen" => notifications::area(&mut child, app, &mut st.notifications),
             "app" => desktop_app::area(&mut child, &mut st.desktop_app),

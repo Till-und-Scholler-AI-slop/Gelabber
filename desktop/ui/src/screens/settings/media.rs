@@ -131,6 +131,38 @@ fn group_head(ui: &mut Ui, title: &str, badge: Option<&str>) {
     ui.allocate_exact_size(vec2(width, head_h), Sense::hover());
 }
 
+/// The diagnostics section's heading, which the call bar's links focus.
+pub fn diagnostics_heading_id() -> Id {
+    Id::unique("gelabber-settings-diagnostics")
+}
+
+/// The diagnostics at the end of Settings → Audio (#570,
+/// voice/DiagnosticsSection.tsx): 28px under the form, the group's small
+/// heading, then the voice diagnostics 12px below it. `wanted`: the call
+/// bar's links asked for them, so they scroll to the top with the focus on
+/// their heading.
+pub fn diagnostics(ui: &mut Ui, app: &mut AppCtx, wanted: bool) {
+    ui.add_space(28.0);
+    let top = ui.cursor().min;
+    let width = ui.available_width();
+    let title = gelabber_i18n::voice_settings::diagnostics_title();
+    group_head(ui, title, None);
+    let head = Rect::from_min_max(top, pos2(top.x + width, ui.cursor().min.y));
+    // The heading takes the focus when asked for (`tabIndex={-1}`).
+    let heading = ui.interact(
+        head,
+        diagnostics_heading_id(),
+        Sense::focusable_noninteractive(),
+    );
+    heading.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Heading, true, title));
+    if wanted {
+        heading.request_focus();
+        ui.scroll_to_rect(head, Some(egui::Align::Min));
+    }
+    ui.add_space(12.0);
+    crate::screens::voice::diagnostics::tab(ui, app, width);
+}
+
 /// `SettingRow`: the name left (136px), the controls right, a hairline
 /// under it unless it is the group's last row.
 fn setting_row(ui: &mut Ui, label: &str, last: bool, content: impl FnOnce(&mut Ui)) {

@@ -213,7 +213,7 @@ So at 1280×800 and 1600×900 the layout is identical except the width of the ma
 
 | z | Element | Source |
 |---|---|---|
-| 35 | server menu (`.shell-menu` under the server name), user menu (`.user-panel-menu > nav`) | `index.css:717, 1212` |
+| 35 | server menu (`.shell-menu` under the server name) | `index.css:717, 1212` |
 | 40 | call bar `.voice-session-dock` | `voice/room.css:938` |
 | 60 | `.ui-popover` (row right-click menu, status popover) | `components/ui/ui.css:638` |
 | 70 | server-rail tooltip `.server-tile-tip` (position fixed) | `index.css:577` |
@@ -677,58 +677,54 @@ max(8, .24·d)).
 
 ---------------------------------------------------------------------------------
 
-## 9. UserPanel (bottom-left) (`components/UserPanel.tsx:31-125`, `index.css:1069-1233`)
+## 9. UserPanel (bottom-left) (`components/UserPanel.tsx`, `components/accountKeys.ts`, `index.css` `.user-panel`, `.user-account`)
 
 There are NO microphone / headphone buttons in the user panel. Mute, deafen, camera,
 share, Live and leave live in the call bar (section 10). The panel holds: profile
-button, settings gear, user-menu chevron.
+button (it opens the account popover) and the settings gear. Since #570 there is no
+user-menu chevron: its entries are in the account popover.
 
 | Element | Spec |
 |---|---|
 | `.user-dock` | `margin-top:auto` (bottom of the sidebar column) |
 | `footer.user-panel` | min-height 56 incl. 1px top border `--lr-border`; flex, centred, gap 4; padding 0 8px; bg `--lr-panel` |
-| Profile button | flex 1, min-width 0; flex centred, gap 9; padding 2px 4px 2px 2px; radius 7; hover or popover open → bg `--lr-hover` |
-| Avatar | 36px with presence dot (own presence for the viewed server, fallback online) and decoration |
+| Profile button | flex 1, min-width 0; flex centred, gap 9; padding 2px 4px 2px 2px; radius 7; hover or popover open → bg `--lr-hover`; `aria-haspopup="dialog"` |
+| Avatar | 36px with presence dot (own presence for the viewed server, fallback online) and decoration; while a feedback reply is unread, the 8px accent `.unread-dot` at its top right (top and right −1px) with a 2px ring in the panel colour (`--lr-hover` while hovered or open) |
 | Name | 14px weight 600 `--lr-text`, line box 21, ellipsis |
-| Subtitle | margin-top 2; 11px `--lr-muted`, line box 16.5, ellipsis; text = "Online" / "Abwesend" / "Offline", plus `" · <status text>"` when set (`components/userPresence.ts:26-33`) |
-| Settings | link styled `.shell-icon-button` 30×36 (height `--lr-control-md`), radius 7, `--lr-muted`, hover bg `--lr-hover` + `--lr-text`; `GearIcon` 21px; title "Einstellungen"; opens settings area "darstellung" |
-| User menu | `summary.shell-icon-button` 30×36, `ChevronIcon` 18px rotated 180° (points up); aria "Benutzermenü" |
+| Subtitle | margin-top 2; 11px `--lr-muted`, line box 16.5, ellipsis; text = "Online" / "Abwesend" / "Offline", plus `" · <status text>"` when set (`components/userPresence.ts:26-33`); while a reply is unread the button's name ends with ", neue Antwort auf dein Feedback" (sr-only) |
+| Settings | link styled `.shell-icon-button` 30×36 (height `--lr-control-md`), radius 7, `--lr-muted`, hover bg `--lr-hover` + `--lr-text`; `GearIcon` 21px; title "Einstellungen"; opens settings area "darstellung", in a call too |
 
 Geometry at 1280×800: panel x 64..287, y 744..800 (content 745..800, 55 tall).
-Profile button x 72..211 (139 wide). Its height is set by the TEXT, not the avatar:
+Profile button x 72..245. Its height is set by the TEXT, not the avatar:
 name line box 21 (14px × 1.5) + 2 margin + subtitle line box 16.5 (11px × 1.5) = 39.5,
 + 2+2 padding = 43.5 → button y 750.75..794.25 (centred in 745..800). Avatar 36 is
-centred in it: x 74..110, y 754.5..790.5. Name line box y 752.75..773.75, subtitle
-line box y 775.75..792.25; text from x 119 to 207 (88px wide, ellipsis). Gear
-x 215..245, chevron x 249..279, both y 754.5..790.5. (At 1600×900 add 100 to every y.)
+centred in it: x 74..110, y 754.5..790.5. Gear x 249..279, y 754.5..790.5. (At
+1600×900 add 100 to every y.)
 
-User menu popup (`index.css:1196-1233`): absolute, right edge = chevron right, bottom
-43px above the chevron's bottom; min-width 180; flex column gap 3; padding 8; bg
-`--lr-panel`; border 1px `--lr-border`; radius 7; shadow `0 8px 25px rgba(0,0,0,.2)`;
-grows from bottom-right (opacity/scale .96, 180ms ease-enter; closes 130ms ease-exit),
-z 35. Items: block, 14px weight 400, line box 21 → 37 tall, padding 8px 10px,
-radius 5, colour `--lr-text`, left-aligned, no icons, hover bg `--lr-hover`; in order:
-"Profil bearbeiten", "Einstellungen", "Feedback geben" (v0.10, #542: only while
-`GET /api/feedback/status` says `enabled`; opens the feedback dialog,
-ui-auth-settings-dialogs §6.10), "Betrieb"
-(operators), "Server wechseln …" (desktop app only, title "Strg+Umschalt+S"),
-"Abmelden". Popup height with 4 items: 2 + 16 + 4·37 + 3·3 = 175. While a feedback
-reply is unread, "Feedback geben" and the chevron carry the 8px accent `.unread-dot`
-(on the chevron absolute, top 4, right 2), and their names become "Feedback geben,
-neue Antwort auf dein Feedback" and "Benutzermenü, neue Antwort auf dein Feedback".
-At 1280×800: x 99..279 (180 wide, right edge = chevron right 279), bottom y = 790.5 − 43
-= 747.5, so it overlaps the panel's top line by 3.5px. Chevron icon points UP at rest
-(rotate 180°) and does not rotate further when open.
+Account popover (click on the profile button, `ui.css` `.ui-popover`, `index.css`
+`.user-account-popover`): 320 wide, placed above-start of the button; popover box
+padding 8, border 1px `--lr-border`, radius 10, bg `--lr-elevated`, shadow
+`--lr-shadow-1`; label "Benutzerkonto". On a phone it is the bottom sheet. Content: a
+column with gap 4 of the status card, then the menu.
 
-Status popover (click on the profile button, `UserPanel.tsx:66-79, 127-234`,
-`index.css:1140-1195`, `ui.css:636-661`): 320 wide, placed above-start of the button;
-popover box padding 8, border 1px `--lr-border`, radius 10, bg `--lr-elevated`, shadow
-`--lr-shadow-1`. Card: flex column gap 12, padding 4. Row 1: avatar 36 + name
+Status card: flex column gap 12, padding 4. Row 1: avatar 36 + name
 (`--lr-type-title-sm`, ellipsis) + presence label (`--lr-type-meta`, muted). Form:
 label "Status", text input + small button "Speichern" ("Speichert…" while saving);
-messages "Gespeichert." / "Nicht gespeichert – erneut versuchen". Footer link
-"Profil bearbeiten": min-height 36, padding 0 8, 1px top border, `--lr-type-ui`,
-hover `--lr-hover`, bottom corners radius 5, bleeds −4px to the card edges.
+messages "Gespeichert." / "Nicht gespeichert – erneut versuchen". Focus starts in the
+text input.
+
+Menu (`role="menu"`, label "Benutzermenü", `.user-account-menu`): flex column gap 2;
+`hr.shell-menu-separator` (margin 4px 6px, 1px top border `--lr-border`), then the
+entries (`.shell-menu-item`, `role="menuitem"`: min-height 36, padding 0 10, radius
+5, `--lr-type-ui` `--lr-text`, hover `--lr-hover`, no icons) in order: "Profil
+bearbeiten", "Feedback geben" (only while `GET /api/feedback/status` says `enabled`;
+opens the feedback dialog, ui-auth-settings-dialogs §6.10; while a reply is unread
+it ends with the `.unread-dot` and its name with ", neue Antwort auf dein Feedback"),
+"Betrieb" (operators), "Server wechseln …" (desktop app only, title
+"Strg+Umschalt+S"), then another separator and "Abmelden". No "Einstellungen": the
+gear is beside the avatar. Keys: ↓ in the status field goes to the first entry; ↑/↓
+move round the entries, Home/End jump, ↑ on the first entry goes back to the field;
+Esc closes and focuses the profile button.
 
 ---------------------------------------------------------------------------------
 

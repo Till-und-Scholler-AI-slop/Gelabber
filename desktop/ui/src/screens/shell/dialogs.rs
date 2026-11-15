@@ -1428,7 +1428,7 @@ mod tests {
         let _config = TempConfig::new("dialog-discard");
         let api = FakeApi::start(true, |_, _, _| None);
         let mut harness = launcher(&api, "/");
-        wait_for_label(&mut harness, "Benutzermenü");
+        wait_for_label(&mut harness, "Einstellungen");
         let question = "Änderungen verwerfen?";
         // Empty: Esc closes it.
         open_add(&harness.ctx.clone(), AddStep::Join);

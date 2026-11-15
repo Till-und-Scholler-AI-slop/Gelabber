@@ -590,61 +590,10 @@ fn the_call_bar_speaks_english() {
 }
 
 #[test]
-fn the_voice_dialog_speaks_english() {
-    use crate::screens::voice::dialogs::{self, Tab};
-    let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
-    let (client, call) = offline();
-    let mut h = harness(client, call, dialogs::show);
-    dialogs::open_settings(&h.ctx, Tab::Diagnose);
-    h.run_steps(6);
-    h.get_by_label("Diagnostics");
-    h.get_by_label("Video & Live");
-    h.get_by_label("For troubleshooting");
-    h.get_by_label("Done").click();
-    h.run_steps(6);
-    assert!(!dialogs::open(&h.ctx));
-}
-
-#[test]
-fn the_voice_dialog_opens_on_its_tab_and_moves_with_the_arrows() {
-    use crate::screens::voice::dialogs::{self, Tab};
-    use egui_kittest::kittest::NodeT;
-    let (client, call) = offline();
-    let mut h = harness(client, call, dialogs::show);
-    dialogs::open_settings(&h.ctx, Tab::Diagnose);
-    h.run_steps(6);
-    let selected = |h: &H, label: &str| {
-        h.get_by_label(label).accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
-    };
-    assert!(selected(&h, "Diagnose"), "opens on the asked tab");
-    assert!(h.get_by_label("Diagnose").accesskit_node().is_focused());
-    h.key_press(egui::Key::ArrowRight);
-    h.run_steps(6);
-    assert!(selected(&h, "Audio"), "the arrows wrap round");
-    h.key_press(egui::Key::End);
-    h.run_steps(6);
-    assert!(selected(&h, "Diagnose"));
-    h.key_press(egui::Key::ArrowLeft);
-    h.run_steps(6);
-    assert!(selected(&h, "Video & Live"));
-    h.get_by_label("Fertig").click();
-    h.run_steps(6);
-    assert!(!dialogs::open(&h.ctx));
-}
-
-#[test]
 fn the_microphone_test_speaks_as_the_desktop_app() {
-    use crate::screens::voice::dialogs::{self, Tab};
+    use crate::screens::voice::dialogs;
     let (client, call) = offline();
     let mut h = harness(client, call, dialogs::show);
-    dialogs::open_settings(&h.ctx, Tab::Audio);
-    h.run_steps(6);
-    // The native test only meters: nothing to record and compare.
-    assert_eq!(h.query_all_by_label("Mikrofon testen").count(), 1);
-    assert!(
-        h.query_by_label("Mikrofon testen und vergleichen")
-            .is_none()
-    );
     dialogs::open_mic_test(&h.ctx);
     h.run_steps(6);
     assert_eq!(h.query_all_by_label("WebRTC-Filter").count(), 1);
@@ -1097,10 +1046,10 @@ fn the_bar_has_no_gear_and_its_status_opens_the_volumes() {
     h.get_by_label("Alle Details");
 }
 
-/// In a call the user panel's gear opens the call's quick settings;
-/// outside one it is the way to the settings.
+/// #570: the user panel's gear is the way to the settings, in a call too;
+/// the call's quick settings are the voice room's.
 #[test]
-fn in_a_call_the_user_panels_gear_opens_the_call_settings() {
+fn in_a_call_the_user_panels_gear_stays_the_settings() {
     let (client, call) = offline();
     let mut h = harness(client, call.clone(), crate::screens::shell::show);
     h.run_steps(6);
@@ -1108,11 +1057,8 @@ fn in_a_call_the_user_panels_gear_opens_the_call_settings() {
     assert!(h.query_by_label("Anrufeinstellungen").is_none());
     call.set_state(in_sofa(MicStatus::Live));
     h.run_steps(6);
-    assert!(h.query_by_label("Einstellungen").is_none());
-    h.get_by_label("Anrufeinstellungen").click();
-    h.run_steps(6);
-    h.get_by_label("Alle Einstellungen …");
-    h.get_by_label("Gespräche");
+    h.get_by_label("Einstellungen");
+    assert!(h.query_by_label("Anrufeinstellungen").is_none());
 }
 
 /// Mira's Live with Jonas watching, Lena in the call.

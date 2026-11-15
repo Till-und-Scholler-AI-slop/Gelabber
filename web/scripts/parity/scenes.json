@@ -1599,35 +1599,16 @@
       ]
     },
     {
-      "name": "voice-settings-dialog",
+      "name": "voice-quick-all-audio-settings",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
       "desktop": true,
-      "call": "Sofa jonas,mira:muted",
       "actions": [
         {
           "click": "Anrufeinstellungen"
         },
         {
-          "clicktext": "Alle Einstellungen …"
-        }
-      ]
-    },
-    {
-      "name": "voice-settings-video",
-      "path": "/s/{home}/c/{Sofa}",
-      "user": "lena",
-      "desktop": true,
-      "call": "Sofa jonas,mira:muted",
-      "actions": [
-        {
-          "click": "Anrufeinstellungen"
-        },
-        {
-          "clicktext": "Alle Einstellungen …"
-        },
-        {
-          "clicktext": "Video & Live"
+          "clicktext": "Alle Audio-Einstellungen →"
         }
       ]
     },
@@ -1650,19 +1631,16 @@
       ]
     },
     {
-      "name": "voice-diagnostics-idle",
-      "path": "/s/{home}/c/{Kino}",
+      "name": "settings-audio-diagnostics",
+      "path": "/settings/audio",
       "user": "lena",
       "desktop": true,
       "actions": [
         {
-          "click": "Anrufeinstellungen"
+          "key": "End"
         },
         {
-          "clicktext": "Alle Einstellungen …"
-        },
-        {
-          "clicktext": "Diagnose"
+          "wait": 300
         }
       ]
     },
@@ -2331,7 +2309,7 @@
       "mask": [[312, 72, 944, 530]]
     },
     {
-      "name": "voice-user-panel-call-settings",
+      "name": "voice-account-popover-in-call",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
       "call": "Sofa jonas,mira:muted",
@@ -2344,7 +2322,7 @@
           "wait": 3000
         },
         {
-          "click": "Anrufeinstellungen"
+          "click": "/^Lena/"
         }
       ]
     },
@@ -2360,7 +2338,7 @@
       "desktop": true,
       "actions": [
         {
-          "click": "Benutzermenü"
+          "click": "/^Lena/"
         }
       ]
     },
@@ -2576,7 +2554,7 @@
       "desktop": true,
       "actions": [
         {
-          "click": "/^Benutzermenü/"
+          "click": "/^Tom/"
         }
       ]
     },
@@ -2598,10 +2576,10 @@
       "user": "tom",
       "actions": [
         {
-          "click": "/^Benutzermenü/"
+          "click": "/^Tom/"
         },
         {
-          "click": "/^Feedback geben/"
+          "menuitem": "/^Feedback geben/"
         }
       ]
     },

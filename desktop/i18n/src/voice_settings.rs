@@ -1,22 +1,13 @@
 //! Audio & video settings (web/src/i18n/catalogs/voiceSettings.ts): the
-//! settings dialog, the quick call settings, push to talk and the
+//! settings page, the quick call settings, push to talk and the
 //! microphone test. The desktop app's own texts follow the web's entries.
 
 use crate::{Locale, get};
 
 crate::strings! {
-    dialog_title = "Audio & Video"
-        | "Audio & video";
-    tabs_label = "Bereiche"
-        | "Sections";
-    tabs_audio = "Audio"
-        | "Audio";
-    tabs_video = "Video & Live"
-        | "Video & Live";
-    tabs_diagnostics = "Diagnose"
+    /// The section at the end of Settings → Audio (#570).
+    diagnostics_title = "Diagnose"
         | "Diagnostics";
-    panel_load_failed = "Die Einstellungen konnten nicht geladen werden."
-        | "The settings could not be loaded.";
     form_intro = "Passe Mikrofon, Lautsprecher und Kamera an. Die Übertragung hat standardmäßig keine Bitratengrenze durch Gelabber."
         | "Adjust your microphone, speakers and camera. By default, Gelabber puts no bitrate limit on what you send.";
     form_apply_note = "Änderungen gelten beim nächsten Start und werden, soweit unterstützt, auch auf laufende Streams angewendet."
@@ -263,8 +254,8 @@ crate::strings! {
         | "Your browser shows names once you allow access.";
     quick_no_key = "Keine Taste festgelegt. Das Mikrofon bleibt stumm."
         | "No key set. Your microphone stays muted.";
-    quick_all_settings = "Alle Einstellungen …"
-        | "All settings…";
+    quick_all_settings = "Alle Audio-Einstellungen →"
+        | "All audio settings →";
     quick_send_level = "Pegel, den die anderen hören"
         | "Level the others hear";
 

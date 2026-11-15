@@ -29,6 +29,8 @@ crate::strings! {
 
     user_panel_settings = "Einstellungen" | "Settings";
     user_panel_menu_label = "Benutzermenü" | "User menu";
+    /// The avatar's popover: the status card and the account's entries.
+    user_panel_account_label = "Benutzerkonto" | "User account";
     user_panel_edit_profile = "Profil bearbeiten" | "Edit profile";
     user_panel_sign_out = "Abmelden" | "Sign out";
     user_panel_status = "Status" | "Status";
@@ -152,7 +154,6 @@ crate::strings! {
     /// The desktop app's own: an older page of history had nothing readable.
     error_unreadable_page = "keine lesbare Nachricht auf der älteren Seite"
         | "no readable message on the older page";
-    user_panel_call_settings = "Anrufeinstellungen" | "Call settings";
     /// The user menu's way to the operator area (operators only).
     user_panel_operator = "Betrieb" | "Operations";
     /// The rail's tile to the directory, while the instance runs one.
@@ -162,9 +163,6 @@ crate::strings! {
     user_panel_feedback = "Feedback geben" | "Give feedback";
     /// The item's accessible suffix while a reply is unread.
     user_panel_feedback_unread = "neue Antwort auf dein Feedback" | "new reply to your feedback";
-    /// The chevron's accessible label while a reply is unread.
-    user_panel_menu_unread_label = "Benutzermenü, neue Antwort auf dein Feedback"
-        | "User menu, new reply to your feedback";
 }
 
 /// The desktop app's own: the server turned the upgrade down, with why
