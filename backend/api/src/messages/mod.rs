@@ -329,6 +329,24 @@ async fn create_message(
         discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
         return Err(err);
     }
+    // Alt texts only for pictures, also before the mentions, so a send that
+    // fails on them does not use up an `@everyone` either. The uploads are
+    // fine and stay.
+    if !descriptions.is_empty() {
+        let pictures: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM attachments WHERE id = ANY($1) AND content_type = ANY($2)",
+        )
+        .bind(&attachment_ids)
+        .bind(attachments::PICTURE_TYPES)
+        .fetch_all(&state.db)
+        .await?;
+        if descriptions.iter().any(|(id, _)| !pictures.contains(id)) {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "attachment_descriptions",
+                "invalid",
+            )])));
+        }
+    }
     // After the uploads check: a send that fails on its files does not use
     // up an `@everyone` of the limit.
     let mentioned = match mentions::resolve(
@@ -506,6 +524,19 @@ async fn update_message(
     if content == current.content && !texts_change {
         return Ok(Json(current));
     }
+    // Alt texts only, also with the text sent along unchanged (the desktop
+    // app does, for servers from before #575).
+    if content == current.content {
+        return describe_only(
+            &state,
+            user.id,
+            message_id,
+            current.channel_id,
+            &descriptions,
+        )
+        .await
+        .map(Json);
+    }
 
     // An edit names its mentions anew. Only a mention still unread counts:
     // one added to a message the user has read stays read.
@@ -559,7 +590,8 @@ async fn update_message(
         .await?;
     attachments::describe(&mut tx, message_id, &descriptions).await?;
     let mut message = row.into_message(&user);
-    message.attachments = with_descriptions(current.attachments, &descriptions);
+    // Read under the lock: a concurrent alt edit may have changed others.
+    message.attachments = attachments::for_message(&mut *tx, message_id).await?;
     persist_event(
         &mut tx,
         access.event_server_id(),
@@ -583,6 +615,46 @@ async fn update_message(
         );
     }
     Ok(Json(message))
+}
+
+/// An edit of alt texts only: the text, its mentions and previews stay as
+/// they are, and the message sent out is the one read under the lock, so
+/// a concurrent text edit is neither reverted nor shown stale.
+async fn describe_only(
+    state: &AppState,
+    user_id: Uuid,
+    message_id: Uuid,
+    channel_id: Uuid,
+    descriptions: &[(Uuid, Option<String>)],
+) -> Result<Message, ApiError> {
+    let mut tx = state.db.begin().await?;
+    let access = lock_access(&mut tx, channel_id, user_id).await?;
+    access.require_send()?;
+    let changed = attachments::describe(&mut tx, message_id, descriptions).await?;
+    let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
+        .bind(message_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let mut message = Message::from(row);
+    message.attachments = attachments::for_message(&mut *tx, message_id).await?;
+    if !changed {
+        // Someone else's request already wrote these texts.
+        tx.rollback().await?;
+        replies::for_messages(&state.db, std::slice::from_mut(&mut message)).await?;
+        previews::for_messages(&state.db, std::slice::from_mut(&mut message)).await?;
+        return Ok(message);
+    }
+    persist_event(
+        &mut tx,
+        access.event_server_id(),
+        EventKind::E,
+        &mut message,
+    )
+    .await?;
+    tx.commit().await?;
+    delivery::wake(state);
+    Ok(message)
 }
 
 async fn delete_message(
