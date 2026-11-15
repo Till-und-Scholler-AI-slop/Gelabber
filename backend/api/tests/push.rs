@@ -995,3 +995,75 @@ async fn a_hidden_channel_pushes_nothing(pool: PgPool) {
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
 }
+
+/// Do not disturb (#590) holds back every push, DMs and mentions alike,
+/// until it is lifted or runs out.
+#[sqlx::test]
+async fn do_not_disturb_holds_back_every_push_until_it_ends(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        channel,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let bob_browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &bob_browser).await;
+    let ada_browser = Browser::new(&service, "sub/ada");
+    subscribe(&mut a, &ada_browser).await;
+    let bob = b.user_id().to_owned();
+
+    let r = b
+        .send(
+            Method::PUT,
+            "/api/me/presence",
+            Some(json!({"mode": "dnd", "duration": "1h"})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    post(&mut a, &dm, "leise dm").await;
+    post(&mut a, &channel, &format!("<@{bob}> leise erwähnt")).await;
+    post(&mut a, &channel, "@everyone leise alle").await;
+    // Bob's pushes are decided in the background; Ada's marker lets them
+    // pass the check before the mode ends.
+    post(&mut b, &dm, "marker").await;
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/ada");
+    assert_eq!(ada_browser.open(&hit)["body"], "marker");
+
+    // Runs out: pushes resume, though nobody swept yet.
+    sqlx::query("UPDATE users SET presence_mode_until = now() - interval '1 second' WHERE id = $1")
+        .bind(Uuid::parse_str(&bob).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    post(&mut a, &dm, "wieder laut").await;
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    assert_eq!(bob_browser.open(&hit)["body"], "wieder laut");
+
+    // Lifted by hand after a new one.
+    b.send(
+        Method::PUT,
+        "/api/me/presence",
+        Some(json!({"mode": "dnd", "duration": "forever"})),
+    )
+    .await;
+    post(&mut a, &dm, "wieder leise").await;
+    post(&mut b, &dm, "marker 2").await;
+    assert_eq!(ada_browser.open(&next(&mut hits).await)["body"], "marker 2");
+    let r = b
+        .send(
+            Method::PUT,
+            "/api/me/presence",
+            Some(json!({"mode": "auto"})),
+        )
+        .await;
+    assert_eq!(r.body, json!({"mode": "auto", "until": null}));
+    post(&mut a, &dm, "laut").await;
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    assert_eq!(bob_browser.open(&hit)["body"], "laut");
+}

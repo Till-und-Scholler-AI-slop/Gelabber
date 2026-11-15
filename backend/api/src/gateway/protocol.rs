@@ -101,6 +101,10 @@ pub enum PresenceStatus {
     Online,
     #[serde(rename = "i")]
     Idle,
+    /// Do not disturb, set by hand (#590). Only ever shown to others: a
+    /// socket reports `o` or `i`, the account's mode turns that into `d`.
+    #[serde(rename = "d")]
+    Dnd,
     #[serde(rename = "x")]
     Offline,
 }
@@ -110,6 +114,7 @@ impl PresenceStatus {
         match self {
             Self::Online => "o",
             Self::Idle => "i",
+            Self::Dnd => "d",
             Self::Offline => "x",
         }
     }
@@ -118,8 +123,75 @@ impl PresenceStatus {
         match raw {
             "o" => Some(Self::Online),
             "i" => Some(Self::Idle),
+            "d" => Some(Self::Dnd),
             "x" => Some(Self::Offline),
             _ => None,
+        }
+    }
+
+    /// What others see of a connected account (`self`, from its sockets)
+    /// under its manual mode (#590). Not connected stays offline.
+    pub fn shown(self, mode: PresenceMode) -> Self {
+        match (self, mode) {
+            (Self::Offline, _) => Self::Offline,
+            (_, PresenceMode::Idle) => Self::Idle,
+            (_, PresenceMode::Dnd) => Self::Dnd,
+            (_, PresenceMode::Invisible) => Self::Offline,
+            (status, PresenceMode::Auto) => status,
+        }
+    }
+}
+
+/// The presence an account sets by hand (#590), account-wide. `Auto` is
+/// today's behaviour: online while used, away after a while without input.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PresenceMode {
+    #[default]
+    Auto,
+    Idle,
+    Dnd,
+    Invisible,
+}
+
+impl PresenceMode {
+    /// The column value (`users.presence_mode`), also the JSON spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Idle => "idle",
+            Self::Dnd => "dnd",
+            Self::Invisible => "invisible",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "auto" => Some(Self::Auto),
+            "idle" => Some(Self::Idle),
+            "dnd" => Some(Self::Dnd),
+            "invisible" => Some(Self::Invisible),
+            _ => None,
+        }
+    }
+
+    /// The one-letter Redis value the presence scripts read; `Auto` has no
+    /// key at all.
+    pub(crate) fn redis(self) -> Option<&'static str> {
+        match self {
+            Self::Auto => None,
+            Self::Idle => Some("i"),
+            Self::Dnd => Some("d"),
+            Self::Invisible => Some("v"),
+        }
+    }
+
+    pub(crate) fn from_redis(raw: &str) -> Self {
+        match raw {
+            "i" => Self::Idle,
+            "d" => Self::Dnd,
+            "v" => Self::Invisible,
+            _ => Self::Auto,
         }
     }
 }
@@ -550,6 +622,15 @@ pub enum ServerFrame {
     /// socket of the account switches. Only to that account's own sockets.
     #[serde(rename = "lc")]
     Locale { l: Locale },
+    /// The account's manual presence (#590) changed on some device or ran
+    /// out: `m` the mode, `u` when it ends (none: until changed). Only to
+    /// that account's own sockets, which show it instead of what others see.
+    #[serde(rename = "pm")]
+    PresenceMode {
+        m: PresenceMode,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        u: Option<chrono::DateTime<chrono::Utc>>,
+    },
     /// The account is now a member of server `s`: its request to join was
     /// accepted (issue #520). Only to that account's own sockets.
     #[serde(rename = "jn")]
@@ -715,6 +796,12 @@ pub enum UserFrame {
     Read { d: Vec<ReadSync> },
     #[serde(rename = "lc")]
     Locale { l: Locale },
+    #[serde(rename = "pm")]
+    PresenceMode {
+        m: PresenceMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        u: Option<chrono::DateTime<chrono::Utc>>,
+    },
     #[serde(rename = "jn")]
     Joined { s: Uuid },
     #[serde(rename = "jq")]
@@ -727,6 +814,7 @@ impl From<UserFrame> for ServerFrame {
             UserFrame::NotificationSettings => Self::NotificationSettings,
             UserFrame::Read { d } => Self::Read { d },
             UserFrame::Locale { l } => Self::Locale { l },
+            UserFrame::PresenceMode { m, u } => Self::PresenceMode { m, u },
             UserFrame::Joined { s } => Self::Joined { s },
             UserFrame::JoinRequests { s, n } => Self::JoinRequests { s, n },
         }
@@ -1105,6 +1193,59 @@ mod tests {
             super::ServerFrame::from(frame).to_json().unwrap(),
             r#"{"op":"lc","l":"en"}"#
         );
+    }
+
+    /// The manual presence frame survives Redis and reaches the socket as
+    /// `pm`; "until changed" carries no end.
+    #[test]
+    fn presence_mode_frame_wire_format() {
+        let until = chrono::DateTime::parse_from_rfc3339("2026-11-15T18:30:00Z")
+            .unwrap()
+            .to_utc();
+        for (frame, wire) in [
+            (
+                super::UserFrame::PresenceMode {
+                    m: super::PresenceMode::Dnd,
+                    u: Some(until),
+                },
+                r#"{"op":"pm","m":"dnd","u":"2026-11-15T18:30:00Z"}"#,
+            ),
+            (
+                super::UserFrame::PresenceMode {
+                    m: super::PresenceMode::Auto,
+                    u: None,
+                },
+                r#"{"op":"pm","m":"auto"}"#,
+            ),
+        ] {
+            let raw = serde_json::to_string(&frame).unwrap();
+            assert_eq!(raw, wire);
+            assert_eq!(
+                serde_json::from_str::<super::UserFrame>(&raw).unwrap(),
+                frame
+            );
+            assert_eq!(super::ServerFrame::from(frame).to_json().unwrap(), wire);
+        }
+    }
+
+    /// Others see the mode on top of what the sockets report; nobody
+    /// connected stays offline whatever the mode.
+    #[test]
+    fn manual_mode_over_socket_status() {
+        use super::{PresenceMode as M, PresenceStatus as S};
+        for (raw, mode, shown) in [
+            (S::Online, M::Auto, S::Online),
+            (S::Idle, M::Auto, S::Idle),
+            (S::Online, M::Idle, S::Idle),
+            (S::Online, M::Dnd, S::Dnd),
+            (S::Idle, M::Dnd, S::Dnd),
+            (S::Online, M::Invisible, S::Offline),
+            (S::Offline, M::Dnd, S::Offline),
+            (S::Offline, M::Idle, S::Offline),
+        ] {
+            assert_eq!(raw.shown(mode), shown, "{raw:?} under {mode:?}");
+        }
+        assert_eq!(serde_json::to_string(&S::Dnd).unwrap(), r#""d""#);
     }
 
     /// The directory's frames survive Redis and reach the socket as `jn`

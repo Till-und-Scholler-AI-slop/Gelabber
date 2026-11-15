@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::hub::ConnId;
 use super::protocol::{
-    CatchUp, ClientFrame, PresenceStatus, ServerFrame, SigKind, Topic, VoiceEntry,
+    CatchUp, ClientFrame, PresenceMode, PresenceStatus, ServerFrame, SigKind, Topic, VoiceEntry,
 };
 use crate::auth::session::CurrentSession;
 use crate::auth::user::User;
@@ -80,6 +80,8 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let expired = tokio::time::sleep_until(until(expires_at));
     tokio::pin!(expired);
     debug!(user_id = %user.id, "ws connected");
+    // Redis lost the manual mode (a restart): put the record's back.
+    crate::presence::restore(&state, user.id).await;
 
     let mut last_client = Instant::now();
     let mut last_activity = Instant::now();
@@ -612,6 +614,18 @@ async fn typing(
             return Ok(());
         }
         Err(other) => return Err(other),
+    }
+    // Invisible (#590): nobody sees this account type. A stop still goes
+    // out, for a start sent before the switch.
+    if on
+        && state
+            .gateway
+            .presence_mode(user.id)
+            .await
+            .unwrap_or_default()
+            == PresenceMode::Invisible
+    {
+        return Ok(());
     }
     state
         .gateway

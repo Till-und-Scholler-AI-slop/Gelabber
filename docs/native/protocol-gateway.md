@@ -269,15 +269,16 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `dm` | `{"op":"dm","c":"<dmChannelId>"}` | a DM involving this account appeared (new DM / first message); verify via REST then subscribe. From v0.10 also sent when the peer's account was deleted and the DM channel with it: the REST check then answers `404` and the DM leaves the list | `protocol.rs:432-433`, `delivery.rs:193-204` |
 | `sig` | `{"op":"sig","t":"j","s":"<srv>",["c":"<chan>",]["u":"<user>",]["k":"a",]["on":true,]["m":false,]["d":false,]["snap":[…],]["replay":true,]["w":["<owner>",…]]}` | voice presence, see §5 | `protocol.rs:469-489` |
 | `err` | `{"op":"err","e":"not_found",["s":"<uuid>",]["c":"<uuid>"]}` | see §3.1 | `protocol.rs:490-497` |
-| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `x` offline | `protocol.rs:96-129,498-508,829-844` |
+| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `d` do not disturb (#590), `x` offline; a letter the client does not know counts as `o` | `protocol.rs:96-129,498-508,829-844` |
 | `y` | `{"op":"y","s":"<srv>","c":"<chan>","u":"<user>","on":true}` | typing; delivered only to sockets subscribed to channel topic `c` | `protocol.rs:509-511`, `hub/fanout.rs:206-221` |
 | `ns` | `{"op":"ns"}` | notification settings changed on some device → refetch them | `protocol.rs:512-515` |
 | `rd` | `{"op":"rd","d":[ReadSync,…]}` | read positions moved on another device | `protocol.rs:516-534` |
+| `pm` | `{"op":"pm","m":"dnd","u":"2026-11-15T18:30:00Z"}` | the account's manual presence (#590) changed on some device (`PUT /api/me/presence`) or ran out → show `m` (`auto` \| `idle` \| `dnd` \| `invisible`) until `u` (absent: until changed). Servers older than v0.11 never send it; older clients ignore it | `protocol.rs` (`ServerFrame::PresenceMode`, `UserFrame::PresenceMode`), `presence.rs` |
 | `lc` | `{"op":"lc","l":"en"}` | the account's language changed (`PUT /api/me/locale`) → switch to `l` (`de` \| `en`) and keep it as the device's cached language. Servers older than v0.10 never send it; older clients ignore it | `protocol.rs` (`ServerFrame::Locale`, `UserFrame::Locale`), `profile.rs` (`put_locale`) |
 | `jn` | `{"op":"jn","s":"<srv>"}` | v0.10: this account is now a member of server `s`, because its request to join was accepted (protocol-rest-auth §4.7) → refetch the server list and show "Du bist jetzt Mitglied von {name}." | `protocol.rs` (`ServerFrame::Joined`, `UserFrame::Joined`), `directory/requests.rs` (`accept`) |
 | `jq` | `{"op":"jq","s":"<srv>","n":3}` | v0.10: server `s` now has `n` pending requests to join. Only to the owner and the members holding `moderate_members`, after a new request, a withdrawal, an accept or a decline → set the queue's count badge and refetch the queue if it is open | `protocol.rs` (`ServerFrame::JoinRequests`, `UserFrame::JoinRequests`), `directory/requests.rs` (`publish_queue`) |
 
-`ns`, `rd`, `lc`, `jn`, `jq`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`). `jn` and `jq` are best effort: they are not replayed, `n` is read after the change commits (two quick changes can both carry the final count), and a client that missed one catches up on its next REST read. Servers older than v0.10 never send them.
+`ns`, `rd`, `lc`, `pm`, `jn`, `jq`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`). `jn` and `jq` are best effort: they are not replayed, `n` is read after the change commits (two quick changes can both carry the final count), and a client that missed one catches up on its next REST read. Servers older than v0.10 never send them.
 
 ### 3.1 Error codes on `/ws`
 
@@ -494,6 +495,19 @@ activity (not while the socket sits in a voice channel undeafened) or on
 per subscribe (§2.2 step 4); entries with missing keys come back as `x`
 (`live.rs:337-360,774`).
 
+Manual mode (#590, `backend/api/src/presence.rs`): the account's
+`presence_mode` is applied on top of the sockets' aggregate before anyone
+else sees it: `idle` → always `i`, `dnd` → `d`, `invisible` → treated as
+offline (no frame, left out of snapshots; `@here` still reaches the
+account). Sockets only ever send `o`/`i`. The account's own sockets get the
+mode itself as `pm` and show it instead of what the server reports (an
+invisible account shows "Unsichtbar", not offline). While `invisible` the
+server drops the account's typing starts, and the client does not send
+them. While `dnd` the server sends no Web Push and the client plays no
+message sounds and shows no toasts or system notifications; unread badges
+stay. A mode with an end is automatic at once when it passes; a sweep every
+15 s clears it and sends `p` and `pm`.
+
 Client (`web/src/ws/idlePresence.ts`, `web/src/ws/useLive.ts`; native:
 `desktop/client/src/presence.rs`):
 
@@ -508,7 +522,7 @@ Client (`web/src/ws/idlePresence.ts`, `web/src/ws/useLive.ts`; native:
 - In a voice channel and not deafened (#566): never send `i`; send `{"op":"p","st":"o"}` at once if idle, then every 60 s. Leaving or deafening re-arms the 5 min timer from that moment.
 - Native app only: input anywhere on the computer counts as activity (system idle time read every 30 s: Windows `GetLastInputInfo`, Wayland `ext-idle-notify-v1`, X11 MIT-SCREEN-SAVER, GNOME `org.gnome.Mutter.IdleMonitor`; without one, window input only). `f` (in front) still follows window input alone.
 - Store `byServer[s][u] = st`; `x` deletes the key. Snapshot replaces the server's map (dropping `x`). Unknown user ⇒ `x`.
-- Member list groups (`live.ts:157-177`): order `o` "Online", `i` "Abwesend", `x` "Offline"; each sorted by `name.localeCompare(b, "de")`; empty groups hidden.
+- Member list groups (`live.ts:157-177`): order `o` "Online" (with `d`), `i` "Abwesend", `x` "Offline"; each sorted by `name.localeCompare(b, "de")`; empty groups hidden.
 - Wire form: `sendPresence("o")` sends `{"op":"p","st":"o"}`, `sendPresence("i")` sends `{"op":"p","st":"i"}` (`client.ts:292-294`); frames while the socket is closed are dropped.
 - Reconnect quirk (copy it): nothing re-sends `p` on reconnect. A new socket becomes `o` on the server with its first subscribe (`announce_server` writes `Online`, `live.rs:287-293`), so a client that was idle when the socket dropped shows as `o` until its next own `i` (5 min later, or never if no input arrives: the idle timer already fired). The native client may re-send `{"op":"p","st":"i"}` after `open` while locally idle; the web does not.
 

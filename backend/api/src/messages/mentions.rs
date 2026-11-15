@@ -196,8 +196,9 @@ pub(crate) async fn resolve(
                 reached.extend(before.iter().copied());
             } else if here {
                 // Best effort: without Redis `@here` reaches nobody, the
-                // message itself still goes out.
-                match state.gateway.presence_snapshot(member.server.id).await {
+                // message itself still goes out. Invisible members (#590)
+                // are there all the same and are reached.
+                match state.gateway.present_members(member.server.id).await {
                     Ok(online) => reached.extend(
                         online
                             .into_iter()

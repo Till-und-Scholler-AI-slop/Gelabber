@@ -8,11 +8,15 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 use super::hub::{ConnId, Gateway};
-use super::protocol::{LiveTopic, PresenceEntry, PresenceStatus, REDIS_PREFIX, ServerFrame};
+use super::protocol::{
+    LiveTopic, PresenceEntry, PresenceMode, PresenceStatus, REDIS_PREFIX, ServerFrame,
+};
 use crate::error::ApiError;
 
 /// Set one connection's status, recompute the user aggregate.
-/// KEYS: conn, user, conn-index. ARGV: status, ttl_ms, conn-key.
+/// KEYS: conn, user, conn-index, mode. ARGV: status, ttl_ms, conn-key.
+/// Returns the previous and new aggregate and the manual mode (#590), read
+/// in the same step, so what others are shown follows from one state.
 const SET_PRESENCE_LUA: &str = r#"
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 redis.call('SADD', KEYS[3], ARGV[3])
@@ -42,10 +46,11 @@ else
   redis.call('SET', KEYS[2], 'i', 'PX', ARGV[2])
   agg = 'i'
 end
-return {prev, agg}
+return {prev, agg, redis.call('GET', KEYS[4]) or ''}
 "#;
 
-/// Drop one connection, recompute the user aggregate.
+/// Drop one connection, recompute the user aggregate. KEYS as
+/// [`SET_PRESENCE_LUA`]; ARGV: ttl_ms, conn-key.
 const DROP_PRESENCE_LUA: &str = r#"
 redis.call('DEL', KEYS[1])
 redis.call('SREM', KEYS[3], ARGV[2])
@@ -74,7 +79,22 @@ else
   redis.call('SET', KEYS[2], 'i', 'PX', ARGV[1])
   agg = 'i'
 end
-return {prev, agg}
+return {prev, agg, redis.call('GET', KEYS[4]) or ''}
+"#;
+
+/// Replace the manual mode (#590). KEYS: mode, user. ARGV: the mode letter
+/// (empty: automatic, no key), its lifetime in ms (0: until changed).
+/// Returns the mode it replaced and the sockets' aggregate.
+const SET_MODE_LUA: &str = r#"
+local old = redis.call('GET', KEYS[1]) or ''
+if ARGV[1] == '' then
+  redis.call('DEL', KEYS[1])
+elseif tonumber(ARGV[2]) > 0 then
+  redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+else
+  redis.call('SET', KEYS[1], ARGV[1])
+end
+return {old, redis.call('GET', KEYS[2]) or 'x'}
 "#;
 
 /// Remove server-set members whose status is gone, checked in one atomic
@@ -119,6 +139,13 @@ fn conn_index_key(user_id: Uuid) -> String {
     format!("{REDIS_PREFIX}p:n:{user_id}")
 }
 
+/// The account's manual mode (#590) as one letter (`i`, `d`, `v`), with the
+/// mode's end as its expiry; no key is automatic. `users.presence_mode` is
+/// the record, this the copy the presence scripts read.
+fn mode_key(user_id: Uuid) -> String {
+    format!("{REDIS_PREFIX}p:m:{user_id}")
+}
+
 fn server_set_key(server_id: Uuid) -> String {
     format!("{REDIS_PREFIX}p:s:{server_id}")
 }
@@ -132,6 +159,26 @@ fn user_servers_key(user_id: Uuid) -> String {
 /// Web Push (#243) skips a user with one of them.
 fn focus_key(user_id: Uuid) -> String {
     format!("{REDIS_PREFIX}fx:{user_id}")
+}
+
+/// The user aggregate around one write: what others were shown before and
+/// are shown now (the manual mode applied), and whether any socket is left.
+struct Aggregate {
+    prev: PresenceStatus,
+    now: PresenceStatus,
+    connected: bool,
+}
+
+impl Aggregate {
+    fn from_script((prev, agg, mode): (String, String, String)) -> Self {
+        let mode = PresenceMode::from_redis(&mode);
+        let agg = parse_st(&agg);
+        Self {
+            prev: parse_st(&prev).shown(mode),
+            now: agg.shown(mode),
+            connected: agg != PresenceStatus::Offline,
+        }
+    }
 }
 
 fn ttl_ms(d: std::time::Duration) -> i64 {
@@ -271,12 +318,68 @@ impl Gateway {
         if matches!(status, PresenceStatus::Offline) {
             return self.drop_conn_presence(id, user_id, &local).await;
         }
-        let (prev, agg) = self.write_presence(user_id, id, status).await?;
-        if prev != agg {
+        let agg = self.write_presence(user_id, id, status).await?;
+        if agg.prev != agg.now {
             let servers = self.presence_targets(user_id, &local).await?;
-            self.broadcast_presence(user_id, agg, &servers).await?;
+            self.broadcast_presence(user_id, agg.now, &servers).await?;
         }
-        Ok(agg)
+        Ok(agg.now)
+    }
+
+    /// The account's manual mode changed (#590): store the copy the presence
+    /// scripts read, then tell every server it is on what it shows now. The
+    /// mode runs out on its own at `until`; the sweep in `crate::presence`
+    /// announces that.
+    pub async fn set_presence_mode(
+        &self,
+        user_id: Uuid,
+        mode: PresenceMode,
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), ApiError> {
+        let lifetime = match until {
+            None => 0,
+            Some(until) => (until - chrono::Utc::now()).num_milliseconds(),
+        };
+        // Already over: automatic, as the record reads from now on.
+        let mode = if until.is_some() && lifetime <= 0 {
+            PresenceMode::Auto
+        } else {
+            mode
+        };
+        let (old, agg): (String, String) = self
+            .with_conn(|mut conn| async move {
+                redis::Script::new(SET_MODE_LUA)
+                    .key(mode_key(user_id))
+                    .key(user_key(user_id))
+                    .arg(mode.redis().unwrap_or(""))
+                    .arg(lifetime.max(0))
+                    .invoke_async(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        let agg = parse_st(&agg);
+        let before = agg.shown(PresenceMode::from_redis(&old));
+        let after = agg.shown(mode);
+        if before != after {
+            let servers = self.presence_targets(user_id, &HashSet::new()).await?;
+            self.broadcast_presence(user_id, after, &servers).await?;
+        }
+        Ok(())
+    }
+
+    /// The manual mode the presence scripts see now; automatic without Redis.
+    pub async fn presence_mode(&self, user_id: Uuid) -> Result<PresenceMode, ApiError> {
+        let raw: Option<String> = self
+            .with_conn(|mut conn| async move {
+                redis::cmd("GET")
+                    .arg(mode_key(user_id))
+                    .query_async(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        Ok(raw.map_or(PresenceMode::Auto, |raw| PresenceMode::from_redis(&raw)))
     }
 
     /// Heartbeat: keep Redis keys alive without flipping idle → online.
@@ -330,7 +433,7 @@ impl Gateway {
         let Some((user_id, local)) = self.socket_meta(id).await else {
             return Ok(());
         };
-        let (prev, agg) = self
+        let agg = self
             .write_presence(user_id, id, PresenceStatus::Online)
             .await?;
         let px = ttl_ms(self.presence_ttl());
@@ -366,17 +469,30 @@ impl Gateway {
             })
             .await
             .map_err(super::hub::redis_err)?;
-        if prev != agg {
+        if agg.prev != agg.now {
             let mut servers = self.presence_targets(user_id, &local).await?;
             servers.insert(server_id);
-            self.broadcast_presence(user_id, agg, &servers).await?;
-        } else if added == 1 {
-            self.publish_presence(server_id, user_id, agg).await?;
+            self.broadcast_presence(user_id, agg.now, &servers).await?;
+        } else if added == 1 && agg.now != PresenceStatus::Offline {
+            // Invisible: the server's members have nothing to hear.
+            self.publish_presence(server_id, user_id, agg.now).await?;
         }
         Ok(())
     }
 
+    /// Who is shown on a server and how, the manual modes (#590) applied:
+    /// an invisible member is left out.
     pub async fn presence_snapshot(&self, server_id: Uuid) -> Result<Vec<PresenceEntry>, ApiError> {
+        self.snapshot(server_id, true).await
+    }
+
+    /// Who is really connected on a server, whatever they show (`@here`:
+    /// an invisible member is there all the same).
+    pub async fn present_members(&self, server_id: Uuid) -> Result<Vec<PresenceEntry>, ApiError> {
+        self.snapshot(server_id, false).await
+    }
+
+    async fn snapshot(&self, server_id: Uuid, shown: bool) -> Result<Vec<PresenceEntry>, ApiError> {
         let users: Vec<String> = self
             .with_conn(|mut conn| {
                 let key = server_set_key(server_id);
@@ -393,9 +509,9 @@ impl Gateway {
                 Err(_) => malformed.push(raw),
             }
         }
-        // Every member's status in one round trip. MGET without a key is an
-        // error, so an empty set skips it.
-        let statuses: Vec<Option<String>> = if ids.is_empty() {
+        // Every member's status and manual mode in one round trip. MGET
+        // without a key is an error, so an empty set skips it.
+        let mut values: Vec<Option<String>> = if ids.is_empty() {
             Vec::new()
         } else {
             self.with_conn(|mut conn| {
@@ -403,16 +519,29 @@ impl Gateway {
                 for user_id in &ids {
                     cmd.arg(user_key(*user_id));
                 }
+                for user_id in &ids {
+                    cmd.arg(mode_key(*user_id));
+                }
                 async move { cmd.query_async::<Vec<Option<String>>>(&mut conn).await }
             })
             .await
             .map_err(super::hub::redis_err)?
         };
+        let modes = values.split_off(ids.len().min(values.len()));
         let mut snap = Vec::new();
         let mut stale = Vec::new();
-        for (user_id, raw) in ids.into_iter().zip(statuses) {
+        for (index, (user_id, raw)) in ids.into_iter().zip(values).enumerate() {
+            let mode = modes
+                .get(index)
+                .and_then(Option::as_deref)
+                .map_or(PresenceMode::Auto, PresenceMode::from_redis);
             match raw.as_deref().and_then(PresenceStatus::parse) {
-                Some(st) => snap.push(PresenceEntry { u: user_id, st }),
+                Some(st) if !shown => snap.push(PresenceEntry { u: user_id, st }),
+                Some(st) => match st.shown(mode) {
+                    // Invisible, and still connected: not stale.
+                    PresenceStatus::Offline => {}
+                    st => snap.push(PresenceEntry { u: user_id, st }),
+                },
                 None => stale.push(user_id),
             }
         }
@@ -578,16 +707,16 @@ impl Gateway {
         user_id: Uuid,
         local: &HashSet<Uuid>,
     ) -> Result<PresenceStatus, ApiError> {
-        let (prev, agg) = self.delete_presence(user_id, id).await?;
+        let agg = self.delete_presence(user_id, id).await?;
         let servers = self.presence_targets(user_id, local).await?;
-        if agg == PresenceStatus::Offline {
+        if !agg.connected {
             self.forget_user_servers(user_id, &servers).await?;
             self.broadcast_presence(user_id, PresenceStatus::Offline, &servers)
                 .await?;
-        } else if prev != agg {
-            self.broadcast_presence(user_id, agg, &servers).await?;
+        } else if agg.prev != agg.now {
+            self.broadcast_presence(user_id, agg.now, &servers).await?;
         }
-        Ok(agg)
+        Ok(agg.now)
     }
 
     /// Every server this user has announced on, plus this socket's set
@@ -621,12 +750,12 @@ impl Gateway {
         user_id: Uuid,
         id: ConnId,
         status: PresenceStatus,
-    ) -> Result<(PresenceStatus, PresenceStatus), ApiError> {
+    ) -> Result<Aggregate, ApiError> {
         let ck = conn_key(user_id, id);
         let uk = user_key(user_id);
         let nk = conn_index_key(user_id);
         let px = ttl_ms(self.presence_ttl());
-        let (prev, agg): (String, String) = self
+        let result: (String, String, String) = self
             .with_conn(|mut conn| {
                 let ck = ck.clone();
                 let uk = uk.clone();
@@ -637,6 +766,7 @@ impl Gateway {
                         .key(ck)
                         .key(uk)
                         .key(nk)
+                        .key(mode_key(user_id))
                         .arg(status.as_str())
                         .arg(px)
                         .arg(member)
@@ -646,19 +776,15 @@ impl Gateway {
             })
             .await
             .map_err(super::hub::redis_err)?;
-        Ok((parse_st(&prev), parse_st(&agg)))
+        Ok(Aggregate::from_script(result))
     }
 
-    async fn delete_presence(
-        &self,
-        user_id: Uuid,
-        id: ConnId,
-    ) -> Result<(PresenceStatus, PresenceStatus), ApiError> {
+    async fn delete_presence(&self, user_id: Uuid, id: ConnId) -> Result<Aggregate, ApiError> {
         let ck = conn_key(user_id, id);
         let uk = user_key(user_id);
         let nk = conn_index_key(user_id);
         let px = ttl_ms(self.presence_ttl());
-        let (prev, agg): (String, String) = self
+        let result: (String, String, String) = self
             .with_conn(|mut conn| {
                 let ck = ck.clone();
                 let uk = uk.clone();
@@ -669,6 +795,7 @@ impl Gateway {
                         .key(ck)
                         .key(uk)
                         .key(nk)
+                        .key(mode_key(user_id))
                         .arg(px)
                         .arg(member)
                         .invoke_async(&mut conn)
@@ -677,7 +804,7 @@ impl Gateway {
             })
             .await
             .map_err(super::hub::redis_err)?;
-        Ok((parse_st(&prev), parse_st(&agg)))
+        Ok(Aggregate::from_script(result))
     }
 
     async fn broadcast_presence(
