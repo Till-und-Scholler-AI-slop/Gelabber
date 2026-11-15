@@ -2103,7 +2103,7 @@
       ]
     },
     {
-      "name": "voice-settings-dialog-en",
+      "name": "voice-quick-all-audio-settings-en",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
       "locale": "en",
@@ -2114,25 +2114,22 @@
           "click": "Call settings"
         },
         {
-          "clicktext": "All settings…"
+          "clicktext": "All audio settings →"
         }
       ]
     },
     {
-      "name": "voice-diagnostics-idle-en",
-      "path": "/s/{home}/c/{Kino}",
+      "name": "settings-audio-diagnostics-en",
+      "path": "/settings/audio",
       "user": "lena",
       "locale": "en",
       "desktop": true,
       "actions": [
         {
-          "click": "Call settings"
+          "key": "End"
         },
         {
-          "clicktext": "All settings…"
-        },
-        {
-          "clicktext": "Diagnostics"
+          "wait": 300
         }
       ]
     },
