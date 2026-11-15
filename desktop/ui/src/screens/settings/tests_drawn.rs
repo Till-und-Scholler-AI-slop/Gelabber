@@ -199,6 +199,24 @@ fn the_call_settings_links_lead_to_the_page() {
         super::open_media(&h.ctx, super::MediaTarget::Diagnostics);
         h.run_steps(6);
         assert_eq!(path(&world), "/settings/audio");
+        assert_eq!(world.borrow().nav.location().fragment, "diagnostics");
+        h.get_by_label("Für die Fehlersuche");
+        assert_eq!(
+            h.ctx.memory(|m| m.focused()),
+            Some(super::media::diagnostics_heading_id())
+        );
+    });
+}
+
+/// `/settings/audio#diagnostics`, as the web's hash: the page opens on
+/// the diagnostics, their heading focused.
+#[test]
+fn the_diagnostics_fragment_opens_on_the_section() {
+    within(30, || {
+        let _config = crate::platform::paths::testing::TempConfig::new("media-fragment");
+        let (mut h, _world, _client, _call) =
+            harness(super::DIAGNOSTICS_HREF, settings_page("audio"));
+        h.run_steps(8);
         h.get_by_label("Für die Fehlersuche");
         assert_eq!(
             h.ctx.memory(|m| m.focused()),

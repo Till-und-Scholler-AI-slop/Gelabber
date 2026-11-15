@@ -131,6 +131,10 @@ fn group_head(ui: &mut Ui, title: &str, badge: Option<&str>) {
     ui.allocate_exact_size(vec2(width, head_h), Sense::hover());
 }
 
+/// The diagnostics section's fragment (voice/mediaSettingsLink.ts
+/// `DIAGNOSTICS_SECTION`).
+pub const DIAGNOSTICS_SECTION: &str = "diagnostics";
+
 /// The diagnostics section's heading, which the call bar's links focus.
 pub fn diagnostics_heading_id() -> Id {
     Id::unique("gelabber-settings-diagnostics")
@@ -157,7 +161,10 @@ pub fn diagnostics(ui: &mut Ui, app: &mut AppCtx, wanted: bool) {
     heading.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Heading, true, title));
     if wanted {
         heading.request_focus();
-        ui.scroll_to_rect(head, Some(egui::Align::Min));
+        // `scrollIntoView` brings the h3 to the top, under the group
+        // head's 6px padding.
+        let h3 = Rect::from_min_max(head.min + vec2(0.0, 6.0), head.max);
+        ui.scroll_to_rect(h3, Some(egui::Align::Min));
     }
     ui.add_space(12.0);
     crate::screens::voice::diagnostics::tab(ui, app, width);

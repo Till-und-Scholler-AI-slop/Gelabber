@@ -163,19 +163,27 @@ pub fn follow_media_link(ctx: &egui::Context, app: &mut AppCtx) {
     };
     app.nav.navigate(match target {
         MediaTarget::Video => "/settings/video",
-        MediaTarget::Audio | MediaTarget::Diagnostics => "/settings/audio",
+        MediaTarget::Audio => "/settings/audio",
+        MediaTarget::Diagnostics => DIAGNOSTICS_HREF,
     });
-    if target == MediaTarget::Diagnostics {
-        let frame = ctx.cumulative_frame_nr();
-        ctx.data_mut(|d| d.insert_temp(diagnostics_wanted_id(), frame));
-    }
+    // Asked again while already there: scroll there again.
+    ctx.data_mut(|d| d.remove_temp::<u64>(diagnostics_wanted_id()));
 }
 
-/// Whether the diagnostics were just asked for: for a few frames, while the
-/// page lays itself out, they scroll to the top and hold the focus.
-fn diagnostics_wanted(ctx: &egui::Context) -> bool {
-    let asked: Option<u64> = ctx.data(|d| d.get_temp(diagnostics_wanted_id()));
-    asked.is_some_and(|at| ctx.cumulative_frame_nr() <= at + 4)
+/// The diagnostics section's link, as on the web (`#diagnostics`).
+pub const DIAGNOSTICS_HREF: &str = "/settings/audio#diagnostics";
+
+/// Whether the diagnostics were just asked for (the `#diagnostics`
+/// fragment, as the web's hash): for a few frames after arriving, while
+/// the page lays itself out, they scroll to the top and hold the focus.
+fn diagnostics_wanted(ctx: &egui::Context, fragment: &str) -> bool {
+    if fragment != media::DIAGNOSTICS_SECTION {
+        ctx.data_mut(|d| d.remove_temp::<u64>(diagnostics_wanted_id()));
+        return false;
+    }
+    let now = ctx.cumulative_frame_nr();
+    let at = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(diagnostics_wanted_id(), || now));
+    now <= at + 4
 }
 
 fn area_of(id: Option<&str>) -> &'static Area {
@@ -542,7 +550,8 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             "themes" => themes::area(&mut child, app, &mut st.themes, viewport),
             "audio" => {
                 media::audio(&mut child, app, &mut st.media);
-                media::diagnostics(&mut child, app, diagnostics_wanted(&ctx));
+                let wanted = diagnostics_wanted(&ctx, &app.nav.location().fragment);
+                media::diagnostics(&mut child, app, wanted);
             }
             "video" => media::video(&mut child, app, &mut st.media),
             "benachrichtigungen" => notifications::area(&mut child, app, &mut st.notifications),

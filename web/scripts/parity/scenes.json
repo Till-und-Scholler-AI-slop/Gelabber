@@ -1632,13 +1632,10 @@
     },
     {
       "name": "settings-audio-diagnostics",
-      "path": "/settings/audio",
+      "path": "/settings/audio#diagnostics",
       "user": "lena",
       "desktop": true,
       "actions": [
-        {
-          "key": "End"
-        },
         {
           "wait": 300
         }
@@ -2120,14 +2117,11 @@
     },
     {
       "name": "settings-audio-diagnostics-en",
-      "path": "/settings/audio",
+      "path": "/settings/audio#diagnostics",
       "user": "lena",
       "locale": "en",
       "desktop": true,
       "actions": [
-        {
-          "key": "End"
-        },
         {
           "wait": 300
         }
