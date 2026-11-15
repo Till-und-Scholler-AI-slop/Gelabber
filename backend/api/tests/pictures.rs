@@ -340,6 +340,78 @@ async fn existing_pictures_are_backfilled(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn clients_hear_when_the_thumbnails_are_there(pool: PgPool) {
+    let (mut owner, _member, channel) = owner_and_member(pool.clone()).await;
+    let id = upload(
+        &mut owner,
+        &channel,
+        "live.jpg",
+        "image/jpeg",
+        &phone_photo(),
+    )
+    .await;
+    let sent = post(&mut owner, &channel, &[&id]).await;
+    wait_for_worker(&pool, &id).await;
+    let message = Uuid::parse_str(sent["id"].as_str().unwrap()).unwrap();
+    // The worker sent the message again (an edit event), so its revision
+    // moved on past the one the send answered with.
+    let mut revision = 0;
+    for _ in 0..100 {
+        revision = sqlx::query_scalar("SELECT revision FROM messages WHERE id = $1")
+            .bind(message)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        if revision > sent["revision"].as_i64().unwrap() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(revision > sent["revision"].as_i64().unwrap(), "{sent}");
+    let edited: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT edited_at FROM messages WHERE id = $1")
+            .bind(message)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(edited, None, "thumbnails are no edit");
+}
+
+#[sqlx::test]
+async fn a_picture_that_keeps_killing_the_worker_is_given_up(pool: PgPool) {
+    let (mut owner, mut member, channel) = owner_and_member(pool.clone()).await;
+    let id = upload(
+        &mut owner,
+        &channel,
+        "bad.jpg",
+        "image/jpeg",
+        &phone_photo(),
+    )
+    .await;
+    post(&mut owner, &channel, &[&id]).await;
+    wait_for_worker(&pool, &id).await;
+    // As if claimed five times and the process died each time.
+    sqlx::query(
+        "UPDATE attachments SET thumb_type = NULL, media_version = 0, media_attempts = 5, \
+         media_retry_at = now() WHERE id = $1",
+    )
+    .bind(Uuid::parse_str(&id).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+    wait_for_worker(&pool, &id).await;
+    let listed = member
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages"),
+            None,
+        )
+        .await;
+    let attachment = &listed.body["messages"][0]["attachments"][0];
+    assert!(attachment.get("thumbnail").is_none(), "{attachment}");
+}
+
+#[sqlx::test]
 async fn heic_from_android_is_a_plain_file(pool: PgPool) {
     let (mut owner, mut member, channel) = owner_and_member(pool.clone()).await;
     let heic = b"\0\0\0\x18ftypheic\0\0\0\0mif1heic....";
