@@ -273,3 +273,75 @@ async fn the_author_changes_and_clears_it_by_editing(pool: PgPool) {
             .is_none()
     );
 }
+
+#[sqlx::test]
+async fn an_alt_edit_writes_only_the_alt_text(pool: PgPool) {
+    let (mut owner, _member, channel) = owner_and_member(pool.clone()).await;
+    let first = upload(&mut owner, &channel, "a.png", "image/png", &png()).await;
+    let second = upload(&mut owner, &channel, "b.png", "image/png", &png()).await;
+    let sent = send(
+        &mut owner,
+        &channel,
+        json!({ "content": "alt", "attachment_ids": [first, second] }),
+    )
+    .await;
+    assert_eq!(sent.status, StatusCode::CREATED, "{}", sent.body);
+    let id = sent.body["id"].as_str().unwrap().to_owned();
+    let res = edit(
+        &mut owner,
+        &id,
+        json!({ "attachment_descriptions": { first.clone(): "Erstes" } }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    // A text edit lands from another device that this request never saw:
+    // it is written behind the API's back here.
+    sqlx::query("UPDATE messages SET content = 'neu' WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&id).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = edit(
+        &mut owner,
+        &id,
+        json!({ "attachment_descriptions": { second.clone(): "Zweites" } }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["content"], "neu", "the text is not written back");
+    assert!(res.body["edited_at"].is_null(), "{}", res.body);
+    let texts: Vec<&str> = res.body["attachments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["description"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(texts, ["Erstes", "Zweites"]);
+}
+
+#[sqlx::test]
+async fn an_alt_text_on_a_file_fails_before_mentions(pool: PgPool) {
+    let (mut owner, _member, channel) = owner_and_member(pool).await;
+    let pdf = upload(
+        &mut owner,
+        &channel,
+        "a.pdf",
+        "application/pdf",
+        b"%PDF-1.4\n%%EOF\n",
+    )
+    .await;
+    for _ in 0..2 {
+        let res = send(
+            &mut owner,
+            &channel,
+            json!({
+                "content": "@everyone schaut",
+                "attachment_ids": [pdf],
+                "attachment_descriptions": { pdf.clone(): "Ein Dokument" },
+            }),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+        assert_eq!(res.body["fields"]["attachment_descriptions"], "invalid");
+    }
+}

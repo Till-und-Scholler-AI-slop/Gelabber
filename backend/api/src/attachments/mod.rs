@@ -858,7 +858,7 @@ pub async fn describe(
 
 /// The types shown as pictures ([`validate::is_image`]): only they take an
 /// alt text.
-const PICTURE_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+pub(crate) const PICTURE_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 pub(crate) fn store_internal(err: StoreError) -> ApiError {
     match err {
