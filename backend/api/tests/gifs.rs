@@ -111,9 +111,10 @@ async fn feed(
                 .unwrap_or_default();
             // Like Klipy: only base slugs are known here, a search slug
             // with its token (`--k…`) finds nothing on its own (#581).
+            // `foo--bar` is a real slug, and Klipy knows `foo` as well.
             let data: Vec<Value> = slugs
                 .split(',')
-                .filter(|slug| *slug == "hello-hi-662")
+                .filter(|slug| ["hello-hi-662", "foo", "foo--bar"].contains(slug))
                 .map(|slug| klipy.item(slug, "Hello"))
                 .collect();
             axum::Json(json!({ "result": true, "data": { "data": data } })).into_response()
@@ -581,6 +582,29 @@ async fn a_gif_picked_from_search_results_is_sent(pool: PgPool) {
     assert!(
         share.starts_with(&format!("SHARE {KEY} hello-hi-662--kgmD1VZja ")),
         "{share}"
+    );
+}
+
+/// A real slug that only looks like `<slug>--<token>` is sent as itself,
+/// even when Klipy also knows the shorter slug (#581 review).
+#[sqlx::test]
+async fn a_slug_with_a_double_dash_is_kept_when_klipy_knows_it(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool, Some(&klipy), &[]);
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    let channel = text_channel(&mut ada).await;
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "gif": { "slug": "foo--bar" } })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(res.body["gif"]["slug"], "foo--bar");
+    assert_eq!(
+        res.body["gif"]["url"],
+        format!("{}/media/foo--bar-hd.webp", klipy.origin)
     );
 }
 

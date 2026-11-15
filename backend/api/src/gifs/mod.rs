@@ -329,8 +329,9 @@ impl Gifs {
 
     /// The message rendition of one slug, `None` if Klipy does not know it.
     /// A slug from a search result carries a search token (see
-    /// [`klipy::base_slug`]); both forms are asked for in one call, and the
-    /// GIF comes back under its base slug, the one a message stores (#581).
+    /// [`klipy::base_slug`]); both forms are asked for in one call. The
+    /// picked slug itself is taken when Klipy knows it, else the GIF comes
+    /// back under its base slug, the one a message stores (#581).
     pub async fn resolve(&self, slug: &str) -> Result<Option<Gif>, ApiError> {
         let base = klipy::base_slug(slug);
         let slugs = if base == slug {
@@ -345,13 +346,18 @@ impl Gifs {
         let body = self.get_json("items", url).await?;
         let found = klipy::items(&body, Size::Message, &self.inner.config.media_origins);
         let returned = found.len();
-        let gif = found
-            .into_iter()
-            .find(|gif| klipy::base_slug(&gif.slug) == base)
-            .map(|gif| Gif {
-                slug: base.to_owned(),
-                ..gif
-            });
+        // The picked slug itself wins: a real slug can contain `--` too
+        // (`foo--bar`), and Klipy may also know `foo`.
+        let gif = match found.iter().position(|gif| gif.slug == slug) {
+            Some(exact) => Some(found.into_iter().nth(exact).expect("position")),
+            None => found
+                .into_iter()
+                .find(|gif| klipy::base_slug(&gif.slug) == base)
+                .map(|gif| Gif {
+                    slug: base.to_owned(),
+                    ..gif
+                }),
+        };
         if gif.is_none() {
             // Says what Klipy answered without logging the key-bearing URL.
             let items = body["data"]["data"]
