@@ -1,6 +1,6 @@
 -- Friends, friend codes and message requests (#563).
 --
--- Who may write whom is decided by the API (`dms/relation.rs`):
+-- Who may write whom is decided by the API (`dms::relation`):
 -- friends and accepted DMs write freely, people who share a server start a
 -- message request, strangers can only send a friend request by code.
 
