@@ -1061,6 +1061,35 @@ fn in_a_call_the_user_panels_gear_stays_the_settings() {
     assert!(h.query_by_label("Anrufeinstellungen").is_none());
 }
 
+/// The connection's "Einstellungen" and "Alle Details" lead to Settings →
+/// Audio and its diagnostics (#570); the popover closes, the call goes on.
+#[test]
+fn the_connection_links_lead_to_the_settings_page() {
+    use crate::screens::settings::{MediaTarget, pending_media};
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    h.run_steps(4);
+    for (button, target) in [
+        ("Alle Details", MediaTarget::Diagnostics),
+        ("Einstellungen", MediaTarget::Audio),
+    ] {
+        h.get_by_label("Verbindung: wird gemessen … – Details anzeigen")
+            .click();
+        h.run_steps(4);
+        h.get_by_label(button).click();
+        h.run_steps(2);
+        assert_eq!(pending_media(&h.ctx), Some(target), "{button}");
+        assert!(h.query_by_label("Alle Details").is_none(), "closed");
+        h.ctx.data_mut(|d| {
+            d.remove_temp::<Option<MediaTarget>>(egui::Id::unique("gelabber-media-link"))
+        });
+    }
+    let state = call.state();
+    assert_eq!(state.status, CallStatus::Connected, "the call goes on");
+    assert_eq!(state.channel, Some(SOFA));
+}
+
 /// Mira's Live with Jonas watching, Lena in the call.
 fn mira_live() -> (CallState, crate::screens::voice::session::Room) {
     let mut state = super::joined();

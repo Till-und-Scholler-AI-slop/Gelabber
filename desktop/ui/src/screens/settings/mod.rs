@@ -146,6 +146,13 @@ pub fn open_media(ctx: &egui::Context, target: MediaTarget) {
     ctx.data_mut(|d| d.insert_temp(media_link_id(), Some(target)));
 }
 
+/// The way to the call's settings asked for and not yet followed.
+#[cfg(test)]
+pub(crate) fn pending_media(ctx: &egui::Context) -> Option<MediaTarget> {
+    ctx.data(|d| d.get_temp::<Option<MediaTarget>>(media_link_id()))
+        .flatten()
+}
+
 /// Goes where [`open_media`] asked, once.
 pub fn follow_media_link(ctx: &egui::Context, app: &mut AppCtx) {
     let Some(target) = ctx
