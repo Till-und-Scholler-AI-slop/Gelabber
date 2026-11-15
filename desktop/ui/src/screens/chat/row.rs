@@ -466,6 +466,7 @@ fn add_extras(ui: &Ui, cx: &RowCx, out: &mut RowLayout, stack: &mut Stack, colum
         &msg.attachments,
         column,
         cx.uploads.as_deref(),
+        (cx.mine && !cx.pending()).then_some(msg.id),
     ) {
         let top = stack.add(6.0, media.height, 0.0);
         out.media = Some((top, media));
@@ -1274,6 +1275,7 @@ mod tests {
             filename: "liste.txt".into(),
             content_type: "text/plain".into(),
             data: Default::default(),
+            description: None,
         }];
         p.failed = Some(gelabber_client::ApiError::Api {
             status: 422,

@@ -437,6 +437,7 @@ fn attachments_upload_bind_and_download() {
         filename: "notiz.txt".into(),
         content_type: "text/plain".into(),
         data: Arc::new(b"Hallo Anhang".to_vec()),
+        description: None,
     };
     lena.send_files(text, "Mit Datei", vec![file], None);
     wait(&lena, "message with attachment", |s| {

@@ -217,11 +217,13 @@ pub fn gone_text(op: &str) -> Option<&'static str> {
 }
 
 /// A file to attach; kept with the pending row so a retry can send it again.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct OutgoingFile {
     pub filename: String,
     pub content_type: String,
     pub data: std::sync::Arc<Vec<u8>>,
+    /// The picture's alt text (#575), written before sending.
+    pub description: Option<String>,
 }
 
 /// One conversation's loaded history.
@@ -1714,6 +1716,7 @@ mod tests {
                 filename: "a.txt".into(),
                 content_type: "text/plain".into(),
                 data: Default::default(),
+                description: None,
             };
             3
         ];

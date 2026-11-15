@@ -242,6 +242,7 @@ pub fn load(
                                     content_type: infer_content_type(&filename, ""),
                                     filename,
                                     data: std::sync::Arc::new(data),
+                                    description: None,
                                 });
                             }
                         }
@@ -290,6 +291,7 @@ pub fn pasted_image(
         ),
         content_type: "image/png".into(),
         data: std::sync::Arc::new(png),
+        description: None,
     })
 }
 
@@ -302,6 +304,7 @@ mod tests {
             filename: name.into(),
             content_type: String::new(),
             data: std::sync::Arc::new(vec![1; size]),
+            description: None,
         }
     }
 

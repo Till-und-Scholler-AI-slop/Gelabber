@@ -106,6 +106,13 @@ crate::strings! {
     lightbox_previous = "Vorheriges Bild" | "Previous picture";
     lightbox_next = "Nächstes Bild" | "Next picture";
     lightbox_zoom = "Zoomen" | "Zoom";
+    alt_badge = "ALT" | "ALT";
+    alt_show = "Alt-Text anzeigen" | "Show alt text";
+    alt_add = "Alt-Text hinzufügen" | "Add alt text";
+    alt_edit = "Alt-Text bearbeiten" | "Edit alt text";
+    alt_title = "Bild beschreiben" | "Describe this picture";
+    alt_hint = "Für alle, die das Bild nicht sehen können, etwa mit Screenreader." | "For everyone who can’t see the picture, for example with a screen reader.";
+    alt_save_failed = "Alt-Text nicht gespeichert." | "Alt text not saved.";
     composer_filter_pictures = "Bilder" | "Pictures";
     composer_filter_all = "Alle Dateien" | "All files";
     attachment_image_too_large = "Bild ist zu groß zum Anzeigen." | "The image is too large to show.";
@@ -391,6 +398,19 @@ pub fn attachment_more(count: usize) -> String {
         Locale::De => format!("{count} weitere Bilder"),
         Locale::En => format!("{count} more pictures"),
     }
+}
+
+/// "Alt-Text für {name}", the alt text field's label.
+pub fn alt_label(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Alt-Text für {name}"),
+        Locale::En => format!("Alt text for {name}"),
+    }
+}
+
+/// "{count} / {max}" under the alt text field.
+pub fn alt_count(count: usize, max: usize) -> String {
+    format!("{count} / {max}")
 }
 
 /// "{n} / {total}" in the lightbox.

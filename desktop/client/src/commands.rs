@@ -889,9 +889,19 @@ impl Client {
             Some(failure) => Err(failure),
             None => {
                 self.update_pending(epoch, channel, nonce, |p| p.stage = SendStage::Bind);
+                let attachment_descriptions = pending
+                    .files
+                    .iter()
+                    .zip(&ids)
+                    .filter_map(|(file, id)| {
+                        let text = file.description.as_deref()?.trim();
+                        (!text.is_empty()).then(|| (*id, text.to_owned()))
+                    })
+                    .collect();
                 let body = NewMessage {
                     content: pending.content.clone(),
                     attachment_ids: pending.gif.is_none().then_some(ids),
+                    attachment_descriptions,
                     gif: pending.gif.clone(),
                     reply_to: pending.reply_to,
                     nonce: Some(nonce),
@@ -988,6 +998,19 @@ impl Client {
             format!("edit:{id}"),
             id,
             async move { http.edit_message(id, &content).await },
+            |s, m| s.apply_message(m),
+        );
+    }
+
+    /// Sets or (blank) clears the alt text of a picture of my message
+    /// (#575); the text stays. Op key `alt:<id>`.
+    pub fn edit_alt_text(&self, id: Uuid, attachment: Uuid, text: &str) {
+        let http = self.http().clone();
+        let text = text.trim().to_owned();
+        self.message_write(
+            format!("alt:{id}"),
+            id,
+            async move { http.edit_alt_text(id, attachment, &text).await },
             |s, m| s.apply_message(m),
         );
     }

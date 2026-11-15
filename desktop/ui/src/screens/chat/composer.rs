@@ -44,6 +44,8 @@ pub struct ComposerState {
     loading: Vec<files::Loading>,
     /// Rows of attached-file chips the last frame drew.
     chip_rows: usize,
+    /// The alt text of a picture to attach being written (#575).
+    pub alt: Option<super::alt_text::AltDialog>,
     /// Where the caret goes once the field shows the new draft.
     caret: Option<usize>,
     last_caret: Option<usize>,
@@ -420,7 +422,9 @@ pub fn show(
         let mut top = fy + 10.0;
         let mut rows = 1;
         let mut remove = None;
+        let mut describe = None;
         for (i, file) in state.files.iter().enumerate() {
+            let picture = super::attachments::is_image(&file.content_type);
             let name = Block::single(ui, &file.filename, TextStyle::new(13.0, 600.0, 1.5), c.text);
             let size = Block::single(
                 ui,
@@ -428,8 +432,9 @@ pub fn show(
                 TextStyle::new(11.0, 400.0, 1.5),
                 c.muted,
             );
-            let w = (8.0 + name.width().max(size.width()) + 10.0 + 4.0 + 26.0 + 12.0)
-                .min(260.0)
+            let alt_w = if picture { 40.0 } else { 0.0 };
+            let w = (8.0 + name.width().max(size.width()) + 10.0 + 4.0 + 26.0 + 12.0 + alt_w)
+                .min(260.0 + alt_w)
                 .min(field.width() - 22.0);
             if x > field.left() + 11.0 && x + w > field.right() - 11.0 {
                 x = field.left() + 11.0;
@@ -438,7 +443,9 @@ pub fn show(
             }
             let r = Rect::from_min_size(pos2(x, top), vec2(w, 56.0));
             ui.painter().rect_filled(r, corner(7.0), c.surface);
-            let clip = ui.painter().with_clip_rect(r);
+            let clip = ui
+                .painter()
+                .with_clip_rect(r.with_max_x(r.right() - 12.0 - 26.0 - 4.0 - alt_w));
             name.paint(&clip, pos2(r.left() + 8.0, r.top() + 8.0));
             size.paint(&clip, pos2(r.left() + 8.0, r.top() + 8.0 + 19.5));
             let close = Rect::from_min_size(
@@ -463,11 +470,68 @@ pub fn show(
             if resp.clicked() {
                 remove = Some(i);
             }
+            if picture {
+                // "ALT": the picture's alt text, filled once written (#575).
+                let set = file.description.is_some();
+                let label = Block::single(
+                    ui,
+                    texts::alt_badge(),
+                    TextStyle::new(11.0, 800.0, 1.5),
+                    if set { c.accent_ink } else { c.text },
+                );
+                let alt = Rect::from_min_size(
+                    pos2(
+                        close.left() - 4.0 - (label.width() + 14.0),
+                        close.center().y - 12.0,
+                    ),
+                    vec2(label.width() + 14.0, 24.0),
+                );
+                let resp = ui.interact(alt, edit_id.with(("alt", i)), Sense::click());
+                resp.widget_info(|| {
+                    let what = if set {
+                        texts::alt_edit()
+                    } else {
+                        texts::alt_add()
+                    };
+                    egui::WidgetInfo::labeled(
+                        egui::Role::Button,
+                        true,
+                        format!("{what}: {}", file.filename),
+                    )
+                });
+                if set {
+                    ui.painter().rect_filled(alt, corner(4.0), c.accent);
+                } else {
+                    ui.painter().rect_stroke(
+                        alt,
+                        corner(4.0),
+                        egui::Stroke::new(1.0, c.border),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                if resp.hovered() && !set {
+                    ui.painter().rect_filled(alt, corner(4.0), c.hover);
+                }
+                label.paint(ui.painter(), alt.center() - label.size() / 2.0);
+                let tip = file.description.as_deref().unwrap_or(texts::alt_add());
+                Tooltip::new(tip).on_hover(&resp, Side::Above);
+                if resp.clicked() {
+                    describe = Some(i);
+                }
+            }
             x += w + 8.0;
         }
         if let Some(i) = remove {
             state.files.remove(i);
             state.file_error = None;
+        }
+        if let Some(i) = describe {
+            let file = &state.files[i];
+            state.alt = Some(super::alt_text::AltDialog::new(
+                super::alt_text::AltTarget::Composer(i),
+                &file.filename,
+                file.description.as_deref(),
+            ));
         }
         if rows != state.chip_rows {
             // `height()` laid out the last frame's rows.
