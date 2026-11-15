@@ -429,6 +429,12 @@ export function themeVariables(theme: ThemeDefinition): Record<string, string> {
     // Older names, still used across the stylesheets.
     "--lr-radius": md,
     "--lr-radius-small": sm,
+    // Every text field (#561, ui.css .ui-field/.ui-field-shell): the panel
+    // colour, the 3:1 border, the focus colour, the medium radius.
+    "--lr-field-bg": c.panel,
+    "--lr-field-border": d.borderStrong,
+    "--lr-field-border-focus": d.accentText,
+    "--lr-field-radius": md,
     "--lr-shadow-1": dark
       ? "0 8px 24px rgb(0 0 0 / 0.32)"
       : "0 8px 24px rgb(60 45 20 / 0.12)",

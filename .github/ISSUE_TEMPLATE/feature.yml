@@ -1,0 +1,23 @@
+name: Feature request
+description: Something new for Gelabber, or a change to how it works.
+type: Feature
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What should change
+      description: Describe the change from the point of view of the people who use it.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The problem it solves, or what it makes possible.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Ideas for the implementation, open questions, both clients (web and desktop) affected?

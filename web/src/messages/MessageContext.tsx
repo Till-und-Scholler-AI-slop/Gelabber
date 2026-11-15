@@ -6,6 +6,7 @@ import { useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { messageContext } from "./search.ts";
 import type { Message } from "./types.ts";
+import { Button } from "../components/ui/Button.tsx";
 
 export function MessageContextView({
   channelId,
@@ -60,21 +61,9 @@ export function MessageContextView({
     >
       <div className="flex flex-wrap gap-2 border-b p-3">
         {onBack ? (
-          <button
-            type="button"
-            onClick={onBack}
-            className="rounded border px-3 py-2"
-          >
-            {t("context.backToResults")}
-          </button>
+          <Button onClick={onBack}>{t("context.backToResults")}</Button>
         ) : null}
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded border px-3 py-2"
-        >
-          {closeLabel ?? t("pane.backToChat")}
-        </button>
+        <Button onClick={onClose}>{closeLabel ?? t("pane.backToChat")}</Button>
       </div>
       <div
         className="min-h-0 flex-1 overflow-y-auto py-3"
@@ -88,14 +77,13 @@ export function MessageContextView({
         {query.error ? (
           <div role="alert" className="px-4">
             <p>{t(missing ? "context.missing" : "context.failed")}</p>
-            <button
-              type="button"
+            <Button
               onClick={() => void query.refetch()}
               disabled={query.isFetching}
-              className="mt-2 rounded border px-3 py-2"
+              className="mt-2"
             >
               {t("list.reload")}
-            </button>
+            </Button>
           </div>
         ) : (
           query.data?.messages.map((message) => (

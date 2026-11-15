@@ -31,6 +31,14 @@ against them will not be merged:
 - The two clients stay at parity: a feature of the web client gets its
   counterpart in the desktop app.
 
+## Planning
+
+Issues are planned in the project
+[Gelabber](https://github.com/orgs/Till-und-Scholler-AI-slop/projects/2).
+Each release is a milestone whose description states its goal, and the
+assignee of an issue is the person working on it right now. The rules are in
+[AGENTS.md](AGENTS.md#planning).
+
 ## Setting up
 
 [README.md](README.md) has the quick start and the development commands;
@@ -48,8 +56,9 @@ a prebuilt libwebrtc package.
 - Commit messages say what changed, in the style of the history:
   `<area>: <what changed>`, then a few lines on why.
 
-[AGENTS.md](AGENTS.md) holds the full rules for branches, releases and CI.
-It is written for coding agents and binds people the same way.
+[AGENTS.md](AGENTS.md) holds the full rules for branches and releases, and
+[.claude/rules/ci-workflows.md](.claude/rules/ci-workflows.md) those for CI.
+They are written for coding agents and bind people the same way.
 
 ## Before you open a pull request
 

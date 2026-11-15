@@ -159,7 +159,7 @@ impl Dialog {
         // The select's own response is not handed out; its id is the next
         // automatic one.
         let select_id = ui.next_auto_id();
-        let changed = controls::select(ui, "transfer-member", options, value, c.bg);
+        let changed = controls::select(ui, "transfer-member", options, value);
         let error = self.errors.field("user_id");
         ui.ctx().accesskit_node_builder(select_id, |node| {
             node.set_label(label);

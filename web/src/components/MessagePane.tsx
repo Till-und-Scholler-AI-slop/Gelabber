@@ -54,6 +54,8 @@ import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
 import { imageBoxHeight } from "./imageBox.ts";
 import { ArrowDownIcon, HashIcon, SearchIcon } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
+import { FieldShell } from "./ui/FieldShell.tsx";
+import { Input } from "./ui/Input.tsx";
 import { SkeletonRows } from "./ui/Skeleton.tsx";
 import { useAfterSkeleton } from "./ui/useAfterSkeleton.ts";
 import { OpenImage } from "./openImage.ts";
@@ -412,13 +414,15 @@ export function MessagePane({
       <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
         <header className="lr-channel-header">
           {title}
-          <label
+          <FieldShell
+            as="label"
             className="lr-header-search"
             data-active={searchText ? "" : undefined}
             title={t("pane.searchHint")}
           >
             <SearchIcon size={16} />
-            <input
+            <Input
+              bare
               ref={searchField}
               type="search"
               value={searchText}
@@ -441,7 +445,7 @@ export function MessagePane({
                 {keyNames(mac).mod} F{/* i18n-ok: a key name */}
               </kbd>
             )}
-          </label>
+          </FieldShell>
           {notify ? <NotificationBell target={notify} muted={muted} /> : null}
           {actions}
         </header>

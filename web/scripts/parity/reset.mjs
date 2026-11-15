@@ -4,7 +4,7 @@
 // scene; otherwise each run would change what the next one sees. Themes
 // (say.mjs theme), notification settings, the language (a scene's
 // `locale`) and Google sign-in (say.mjs oidc-*) go back to the seeded ones too,
-// Lena's and Mira's signed-in devices to the reference's fixed ones, and no
+// Lena's and Kai's signed-in devices to the reference's fixed ones, and no
 // fixture account has a data export (say.mjs export). Feedback goes back to the
 // seeded entries and threads: anything a scene added is deleted, and Tom's
 // reply is unread again.
@@ -27,6 +27,7 @@ const uuid = (v) => {
 const lena = uuid(fixture.users.lena.id);
 const mira = uuid(fixture.users.mira.id);
 const tom = uuid(fixture.users.tom.id);
+const kai = uuid(fixture.users.kai.id);
 const jonas = uuid(fixture.users.jonas.id);
 const allgemein = uuid(fixture.servers.home.channels.allgemein);
 const people = Object.values(fixture.users)
@@ -58,7 +59,7 @@ delete from user_identities where user_id in (${people});
 delete from oidc_results where subject = 'parity-neu';
 -- Signed-in devices: Lena's two other devices of the reference, and nothing
 -- else; the scene's own sign-in adds the current one.
-delete from sessions where user_id in (${lena}, ${mira});
+delete from sessions where user_id in (${lena}, ${kai});
 insert into sessions (token_hash, user_id, created_at, last_used_at, expires_at, device_client, device_os)
 values (sha256(convert_to('parity-lena-firefox', 'UTF8')), ${lena}, now() - interval '1 day',
         now() - interval '1 day', now() + interval '14 days', 'firefox', 'windows'),

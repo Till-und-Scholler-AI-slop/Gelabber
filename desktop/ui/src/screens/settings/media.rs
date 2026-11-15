@@ -75,16 +75,6 @@ fn in_dialog(ui: &Ui) -> bool {
     ui.ctx().data(|d| d.get_temp(dialog_id())).unwrap_or(false)
 }
 
-/// The fill of a select (`--lr-field` differs in a modal).
-fn field_fill(ui: &Ui) -> Color32 {
-    let theme = Theme::of(ui.ctx());
-    if in_dialog(ui) {
-        theme.c.bg
-    } else {
-        theme.c.surface
-    }
-}
-
 /// Device choices: the system default, then what the call lists.
 fn devices(list: &[gelabber_call::Device]) -> Vec<(String, String)> {
     crate::screens::voice::quick::device_options(list)
@@ -344,8 +334,7 @@ fn labelled_select(
     let c = &theme.c;
     controls::paint(ui, ui.cursor().min, label, HINT, c.subtle);
     ui.add_space(16.8 + 4.0);
-    let fill = field_fill(ui);
-    controls::select(ui, id.to_owned(), options, value, fill)
+    controls::select(ui, id.to_owned(), options, value)
 }
 
 fn pct(v: f64) -> String {
@@ -391,7 +380,6 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 "audio-input",
                 &devices(&listed.inputs),
                 &mut p.audio_input_id,
-                field_fill(ui),
             ) {
                 app.call.set_input(chosen(&p.audio_input_id));
             }
@@ -531,7 +519,6 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 "audio-output",
                 &devices(&listed.outputs),
                 &mut p.audio_output_id,
-                field_fill(ui),
             ) {
                 app.call.set_output(chosen(&p.audio_output_id));
             }
@@ -1110,7 +1097,6 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 "video-input",
                 &devices(&listed.cameras),
                 &mut p.video_input_id,
-                field_fill(ui),
             ) {
                 app.call.set_camera_device(chosen(&p.video_input_id));
             }
@@ -1166,13 +1152,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                     .chain(apps.iter().map(|a| (a.id.clone(), a.label.clone())))
                     .collect();
             let was_open = controls::select_open(ui.ctx(), "source-audio-app");
-            if controls::select(
-                ui,
-                "source-audio-app",
-                &options,
-                &mut chosen,
-                field_fill(ui),
-            ) {
+            if controls::select(ui, "source-audio-app", &options, &mut chosen) {
                 p.source_audio_app = chosen;
             }
             // The list asks again as it opens (`onFocus={load}`).

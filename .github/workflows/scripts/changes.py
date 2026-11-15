@@ -15,10 +15,13 @@ AREAS = {
     # The legacy import's test reads the web client's storage keys (legacy.rs).
     'desktop': ('desktop/', 'rust-toolchain.toml', 'web/src/voice/settings.ts',
                 'web/src/interface/preferences.ts', 'web/src/voice/userVolume.ts',
-                'web/src/messages/drafts.ts'),
+                'web/src/messages/drafts.ts',
+                # theme.rs checks its tokens against the web's (#561).
+                'web/src/theme/tokens.fixture.json'),
     # The deployment tests also read the backend's build, both versions and
-    # the workflows.
-    'deploy': ('deploy/', 'backend/', 'desktop/Cargo.toml', 'rust-toolchain.toml', '.dockerignore'),
+    # the workflows. They test the Claude Code hooks too, so .claude/ is here.
+    'deploy': ('deploy/', 'backend/', 'desktop/Cargo.toml', 'rust-toolchain.toml', '.dockerignore',
+               '.claude/'),
     'minio': ('deploy/compose/minio/', 'deploy/compose/mc/', 'deploy/compose/minio-init.sh',
               'deploy/compose/compose.yaml', 'backend/Cargo.toml'),
 }

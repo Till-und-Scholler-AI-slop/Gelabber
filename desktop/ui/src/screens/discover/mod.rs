@@ -33,8 +33,7 @@ use crate::task::{Pending, poll};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
 use crate::widgets::{
-    Button, IconButton, Tooltip, eased, focus_ring, focus_ring_inset, keyboard_focus, snap,
-    tooltip::Side,
+    Button, IconButton, Tooltip, eased, focus_ring_inset, keyboard_focus, snap, tooltip::Side,
 };
 
 /// `QUERY_MAX` of web/src/discover/rules.ts.
@@ -725,16 +724,7 @@ fn search_field(ui: &mut Ui, s: &mut State, width: f32) {
     let focused = ui.memory(|m| m.has_focus(id));
     let shown = snap(ui.ctx(), rect);
     let painter = ui.painter().clone();
-    if focused {
-        focus_ring(&painter, shown, theme.radius.sm, &theme);
-    }
-    painter.rect(
-        shown,
-        corner(theme.radius.sm),
-        c.bg,
-        egui::Stroke::new(1.0, if focused { c.focus } else { c.border_strong }),
-        egui::StrokeKind::Inside,
-    );
+    crate::widgets::field_box(&painter, shown, &theme, focused, false);
     icons::paint_centered(
         &painter,
         Icon::Search,

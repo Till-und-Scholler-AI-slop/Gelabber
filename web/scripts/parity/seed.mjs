@@ -254,7 +254,8 @@ if (!feedbackStatus.enabled) {
 // Entdecken (v0.10), as in directory.png: Ada's, Mira's and Tom's servers
 // that Lena is not in, Jonas' Spieleabend that she is in ("Öffnen"), and her
 // Wohnzimmer on request, with Kai's request waiting. Kai joins no server, so
-// the member lists and "Neue Nachricht" stay as they were.
+// the member lists and "Neue Nachricht" stay as they were, and owns none, so
+// deleting Kai's account asks only to confirm (settings-konto-delete).
 const listed = (client, server, description, language, joinMode) =>
   client.call("PUT", `/servers/${server}/listing`, {
     listed: true, description, language, join_mode: joinMode,

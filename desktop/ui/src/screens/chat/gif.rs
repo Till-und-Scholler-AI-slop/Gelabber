@@ -108,17 +108,8 @@ pub fn show(
                 crate::text::label(ui, texts::gif_search(), LABEL, c.text);
                 let input_id = egui::Id::unique("gelabber-gif-search");
                 let (r, _) = ui.allocate_exact_size(vec2(width, 39.0), Sense::hover());
-                let border = if theme.is_dark() { c.muted } else { c.border };
-                ui.painter().rect(
-                    r,
-                    corner(4.0),
-                    Color32::TRANSPARENT,
-                    Stroke::new(1.0, border),
-                    StrokeKind::Inside,
-                );
-                if ui.memory(|m| m.has_focus(input_id)) {
-                    crate::widgets::focus_ring(ui.painter(), r, 4.0, &theme);
-                }
+                let focused = ui.memory(|m| m.has_focus(input_id));
+                crate::widgets::field_box(ui.painter(), r, &theme, focused, false);
                 let color = c.text;
                 let mut layouter = move |ui: &Ui, buf: &dyn TextBuffer, _w: f32| {
                     let mut job = crate::text::job(buf.as_str(), INPUT, color, None);

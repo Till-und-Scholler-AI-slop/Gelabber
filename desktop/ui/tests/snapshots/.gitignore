@@ -1,0 +1,4 @@
+# egui_kittest writes these next to a picture that changed.
+*.new.png
+*.diff.png
+*.old.png

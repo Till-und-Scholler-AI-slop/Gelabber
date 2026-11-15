@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in Gelabber does not work as it should.
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem does not belong in a public issue: see the
+        [security policy](https://github.com/Till-und-Scholler-AI-slop/Gelabber/security/policy).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The Gelabber release or image tag you run.
+      placeholder: v0.10.1
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client
+      options:
+        - Web (browser)
+        - Desktop app on Linux
+        - Desktop app on Windows
+        - Server / deployment
+    validations:
+      required: true
+  - type: input
+    id: client-details
+    attributes:
+      label: Browser or system
+      description: Browser and version, or the Linux distribution / Windows version.
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: The steps that lead to the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: For call problems, attach the diagnostics export from the call settings.
+    validations:
+      required: true

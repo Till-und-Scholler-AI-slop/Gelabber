@@ -297,27 +297,34 @@ pub fn show(
     let focused = ui.memory(|m| m.has_focus(edit_id));
     // Esc drops egui's focus before the frame runs; it was ours.
     let had_focus = focused || ui.memory(|m| m.had_focus_last_frame(edit_id));
+    // `.ui-field-shell` (#561): the field tokens, its radius plus the row's
+    // 4px padding so the buttons inside sit concentric, the flush ring.
+    let f = theme.field;
+    let radius = f.radius + 4.0;
     let border = if drop_target {
         c.accent
     } else if focused {
-        mix(c.border, c.accent, 0.7)
+        f.border_focus
     } else {
-        c.border_strong
+        f.border
     };
     let border = crate::widgets::eased(
         ui.ctx(),
         edit_id.with("border"),
         focused || drop_target,
-        c.border_strong,
+        f.border,
         border,
     );
     ui.painter().rect(
         field,
-        corner(11.0),
-        c.panel,
+        corner(radius),
+        f.bg,
         Stroke::new(1.0, border),
         StrokeKind::Inside,
     );
+    if focused && !drop_target {
+        crate::widgets::field_focus_ring(ui.painter(), field, radius, border);
+    }
     // `anchor-name: --lr-composer` (the whole composer, the pane wide): the
     // toasts sit above it, 16px in from the pane's edge.
     crate::toasts::set_anchor(
@@ -747,6 +754,9 @@ pub fn show(
         };
         ui.painter().rect_filled(r, corner(7.0), fill);
         icons::paint_centered(ui.painter(), Icon::Send, r, 17.0, c.accent_ink);
+        if resp.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+            crate::widgets::focus_ring_edge(ui.painter(), r, 7.0, &theme);
+        }
         if resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -876,6 +886,10 @@ fn composer_icon(ui: &mut Ui, rect: Rect, icon: Icon, label: &str, id: egui::Id)
         18.0,
         if resp.hovered() { c.text } else { c.muted },
     );
+    // Inside the composer's frame: a ring along the button's edge (#561).
+    if resp.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring_edge(ui.painter(), rect, 7.0, &theme);
+    }
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }

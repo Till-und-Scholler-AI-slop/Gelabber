@@ -10,6 +10,7 @@ const fixture = vi.hoisted(() => ({
     data?: { pages: { listings: unknown[]; next_offset: number | null }[] };
     isError?: boolean;
     hasNextPage?: boolean;
+    isPlaceholderData?: boolean;
   },
   search: {} as { q?: string; lang?: string },
   queries: [] as [string, string | undefined][],
@@ -160,6 +161,18 @@ describe("Entdecken", () => {
     expect(text(renderToStaticMarkup(<DiscoverPage />))).not.toContain(
       "Mehr laden",
     );
+  });
+
+  it("offers no more while a new search shows the previous one's rows", () => {
+    // keepPreviousData: the rows and next page are the previous search's.
+    fixture.listings = {
+      data: pages([listing()], 30),
+      hasNextPage: true,
+      isPlaceholderData: true,
+    };
+    const html = text(renderToStaticMarkup(<DiscoverPage q="rust" />));
+    expect(html).toContain("Filmclub");
+    expect(html).not.toContain("Mehr laden");
   });
 
   it("shows a server's image, else its initials", () => {
