@@ -170,6 +170,7 @@ async fn setup(pool: PgPool) -> World {
         .send(Method::POST, &format!("/api/invites/{code}/join"), None)
         .await;
     assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+    a.befriend(b.user_id()).await;
     let dm = a
         .send(
             Method::POST,

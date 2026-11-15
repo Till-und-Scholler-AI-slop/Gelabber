@@ -52,6 +52,7 @@ pub mod settings;
 pub mod themes;
 
 pub mod dms;
+pub mod friends;
 pub mod members;
 pub mod servers;
 pub mod shell;
@@ -95,6 +96,7 @@ pub const NAMESPACES: &[(&str, Entries)] = &[
     ("emoji", emoji::ALL),
     ("shell", shell::ALL),
     ("dms", dms::ALL),
+    ("friends", friends::ALL),
     ("servers", servers::ALL),
     ("members", members::ALL),
     ("voice", voice::ALL),

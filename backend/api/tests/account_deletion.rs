@@ -561,6 +561,7 @@ async fn a_dm_goes_on_both_sides_and_the_peer_is_told(pool: PgPool) {
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
     let ada_id = Uuid::parse_str(ada.user_id()).unwrap();
+    ada.befriend(bob.user_id()).await;
     let res = ada
         .send(
             Method::POST,

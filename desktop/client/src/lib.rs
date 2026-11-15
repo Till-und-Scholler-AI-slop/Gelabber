@@ -5,6 +5,7 @@
 
 pub mod api;
 mod commands;
+mod friends;
 pub mod gateway;
 pub mod http;
 pub mod models;
@@ -17,8 +18,9 @@ use std::time::Instant;
 
 use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 
-pub use api::HistoryQuery;
+pub use api::{FriendTarget, HistoryQuery};
 pub use commands::SettingTarget;
+pub use friends::FriendAction;
 pub use gateway::{Gateway, GatewayConfig, GatewayEvent, GatewayStatus};
 pub use http::{ApiError, Download, DownloadError, Http, error_message};
 pub use models::*;

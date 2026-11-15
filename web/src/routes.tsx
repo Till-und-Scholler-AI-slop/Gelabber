@@ -23,6 +23,8 @@ import { MainSkeleton } from "./components/ui/Skeleton.tsx";
 import { ChannelPage } from "./pages/ChannelPage.tsx";
 import { DmChannelPage } from "./pages/DmChannelPage.tsx";
 import { DmIndexPage } from "./pages/DmIndexPage.tsx";
+import { FriendsPage } from "./friends/FriendsPage.tsx";
+import { RequestsPage } from "./friends/RequestsPage.tsx";
 import { AppPlaceholder, AuthLayout } from "./pages/AuthLayout.tsx";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage.tsx";
 import { InvitePage } from "./pages/InvitePage.tsx";
@@ -335,6 +337,19 @@ const dmRoute = createRoute({
   component: DmChannelPage,
 });
 
+// Static segments win over `$channelId` (#563).
+const friendsRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/d/friends",
+  component: FriendsPage,
+});
+
+const dmRequestsRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/d/requests",
+  component: RequestsPage,
+});
+
 /**
  * Guard for the operator area: anyone who is not an operator, and every
  * unknown page, gets "not found", so the area is not confirmed to exist.
@@ -439,6 +454,8 @@ const routeTree = rootRoute.addChildren([
     userSettingsRoute,
     userSettingsAreaRoute,
     dmIndexRoute,
+    friendsRoute,
+    dmRequestsRoute,
     dmRoute,
     operatorRoute,
     operatorPageRoute,

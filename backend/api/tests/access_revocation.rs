@@ -32,6 +32,7 @@ fn duplicate(client: &Client) -> Client {
         jar: client.jar.clone(),
         csrf: client.csrf.clone(),
         user_id: client.user_id.clone(),
+        db: client.db.clone(),
     }
 }
 async fn server(client: &mut Client, name: &str) -> (Uuid, Uuid, Uuid, String) {

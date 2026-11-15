@@ -12,6 +12,7 @@ pub mod connection;
 pub mod dialogs;
 mod dm_index;
 mod dm_sidebar;
+pub mod friends;
 mod home;
 mod members;
 pub(crate) mod operator;
@@ -143,7 +144,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s) => {
             (Some(s), false, Some(s))
         }
-        Route::Dms => (None, true, None),
+        Route::Dms | Route::Friends | Route::DmRequests => (None, true, None),
         Route::Dm(c) => (None, true, Some(c)),
         _ => (None, false, None),
     };
@@ -217,6 +218,20 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             dm_sidebar::show(ui, app, sidebar, None);
             panel(ui, app);
             dm_index::show(ui, app, layout::page_rect(content, false));
+        }
+        Route::Friends => {
+            dm_sidebar::show(ui, app, sidebar, None);
+            panel(ui, app);
+            let mut main =
+                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
+            friends::friends_page(&mut main, app, layout::page_rect(content, false));
+        }
+        Route::DmRequests => {
+            dm_sidebar::show(ui, app, sidebar, None);
+            panel(ui, app);
+            let mut main =
+                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
+            friends::requests_page(&mut main, app, layout::page_rect(content, false));
         }
         Route::Dm(c) => {
             dm_sidebar::show(ui, app, sidebar, Some(c));
@@ -512,7 +527,13 @@ fn shortcuts(ui: &Ui, app: &mut AppCtx, route: &Route, other_modal: bool) {
             .detail(server)
             .map(channel_sidebar::channel_order)
             .unwrap_or_default(),
-        None if matches!(route, Route::Dms | Route::Dm(_)) => s.dms.iter().map(|d| d.id).collect(),
+        None if matches!(
+            route,
+            Route::Dms | Route::Friends | Route::DmRequests | Route::Dm(_)
+        ) =>
+        {
+            s.dms.iter().map(|d| d.id).collect()
+        }
         None => Vec::new(),
     });
     let index = current.and_then(|c| ids.iter().position(|x| *x == c));

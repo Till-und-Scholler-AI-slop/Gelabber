@@ -883,6 +883,8 @@ pub fn is_workspace(route: &Route) -> bool {
             | Route::ServerSettings(_)
             | Route::Settings(_)
             | Route::Dms
+            | Route::Friends
+            | Route::DmRequests
             | Route::Dm(_)
             | Route::Profile
             | Route::Discover(_)

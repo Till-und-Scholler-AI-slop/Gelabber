@@ -239,6 +239,8 @@ struct Conversation {
     mentionable: Vec<Member>,
     /// Limited to roles: the header's lock.
     limited: bool,
+    /// A DM that is still a message request (#563): its bar or note.
+    request: Option<gelabber_client::DirectMessage>,
 }
 
 /// A server text channel: header and body, drawn into `ui.max_rect()`.
@@ -284,6 +286,7 @@ pub fn channel_page(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) 
                     })
                     .collect(),
                 limited: ch.limited,
+                request: None,
             }
         }))
     });
@@ -349,7 +352,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
                 avatar: dm.peer.avatar_url.clone(),
             },
             can_send: true,
-            can_send_files: true,
+            can_send_files: dm.request.is_none(),
             can_moderate: false,
             can_everyone: false,
             mentionable: members.clone(),
@@ -357,6 +360,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             peer: Some((dm.peer.name.clone(), dm.peer.avatar_url.clone(), presence)),
             muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
             limited: false,
+            request: dm.request.is_some().then(|| dm.clone()),
         })
     });
     // Each opening fetches the conversation itself (`useDm`), also one the
@@ -556,7 +560,31 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         mentionable: &conv.mentionable,
     };
     let composer_state = chat.composers.entry(channel).or_default();
-    let composer_h = composer::height(ui.ctx(), composer_state, &composer_input, page.width());
+    // A message request (#563): the peer's waits for an answer in a bar
+    // instead of the composer; the user's own says what may still go.
+    let incoming = conv
+        .request
+        .as_ref()
+        .filter(|dm| dm.request.is_some_and(|r| r.incoming));
+    let note = conv
+        .request
+        .as_ref()
+        .and_then(crate::screens::shell::friends::outgoing_note)
+        .map(|note| {
+            crate::text::Block::wrapped(
+                ui,
+                &note,
+                crate::text::META.line_height(1.5),
+                c.muted,
+                page.width() - 32.0,
+            )
+        });
+    let note_h = note.as_ref().map_or(0.0, |b| b.height() + 8.0);
+    let composer_h = if incoming.is_some() {
+        crate::screens::shell::friends::BAR_HEIGHT
+    } else {
+        composer::height(ui.ctx(), composer_state, &composer_input, page.width()) + note_h
+    };
     // `.lr-toast-space` between the typing bar and the composer.
     let toasts = crate::toasts::space(ui.ctx());
     let room = toasts + toasts.min(12.0);
@@ -663,7 +691,26 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     // Composer.
     let composer_rect = Rect::from_min_max(pos2(page.left(), page.bottom() - composer_h), page.max);
     let composer_state = chat.composers.entry(channel).or_default();
-    let composer_actions = composer::show(ui, composer_rect, composer_state, &composer_input);
+    let composer_actions = match incoming {
+        Some(dm) => {
+            crate::screens::shell::friends::incoming_bar(ui, app, composer_rect, dm);
+            Vec::new()
+        }
+        None => {
+            if let Some(note) = &note {
+                ui.painter().rect_filled(
+                    Rect::from_min_size(composer_rect.min, vec2(page.width(), note_h)),
+                    0.0,
+                    c.bg,
+                );
+                note.paint(
+                    ui.painter(),
+                    pos2(composer_rect.left() + 16.0, composer_rect.top() + 4.0),
+                );
+            }
+            composer::show(ui, composer_rect, composer_state, &composer_input)
+        }
+    };
     // `.lr-message-pane.is-drop-target`: a dashed accent outline 6px inside.
     if composer::dropping(ui.ctx(), &composer_input) {
         let r = page.shrink(6.0 + 1.0);

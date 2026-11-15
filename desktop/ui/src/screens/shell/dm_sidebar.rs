@@ -3,13 +3,14 @@
 //! one 44px row per conversation in a 48px slot.
 
 use egui::{Color32, Id, Rect, Ui, Vec2, pos2};
-use gelabber_i18n::{dms as dm_texts, shell};
+use gelabber_i18n::{dms as dm_texts, friends, shell};
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
 use super::row_menu::{self, Owner};
 use crate::app::AppCtx;
 use crate::icons::Icon;
+use crate::route::Route;
 use crate::text::{self, Block};
 use crate::theme::{Theme, mix};
 use crate::widgets::{Button, IconButton, count_badge, hairline_h};
@@ -66,9 +67,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
         rect.top() + 51.0,
     );
 
+    let nav_bottom = friend_nav(ui, app, rect);
     let dms = app.client.with_state(|s| s.dms.clone());
     let list = Rect::from_min_max(
-        pos2(rect.left(), rect.top() + 52.0),
+        pos2(rect.left(), nav_bottom),
         pos2(rect.right() - 1.0, rect.bottom()),
     );
     if dms.is_empty() {
@@ -290,4 +292,83 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                 }
             }
         });
+}
+
+const NAV_ROW: f32 = 36.0;
+
+/// "Freunde" and "Anfragen" above the conversations (#563), with counts of
+/// what waits for an answer. Returns where the list starts.
+fn friend_nav(ui: &mut Ui, app: &mut AppCtx, rect: Rect) -> f32 {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let (friend_count, request_count) = app.client.with_state(|s| {
+        (
+            s.friends.as_ref().map_or(0, |f| f.incoming.len()),
+            s.dm_requests.as_ref().map_or(0, Vec::len),
+        )
+    });
+    let route = app.nav.route().clone();
+    let rows = [
+        (
+            friends::nav_friends(),
+            "/d/friends",
+            friend_count,
+            route == Route::Friends,
+        ),
+        (
+            friends::nav_requests(),
+            "/d/requests",
+            request_count,
+            route == Route::DmRequests,
+        ),
+    ];
+    let top = rect.top() + 52.0 + 8.0;
+    for (i, (label, href, count, active)) in rows.into_iter().enumerate() {
+        let row = Rect::from_min_size(
+            pos2(rect.left() + 8.0, top + (NAV_ROW + 4.0) * i as f32),
+            Vec2::new(rect.width() - 1.0 - 16.0, NAV_ROW),
+        );
+        let id = Id::unique(("dm-nav", href));
+        let response = ui.interact(row, id, egui::Sense::click());
+        let lit = response.hovered();
+        let fill = if lit {
+            c.hover
+        } else if active {
+            c.selected
+        } else {
+            Color32::TRANSPARENT
+        };
+        common::fill(ui.painter(), row, theme.radius.md, fill);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, label));
+        let mut right = row.right() - 10.0;
+        if count > 0 {
+            let r = count_badge(
+                ui.painter(),
+                ui,
+                pos2(right, row.center().y + 9.0),
+                count.min(u32::MAX as usize) as u32,
+                None,
+            );
+            right = r.left() - 10.0;
+        }
+        let color = if lit || active || count > 0 {
+            c.text
+        } else {
+            c.muted
+        };
+        let name = line(ui, label, text::BODY, color, right - row.left() - 12.0);
+        paint_mid(ui.painter(), &name, row.left() + 12.0, row.center().y);
+        common::focus_visible(ui, &response, row, theme.radius.md);
+        if response.clicked() {
+            app.nav.navigate(href);
+        }
+    }
+    let bottom = top + (NAV_ROW + 4.0) * 2.0 + 4.0;
+    hairline_h(
+        ui.painter(),
+        &theme,
+        rect.left()..=rect.right() - 1.0,
+        bottom,
+    );
+    bottom + 1.0
 }

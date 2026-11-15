@@ -245,6 +245,7 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 
+    ada.befriend(bob.user_id()).await;
     let res = ada
         .send(
             Method::POST,

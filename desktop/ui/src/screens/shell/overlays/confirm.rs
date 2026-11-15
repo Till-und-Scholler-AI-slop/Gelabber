@@ -33,6 +33,12 @@ pub enum ConfirmAction {
     },
     /// Signing out ends the call (components/logout.ts).
     Logout,
+    /// Ends a friendship (#563); the conversation stays.
+    RemoveFriend {
+        user: Uuid,
+    },
+    /// A new friend code; the old one stops working.
+    RegenerateFriendCode,
 }
 
 #[derive(Clone, Debug)]
@@ -183,5 +189,9 @@ fn run(app: &mut AppCtx, action: ConfirmAction) {
             app.client.delete_category(server, category)
         }
         ConfirmAction::Logout => crate::screens::shell::user_panel::sign_out(app),
+        ConfirmAction::RemoveFriend { user } => app
+            .client
+            .friend_action(gelabber_client::FriendAction::Remove, user),
+        ConfirmAction::RegenerateFriendCode => app.client.regenerate_friend_code(),
     }
 }

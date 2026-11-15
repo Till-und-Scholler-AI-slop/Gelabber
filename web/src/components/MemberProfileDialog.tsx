@@ -1,3 +1,4 @@
+import { FriendButton } from "../friends/FriendButton.tsx";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
@@ -154,6 +155,7 @@ export function MemberProfileDialog({
                 {openDm.isPending ? t("profile.opening") : t("profile.message")}
               </button>
             )}
+            {self ? null : <FriendButton userId={member.user_id} />}
             <GhostButton onClick={close}>{tc("close")}</GhostButton>
           </div>
           <MemberActions server={server} member={member} />

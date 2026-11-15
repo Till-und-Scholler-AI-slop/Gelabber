@@ -305,6 +305,7 @@ async fn cards_are_visible_to_server_members_and_dm_peers_only(pool: PgPool) {
     assert!(row.get("bio").is_none(), "the bio loads with the card only");
 
     // Cara has no server with Ada; a DM with Bob does not reveal Ada.
+    cara.befriend(&bob_id.to_string()).await;
     let res = cara
         .send(Method::POST, "/api/dms", Some(json!({ "user_id": bob_id })))
         .await;
@@ -410,6 +411,7 @@ async fn banner_downloads_follow_card_visibility(pool: PgPool) {
     let (status, _, _) = bob.send_raw(Method::GET, &avatar, None).await;
     assert_eq!(status, StatusCode::OK, "avatars are not gated");
 
+    bob.befriend(ada.user_id()).await;
     let res = bob
         .send(
             Method::POST,

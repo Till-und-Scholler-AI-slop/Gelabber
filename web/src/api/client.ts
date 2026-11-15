@@ -18,7 +18,11 @@ export type FieldCode =
   | "not_editable"
   | "too_large"
   | "mismatch"
-  | "too_many";
+  | "too_many"
+  | "self"
+  | "request_link"
+  | "request_mention"
+  | "request_text_only";
 
 export type FieldErrors = Partial<Record<string, FieldCode>>;
 
@@ -61,7 +65,13 @@ export type ApiErrorCode =
   | "join_requests_full"
   | "already_member"
   | "owns_servers"
-  | "export_pending";
+  | "export_pending"
+  | "dm_not_allowed"
+  | "message_request_pending"
+  | "message_request_limit"
+  | "already_friends"
+  | "friend_request_declined"
+  | "friend_requests_full";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
@@ -435,6 +445,12 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "join_request_declined",
   "join_requests_full",
   "already_member",
+  "dm_not_allowed",
+  "message_request_pending",
+  "message_request_limit",
+  "already_friends",
+  "friend_request_declined",
+  "friend_requests_full",
 ]);
 
 function toErrorCode(raw: string | undefined): ApiErrorCode {

@@ -41,6 +41,7 @@ import { useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
 import { ProfileCardForm } from "./ProfileCardForm.tsx";
+import { FriendCodeCard } from "../friends/FriendCodeCard.tsx";
 import "./settings.css";
 
 /** Settings area "Profil": name and picture. */
@@ -48,7 +49,12 @@ export function ProfileArea() {
   const user = useSession((state) => state.user);
   // The route guard guarantees a user; the fallback keeps the type narrow.
   if (!user) return null;
-  return <ProfileForm key={user.id} user={user} />;
+  return (
+    <>
+      <ProfileForm key={user.id} user={user} />
+      <FriendCodeCard />
+    </>
+  );
 }
 
 /** Settings area "Profilkarte". */

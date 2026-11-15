@@ -534,6 +534,105 @@ async fn settle(state: &AppState, push: &Push, results: Vec<(Outcome, String)>) 
     sent
 }
 
+/// What a request push (#563) is about. It never carries content.
+#[derive(Debug, Clone, Copy)]
+pub enum Invite {
+    /// A friend request; a tap opens the friend list.
+    Friend,
+    /// The first message of a message request; a tap opens the requests.
+    Message { channel: Uuid, message: Uuid },
+}
+
+/// "X wants to message you" / "X sent you a friend request" to `to`, in the
+/// background. Like a DM push: not while a page of the app is in front, and
+/// a message request not where the recipient set that DM to "nothing" or
+/// muted it.
+pub fn invite(state: &AppState, to: Uuid, from: &str, kind: Invite) {
+    let Some(push) = state.push.clone() else {
+        return;
+    };
+    let Ok(slot) = push.dm_deliveries.clone().try_acquire_owned() else {
+        state.metrics.rate_limited("push_dropped");
+        return;
+    };
+    let state = state.clone();
+    let from = from.to_owned();
+    tokio::spawn(async move {
+        if let Err(err) = deliver_invite(&state, &push, to, &from, kind).await {
+            debug!(error = err.code(), "request push not sent");
+        }
+        drop(slot);
+    });
+}
+
+async fn deliver_invite(
+    state: &AppState,
+    push: &Push,
+    to: Uuid,
+    from: &str,
+    kind: Invite,
+) -> Result<(), ApiError> {
+    if state.gateway.has_focus(to).await.unwrap_or(false) {
+        return Ok(());
+    }
+    let channel = match kind {
+        Invite::Message { channel, .. } => Some(channel),
+        Invite::Friend => None,
+    };
+    let targets: Vec<Target> = sqlx::query_as(
+        "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
+                u.notifications_hide_content AS hide_content, u.locale
+         FROM push_subscriptions p
+         JOIN sessions s ON s.token_hash=p.session_hash AND s.expires_at>now()
+         JOIN users u ON u.id=p.user_id
+         LEFT JOIN notification_settings cs ON cs.user_id=p.user_id
+           AND cs.scope_kind='channel' AND cs.scope_id=$2
+         WHERE p.user_id=$1
+           AND COALESCE(cs.level, 'all')<>'none'
+           AND NOT (cs.muted IS TRUE AND (cs.muted_until IS NULL OR cs.muted_until>now()))",
+    )
+    .bind(to)
+    .bind(channel)
+    .fetch_all(&state.db)
+    .await?;
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let (path, tag, message) = match kind {
+        Invite::Friend => ("/d/friends", to, Uuid::new_v4()),
+        Invite::Message { channel, message } => ("/d/requests", channel, message),
+    };
+    let at = chrono::Utc::now();
+    let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
+        let title = match kind {
+            Invite::Friend => i18n::friend_request_from(target.locale, from),
+            Invite::Message { .. } => i18n::message_request_from(target.locale, from),
+        };
+        let payload = Payload {
+            title: &title,
+            body: "",
+            path,
+            user: target.user_id,
+            channel: tag,
+            message,
+            at,
+            recall: false,
+        };
+        serde_json::to_vec(&payload).ok().map(|raw| (target, raw))
+    }))
+    .map(|(target, raw)| async move {
+        (
+            send(push, &target, &raw, "normal", message).await,
+            target.endpoint,
+        )
+    })
+    .buffer_unordered(8)
+    .collect::<Vec<_>>()
+    .await;
+    settle(state, push, results).await;
+    Ok(())
+}
+
 /// After a message is deleted: recall its pushes in the background.
 pub fn recall(state: &AppState, message: &Message, server: Option<Uuid>) {
     let Some(push) = state.push.clone() else {

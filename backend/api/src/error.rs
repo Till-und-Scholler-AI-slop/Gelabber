@@ -117,6 +117,21 @@ pub enum ApiError {
     OwnsServers(Vec<OwnedServer>),
     /// 409: a data export is already queued or being built.
     ExportPending,
+    /// 403: a DM with someone who is neither a friend nor on a shared
+    /// server (#563). They can only get a friend request by code.
+    DmNotAllowed,
+    /// 403: the recipient of a message request writing before accepting it.
+    MessageRequestPending,
+    /// 409: the sender of a message request has sent as many messages as a
+    /// request allows before it is accepted.
+    MessageRequestLimit,
+    /// 409: a friend request to someone who is a friend already.
+    AlreadyFriends,
+    /// 409: the person declined the caller's last friend request, and the
+    /// cooldown has `retry_after` seconds left.
+    FriendRequestDeclined { retry_after: u64 },
+    /// 409: the caller has as many outgoing friend requests as allowed.
+    FriendRequestsFull,
 }
 
 /// A server that keeps an account from being deleted (`owns_servers`).
@@ -179,6 +194,12 @@ impl ApiError {
             Self::AlreadyMember => "already_member",
             Self::OwnsServers(_) => "owns_servers",
             Self::ExportPending => "export_pending",
+            Self::DmNotAllowed => "dm_not_allowed",
+            Self::MessageRequestPending => "message_request_pending",
+            Self::MessageRequestLimit => "message_request_limit",
+            Self::AlreadyFriends => "already_friends",
+            Self::FriendRequestDeclined { .. } => "friend_request_declined",
+            Self::FriendRequestsFull => "friend_requests_full",
         }
     }
 
@@ -217,6 +238,11 @@ impl ApiError {
             | Self::AlreadyMember => StatusCode::CONFLICT,
             Self::OwnsServers(_) => StatusCode::CONFLICT,
             Self::ExportPending => StatusCode::CONFLICT,
+            Self::DmNotAllowed | Self::MessageRequestPending => StatusCode::FORBIDDEN,
+            Self::MessageRequestLimit
+            | Self::AlreadyFriends
+            | Self::FriendRequestDeclined { .. }
+            | Self::FriendRequestsFull => StatusCode::CONFLICT,
         }
     }
 
@@ -271,6 +297,18 @@ impl ApiError {
             Self::AlreadyMember => "You are already a member of this server.",
             Self::OwnsServers(_) => "Transfer or delete your servers first.",
             Self::ExportPending => "Your data export is still being built.",
+            Self::DmNotAllowed => {
+                "You can message friends and people you share a server with. Send a friend request instead."
+            }
+            Self::MessageRequestPending => "Accept the message request to reply.",
+            Self::MessageRequestLimit => {
+                "Wait until your message request is accepted to send more."
+            }
+            Self::AlreadyFriends => "You are already friends.",
+            Self::FriendRequestDeclined { .. } => "You can send a new friend request later.",
+            Self::FriendRequestsFull => {
+                "Too many open friend requests. Wait for some answers first."
+            }
         }
     }
 
@@ -285,7 +323,8 @@ impl ApiError {
         let retry_after = match self {
             Self::RateLimited { retry_after }
             | Self::UpstreamQuota { retry_after }
-            | Self::JoinRequestDeclined { retry_after } => Some(*retry_after),
+            | Self::JoinRequestDeclined { retry_after }
+            | Self::FriendRequestDeclined { retry_after } => Some(*retry_after),
             _ => None,
         };
         let servers = match self {

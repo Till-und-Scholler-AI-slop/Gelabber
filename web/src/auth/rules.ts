@@ -402,6 +402,14 @@ export function fieldMessage(field: string, code: FieldCode): string {
       return translate(auth, "fieldError.unavailable");
     case "not_editable":
       return translate(auth, "fieldError.notEditable");
+    case "self":
+      return translate(auth, "fieldError.self");
+    case "request_link":
+      return translate(auth, "fieldError.requestLink");
+    case "request_mention":
+      return translate(auth, "fieldError.requestMention");
+    case "request_text_only":
+      return translate(auth, "fieldError.requestTextOnly");
     case "invalid":
       switch (field) {
         case "email":
@@ -423,6 +431,8 @@ export function fieldMessage(field: string, code: FieldCode): string {
           return translate(auth, "fieldError.roleIdsInvalid");
         case "invitation":
           return translate(auth, "error.invitationInvalid");
+        case "code":
+          return translate(auth, "fieldError.friendCodeInvalid");
         default:
           return translate(auth, "fieldError.invalid", { label });
       }
@@ -509,6 +519,18 @@ export function errorMessage(code: ApiErrorCode): string {
       return translate(auth, "error.ownsServers");
     case "export_pending":
       return translate(auth, "error.exportPending");
+    case "dm_not_allowed":
+      return translate(auth, "error.dmNotAllowed");
+    case "message_request_pending":
+      return translate(auth, "error.messageRequestPending");
+    case "message_request_limit":
+      return translate(auth, "error.messageRequestLimit");
+    case "already_friends":
+      return translate(auth, "error.alreadyFriends");
+    case "friend_request_declined":
+      return translate(auth, "error.friendRequestDeclined");
+    case "friend_requests_full":
+      return translate(auth, "error.friendRequestsFull");
   }
 }
 

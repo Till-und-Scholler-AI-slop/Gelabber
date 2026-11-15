@@ -103,6 +103,7 @@ export function MessagePane({
   notify,
   peer,
   footer,
+  composer: composerSlot,
   onDraftChange,
   onDraftStop,
 }: {
@@ -131,6 +132,8 @@ export function MessagePane({
   /** A DM's other person, shown where its history begins. */
   peer?: { name: string; avatar_url: string | null };
   footer?: ReactNode;
+  /** In place of the composer: a message request's answer bar (#563). */
+  composer?: ReactNode;
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
 }) {
@@ -637,21 +640,23 @@ export function MessagePane({
         ) : null}
         {footer}
         <div className="lr-toast-space" />
-        <Composer
-          key={user?.id ?? "anonymous"}
-          handle={composer}
-          channelId={channelId}
-          channelName={channelName}
-          canSend={canSend}
-          canSendFiles={canSendFiles}
-          mention={mention}
-          author={author}
-          attempts={channelAttempts}
-          onSent={toLatest}
-          onShowAttempt={showAttempt}
-          onDraftChange={onDraftChange}
-          onDraftStop={onDraftStop}
-        />
+        {composerSlot ?? (
+          <Composer
+            key={user?.id ?? "anonymous"}
+            handle={composer}
+            channelId={channelId}
+            channelName={channelName}
+            canSend={canSend}
+            canSendFiles={canSendFiles}
+            mention={mention}
+            author={author}
+            attempts={channelAttempts}
+            onSent={toLatest}
+            onShowAttempt={showAttempt}
+            onDraftChange={onDraftChange}
+            onDraftStop={onDraftStop}
+          />
+        )}
       </div>
     </MentionContext.Provider>
   );

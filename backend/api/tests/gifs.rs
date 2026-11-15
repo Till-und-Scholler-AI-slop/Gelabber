@@ -521,6 +521,7 @@ async fn a_gif_can_be_sent_in_a_dm(pool: PgPool) {
     let state = app_state(pool, Some(&klipy), &[]);
     let mut ada = user(&state, "ada@example.com", "Ada").await;
     let mut bob = user(&state, "bob@example.com", "Bob").await;
+    ada.befriend(bob.user_id()).await;
     let res = ada
         .send(
             Method::POST,
@@ -883,6 +884,7 @@ async fn a_gif_message_reaches_subscribers_through_the_gateway(pool: PgPool) {
 
     let mut ada = user(&state, "ada@example.com", "Ada").await;
     let bob = user(&state, "bob@example.com", "Bob").await;
+    ada.befriend(bob.user_id()).await;
     let res = ada
         .send(
             Method::POST,
