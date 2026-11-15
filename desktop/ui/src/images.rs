@@ -659,6 +659,10 @@ fn decode_still(bytes: &[u8], limit: &Limit) -> Option<ColorImage> {
     // The server keeps the EXIF orientation in the original and sends the
     // size as shown, so the picture is turned upright here (#574).
     let mut decoder = reader.into_decoder().ok()?;
+    // `into_decoder` checks the edges only; `decode` would check this.
+    if image::ImageDecoder::total_bytes(&decoder) > limits().max_alloc.unwrap_or(u64::MAX) {
+        return None;
+    }
     let orientation = image::ImageDecoder::orientation(&mut decoder).ok();
     let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
     if let Some(orientation) = orientation {
