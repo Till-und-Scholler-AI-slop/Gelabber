@@ -37,6 +37,23 @@ pub fn valid_slug(slug: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// The slug without the token Klipy appends to search results
+/// (`hello-hi-662--kgmD1VZja`, one token per search, seen since 2026-11-14;
+/// trending and stored slugs have none). The base slug is the GIF's stable
+/// name: what Klipy's own items show and what a message stores.
+pub fn base_slug(slug: &str) -> &str {
+    match slug.rsplit_once("--") {
+        Some((base, token))
+            if !base.is_empty()
+                && !token.is_empty()
+                && token.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            base
+        }
+        _ => slug,
+    }
+}
+
 /// `{ result, data: { data: [...], has_next } }` from search/trending.
 pub fn page(body: &Value, page: u32, size: Size, origins: &[String]) -> GifPage {
     let data = &body["data"];
@@ -259,6 +276,25 @@ mod tests {
             "https://static.klipy.com:443/ii/a/b.webp",
             &o
         ));
+    }
+
+    #[test]
+    fn base_slug_drops_the_search_token_only() {
+        // Real search slugs from gelabber.com, 2026-11-15.
+        assert_eq!(base_slug("greetings-PSr--kgmD1VZja"), "greetings-PSr");
+        assert_eq!(
+            base_slug("hello-robin-williams--kgmD1VZja"),
+            "hello-robin-williams"
+        );
+        assert_eq!(base_slug("lil-jon-yeah-1--ktyFmNaXO"), "lil-jon-yeah-1");
+        // Trending and stored slugs stay as they are.
+        assert_eq!(base_slug("lil-jon-yeah-1"), "lil-jon-yeah-1");
+        assert_eq!(base_slug("thank-you-iIf"), "thank-you-iIf");
+        // Nothing usable to strip.
+        assert_eq!(base_slug("--kgmD1VZja"), "--kgmD1VZja");
+        assert_eq!(base_slug("trailing--"), "trailing--");
+        assert_eq!(base_slug("a--b_c"), "a--b_c");
+        assert_eq!(base_slug("a--b-c"), "a--b-c");
     }
 
     #[test]

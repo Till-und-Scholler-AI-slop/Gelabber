@@ -135,6 +135,45 @@ pub enum UploadState {
     Done,
 }
 
+/// Why a send failed, for its row (`sendFailureText`, #581): the reason the
+/// server named where one is known, else the stage's text, with status and
+/// code for a refusal. A lost answer keeps the stage's text.
+pub fn send_failure_text(stage: SendStage, error: &ApiError, gif: bool) -> String {
+    let fallback = stage.failed();
+    if send_uncertain(stage, error) {
+        return fallback.to_owned();
+    }
+    let ApiError::Api {
+        status,
+        code,
+        fields,
+        retry_after,
+        ..
+    } = error
+    else {
+        return fallback.to_owned();
+    };
+    match fields.get("gif").and_then(|v| v.as_str()) {
+        Some("invalid") => return chat::send_gif_gone().to_owned(),
+        Some("unavailable") => return chat::send_gif_off().to_owned(),
+        _ => {}
+    }
+    if code == "rate_limited" {
+        return match retry_after.filter(|wait| *wait > 0.0) {
+            Some(wait) => chat::send_rate_limited_wait(gif, wait.ceil() as u64),
+            None if gif => chat::send_gif_rate_limited().to_owned(),
+            None => chat::send_rate_limited().to_owned(),
+        };
+    }
+    if code == "forbidden" {
+        return chat::send_forbidden().to_owned();
+    }
+    if (400..500).contains(status) {
+        return format!("{fallback} ({status} {code})");
+    }
+    fallback.to_owned()
+}
+
 /// Whether a failed send may be saved anyway: only a bind whose answer
 /// was lost (network, timeout, 408, 5xx) is in doubt.
 pub fn send_uncertain(stage: SendStage, error: &ApiError) -> bool {
@@ -1965,6 +2004,91 @@ mod tests {
         );
         assert_eq!(failure_text("kick:1"), Some("Member not removed."));
         assert_eq!(SendStage::Upload.failed(), "File upload failed.");
+    }
+
+    #[test]
+    fn a_refused_send_names_the_servers_reason() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let gone = api(
+            422,
+            "validation_failed",
+            serde_json::json!({ "gif": "invalid" }),
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &gone, true),
+            "This GIF is no longer available."
+        );
+        let off = api(
+            422,
+            "validation_failed",
+            serde_json::json!({ "gif": "unavailable" }),
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &off, true),
+            "GIFs are turned off on this server."
+        );
+        let mut busy = api(429, "rate_limited", serde_json::json!({}));
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &busy, true),
+            "Too many GIFs. Wait a moment."
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &busy, false),
+            "Too many messages. Wait a moment."
+        );
+        if let ApiError::Api { retry_after, .. } = &mut busy {
+            *retry_after = Some(41.2);
+        }
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &busy, true),
+            "Too many GIFs. Try again in 42 seconds."
+        );
+        let forbidden = api(403, "forbidden", serde_json::json!({}));
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &forbidden, false),
+            "You can't send messages here."
+        );
+        let other = api(
+            422,
+            "validation_failed",
+            serde_json::json!({ "content": "too_long" }),
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &other, false),
+            "Saving the message failed. (422 validation_failed)"
+        );
+        // A lost answer and a server fault keep the stage's text.
+        let lost = ApiError::Transport("reset".into());
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &lost, true),
+            "Saving the message failed."
+        );
+        let fault = api(502, "upstream_unavailable", serde_json::json!({}));
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &fault, true),
+            "Saving the message failed."
+        );
+    }
+
+    #[test]
+    fn a_refused_gif_reads_in_german() {
+        let gone = api(
+            422,
+            "validation_failed",
+            serde_json::json!({ "gif": "invalid" }),
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &gone, true),
+            "Dieses GIF ist nicht mehr verfügbar."
+        );
+        let mut busy = api(429, "rate_limited", serde_json::json!({}));
+        if let ApiError::Api { retry_after, .. } = &mut busy {
+            *retry_after = Some(1.0);
+        }
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &busy, false),
+            "Zu viele Nachrichten. Versuch es in 1 Sekunde noch mal."
+        );
     }
 
     #[test]

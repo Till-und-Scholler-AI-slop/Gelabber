@@ -328,17 +328,50 @@ impl Gifs {
     }
 
     /// The message rendition of one slug, `None` if Klipy does not know it.
+    /// A slug from a search result carries a search token (see
+    /// [`klipy::base_slug`]); both forms are asked for in one call. The
+    /// picked slug itself is taken when Klipy knows it, else the GIF comes
+    /// back under its base slug, the one a message stores (#581).
     pub async fn resolve(&self, slug: &str) -> Result<Option<Gif>, ApiError> {
+        let base = klipy::base_slug(slug);
+        let slugs = if base == slug {
+            slug.to_owned()
+        } else {
+            format!("{base},{slug}")
+        };
         let mut url = self.endpoint("items")?;
         url.query_pairs_mut()
-            .append_pair("slugs", slug)
+            .append_pair("slugs", &slugs)
             .append_pair("format_filter", FORMATS);
         let body = self.get_json("items", url).await?;
-        Ok(
-            klipy::items(&body, Size::Message, &self.inner.config.media_origins)
+        let found = klipy::items(&body, Size::Message, &self.inner.config.media_origins);
+        let returned = found.len();
+        // The picked slug itself wins: a real slug can contain `--` too
+        // (`foo--bar`), and Klipy may also know `foo`.
+        let gif = match found.iter().position(|gif| gif.slug == slug) {
+            Some(exact) => Some(found.into_iter().nth(exact).expect("position")),
+            None => found
                 .into_iter()
-                .find(|gif| gif.slug == slug),
-        )
+                .find(|gif| klipy::base_slug(&gif.slug) == base)
+                .map(|gif| Gif {
+                    slug: base.to_owned(),
+                    ..gif
+                }),
+        };
+        if gif.is_none() {
+            // Says what Klipy answered without logging the key-bearing URL.
+            let items = body["data"]["data"]
+                .as_array()
+                .or_else(|| body["data"].as_array())
+                .map_or(0, Vec::len);
+            warn!(
+                slug,
+                items,
+                usable = returned,
+                "klipy items lookup did not return the picked gif"
+            );
+        }
+        Ok(gif)
     }
 
     /// Klipy's share trigger after a GIF was posted. Best effort, off the
