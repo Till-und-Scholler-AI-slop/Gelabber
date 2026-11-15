@@ -93,9 +93,32 @@ describe("picture box", () => {
     // The thumbnail, not the 6 MB original, at both densities.
     expect(html).toContain('src="/api/attachments/api1?size=400"');
     expect(html).toContain(
-      'srcSet="/api/attachments/api1?size=400 400w, /api/attachments/api1?size=800 800w"',
+      'srcSet="/api/attachments/api1?size=400 300w, /api/attachments/api1?size=800 600w"',
     );
     expect(html).toContain('sizes="300px"');
+  });
+
+  it("picks the thumbnail by the width the picture is drawn at (#574)", () => {
+    const pic = (id: string, width: number, height: number): Attachment => ({
+      ...file(id, `${id}.png`, "image/png"),
+      width,
+      height,
+      thumbnail: true,
+    });
+    // A long screenshot cropped to 134x400: the 400 thumbnail is 72 px
+    // wide, too narrow for the box at any density.
+    const long = renderToStaticMarkup(
+      <AttachmentList attachments={[pic("s1", 1080, 6000)]} />,
+    );
+    expect(long).toContain("size=400 72w");
+    expect(long).toContain("size=800 144w");
+    // A 4:3 photo in a mosaic tile covers it, so it is drawn wider.
+    const tiles = renderToStaticMarkup(
+      <AttachmentList
+        attachments={[pic("m1", 4000, 3000), pic("m2", 10, 10)]}
+      />,
+    );
+    expect(tiles).toContain('sizes="(max-width: 600px) 67vw, 267px"');
   });
 
   it("shows the original until there is a thumbnail", () => {

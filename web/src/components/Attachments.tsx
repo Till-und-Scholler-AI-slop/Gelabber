@@ -239,13 +239,21 @@ function AttachmentImage({
   const thumbed =
     attachment.thumbnail === true && !attachment.preview_url && !playsInline;
   const src = thumbed ? thumbnailUrl(attachment.id, 400) : original;
+  // The thumbnails are measured on the long edge, so each one's width
+  // is the picture's share of it; and boxes are drawn with cover, so the
+  // width the picture is drawn at is the box's, or more for a picture
+  // wider than its box (cropped, or a tile, taken as square).
+  const ratio = size ? size.width / size.height : 1;
+  const thumbWidth = (edge: number) =>
+    Math.max(1, Math.round(edge * Math.min(1, ratio)));
   const srcSet = thumbed
-    ? `${thumbnailUrl(attachment.id, 400)} 400w, ${thumbnailUrl(attachment.id, 800)} 800w`
+    ? `${thumbnailUrl(attachment.id, 400)} ${thumbWidth(400)}w, ${thumbnailUrl(attachment.id, 800)} ${thumbWidth(800)}w`
     : undefined;
+  const wide = Math.max(1, ratio);
   const sizes = thumbed
     ? tile
-      ? "(max-width: 600px) 50vw, 200px"
-      : `${Math.ceil(fit?.width ?? PICTURE_BOX)}px`
+      ? `(max-width: 600px) ${Math.ceil(50 * wide)}vw, ${Math.ceil(200 * wide)}px`
+      : `${Math.ceil(fit ? Math.max(fit.width, fit.height * ratio) : PICTURE_BOX)}px`
     : undefined;
   if (failed)
     return (
