@@ -420,7 +420,7 @@ async fn accepting_makes_an_ordinary_dm_but_not_friends(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn a_decline_is_silent_and_a_new_round_comes_after_an_hour(pool: PgPool) {
+async fn a_decline_is_silent(pool: PgPool) {
     let mut w = world(pool.clone()).await;
     let dm = request_dm(&mut w).await;
     text(&mut w.ada, &dm, "hello").await;
@@ -430,20 +430,24 @@ async fn a_decline_is_silent_and_a_new_round_comes_after_an_hour(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     assert!(requests(&mut w.bob).await.is_empty());
-    // Ada notices nothing: the DM and her count are as before, and a message
-    // within the hour is kept without showing the request again.
+    // Ada notices nothing: the DM and her count are as before, and what is
+    // left of the limit is kept without showing the request again.
     let mine = w
         .ada
         .send(Method::GET, &format!("/api/dms/{dm}"), None)
         .await;
     assert_eq!(mine.body["request"]["remaining"], 2);
+    for n in 0..2 {
+        let res = text(&mut w.ada, &dm, &format!("hello {n}?")).await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    }
     assert_eq!(
-        text(&mut w.ada, &dm, "hello?").await.status,
-        StatusCode::CREATED
+        text(&mut w.ada, &dm, "too many").await.body["error"],
+        "message_request_limit"
     );
     assert!(requests(&mut w.bob).await.is_empty());
-
-    sqlx::query("UPDATE channels SET dm_declined_at = now() - interval '61 minutes' WHERE id = $1")
+    // Later too: a declined request reads like one nobody answers.
+    sqlx::query("UPDATE channels SET dm_declined_at = now() - interval '2 days' WHERE id = $1")
         .bind(uuid(&dm))
         .execute(&pool)
         .await
@@ -452,16 +456,102 @@ async fn a_decline_is_silent_and_a_new_round_comes_after_an_hour(pool: PgPool) {
         .ada
         .send(Method::GET, &format!("/api/dms/{dm}"), None)
         .await;
-    assert_eq!(mine.body["request"]["remaining"], 3, "{}", mine.body);
-    for n in 0..3 {
+    assert_eq!(mine.body["request"]["remaining"], 0, "{}", mine.body);
+    // Bob can still accept it.
+    let res = w
+        .bob
+        .send(Method::POST, &format!("/api/dms/{dm}/accept"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn reacting_waits_for_the_request_to_be_accepted(pool: PgPool) {
+    let mut w = world(pool).await;
+    let dm = request_dm(&mut w).await;
+    let first = text(&mut w.ada, &dm, "hello").await;
+    let id = first.body["id"].as_str().unwrap().to_owned();
+    let react = format!("/api/messages/{id}/reactions/%F0%9F%91%8D");
+    let res = w.bob.send(Method::PUT, &react, None).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(res.body["error"], "message_request_pending");
+    let res = w
+        .bob
+        .send(Method::POST, &format!("/api/dms/{dm}/accept"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = w.bob.send(Method::PUT, &react, None).await;
+    assert!(res.status.is_success(), "{}", res.body);
+}
+
+#[sqlx::test]
+async fn deleting_does_not_give_the_limit_back(pool: PgPool) {
+    let mut w = world(pool).await;
+    let dm = request_dm(&mut w).await;
+    let first = text(&mut w.ada, &dm, "hello").await;
+    let id = first.body["id"].as_str().unwrap().to_owned();
+    let res = w
+        .ada
+        .send(Method::DELETE, &format!("/api/messages/{id}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    // Still shown to Bob, and still one of Ada's three.
+    assert_eq!(requests(&mut w.bob).await.len(), 1);
+    let mine = w
+        .ada
+        .send(Method::GET, &format!("/api/dms/{dm}"), None)
+        .await;
+    assert_eq!(mine.body["request"]["remaining"], 2, "{}", mine.body);
+    for n in 0..2 {
         let res = text(&mut w.ada, &dm, &format!("again {n}")).await;
         assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
     }
     assert_eq!(
-        text(&mut w.ada, &dm, "too many").await.body["error"],
+        text(&mut w.ada, &dm, "one more").await.body["error"],
         "message_request_limit"
     );
-    assert_eq!(requests(&mut w.bob).await.len(), 1, "shown again");
+}
+
+#[sqlx::test]
+async fn an_empty_request_goes_to_whoever_writes_first(pool: PgPool) {
+    let mut w = world(pool).await;
+    // Ada opens the DM ("Neue Nachricht") but writes nothing.
+    let dm = request_dm(&mut w).await;
+    assert!(requests(&mut w.bob).await.is_empty());
+    let bob_side = w
+        .bob
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": w.ada.user_id() })),
+        )
+        .await;
+    assert_eq!(bob_side.status, StatusCode::OK, "{}", bob_side.body);
+    assert_eq!(bob_side.body["id"], dm.as_str());
+    assert_eq!(
+        bob_side.body["request"]["incoming"], false,
+        "{}",
+        bob_side.body
+    );
+    assert_eq!(
+        text(&mut w.bob, &dm, "hallo Ada").await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(requests(&mut w.ada).await.len(), 1);
+    // Once written into, it stays Bob's.
+    let ada_side = w
+        .ada
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": w.bob.user_id() })),
+        )
+        .await;
+    assert_eq!(
+        ada_side.body["request"]["incoming"], true,
+        "{}",
+        ada_side.body
+    );
 }
 
 #[sqlx::test]
@@ -637,7 +727,7 @@ async fn a_declined_friend_request_waits_an_hour(pool: PgPool) {
     let left = res.body["retry_after"].as_u64().unwrap();
     assert!((3500..=3600).contains(&left), "{left}");
     // Bob may still ask Ada.
-    sqlx::query("UPDATE friend_requests SET declined_at = now() - interval '61 minutes'")
+    sqlx::query("UPDATE friend_requests SET closed_at = now() - interval '61 minutes'")
         .execute(&pool)
         .await
         .unwrap();

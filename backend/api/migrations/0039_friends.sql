@@ -19,16 +19,17 @@ CREATE TABLE friendships (
 );
 CREATE INDEX friendships_high_idx ON friendships (user_high);
 
--- One row per (sender, recipient). Accepted and withdrawn requests are
--- deleted; a declined one stays as the 1 h cooldown and is replaced by a new
--- request after that.
+-- One row per (sender, recipient). Accepted requests are deleted. A
+-- declined or withdrawn one stays for an hour from `closed_at`: after a
+-- decline the sender may not ask again before that, after a withdrawal
+-- asking again is quiet (no second push) until then.
 CREATE TABLE friend_requests (
     sender_id     UUID        NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     recipient_id  UUID        NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     status        TEXT        NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending', 'declined')),
+                  CHECK (status IN ('pending', 'declined', 'withdrawn')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    declined_at   TIMESTAMPTZ,
+    closed_at     TIMESTAMPTZ,
     PRIMARY KEY (sender_id, recipient_id),
     CHECK (sender_id <> recipient_id)
 );
@@ -38,12 +39,16 @@ CREATE INDEX friend_requests_recipient_idx
 -- A DM is a message request while `dm_request_by` names who started it:
 -- that person may send a few text messages, the other one accepts or
 -- declines. NULL is an ordinary DM, so every DM that exists now counts as
--- accepted. `dm_request_since` starts the current round (the message limit
--- counts from it); `dm_declined_at` hides a declined request from the
--- recipient, and the sender may start a new round an hour later.
+-- accepted. `dm_request_sent` counts the messages sent into the request; a
+-- deleted message still counts, so the limit and the one push hold.
+-- `dm_declined_at` hides a declined request from the recipient; the sender
+-- is not told and cannot tell it from one left unanswered.
 ALTER TABLE channels
-    ADD COLUMN dm_request_by    UUID REFERENCES users (id) ON DELETE SET NULL,
-    ADD COLUMN dm_request_since TIMESTAMPTZ,
-    ADD COLUMN dm_declined_at   TIMESTAMPTZ,
+    ADD COLUMN dm_request_by   UUID REFERENCES users (id) ON DELETE SET NULL,
+    ADD COLUMN dm_request_sent SMALLINT NOT NULL DEFAULT 0,
+    ADD COLUMN dm_declined_at  TIMESTAMPTZ,
     ADD CONSTRAINT channels_dm_request_only_dm
         CHECK (dm_request_by IS NULL OR kind = 'dm');
+-- For the purge's ON DELETE SET NULL.
+CREATE INDEX channels_dm_request_by_idx ON channels (dm_request_by)
+    WHERE dm_request_by IS NOT NULL;

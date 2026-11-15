@@ -165,8 +165,9 @@ async fn block(
     if !crate::servers::account_alive(&mut tx, them).await? {
         return Err(ApiError::NotFound);
     }
-    // Serialise this account's blocks so two at once cannot pass the cap.
-    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+    // Serialise this account's blocks so two at once cannot pass the cap;
+    // `NO KEY UPDATE` does not conflict with `account_alive`'s `KEY SHARE`.
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE")
         .bind(user.id)
         .execute(&mut *tx)
         .await?;
