@@ -5,14 +5,17 @@
 //! friend request. B gets the error an unreachable person gives
 //! (`dm_not_allowed`, `not_found`, `dm_closed`), never "blocked"; A gets
 //! `blocked`. Blocking ends their friendship, drops friend requests between
-//! them and declines a pending message request, in one transaction. B's
+//! them and declines a pending message request from B, in one transaction. B's
 //! pushes and mention counts do not reach A (`crate::push`,
 //! `crate::messages::workflows`); on shared servers the clients fold B's
 //! messages and typing for A. Unblocking leaves an accepted DM usable and
 //! restores no friendship.
 //!
-//! Only A's sockets are told (`op: "bl"`); B's friend list reloads (`fr`)
-//! when a friendship or request went.
+//! Only A's sockets are told (`op: "bl"`, and `mr` when B's request to A
+//! was declined); B's friend list reloads (`fr`) when a friendship or
+//! request went. Reactions in a closed DM are refused like messages, typing
+//! there is dropped on the server, and a request stays out of both incoming
+//! lists and cannot be accepted while a block stands.
 
 use axum::Router;
 use axum::extract::State;
@@ -203,9 +206,8 @@ async fn block(
         }
     }
     if cut.request {
-        for who in [user.id, them] {
-            dms::publish(&state, who, UserFrame::MessageRequests).await;
-        }
+        // Only the blocker's incoming list changed.
+        dms::publish(&state, user.id, UserFrame::MessageRequests).await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -214,13 +216,14 @@ async fn block(
 struct Cut {
     /// A friendship or a friend request.
     friends: bool,
-    /// A pending message request.
+    /// A pending message request from the blocked person to the blocker.
     request: bool,
 }
 
-/// Ends the friendship, deletes friend requests both ways and declines a
-/// pending message request (its messages stay for the record, as a silent
-/// decline keeps them).
+/// `a` blocks `b`: ends their friendship, deletes friend requests both ways
+/// and declines a pending message request from `b` (its messages stay for
+/// the record, as a silent decline keeps them). A request `a` sent stays
+/// open: the block closes it, and it is live again after an unblock.
 async fn cut_ties(db: &mut PgConnection, a: Uuid, b: Uuid) -> Result<Cut, ApiError> {
     let friendship = sqlx::query(
         "DELETE FROM friendships WHERE user_low = LEAST($1, $2) AND user_high = GREATEST($1, $2)",
@@ -241,10 +244,11 @@ async fn cut_ties(db: &mut PgConnection, a: Uuid, b: Uuid) -> Result<Cut, ApiErr
     .rows_affected();
     let request = sqlx::query(
         "UPDATE channels SET dm_declined_at = now() \
-         WHERE kind = 'dm' AND pair_key = $1 AND dm_request_by IS NOT NULL \
+         WHERE kind = 'dm' AND pair_key = $1 AND dm_request_by = $2 \
            AND dm_declined_at IS NULL",
     )
     .bind(dms::pair_key(a, b))
+    .bind(b)
     .execute(&mut *db)
     .await?
     .rows_affected();

@@ -526,8 +526,22 @@ pub fn incoming_bar(ui: &mut Ui, app: &mut AppCtx, rect: Rect, dm: &DirectMessag
     let decline = Button::new(t::action_decline())
         .ghost()
         .disabled(pending_op(app, &format!("dm_decline:{}", dm.id)));
-    let (aw, dw) = (accept.natural_width(ui), decline.natural_width(ui));
-    let buttons_w = aw + 8.0 + dw;
+    // Blocking from here too (#565), asked first as in the profile.
+    let blocking = app.client.with_state(|s| {
+        matches!(
+            s.op(&format!("block:{}", dm.peer.id)),
+            Some(OpState::Pending)
+        )
+    });
+    let block = Button::new(gelabber_i18n::blocks::action_block())
+        .ghost()
+        .disabled(blocking);
+    let (aw, dw, bw) = (
+        accept.natural_width(ui),
+        decline.natural_width(ui),
+        block.natural_width(ui),
+    );
+    let buttons_w = aw + 8.0 + dw + 8.0 + bw;
     let note = Block::wrapped(
         ui,
         &t::bar_incoming(&dm.peer.name),
@@ -544,6 +558,7 @@ pub fn incoming_bar(ui: &mut Ui, app: &mut AppCtx, rect: Rect, dm: &DirectMessag
         vec2(aw, 36.0),
     );
     let d = Rect::from_min_size(pos2(a.right() + 8.0, a.top()), vec2(dw, 36.0));
+    let b = Rect::from_min_size(pos2(d.right() + 8.0, a.top()), vec2(bw, 36.0));
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
     if child.put(a, accept).clicked() {
         app.client.accept_dm_request(dm.id);
@@ -551,6 +566,9 @@ pub fn incoming_bar(ui: &mut Ui, app: &mut AppCtx, rect: Rect, dm: &DirectMessag
     if child.put(d, decline).clicked() {
         app.client.decline_dm_request(dm.id);
         app.nav.navigate("/d/requests");
+    }
+    if child.put(b, block).clicked() {
+        overlays::ask(ui.ctx(), Question::block(dm.peer.id, &dm.peer.name));
     }
 }
 

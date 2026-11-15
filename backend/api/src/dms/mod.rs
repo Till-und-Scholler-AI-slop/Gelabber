@@ -210,6 +210,9 @@ async fn list_requests(
          JOIN users u ON u.id = p.user_id \
          WHERE me.user_id = $1 AND c.dm_request_by = p.user_id AND c.dm_declined_at IS NULL \
            AND c.dm_request_sent > 0 \
+           AND NOT EXISTS (SELECT 1 FROM user_blocks b \
+                           WHERE (b.blocker_id = me.user_id AND b.blocked_id = p.user_id) \
+                              OR (b.blocker_id = p.user_id AND b.blocked_id = me.user_id)) \
          ORDER BY (SELECT MAX(m.created_at) FROM messages m WHERE m.channel_id = c.id) DESC NULLS LAST, c.id"
     ))
     .bind(user.id)
@@ -240,7 +243,8 @@ async fn lock_incoming(
 }
 
 /// `POST /api/dms/{id}/accept`: the request becomes an ordinary DM. It does
-/// not make the two friends. Also after a decline.
+/// not make the two friends. Also after a decline, but not across a block
+/// (#565).
 async fn accept_request(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -250,6 +254,9 @@ async fn accept_request(
     let sender = lock_incoming(&mut tx, channel_id, user.id)
         .await?
         .ok_or(ApiError::NotFound)?;
+    crate::blocks::between(&mut *tx, user.id, sender)
+        .await?
+        .refuse(ApiError::NotFound)?;
     accept_in(&mut tx, channel_id, &[user.id, sender]).await?;
     tx.commit().await?;
     crate::gateway::delivery::wake(&state);

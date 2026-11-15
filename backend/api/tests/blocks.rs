@@ -335,6 +335,83 @@ async fn blocking_ends_friendship_and_requests(pool: PgPool) {
     );
 }
 
+async fn react(client: &mut Client, message: &str) -> Response {
+    client
+        .send(
+            Method::PUT,
+            &format!("/api/messages/{message}/reactions/%F0%9F%91%8D"),
+            None,
+        )
+        .await
+}
+
+#[sqlx::test]
+async fn reactions_in_a_closed_dm_are_refused_both_ways(pool: PgPool) {
+    let mut w = world(common::state(pool)).await;
+    let bob = w.bob.user_id().to_owned();
+    w.ada.befriend(&bob).await;
+    let dm = open_dm(&mut w.ada, &bob).await;
+    let dm = dm.body["id"].as_str().unwrap().to_owned();
+    let adas = text(&mut w.ada, &dm, "von ada").await;
+    let adas = adas.body["id"].as_str().unwrap().to_owned();
+    let bobs = text(&mut w.bob, &dm, "von bob").await;
+    let bobs = bobs.body["id"].as_str().unwrap().to_owned();
+    block(&mut w.ada, &bob).await;
+
+    refused(
+        &react(&mut w.bob, &adas).await,
+        StatusCode::FORBIDDEN,
+        "dm_closed",
+    );
+    refused(
+        &react(&mut w.ada, &bobs).await,
+        StatusCode::FORBIDDEN,
+        "blocked",
+    );
+    // On a shared server reactions stay open: the clients fold there.
+    let open = text(&mut w.bob, &w.channel.clone(), "im server").await;
+    let open = open.body["id"].as_str().unwrap().to_owned();
+    assert_eq!(react(&mut w.ada, &open).await.status, StatusCode::OK);
+}
+
+#[sqlx::test]
+async fn the_blockers_own_request_waits_out_the_block(pool: PgPool) {
+    let mut w = world(common::state(pool)).await;
+    let bob = w.bob.user_id().to_owned();
+    // Ada writes Bob a message request, then blocks him.
+    let dm = open_dm(&mut w.ada, &bob).await;
+    assert_eq!(dm.status, StatusCode::CREATED, "{}", dm.body);
+    let dm = dm.body["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        text(&mut w.ada, &dm, "hallo").await.status,
+        StatusCode::CREATED
+    );
+    block(&mut w.ada, &bob).await;
+
+    // Bob neither sees nor accepts it while the block stands.
+    let res = w.bob.send(Method::GET, "/api/dms/requests", None).await;
+    assert_eq!(res.body, json!([]));
+    let accept = w
+        .bob
+        .send(Method::POST, &format!("/api/dms/{dm}/accept"), None)
+        .await;
+    refused(&accept, StatusCode::NOT_FOUND, "not_found");
+
+    // After the unblock it is live again, not silently declined.
+    unblock(&mut w.ada, &bob).await;
+    assert_eq!(
+        text(&mut w.ada, &dm, "nochmal").await.status,
+        StatusCode::CREATED
+    );
+    let res = w.bob.send(Method::GET, "/api/dms/requests", None).await;
+    assert_eq!(res.body.as_array().unwrap().len(), 1, "{}", res.body);
+    let accept = w
+        .bob
+        .send(Method::POST, &format!("/api/dms/{dm}/accept"), None)
+        .await;
+    assert_eq!(accept.status, StatusCode::OK, "{}", accept.body);
+}
+
 async fn unread_row(client: &mut Client, channel: &str) -> Value {
     let res = client.send(Method::GET, "/api/messages/unread", None).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
@@ -436,17 +513,63 @@ async fn only_the_blocker_hears_of_a_block(pool: PgPool) {
     let state = common::ws_state(pool);
     let addr = common::serve_ws_state(state.clone()).await;
     let mut w = world(state).await;
+    let ada = w.ada.user_id().to_owned();
+    let bob = w.bob.user_id().to_owned();
+    // Bob's message request to Ada is declined by the block.
+    let dm = open_dm(&mut w.bob, &ada).await;
+    let dm = dm.body["id"].as_str().unwrap().to_owned();
+    text(&mut w.bob, &dm, "hallo").await;
     let mut ada_ws = socket(addr, &w.ada).await;
     let mut bob_ws = socket(addr, &w.bob).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let bob = w.bob.user_id().to_owned();
     block(&mut w.ada, &bob).await;
     let bl = |f: &Value| f["op"] == "bl";
+    let mr = |f: &Value| f["op"] == "mr";
     assert!(
         frame(&mut ada_ws, Duration::from_secs(5), bl)
             .await
             .is_some()
+    );
+    assert!(
+        frame(&mut ada_ws, Duration::from_secs(5), mr)
+            .await
+            .is_some(),
+        "Ada's incoming requests changed"
+    );
+    assert!(
+        frame(&mut bob_ws, Duration::from_millis(500), mr)
+            .await
+            .is_none(),
+        "Bob's did not"
+    );
+
+    // Bob's typing in the closed DM reaches nobody.
+    for ws in [&mut ada_ws, &mut bob_ws] {
+        ws.send(Message::Text(
+            json!({ "op": "s", "s": dm, "c": dm }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+        assert!(
+            frame(ws, Duration::from_secs(5), |f| f["op"] == "ok")
+                .await
+                .is_some()
+        );
+    }
+    bob_ws
+        .send(Message::Text(
+            json!({ "op": "y", "s": dm, "c": dm, "on": true })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        frame(&mut ada_ws, Duration::from_millis(700), |f| f["op"] == "y")
+            .await
+            .is_none(),
+        "no typing across a block"
     );
     unblock(&mut w.ada, &bob).await;
     assert!(

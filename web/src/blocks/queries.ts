@@ -25,6 +25,7 @@ import { blocks as blocksCatalog } from "../i18n/catalogs/blocks.ts";
 import { getGateway } from "../ws/client.ts";
 import type { AccountFrame } from "../ws/protocol.ts";
 import * as remote from "./api.ts";
+import type { BlockedUser } from "./types.ts";
 
 export const blockKeys = {
   list: (userId: string, generation: number) =>
@@ -40,6 +41,24 @@ export function useBlocks() {
     enabled: userId.length > 0,
     staleTime: Infinity,
   });
+}
+
+/**
+ * Whether `authorId` is someone the user blocks, from what is cached: for
+ * code outside React, such as the notification listener. False until the
+ * list is in.
+ */
+export function blocksAuthor(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  authorId: string,
+): boolean {
+  return (
+    client
+      .getQueryData<BlockedUser[]>(blockKeys.list(userId, generation))
+      ?.some((row) => row.id === authorId) ?? false
+  );
 }
 
 /** The ids the signed-in user blocks; empty until the list is in. */
