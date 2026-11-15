@@ -70,11 +70,11 @@ describe("picture box", () => {
   it("knows the height of a mosaic before it loads", () => {
     const many = (n: number) =>
       Array.from({ length: n }, (_, i) => picture(`many${i}`));
-    expect(picturesHeight(many(2))).toBe(204);
-    expect(picturesHeight(many(3))).toBe(271);
-    expect(picturesHeight(many(4))).toBe(404);
-    expect(picturesHeight(many(5))).toBe(337);
-    expect(picturesHeight(many(9))).toBe(271);
+    expect(picturesHeight(many(2))).toBe(200);
+    expect(picturesHeight(many(3))).toBe(267);
+    expect(picturesHeight(many(4))).toBe(400);
+    expect(picturesHeight(many(5))).toBe(333);
+    expect(picturesHeight(many(9))).toBe(267);
     expect(mosaic(9).tiles).toBe(6);
   });
 

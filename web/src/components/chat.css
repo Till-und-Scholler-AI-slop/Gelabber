@@ -2335,10 +2335,15 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   }
 }
 .lr-alt-text {
+  /* Fixed to the badge (Attachments.tsx), so a mosaic tile's clip does not
+     cut it; long texts scroll. */
+  position: fixed;
+  z-index: 30;
   display: block;
   width: max-content;
-  max-width: min(320px, 100%);
-  margin-top: 4px;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: min(40vh, 320px);
+  overflow: auto;
   padding: 6px 8px;
   border-radius: var(--lr-radius-small);
   background: rgb(0 0 0 / 0.85);
@@ -2350,7 +2355,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-alt-text > button {
   display: block;
-  margin-top: 4px;
+  margin-bottom: 4px;
   color: #fff;
   font-weight: 600;
   text-decoration: underline;

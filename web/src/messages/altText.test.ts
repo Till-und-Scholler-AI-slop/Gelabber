@@ -5,6 +5,7 @@ import {
   altTextLength,
   altTextOf,
   setAltText,
+  withoutControls,
 } from "./altText.ts";
 
 describe("alt texts of files not sent yet (#575)", () => {
@@ -16,6 +17,12 @@ describe("alt texts of files not sent yet (#575)", () => {
     expect(altTextOf(b)).toBeUndefined();
     setAltText(a, "   ");
     expect(altTextOf(a)).toBeUndefined();
+  });
+
+  it("drops control characters but keeps tabs and line breaks", () => {
+    expect(withoutControls("a\u000bb\u000cc\u0000d\u007f\te\nf")).toBe(
+      "abcd\te\nf",
+    );
   });
 
   it("counts characters as the server does", () => {

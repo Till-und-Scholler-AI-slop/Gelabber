@@ -17,6 +17,17 @@ export function setAltText(file: File, text: string): void {
   else texts.delete(file);
 }
 
+/** Control characters the server refuses (all but tab and line break),
+ *  as `validateContent` checks message text. */
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+
+/** The text without the control characters a paste can bring along, so a
+ *  save does not fail on what nobody can see. */
+export function withoutControls(text: string): string {
+  return text.replace(CONTROL, "");
+}
+
 /** Characters as the server counts them (code points, not UTF-16 units). */
 export function altTextLength(text: string): number {
   return [...text.trim()].length;

@@ -5,7 +5,6 @@
 import {
   useContext,
   useEffect,
-  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -292,9 +291,16 @@ function AttachmentImage({
               .map(lightboxImage),
           );
         }}
-        aria-label={t("attachment.enlargeLabel", {
-          name: attachment.description ?? attachment.filename,
-        })}
+        // The "+N" over the last tile is part of the link's name, as a
+        // label on the span inside is not read.
+        aria-label={[
+          t("attachment.enlargeLabel", {
+            name: attachment.description ?? attachment.filename,
+          }),
+          more && moreCount > 0 ? more : "",
+        ]
+          .filter(Boolean)
+          .join(", ")}
         className={className}
         style={{
           ...sized,
@@ -335,7 +341,7 @@ function AttachmentImage({
           </span>
         ) : null}
         {more && moreCount > 0 ? (
-          <span className="lr-attachment-more" aria-label={more}>
+          <span className="lr-attachment-more" aria-hidden="true">
             +{moreCount}
           </span>
         ) : null}
@@ -366,8 +372,46 @@ function AltTextBadge({
   const t = useT(chat);
   const [open, setOpen] = useState(false);
   const hovered = useRef(false);
-  const id = useId();
+  const badge = useRef<HTMLButtonElement>(null);
+  // Where the bubble goes: fixed to the badge, outside the mosaic's clip.
+  const [at, setAt] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    maxHeight: number;
+  }>();
   const text = attachment.description;
+  const show = (next: boolean) => {
+    const box = badge.current?.getBoundingClientRect();
+    if (next && box) {
+      // Below the badge, or above it where more room is (a picture low
+      // in the window); never past the window's edge.
+      const below = window.innerHeight - box.bottom - 12;
+      const above = box.top - 12;
+      const left = Math.max(8, Math.min(box.left, window.innerWidth - 328));
+      setAt(
+        below >= 160 || below >= above
+          ? { top: box.bottom + 4, left, maxHeight: below }
+          : {
+              bottom: window.innerHeight - box.top + 4,
+              left,
+              maxHeight: above,
+            },
+      );
+    }
+    setOpen(next);
+  };
+  // The list scrolls under a fixed bubble: it goes.
+  useEffect(() => {
+    if (!open) return;
+    const hide = () => setOpen(false);
+    window.addEventListener("scroll", hide, { capture: true, passive: true });
+    window.addEventListener("resize", hide);
+    return () => {
+      window.removeEventListener("scroll", hide, { capture: true });
+      window.removeEventListener("resize", hide);
+    };
+  }, [open]);
   if (!text && !onEdit) return null;
   if (!text)
     return (
@@ -387,40 +431,42 @@ function AltTextBadge({
       onPointerLeave={(event) => {
         if (event.pointerType !== "mouse") return;
         hovered.current = false;
-        setOpen(false);
+        show(false);
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && open) {
           event.stopPropagation();
-          setOpen(false);
+          show(false);
         }
       }}
     >
+      {/* No expanded state for screen readers: the text it shows is
+          already the picture's name, and is hidden from them here. */}
       <button
+        ref={badge}
         type="button"
         className="lr-alt-badge"
-        aria-expanded={open}
-        aria-controls={id}
         aria-label={t("altText.show")}
         onPointerEnter={(event) => {
           if (event.pointerType !== "mouse") return;
           hovered.current = true;
-          setOpen(true);
+          show(true);
         }}
         // A mouse opened it on hover already: its click keeps it open.
-        onClick={() => setOpen((was) => (hovered.current ? true : !was))}
+        onClick={() => show(hovered.current ? true : !open)}
       >
         {t("altText.badge")}
       </button>
       {open ? (
-        <span id={id} className="lr-alt-text">
-          {/* Already read out as the picture's alt. */}
-          <span aria-hidden="true">{text}</span>
+        <span className="lr-alt-text" style={at}>
+          {/* First, so a long text does not push it out of reach. */}
           {onEdit ? (
             <button type="button" onClick={onEdit}>
               {t("altText.edit")}
             </button>
           ) : null}
+          {/* Already read out as the picture's alt. */}
+          <span aria-hidden="true">{text}</span>
         </span>
       ) : null}
     </span>

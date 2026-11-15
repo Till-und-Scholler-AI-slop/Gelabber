@@ -9,6 +9,7 @@ import { useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { formatSize } from "../messages/rules.ts";
+import { isTauriApp } from "../tauriApp.ts";
 import { DownloadLink } from "./Attachments.tsx";
 import { CloseIcon } from "./Icons.tsx";
 
@@ -28,6 +29,10 @@ export type LightboxImage = {
   download?: string;
   /** "Open original" in a new tab, where tabs exist. */
   open?: string;
+  /** The original's size as shown, from the API: the box the thumbnail
+   *  and the original fill alike, and what "actual size" means. */
+  width?: number;
+  height?: number;
 };
 
 /** The most a picture is enlarged, relative to fitting the screen. */
@@ -39,8 +44,11 @@ const DOUBLE_TAP_MS = 300;
 type View = { scale: number; x: number; y: number };
 const FIT: View = { scale: 1, x: 0, y: 0 };
 
-/** Tabs exist outside the installed web app and the desktop app. */
+/** Tabs exist outside the installed web app and the desktop app. The
+ *  old Tauri shell is no standalone window, but its system browser has no
+ *  session cookie. */
 function hasTabs(): boolean {
+  if (isTauriApp()) return false;
   try {
     return !window.matchMedia("(display-mode: standalone)").matches;
   } catch {
@@ -83,6 +91,10 @@ export function ImageLightbox({
   // The original once it has loaded, per picture.
   const [loaded, setLoaded] = useState<Record<string, true>>({});
   const [drag, setDrag] = useState({ x: 0, y: 0 });
+  // A finger or the mouse is down: the picture follows it, no easing.
+  const [gesturing, setGesturing] = useState(false);
+  // The stage's size, for the box a picture of known size fills.
+  const [stageSize, setStageSize] = useState<{ w: number; h: number }>();
 
   const fallback = useRef(fallbackFocus);
   const close = useRef(onClose);
@@ -94,6 +106,21 @@ export function ImageLightbox({
   const closeButton = useRef<HTMLButtonElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const picture = useRef<HTMLImageElement>(null);
+  // Counts mounts, so a cleanup can tell a remount (StrictMode) from the
+  // end and leave the history entry to the next mount.
+  const mounts = useRef(0);
+
+  useEffect(() => {
+    const element = stage.current;
+    if (!element) return;
+    const measure = () =>
+      setStageSize({ w: element.clientWidth, h: element.clientHeight });
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -107,16 +134,24 @@ export function ImageLightbox({
     closeButton.current?.focus({ preventScroll: true });
     // The back button (Android, browser) closes the picture, not the page:
     // an entry of our own, with the router's state, so it sees no move.
+    // One entry, also when mounted twice.
+    const mount = ++mounts.current;
     let popped = false;
     const onPop = () => {
       popped = true;
       close.current();
     };
-    window.history.pushState({ ...window.history.state, lightbox: true }, "");
+    if (!window.history.state?.lightbox)
+      window.history.pushState({ ...window.history.state, lightbox: true }, "");
     window.addEventListener("popstate", onPop);
     return () => {
       window.removeEventListener("popstate", onPop);
-      if (!popped && window.history.state?.lightbox) window.history.back();
+      // Later, and only if no new mount took the entry over meanwhile.
+      if (!popped)
+        window.setTimeout(() => {
+          if (mounts.current === mount && window.history.state?.lightbox)
+            window.history.back();
+        }, 0);
       if (dialog.open) dialog.close();
       if (opener?.isConnected) opener.focus({ preventScroll: true });
       else fallback.current?.();
@@ -134,6 +169,9 @@ export function ImageLightbox({
     original.src = current.full;
     return () => {
       live = false;
+      // Stepped on: the original of a picture passed by is not wanted.
+      original.onload = null;
+      original.src = "";
     };
   }, [current.id, current.full, loaded]);
 
@@ -167,9 +205,8 @@ export function ImageLightbox({
   const actualSize = () => {
     const img = picture.current;
     if (!img || !img.clientWidth) return 2;
-    const natural = loaded[current.id]
-      ? Math.max(img.naturalWidth, 1)
-      : img.naturalWidth;
+    // The original's width, also while the thumbnail is on screen.
+    const natural = current.width ?? img.naturalWidth;
     return Math.max(2, natural / img.clientWidth);
   };
 
@@ -182,6 +219,9 @@ export function ImageLightbox({
     pinch?: { distance: number; scale: number };
     moved: boolean;
     touch: boolean;
+    /** Went down on the picture. Pointer capture makes the stage the
+     *  target of every later event, so this is decided here. */
+    onPicture: boolean;
   } | null>(null);
   const lastTap = useRef(0);
 
@@ -197,7 +237,9 @@ export function ImageLightbox({
       x: event.clientX,
       y: event.clientY,
     });
+    const onPicture = event.target === picture.current;
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    setGesturing(true);
     if (pointers.current.size === 2) {
       gesture.current = {
         start: { x: event.clientX, y: event.clientY },
@@ -205,6 +247,7 @@ export function ImageLightbox({
         pinch: { distance: distance(), scale: view.scale },
         moved: true,
         touch: true,
+        onPicture,
       };
     } else {
       gesture.current = {
@@ -212,6 +255,7 @@ export function ImageLightbox({
         view,
         moved: false,
         touch: event.pointerType !== "mouse",
+        onPicture,
       };
     }
   };
@@ -248,12 +292,26 @@ export function ImageLightbox({
     const g = gesture.current;
     if (!g) return;
     if (g.pinch) {
-      // The other finger may stay down; it starts no swipe.
-      if (pointers.current.size === 0) gesture.current = null;
-      else g.moved = true;
+      const [rest] = pointers.current.values();
+      if (!rest) {
+        gesture.current = null;
+        setGesturing(false);
+        return;
+      }
+      // The finger still down pans on from where it is, at the zoom the
+      // pinch left; it starts no swipe.
+      gesture.current = {
+        start: rest,
+        view,
+        moved: true,
+        touch: true,
+        onPicture: false,
+      };
+      setDrag({ x: 0, y: 0 });
       return;
     }
     gesture.current = null;
+    setGesturing(false);
     const dx = event.clientX - g.start.x;
     const dy = event.clientY - g.start.y;
     setDrag({ x: 0, y: 0 });
@@ -265,7 +323,7 @@ export function ImageLightbox({
       return;
     }
     // A tap or click.
-    const onPicture = event.target === picture.current;
+    const { onPicture } = g;
     if (g.touch) {
       const now = event.timeStamp;
       if (now - lastTap.current < DOUBLE_TAP_MS) {
@@ -326,6 +384,15 @@ export function ImageLightbox({
       : drag.x || drag.y
         ? `translate(${drag.x}px, ${drag.y}px)`
         : undefined;
+  // A picture of known size fills its fitted box from the first (800 px)
+  // thumbnail on, so the original takes the same place.
+  const fitted =
+    current.width && current.height && stageSize?.w && stageSize.h
+      ? Math.min(1, stageSize.w / current.width, stageSize.h / current.height)
+      : undefined;
+  const box = fitted
+    ? { width: current.width! * fitted, height: current.height! * fitted }
+    : undefined;
   const fading = drag.y > 0 ? Math.max(0.3, 1 - drag.y / 400) : undefined;
   const label = many
     ? tc("lightbox.label", {
@@ -365,6 +432,7 @@ export function ImageLightbox({
         onPointerCancel={(event) => {
           pointers.current.delete(event.pointerId);
           gesture.current = null;
+          setGesturing(false);
           setDrag({ x: 0, y: 0 });
         }}
       >
@@ -374,8 +442,8 @@ export function ImageLightbox({
           src={src}
           alt={current.alt ?? current.filename}
           draggable={false}
-          className={drag.x || drag.y ? "is-dragging" : undefined}
-          style={transform ? { transform } : undefined}
+          className={drag.x || drag.y || gesturing ? "is-dragging" : undefined}
+          style={box || transform ? { ...box, transform } : undefined}
         />
       </div>
       {current.alt ? (

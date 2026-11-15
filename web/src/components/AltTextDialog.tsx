@@ -3,7 +3,11 @@
 
 import { useId, useState } from "react";
 
-import { ALT_TEXT_MAX, altTextLength } from "../messages/altText.ts";
+import {
+  ALT_TEXT_MAX,
+  altTextLength,
+  withoutControls,
+} from "../messages/altText.ts";
 import { useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { common } from "../i18n/catalogs/common.ts";
@@ -33,7 +37,7 @@ export function AltTextDialog({
   const t = useT(chat);
   const tc = useT(common);
   const ids = useId();
-  const [text, setText] = useState(initial);
+  const [text, setText] = useState(() => withoutControls(initial));
   const count = altTextLength(text);
   const tooLong = count > ALT_TEXT_MAX;
   const formId = `${ids}-form`;
@@ -83,7 +87,7 @@ export function AltTextDialog({
           autoFocus
           invalid={tooLong}
           aria-describedby={`${ids}-hint ${ids}-count`}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => setText(withoutControls(event.target.value))}
           onKeyDown={(event) => {
             // Ctrl/Cmd+Enter saves; Enter alone is a line break.
             if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {

@@ -25,7 +25,6 @@ const SHAPE_MAX = 3;
 export const UNKNOWN_BOX_HEIGHT = 300;
 /** Tiles a mosaic shows; the last says "+N" for the rest. */
 export const MOSAIC_TILES = 6;
-const GAP = 4;
 
 /** How many sizes the session keeps. A picture shown again is remembered
  *  again, so what goes first is what was seen longest ago. */
@@ -113,7 +112,8 @@ export function mosaic(count: number): {
 export function picturesHeight(pictures: Attachment[]): number {
   if (pictures.length === 0) return 0;
   if (pictures.length === 1) return imageBoxHeight(pictures[0]!);
-  return Math.round(PICTURE_BOX * mosaic(pictures.length).ratio + GAP);
+  // The gap is inside the grid's aspect-ratio box.
+  return Math.round(PICTURE_BOX * mosaic(pictures.length).ratio);
 }
 
 /** How tall the box of a message's only picture is, as far as known. */

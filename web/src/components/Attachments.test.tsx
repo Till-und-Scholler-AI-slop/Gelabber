@@ -178,7 +178,8 @@ describe("picture box", () => {
     const ten = renderToStaticMarkup(
       <AttachmentList attachments={shots(10)} />,
     );
-    expect(ten).toContain('aria-label="4 weitere Bilder">+4</span>');
+    expect(ten).toContain('aria-label="a.png vergrößern, 4 weitere Bilder"');
+    expect(ten).toContain('aria-hidden="true">+4</span>');
   });
 
   it("shows upload progress in percent on the picture", () => {
@@ -288,7 +289,7 @@ describe("alt text (#575)", () => {
     expect(html).not.toContain('alt="IMG_20261114_175312.jpg"');
     expect(html).toContain('class="lr-alt-badge"');
     expect(html).toContain('aria-label="Alt-Text anzeigen"');
-    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("aria-expanded");
   });
 
   it("keeps the file name and no badge without one", () => {
