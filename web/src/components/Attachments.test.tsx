@@ -177,7 +177,8 @@ describe("picture box", () => {
     const ten = renderToStaticMarkup(
       <AttachmentList attachments={shots(10)} />,
     );
-    expect(ten).toContain('aria-label="4 weitere Bilder">+4</span>');
+    expect(ten).toContain('aria-label="a.png vergrößern, 4 weitere Bilder"');
+    expect(ten).toContain('aria-hidden="true">+4</span>');
   });
 
   it("shows upload progress in percent on the picture", () => {

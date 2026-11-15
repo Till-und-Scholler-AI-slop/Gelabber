@@ -248,7 +248,14 @@ function AttachmentImage({
             .map(lightboxImage),
         );
       }}
-      aria-label={t("attachment.enlargeLabel", { name: attachment.filename })}
+      // The "+N" over the last tile is part of the link's name, as a
+      // label on the span inside is not read.
+      aria-label={[
+        t("attachment.enlargeLabel", { name: attachment.filename }),
+        more && moreCount > 0 ? more : "",
+      ]
+        .filter(Boolean)
+        .join(", ")}
       className={className}
       style={{
         ...sized,
@@ -287,7 +294,7 @@ function AttachmentImage({
         <span className="lr-attachment-badge">{t("attachment.animated")}</span>
       ) : null}
       {more && moreCount > 0 ? (
-        <span className="lr-attachment-more" aria-label={more}>
+        <span className="lr-attachment-more" aria-hidden="true">
           +{moreCount}
         </span>
       ) : null}

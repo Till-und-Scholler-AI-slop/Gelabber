@@ -23,5 +23,9 @@ export function lightboxImage(attachment: Attachment): LightboxImage {
       ? undefined
       : attachmentDownloadUrl(attachment.id),
     open: isPendingId(attachment.id) ? undefined : attachmentUrl(attachment.id),
+    // The API's size only: one measured inline may be a thumbnail's.
+    ...(attachment.width && attachment.height
+      ? { width: attachment.width, height: attachment.height }
+      : {}),
   };
 }
