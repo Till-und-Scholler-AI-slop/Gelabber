@@ -535,6 +535,7 @@ fn account_popover(
             let mut save = false;
             let mut field_ui = ui.new_child(egui::UiBuilder::new().max_rect(field_rect));
             let field = TextField::new("user-status-text", &mut draft.text)
+                .name(shell::user_panel_status())
                 .char_limit(STATUS_MAX)
                 .show(&mut field_ui);
             save |= field.submitted;

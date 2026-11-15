@@ -2563,7 +2563,7 @@
       "locale": "en",
       "actions": [
         {
-          "click": "/^User menu/"
+          "click": "/^Tom/"
         }
       ]
     },
@@ -2587,10 +2587,10 @@
       "locale": "en",
       "actions": [
         {
-          "click": "/^User menu/"
+          "click": "/^Tom/"
         },
         {
-          "click": "/^Give feedback/"
+          "menuitem": "/^Give feedback/"
         }
       ]
     },
