@@ -303,6 +303,12 @@ impl Notifier {
             }
             self.silenced = reading;
         }
+        // Do not disturb (#590): no notification, cue or flash; what came
+        // meanwhile is dropped, not saved up for later.
+        if state.presence_mode_now() == gelabber_client::PresenceMode::Dnd {
+            self.live_seen = state.live_started.last().map_or(0, |l| l.seq);
+            return out;
+        }
         for event in events {
             if let Some(notice) = self.decide(state, me, &event, cx, &mut out) {
                 let shown = match &self.backend {

@@ -153,6 +153,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                 let label = match status {
                     PresenceStatus::Online => gelabber_i18n::common::online(),
                     PresenceStatus::Idle => members::card_away(),
+                    // Grouped with Online (`presenceGroup`); never a group.
+                    PresenceStatus::Dnd => gelabber_i18n::common::online(),
                     PresenceStatus::Offline => gelabber_i18n::common::offline(),
                 };
                 let heading = Block::single(

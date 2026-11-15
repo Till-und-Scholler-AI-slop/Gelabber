@@ -726,6 +726,27 @@ impl Http {
         .await
     }
 
+    /// The account's manual presence (#590).
+    pub async fn presence_mode(&self) -> Result<ModeState> {
+        self.get("/me/presence").await
+    }
+
+    pub async fn set_presence_mode(
+        &self,
+        mode: PresenceMode,
+        duration: ModeDuration,
+    ) -> Result<ModeState> {
+        #[derive(Serialize)]
+        struct Body {
+            mode: PresenceMode,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            duration: Option<ModeDuration>,
+        }
+        let duration = (mode != PresenceMode::Auto).then_some(duration);
+        self.send(Method::PUT, "/me/presence", &Body { mode, duration })
+            .await
+    }
+
     pub async fn notification_privacy(&self) -> Result<NotificationPrivacy> {
         self.get("/notification-privacy").await
     }

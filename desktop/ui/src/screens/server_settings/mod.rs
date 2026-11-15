@@ -1136,6 +1136,7 @@ fn presence(p: PresenceStatus) -> Presence {
     match p {
         PresenceStatus::Online => Presence::Online,
         PresenceStatus::Idle => Presence::Away,
+        PresenceStatus::Dnd => Presence::Dnd,
         PresenceStatus::Offline => Presence::Offline,
     }
 }

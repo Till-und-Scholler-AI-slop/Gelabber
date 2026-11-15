@@ -46,11 +46,14 @@ impl AvatarSize {
     }
 }
 
-/// Presence of `PresenceAvatar`: `o` online, `i` away, `x` offline.
+/// Presence of `PresenceAvatar`: `o` online, `i` away, `d` do not disturb
+/// (#590), `x` offline; `Invisible` only on your own avatar (web `v`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Presence {
     Online,
     Away,
+    Dnd,
+    Invisible,
     Offline,
 }
 
@@ -60,6 +63,8 @@ impl Presence {
         match s {
             "o" => Self::Online,
             "i" => Self::Away,
+            "d" => Self::Dnd,
+            "v" => Self::Invisible,
             _ => Self::Offline,
         }
     }
@@ -68,7 +73,47 @@ impl Presence {
         match self {
             Self::Online => gelabber_i18n::common::online(),
             Self::Away => gelabber_i18n::chat::presence_away(),
+            Self::Dnd => gelabber_i18n::chat::presence_dnd(),
+            Self::Invisible => gelabber_i18n::chat::presence_invisible(),
             Self::Offline => gelabber_i18n::common::offline(),
+        }
+    }
+
+    /// `.gel-presence-dot` of `diameter` at `center`, with a 2px `ring`:
+    /// do not disturb red with a bar across, invisible a hollow grey ring
+    /// (index.css `.gel-presence-d`, `.gel-presence-v`).
+    pub fn paint(
+        self,
+        painter: &egui::Painter,
+        theme: &Theme,
+        center: Pos2,
+        diameter: f32,
+        ring: egui::Color32,
+    ) {
+        let outer = diameter / 2.0;
+        let inner = outer - 2.0;
+        painter.circle_filled(center, outer, ring);
+        let fill = match self {
+            Self::Online => theme.c.online,
+            Self::Away => theme.c.warning,
+            Self::Dnd => theme.c.danger,
+            Self::Invisible | Self::Offline => theme.c.muted,
+        };
+        painter.circle_filled(center, inner, fill);
+        match self {
+            Self::Dnd => {
+                // 56 % wide, 24 % tall, in the ring's colour.
+                let bar = Vec2::new(inner * 2.0 * 0.56, (inner * 2.0 * 0.24).max(1.5));
+                painter.rect_filled(
+                    Rect::from_center_size(center, bar),
+                    crate::theme::corner(bar.y / 2.0),
+                    ring,
+                );
+            }
+            Self::Invisible => {
+                painter.circle_filled(center, inner * 0.38, ring);
+            }
+            _ => {}
         }
     }
 }
@@ -156,17 +201,13 @@ impl<'a> Avatar<'a> {
         if let Some(presence) = self.presence {
             let dot = (rect.width() * 0.23).max(10.0);
             let dot_rect = Rect::from_min_max(rect.max - Vec2::splat(dot), rect.max);
-            let fill = match presence {
-                Presence::Online => theme.c.online,
-                Presence::Away => theme.c.warning,
-                Presence::Offline => theme.c.muted,
-            };
-            painter.circle_filled(
+            presence.paint(
+                painter,
+                &theme,
                 dot_rect.center(),
-                dot / 2.0,
+                dot,
                 self.ring.unwrap_or(theme.c.bg),
             );
-            painter.circle_filled(dot_rect.center(), dot / 2.0 - 2.0, fill);
         }
     }
 }

@@ -324,11 +324,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
     let found = app.client.with_state(|s| {
         let dm = s.dm(channel)?;
         let me = s.me();
-        let presence = match s.presence_of(channel, dm.peer.id) {
-            gelabber_client::PresenceStatus::Online => Presence::Online,
-            gelabber_client::PresenceStatus::Idle => Presence::Away,
-            _ => Presence::Offline,
-        };
+        let presence = crate::screens::shell::common::presence(s.presence_of(channel, dm.peer.id));
         let mut members = vec![Member {
             id: dm.peer.id,
             name: dm.peer.name.clone(),
