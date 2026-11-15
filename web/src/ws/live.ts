@@ -216,13 +216,19 @@ export function resetLiveStores(): void {
 
 export type PresenceGroup = "o" | "i" | "x";
 
+/** The member list's group: do not disturb (#590) is online, as is a
+ * status this client does not know. */
+export function presenceGroup(status: PresenceStatus): PresenceGroup {
+  return status === "i" || status === "x" ? status : "o";
+}
+
 export function groupMembers<T extends { user_id: string; name: string }>(
   members: T[],
   statusOf: (userId: string) => PresenceStatus,
 ): { group: PresenceGroup; label: string; members: T[] }[] {
   const buckets: Record<PresenceGroup, T[]> = { o: [], i: [], x: [] };
   for (const member of members) {
-    buckets[statusOf(member.user_id)].push(member);
+    buckets[presenceGroup(statusOf(member.user_id))].push(member);
   }
   for (const group of Object.values(buckets)) {
     group.sort((a, b) => compareNames(a.name, b.name));

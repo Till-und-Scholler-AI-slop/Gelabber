@@ -192,6 +192,30 @@ describe("account menu", () => {
     );
   });
 
+  it("starts with the presence modes, the current one checked (#590)", () => {
+    fixture.session = { user: lena, operator: false };
+    // A server render reads the store's first state: automatic.
+    const markup = menuMarkup();
+    const radios = [
+      ...markup.matchAll(
+        /role="menuitemradio" aria-checked="(true|false)"[^>]*data-presence-mode="(\w+)"/g,
+      ),
+    ].map(([, checked, mode]) => [mode, checked]);
+    expect(radios).toEqual([
+      ["auto", "true"],
+      ["idle", "false"],
+      ["dnd", "false"],
+      ["invisible", "false"],
+    ]);
+    // Away and the others ask for how long first; automatic does not.
+    expect(markup.match(/aria-expanded="false"/g)).toHaveLength(3);
+    expect(markup).toContain('<span class="presence-mode__dot gel-presence-d"');
+    // The modes come before the account's entries.
+    expect(markup.indexOf("Nicht stören")).toBeLessThan(
+      markup.indexOf("Profil bearbeiten"),
+    );
+  });
+
   it("moves with the arrows, round the ends, and up into the status field", () => {
     expect(accountStep("ArrowDown", 0, 3)).toBe(1);
     expect(accountStep("ArrowDown", 2, 3)).toBe(0);

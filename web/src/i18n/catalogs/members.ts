@@ -17,6 +17,7 @@ export const members = defineCatalog(
     "row.inVoice": "Im Sprachkanal",
 
     "card.away": "Abwesend",
+    "card.dnd": "Nicht stören",
     "card.about": "Über mich",
 
     "profile.title": "Profil von {name}",
@@ -57,6 +58,7 @@ export const members = defineCatalog(
     "row.inVoice": "In a voice channel",
 
     "card.away": "Away",
+    "card.dnd": "Do not disturb",
     "card.about": "About me",
 
     "profile.title": "{name}’s profile",

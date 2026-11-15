@@ -125,6 +125,8 @@ export type LiveDevice = {
   focused: boolean;
   /** The channel this window shows. */
   viewingChannelId: string | undefined;
+  /** Do not disturb (#590): no notice at all. */
+  doNotDisturb?: boolean;
 };
 
 /**
@@ -166,6 +168,7 @@ export function liveNoticeDecision(input: {
     own: false,
     channelId: start.channelId,
     viewingChannelId: device.viewingChannelId,
+    doNotDisturb: device.doNotDisturb === true,
   });
 }
 

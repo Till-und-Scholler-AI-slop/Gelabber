@@ -1216,6 +1216,23 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   flex-direction: column;
   gap: 2px;
 }
+/* Presence modes (#590): a dot per mode, durations indented below. */
+.presence-mode__dot {
+  position: relative;
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-inline: 4px;
+  border-radius: 50%;
+  /* The cut-outs take the menu's surface. */
+  --lr-bg: var(--lr-elevated);
+}
+.presence-mode .shell-menu-label > small {
+  white-space: normal;
+}
+.presence-mode__durations > .shell-menu-item {
+  padding-inline-start: 36px;
+}
 .user-account-menu > .shell-menu-item > .unread-dot {
   margin-left: auto;
 }
@@ -1356,6 +1373,18 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
 }
 .gel-presence-x {
   background: var(--lr-muted);
+}
+/* Do not disturb (#590): red with a white bar, told apart by shape too. */
+.gel-presence-d {
+  background:
+    linear-gradient(var(--lr-bg), var(--lr-bg)) center / 56% 24% no-repeat,
+    var(--lr-danger);
+}
+/* Your own avatar while invisible: a hollow ring, not offline grey. */
+.gel-presence-v {
+  background:
+    radial-gradient(circle, var(--lr-bg) 0 38%, transparent 39%),
+    var(--lr-muted);
 }
 /* Avatar decorations (profile card). Drawn around the avatar in the
    person's accent color; the gap ring uses the surface behind it. */

@@ -61,6 +61,19 @@ describe("presence store", () => {
     expect(groups[0]?.members[0]?.name).toBe("Ada");
     expect(TYPING_BAR_PX).toBe(28);
   });
+
+  it("lists do not disturb with the online members (#590)", () => {
+    const groups = groupMembers(
+      [
+        { user_id: "a", name: "Ada" },
+        { user_id: "b", name: "Bob" },
+      ],
+      (id) => (id === "a" ? "d" : "o"),
+    );
+    expect(groups.map((g) => [g.group, g.members.map((m) => m.name)])).toEqual([
+      ["o", ["Ada", "Bob"]],
+    ]);
+  });
 });
 
 describe("typing store", () => {
