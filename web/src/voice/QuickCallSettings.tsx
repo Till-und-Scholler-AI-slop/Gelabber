@@ -22,6 +22,7 @@ import { useTooltip } from "../components/ui/Tooltip.tsx";
 import { useT } from "../i18n/catalog.ts";
 import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
 import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
+import { useOpenMediaSettings } from "./mediaSettingsLink.ts";
 import {
   deviceChoices,
   needsDeviceLabels,
@@ -163,7 +164,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
   const t = useT(voiceSettings);
   const ids = useId();
   const settings = useMediaSettings();
-  const openDialog = useMediaSettings((s) => s.openDialog);
+  const openSettings = useOpenMediaSettings();
   const capable = useCapabilities();
   const joined = useVoice((s) => s.status === "joined");
   const micLive = useVoice((s) => s.mic === "live" || s.mic === "ptt-idle");
@@ -283,7 +284,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
         className="voice-quick-more"
         onClick={() => {
           onMore();
-          openDialog();
+          openSettings("audio");
         }}
       >
         {t("quick.allSettings")}

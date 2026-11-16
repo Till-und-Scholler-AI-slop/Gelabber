@@ -56,6 +56,11 @@ export function useDm(id: string | undefined, enabled = true) {
     queryFn: ({ signal }) => remote.getDm(id ?? "", signal),
     enabled: userId.length > 0 && id !== undefined && enabled,
     staleTime: STALE_MS,
+    // A sent message request counts down and ends unannounced (#563).
+    refetchInterval: (query) =>
+      query.state.data?.request && !query.state.data.request.incoming
+        ? 15_000
+        : false,
     retry: (count, error) =>
       count < 2 &&
       !(

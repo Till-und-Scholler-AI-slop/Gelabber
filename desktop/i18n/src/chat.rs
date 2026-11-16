@@ -85,6 +85,11 @@ crate::strings! {
     send_presign_failed = "Dateifreigabe fehlgeschlagen." | "Preparing the upload failed.";
     send_upload_failed = "Dateiübertragung fehlgeschlagen." | "File upload failed.";
     send_bind_failed = "Nachricht speichern fehlgeschlagen." | "Saving the message failed.";
+    send_gif_gone = "Dieses GIF ist nicht mehr verfügbar." | "This GIF is no longer available.";
+    send_gif_off = "GIFs sind auf diesem Server ausgeschaltet." | "GIFs are turned off on this server.";
+    send_gif_rate_limited = "Zu viele GIFs. Warte einen Moment." | "Too many GIFs. Wait a moment.";
+    send_rate_limited = "Zu viele Nachrichten. Warte einen Moment." | "Too many messages. Wait a moment.";
+    send_forbidden = "Du darfst hier keine Nachrichten senden." | "You can't send messages here.";
     upload_timed_out = "Der Upload hat zu lange gedauert und wurde abgebrochen."
         | "The upload took too long and was cancelled.";
     upload_aborted = "Der Upload wurde abgebrochen." | "The upload was cancelled.";
@@ -226,6 +231,34 @@ pub fn pane_new_messages(count: u64, n: &str) -> String {
             count,
             format!("{n} new message"),
             format!("{n} new messages"),
+        ),
+    }
+}
+
+/// A refused send with the wait the server named (`send.gifRateLimitedWait`,
+/// `send.rateLimitedWait`).
+pub fn send_rate_limited_wait(gif: bool, seconds: u64) -> String {
+    let n = seconds;
+    match (get(), gif) {
+        (Locale::De, true) => plural(
+            n,
+            format!("Zu viele GIFs. Versuch es in {n} Sekunde noch mal."),
+            format!("Zu viele GIFs. Versuch es in {n} Sekunden noch mal."),
+        ),
+        (Locale::De, false) => plural(
+            n,
+            format!("Zu viele Nachrichten. Versuch es in {n} Sekunde noch mal."),
+            format!("Zu viele Nachrichten. Versuch es in {n} Sekunden noch mal."),
+        ),
+        (Locale::En, true) => plural(
+            n,
+            format!("Too many GIFs. Try again in {n} second."),
+            format!("Too many GIFs. Try again in {n} seconds."),
+        ),
+        (Locale::En, false) => plural(
+            n,
+            format!("Too many messages. Try again in {n} second."),
+            format!("Too many messages. Try again in {n} seconds."),
         ),
     }
 }

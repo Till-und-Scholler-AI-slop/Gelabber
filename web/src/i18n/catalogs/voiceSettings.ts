@@ -1,16 +1,11 @@
-// Audio & video settings: the settings dialog and page, the quick call
+// Audio & video settings: the settings page, the quick call
 // settings, push to talk and the microphone test.
 import { defineCatalog } from "../catalog.ts";
 
 export const voiceSettings = defineCatalog(
   "voiceSettings",
   {
-    "dialog.title": "Audio & Video",
-    "tabs.label": "Bereiche",
-    "tabs.audio": "Audio",
-    "tabs.video": "Video & Live",
-    "tabs.diagnostics": "Diagnose",
-    "panel.loadFailed": "Die Einstellungen konnten nicht geladen werden.",
+    "diagnostics.title": "Diagnose",
     percent: "{percent} %",
     "form.intro":
       "Passe Mikrofon, Lautsprecher und Kamera an. Die Übertragung hat standardmäßig keine Bitratengrenze durch Gelabber.",
@@ -183,16 +178,11 @@ export const voiceSettings = defineCatalog(
     "quick.namesAfterPermission":
       "Namen zeigt der Browser erst nach deiner Erlaubnis.",
     "quick.noKey": "Keine Taste festgelegt. Das Mikrofon bleibt stumm.",
-    "quick.allSettings": "Alle Einstellungen …",
+    "quick.allSettings": "Alle Audio-Einstellungen →",
     "quick.sendLevel": "Pegel, den die anderen hören",
   },
   {
-    "dialog.title": "Audio & video",
-    "tabs.label": "Sections",
-    "tabs.audio": "Audio",
-    "tabs.video": "Video & Live",
-    "tabs.diagnostics": "Diagnostics",
-    "panel.loadFailed": "The settings could not be loaded.",
+    "diagnostics.title": "Diagnostics",
     percent: "{percent}%",
     "form.intro":
       "Adjust your microphone, speakers and camera. By default, Gelabber puts no bitrate limit on what you send.",
@@ -363,7 +353,7 @@ export const voiceSettings = defineCatalog(
     "quick.namesAfterPermission":
       "Your browser shows names once you allow access.",
     "quick.noKey": "No key set. Your microphone stays muted.",
-    "quick.allSettings": "All settings…",
+    "quick.allSettings": "All audio settings →",
     "quick.sendLevel": "Level the others hear",
   },
 );

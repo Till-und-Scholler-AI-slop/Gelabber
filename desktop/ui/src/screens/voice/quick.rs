@@ -1,6 +1,7 @@
-//! The gear's quick settings (voice/QuickCallSettings.tsx, room.css
-//! `.voice-quick`): microphone, speaker and camera, the two volumes, voice
-//! activation or push-to-talk, and the way to all settings. Width 312.
+//! The voice room gear's quick settings (voice/QuickCallSettings.tsx,
+//! room.css `.voice-quick`): microphone, speaker and camera, the two
+//! volumes, voice activation or push-to-talk, and the way to Settings →
+//! Audio. Width 312.
 
 use egui::{Id, Rect, Response, Sense, Ui, UiBuilder, vec2};
 use gelabber_call::{CallStatus, Device, MicStatus, logic};
@@ -26,16 +27,6 @@ fn open_id() -> Id {
 
 /// Opens and closes the popover from the gear `response` at `anchor`.
 pub fn button(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect) {
-    toggle(ui, app, response, anchor, true);
-}
-
-/// [`button`] for the user panel's gear in a call: the popover opens over
-/// it from its start (`top-start`).
-pub fn panel_button(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect) {
-    toggle(ui, app, response, anchor, false);
-}
-
-fn toggle(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect, end: bool) {
     let ctx = ui.ctx().clone();
     let open: Option<Rect> = ctx.data(|d| d.get_temp(open_id())).flatten();
     let same = open.is_some_and(|r| (r.center() - anchor.center()).length() < 1.0);
@@ -47,13 +38,10 @@ fn toggle(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect, end: 
     if !same {
         return;
     }
-    let popover = Popover::new("voice-quick", anchor).min_width(312.0);
-    let popover = if end {
-        popover.align_end()
-    } else {
-        popover.above()
-    };
-    let shown = popover.show(&ctx, |ui| content(ui, app));
+    let shown = Popover::new("voice-quick", anchor)
+        .min_width(312.0)
+        .align_end()
+        .show(&ctx, |ui| content(ui, app));
     match shown {
         Some(false) => {}
         Some(true) | None => {
@@ -182,7 +170,7 @@ pub fn call_sound(ui: &mut Ui, rect: Rect, deafened: bool) -> Rect {
     used
 }
 
-/// The fields; returns true once "Alle Einstellungen …" was pressed.
+/// The fields; returns true once "Alle Audio-Einstellungen →" was pressed.
 fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -315,7 +303,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         prefs::update(&ctx, |q| *q = p);
     }
     if more {
-        super::dialogs::open_settings(&ctx, super::dialogs::Tab::Audio);
+        crate::screens::settings::open_media(&ctx, crate::screens::settings::MediaTarget::Audio);
     }
     more
 }

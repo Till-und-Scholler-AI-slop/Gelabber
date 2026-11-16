@@ -448,10 +448,11 @@ mod tests {
         // The channel header's search field, the page's first control
         // (its frame is no Tab stop of its own).
         assert_eq!(focused_label(&harness).as_deref(), Some("Suchen"));
-        // Back: the user panel's last control ends the navigation.
+        // Back: the user panel's last control, the gear, ends the
+        // navigation.
         harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
         harness.run_steps(2);
-        assert_eq!(focused_label(&harness).as_deref(), Some("Benutzermenü"));
+        assert_eq!(focused_label(&harness).as_deref(), Some("Einstellungen"));
     }
 
     /// notifyLevel.ts `unreadLabel`: every unread state says "ungelesen".

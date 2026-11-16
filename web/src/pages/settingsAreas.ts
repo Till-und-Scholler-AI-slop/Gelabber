@@ -34,6 +34,11 @@ export const SETTINGS_AREAS = [
     group: "konto",
   },
   {
+    id: "blockiert",
+    scope: "account",
+    group: "konto",
+  },
+  {
     id: "darstellung",
     group: "app",
   },

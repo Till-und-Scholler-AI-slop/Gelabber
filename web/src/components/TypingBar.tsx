@@ -4,6 +4,7 @@
 import { useMemo } from "react";
 
 import { useSession } from "../auth/session.ts";
+import { useBlockedIds } from "../blocks/queries.ts";
 import { useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import type { Member } from "../servers/types.ts";
@@ -25,11 +26,15 @@ export function TypingBar({
   const me = useSession((s) => s.user?.id);
   const byChannel = useTypingStore((s) => s.byChannel);
   const now = useTypingStore((s) => s.now);
+  const blocked = useBlockedIds();
   const names = useMemo(() => {
-    const ids = typingUserIds(byChannel, channelId, now, me);
+    // Someone the user blocks types unseen (#565).
+    const ids = typingUserIds(byChannel, channelId, now, me).filter(
+      (id) => !blocked.has(id),
+    );
     const lookup = new Map(members.map((m) => [m.user_id, m.name]));
     return ids.map((id) => lookup.get(id) ?? t("typing.someone"));
-  }, [byChannel, channelId, me, members, now, t]);
+  }, [blocked, byChannel, channelId, me, members, now, t]);
 
   return (
     <div

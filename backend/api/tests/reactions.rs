@@ -243,6 +243,7 @@ async fn removal_requires_read_but_does_not_require_write(pool: PgPool) {
 #[sqlx::test]
 async fn dm_votes_are_private_and_invalid_sequences_are_rejected(pool: PgPool) {
     let (mut a, mut b) = users(&pool, false).await;
+    a.befriend(b.user_id()).await;
     let dm = a
         .send(
             Method::POST,

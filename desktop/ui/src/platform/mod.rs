@@ -6,6 +6,7 @@
 
 pub mod aumid;
 pub mod files;
+pub mod idle;
 pub mod instance;
 pub mod legacy;
 pub mod notify;
@@ -106,6 +107,20 @@ pub fn ptt_status(ctx: &Context) -> Option<PttStatus> {
         .flatten()
 }
 
+/// Pointer or key input in the window: presence counts it as activity
+/// (`PRESENCE_ACTIVITY_EVENTS` on the web).
+fn is_user_input(event: &egui::Event) -> bool {
+    matches!(
+        event,
+        egui::Event::PointerMoved(_)
+            | egui::Event::PointerButton { .. }
+            | egui::Event::MouseWheel { .. }
+            | egui::Event::Key { .. }
+            | egui::Event::Text(_)
+            | egui::Event::Touch { .. }
+    )
+}
+
 type Wake = Arc<Mutex<Option<Context>>>;
 
 fn waker(slot: &Wake) -> Arc<dyn Fn() + Send + Sync> {
@@ -130,6 +145,8 @@ pub struct Platform {
     window_can_hide: bool,
     quitting: bool,
     front: Option<bool>,
+    /// The egui pass whose input presence last looked at.
+    input_pass: Option<u64>,
     /// Its own clock: logic-only passes (hidden, not composited) keep egui's still.
     next_tick: Option<Instant>,
     stored: state::Stored,
@@ -166,6 +183,7 @@ impl Platform {
             window_can_hide: true,
             quitting: false,
             front: None,
+            input_pass: None,
             next_tick: None,
             saved: stored.clone(),
             stored,
@@ -219,6 +237,10 @@ impl Platform {
         }
         self.tray = tray::Tray::start(self.tray_events.clone(), waker(&self.wake));
         self.updates.start(Instant::now());
+        // Tests stay on window input: the process-wide source would leak
+        // the test machine's input into every client.
+        #[cfg(not(test))]
+        idle::start();
     }
 
     fn show_window(&mut self, ctx: &Context) {
@@ -306,6 +328,15 @@ impl Platform {
         if self.front != Some(in_front) {
             self.front = Some(in_front);
             client.set_focused(in_front);
+        }
+        // While hidden, logic-only passes see the last shown frame's events
+        // again: count each pass's input once.
+        let pass = ctx.cumulative_pass_nr();
+        if self.input_pass != Some(pass) {
+            self.input_pass = Some(pass);
+            if ctx.input(|i| i.events.iter().any(is_user_input)) {
+                client.activity();
+            }
         }
         let p = prefs::get(ctx);
         let (joined, deafened) = app
@@ -630,6 +661,38 @@ mod tests {
         let stored = state::load();
         let window = stored.window.unwrap();
         assert_eq!((window.width, window.height), (900.0, 700.0));
+        drop(config);
+    }
+
+    /// Pointer input in the window counts for presence (#566): before, the
+    /// app never told the client, which went away five minutes after start.
+    #[test]
+    fn window_input_reports_presence() {
+        use gelabber_client::{ClientFrame, PresenceStatus};
+        let config = paths::testing::TempConfig::new("platform-presence");
+        let ctx = Context::default();
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let tap = sent.clone();
+        client.set_frame_tap(Some(Arc::new(move |frame: &ClientFrame| {
+            if let ClientFrame::Presence { st } = frame {
+                tap.lock().push(*st);
+            }
+        })));
+        let mut platform = Platform::new(None);
+        let mut app = GelabberApp::with_context(&ctx, client, None);
+        let mut pass = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| platform.logic(ui.ctx(), Some(&mut app)));
+            out.textures_delta.clear();
+        };
+        pass(Vec::new());
+        assert!(sent.lock().is_empty(), "no input, no presence");
+        pass(vec![egui::Event::PointerMoved(egui::pos2(10.0, 10.0))]);
+        assert_eq!(*sent.lock(), vec![Some(PresenceStatus::Online)]);
         drop(config);
     }
 

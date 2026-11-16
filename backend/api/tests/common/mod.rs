@@ -161,6 +161,7 @@ pub struct Client {
     pub jar: BTreeMap<String, String>,
     pub csrf: Option<String>,
     pub user_id: Option<String>,
+    pub db: PgPool,
 }
 
 impl Client {
@@ -179,7 +180,14 @@ impl Client {
             jar: BTreeMap::new(),
             csrf: None,
             user_id: None,
+            db: state.db.clone(),
         }
+    }
+
+    /// Make this user and `other` friends directly (#563), so a DM between
+    /// them opens as an ordinary one.
+    pub async fn befriend(&self, other: &str) {
+        befriend(&self.db, self.user_id(), other).await;
     }
 
     /// Same as [`Self::new`] but with a live Redis (ticket mint / gateway).
@@ -414,4 +422,18 @@ impl Client {
         )
         .await
     }
+}
+
+/// Makes two accounts friends directly (#563), for tests about DMs that
+/// do not care how the two met.
+pub async fn befriend(pool: &PgPool, a: &str, b: &str) {
+    sqlx::query(
+        "INSERT INTO friendships (user_low, user_high) \
+         VALUES (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid)) ON CONFLICT DO NOTHING",
+    )
+    .bind(a)
+    .bind(b)
+    .execute(pool)
+    .await
+    .expect("befriend");
 }

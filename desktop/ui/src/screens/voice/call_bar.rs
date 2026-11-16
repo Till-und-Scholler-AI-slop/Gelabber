@@ -1150,7 +1150,7 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
                 .put(a, Button::new(texts::quality_settings()).small().ghost())
                 .clicked()
             {
-                show = Some(super::dialogs::Tab::Audio);
+                show = Some(crate::screens::settings::MediaTarget::Audio);
             }
             let w2 = Block::single(
                 ui,
@@ -1165,11 +1165,11 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
             // Focus starts on the way to the details.
             crate::widgets::popover::autofocus(&details);
             if details.clicked() {
-                show = Some(super::dialogs::Tab::Diagnose);
+                show = Some(crate::screens::settings::MediaTarget::Diagnostics);
             }
         });
-    if let Some(tab) = show {
-        super::dialogs::open_settings(&ctx, tab);
+    if let Some(target) = show {
+        crate::screens::settings::open_media(&ctx, target);
     }
     if shown.is_none() || show.is_some() {
         ctx.data_mut(|d| d.insert_temp(id, false));
@@ -1232,7 +1232,7 @@ fn mic_problem(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, denied: b
         app.call.retry_microphone();
     }
     if choose {
-        super::dialogs::open_settings(&ctx, super::dialogs::Tab::Audio);
+        crate::screens::settings::open_media(&ctx, crate::screens::settings::MediaTarget::Audio);
     }
     if shown.is_none() || retry || choose {
         ctx.data_mut(|d| d.insert_temp(mic_problem_id(), false));
@@ -1309,7 +1309,11 @@ fn live_menu(
                 false,
                 false,
             ) {
-                super::dialogs::open_settings(ui.ctx(), super::dialogs::Tab::Audio);
+                // The app the Live's sound comes from is set in Video.
+                crate::screens::settings::open_media(
+                    ui.ctx(),
+                    crate::screens::settings::MediaTarget::Video,
+                );
                 done = true;
             }
             done

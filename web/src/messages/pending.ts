@@ -55,6 +55,7 @@ type PendingState = {
     id: string,
     index: number,
     state: "waiting" | "uploading" | "done",
+    progress?: number,
   ) => void;
 };
 
@@ -107,7 +108,7 @@ export const usePendingMessages = create<PendingState>((set) => ({
       },
     }));
   },
-  upload: (channelId, id, index, upload) =>
+  upload: (channelId, id, index, upload, progress) =>
     set((state) => {
       const rows = state.byChannel[channelId];
       if (!rows?.some((row) => row.id === id)) return state;
@@ -119,7 +120,9 @@ export const usePendingMessages = create<PendingState>((set) => ({
               ? {
                   ...row,
                   attachments: row.attachments.map((attachment, i) =>
-                    i === index ? { ...attachment, upload } : attachment,
+                    i === index
+                      ? { ...attachment, upload, progress }
+                      : attachment,
                   ),
                 }
               : row,
@@ -159,8 +162,9 @@ export function markUpload(
   id: string,
   index: number,
   state: "waiting" | "uploading" | "done",
+  progress?: number,
 ): void {
-  usePendingMessages.getState().upload(channelId, id, index, state);
+  usePendingMessages.getState().upload(channelId, id, index, state, progress);
 }
 
 export function addPending(channelId: string, message: Message): void {

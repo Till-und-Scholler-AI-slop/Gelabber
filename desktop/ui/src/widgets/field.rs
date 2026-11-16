@@ -31,6 +31,8 @@ pub struct TextField<'a> {
     text: &'a mut String,
     id: Id,
     label: Option<&'a str>,
+    /// The name of a field whose label is drawn by its caller.
+    name: Option<&'a str>,
     hint: Option<&'a str>,
     error: Option<&'a str>,
     placeholder: Option<&'a str>,
@@ -47,6 +49,7 @@ impl<'a> TextField<'a> {
             text,
             id: field_id(id),
             label: None,
+            name: None,
             hint: None,
             error: None,
             placeholder: None,
@@ -60,6 +63,13 @@ impl<'a> TextField<'a> {
 
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
+        self
+    }
+
+    /// The field's accessible name when its caller draws the label (the
+    /// `<label for>` of a field laid out apart from it).
+    pub fn name(mut self, name: &'a str) -> Self {
+        self.name = Some(name);
         self
     }
 
@@ -214,10 +224,12 @@ impl<'a> TextField<'a> {
         let output = ui
             .scope_builder(UiBuilder::new().max_rect(inner), |ui| edit.show(ui))
             .inner;
-        let response = output
-            .response
-            .response
-            .accessible_name(self.label.or(self.placeholder).unwrap_or_default());
+        let response = output.response.response.accessible_name(
+            self.label
+                .or(self.name)
+                .or(self.placeholder)
+                .unwrap_or_default(),
+        );
         // The click that opened this field (a menu item, a dialog button)
         // ends in this frame and egui surrenders focus on it; take it back.
         if autofocus_now && !response.has_focus() {

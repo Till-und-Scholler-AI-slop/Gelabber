@@ -57,6 +57,8 @@ vi.mock("../servers/queries.ts", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
+  // The ways to Settings → Audio (#570) navigate.
+  useNavigate: () => () => Promise.resolve(),
 }));
 // The invite dialog as a mark: whether VoiceRoom keeps it mounted.
 vi.mock("../components/InviteDialog.tsx", () => ({

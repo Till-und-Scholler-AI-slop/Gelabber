@@ -30,6 +30,8 @@ const LOADING_ROW: f32 = 32.0;
 const OLDER_FAILED: f32 = LOADING_ROW + 48.0;
 const DAY_DIVIDER: f32 = 38.0;
 const NEW_DIVIDER: f32 = 24.5;
+/// `.lr-blocked-fold`: 4px padding and 2px margin around a 13px line.
+const FOLD: f32 = 32.0;
 
 /// Where the conversation's history begins.
 #[derive(Clone, Debug)]
@@ -105,6 +107,9 @@ pub struct PaneState {
     pub lightbox: Option<super::attachments::Lightbox>,
     /// The alt text of one of my sent pictures being written (#575).
     pub alt: Option<super::alt_text::AltDialog>,
+    /// Runs of blocked messages opened with "Anzeigen", by their first
+    /// message (#565).
+    unfolded: HashSet<Uuid>,
 }
 
 impl PaneState {
@@ -126,6 +131,9 @@ pub struct ListInput<'a> {
     pub now: DateTime<Utc>,
     pub images: &'a Images,
     pub http: &'a gelabber_client::Http,
+    /// Fold runs of messages by people the user blocks (server channels,
+    /// #565).
+    pub fold: bool,
 }
 
 /// What the list asks for once the state lock is released.
@@ -146,6 +154,83 @@ struct Item<'a> {
     new_divider: bool,
     start: bool,
     continued: bool,
+    fold: Option<Fold>,
+}
+
+/// A row in a run of messages by someone the user blocks (#565).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fold {
+    /// The run's first row: "Blockierte Nachricht(en) · Anzeigen" for all
+    /// `n` of them.
+    First(u64),
+    Hidden,
+}
+
+/// `useBlockedRuns` (MessagePane.tsx): folds each run of messages by
+/// people the user blocks, except runs opened with "Anzeigen".
+fn fold_runs(items: &mut [Item], state: &State, unfolded: &HashSet<Uuid>) {
+    let mut first: Option<usize> = None;
+    for i in 0..items.len() {
+        let blocked = items[i].send.is_none() && state.blocks_user(items[i].msg.author.id);
+        if !blocked {
+            first = None;
+            continue;
+        }
+        match first {
+            None => {
+                first = Some(i);
+                items[i].fold = Some(Fold::First(1));
+            }
+            Some(start) => {
+                items[i].fold = Some(Fold::Hidden);
+                if let Some(Fold::First(n)) = &mut items[start].fold {
+                    *n += 1;
+                }
+            }
+        }
+    }
+    let mut open = false;
+    for item in items.iter_mut() {
+        match item.fold {
+            Some(Fold::First(_)) => {
+                open = unfolded.contains(&item.msg.id);
+                if open {
+                    item.fold = None;
+                }
+            }
+            Some(Fold::Hidden) if open => item.fold = None,
+            Some(Fold::Hidden) => {}
+            None => open = false,
+        }
+    }
+}
+
+/// The fold line in place of a blocked run; true when "Anzeigen" was
+/// clicked.
+fn paint_fold(ui: &mut Ui, at: egui::Pos2, count: u64) -> bool {
+    let c = Theme::of(ui.ctx()).c;
+    let style = TextStyle::new(13.0, 400.0, 1.5);
+    let note = Block::single(
+        ui,
+        &format!("{} · ", gelabber_i18n::blocks::folded(count)),
+        style,
+        c.muted,
+    );
+    let y = at.y + 2.0 + 4.0;
+    note.paint(ui.painter(), pos2(at.x + 72.0, y));
+    let label = gelabber_i18n::blocks::folded_show();
+    let link = Block::single(ui, label, style, c.accent_text);
+    let rect = Rect::from_min_size(
+        pos2(at.x + 72.0 + note.width(), y),
+        vec2(link.width(), link.height()),
+    );
+    ui.put(
+        rect,
+        crate::widgets::Link::new(label)
+            .style(style)
+            .color(c.accent_text),
+    )
+    .clicked()
 }
 
 /// `isContinued`: same author within 5 minutes, no reply or system line.
@@ -406,7 +491,11 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
             new_divider: first_new,
             start: i == 0 && !has_more,
             continued: !new_day && !first_new && is_continued(previous, m),
+            fold: None,
         });
+    }
+    if input.fold {
+        fold_runs(&mut items, input.state, &pane.unfolded);
     }
 
     let width = rect.width();
@@ -427,6 +516,12 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
     };
     let make_cx = |item| make_cx(item, input, &snap);
     for (i, item) in items.iter().enumerate() {
+        if let Some(fold) = item.fold {
+            let h = if fold == Fold::Hidden { 0.0 } else { FOLD };
+            raw.push(h);
+            heights.push((pre_height(item, &input.start) + h).round());
+            continue;
+        }
         let cx = make_cx(item);
         let key = row_key(&cx, item, width);
         let h = match pane.heights.get(&item.msg.id) {
@@ -662,6 +757,16 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         if item.new_divider {
             paint_new(&child, pos2(rect.left(), y), width);
             y += NEW_DIVIDER;
+        }
+        match item.fold {
+            Some(Fold::First(count)) => {
+                if paint_fold(&mut child, pos2(rect.left(), y), count) {
+                    pane.unfolded.insert(item.msg.id);
+                }
+                continue;
+            }
+            Some(Fold::Hidden) => continue,
+            None => {}
         }
         let cx = make_cx(item);
         let layout = layouts
@@ -1126,6 +1231,7 @@ pub fn context_rows(
             new_divider: false,
             start: false,
             continued: false,
+            fold: None,
         })
         .collect();
     // The found row is 4px in from both sides and has a 2px border.
@@ -1227,6 +1333,59 @@ mod tests {
             "created_order": minutes,
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn runs_of_blocked_messages_fold_until_opened() {
+        let msgs: Vec<Message> = [1, 9, 9, 8, 1, 9]
+            .iter()
+            .enumerate()
+            .map(|(i, a)| message(*a, i as i64))
+            .collect();
+        let item = |m: &Message| Item {
+            msg: std::borrow::Cow::Owned(m.clone()),
+            send: None,
+            uploads: None,
+            day: None,
+            new_divider: false,
+            start: false,
+            continued: false,
+            fold: None,
+        };
+        let mut state = State::default();
+        state.blocks = Some(
+            [9, 8]
+                .iter()
+                .map(|id| {
+                    serde_json::from_value(serde_json::json!({
+                        "id": Uuid::from_u128(*id), "name": "B",
+                        "avatar_url": null, "created_at": "2026-11-15T10:00:00Z",
+                    }))
+                    .unwrap()
+                })
+                .collect(),
+        );
+        let folds = |unfolded: &HashSet<Uuid>| {
+            let mut items: Vec<Item> = msgs.iter().map(item).collect();
+            fold_runs(&mut items, &state, unfolded);
+            items.iter().map(|i| i.fold).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            folds(&HashSet::new()),
+            [
+                None,
+                Some(Fold::First(3)),
+                Some(Fold::Hidden),
+                Some(Fold::Hidden),
+                None,
+                Some(Fold::First(1)),
+            ]
+        );
+        let opened = HashSet::from([msgs[1].id]);
+        assert_eq!(
+            folds(&opened),
+            [None, None, None, None, None, Some(Fold::First(1))]
+        );
     }
 
     #[test]

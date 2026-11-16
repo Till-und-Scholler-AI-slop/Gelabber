@@ -754,21 +754,58 @@ try {
         "true",
       );
       await page.keyboard.press("Enter");
-      // In a call the user panel's gear holds the call settings.
-      const settings = page.locator(".user-panel").getByRole("button", {
-        name: "Anrufeinstellungen",
-        exact: true,
-      });
-      await tabTo(settings);
+      // #570: the avatar opens one account popover, a menu for the keys:
+      // ↓ from the status field to the entries, round the ends, Esc back
+      // to the avatar. The call goes on. Beside the sidebar: on a phone the
+      // popover is a sheet that starts on its title.
+      await page.setViewportSize({ width: 1280, height: 720 });
+      const profile = page.locator(".user-panel-profile");
+      await tabTo(profile);
       await page.keyboard.press("Enter");
-      const dialog = page.getByRole("dialog", {
-        name: "Audio & Video",
+      const account = page.getByRole("dialog", {
+        name: "Benutzerkonto",
         exact: true,
       });
-      await dialog.waitFor();
-      await capture("14-call-settings-short");
+      await account.waitFor();
+      assert.ok(await focused(account.locator("#user-status-text")));
+      await page.keyboard.press("ArrowDown");
+      assert.ok(
+        await focused(
+          account.getByRole("menuitem", {
+            name: "Profil bearbeiten",
+            exact: true,
+          }),
+        ),
+      );
+      await page.keyboard.press("End");
+      assert.ok(
+        await focused(
+          account.getByRole("menuitem", { name: "Abmelden", exact: true }),
+        ),
+      );
+      await page.keyboard.press("ArrowDown");
+      assert.ok(
+        await focused(
+          account.getByRole("menuitem", {
+            name: "Profil bearbeiten",
+            exact: true,
+          }),
+        ),
+      );
+      await capture("14-account-popover");
       await page.keyboard.press("Escape");
-      assert.ok(await focused(settings));
+      await account.waitFor({ state: "hidden" });
+      assert.ok(await focused(profile));
+      // The gear is Settings in a call too; the call bar stays.
+      const gear = page.locator(".user-panel").getByRole("link", {
+        name: "Einstellungen",
+        exact: true,
+      });
+      await tabTo(gear);
+      await page.keyboard.press("Enter");
+      await page.waitForURL((url) => url.pathname === "/settings/darstellung");
+      await dock.waitFor();
+      await page.goBack();
       const leave = dock.getByRole("button", {
         name: "Verlassen",
         exact: true,

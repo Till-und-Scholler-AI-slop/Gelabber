@@ -20,6 +20,8 @@ export const settings = defineCatalog(
     "area.profilkarte.description": "So sehen dich andere.",
     "area.konto.label": "Sicherheit",
     "area.konto.description": "Anmeldung, Geräte und Kontodaten.",
+    "area.blockiert.label": "Blockiert",
+    "area.blockiert.description": "Wen du blockierst.",
     "area.feedback.label": "Feedback",
     "area.feedback.description":
       "Was du geschickt hast und die Antworten darauf.",
@@ -164,6 +166,8 @@ export const settings = defineCatalog(
     "area.profilkarte.description": "How others see you.",
     "area.konto.label": "Security",
     "area.konto.description": "Sign-in, devices and account data.",
+    "area.blockiert.label": "Blocked",
+    "area.blockiert.description": "People you block.",
     "area.feedback.label": "Feedback",
     "area.feedback.description": "What you sent and the replies to it.",
     "area.feedback.unread": "new reply",

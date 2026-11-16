@@ -19,6 +19,10 @@ pub enum Route {
     /// `/settings` and `/settings/$area`.
     Settings(Option<String>),
     Dms,
+    /// `/d/friends` (#563): the friend list, requests and the friend code.
+    Friends,
+    /// `/d/requests` (#563): incoming message requests.
+    DmRequests,
     Dm(Uuid),
     Profile,
     NotFound(String),
@@ -110,6 +114,8 @@ impl Route {
             ["settings"] => Self::Settings(None),
             ["settings", area] => Self::Settings(Some((*area).to_owned())),
             ["d"] => Self::Dms,
+            ["d", "friends"] => Self::Friends,
+            ["d", "requests"] => Self::DmRequests,
             ["d", c] => id(c).map_or_else(|| Self::NotFound(path.to_owned()), Self::Dm),
             ["s", s] => id(s).map_or_else(|| Self::NotFound(path.to_owned()), Self::Server),
             ["s", s, "settings"] => {
@@ -142,6 +148,8 @@ impl Route {
             Self::Settings(None) => "/settings".into(),
             Self::Settings(Some(area)) => format!("/settings/{area}"),
             Self::Dms => "/d".into(),
+            Self::Friends => "/d/friends".into(),
+            Self::DmRequests => "/d/requests".into(),
             Self::Dm(c) => format!("/d/{c}"),
             Self::Profile => "/profile".into(),
             Self::NotFound(p) => p.clone(),
@@ -182,6 +190,8 @@ mod tests {
             Route::Settings(None),
             Route::Settings(Some("darstellung".into())),
             Route::Dms,
+            Route::Friends,
+            Route::DmRequests,
             Route::Dm(c),
             Route::Invite("abc".into()),
         ] {
