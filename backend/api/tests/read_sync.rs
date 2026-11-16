@@ -130,6 +130,7 @@ async fn read_all_and_dms_only(pool: PgPool) {
     let mut a = user(&pool, "a@test.example", "Ada").await;
     let mut b = user(&pool, "b@test.example", "Bob").await;
     let (_, general) = server(&mut a, &mut b, "Eins").await;
+    a.befriend(b.user_id()).await;
     let dm = a
         .send(
             Method::POST,

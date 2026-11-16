@@ -12,6 +12,14 @@ use crate::models::*;
 
 type Result<T> = std::result::Result<T, ApiError>;
 
+/// Whom a friend request goes to (#563): someone the user can see, or the
+/// owner of a friend code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FriendTarget {
+    User(Uuid),
+    Code(String),
+}
+
 /// Paging of `GET /api/channels/{id}/messages`; `before` and `after` take
 /// `ts|uuid` cursors ([`Message::cursor`]), a message id or a time.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -587,6 +595,64 @@ impl Http {
     pub async fn open_dm(&self, user: Uuid) -> Result<DirectMessage> {
         self.send(Method::POST, "/dms", &json!({"user_id": user}))
             .await
+    }
+
+    /// Message requests to the user (#563).
+    pub async fn dm_requests(&self) -> Result<Vec<DirectMessage>> {
+        self.get("/dms/requests").await.map(|Lenient(v)| v)
+    }
+
+    pub async fn accept_dm_request(&self, id: Uuid) -> Result<DirectMessage> {
+        self.send_empty(Method::POST, &format!("/dms/{id}/accept"))
+            .await
+    }
+
+    pub async fn decline_dm_request(&self, id: Uuid) -> Result<()> {
+        self.send_empty(Method::POST, &format!("/dms/{id}/decline"))
+            .await
+    }
+
+    // ----------------------------------------------------------- friends
+
+    pub async fn friends(&self) -> Result<FriendList> {
+        self.get("/friends").await
+    }
+
+    /// By user id (someone the user can see) or by friend code.
+    pub async fn send_friend_request(&self, target: FriendTarget) -> Result<FriendAnswer> {
+        let body = match target {
+            FriendTarget::User(id) => json!({ "user_id": id }),
+            FriendTarget::Code(code) => json!({ "code": code }),
+        };
+        self.send(Method::POST, "/friends/requests", &body).await
+    }
+
+    pub async fn accept_friend(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::POST, &format!("/friends/requests/{user}/accept"))
+            .await
+    }
+
+    pub async fn decline_friend(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::POST, &format!("/friends/requests/{user}/decline"))
+            .await
+    }
+
+    pub async fn withdraw_friend(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::DELETE, &format!("/friends/requests/{user}"))
+            .await
+    }
+
+    pub async fn remove_friend(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::DELETE, &format!("/friends/{user}"))
+            .await
+    }
+
+    pub async fn friend_code(&self) -> Result<FriendCode> {
+        self.get("/me/friend-code").await
+    }
+
+    pub async fn regenerate_friend_code(&self) -> Result<FriendCode> {
+        self.send_empty(Method::POST, "/me/friend-code").await
     }
 
     // ---------------------------------------------------------- messages

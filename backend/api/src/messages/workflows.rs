@@ -76,7 +76,8 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
     UNION ALL
     SELECT c.id, c.server_id, cm.joined_at
     FROM channels c JOIN channel_members cm ON cm.channel_id=c.id AND cm.user_id=$1
-    WHERE c.kind='dm'
+    -- A message request to the caller is counted in its own tab (#563).
+    WHERE c.kind='dm' AND (c.dm_request_by IS NULL OR c.dm_request_by=$1)
 ), mutes AS (
     SELECT v.channel_id,
       cs.level AS channel_level, ss.level AS server_level,

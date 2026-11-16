@@ -175,6 +175,39 @@ fn actions(ui: &mut Ui, height: f32, add: impl FnOnce(&mut Ui)) {
     super::row(ui, height, 12.0, add);
 }
 
+/// The profile card's friend button (`FriendButton`, #563): add, the
+/// request sent, accept theirs, or already friends.
+fn friend_button(ui: &mut Ui, app: &mut AppCtx, user: uuid::Uuid, height: f32) {
+    use gelabber_client::{FriendAction, FriendTarget, OpState, Relation};
+    use gelabber_i18n::friends as t;
+    let (relation, sending, accepting) = app.client.with_state(|s| {
+        (
+            s.friends.as_ref().map(|f| f.relation(user)),
+            matches!(s.op("friend_send"), Some(OpState::Pending)),
+            matches!(s.op(&FriendAction::Accept.op(user)), Some(OpState::Pending)),
+        )
+    });
+    let Some(relation) = relation else {
+        return;
+    };
+    let (label, enabled) = match relation {
+        Relation::None => (t::card_add(), !sending),
+        Relation::Outgoing => (t::card_pending(), false),
+        Relation::Incoming => (t::card_incoming(), !accepting),
+        Relation::Friend => (t::card_friends(), false),
+    };
+    let clicked = ui
+        .add(Button::new(label).height(height).disabled(!enabled))
+        .clicked();
+    if clicked {
+        match relation {
+            Relation::None => app.client.send_friend_request(FriendTarget::User(user)),
+            Relation::Incoming => app.client.friend_action(FriendAction::Accept, user),
+            _ => {}
+        }
+    }
+}
+
 /// `.lr-primary` height: one 21px line, padding 12, a 1px border.
 const PRIMARY_H: f32 = 2.0 + 24.0 + 21.0;
 
@@ -381,6 +414,9 @@ pub fn member_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut MemberDialog) -> boo
                         d.opening = true;
                     }
                 }
+                if !data.me {
+                    friend_button(ui, app, d.member, primary.rect.height());
+                }
                 if close_button(ui, primary.rect.height()).clicked() {
                     done = true;
                 }
@@ -534,6 +570,7 @@ pub fn user_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut UserDialog) -> bool {
             ui.spacing_mut().item_spacing.y = 22.0;
             card(ui, app, &person, presence);
             actions(ui, 36.0, |ui| {
+                friend_button(ui, app, d.user, 36.0);
                 let close = close_button(ui, 36.0);
                 if first {
                     close.request_focus();

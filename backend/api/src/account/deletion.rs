@@ -57,12 +57,16 @@ pub struct Removed {
     pub servers: Vec<Uuid>,
     /// Servers whose queue lost the person's pending join request.
     pub requests: Vec<Uuid>,
+    /// Friends and people with a friend request to or from the person
+    /// (#563), whose lists reload.
+    pub friends: Vec<Uuid>,
 }
 
 /// Phase one, in one transaction: marks the account deleted and removes its
 /// sessions, sign-in tokens, memberships (with their roles), the invites it
-/// created, its pending join requests (declined ones stay until the purge)
-/// and its data export (the trigger queues the archive). Refuses
+/// created, its pending join requests (declined ones stay until the purge),
+/// its friendships, friend requests and friend code (#563) and its data
+/// export (the trigger queues the archive). Refuses
 /// with `409 owns_servers` while the account owns a server, and with `401`
 /// when it is gone or under deletion already.
 ///
@@ -124,11 +128,33 @@ pub async fn mark_deleted(db: &PgPool, user_id: Uuid) -> Result<Removed, ApiErro
         .bind(user_id)
         .execute(&mut *tx)
         .await?;
+    let mut friends: Vec<Uuid> = sqlx::query_scalar(
+        "DELETE FROM friendships WHERE user_low = $1 OR user_high = $1 \
+         RETURNING CASE WHEN user_low = $1 THEN user_high ELSE user_low END",
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let asked: Vec<Uuid> = sqlx::query_scalar(
+        "DELETE FROM friend_requests WHERE sender_id = $1 OR recipient_id = $1 \
+         RETURNING CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END",
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    friends.extend(asked);
+    friends.sort_unstable();
+    friends.dedup();
+    sqlx::query("UPDATE users SET friend_code = NULL WHERE id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Removed {
         sessions,
         servers,
         requests,
+        friends,
     })
 }
 

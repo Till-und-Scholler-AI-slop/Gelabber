@@ -133,6 +133,9 @@ async fn delete_me(
     for &server_id in &removed.requests {
         directory::requests::publish_queue(&state, server_id).await;
     }
+    for &friend in &removed.friends {
+        crate::dms::publish(&state, friend, crate::gateway::protocol::UserFrame::Friends).await;
+    }
     state.gateway.announce_recheck(Recheck::User(user_id)).await;
     deletion::wake(&state);
     info!(

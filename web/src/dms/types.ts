@@ -12,4 +12,16 @@ export type DirectMessage = {
   kind: "dm";
   created_at: string;
   peer: DmPeer;
+  /** Set while the DM is a message request (#563); absent once accepted. */
+  request?: DmRequest;
+};
+
+/**
+ * A pending message request. `incoming`: the peer started it and waits for
+ * an answer. Otherwise the signed-in user sent it and may write `remaining`
+ * more text-only messages until it is accepted.
+ */
+export type DmRequest = {
+  incoming: boolean;
+  remaining: number;
 };

@@ -92,7 +92,11 @@ impl Client {
     }
 
     /// `None` also when the account changed meanwhile: the answer is dropped.
-    async fn op<T>(&self, key: &str, work: impl Future<Output = Result<T, ApiError>>) -> Option<T> {
+    pub(crate) async fn op<T>(
+        &self,
+        key: &str,
+        work: impl Future<Output = Result<T, ApiError>>,
+    ) -> Option<T> {
         let epoch = self.epoch();
         self.write(|s| s.ops.insert(key.to_owned(), OpState::Pending));
         match work.await {
@@ -396,6 +400,9 @@ impl Client {
             );
         });
         if current.is_some() && self.with_state(|s| s.me().is_some()) {
+            // For the sidebar's counts; their pages read them again.
+            self.load_friends();
+            self.load_dm_requests();
             self.ensure_gateway();
             self.activity();
             self.sync_topics();
@@ -598,6 +605,17 @@ impl Client {
             let http = this.http().clone();
             let key = format!("dm_load:{channel}");
             match this.op(&key, http.dm(channel)).await {
+                Some(dm) if dm.request.is_some_and(|r| r.incoming) => {
+                    // Someone's message request: kept with the requests.
+                    this.write_in(epoch, |s| {
+                        let list = s.dm_requests.get_or_insert_with(Vec::new);
+                        match list.iter_mut().find(|d| d.id == dm.id) {
+                            Some(known) => *known = dm,
+                            None => list.insert(0, dm),
+                        }
+                    });
+                    this.open_conversation(None, channel);
+                }
                 Some(dm) => {
                     let added =
                         this.write_in(epoch, |s| match s.dms.iter_mut().find(|d| d.id == dm.id) {
@@ -902,7 +920,16 @@ impl Client {
         };
         match result {
             Ok(message) => {
-                self.write_in(epoch, |s| s.apply_message(message));
+                let request = self
+                    .write_in(epoch, |s| {
+                        s.apply_message(message);
+                        s.dm(channel).is_some_and(|d| d.request.is_some())
+                    })
+                    .unwrap_or(false);
+                // A message request counts down what may still go (#563).
+                if request {
+                    self.load_dm(channel);
+                }
             }
             Err((stage, error)) => self.update_pending(epoch, channel, nonce, |row| {
                 row.stage = stage;
@@ -2298,6 +2325,8 @@ impl Client {
                 self.spawn(async move { this.joined(s).await });
             }
             ServerFrame::JoinRequests { s, n } => self.write(|st| st.set_join_requests(s, n)),
+            ServerFrame::Friends => self.load_friends(),
+            ServerFrame::MessageRequests => self.load_dm_requests(),
             _ => {}
         }
     }

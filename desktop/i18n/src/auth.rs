@@ -267,6 +267,26 @@ crate::strings! {
     error_owns_servers = "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst."
         | "You still own servers. Hand them over to another member or delete them first.";
     error_export_pending = "Dein Export wird schon erstellt." | "Your export is already being prepared.";
+    error_dm_not_allowed = "Schreiben kannst du Freunden und Leuten, mit denen du einen Server teilst. Schick sonst eine Freundschaftsanfrage."
+        | "You can message friends and people you share a server with. Send a friend request instead.";
+    error_message_request_pending = "Nimm die Nachrichtenanfrage an, um zu antworten."
+        | "Accept the message request to reply.";
+    error_message_request_limit = "Mehr Nachrichten gehen erst, wenn die Anfrage angenommen ist."
+        | "You can send more once the request is accepted.";
+    error_already_friends = "Ihr seid schon befreundet." | "You are already friends.";
+    error_friend_request_declined = "Eine neue Freundschaftsanfrage geht erst später wieder."
+        | "You can send a new friend request later.";
+    error_friend_requests_full = "Du hast zu viele offene Freundschaftsanfragen. Warte erst auf Antworten."
+        | "You have too many open friend requests. Wait for some answers first.";
+    field_error_self = "Das bist du selbst." | "That is you.";
+    field_error_request_link = "In einer Nachrichtenanfrage gehen keine Links. Erst wenn sie angenommen ist."
+        | "Links can’t go in a message request, only once it is accepted.";
+    field_error_request_mention = "In einer Nachrichtenanfrage gehen keine Erwähnungen."
+        | "Mentions can’t go in a message request.";
+    field_error_request_text_only = "In einer Nachrichtenanfrage geht nur Text, keine Dateien oder GIFs."
+        | "A message request is text only, no files or GIFs.";
+    field_error_friend_code_invalid = "Ein Freundescode hat acht Zeichen, etwa K7QX-M2PD."
+        | "A friend code has eight characters, like K7QX-M2PD.";
 
     // Sign-in through a provider on /login and /register (#518): Google's
     // own wording for its button, the divider above the form, and, native

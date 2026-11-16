@@ -1,3 +1,4 @@
+import { FriendButton } from "../friends/FriendButton.tsx";
 import { useUserProfile } from "../profile/queries.ts";
 import { useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
@@ -37,6 +38,7 @@ export function UserProfileDialog({
       <div className="member-profile">
         <ProfileCardView person={person} presence={presence} />
         <div className="member-profile__actions">
+          <FriendButton userId={userId} />
           <GhostButton onClick={onClose}>{tc("close")}</GhostButton>
         </div>
       </div>

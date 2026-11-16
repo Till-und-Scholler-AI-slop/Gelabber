@@ -558,6 +558,14 @@ pub enum ServerFrame {
     /// the accounts that answer them.
     #[serde(rename = "jq")]
     JoinRequests { s: Uuid, n: i64 },
+    /// The account's friends or friend requests changed (issue #563): fetch
+    /// `/api/friends` again. Only to the two accounts concerned.
+    #[serde(rename = "fr")]
+    Friends,
+    /// The account's incoming message requests changed (issue #563): fetch
+    /// `/api/dms/requests` again. Only to the recipient's sockets.
+    #[serde(rename = "mr")]
+    MessageRequests,
 }
 
 /// A conversation's new read position and what is still unread after it.
@@ -719,6 +727,10 @@ pub enum UserFrame {
     Joined { s: Uuid },
     #[serde(rename = "jq")]
     JoinRequests { s: Uuid, n: i64 },
+    #[serde(rename = "fr")]
+    Friends,
+    #[serde(rename = "mr")]
+    MessageRequests,
 }
 
 impl From<UserFrame> for ServerFrame {
@@ -729,6 +741,8 @@ impl From<UserFrame> for ServerFrame {
             UserFrame::Locale { l } => Self::Locale { l },
             UserFrame::Joined { s } => Self::Joined { s },
             UserFrame::JoinRequests { s, n } => Self::JoinRequests { s, n },
+            UserFrame::Friends => Self::Friends,
+            UserFrame::MessageRequests => Self::MessageRequests,
         }
     }
 }
@@ -1121,6 +1135,8 @@ mod tests {
                 super::UserFrame::JoinRequests { s, n: 3 },
                 r#"{"op":"jq","s":"00000000-0000-0000-0000-000000000001","n":3}"#,
             ),
+            (super::UserFrame::Friends, r#"{"op":"fr"}"#),
+            (super::UserFrame::MessageRequests, r#"{"op":"mr"}"#),
         ] {
             let raw = serde_json::to_string(&frame).unwrap();
             assert_eq!(raw, wire);
