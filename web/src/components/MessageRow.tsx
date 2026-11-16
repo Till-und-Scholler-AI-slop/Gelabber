@@ -416,7 +416,14 @@ export function MessageRow({
             </div>
           ) : null}
           {gif ? <GifMessage gif={gif} /> : null}
-          <AttachmentList attachments={message.attachments ?? []} />
+          <AttachmentList
+            attachments={message.attachments ?? []}
+            editAlt={
+              mine && !pending
+                ? { messageId: message.id, channelId: message.channel_id }
+                : undefined
+            }
+          />
           <LinkPreviews
             messageId={message.id}
             previews={message.previews}
@@ -522,7 +529,14 @@ export function MessageRow({
         ) : null}
         {!editing && gif ? <GifMessage gif={gif} /> : null}
         {!editing ? (
-          <AttachmentList attachments={message.attachments ?? []} />
+          <AttachmentList
+            attachments={message.attachments ?? []}
+            editAlt={
+              mine && !pending
+                ? { messageId: message.id, channelId: message.channel_id }
+                : undefined
+            }
+          />
         ) : null}
         {!editing ? (
           <LinkPreviews

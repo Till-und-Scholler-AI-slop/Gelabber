@@ -35,13 +35,21 @@ export const createMessage = (
   gif?: GifPick,
   replyTo?: string,
   nonce?: string,
+  /** Alt texts by attachment id (#575). */
+  descriptions: Record<string, string> = {},
 ) =>
   api<Message>(`/channels/${channelId}/messages`, {
     method: "POST",
     body: {
       ...(gif
         ? { content: "", gif: { slug: gif.slug, query: gif.query } }
-        : { content, attachment_ids: attachmentIds }),
+        : {
+            content,
+            attachment_ids: attachmentIds,
+            ...(Object.keys(descriptions).length > 0
+              ? { attachment_descriptions: descriptions }
+              : {}),
+          }),
       ...(replyTo ? { reply_to: replyTo } : {}),
       ...(nonce ? { nonce } : {}),
     },
@@ -49,6 +57,17 @@ export const createMessage = (
 
 export const updateMessage = (id: string, content: string) =>
   api<Message>(`/messages/${id}`, { method: "PATCH", body: { content } });
+
+/** Sets (or, empty, clears) a picture's alt text; the text stays (#575). */
+export const updateAltText = (
+  messageId: string,
+  attachmentId: string,
+  text: string,
+) =>
+  api<Message>(`/messages/${messageId}`, {
+    method: "PATCH",
+    body: { attachment_descriptions: { [attachmentId]: text.trim() || null } },
+  });
 
 export const deleteMessage = (id: string) =>
   api<null>(`/messages/${id}`, { method: "DELETE" });

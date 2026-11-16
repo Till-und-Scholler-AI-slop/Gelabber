@@ -18,6 +18,7 @@ export function lightboxImage(attachment: Attachment): LightboxImage {
     src: thumbed && !plays ? thumbnailUrl(attachment.id, 800) : original,
     full: thumbed && !plays ? original : undefined,
     filename: attachment.filename,
+    alt: attachment.description,
     size: attachment.size,
     download: isPendingId(attachment.id)
       ? undefined

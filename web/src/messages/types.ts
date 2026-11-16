@@ -23,6 +23,8 @@ export type Attachment = {
   animated?: boolean;
   /** `?size=400|800` answer with a thumbnail. */
   thumbnail?: boolean;
+  /** Alt text the uploader wrote (#575), 1–1000 characters. */
+  description?: string;
   /** Client-only: local object URL while the PUT is still in flight. */
   preview_url?: string;
   /** Client-only: where this file of an unsent message stands. */

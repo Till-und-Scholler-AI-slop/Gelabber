@@ -20,6 +20,8 @@ export type LightboxImage = {
   /** The original, swapped in once it has loaded; absent when `src` is it. */
   full?: string;
   filename: string;
+  /** The uploader's alt text (#575), shown under the picture. */
+  alt?: string;
   /** Bytes of the original, for the bar. */
   size?: number;
   /** Saves the file (`?download=1`), see `attachmentDownloadUrl`. Absent
@@ -450,12 +452,18 @@ export function ImageLightbox({
           ref={picture}
           key={current.id}
           src={src}
-          alt={current.filename}
+          alt={current.alt ?? current.filename}
           draggable={false}
           className={drag.x || drag.y || gesturing ? "is-dragging" : undefined}
           style={box || transform ? { ...box, transform } : undefined}
         />
       </div>
+      {current.alt ? (
+        // Read out as the picture's alt already; shown for everyone else.
+        <p className="lr-lightbox-alt" aria-hidden="true">
+          {current.alt}
+        </p>
+      ) : null}
       {many ? (
         <>
           <button

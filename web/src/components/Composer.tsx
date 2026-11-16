@@ -20,6 +20,8 @@ import { useChatDraft } from "../messages/drafts.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { discardAttempt, type SendAttempt } from "../messages/pending.ts";
 import { useSendMessage } from "../messages/queries.ts";
+import { altTextOf, setAltText } from "../messages/altText.ts";
+import { AltTextDialog } from "./AltTextDialog.tsx";
 import {
   carriesFiles,
   droppedFiles,
@@ -214,6 +216,8 @@ export function Composer({
     setFileError(null);
     setFiles(files.filter((_, i) => i !== index));
   };
+  // The picture whose alt text is being written (#575).
+  const [describing, setDescribing] = useState<File | null>(null);
 
   // Files dropped anywhere on the conversation attach like the paperclip.
   const [dropping, setDropping] = useState(false);
@@ -407,6 +411,25 @@ export function Composer({
                       <p>{attached.name}</p>
                       <p>{formatSize(attached.size)}</p>
                     </div>
+                    {preview ? (
+                      <button
+                        type="button"
+                        className={
+                          altTextOf(attached)
+                            ? "lr-composer-alt is-set"
+                            : "lr-composer-alt"
+                        }
+                        onClick={() => setDescribing(attached)}
+                        aria-label={`${
+                          altTextOf(attached)
+                            ? t("altText.edit")
+                            : t("altText.add")
+                        }: ${attached.name}`}
+                        title={altTextOf(attached) ?? t("altText.add")}
+                      >
+                        {t("altText.badge")}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => removeFile(index)}
@@ -421,6 +444,20 @@ export function Composer({
                 );
               })}
             </ul>
+          ) : null}
+          {describing ? (
+            <AltTextDialog
+              key={`${describing.name}:${describing.lastModified}`}
+              open
+              name={describing.name}
+              preview={previews.get(describing)}
+              initial={altTextOf(describing) ?? ""}
+              onSave={(text) => {
+                setAltText(describing, text);
+                setDescribing(null);
+              }}
+              onClose={() => setDescribing(null)}
+            />
           ) : null}
           {suggestions.list}
           <div className="lr-composer-row">
