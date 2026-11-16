@@ -924,10 +924,13 @@ fn row_action(
                 name,
                 text,
             } => {
+                let content =
+                    client.with_state(|s| s.find_message(message).map(|m| m.content.clone()));
                 pane.alt = Some(alt_text::AltDialog::new(
                     alt_text::AltTarget::Sent {
                         message,
                         attachment,
+                        content,
                     },
                     &name,
                     text.as_deref(),
@@ -1329,7 +1332,7 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
     // A save in flight keeps the dialog open: it closes once the server took
     // the text, and stays with the text (and a toast) when it did not.
     if let Some(dialog) = pane.alt.as_mut()
-        && let alt_text::AltTarget::Sent { message, .. } = dialog.target
+        && let alt_text::AltTarget::Sent { message, .. } = &dialog.target
         && dialog.saving
     {
         let op = format!("alt:{message}");
@@ -1354,10 +1357,11 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                 if let alt_text::AltTarget::Sent {
                     message,
                     attachment,
-                } = dialog.target
+                    content,
+                } = &dialog.target
                 {
                     let text = alt_text::normalised(&text).unwrap_or_default();
-                    client.edit_alt_text(message, attachment, &text);
+                    client.edit_alt_text(*message, *attachment, content.as_deref(), &text);
                     dialog.saving = true;
                 } else {
                     pane.alt = None;
