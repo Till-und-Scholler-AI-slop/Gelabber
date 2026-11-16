@@ -65,7 +65,8 @@ pub struct Removed {
 /// Phase one, in one transaction: marks the account deleted and removes its
 /// sessions, sign-in tokens, memberships (with their roles), the invites it
 /// created, its pending join requests (declined ones stay until the purge),
-/// its friendships, friend requests and friend code (#563) and its data
+/// its friendships, friend requests and friend code (#563), its blocks
+/// both ways (#565) and its data
 /// export (the trigger queues the archive). Refuses
 /// with `409 owns_servers` while the account owns a server, and with `401`
 /// when it is gone or under deletion already.
@@ -145,6 +146,10 @@ pub async fn mark_deleted(db: &PgPool, user_id: Uuid) -> Result<Removed, ApiErro
     friends.extend(asked);
     friends.sort_unstable();
     friends.dedup();
+    sqlx::query("DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("UPDATE users SET friend_code = NULL WHERE id = $1")
         .bind(user_id)
         .execute(&mut *tx)

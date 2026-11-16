@@ -548,6 +548,8 @@ pub struct State {
     pub friends: Option<FriendList>,
     /// Incoming message requests (#563), newest first; `None` until read.
     pub dm_requests: Option<Vec<DirectMessage>>,
+    /// Whom the user blocks (#565), newest first; `None` until read.
+    pub blocks: Option<Vec<BlockedUser>>,
     /// The account's friend code; `None` until read.
     pub friend_code: Option<String>,
     pub channels: HashMap<Uuid, ChannelMessages>,
@@ -648,6 +650,13 @@ impl State {
             .values()
             .flat_map(|d| d.channels.iter())
             .find(|c| c.id == id)
+    }
+
+    /// The user blocks `user` (#565); false until the list is read.
+    pub fn blocks_user(&self, user: Uuid) -> bool {
+        self.blocks
+            .as_ref()
+            .is_some_and(|list| list.iter().any(|b| b.id == user))
     }
 
     /// A listed DM, or an incoming message request (#563), which stays out
@@ -1060,6 +1069,8 @@ impl State {
         let names: Vec<String> = self
             .typers(channel, now)
             .into_iter()
+            // Someone the user blocks types unseen (#565).
+            .filter(|u| !self.blocks_user(*u))
             .map(|u| {
                 self.name_of(channel, u)
                     .unwrap_or_else(|| shell::someone().into())

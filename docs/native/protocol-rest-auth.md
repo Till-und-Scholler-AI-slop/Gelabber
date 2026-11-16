@@ -161,6 +161,9 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `already_friends` | 409 | You are already friends. | v0.11: `auth` `error.alreadyFriends` |
 | `friend_request_declined` | 409 | You can send a new friend request later. (also `retry_after`: seconds until the cooldown ends, body only) | v0.11: `auth` `error.friendRequestDeclined` |
 | `friend_requests_full` | 409 | Too many open friend requests. Wait for some answers first. | v0.11: `auth` `error.friendRequestsFull` |
+| `blocked` | 403 | You blocked this person. Unblock them to write. | v0.11 (#565, §5.4): `auth` `error.blocked` |
+| `dm_closed` | 403 | You can't send messages in this conversation. | v0.11: `auth` `error.dmClosed` |
+| `blocks_full` | 409 | You already block as many people as you can. | v0.11: `auth` `error.blocksFull` |
 | client-only `network` | 0 | Network error. | Keine Verbindung zum Server. |
 | client-only `timeout` | 0 | Request timed out. | Der Server antwortet nicht. Bitte noch einmal versuchen. |
 
@@ -426,7 +429,8 @@ account.json                                { id, email, name, created_at, email
                                               friend_code: string | null,                               v0.11
                                               friends: [ {id, name, at} ],                               at = since
                                               friend_requests: { incoming: [ {id, name, at} ],
-                                                                 outgoing: [ {id, name, at} ] } }      pending only
+                                                                 outgoing: [ {id, name, at} ] },       pending only
+                                              blocks: [ {id, name, avatar_url, created_at} ] }           v0.11, newest first
 profile/avatar.<ext>, profile/banner.<ext>  uploaded images only; ext png | jpg | webp | gif | bin from the stored type
 messages/servers/<server-id>/<channel-id>.json
 messages/dms/<channel-id>.json
@@ -679,7 +683,7 @@ Shapes:
 
 ## 5. Direct messages, message requests and friends (`backend/api/src/dms/`, `backend/api/src/friends/`; web `web/src/dms/`, `web/src/friends/`)
 
-`DirectMessage`: `{id: uuid (the DM channel id), kind: "dm", created_at: ts, peer: {id, name, avatar_url: nullable}, request?: {incoming: bool, remaining: int}}`. `request` is present only while the DM is a message request (v0.11, #563): `incoming: true` means the peer started it and the caller accepts or declines; otherwise the caller started it and may still send `remaining` messages (0 to 3).
+`DirectMessage`: `{id: uuid (the DM channel id), kind: "dm", created_at: ts, peer: {id, name, avatar_url: nullable}, request?: {incoming: bool, remaining: int}, blocked?: true, closed?: true}`. `blocked` (the caller blocks the peer) and `closed` (the peer blocks the caller) are present only while true (v0.11, #565, §5.4). `request` is present only while the DM is a message request (v0.11, #563): `incoming: true` means the peer started it and the caller accepts or declines; otherwise the caller started it and may still send `remaining` messages (0 to 3).
 
 ### 5.1 Who may open a DM (v0.11)
 
@@ -720,6 +724,22 @@ Messages, reads, notification settings and attachments of a DM use the channel r
 | `POST /api/me/friend-code` | none (CSRF) | `200 {code}`, a new one; the old one stops working at once | 401 |
 
 Every change goes to both accounts' sockets as `{"op":"fr"}` (protocol-gateway §3), which read `GET /api/friends` again. A new request (not one re-sent within an hour of withdrawing it) pushes "X hat dir eine Freundschaftsanfrage geschickt" to `/d/friends`. Friend-request pushes belong to no channel, so channel notification settings do not hold them back.
+
+### 5.4 Blocking (v0.11, #565, `backend/api/src/blocks/`)
+
+`Blocked`: `{id, name, avatar_url: nullable, created_at: ts}` (when the block was made).
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/users/me/blocks` | — | `200 Blocked[]`, newest first | 401 |
+| `PUT /api/users/me/blocks/{user}` | none (CSRF) | `204`, idempotent | `422 user_id: self`; `404` unknown or deleted; `409 blocks_full` (1000) |
+| `DELETE /api/users/me/blocks/{user}` | none (CSRF) | `204`, idempotent | 401 |
+
+While A blocks B, every private path between them is closed both ways: opening a new DM, writing into or editing in an existing one, reacting there, message requests and friend requests. A gets `403 blocked`. B gets what an unreachable person gives, never "blocked": `403 dm_not_allowed` for a new DM, `404` for a friend request, `403 dm_closed` in an existing DM. The history of an existing DM stays readable for both. An existing DM necessarily tells B: `dm_closed` and `closed` have no other cause, since a deleted account's DMs are removed within seconds (`account/deletion.rs`).
+
+Blocking ends their friendship, deletes friend requests both ways and declines a pending message request from B (its messages stay), in one transaction. A request A sent stays open: while the block stands it is in neither side's `GET /api/dms/requests` and `POST /api/dms/{id}/accept` answers `404`; after an unblock it is live again. B's pushes and mention counts (`mention_count`, §7) do not reach A, in DMs and on shared servers, and the clients raise no toast or notification for B's messages. The clients fold B's messages in server channels ("N blockierte Nachrichten · Anzeigen") and hide B's typing; in a closed DM the server drops typing (`op: "y"`) both ways. Unblocking leaves an accepted DM usable and restores no friendship.
+
+A's sockets get `{"op":"bl"}` (protocol-gateway §3) and read the list and `GET /api/dms` again, plus `mr` when B's request to A was declined; B is not told, and only hears `fr` when a friendship or a friend request went.
 
 ## 6. Messages (`backend/api/src/messages/mod.rs`; web `web/src/messages/api.ts`, `types.ts`)
 
@@ -1029,6 +1049,8 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 | DELETE | /api/friends/requests/{id} | yes | 5.3 (v0.11) |
 | POST | /api/friends/requests/{id}/accept, /api/friends/requests/{id}/decline | yes | 5.3 (v0.11) |
 | GET, POST | /api/me/friend-code | yes | 5.3 (v0.11) |
+| GET | /api/users/me/blocks | yes | 5.4 (v0.11) |
+| PUT, DELETE | /api/users/me/blocks/{id} | yes | 5.4 (v0.11) |
 | GET, POST | /api/channels/{id}/messages | yes | 6 |
 | PATCH, DELETE | /api/messages/{id} | yes | 6 |
 | DELETE | /api/messages/{id}/previews | yes | 6 |

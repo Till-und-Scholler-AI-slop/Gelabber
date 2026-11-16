@@ -41,7 +41,7 @@ pub struct Area {
     pub scope: Option<Scope>,
 }
 
-pub const AREAS: [Area; 10] = [
+pub const AREAS: [Area; 11] = [
     Area {
         id: "profil",
         group: "konto",
@@ -69,6 +69,13 @@ pub const AREAS: [Area; 10] = [
         group: "konto",
         label: texts::area_feedback_label,
         description: texts::area_feedback_description,
+        scope: Some(Scope::Account),
+    },
+    Area {
+        id: "blockiert",
+        group: "konto",
+        label: texts::area_blockiert_label,
+        description: texts::area_blockiert_description,
         scope: Some(Scope::Account),
     },
     Area {
@@ -546,6 +553,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             "profil" => profile::profile(&mut child, app, &user, &mut st.profile),
             "profilkarte" => card::area(&mut child, app, &user, &mut st.card, viewport),
             "konto" => security::area(&mut child, app, &user, &mut st.security),
+            "blockiert" => crate::screens::shell::blocks::area(&mut child, app),
             "darstellung" => appearance::area(&mut child, app, &mut st.appearance),
             "themes" => themes::area(&mut child, app, &mut st.themes, viewport),
             "audio" => {

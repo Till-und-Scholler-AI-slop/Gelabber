@@ -71,7 +71,10 @@ export type ApiErrorCode =
   | "message_request_limit"
   | "already_friends"
   | "friend_request_declined"
-  | "friend_requests_full";
+  | "friend_requests_full"
+  | "blocked"
+  | "dm_closed"
+  | "blocks_full";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
@@ -451,6 +454,9 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "already_friends",
   "friend_request_declined",
   "friend_requests_full",
+  "blocked",
+  "dm_closed",
+  "blocks_full",
 ]);
 
 function toErrorCode(raw: string | undefined): ApiErrorCode {

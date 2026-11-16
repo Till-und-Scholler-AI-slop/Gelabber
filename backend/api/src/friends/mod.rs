@@ -315,6 +315,11 @@ async fn request(db: &PgPool, me: Uuid, them: Uuid) -> Result<Requested, ApiErro
     if !crate::servers::account_alive(&mut tx, them).await? {
         return Err(ApiError::NotFound);
     }
+    // A block closes the way in both directions (#565); the one blocked
+    // hears what an unknown person gives.
+    crate::blocks::between(&mut *tx, me, them)
+        .await?
+        .refuse(ApiError::NotFound)?;
     if are_friends(&mut tx, me, them).await? {
         return Err(ApiError::AlreadyFriends);
     }
@@ -547,7 +552,7 @@ pub async fn are_friends(db: &mut PgConnection, a: Uuid, b: Uuid) -> Result<bool
     .await?)
 }
 
-async fn lock_pair(db: &mut PgConnection, a: Uuid, b: Uuid) -> Result<(), ApiError> {
+pub(crate) async fn lock_pair(db: &mut PgConnection, a: Uuid, b: Uuid) -> Result<(), ApiError> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 563))")
         .bind(dms::pair_key(a, b))
         .execute(db)

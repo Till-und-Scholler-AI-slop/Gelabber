@@ -20,6 +20,7 @@ import type { Member } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { useTypingInput } from "../ws/useLive.ts";
 import { notify } from "../components/toasts.ts";
+import { ClosedBar } from "../blocks/ClosedBar.tsx";
 import { RequestBar } from "../friends/RequestsPage.tsx";
 import { translate, useT } from "../i18n/catalog.ts";
 import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
@@ -120,12 +121,19 @@ function DmChat({ dm }: { dm: DirectMessage }) {
               }
               channelId={dm.id}
               channelName={dm.peer.name}
-              canSend={!dm.request?.incoming}
+              canSend={!dm.request?.incoming && !dm.blocked && !dm.closed}
               canSendFiles={!dm.request}
               composer={
-                dm.request?.incoming ? (
+                dm.blocked || dm.closed ? (
+                  <ClosedBar
+                    peerId={dm.peer.id}
+                    peerName={dm.peer.name}
+                    blocked={Boolean(dm.blocked)}
+                  />
+                ) : dm.request?.incoming ? (
                   <RequestBar
                     channelId={dm.id}
+                    peerId={dm.peer.id}
                     peerName={dm.peer.name}
                     incoming
                     remaining={dm.request.remaining}
@@ -146,6 +154,7 @@ function DmChat({ dm }: { dm: DirectMessage }) {
                   {dm.request && !dm.request.incoming ? (
                     <RequestBar
                       channelId={dm.id}
+                      peerId={dm.peer.id}
                       peerName={dm.peer.name}
                       incoming={false}
                       remaining={dm.request.remaining}

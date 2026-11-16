@@ -650,6 +650,10 @@ impl Archive {
             .bind(user_id)
             .fetch_all(&db),
         )?;
+        // Whom the person blocks (#565).
+        let blocks = self
+            .handle
+            .block_on(crate::blocks::blocked_by(&db, user_id))?;
         let friend_code: Option<String> = self.wait(
             sqlx::query_scalar("SELECT friend_code FROM users WHERE id = $1")
                 .bind(user_id)
@@ -705,6 +709,7 @@ impl Archive {
                 "sessions": sessions,
                 "servers": servers,
                 "invites": invites,
+                "blocks": blocks,
                 "friend_code": friend_code,
                 "friends": friends,
                 "friend_requests": {"incoming": incoming, "outgoing": outgoing},

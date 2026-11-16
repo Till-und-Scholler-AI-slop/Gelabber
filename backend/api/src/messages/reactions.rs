@@ -90,14 +90,15 @@ async fn mutate(
     let access = lock_access(&mut tx, initial.channel_id, user).await?;
     if add {
         access.require_send()?;
-        // A reaction answers too: not before a message request is accepted.
+        // A reaction answers too: not before a message request is accepted,
+        // and not where a block closed the DM (#565).
         if let super::MessagingChannel::Dm { .. } = &access {
             let draft = crate::dms::request::Draft {
                 content: "",
                 files: false,
                 gif: false,
             };
-            crate::dms::request::precheck(&mut *tx, initial.channel_id, user, &draft).await?;
+            crate::dms::request::precheck_in(&mut tx, initial.channel_id, user, &draft).await?;
         }
     }
     let row = sqlx::query_as::<_, MessageRow>(super::MESSAGE_BY_ID_SQL)

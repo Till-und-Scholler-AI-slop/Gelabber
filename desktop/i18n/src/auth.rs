@@ -278,6 +278,12 @@ crate::strings! {
         | "You can send a new friend request later.";
     error_friend_requests_full = "Du hast zu viele offene Freundschaftsanfragen. Warte erst auf Antworten."
         | "You have too many open friend requests. Wait for some answers first.";
+    error_blocked = "Du hast diese Person blockiert. Heb die Blockierung auf, um zu schreiben."
+        | "You blocked this person. Unblock them to write.";
+    error_dm_closed = "Du kannst in dieser Unterhaltung keine Nachrichten senden."
+        | "You can’t send messages in this conversation.";
+    error_blocks_full = "Du blockierst schon so viele Leute wie möglich."
+        | "You already block as many people as you can.";
     field_error_self = "Das bist du selbst." | "That is you.";
     field_error_request_link = "In einer Nachrichtenanfrage gehen keine Links. Erst wenn sie angenommen ist."
         | "Links can’t go in a message request, only once it is accepted.";

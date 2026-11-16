@@ -12,6 +12,11 @@
 //! Incoming requests are not in `GET /api/dms` but in
 //! `GET /api/dms/requests`, answered with `accept` or `decline`.
 //!
+//! A block (#565, `crate::blocks`) closes every DM path between the two
+//! both ways: no new DM, no writing into one that exists. The history stays
+//! readable; each DM says `blocked` (the user blocks the peer) or `closed`
+//! (the peer blocks the user).
+//!
 //! The protocol `s` field for a DM is the channel id itself, so subscribe
 //! / typing / events stay on the existing frames.
 
@@ -57,6 +62,13 @@ pub struct DirectMessage {
     /// Set while the DM is a message request (#563); absent once accepted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request: Option<DmRequest>,
+    /// The caller blocks the peer (#565): unblock to write.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
+    /// The caller cannot write here and is not told why (#565: the peer
+    /// blocks them).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
 }
 
 /// A pending message request as one side sees it.
@@ -85,6 +97,8 @@ struct DmRow {
     request_by: Option<Uuid>,
     /// Messages sent into the request, deleted ones too.
     request_sent: i16,
+    blocked: bool,
+    closed: bool,
 }
 
 impl From<DmRow> for DirectMessage {
@@ -102,6 +116,8 @@ impl From<DmRow> for DirectMessage {
                 name: row.peer_name,
                 avatar_url: row.peer_avatar_url,
             },
+            blocked: row.blocked,
+            closed: row.closed,
         }
     }
 }
@@ -109,7 +125,11 @@ impl From<DmRow> for DirectMessage {
 /// The columns of [`DmRow`] after the peer's; `c` is the channel.
 macro_rules! request_columns {
     () => {
-        ", c.dm_request_by AS request_by, c.dm_request_sent AS request_sent "
+        ", c.dm_request_by AS request_by, c.dm_request_sent AS request_sent, \
+         EXISTS (SELECT 1 FROM user_blocks b \
+                 WHERE b.blocker_id = me.user_id AND b.blocked_id = p.user_id) AS blocked, \
+         EXISTS (SELECT 1 FROM user_blocks b \
+                 WHERE b.blocker_id = p.user_id AND b.blocked_id = me.user_id) AS closed "
     };
 }
 
@@ -190,6 +210,9 @@ async fn list_requests(
          JOIN users u ON u.id = p.user_id \
          WHERE me.user_id = $1 AND c.dm_request_by = p.user_id AND c.dm_declined_at IS NULL \
            AND c.dm_request_sent > 0 \
+           AND NOT EXISTS (SELECT 1 FROM user_blocks b \
+                           WHERE (b.blocker_id = me.user_id AND b.blocked_id = p.user_id) \
+                              OR (b.blocker_id = p.user_id AND b.blocked_id = me.user_id)) \
          ORDER BY (SELECT MAX(m.created_at) FROM messages m WHERE m.channel_id = c.id) DESC NULLS LAST, c.id"
     ))
     .bind(user.id)
@@ -220,7 +243,8 @@ async fn lock_incoming(
 }
 
 /// `POST /api/dms/{id}/accept`: the request becomes an ordinary DM. It does
-/// not make the two friends. Also after a decline.
+/// not make the two friends. Also after a decline, but not across a block
+/// (#565).
 async fn accept_request(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -230,6 +254,9 @@ async fn accept_request(
     let sender = lock_incoming(&mut tx, channel_id, user.id)
         .await?
         .ok_or(ApiError::NotFound)?;
+    crate::blocks::between(&mut *tx, user.id, sender)
+        .await?
+        .refuse(ApiError::NotFound)?;
     accept_in(&mut tx, channel_id, &[user.id, sender]).await?;
     tx.commit().await?;
     crate::gateway::delivery::wake(&state);
@@ -391,6 +418,11 @@ async fn open_or_create(
         tx.commit().await?;
         return Ok((existing, false));
     }
+    // A block closes the way in both directions (#565); the one blocked
+    // hears what a stranger would.
+    crate::blocks::between(&mut *tx, user_id, peer.id)
+        .await?
+        .refuse(ApiError::DmNotAllowed)?;
     let request = match relation(&mut *tx, user_id, peer.id).await? {
         Relation::Friends => false,
         Relation::SharedServer => true,
@@ -422,6 +454,8 @@ async fn open_or_create(
                 incoming: false,
                 remaining: request::MAX_MESSAGES,
             }),
+            blocked: false,
+            closed: false,
         },
         true,
     ))

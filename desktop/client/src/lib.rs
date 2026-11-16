@@ -4,6 +4,7 @@
 //! (`commands.rs`), which run on the client's own tokio runtime.
 
 pub mod api;
+mod blocks;
 mod commands;
 mod friends;
 pub mod gateway;

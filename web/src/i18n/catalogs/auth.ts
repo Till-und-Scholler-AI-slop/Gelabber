@@ -80,6 +80,11 @@ export const auth = defineCatalog(
       "Eine neue Freundschaftsanfrage geht erst später wieder.",
     "error.friendRequestsFull":
       "Du hast zu viele offene Freundschaftsanfragen. Warte erst auf Antworten.",
+    "error.blocked":
+      "Du hast diese Person blockiert. Heb die Blockierung auf, um zu schreiben.",
+    "error.dmClosed":
+      "Du kannst in dieser Unterhaltung keine Nachrichten senden.",
+    "error.blocksFull": "Du blockierst schon so viele Leute wie möglich.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -365,6 +370,9 @@ export const auth = defineCatalog(
     "error.friendRequestDeclined": "You can send a new friend request later.",
     "error.friendRequestsFull":
       "You have too many open friend requests. Wait for some answers first.",
+    "error.blocked": "You blocked this person. Unblock them to write.",
+    "error.dmClosed": "You can’t send messages in this conversation.",
+    "error.blocksFull": "You already block as many people as you can.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",

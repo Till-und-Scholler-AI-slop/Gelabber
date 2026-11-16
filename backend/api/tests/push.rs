@@ -1064,3 +1064,55 @@ async fn requests_ring_once(pool: PgPool) {
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
 }
+
+/// Nothing from someone the recipient blocks (#565): not their mentions,
+/// not `@everyone`. Cara's mention after them is the only push.
+#[sqlx::test]
+async fn nothing_pushes_from_someone_blocked(pool: PgPool) {
+    let World {
+        state,
+        mut a,
+        mut b,
+        server,
+        channel,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let mut c = user(&state, "c@test.example", "Cara").await;
+    let invite = a
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    let code = invite.body["code"].as_str().unwrap().to_owned();
+    let joined = c
+        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .await;
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+    let r = b
+        .send(
+            Method::PUT,
+            &format!("/api/users/me/blocks/{}", a.user_id()),
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+
+    post(&mut a, &channel, &format!("<@{bob}> hallo")).await;
+    post(&mut a, &channel, "@everyone Essen").await;
+    post(&mut c, &channel, &format!("<@{bob}> marker")).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["body"], "@Bob marker");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), hits.recv())
+            .await
+            .is_err(),
+        "nothing from Ada"
+    );
+}

@@ -208,6 +208,36 @@ fn friend_button(ui: &mut Ui, app: &mut AppCtx, user: uuid::Uuid, height: f32) {
     }
 }
 
+/// `BlockButton` (blocks/BlockButton.tsx, #565): "Blockieren", asked
+/// first, or "Blockierung aufheben" at once.
+fn block_button(ui: &mut Ui, app: &mut AppCtx, user: uuid::Uuid, name: &str, height: f32) {
+    use gelabber_i18n::blocks as t;
+    let (known, blocked, busy) = app.client.with_state(|s| {
+        let busy = |key: String| matches!(s.op(&key), Some(OpState::Pending));
+        (
+            s.blocks.is_some(),
+            s.blocks_user(user),
+            busy(format!("block:{user}")) || busy(format!("unblock:{user}")),
+        )
+    });
+    if !known {
+        return;
+    }
+    let label = if blocked {
+        t::action_unblock()
+    } else {
+        t::action_block()
+    };
+    let button = Button::new(label).ghost().height(height).disabled(busy);
+    if ui.add(button).clicked() {
+        if blocked {
+            app.client.unblock_user(user);
+        } else {
+            super::ask(ui.ctx(), Question::block(user, name));
+        }
+    }
+}
+
 /// `.lr-primary` height: one 21px line, padding 12, a 1px border.
 const PRIMARY_H: f32 = 2.0 + 24.0 + 21.0;
 
@@ -416,6 +446,7 @@ pub fn member_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut MemberDialog) -> boo
                 }
                 if !data.me {
                     friend_button(ui, app, d.member, primary.rect.height());
+                    block_button(ui, app, d.member, &data.name, primary.rect.height());
                 }
                 if close_button(ui, primary.rect.height()).clicked() {
                     done = true;
@@ -571,6 +602,7 @@ pub fn user_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut UserDialog) -> bool {
             card(ui, app, &person, presence);
             actions(ui, 36.0, |ui| {
                 friend_button(ui, app, d.user, 36.0);
+                block_button(ui, app, d.user, &person.name, 36.0);
                 let close = close_button(ui, 36.0);
                 if first {
                     close.request_focus();

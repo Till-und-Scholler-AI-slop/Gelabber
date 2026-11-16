@@ -403,6 +403,7 @@ impl Client {
             // For the sidebar's counts; their pages read them again.
             self.load_friends();
             self.load_dm_requests();
+            self.load_blocks();
             self.ensure_gateway();
             self.activity();
             self.sync_topics();
@@ -2230,7 +2231,10 @@ impl Client {
                     let created = (event.t == EventKind::C)
                         .then(|| event.message())
                         .flatten()
-                        .filter(|m| Some(m.author.id) != me);
+                        .filter(|m| Some(m.author.id) != me)
+                        // Someone blocked raises nothing, not even a
+                        // mention (#565).
+                        .filter(|m| !s.blocks_user(m.author.id));
                     (removed, created)
                 });
                 if let Some((server, banned)) = removed {
@@ -2327,6 +2331,7 @@ impl Client {
             ServerFrame::JoinRequests { s, n } => self.write(|st| st.set_join_requests(s, n)),
             ServerFrame::Friends => self.load_friends(),
             ServerFrame::MessageRequests => self.load_dm_requests(),
+            ServerFrame::Blocks => self.blocks_changed(),
             _ => {}
         }
     }
@@ -2967,6 +2972,47 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(5), "{what}");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// A message from someone blocked raises no notice; anyone else's does.
+    #[test]
+    fn a_blocked_author_raises_no_notice() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let (home, channel) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let blocked = Uuid::from_u128(2);
+        client.write(|s| {
+            s.blocks = Some(vec![BlockedUser {
+                id: blocked,
+                name: "Bob".into(),
+                avatar_url: None,
+                created_at: "2026-11-01T00:00:00Z".parse().unwrap(),
+            }]);
+        });
+        let created = |n: u64, author: Uuid| EventFrame {
+            t: EventKind::C,
+            s: home,
+            c: Some(channel),
+            n,
+            ep: None,
+            i: Some(Uuid::from_u128(100 + n as u128)),
+            d: Some(serde_json::json!({
+                "id": Uuid::from_u128(100 + n as u128), "channel_id": channel,
+                "author": {"id": author, "name": "Wer"},
+                "content": "@everyone", "created_at": "2026-11-01T00:00:00Z",
+                "mention_everyone": true, "revision": 1, "created_order": n,
+            })),
+            r: None,
+        };
+        client.on_gateway(GatewayEvent::Event(created(1, blocked)));
+        assert!(client.take_notices().is_empty());
+        client.on_gateway(GatewayEvent::Event(created(2, Uuid::from_u128(3))));
+        let notices = client.take_notices();
+        assert!(
+            matches!(notices.as_slice(), [Notice::Message { .. }]),
+            "{notices:?}"
+        );
     }
 
     /// `k: "o"` (`isOwnerChange`): the list and that server's detail are
