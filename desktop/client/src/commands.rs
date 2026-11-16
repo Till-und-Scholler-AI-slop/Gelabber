@@ -907,9 +907,19 @@ impl Client {
             Some(failure) => Err(failure),
             None => {
                 self.update_pending(epoch, channel, nonce, |p| p.stage = SendStage::Bind);
+                let attachment_descriptions = pending
+                    .files
+                    .iter()
+                    .zip(&ids)
+                    .filter_map(|(file, id)| {
+                        let text = file.description.as_deref()?.trim();
+                        (!text.is_empty()).then(|| (*id, text.to_owned()))
+                    })
+                    .collect();
                 let body = NewMessage {
                     content: pending.content.clone(),
                     attachment_ids: pending.gif.is_none().then_some(ids),
+                    attachment_descriptions,
                     gif: pending.gif.clone(),
                     reply_to: pending.reply_to,
                     nonce: Some(nonce),
@@ -1015,6 +1025,43 @@ impl Client {
             format!("edit:{id}"),
             id,
             async move { http.edit_message(id, &content).await },
+            |s, m| s.apply_message(m),
+        );
+    }
+
+    /// Sets or (blank) clears the alt text of a picture of my message
+    /// (#575); the text stays. `opened_with` is the message's text when the
+    /// dialog opened, for a message no longer loaded. Op key `alt:<id>`.
+    pub fn edit_alt_text(&self, id: Uuid, attachment: Uuid, opened_with: Option<&str>, text: &str) {
+        let http = self.http().clone();
+        let text = text.trim().to_owned();
+        let op = format!("alt:{id}");
+        // Pending before anything runs, so the dialog waiting on it never
+        // reads a missing or stale state as done.
+        self.write(|s| s.ops.insert(op.clone(), OpState::Pending));
+        // The text as shown goes along: a server from before #575 reads a
+        // PATCH without `content` as an empty text and would delete it.
+        // Without a known text nothing is sent, as an empty one would be a
+        // text edit that deletes it.
+        let content = self
+            .with_state(|s| s.find_message(id).map(|m| m.content.clone()))
+            .or_else(|| opened_with.map(str::to_owned));
+        let Some(content) = content else {
+            // Never asked the server: an error of its own, not a lost connection.
+            let error = ApiError::Api {
+                status: 0,
+                code: "unloaded".into(),
+                message: gelabber_i18n::chat::alt_message_unloaded().into(),
+                fields: serde_json::Value::Null,
+                retry_after: None,
+            };
+            self.fail_op(&op, error);
+            return;
+        };
+        self.message_write(
+            op,
+            id,
+            async move { http.edit_alt_text(id, attachment, &content, &text).await },
             |s, m| s.apply_message(m),
         );
     }

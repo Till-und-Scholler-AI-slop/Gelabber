@@ -77,6 +77,13 @@ pub enum MediaAction {
     Open(String, String),
     /// Open a message's pictures large, at the one clicked.
     Gallery(Vec<Picture>, usize),
+    /// Write or change the alt text of a picture of my message (#575).
+    EditAlt {
+        message: Uuid,
+        attachment: Uuid,
+        name: String,
+        text: Option<String>,
+    },
     /// Open in the browser (a link preview).
     External(String),
     /// Fetch through the app's session and save where the user says, as `name`.
@@ -102,6 +109,8 @@ pub struct Picture {
     pub preview: Option<String>,
     pub name: String,
     pub size: Option<Vec2>,
+    /// The uploader's alt text (#575), shown under the picture.
+    pub alt: Option<String>,
 }
 
 /// The lightbox (components/ImageLightbox.tsx): the pictures it steps
@@ -134,6 +143,7 @@ impl Lightbox {
                 preview: None,
                 name,
                 size: None,
+                alt: None,
             }],
             0,
         )
@@ -359,6 +369,8 @@ enum TextBody {
 pub struct Media {
     pieces: Vec<(f32, Piece)>,
     pub height: f32,
+    /// My sent message: its pictures' alt texts can be changed (#575).
+    editable: Option<Uuid>,
 }
 
 /// The box of a single picture (`imageFit`, the 1px border inside it)
@@ -380,6 +392,7 @@ fn gallery(pictures: &[&Attachment]) -> Vec<Picture> {
             preview: pictures::preview_url(a),
             name: a.filename.clone(),
             size: pictures::known_size(a),
+            alt: a.description.clone(),
         })
         .collect()
 }
@@ -407,6 +420,7 @@ pub fn layout(
     attachments: &[Attachment],
     width: f32,
     uploads: Option<&[UploadState]>,
+    editable: Option<Uuid>,
 ) -> Option<Media> {
     if attachments.is_empty() {
         return None;
@@ -593,7 +607,11 @@ pub fn layout(
             })),
         );
     }
-    Some(Media { pieces, height: y })
+    Some(Media {
+        pieces,
+        height: y,
+        editable,
+    })
 }
 
 fn paint_image(
@@ -651,8 +669,9 @@ fn paint_animated_badge(ui: &Ui, att: &Attachment, url: &str, rect: Rect) {
     }
     let block = Block::single(ui, texts::attachment_animated(), SIZE_STYLE, Color32::WHITE);
     let badge = Rect::from_min_size(
+        // Bottom right, as on the web: the top left belongs to "ALT".
         pos2(
-            rect.left() + 6.0,
+            rect.right() - 6.0 - block.width() - 8.0,
             rect.bottom() - 6.0 - block.height() - 2.0,
         ),
         vec2(block.width() + 8.0, block.height() + 2.0),
@@ -660,6 +679,91 @@ fn paint_animated_badge(ui: &Ui, att: &Attachment, url: &str, rect: Rect) {
     ui.painter()
         .rect_filled(badge, corner(3.0), Color32::from_black_alpha(160));
     block.paint(ui.painter(), pos2(badge.left() + 4.0, badge.top() + 1.0));
+}
+
+/// "ALT" at the top left of a picture with an alt text (#575): hovering
+/// or focusing it shows the text below it. On my own picture a click
+/// changes it, and one without shows a dashed "ALT" on hover to add one.
+fn paint_alt_badge(
+    ui: &Ui,
+    att: &Attachment,
+    rect: Rect,
+    id: egui::Id,
+    editable: Option<Uuid>,
+    hovered: bool,
+) -> Option<MediaAction> {
+    let message = editable.filter(|_| !att.id.is_nil());
+    let text = att.description.as_deref();
+    let block = Block::single(ui, texts::alt_badge(), SIZE_STYLE, Color32::WHITE);
+    let badge = Rect::from_min_size(
+        rect.min + vec2(6.0, 6.0),
+        vec2(block.width() + 10.0, block.height() + 2.0),
+    );
+    let focus_id = id.with("badge");
+    if text.is_none() && message.is_none() {
+        return None;
+    }
+    // Registered also while unseen, so Tab and AccessKit reach "add" on my
+    // own picture; drawn on hover or focus.
+    let response = ui.interact(badge, focus_id, Sense::click());
+    response.widget_info(|| {
+        // The text itself is already the picture's name.
+        let label = match text {
+            Some(_) => texts::alt_show().to_owned(),
+            None => format!("{}: {}", texts::alt_add(), att.filename),
+        };
+        egui::WidgetInfo::labeled(egui::Role::Button, true, label)
+    });
+    if text.is_none() && !(hovered || response.hovered() || response.has_focus()) {
+        return None;
+    }
+    let painter = ui.painter();
+    if text.is_some() {
+        painter.rect_filled(badge, corner(3.0), Color32::from_black_alpha(166));
+    } else {
+        painter.rect_filled(badge, corner(3.0), Color32::from_black_alpha(115));
+        dashed(painter, badge, Color32::from_white_alpha(204));
+    }
+    block.paint(painter, pos2(badge.left() + 5.0, badge.top() + 1.0));
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring(painter, badge, 3.0, &Theme::of(ui.ctx()));
+    }
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(if message.is_some() {
+            egui::CursorIcon::PointingHand
+        } else {
+            egui::CursorIcon::Default
+        });
+    }
+    if let Some(text) = text
+        && (response.hovered() || response.has_focus())
+    {
+        // Above the list, so a small picture does not cut it.
+        let width = 320f32.min((rect.width() - 12.0).max(160.0));
+        let body = Block::wrapped(
+            ui,
+            text,
+            TextStyle::new(13.0, 400.0, 1.4),
+            Color32::WHITE,
+            width,
+        );
+        let bubble = Rect::from_min_size(
+            pos2(badge.left(), badge.bottom() + 4.0),
+            body.size() + vec2(16.0, 12.0),
+        );
+        let layer = ui
+            .ctx()
+            .layer_painter(egui::LayerId::new(egui::Order::Tooltip, id.with("bubble")));
+        layer.rect_filled(bubble, corner(4.0), Color32::from_black_alpha(217));
+        body.paint(&layer, bubble.min + vec2(8.0, 6.0));
+    }
+    let message = message?;
+    response.clicked().then(|| MediaAction::EditAlt {
+        message,
+        attachment: att.id,
+        name: att.filename.clone(),
+        text: att.description.clone(),
+    })
 }
 
 /// "+N" over the last tile of a mosaic (`.lr-attachment-more`).
@@ -964,6 +1068,7 @@ impl Media {
                     let rect = Rect::from_min_size(pos2(origin.x, top), *size);
                     paint_image(ui, images, att, url, rect, *cropped, play);
                     paint_animated_badge(ui, att, url, rect);
+                    let hovered = ui.rect_contains_pointer(rect);
                     if let Some(text) = upload_text(*upload) {
                         paint_upload_badge(ui, rect, text);
                     }
@@ -972,10 +1077,17 @@ impl Media {
                         egui::WidgetInfo::labeled(
                             egui::Role::Link,
                             true,
-                            texts::attachment_enlarge_label(&att.filename),
+                            texts::attachment_enlarge_label(
+                                att.description.as_deref().unwrap_or(&att.filename),
+                            ),
                         )
                     });
                     picture_ring(ui, &response, rect);
+                    if let Some(a) =
+                        paint_alt_badge(ui, att, rect, id.with(("alt", n)), self.editable, hovered)
+                    {
+                        action = Some(a);
+                    }
                     if response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                     }
@@ -1016,6 +1128,7 @@ impl Media {
                         }
                         paint_image(ui, images, att, url, rect, true, play);
                         paint_animated_badge(ui, att, url, rect);
+                        let hovered = ui.rect_contains_pointer(rect);
                         if hidden > 0 {
                             paint_more(ui, rect, hidden);
                         }
@@ -1024,11 +1137,23 @@ impl Media {
                             let label = if hidden > 0 {
                                 texts::attachment_more(hidden)
                             } else {
-                                texts::attachment_enlarge_label(&att.filename)
+                                texts::attachment_enlarge_label(
+                                    att.description.as_deref().unwrap_or(&att.filename),
+                                )
                             };
                             egui::WidgetInfo::labeled(egui::Role::Link, true, label)
                         });
                         picture_ring(ui, &response, rect);
+                        if let Some(a) = paint_alt_badge(
+                            ui,
+                            att,
+                            rect,
+                            id.with(("alt", n, i)),
+                            self.editable,
+                            hovered,
+                        ) {
+                            action = Some(a);
+                        }
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                         }
@@ -1279,6 +1404,9 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
             .or_else(|| images.natural(ctx, &item.url, Fit::Full))
             .or_else(|| texture.as_ref().map(|t| t.size_vec2()));
         let mut image_rect = None;
+        // Where the alt caption was last frame: the wheel scrolls it there.
+        let caption_id = egui::Id::unique("gelabber-lightbox-alt-rect");
+        let caption_at: Option<Rect> = ctx.data(|d| d.get_temp(caption_id));
         if let (Some(t), Some(size)) = (texture, natural) {
             let fit = (stage.width() / size.x)
                 .min(stage.height() / size.y)
@@ -1294,7 +1422,9 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
                 view.zoom = to;
             };
             let scroll = ui.input(|i| i.smooth_scroll_delta.y + i.zoom_delta().ln() * 200.0);
-            if scroll != 0.0 && pointer.is_some_and(|p| stage.contains(p)) {
+            // The caption scrolls itself.
+            let over_caption = pointer.is_some_and(|p| caption_at.is_some_and(|c| c.contains(p)));
+            if scroll != 0.0 && !over_caption && pointer.is_some_and(|p| stage.contains(p)) {
                 zoom_at(view, view.zoom * (scroll * 0.004).exp(), pointer);
             }
             if zoom_in {
@@ -1322,13 +1452,14 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
                 Sense::click_and_drag(),
             );
             picture.widget_info(|| {
+                let name = item.alt.as_deref().unwrap_or(&item.name);
                 egui::WidgetInfo::labeled(
                     egui::Role::Image,
                     true,
                     if many {
-                        texts::lightbox_label(view.index + 1, view.items.len(), &item.name)
+                        texts::lightbox_label(view.index + 1, view.items.len(), name)
                     } else {
-                        item.name.clone()
+                        name.to_owned()
                     },
                 )
             });
@@ -1355,6 +1486,43 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
                 });
             }
             image_rect = Some(r.intersect(stage));
+        }
+        if item.alt.is_none() {
+            ctx.data_mut(|d| d.remove::<Rect>(caption_id));
+        }
+        if let Some(alt) = &item.alt {
+            // The alt text under the picture (#575); read out as its label.
+            let width = 640f32.min(screen.width() - 32.0) - 24.0;
+            let body = Block::wrapped(
+                ui,
+                alt,
+                TextStyle::new(14.0, 400.0, 1.45),
+                Color32::WHITE,
+                width,
+            );
+            // At most 30% of the window, then it scrolls (web: 30vh).
+            let max_body = (screen.height() * 0.3 - 16.0).max(40.0);
+            let shown = vec2(body.width(), body.height().min(max_body));
+            let size = shown + vec2(24.0, 16.0);
+            let at = pos2(
+                screen.center().x - size.x / 2.0,
+                screen.bottom() - 16.0 - size.y,
+            );
+            let caption = Rect::from_min_size(at, size);
+            ui.painter()
+                .rect_filled(caption, corner(7.0), Color32::from_black_alpha(178));
+            let inner = Rect::from_min_size(caption.min + vec2(12.0, 8.0), shown);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("gelabber-lightbox-alt")
+                    .max_height(shown.y)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let (rect, _) = ui.allocate_exact_size(body.size(), Sense::hover());
+                        body.paint(ui.painter(), rect.min);
+                    });
+            });
+            ctx.data_mut(|d| d.insert_temp(caption_id, caption));
         }
         let white = Color32::WHITE;
         let style = TextStyle::new(14.0, 400.0, 1.5);
@@ -1866,7 +2034,7 @@ mod tests {
             .build_ui(move |ui| {
                 crate::fonts::install(ui.ctx());
                 crate::theme::set(ui.ctx(), Theme::dark());
-                let media = layout(ui, &drawn, &attachments, 600.0, uploads.as_deref());
+                let media = layout(ui, &drawn, &attachments, 600.0, uploads.as_deref(), None);
                 if let Some(media) = media {
                     let mut text = None;
                     let _ = media.paint(
@@ -2028,7 +2196,9 @@ mod tests {
                 crate::fonts::install(ui.ctx());
                 crate::theme::set(ui.ctx(), Theme::dark());
                 shown(ui.ctx()).lock().open.insert(id, true);
-                if let Some(media) = layout(ui, &drawn, std::slice::from_ref(&file), 600.0, None) {
+                if let Some(media) =
+                    layout(ui, &drawn, std::slice::from_ref(&file), 600.0, None, None)
+                {
                     let mut text = None;
                     let _ = media.paint(
                         ui,
@@ -2073,7 +2243,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut out = None;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            out = layout(ui, &images, attachments, 600.0, None);
+            out = layout(ui, &images, attachments, 600.0, None, None);
         });
         output.textures_delta.clear();
         out.expect("laid out")
@@ -2148,6 +2318,40 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_reads_its_alt_text_and_shows_alt() {
+        // Still on its way up (no server to fail against here).
+        let described = Attachment {
+            description: Some("Ein Hund am Strand".into()),
+            ..photo(0)
+        };
+        let (mut harness, _images) = harness(vec![described], None);
+        harness.step();
+        harness.get_by_label("Ein Hund am Strand vergrößern");
+        harness.get_by_label("Alt-Text anzeigen");
+        let (mut harness, _images) = harness_plain(vec![photo(0)]);
+        harness.step();
+        harness.get_by_label("p0.jpg vergrößern");
+        assert!(harness.query_by_label_contains("Alt-Text").is_none());
+    }
+
+    fn harness_plain<'a>(attachments: Vec<Attachment>) -> (egui_kittest::Harness<'a>, Images) {
+        harness(attachments, None)
+    }
+
+    #[test]
+    fn the_lightbox_carries_the_alt_text() {
+        let described = Attachment {
+            description: Some("Sonnenuntergang".into()),
+            ..photo(3)
+        };
+        let media = first_layout(&[described]);
+        let Piece::Image { gallery, .. } = &media.pieces[0].1 else {
+            panic!("a picture");
+        };
+        assert_eq!(gallery[0].alt.as_deref(), Some("Sonnenuntergang"));
+    }
+
+    #[test]
     fn the_lightbox_steps_round_and_fits_each_picture() {
         let items: Vec<Picture> = (0..3)
             .map(|i| Picture {
@@ -2155,6 +2359,7 @@ mod tests {
                 preview: None,
                 name: format!("p{i}"),
                 size: None,
+                alt: None,
             })
             .collect();
         let mut view = Lightbox::new(items, 7);

@@ -951,6 +951,9 @@ pub struct Attachment {
     /// The server has `?size=400` and `?size=800` of it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thumbnail: bool,
+    /// The uploader's alt text (#575).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1053,6 +1056,9 @@ pub struct NewMessage {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachment_ids: Option<Vec<Uuid>>,
+    /// Alt texts of pictures among `attachment_ids` (#575).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub attachment_descriptions: std::collections::BTreeMap<Uuid, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gif: Option<GifPick>,
     #[serde(skip_serializing_if = "Option::is_none")]

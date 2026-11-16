@@ -105,6 +105,8 @@ pub struct PaneState {
     pub edit_autofocus: bool,
     /// Pictures shown large.
     pub lightbox: Option<super::attachments::Lightbox>,
+    /// The alt text of one of my sent pictures being written (#575).
+    pub alt: Option<super::alt_text::AltDialog>,
     /// Runs of blocked messages opened with "Anzeigen", by their first
     /// message (#565).
     unfolded: HashSet<Uuid>,
@@ -282,6 +284,7 @@ fn pending_message(p: &gelabber_client::PendingMessage, state: &State) -> Messag
                 filename: f.filename.clone(),
                 content_type: f.content_type.clone(),
                 size: f.data.len() as i64,
+                description: f.description.clone(),
                 ..Default::default()
             })
             .collect(),

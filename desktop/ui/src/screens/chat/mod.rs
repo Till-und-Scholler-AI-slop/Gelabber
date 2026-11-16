@@ -2,6 +2,7 @@
 //! composer (web components/MessagePane.tsx, pages/ChannelPage.tsx,
 //! pages/DmChannelPage.tsx).
 
+pub(crate) mod alt_text;
 pub(crate) mod attachments;
 pub mod clipboard;
 mod composer;
@@ -827,6 +828,8 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
 
     let overlay_open = pane_state.menu.is_some()
         || pane_state.lightbox.is_some()
+        || pane_state.alt.is_some()
+        || chat.composers.get(&channel).is_some_and(|c| c.alt.is_some())
         || chat.composers.get(&channel).is_some_and(|c| c.gif_open)
         || pane_state.picker.is_some()
         || pane_state.confirm_delete.is_some()
@@ -971,6 +974,24 @@ fn row_action(
             }
             attachments::MediaAction::Gallery(items, index) => {
                 pane.lightbox = Some(attachments::Lightbox::new(items, index));
+            }
+            attachments::MediaAction::EditAlt {
+                message,
+                attachment,
+                name,
+                text,
+            } => {
+                let content =
+                    client.with_state(|s| s.find_message(message).map(|m| m.content.clone()));
+                pane.alt = Some(alt_text::AltDialog::new(
+                    alt_text::AltTarget::Sent {
+                        message,
+                        attachment,
+                        content,
+                    },
+                    &name,
+                    text.as_deref(),
+                ));
             }
             attachments::MediaAction::External(url) => {
                 let full = if url.starts_with('/') {
@@ -1360,6 +1381,65 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
         }
         if close {
             pane.lightbox = None;
+        }
+    }
+    // An alt text being written (#575): for a composer file, or one of my
+    // sent pictures.
+    let pane = chat.panes.entry(channel).or_default();
+    // A save in flight keeps the dialog open: it closes once the server took
+    // the text, and stays with the text (and a toast) when it did not.
+    if let Some(dialog) = pane.alt.as_mut()
+        && let alt_text::AltTarget::Sent { message, .. } = &dialog.target
+        && dialog.saving
+    {
+        let op = format!("alt:{message}");
+        match client.with_state(|s| s.op(&op).cloned()) {
+            Some(gelabber_client::OpState::Pending) => {}
+            Some(gelabber_client::OpState::Failed(_)) => {
+                dialog.saving = false;
+                client.clear_op(op);
+            }
+            _ => {
+                pane.alt = None;
+                client.clear_op(op);
+            }
+        }
+    }
+    if let Some(dialog) = pane.alt.as_mut() {
+        match alt_text::show(&ctx, dialog) {
+            alt_text::AltOutcome::Open => {}
+            alt_text::AltOutcome::Close => pane.alt = None,
+            alt_text::AltOutcome::Save(_) if dialog.saving => {}
+            alt_text::AltOutcome::Save(text) => {
+                if let alt_text::AltTarget::Sent {
+                    message,
+                    attachment,
+                    content,
+                } = &dialog.target
+                {
+                    let text = alt_text::normalised(&text).unwrap_or_default();
+                    client.edit_alt_text(*message, *attachment, content.as_deref(), &text);
+                    dialog.saving = true;
+                } else {
+                    pane.alt = None;
+                }
+            }
+        }
+    }
+    if let Some(composer) = chat.composers.get_mut(&channel)
+        && let Some(dialog) = composer.alt.as_mut()
+    {
+        match alt_text::show(&ctx, dialog) {
+            alt_text::AltOutcome::Open => {}
+            alt_text::AltOutcome::Close => composer.alt = None,
+            alt_text::AltOutcome::Save(text) => {
+                if let alt_text::AltTarget::Composer(i) = dialog.target
+                    && let Some(file) = composer.files.get_mut(i)
+                {
+                    file.description = alt_text::normalised(&text);
+                }
+                composer.alt = None;
+            }
         }
     }
     // The composer's GIF picker.
