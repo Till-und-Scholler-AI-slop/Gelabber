@@ -1,4 +1,4 @@
-// Attachments of a message: pictures in a grid, video and audio in the
+// Attachments of a message: pictures in a mosaic, video and audio in the
 // browser's own player, text as a preview to open, every other file as a
 // download (issue #255).
 
@@ -7,10 +7,15 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type SyntheticEvent,
 } from "react";
 
-import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
+import {
+  attachmentDownloadUrl,
+  attachmentUrl,
+  thumbnailUrl,
+} from "../messages/api.ts";
 import { isPendingId } from "../messages/queries.ts";
 import {
   decodeText,
@@ -27,7 +32,14 @@ import { useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { useDownload } from "./download.ts";
 import { CheckIcon, PaperclipIcon } from "./Icons.tsx";
-import { imageFit, knownImageSize, rememberImageSize } from "./imageBox.ts";
+import {
+  imageFit,
+  knownImageSize,
+  mosaic,
+  PICTURE_BOX,
+  rememberImageSize,
+} from "./imageBox.ts";
+import { lightboxImage } from "./lightboxImage.ts";
 import { reloadMedia } from "./mediaReload.ts";
 import { OpenImage } from "./openImage.ts";
 import { isPlainClick } from "./plainClick.ts";
@@ -39,17 +51,7 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   const others = files.filter((a) => !isImageType(a.content_type));
   return (
     <div className="lr-attachments">
-      {images.length > 0 ? (
-        <div className={images.length > 1 ? "lr-attachment-grid" : undefined}>
-          {images.map((attachment) => (
-            <AttachmentImage
-              key={attachment.id}
-              attachment={attachment}
-              fit={images.length === 1}
-            />
-          ))}
-        </div>
-      ) : null}
+      {images.length > 0 ? <Pictures pictures={images} /> : null}
       {others.map((attachment) => {
         const type = attachment.content_type;
         if (isVideoType(type) || isAudioType(type))
@@ -60,6 +62,36 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
           return <AttachmentText key={attachment.id} attachment={attachment} />;
         return <AttachmentFile key={attachment.id} attachment={attachment} />;
       })}
+    </div>
+  );
+}
+
+/** One picture in its own shape, or several as a mosaic by count (#574):
+ *  1 / 2 halves / 1 big and 2 / 2×2 / 2 and 3 / 3×2, the last tile "+N"
+ *  past six. Every box is known before a byte loads (imageBox.ts). */
+function Pictures({ pictures }: { pictures: Attachment[] }) {
+  const t = useT(chat);
+  if (pictures.length === 1)
+    return <AttachmentImage attachment={pictures[0]!} gallery={pictures} />;
+  const layout = mosaic(pictures.length);
+  const shown = pictures.slice(0, layout.tiles);
+  const hidden = pictures.length - shown.length;
+  return (
+    <div className={`lr-attachment-grid ${layout.name}`}>
+      {shown.map((attachment, index) => (
+        <AttachmentImage
+          key={attachment.id}
+          attachment={attachment}
+          gallery={pictures}
+          tile
+          more={
+            index === shown.length - 1 && hidden > 0
+              ? t("attachment.more", { count: String(hidden) })
+              : undefined
+          }
+          moreCount={index === shown.length - 1 ? hidden : 0}
+        />
+      ))}
     </div>
   );
 }
@@ -88,6 +120,19 @@ export function DownloadLink({
 function UploadState({ attachment }: { attachment: Attachment }) {
   const t = useT(chat);
   if (!attachment.upload || attachment.upload === "done") return null;
+  if (attachment.upload === "uploading" && attachment.progress !== undefined) {
+    const percent = Math.round(attachment.progress * 100);
+    return (
+      <span className="lr-attachment-upload has-progress" role="status">
+        {t("attachment.uploadProgress", { percent: String(percent) })}
+        <span
+          className="lr-attachment-progress"
+          aria-hidden="true"
+          style={{ width: `${percent}%` }}
+        />
+      </span>
+    );
+  }
   return (
     <span className="lr-attachment-upload" role="status">
       {t(
@@ -99,44 +144,96 @@ function UploadState({ attachment }: { attachment: Attachment }) {
   );
 }
 
-/** One picture; `fit`: its box is the picture's own size (imageBox.ts),
- *  not a grid cell. */
+/** Animated pictures up to this size play inline; larger ones show their
+ *  first frame and play in the viewer (#574). */
+const ANIMATED_INLINE_MAX = 5 * 1024 * 1024;
+
+/** The colour shown while a picture loads, when the API sent one. */
+function placeholderColour(attachment: Attachment): string | undefined {
+  return attachment.placeholder_version === 1 &&
+    typeof attachment.placeholder === "string" &&
+    /^#[0-9a-f]{6}$/i.test(attachment.placeholder)
+    ? attachment.placeholder
+    : undefined;
+}
+
+/** One picture: alone in its own box, or a `tile` of a mosaic. */
 function AttachmentImage({
   attachment,
-  fit,
+  gallery,
+  tile = false,
+  more,
+  moreCount = 0,
 }: {
   attachment: Attachment;
-  fit: boolean;
+  gallery: Attachment[];
+  tile?: boolean;
+  /** "+N" over the last tile, for the pictures the mosaic leaves out. */
+  more?: string;
+  moreCount?: number;
 }) {
   const t = useT(chat);
   const openImage = useContext(OpenImage);
   const [failed, setFailed] = useState(false);
-  // A new key mounts a new <img>, which asks the API again.
+  // A new key mounts a new <img>, which asks the API again. The first
+  // failure retries by itself; the second shows the error card.
   const [attempt, setAttempt] = useState(0);
   const [natural, setNatural] = useState(() => knownImageSize(attachment));
+  const size = knownImageSize(attachment) ?? natural;
+  const fit = !tile && size ? imageFit(size) : undefined;
   // Size known: the picture's own box, reserved before it arrives, so
   // loading does not move the list.
-  const sized =
-    fit && natural
-      ? {
-          width: imageFit(natural).width,
-          aspectRatio: `${natural.width} / ${natural.height}`,
-        }
-      : undefined;
-  const src = attachment.preview_url ?? attachmentUrl(attachment.id);
+  const sized = fit
+    ? {
+        width: `min(100%, ${fit.width}px)`,
+        aspectRatio: `${fit.width} / ${fit.height}`,
+      }
+    : undefined;
+  const colour = placeholderColour(attachment);
+  const original = attachment.preview_url ?? attachmentUrl(attachment.id);
+  const playsInline =
+    attachment.animated === true && attachment.size <= ANIMATED_INLINE_MAX;
+  const thumbed =
+    attachment.thumbnail === true && !attachment.preview_url && !playsInline;
+  const src = thumbed ? thumbnailUrl(attachment.id, 400) : original;
+  // The thumbnails are measured on the long edge, so each one's width
+  // is the picture's share of it; and boxes are drawn with cover, so the
+  // width the picture is drawn at is the box's, or more for a picture
+  // wider than its box (cropped, or a tile, taken as square).
+  const ratio = size ? size.width / size.height : 1;
+  const thumbWidth = (edge: number) =>
+    Math.max(1, Math.round(edge * Math.min(1, ratio)));
+  const srcSet = thumbed
+    ? `${thumbnailUrl(attachment.id, 400)} ${thumbWidth(400)}w, ${thumbnailUrl(attachment.id, 800)} ${thumbWidth(800)}w`
+    : undefined;
+  const wide = Math.max(1, ratio);
+  const sizes = thumbed
+    ? tile
+      ? `(max-width: 600px) ${Math.ceil(50 * wide)}vw, ${Math.ceil(200 * wide)}px`
+      : `${Math.ceil(fit ? Math.max(fit.width, fit.height * ratio) : PICTURE_BOX)}px`
+    : undefined;
   if (failed)
     return (
       <AttachmentImageFailed
         attachment={attachment}
+        style={sized}
         onRetry={() => {
           setFailed(false);
           setAttempt((n) => n + 1);
         }}
       />
     );
+  const className = [
+    "lr-attachment-image",
+    sized ? "is-sized" : "",
+    tile ? "is-tile" : "",
+    !size && !tile ? "is-unsized" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <a
-      href={src}
+      href={original}
       // The link stays for "open in new tab"; a click shows the
       // picture here, also where no new tab exists (desktop app,
       // installed web app).
@@ -144,38 +241,63 @@ function AttachmentImage({
         if (!isPlainClick(event)) return;
         event.preventDefault();
         if (isPendingId(attachment.id)) return;
-        openImage({
-          id: attachment.id,
-          src,
-          filename: attachment.filename,
-          download: attachmentDownloadUrl(attachment.id),
-        });
+        openImage(
+          lightboxImage(attachment),
+          gallery
+            .filter((picture) => !isPendingId(picture.id))
+            .map(lightboxImage),
+        );
       }}
-      aria-label={t("attachment.enlargeLabel", { name: attachment.filename })}
-      className={sized ? "lr-attachment-image is-sized" : "lr-attachment-image"}
+      // The "+N" over the last tile is part of the link's name, as a
+      // label on the span inside is not read.
+      aria-label={[
+        t("attachment.enlargeLabel", { name: attachment.filename }),
+        more && moreCount > 0 ? more : "",
+      ]
+        .filter(Boolean)
+        .join(", ")}
+      className={className}
+      style={{
+        ...sized,
+        ...(colour ? { backgroundColor: colour } : {}),
+      }}
     >
       <img
         key={attempt}
         src={src}
+        srcSet={srcSet}
+        sizes={sizes}
         alt={attachment.filename}
-        style={sized}
         decoding="async"
         loading="lazy"
         onLoad={(event) => {
+          if (knownImageSize(attachment)) return;
           const { naturalWidth: width, naturalHeight: height } =
             event.currentTarget;
           if (width <= 0 || height <= 0) return;
           rememberImageSize(attachment, { width, height });
-          setNatural((size) =>
-            size?.width === width && size.height === height
-              ? size
+          setNatural((known) =>
+            known?.width === width && known.height === height
+              ? known
               : { width, height },
           );
         }}
         // A picture that cannot load (storage unreachable, link expired,
-        // file gone) says so instead of leaving an empty box (#348).
-        onError={() => setFailed(true)}
+        // file gone) says so instead of leaving an empty box (#348), after
+        // one more try of its own.
+        onError={() => {
+          if (attempt === 0) setAttempt(1);
+          else setFailed(true);
+        }}
       />
+      {attachment.animated && !playsInline ? (
+        <span className="lr-attachment-badge">{t("attachment.animated")}</span>
+      ) : null}
+      {more && moreCount > 0 ? (
+        <span className="lr-attachment-more" aria-hidden="true">
+          +{moreCount}
+        </span>
+      ) : null}
       <UploadState attachment={attachment} />
     </a>
   );
@@ -187,13 +309,16 @@ function AttachmentImage({
 export function AttachmentImageFailed({
   attachment,
   onRetry,
+  style,
 }: {
   attachment: Attachment;
   onRetry: () => void;
+  /** The box of the picture it replaces. */
+  style?: CSSProperties;
 }) {
   const t = useT(chat);
   return (
-    <div className="lr-attachment-image is-failed" role="group">
+    <div className="lr-attachment-image is-failed" role="group" style={style}>
       <p className="lr-attachment-image-error">
         <PaperclipIcon size={15} />
         <span className="lr-attachment-image-name">{attachment.filename}</span>

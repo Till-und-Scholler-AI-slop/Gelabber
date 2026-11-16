@@ -84,7 +84,11 @@ export async function putPresigned(
   file: File,
   headers: Record<string, string>,
   signal?: AbortSignal,
+  onProgress?: (share: number) => void,
 ): Promise<void> {
+  // Only XMLHttpRequest reports upload progress (#574).
+  if (onProgress && typeof XMLHttpRequest !== "undefined")
+    return putWithProgress(url, file, headers, onProgress, signal);
   let response: Response;
   try {
     const putHeaders = new Headers();
@@ -114,8 +118,67 @@ export async function putPresigned(
   }
 }
 
+/** `putPresigned` through XMLHttpRequest, with the same errors. */
+function putWithProgress(
+  url: string,
+  file: File,
+  headers: Record<string, string>,
+  onProgress: (share: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const aborted = () =>
+      reject(
+        new Error(translate(chat, "upload.aborted"), {
+          cause: new DOMException("Aborted", "AbortError"),
+        }),
+      );
+    if (signal?.aborted) return aborted();
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    for (const [name, value] of Object.entries(headers)) {
+      if (name.toLowerCase() === "content-length") continue;
+      xhr.setRequestHeader(name, value);
+    }
+    xhr.timeout = uploadTimeoutMs(file.size);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0)
+        onProgress(Math.min(1, event.loaded / event.total));
+    };
+    const stop = () => xhr.abort();
+    signal?.addEventListener("abort", stop, { once: true });
+    const done = () => signal?.removeEventListener("abort", stop);
+    xhr.onload = () => {
+      done();
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(1);
+        resolve();
+      } else reject(new Error(translate(chat, "upload.failed")));
+    };
+    xhr.ontimeout = () => {
+      done();
+      reject(new Error(translate(chat, "upload.timedOut")));
+    };
+    xhr.onabort = () => {
+      done();
+      aborted();
+    };
+    xhr.onerror = () => {
+      done();
+      reject(new ApiError("network", 0, "Network error."));
+    };
+    xhr.send(file);
+  });
+}
+
 export function attachmentUrl(id: string): string {
   return `/api/attachments/${id}`;
+}
+
+/** A picture's thumbnail with that long edge (#574). Until the server has
+ *  made it, the same link answers with the original, uncached. */
+export function thumbnailUrl(id: string, edge: 400 | 800): string {
+  return `/api/attachments/${id}?size=${edge}`;
 }
 
 /** The same file, answered with `Content-Disposition: attachment`: a
