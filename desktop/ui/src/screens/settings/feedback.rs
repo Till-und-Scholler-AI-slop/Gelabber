@@ -62,7 +62,7 @@ pub struct State {
     context_open: HashSet<Uuid>,
     replies: HashMap<Uuid, ReplyForm>,
     /// The image shown large.
-    lightbox: Option<String>,
+    lightbox: Option<crate::screens::chat::attachments::Lightbox>,
 }
 
 /// "Antworten" and the form it opens in place.
@@ -351,10 +351,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
     }
 
-    if let Some(url) = s.lightbox.clone() {
-        let (close, download) =
-            crate::screens::chat::attachments::lightbox(&ctx, app.images, &url, texts::image_alt());
-        if download {
+    if let Some(view) = s.lightbox.as_mut() {
+        let (close, download) = crate::screens::chat::attachments::lightbox(&ctx, app.images, view);
+        if let Some(url) = view.current().filter(|_| download).map(|i| i.url.clone()) {
             crate::screens::chat::attachments::download(&ctx, app.client, &url, texts::image_alt());
         }
         if close {
@@ -430,7 +429,10 @@ fn entry_body(ui: &mut Ui, app: &mut AppCtx, s: &mut State, entry: &FeedbackEntr
     if let Some(image) = &entry.image {
         ui.add_space(space::S3);
         if thumbnail(ui, app, &image.url) {
-            s.lightbox = Some(image.url.clone());
+            s.lightbox = Some(crate::screens::chat::attachments::Lightbox::single(
+                image.url.clone(),
+                texts::image_alt().to_owned(),
+            ));
         }
     }
     ui.add_space(space::S3);

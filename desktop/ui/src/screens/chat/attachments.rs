@@ -21,8 +21,8 @@ use crate::images::{Fit, ImageState, Images, TextState, cover_uv};
 use crate::text::{Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 
-const IMAGE_BOX_W: f32 = 360.0;
-const IMAGE_BOX_H: f32 = 240.0;
+use super::pictures::{self, PICTURE_BOX, UNKNOWN_BOX_HEIGHT};
+
 /// `TEXT_PREVIEW_MAX`: larger text files are plain downloads.
 const TEXT_PREVIEW_MAX: i64 = 100 * 1024;
 /// `DOWNLOAD_STARTED_MS`.
@@ -75,6 +75,8 @@ pub fn upload_text(state: Option<UploadState>) -> Option<&'static str> {
 pub enum MediaAction {
     /// Open a picture large (a URL the image cache knows).
     Open(String, String),
+    /// Open a message's pictures large, at the one clicked.
+    Gallery(Vec<Picture>, usize),
     /// Open in the browser (a link preview).
     External(String),
     /// Fetch through the app's session and save where the user says, as `name`.
@@ -86,6 +88,68 @@ impl MediaAction {
         Self::Download {
             url: download_url(att.id),
             name: att.filename.clone(),
+        }
+    }
+}
+
+/// A picture the lightbox shows: the original, the 800 thumbnail to show
+/// while it loads, the name it is saved under, and its size in pixels as
+/// the server measured it (upright), which stays the same through the
+/// thumbnail → original swap.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Picture {
+    pub url: String,
+    pub preview: Option<String>,
+    pub name: String,
+    pub size: Option<Vec2>,
+}
+
+/// The lightbox (components/ImageLightbox.tsx): the pictures it steps
+/// through, the one shown, and how far it is zoomed in (1 = fitted).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lightbox {
+    pub items: Vec<Picture>,
+    pub index: usize,
+    pub zoom: f32,
+    /// The picture's centre moved away from the stage's, in points.
+    pub pan: Vec2,
+}
+
+impl Lightbox {
+    pub fn new(items: Vec<Picture>, index: usize) -> Self {
+        let index = index.min(items.len().saturating_sub(1));
+        Self {
+            items,
+            index,
+            zoom: 1.0,
+            pan: Vec2::ZERO,
+        }
+    }
+
+    /// One picture, such as a link preview's.
+    pub fn single(url: String, name: String) -> Self {
+        Self::new(
+            vec![Picture {
+                url,
+                preview: None,
+                name,
+                size: None,
+            }],
+            0,
+        )
+    }
+
+    pub fn current(&self) -> Option<&Picture> {
+        self.items.get(self.index)
+    }
+
+    /// Steps by `by`, wrapping around, and fits the next picture.
+    pub fn step(&mut self, by: isize) {
+        let n = self.items.len() as isize;
+        if n > 1 {
+            self.index = (self.index as isize + by).rem_euclid(n) as usize;
+            self.zoom = 1.0;
+            self.pan = Vec2::ZERO;
         }
     }
 }
@@ -234,10 +298,17 @@ enum Piece {
         att: Attachment,
         url: String,
         size: Vec2,
+        /// Beyond 1:3 the picture fills its box and is cut.
+        cropped: bool,
         upload: Option<UploadState>,
+        gallery: Vec<Picture>,
     },
+    /// Several pictures as a mosaic by count; the last tile says how many
+    /// more there are.
     Grid {
-        cells: Vec<(Attachment, String)>,
+        cells: Vec<Cell>,
+        more: usize,
+        gallery: Vec<Picture>,
     },
     /// A picture that did not load (`AttachmentImageFailed`).
     Failed {
@@ -246,6 +317,13 @@ enum Piece {
     },
     File(Box<FilePiece>),
     Text(Box<TextPiece>),
+}
+
+struct Cell {
+    att: Attachment,
+    url: String,
+    /// Relative to the mosaic's top left corner.
+    rect: Rect,
 }
 
 struct FilePiece {
@@ -283,18 +361,33 @@ pub struct Media {
     pub height: f32,
 }
 
-/// The box of a single picture: `imageFit` plus the 1px border.
-pub fn image_box(natural: Option<Vec2>, width: f32) -> Vec2 {
-    match natural {
-        Some(n) if n.x > 0.0 && n.y > 0.0 => {
-            let scale = 1f32
-                .min((IMAGE_BOX_W - 2.0) / n.x)
-                .min((IMAGE_BOX_H - 2.0) / n.y)
-                .min((width - 2.0).max(1.0) / n.x);
-            vec2((n.x * scale + 2.0).max(24.0), (n.y * scale + 2.0).max(24.0))
-        }
-        _ => vec2(IMAGE_BOX_W.min(width), IMAGE_BOX_H),
+/// The box of a single picture (`imageFit`, the 1px border inside it)
+/// and whether it is cropped: the server's size, else the one measured.
+pub fn image_box(known: Option<Vec2>, width: f32) -> (Vec2, bool) {
+    match known {
+        Some(n) if n.x > 0.0 && n.y > 0.0 => pictures::fit(n, width),
+        _ => (vec2(PICTURE_BOX.min(width), UNKNOWN_BOX_HEIGHT), false),
     }
+}
+
+/// A message's pictures as the lightbox steps through them.
+fn gallery(pictures: &[&Attachment]) -> Vec<Picture> {
+    pictures
+        .iter()
+        .filter(|a| !a.id.is_nil())
+        .map(|a| Picture {
+            url: attachment_url(a.id),
+            preview: pictures::preview_url(a),
+            name: a.filename.clone(),
+            size: pictures::known_size(a),
+        })
+        .collect()
+}
+
+/// Where `att` is in its message's gallery.
+fn gallery_index(gallery: &[Picture], att: &Attachment) -> usize {
+    let url = attachment_url(att.id);
+    gallery.iter().position(|s| s.url == url).unwrap_or(0)
 }
 
 fn natural(ui: &Ui, images: &Images, url: &str) -> Option<Vec2> {
@@ -337,12 +430,15 @@ pub fn layout(
         pieces.push((y, piece));
         y += h;
     };
+    let ppp = ui.ctx().pixels_per_point();
     if pictures.len() == 1 {
         let a = pictures[0];
-        let url = attachment_url(a.id);
+        let known = pictures::known_size(a);
+        let (shape, _) = image_box(known, width);
+        let url = pictures::inline_url(a, shape, ppp);
         if failed(ui, images, a, &url) {
-            // The box of a picture still loading: 240 wide, 240 high.
-            let size = vec2(240.0_f32.min(width), IMAGE_BOX_H);
+            // The box the picture would have had.
+            let (size, _) = image_box(known, width);
             push(
                 &mut pieces,
                 size.y,
@@ -352,7 +448,8 @@ pub fn layout(
                 },
             );
         } else {
-            let size = image_box(natural(ui, images, &url), width);
+            let known = known.or_else(|| natural(ui, images, &url));
+            let (size, cropped) = image_box(known, width);
             push(
                 &mut pieces,
                 size.y,
@@ -360,20 +457,32 @@ pub fn layout(
                     att: a.clone(),
                     url,
                     size,
+                    cropped,
                     upload: upload_of(a),
+                    gallery: gallery(&pictures),
                 },
             );
         }
     } else if pictures.len() > 1 {
-        let rows = pictures.len().div_ceil(2) as f32;
+        let (size, rects) = pictures::tiles(pictures.len(), width);
+        let more = pictures.len() - rects.len();
         let cells = pictures
             .iter()
-            .map(|a| ((*a).clone(), attachment_url(a.id)))
+            .zip(rects)
+            .map(|(a, rect)| Cell {
+                att: (*a).clone(),
+                url: pictures::inline_url(a, rect.size(), ppp),
+                rect,
+            })
             .collect();
         push(
             &mut pieces,
-            rows * 160.0 + (rows - 1.0) * 4.0,
-            Piece::Grid { cells },
+            size.y,
+            Piece::Grid {
+                cells,
+                more,
+                gallery: gallery(&pictures),
+            },
         );
     }
     let state = shown(ui.ctx());
@@ -487,10 +596,34 @@ pub fn layout(
     Some(Media { pieces, height: y })
 }
 
-fn paint_image(ui: &Ui, images: &Images, url: &str, rect: Rect, cover: bool, play: bool) {
+fn paint_image(
+    ui: &Ui,
+    images: &Images,
+    att: &Attachment,
+    url: &str,
+    rect: Rect,
+    cover: bool,
+    play: bool,
+) {
     let theme = Theme::of(ui.ctx());
     let painter = ui.painter();
-    if let ImageState::Ready(texture) = images.frame(ui.ctx(), url, play, Fit::Inline) {
+    let mut state = images.frame(ui.ctx(), url, play, Fit::Inline);
+    // A fresh picture switches to its thumbnail once the server has made
+    // it; the original already on screen stays until the thumbnail is in.
+    let original = attachment_url(att.id);
+    if !matches!(state, ImageState::Ready(_))
+        && url != original
+        && let Some(texture) = images.peek(&original, Fit::Inline)
+    {
+        state = ImageState::Ready(texture);
+    }
+    if !matches!(state, ImageState::Ready(_))
+        && let Some(color) = pictures::placeholder(att)
+    {
+        // The picture's average colour until it arrives (#574).
+        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(6), color);
+    }
+    if let ImageState::Ready(texture) = state {
         let inner = rect.shrink(1.0);
         let uv = if cover {
             cover_uv(texture.size_vec2(), inner.size())
@@ -508,6 +641,63 @@ fn paint_image(ui: &Ui, images: &Images, url: &str, rect: Rect, cover: bool, pla
         Stroke::new(1.0, theme.c.border),
         StrokeKind::Inside,
     );
+}
+
+/// "GIF" in the corner of an animation shown as its first frame: it
+/// plays in the lightbox.
+fn paint_animated_badge(ui: &Ui, att: &Attachment, url: &str, rect: Rect) {
+    if !att.animated || url == attachment_url(att.id) {
+        return;
+    }
+    let block = Block::single(ui, texts::attachment_animated(), SIZE_STYLE, Color32::WHITE);
+    let badge = Rect::from_min_size(
+        pos2(
+            rect.left() + 6.0,
+            rect.bottom() - 6.0 - block.height() - 2.0,
+        ),
+        vec2(block.width() + 8.0, block.height() + 2.0),
+    );
+    ui.painter()
+        .rect_filled(badge, corner(3.0), Color32::from_black_alpha(160));
+    block.paint(ui.painter(), pos2(badge.left() + 4.0, badge.top() + 1.0));
+}
+
+/// "+N" over the last tile of a mosaic (`.lr-attachment-more`).
+fn paint_more(ui: &Ui, rect: Rect, hidden: usize) {
+    let painter = ui.painter();
+    painter.rect_filled(
+        rect.shrink(1.0),
+        CornerRadius::same(6),
+        Color32::from_black_alpha(140),
+    );
+    let text = Block::single(
+        ui,
+        &format!("+{hidden}"),
+        TextStyle::new(24.0, 700.0, 1.2),
+        Color32::WHITE,
+    );
+    text.paint(painter, rect.center() - text.size() / 2.0);
+}
+
+/// "+N" in the top right corner of a tile that failed to load, so the
+/// pictures past it are still announced and seen.
+fn paint_more_corner(ui: &Ui, rect: Rect, hidden: usize, id: egui::Id) {
+    let text = Block::single(
+        ui,
+        &format!("+{hidden}"),
+        TextStyle::new(13.0, 700.0, 1.2),
+        Color32::WHITE,
+    );
+    let pill = Rect::from_min_size(
+        pos2(rect.right() - 6.0 - text.width() - 12.0, rect.top() + 6.0),
+        text.size() + vec2(12.0, 4.0),
+    );
+    ui.painter()
+        .rect_filled(pill, CornerRadius::same(4), Color32::from_black_alpha(160));
+    text.paint(ui.painter(), pill.center() - text.size() / 2.0);
+    ui.interact(pill, id, Sense::hover()).widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Label, true, texts::attachment_more(hidden))
+    });
 }
 
 /// The global `:focus-visible` ring around a picture link, for example
@@ -767,10 +957,13 @@ impl Media {
                     att,
                     url,
                     size,
+                    cropped,
                     upload,
+                    gallery,
                 } => {
                     let rect = Rect::from_min_size(pos2(origin.x, top), *size);
-                    paint_image(ui, images, url, rect, false, play);
+                    paint_image(ui, images, att, url, rect, *cropped, play);
+                    paint_animated_badge(ui, att, url, rect);
                     if let Some(text) = upload_text(*upload) {
                         paint_upload_badge(ui, rect, text);
                     }
@@ -787,7 +980,10 @@ impl Media {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                     }
                     if response.clicked() && !att.id.is_nil() {
-                        action = Some(MediaAction::Open(url.clone(), att.filename.clone()));
+                        action = Some(MediaAction::Gallery(
+                            gallery.clone(),
+                            gallery_index(gallery, att),
+                        ));
                     }
                 }
                 Piece::Failed { att, size } => {
@@ -796,37 +992,51 @@ impl Media {
                         action = Some(a);
                     }
                 }
-                Piece::Grid { cells } => {
-                    for (i, (att, url)) in cells.iter().enumerate() {
-                        let col = (i % 2) as f32;
-                        let row = (i / 2) as f32;
-                        let cell_w = 198.0;
-                        let rect = Rect::from_min_size(
-                            pos2(origin.x + col * (cell_w + 4.0), top + row * 164.0),
-                            vec2(cell_w, 160.0),
-                        );
+                Piece::Grid {
+                    cells,
+                    more,
+                    gallery,
+                } => {
+                    let last = cells.len().saturating_sub(1);
+                    for (i, cell) in cells.iter().enumerate() {
+                        let Cell { att, url, rect } = cell;
+                        let rect = rect.translate(vec2(origin.x, top));
+                        let hidden = if i == last { *more } else { 0 };
                         if failed(ui, images, att, url) {
                             let cell_id = id.with(("cell-failed", n, i));
                             if let Some(a) = paint_failed(ui, images, att, rect, cell_id) {
                                 action = Some(a);
                             }
+                            // The error card keeps its buttons; the count
+                            // moves to a corner so it still says so.
+                            if hidden > 0 {
+                                paint_more_corner(ui, rect, hidden, cell_id.with("more"));
+                            }
                             continue;
                         }
-                        paint_image(ui, images, url, rect, true, play);
+                        paint_image(ui, images, att, url, rect, true, play);
+                        paint_animated_badge(ui, att, url, rect);
+                        if hidden > 0 {
+                            paint_more(ui, rect, hidden);
+                        }
                         let response = ui.interact(rect, id.with(("cell", n, i)), Sense::click());
                         response.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::Role::Link,
-                                true,
-                                texts::attachment_enlarge_label(&att.filename),
-                            )
+                            let label = if hidden > 0 {
+                                texts::attachment_more(hidden)
+                            } else {
+                                texts::attachment_enlarge_label(&att.filename)
+                            };
+                            egui::WidgetInfo::labeled(egui::Role::Link, true, label)
                         });
                         picture_ring(ui, &response, rect);
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                         }
                         if response.clicked() && !att.id.is_nil() {
-                            action = Some(MediaAction::Open(url.clone(), att.filename.clone()));
+                            action = Some(MediaAction::Gallery(
+                                gallery.clone(),
+                                gallery_index(gallery, att),
+                            ));
                         }
                     }
                 }
@@ -1008,13 +1218,32 @@ fn paint_text(
     }
     action
 }
+/// The largest zoom, as a multiple of the picture's actual size.
+const ZOOM_MAX: f32 = 4.0;
+
 /// The picture large over the window (components/ImageLightbox.tsx):
-/// filename, "Herunterladen", close; Esc or a click beside it closes.
-/// Returns (close, download).
-pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> (bool, bool) {
+/// filename, "n / m", "Herunterladen", close; Esc or a click beside it
+/// closes, ← and → (or the buttons at the sides) step through the
+/// message's pictures, the wheel zooms at the pointer, a click toggles
+/// the actual size and a drag moves a zoomed picture. The 800 thumbnail
+/// stands in until the original has loaded. Returns (close, download).
+pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (bool, bool) {
     let screen = ctx.content_rect();
     let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let mut download = false;
+    let Some(item) = view.current().cloned() else {
+        return (true, false);
+    };
+    let many = view.items.len() > 1;
+    let (left, right, zoom_in, zoom_out, reset) = ctx.input(|i| {
+        (
+            i.key_pressed(egui::Key::ArrowLeft),
+            i.key_pressed(egui::Key::ArrowRight),
+            i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
+            i.key_pressed(egui::Key::Minus),
+            i.key_pressed(egui::Key::Num0),
+        )
+    });
     let area = egui::Area::new(egui::Id::unique("gelabber-lightbox"))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min);
@@ -1022,24 +1251,110 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> 
     ctx.memory_mut(|m| m.set_modal_layer(area.layer()));
     crate::widgets::opener::dialog_shown(ctx, area.layer());
     let first = crate::widgets::field::mounted(ctx, egui::Id::unique("gelabber-lightbox-open"));
+    let play = !crate::screens::settings::prefs::get(ctx).reduced_motion;
     area.show(ctx, |ui| {
         let backdrop = ui.allocate_rect(screen, Sense::click());
         ui.painter()
             .rect_filled(screen, 0.0, Color32::from_black_alpha(217));
-        let area = Rect::from_min_max(
+        let stage = Rect::from_min_max(
             pos2(screen.left() + 16.0, screen.top() + 56.0),
             pos2(screen.right() - 16.0, screen.bottom() - 16.0),
         );
+        // The original once it is there, else its thumbnail.
+        let texture = match images.frame(ctx, &item.url, play, Fit::Full) {
+            ImageState::Ready(t) => Some(t),
+            _ => item
+                .preview
+                .as_deref()
+                .and_then(|p| match images.get(ctx, p) {
+                    ImageState::Ready(t) => Some(t),
+                    _ => None,
+                }),
+        };
+        // The picture's own size, image pixels as points like the chat
+        // and web: the server's, else the original's texture, as the
+        // thumbnail is smaller.
+        let natural = item
+            .size
+            .or_else(|| images.natural(ctx, &item.url, Fit::Full))
+            .or_else(|| texture.as_ref().map(|t| t.size_vec2()));
         let mut image_rect = None;
-        if let ImageState::Ready(t) = images.get(ctx, url) {
-            let size = t.size_vec2();
-            let scale = (area.width() / size.x).min(area.height() / size.y).min(1.0);
-            let r = Rect::from_center_size(area.center(), size * scale);
-            ui.painter().add(
+        if let (Some(t), Some(size)) = (texture, natural) {
+            let fit = (stage.width() / size.x)
+                .min(stage.height() / size.y)
+                .min(1.0);
+            let max = (ZOOM_MAX / fit).max(1.0);
+            let pointer = ui.input(|i| i.pointer.hover_pos());
+            let zoom_at = |view: &mut Lightbox, to: f32, at: Option<Pos2>| {
+                let to = to.clamp(1.0, max);
+                // The point under the pointer stays where it is.
+                let at = at.unwrap_or(stage.center()) - stage.center();
+                let k = to / view.zoom;
+                view.pan = at - (at - view.pan) * k;
+                view.zoom = to;
+            };
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y + i.zoom_delta().ln() * 200.0);
+            if scroll != 0.0 && pointer.is_some_and(|p| stage.contains(p)) {
+                zoom_at(view, view.zoom * (scroll * 0.004).exp(), pointer);
+            }
+            if zoom_in {
+                zoom_at(view, view.zoom * 1.25, None);
+            }
+            if zoom_out {
+                zoom_at(view, view.zoom / 1.25, None);
+            }
+            if reset {
+                zoom_at(view, 1.0, None);
+            }
+            let shown = size * fit * view.zoom;
+            // A zoomed picture covers the stage where it can, no further.
+            let slack = ((shown - stage.size()) / 2.0).max(Vec2::ZERO);
+            view.pan = view.pan.clamp(-slack, slack);
+            let r = Rect::from_center_size(stage.center() + view.pan, shown);
+            let clip = ui.painter().with_clip_rect(stage);
+            clip.add(
                 egui::epaint::RectShape::filled(r, CornerRadius::same(7), Color32::WHITE)
                     .with_texture(t.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))),
             );
-            image_rect = Some(r);
+            let picture = ui.interact(
+                r.intersect(stage),
+                egui::Id::unique("gelabber-lightbox-picture"),
+                Sense::click_and_drag(),
+            );
+            picture.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::Role::Image,
+                    true,
+                    if many {
+                        texts::lightbox_label(view.index + 1, view.items.len(), &item.name)
+                    } else {
+                        item.name.clone()
+                    },
+                )
+            });
+            if picture.dragged() && view.zoom > 1.0 {
+                view.pan += picture.drag_delta();
+            }
+            if picture.clicked() {
+                // Fitted ↔ actual size, at the click; at least 2x, also
+                // for a picture that already fits (web's actualSize).
+                let to = if view.zoom > 1.0 {
+                    1.0
+                } else {
+                    (1.0 / fit).max(2.0).min(max)
+                };
+                zoom_at(view, to, picture.interact_pointer_pos());
+            }
+            if picture.hovered() {
+                ui.ctx().set_cursor_icon(if picture.dragged() {
+                    egui::CursorIcon::Grabbing
+                } else if view.zoom > 1.0 {
+                    egui::CursorIcon::ZoomOut
+                } else {
+                    egui::CursorIcon::ZoomIn
+                });
+            }
+            image_rect = Some(r.intersect(stage));
         }
         let white = Color32::WHITE;
         let style = TextStyle::new(14.0, 400.0, 1.5);
@@ -1055,8 +1370,20 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> 
             ),
             dl.size(),
         );
-        let title_w = (dl_rect.left() - 16.0 - screen.left() - 16.0).max(10.0);
-        let mut job = crate::text::job(name, style, white, Some(title_w));
+        let mut title_right = dl_rect.left() - 16.0;
+        if many {
+            let count = Block::single(
+                ui,
+                &texts::lightbox_count(view.index + 1, view.items.len()),
+                style,
+                Color32::from_white_alpha(200),
+            );
+            let at = pos2(title_right - count.width(), dl_rect.top());
+            count.paint(ui.painter(), at);
+            title_right = at.x - 16.0;
+        }
+        let title_w = (title_right - screen.left() - 16.0).max(10.0);
+        let mut job = crate::text::job(&item.name, style, white, Some(title_w));
         job.wrap.max_rows = 1;
         job.wrap.break_anywhere = true;
         Block::new(ui, job, style).paint(ui.painter(), pos2(screen.left() + 16.0, dl_rect.top()));
@@ -1092,15 +1419,62 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> 
             .circle_filled(close_rect.center(), 20.0, Color32::from_white_alpha(31));
         icons::paint_centered(ui.painter(), Icon::Close, close_rect, 18.0, white);
         let keyboard = crate::widgets::keyboard_focus(ui.ctx());
-        for (r, focused, radius) in [
+        let mut rings = vec![
             (close_rect, close_resp.has_focus(), 20.0),
             (dl_rect, dl_resp.has_focus(), 3.0),
-        ] {
+        ];
+        let mut hovered = dl_resp.hovered() || close_resp.hovered();
+        let mut stepped = 0;
+        if many {
+            for (by, label, x) in [
+                (-1, texts::lightbox_previous(), stage.left() + 8.0),
+                (1, texts::lightbox_next(), stage.right() - 8.0 - 44.0),
+            ] {
+                let r = Rect::from_min_size(pos2(x, stage.center().y - 22.0), vec2(44.0, 44.0));
+                let resp = ui.interact(
+                    r,
+                    egui::Id::unique("gelabber-lightbox-step").with(by),
+                    Sense::click(),
+                );
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+                let fill = if resp.hovered() { 72 } else { 46 };
+                ui.painter()
+                    .circle_filled(r.center(), 22.0, Color32::from_black_alpha(fill));
+                ui.painter().circle_stroke(
+                    r.center(),
+                    22.0,
+                    Stroke::new(1.0, Color32::from_white_alpha(40)),
+                );
+                // A chevron pointing the way it steps.
+                let c = r.center();
+                let d = 6.0 * by as f32;
+                ui.painter().line(
+                    vec![
+                        c + vec2(-d / 2.0, -9.0),
+                        c + vec2(d, 0.0),
+                        c + vec2(-d / 2.0, 9.0),
+                    ],
+                    Stroke::new(2.0, white),
+                );
+                rings.push((r, resp.has_focus(), 22.0));
+                hovered |= resp.hovered();
+                if resp.clicked() {
+                    stepped = by;
+                }
+            }
+            if left {
+                stepped = -1;
+            }
+            if right {
+                stepped = 1;
+            }
+        }
+        for (r, focused, radius) in rings {
             if focused && keyboard {
                 crate::widgets::focus_ring(ui.painter(), r, radius, &Theme::of(ui.ctx()));
             }
         }
-        if dl_resp.hovered() || close_resp.hovered() {
+        if hovered {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         download = dl_resp.clicked();
@@ -1109,6 +1483,9 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> 
             .is_some_and(|p| image_rect.is_some_and(|r| r.contains(p)));
         if close_resp.clicked() || (backdrop.clicked() && !on_image) {
             close = true;
+        }
+        if stepped != 0 {
+            view.step(stepped);
         }
     });
     (close, download)
@@ -1471,6 +1848,7 @@ mod tests {
             filename: name.into(),
             content_type: content_type.into(),
             size: 2048,
+            ..Default::default()
         }
     }
 
@@ -1688,6 +2066,110 @@ mod tests {
         assert!(takes_wheel(&harness.ctx, pos2(100.0, 150.0), 10.0));
     }
 
+    /// Lays out `attachments` once, on the first frame: nothing has loaded.
+    fn first_layout(attachments: &[Attachment]) -> Media {
+        let client = gelabber_client::Client::new("http://127.0.0.1:9").expect("client");
+        let images = Images::new(client);
+        let ctx = egui::Context::default();
+        let mut out = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            out = layout(ui, &images, attachments, 600.0, None);
+        });
+        output.textures_delta.clear();
+        out.expect("laid out")
+    }
+
+    fn photo(id: u128) -> Attachment {
+        Attachment {
+            width: Some(4000),
+            height: Some(3000),
+            thumbnail: true,
+            ..attachment(id, &format!("p{id}.jpg"), "image/jpeg")
+        }
+    }
+
+    #[test]
+    fn several_pictures_make_a_mosaic_known_before_they_load() {
+        let photos: Vec<Attachment> = (1..=8).map(photo).collect();
+        let media = first_layout(&photos);
+        assert!(
+            (media.height - 400.0 * 2.0 / 3.0).abs() < 0.01,
+            "{}",
+            media.height
+        );
+        let Piece::Grid {
+            cells,
+            more,
+            gallery,
+        } = &media.pieces[0].1
+        else {
+            panic!("a mosaic");
+        };
+        assert_eq!((cells.len(), *more, gallery.len()), (6, 2, 8));
+        assert_eq!(
+            cells[0].url,
+            format!("{}?size=400", attachment_url(photos[0].id))
+        );
+        assert_eq!(gallery[7].url, attachment_url(photos[7].id));
+        assert_eq!(
+            gallery[7].preview.as_deref(),
+            Some(format!("{}?size=800", attachment_url(photos[7].id)).as_str())
+        );
+        assert_eq!(gallery_index(gallery, &photos[4]), 4);
+    }
+
+    #[test]
+    fn one_picture_takes_the_server_s_size_at_once() {
+        let media = first_layout(&[photo(1)]);
+        let Piece::Image {
+            size,
+            cropped,
+            url,
+            gallery,
+            ..
+        } = &media.pieces[0].1
+        else {
+            panic!("a picture");
+        };
+        assert_eq!((*size, *cropped), (vec2(400.0, 300.0), false));
+        assert!(url.ends_with("?size=400"), "{url}");
+        assert_eq!(gallery.len(), 1);
+        // A panorama is cut to 3:1.
+        let wide = Attachment {
+            width: Some(9000),
+            height: Some(1000),
+            ..photo(2)
+        };
+        let media = first_layout(&[wide]);
+        let Piece::Image { size, cropped, .. } = &media.pieces[0].1 else {
+            panic!("a picture");
+        };
+        assert!((size.y - 400.0 / 3.0).abs() < 0.01 && *cropped, "{size:?}");
+    }
+
+    #[test]
+    fn the_lightbox_steps_round_and_fits_each_picture() {
+        let items: Vec<Picture> = (0..3)
+            .map(|i| Picture {
+                url: format!("/p{i}"),
+                preview: None,
+                name: format!("p{i}"),
+                size: None,
+            })
+            .collect();
+        let mut view = Lightbox::new(items, 7);
+        assert_eq!(view.index, 2);
+        view.zoom = 3.0;
+        view.pan = vec2(10.0, 0.0);
+        view.step(1);
+        assert_eq!((view.index, view.zoom, view.pan), (0, 1.0, Vec2::ZERO));
+        view.step(-1);
+        assert_eq!(view.current().map(|p| p.name.as_str()), Some("p2"));
+        let mut one = Lightbox::single("/x".into(), String::new());
+        one.step(1);
+        assert_eq!(one.index, 0);
+    }
+
     #[test]
     fn sizes() {
         assert_eq!(format_size(1536 * 1024), "1,5 MB");
@@ -1699,11 +2181,13 @@ mod tests {
             assert_eq!(format_size(1536 * 1024), "1.5 MB");
             assert_eq!(format_size(2000 * 1024 * 1024), "2000.0 MB");
         }
-        let b = image_box(Some(vec2(1920.0, 1080.0)), 656.0);
+        // The server's size wins; unknown is a 400×300 box (#574).
+        let (b, cropped) = image_box(Some(vec2(1920.0, 1080.0)), 656.0);
         assert!(
-            (b.x - 360.0).abs() < 0.01 && (b.y - 203.37).abs() < 0.05,
+            (b.x - 400.0).abs() < 0.01 && (b.y - 225.0).abs() < 0.01 && !cropped,
             "{b:?}"
         );
-        assert_eq!(image_box(None, 656.0), vec2(360.0, 240.0));
+        assert_eq!(image_box(None, 656.0), (vec2(400.0, 300.0), false));
+        assert_eq!(image_box(None, 250.0), (vec2(250.0, 300.0), false));
     }
 }

@@ -103,8 +103,8 @@ pub struct PaneState {
     pub at_latest: bool,
     /// The editor takes the keyboard on its next frame.
     pub edit_autofocus: bool,
-    /// A picture shown large: URL and filename.
-    pub lightbox: Option<(String, String)>,
+    /// Pictures shown large.
+    pub lightbox: Option<super::attachments::Lightbox>,
     /// Runs of blocked messages opened with "Anzeigen", by their first
     /// message (#565).
     unfolded: HashSet<Uuid>,
@@ -282,6 +282,7 @@ fn pending_message(p: &gelabber_client::PendingMessage, state: &State) -> Messag
                 filename: f.filename.clone(),
                 content_type: f.content_type.clone(),
                 size: f.data.len() as i64,
+                ..Default::default()
             })
             .collect(),
         reactions: Vec::new(),
