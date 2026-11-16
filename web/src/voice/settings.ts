@@ -211,18 +211,11 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
 };
 
-/** The settings dialog's tab it opens on. */
-export type MediaDialogSection = "audio" | "video" | "diagnostics";
-
 type MediaSettingsState = MediaSettings & {
-  dialogOpen: boolean;
-  dialogSection: MediaDialogSection | null;
   /** Not persisted. Set by the live session after a profile change. */
   cameraProfileApply: StreamApply;
   screenProfileApply: StreamApply;
   patch: (partial: Partial<MediaSettings>) => void;
-  openDialog: (section?: MediaDialogSection) => void;
-  closeDialog: () => void;
 };
 
 let listener: ((prev: MediaSettings, next: MediaSettings) => void) | null =
@@ -433,8 +426,6 @@ export const useMediaSettings = create<MediaSettingsState>()(
   persist(
     (set, get) => ({
       ...DEFAULT_MEDIA_SETTINGS,
-      dialogOpen: false,
-      dialogSection: null,
       cameraProfileApply: "idle",
       screenProfileApply: "idle",
       patch: (partial) => {
@@ -531,9 +522,6 @@ export const useMediaSettings = create<MediaSettingsState>()(
         });
         listener?.(prev, snapshot(get()));
       },
-      openDialog: (section) =>
-        set({ dialogOpen: true, dialogSection: section ?? null }),
-      closeDialog: () => set({ dialogOpen: false, dialogSection: null }),
     }),
     {
       name: SETTINGS_KEY,
@@ -630,8 +618,6 @@ export const useMediaSettings = create<MediaSettingsState>()(
           ),
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
-          dialogOpen: current.dialogOpen,
-          dialogSection: current.dialogSection,
         };
       },
     },
@@ -672,8 +658,6 @@ export function sourceAudioChoice(on: boolean): SourceAudioShare {
 export function resetMediaSettingsForTests(): void {
   useMediaSettings.setState({
     ...DEFAULT_MEDIA_SETTINGS,
-    dialogOpen: false,
-    dialogSection: null,
     cameraProfileApply: "idle",
     screenProfileApply: "idle",
   });

@@ -339,7 +339,6 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
         s.effects_for = Some(href.clone());
         if first {
             s.server_menu = false;
-            s.user_menu = false;
             s.row_menu = None;
         }
         first
@@ -708,13 +707,7 @@ mod tests {
         let api = FakeApi::start(true, |method, path, _| workspace(method, path));
         let mut harness = launcher(&api, &format!("/s/{HOME}"));
         wait_for_label(&mut harness, "Overview");
-        for label in [
-            "Direct messages",
-            "Add server",
-            "Invite",
-            "Settings",
-            "User menu",
-        ] {
+        for label in ["Direct messages", "Add server", "Invite", "Settings"] {
             assert!(
                 harness.query_all_by_label(label).next().is_some(),
                 "{label}"

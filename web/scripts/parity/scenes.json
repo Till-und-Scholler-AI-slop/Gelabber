@@ -1599,35 +1599,16 @@
       ]
     },
     {
-      "name": "voice-settings-dialog",
+      "name": "voice-quick-all-audio-settings",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
       "desktop": true,
-      "call": "Sofa jonas,mira:muted",
       "actions": [
         {
           "click": "Anrufeinstellungen"
         },
         {
-          "clicktext": "Alle Einstellungen …"
-        }
-      ]
-    },
-    {
-      "name": "voice-settings-video",
-      "path": "/s/{home}/c/{Sofa}",
-      "user": "lena",
-      "desktop": true,
-      "call": "Sofa jonas,mira:muted",
-      "actions": [
-        {
-          "click": "Anrufeinstellungen"
-        },
-        {
-          "clicktext": "Alle Einstellungen …"
-        },
-        {
-          "clicktext": "Video & Live"
+          "clicktext": "Alle Audio-Einstellungen →"
         }
       ]
     },
@@ -1650,19 +1631,13 @@
       ]
     },
     {
-      "name": "voice-diagnostics-idle",
-      "path": "/s/{home}/c/{Kino}",
+      "name": "settings-audio-diagnostics",
+      "path": "/settings/audio#diagnostics",
       "user": "lena",
       "desktop": true,
       "actions": [
         {
-          "click": "Anrufeinstellungen"
-        },
-        {
-          "clicktext": "Alle Einstellungen …"
-        },
-        {
-          "clicktext": "Diagnose"
+          "wait": 300
         }
       ]
     },
@@ -2125,7 +2100,7 @@
       ]
     },
     {
-      "name": "voice-settings-dialog-en",
+      "name": "voice-quick-all-audio-settings-en",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
       "locale": "en",
@@ -2136,25 +2111,19 @@
           "click": "Call settings"
         },
         {
-          "clicktext": "All settings…"
+          "clicktext": "All audio settings →"
         }
       ]
     },
     {
-      "name": "voice-diagnostics-idle-en",
-      "path": "/s/{home}/c/{Kino}",
+      "name": "settings-audio-diagnostics-en",
+      "path": "/settings/audio#diagnostics",
       "user": "lena",
       "locale": "en",
       "desktop": true,
       "actions": [
         {
-          "click": "Call settings"
-        },
-        {
-          "clicktext": "All settings…"
-        },
-        {
-          "clicktext": "Diagnostics"
+          "wait": 300
         }
       ]
     },
@@ -2331,7 +2300,7 @@
       "mask": [[312, 72, 944, 530]]
     },
     {
-      "name": "voice-user-panel-call-settings",
+      "name": "voice-account-popover-in-call",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
       "call": "Sofa jonas,mira:muted",
@@ -2344,7 +2313,7 @@
           "wait": 3000
         },
         {
-          "click": "Anrufeinstellungen"
+          "click": "/^Lena/"
         }
       ]
     },
@@ -2360,7 +2329,7 @@
       "desktop": true,
       "actions": [
         {
-          "click": "Benutzermenü"
+          "click": "/^Lena/"
         }
       ]
     },
@@ -2576,7 +2545,7 @@
       "desktop": true,
       "actions": [
         {
-          "click": "/^Benutzermenü/"
+          "click": "/^Tom/"
         }
       ]
     },
@@ -2588,7 +2557,7 @@
       "locale": "en",
       "actions": [
         {
-          "click": "/^User menu/"
+          "click": "/^Tom/"
         }
       ]
     },
@@ -2598,10 +2567,10 @@
       "user": "tom",
       "actions": [
         {
-          "click": "/^Benutzermenü/"
+          "click": "/^Tom/"
         },
         {
-          "click": "/^Feedback geben/"
+          "menuitem": "/^Feedback geben/"
         }
       ]
     },
@@ -2612,10 +2581,10 @@
       "locale": "en",
       "actions": [
         {
-          "click": "/^User menu/"
+          "click": "/^Tom/"
         },
         {
-          "click": "/^Give feedback/"
+          "menuitem": "/^Give feedback/"
         }
       ]
     },

@@ -662,7 +662,10 @@ export async function click(actor, name) {
       .first()
       .isVisible())
   ) {
-    await actor.page.locator('summary[aria-label="Benutzermenü"]').click();
+    // The account popover under the avatar holds it, as a menu entry.
+    await actor.page.locator(".user-panel-profile").first().click();
+    await actor.page.getByRole("menuitem", { name, exact: true }).click();
+    return;
   }
   const target = actor.page.getByRole("button", { name, exact: true }).first();
   // Message actions live in a toolbar that takes pointer events only while

@@ -1,8 +1,8 @@
-// Voice diagnostics, the settings dialog's "Diagnose" tab; the call bar's
-// connection popover links here. The status on top answers whether the
-// call is fine; the table shows what is being sent and received; the raw
-// figures wait under "Für die Fehlersuche". They are clues, not a verdict
-// about the cause.
+// Voice diagnostics, the "Diagnose" section at the end of Settings → Audio;
+// the call bar's connection popover links there. The status on top answers
+// whether the call is fine; the table shows what is being sent and
+// received; the raw figures wait under "Für die Fehlersuche". They are
+// clues, not a verdict about the cause.
 
 import { Button } from "../components/ui/Button.tsx";
 import { useT, type TFunction } from "../i18n/catalog.ts";
@@ -34,6 +34,7 @@ import {
   type FlowStats,
   type VideoChoice,
 } from "./diagnostics.ts";
+import { useOpenMediaSettings } from "./mediaSettingsLink.ts";
 import "./connection.css";
 import "./quality.css";
 
@@ -87,7 +88,7 @@ function UploadTip() {
   const voice = useVoiceDiagnostics((state) => state.latest?.voice ?? null);
   const measuring = useVoiceDiagnostics((state) => state.polling.voice);
   const economy = useMediaSettings((s) => s.economyMode);
-  const openDialog = useMediaSettings((s) => s.openDialog);
+  const openSettings = useOpenMediaSettings();
   const quality = measuring ? callQuality(voice) : null;
   const sendLoss = Math.max(
     0,
@@ -105,7 +106,7 @@ function UploadTip() {
   return (
     <div className="connection-tip">
       <p>{t("tip.text")}</p>
-      <Button size="sm" onClick={() => openDialog("video")}>
+      <Button size="sm" onClick={() => openSettings("video")}>
         {t("tip.action")}
       </Button>
     </div>

@@ -30,7 +30,6 @@ import { isChromeLongPress } from "./longPress.ts";
 import { MessageToasts } from "./MessageToasts.tsx";
 import { NotificationSettingsHost } from "./NotificationSettingsDialog.tsx";
 import { Toasts } from "./Toasts.tsx";
-import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
 import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
 import { SessionRecoveryNotice } from "./SessionRecoveryNotice.tsx";
 import { useT } from "../i18n/catalog.ts";
@@ -118,7 +117,6 @@ export function AppShell() {
       <Toasts />
       <MessageToasts />
       <ConfirmHost />
-      {user ? <VoiceSettingsDialog /> : null}
       {user ? (
         <NotificationSettingsHost key={`notifications-${user.id}`} />
       ) : null}
