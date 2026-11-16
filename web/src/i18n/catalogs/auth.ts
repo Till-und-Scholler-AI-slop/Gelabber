@@ -69,6 +69,22 @@ export const auth = defineCatalog(
     "error.ownsServers":
       "Dir gehören noch Server. Übergib sie an ein anderes Mitglied oder lösche sie zuerst.",
     "error.exportPending": "Dein Export wird schon erstellt.",
+    "error.dmNotAllowed":
+      "Schreiben kannst du Freunden und Leuten, mit denen du einen Server teilst. Schick sonst eine Freundschaftsanfrage.",
+    "error.messageRequestPending":
+      "Nimm die Nachrichtenanfrage an, um zu antworten.",
+    "error.messageRequestLimit":
+      "Mehr Nachrichten gehen erst, wenn die Anfrage angenommen ist.",
+    "error.alreadyFriends": "Ihr seid schon befreundet.",
+    "error.friendRequestDeclined":
+      "Eine neue Freundschaftsanfrage geht erst später wieder.",
+    "error.friendRequestsFull":
+      "Du hast zu viele offene Freundschaftsanfragen. Warte erst auf Antworten.",
+    "error.blocked":
+      "Du hast diese Person blockiert. Heb die Blockierung auf, um zu schreiben.",
+    "error.dmClosed":
+      "Du kannst in dieser Unterhaltung keine Nachrichten senden.",
+    "error.blocksFull": "Du blockierst schon so viele Leute wie möglich.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -123,6 +139,15 @@ export const auth = defineCatalog(
     "fieldError.exclusive": "Ein GIF wird ohne Text und Anhang gesendet.",
     "fieldError.unavailable": "GIFs sind auf diesem Server nicht eingerichtet.",
     "fieldError.notEditable": "Ein GIF lässt sich nicht bearbeiten.",
+    "fieldError.self": "Das bist du selbst.",
+    "fieldError.requestLink":
+      "In einer Nachrichtenanfrage gehen keine Links. Erst wenn sie angenommen ist.",
+    "fieldError.requestMention":
+      "In einer Nachrichtenanfrage gehen keine Erwähnungen.",
+    "fieldError.requestTextOnly":
+      "In einer Nachrichtenanfrage geht nur Text, keine Dateien oder GIFs.",
+    "fieldError.friendCodeInvalid":
+      "Ein Freundescode hat acht Zeichen, etwa K7QX-M2PD.",
     "fieldError.emailInvalid": "Das sieht nicht wie eine E-Mail-Adresse aus.",
     "fieldError.avatarUrlInvalid": "Bitte eine vollständige https-URL angeben.",
     "fieldError.colorInvalid": "Bitte eine Farbe im Format #rrggbb wählen.",
@@ -336,6 +361,18 @@ export const auth = defineCatalog(
     "error.ownsServers":
       "You still own servers. Hand them over to another member or delete them first.",
     "error.exportPending": "Your export is already being prepared.",
+    "error.dmNotAllowed":
+      "You can message friends and people you share a server with. Send a friend request instead.",
+    "error.messageRequestPending": "Accept the message request to reply.",
+    "error.messageRequestLimit":
+      "You can send more once the request is accepted.",
+    "error.alreadyFriends": "You are already friends.",
+    "error.friendRequestDeclined": "You can send a new friend request later.",
+    "error.friendRequestsFull":
+      "You have too many open friend requests. Wait for some answers first.",
+    "error.blocked": "You blocked this person. Unblock them to write.",
+    "error.dmClosed": "You can’t send messages in this conversation.",
+    "error.blocksFull": "You already block as many people as you can.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",
@@ -388,6 +425,14 @@ export const auth = defineCatalog(
     "fieldError.exclusive": "A GIF is sent without text or attachments.",
     "fieldError.unavailable": "GIFs aren’t set up on this server.",
     "fieldError.notEditable": "A GIF can’t be edited.",
+    "fieldError.self": "That is you.",
+    "fieldError.requestLink":
+      "Links can’t go in a message request, only once it is accepted.",
+    "fieldError.requestMention": "Mentions can’t go in a message request.",
+    "fieldError.requestTextOnly":
+      "A message request is text only, no files or GIFs.",
+    "fieldError.friendCodeInvalid":
+      "A friend code has eight characters, like K7QX-M2PD.",
     "fieldError.emailInvalid": "That doesn’t look like an email address.",
     "fieldError.avatarUrlInvalid": "Please enter a full https URL.",
     "fieldError.colorInvalid": "Please pick a colour in the format #rrggbb.",

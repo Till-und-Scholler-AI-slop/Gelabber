@@ -91,22 +91,6 @@
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-/* "Feedback geben" in the user menu, and the dot on the menu's chevron. */
-.user-panel-menu > nav > button.user-panel-feedback {
-  display: flex;
-  align-items: center;
-  gap: var(--lr-space-2);
-}
-.user-panel-menu > summary {
-  position: relative;
-}
-.user-panel-menu > summary > .unread-dot {
-  position: absolute;
-  top: 4px;
-  right: 2px;
-  margin: 0;
-}
-
 /* Einstellungen → Feedback: the entries as small threads. */
 .feedback-area {
   display: flex;

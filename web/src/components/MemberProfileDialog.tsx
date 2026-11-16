@@ -1,3 +1,5 @@
+import { BlockButton } from "../blocks/BlockButton.tsx";
+import { FriendButton } from "../friends/FriendButton.tsx";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
@@ -153,6 +155,10 @@ export function MemberProfileDialog({
                 <ChatIcon size={19} />
                 {openDm.isPending ? t("profile.opening") : t("profile.message")}
               </button>
+            )}
+            {self ? null : <FriendButton userId={member.user_id} />}
+            {self ? null : (
+              <BlockButton userId={member.user_id} name={member.name} />
             )}
             <GhostButton onClick={close}>{tc("close")}</GhostButton>
           </div>

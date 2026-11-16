@@ -953,6 +953,22 @@ mod tests {
         );
     }
 
+    /// The friend, message request and block frames (#563, #565) carry
+    /// nothing but their op.
+    #[test]
+    fn friend_and_block_frames_decode_like_the_server_sends_them() {
+        for (op, frame) in [
+            ("fr", ServerFrame::Friends),
+            ("mr", ServerFrame::MessageRequests),
+            ("bl", ServerFrame::Blocks),
+        ] {
+            let text = format!(r#"{{"op":"{op}"}}"#);
+            let f: ServerFrame = serde_json::from_str(&text).unwrap();
+            assert_eq!(f, frame);
+            assert_eq!(serde_json::to_string(&f).unwrap(), text);
+        }
+    }
+
     #[test]
     fn only_an_unreadable_event_names_its_topic_for_a_gap() {
         let bad = r#"{"op":"e","t":"c","s":"00000000-0000-0000-0000-000000000001","c":"00000000-0000-0000-0000-000000000002","n":"sieben"}"#;

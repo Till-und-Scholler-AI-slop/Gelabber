@@ -514,6 +514,8 @@ Volume row (`room.css:1373-1395`): grid `1fr auto`, align center, gap 6 (row) 8 
 
 ### 6.5 VoiceSettingsDialog `Audio & Video` (`components/VoiceSettingsDialog.tsx`, `components/Modal.tsx`, `ui.css:740-858`, `voice/quality.css`)
 
+> Since #570 the dialog is gone: Settings → Audio and Video are the one place for the call's settings, its ways in (the quick popover's "Alle Audio-Einstellungen →", "Mikrofon wählen …", the connection popover's "Einstellungen" and "Alle Details", the diagnostics' tip) navigate there while the call goes on, and the diagnostics are a section ("Diagnose", 28px under the form, group head then 12px) at the end of Settings → Audio. The form spec below still holds for the page; modal, footer and tabs no longer exist.
+
 | Part | Spec |
 |---|---|
 | Modal | width calc(100%-32), max-width 640 (`large`), max-height 100vh-32 (768 @800, 868 @900), radius 14, border 1, bg elevated, shadow-2; backdrop `--lr-backdrop`; enter 240ms opacity+scale .97 |

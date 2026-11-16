@@ -76,7 +76,8 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
     UNION ALL
     SELECT c.id, c.server_id, cm.joined_at
     FROM channels c JOIN channel_members cm ON cm.channel_id=c.id AND cm.user_id=$1
-    WHERE c.kind='dm'
+    -- A message request to the caller is counted in its own tab (#563).
+    WHERE c.kind='dm' AND (c.dm_request_by IS NULL OR c.dm_request_by=$1)
 ), mutes AS (
     SELECT v.channel_id,
       cs.level AS channel_level, ss.level AS server_level,
@@ -105,12 +106,14 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
     CASE WHEN r.created_order IS NULL OR r.message_at<v.joined_at THEN
       (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
         WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id=$1 AND b.blocked_id=m.author_id)
         AND m.created_at>=v.joined_at AND (r.created_order IS NULL OR m.created_order>r.created_order)
         ORDER BY m.created_at DESC LIMIT 1000) recent
         WHERE $1=ANY(recent.mentions) OR recent.mentions_everyone)
     ELSE
       (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
         WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id=$1 AND b.blocked_id=m.author_id)
         AND m.created_at>=v.joined_at AND m.created_order>r.created_order
         ORDER BY m.created_order DESC LIMIT 1000) recent
         WHERE $1=ANY(recent.mentions) OR recent.mentions_everyone)

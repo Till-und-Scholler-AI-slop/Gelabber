@@ -64,7 +64,7 @@ Server (env-configurable, defaults shown) — `backend/api/src/config.rs:20-25,8
 |---|---|---|---|---|
 | `ws_heartbeat` | `API_WS_HEARTBEAT_MS` | 15 000 ms | server sends `{"op":"h"}` every tick (first tick skipped, so first `h` at t+15 s) | `conn.rs:70-74,170-191` |
 | `ws_dead` | `API_WS_DEAD_MS` | 30 000 ms | server closes when nothing (text/ping/pong/binary) arrived for ≥ 30 s, checked on each heartbeat tick | `conn.rs:177-180` |
-| `ws_idle` | `API_WS_IDLE_MS` | 300 000 ms | without an *activity* frame for 5 min the server marks this socket idle (`i`) | `conn.rs:181-184` |
+| `ws_idle` | `API_WS_IDLE_MS` | 300 000 ms | without an *activity* frame for 5 min the server marks this socket idle (`i`); never while the socket holds a voice seat that is not deafened, and the 5 min start when it leaves or deafens (#566) | `conn.rs` `idle_timer` |
 | presence TTL | `API_WS_PRESENCE_TTL_MS` | 45 000 ms | Redis TTL of presence keys, refreshed by heartbeats | `config.rs:86`, `live.rs:241-248` |
 | typing TTL | `API_WS_TYPING_TTL_MS` | 6 000 ms | Redis TTL of a typing key. **The server sends no `on:false` at expiry** — the client must time out | `live.rs:441-485` |
 | replay buffer | `API_WS_REPLAY` | 256 events per topic | bounded Redis list for resume | `config.rs:84`, `event_log.rs:78` |
@@ -276,8 +276,11 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `lc` | `{"op":"lc","l":"en"}` | the account's language changed (`PUT /api/me/locale`) → switch to `l` (`de` \| `en`) and keep it as the device's cached language. Servers older than v0.10 never send it; older clients ignore it | `protocol.rs` (`ServerFrame::Locale`, `UserFrame::Locale`), `profile.rs` (`put_locale`) |
 | `jn` | `{"op":"jn","s":"<srv>"}` | v0.10: this account is now a member of server `s`, because its request to join was accepted (protocol-rest-auth §4.7) → refetch the server list and show "Du bist jetzt Mitglied von {name}." | `protocol.rs` (`ServerFrame::Joined`, `UserFrame::Joined`), `directory/requests.rs` (`accept`) |
 | `jq` | `{"op":"jq","s":"<srv>","n":3}` | v0.10: server `s` now has `n` pending requests to join. Only to the owner and the members holding `moderate_members`, after a new request, a withdrawal, an accept or a decline → set the queue's count badge and refetch the queue if it is open | `protocol.rs` (`ServerFrame::JoinRequests`, `UserFrame::JoinRequests`), `directory/requests.rs` (`publish_queue`) |
+| `fr` | `{"op":"fr"}` | v0.11 (#563): friends or friend requests of this account changed (a new, accepted, declined or withdrawn request, a removed friend) → refetch `GET /api/friends` | `protocol.rs` (`ServerFrame::Friends`, `UserFrame::Friends`), `friends/mod.rs` (`announce`) |
+| `mr` | `{"op":"mr"}` | v0.11: the incoming message requests of this account changed (a first message, an accept, a decline) → refetch `GET /api/dms/requests` | `protocol.rs` (`ServerFrame::MessageRequests`), `dms/mod.rs`, `messages/mod.rs` |
+| `bl` | `{"op":"bl"}` | v0.11 (#565): this account blocked or unblocked someone, on any device → refetch `GET /api/users/me/blocks` and `GET /api/dms` (their `blocked`/`closed`). Only to the blocker | `protocol.rs` (`ServerFrame::Blocks`, `UserFrame::Blocks`), `blocks/mod.rs` |
 
-`ns`, `rd`, `lc`, `jn`, `jq`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`). `jn` and `jq` are best effort: they are not replayed, `n` is read after the change commits (two quick changes can both carry the final count), and a client that missed one catches up on its next REST read. Servers older than v0.10 never send them.
+`ns`, `rd`, `lc`, `jn`, `jq`, `fr`, `mr`, `bl`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`). `jn` and `jq` are best effort: they are not replayed, `n` is read after the change commits (two quick changes can both carry the final count), and a client that missed one catches up on its next REST read. Servers older than v0.10 never send them; `fr`, `mr` and `bl` are best effort the same way and come from v0.11 on.
 
 ### 3.1 Error codes on `/ws`
 
@@ -487,21 +490,26 @@ If the gateway socket dies the seat expires ≤ 5 s later and others see `l`
 ### 6.1 Presence
 
 Server: socket status is `o` on connect/subscribe, `i` after 300 s without
-activity or on `{"op":"p","st":"i"}`; aggregated per user across sockets;
+activity (not while the socket sits in a voice channel undeafened) or on
+`{"op":"p","st":"i"}`; aggregated per user across sockets;
 `x` when the last socket goes (`live.rs:221-240,564-575`). Broadcast as
 `{"op":"p","s","u","st"}` to each server the user is announced in. Snapshot
 per subscribe (§2.2 step 4); entries with missing keys come back as `x`
 (`live.rs:337-360,774`).
 
-Client (`web/src/ws/live.ts:8-77`, `web/src/ws/useLive.ts:48-90`):
+Client (`web/src/ws/idlePresence.ts`, `web/src/ws/useLive.ts`; native:
+`desktop/client/src/presence.rs`):
 
 | Constant | Value |
 |---|---|
 | `CLIENT_IDLE_MS` | 300 000 (5 min) |
 | `PRESENCE_PULSE_MS` | 10 000 |
+| `CALL_PULSE_MS` | 60 000 |
 | activity events | `pointerdown`, `keydown`, `mousemove` (not visibility) |
 
 - On sign-in and on each activity event: if idle → send `{"op":"p","st":"o"}`; else send it at most every 10 s. Re-arm a 5 min timer that sends `{"op":"p","st":"i"}` once.
+- In a voice channel and not deafened (#566): never send `i`; send `{"op":"p","st":"o"}` at once if idle, then every 60 s. Leaving or deafening re-arms the 5 min timer from that moment.
+- Native app only: input anywhere on the computer counts as activity (system idle time read every 30 s: Windows `GetLastInputInfo`, Wayland `ext-idle-notify-v1`, X11 MIT-SCREEN-SAVER, GNOME `org.gnome.Mutter.IdleMonitor`; without one, window input only). `f` (in front) still follows window input alone.
 - Store `byServer[s][u] = st`; `x` deletes the key. Snapshot replaces the server's map (dropping `x`). Unknown user ⇒ `x`.
 - Member list groups (`live.ts:157-177`): order `o` "Online", `i` "Abwesend", `x` "Offline"; each sorted by `name.localeCompare(b, "de")`; empty groups hidden.
 - Wire form: `sendPresence("o")` sends `{"op":"p","st":"o"}`, `sendPresence("i")` sends `{"op":"p","st":"i"}` (`client.ts:292-294`); frames while the socket is closed are dropped.

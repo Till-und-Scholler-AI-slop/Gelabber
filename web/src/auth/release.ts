@@ -10,7 +10,6 @@ import { resetPendingMessages } from "../messages/pending.ts";
 import { resetReplyTargets } from "../messages/replyTarget.ts";
 import { dropForeignUserQueries, setQueryScope } from "../queryClient.ts";
 import { stopCallSounds } from "../voice/callSounds.ts";
-import { useMediaSettings } from "../voice/settings.ts";
 import { bindUserVolumeAccount } from "../voice/userVolume.ts";
 import { leaveVoice } from "../voice/session.ts";
 import { resetVoiceRoster } from "../voice/roster.ts";
@@ -41,5 +40,4 @@ export function releaseUserScope(nextUserId: string | null): void {
   clearToasts();
   resetLiveStores();
   resetVoiceRoster();
-  useMediaSettings.getState().closeDialog();
 }

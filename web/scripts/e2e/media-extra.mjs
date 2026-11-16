@@ -680,10 +680,10 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "session-undeafen-did-not-restore-every-path",
         );
         stage = "session-volume";
-        // The user panel gear's quick settings hold the call volume, Live
+        // The voice room gear's quick settings hold the call volume, Live
         // or not.
         await f.watcher.page
-          .locator(".user-panel")
+          .locator(".voice-room")
           .getByRole("button", { name: "Anrufeinstellungen", exact: true })
           .click();
         const volume = f.watcher.page

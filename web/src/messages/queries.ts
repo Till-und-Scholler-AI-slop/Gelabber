@@ -30,6 +30,7 @@ import { randomUuid } from "../lib/uuid.ts";
 import { isPendingId } from "../servers/queries.ts";
 import type { GifPick } from "../gifs/api.ts";
 import { refreshChatWorkflows } from "./readState.ts";
+import { sendFailureText } from "./sendFailure.ts";
 import * as remote from "./api.ts";
 import {
   applyMessageChanges,
@@ -601,11 +602,6 @@ export async function sendMessageAttempt(
           error.status === 0 ||
           error.status === 408 ||
           error.status >= 500);
-      const failed = {
-        presign: "send.presignFailed",
-        upload: "send.uploadFailed",
-        bind: "send.bindFailed",
-      } as const;
       // The bind may have gone through: these ids may be taken already, so
       // a retry or a draft taken back uploads the files again.
       if (uncertain) for (const file of attempt.files) arrived.delete(file);
@@ -620,7 +616,12 @@ export async function sendMessageAttempt(
         uploadedIds: rejected ? [] : attempt.uploadedIds,
         status: uncertain ? "uncertain" : "failed",
         error: [
-          translate(chat, failed[attempt.stage]),
+          // A rejection naming its files says why itself.
+          sendFailureText(
+            uncertain || rejected ? null : error,
+            attempt.stage,
+            attempt.gif !== undefined,
+          ),
           ...(rejected ?? []),
         ].join(" "),
       });

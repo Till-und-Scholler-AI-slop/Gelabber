@@ -784,7 +784,10 @@ fn upload_tip(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32, ec
         vec2(bw, 32.0),
     );
     if ui.put(br, Button::new(label).small()).clicked() {
-        super::dialogs::open_settings(ui.ctx(), super::dialogs::Tab::Video);
+        crate::screens::settings::open_media(
+            ui.ctx(),
+            crate::screens::settings::MediaTarget::Video,
+        );
     }
     ui.allocate_rect(rect, Sense::hover());
 }

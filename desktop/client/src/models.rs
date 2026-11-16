@@ -740,6 +740,110 @@ pub struct DirectMessage {
     pub kind: ChannelKind,
     pub created_at: Timestamp,
     pub peer: Peer,
+    /// Set while the DM is a message request (#563); absent once accepted
+    /// and from servers before v0.11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<DmRequest>,
+    /// The user blocks the peer (#565): the composer says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
+    /// The peer blocks the user: nothing can be sent, without saying why.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
+}
+
+/// A pending message request. `incoming`: the peer started it and waits
+/// for an answer. Otherwise the user sent it and may write `remaining`
+/// more text-only messages until it is accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DmRequest {
+    pub incoming: bool,
+    #[serde(default)]
+    pub remaining: i64,
+}
+
+// ------------------------------------------------------------------- blocks
+
+/// Someone the user blocks (`GET /api/users/me/blocks`, #565).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BlockedUser {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    pub created_at: Timestamp,
+}
+
+// ------------------------------------------------------------------ friends
+
+/// Someone on the friend list or in a friend request (`/api/friends`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendPerson {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Friend {
+    pub user: FriendPerson,
+    pub since: Timestamp,
+    /// Online or idle; absent when offline or not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<PresenceStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendRequest {
+    pub user: FriendPerson,
+    pub created_at: Timestamp,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FriendList {
+    #[serde(default, deserialize_with = "lenient_list")]
+    pub friends: Vec<Friend>,
+    #[serde(default, deserialize_with = "lenient_list")]
+    pub incoming: Vec<FriendRequest>,
+    #[serde(default, deserialize_with = "lenient_list")]
+    pub outgoing: Vec<FriendRequest>,
+}
+
+/// How the user stands to someone, for a profile card's button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Relation {
+    Friend,
+    Outgoing,
+    Incoming,
+    None,
+}
+
+impl FriendList {
+    pub fn relation(&self, user: Uuid) -> Relation {
+        if self.friends.iter().any(|f| f.user.id == user) {
+            Relation::Friend
+        } else if self.outgoing.iter().any(|r| r.user.id == user) {
+            Relation::Outgoing
+        } else if self.incoming.iter().any(|r| r.user.id == user) {
+            Relation::Incoming
+        } else {
+            Relation::None
+        }
+    }
+}
+
+/// `POST /api/friends/requests`: `pending`, or `friends` when they had
+/// asked already.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendAnswer {
+    pub status: String,
+    pub peer: FriendPerson,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendCode {
+    pub code: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1833,6 +1937,15 @@ pub enum ServerFrame {
     /// the owner and holders of `moderate_members` get it.
     #[serde(rename = "jq")]
     JoinRequests { s: Uuid, n: i64 },
+    /// Friends or friend requests changed (#563): fetch `/friends` again.
+    #[serde(rename = "fr")]
+    Friends,
+    /// Incoming message requests changed (#563): fetch `/dms/requests`.
+    #[serde(rename = "mr")]
+    MessageRequests,
+    /// The user blocked or unblocked someone (#565): fetch the blocks.
+    #[serde(rename = "bl")]
+    Blocks,
     #[serde(other)]
     Unknown,
 }

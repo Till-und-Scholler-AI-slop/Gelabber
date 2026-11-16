@@ -49,6 +49,7 @@ import { useLiveWatchers, watchersTitle } from "../voice/useLiveWatchers.ts";
 import { formatNumber } from "../i18n/format.ts";
 import { useUserId } from "../auth/scope.ts";
 import type { ServerDetail } from "../servers/types.ts";
+import { useOpenMediaSettings } from "../voice/mediaSettingsLink.ts";
 import { CallSoundButton } from "../voice/QuickCallSettings.tsx";
 import {
   callShortcutKeys,
@@ -158,7 +159,7 @@ function MicProblem({
   const tc = useT(common);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
-  const openSettings = useMediaSettings((s) => s.openDialog);
+  const openSettings = useOpenMediaSettings();
   const tip = useTooltip({ label: t("mic.none"), disabled: open });
   return (
     <>
@@ -201,7 +202,7 @@ function MicProblem({
             variant="ghost"
             onClick={() => {
               setOpen(false);
-              openSettings();
+              openSettings("audio");
             }}
           >
             {t("mic.choose")}
