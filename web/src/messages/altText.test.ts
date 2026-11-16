@@ -20,9 +20,9 @@ describe("alt texts of files not sent yet (#575)", () => {
   });
 
   it("drops control characters but keeps tabs and line breaks", () => {
-    expect(withoutControls("a\u000bb\u000cc\u0000d\u007f\te\nf")).toBe(
-      "abcd\te\nf",
-    );
+    expect(
+      withoutControls("a\u000bb\u000cc\u0000d\u007f\u0085\u009f\te\nf"),
+    ).toBe("abcd\te\nf");
   });
 
   it("counts characters as the server does", () => {

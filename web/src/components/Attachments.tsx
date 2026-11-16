@@ -373,6 +373,9 @@ function AltTextBadge({
   const [open, setOpen] = useState(false);
   const hovered = useRef(false);
   const badge = useRef<HTMLButtonElement>(null);
+  const bubble = useRef<HTMLSpanElement>(null);
+  // A mouse leaving for the bubble crosses a small gap: closing waits.
+  const closing = useRef<number | undefined>(undefined);
   // Where the bubble goes: fixed to the badge, outside the mosaic's clip.
   const [at, setAt] = useState<{
     top?: number;
@@ -389,22 +392,32 @@ function AltTextBadge({
       const below = window.innerHeight - box.bottom - 12;
       const above = box.top - 12;
       const left = Math.max(8, Math.min(box.left, window.innerWidth - 328));
+      const cap = Math.min(320, window.innerHeight * 0.4);
       setAt(
         below >= 160 || below >= above
-          ? { top: box.bottom + 4, left, maxHeight: below }
+          ? { top: box.bottom + 4, left, maxHeight: Math.min(below, cap) }
           : {
               bottom: window.innerHeight - box.top + 4,
               left,
-              maxHeight: above,
+              maxHeight: Math.min(above, cap),
             },
       );
     }
     setOpen(next);
   };
-  // The list scrolls under a fixed bubble: it goes.
+  useEffect(() => () => window.clearTimeout(closing.current), []);
+  // The list scrolls under a fixed bubble: it goes. Scrolling the bubble
+  // itself (a long text) keeps it.
   useEffect(() => {
     if (!open) return;
-    const hide = () => setOpen(false);
+    const hide = (event: Event) => {
+      if (
+        event.target instanceof Node &&
+        bubble.current?.contains(event.target)
+      )
+        return;
+      setOpen(false);
+    };
     window.addEventListener("scroll", hide, { capture: true, passive: true });
     window.addEventListener("resize", hide);
     return () => {
@@ -428,10 +441,14 @@ function AltTextBadge({
   return (
     <span
       className="lr-alt"
+      onPointerEnter={() => window.clearTimeout(closing.current)}
       onPointerLeave={(event) => {
         if (event.pointerType !== "mouse") return;
-        hovered.current = false;
-        show(false);
+        window.clearTimeout(closing.current);
+        closing.current = window.setTimeout(() => {
+          hovered.current = false;
+          show(false);
+        }, 200);
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && open) {
@@ -458,7 +475,7 @@ function AltTextBadge({
         {t("altText.badge")}
       </button>
       {open ? (
-        <span className="lr-alt-text" style={at}>
+        <span ref={bubble} className="lr-alt-text" style={at}>
           {/* First, so a long text does not push it out of reach. */}
           {onEdit ? (
             <button type="button" onClick={onEdit}>

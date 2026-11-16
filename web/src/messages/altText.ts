@@ -20,7 +20,7 @@ export function setAltText(file: File, text: string): void {
 /** Control characters the server refuses (all but tab and line break),
  *  as `validateContent` checks message text. */
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 
 /** The text without the control characters a paste can bring along, so a
  *  save does not fail on what nobody can see. */
