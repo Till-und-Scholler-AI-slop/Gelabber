@@ -15,11 +15,18 @@ import {
 } from "../auth/session.ts";
 import type { User } from "../auth/types.ts";
 import { usePresenceStore } from "../ws/live.ts";
-import type { PresenceStatus } from "../ws/protocol.ts";
+import {
+  modeAt,
+  modeLabel,
+  ownShown,
+  usePresenceMode,
+  type OwnPresence,
+} from "../presence/mode.ts";
 import { moveInAccount } from "./accountKeys.ts";
 import { GearIcon } from "./Icons.tsx";
 import { logOut } from "./logout.ts";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
+import { PresenceModeMenu } from "./PresenceModeMenu.tsx";
 import { Button } from "./ui/Button.tsx";
 import { InlineStatus } from "./ui/InlineStatus.tsx";
 import { Input } from "./ui/Input.tsx";
@@ -38,9 +45,12 @@ import "./shell.css";
 export function UserPanel({ contextId }: { contextId?: string }) {
   const t = useT(shell);
   const user = useSession((state) => state.user);
-  const presence = usePresenceStore((state) =>
+  const reported = usePresenceStore((state) =>
     user ? ownPresence(state.byServer, user.id, contextId) : "o",
   );
+  // The mode you chose wins (#590): invisible shows as such, not offline.
+  const mode = usePresenceMode((state) => modeAt(state));
+  const presence = ownShown(mode, reported);
   const profileButton = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const feedbackStatus = useFeedbackStatus().data;
@@ -123,9 +133,9 @@ export function UserPanel({ contextId }: { contextId?: string }) {
   );
 }
 
-/** The account's entries under the status card: profile, feedback,
- * operator, then signing out after a line. Room for the presence modes of
- * #590 above them. */
+/** The account's entries under the status card: the presence modes
+ * (#590), then profile, feedback, operator, then signing out after a
+ * line. */
 export function AccountMenu({
   feedback,
   unread,
@@ -146,6 +156,7 @@ export function AccountMenu({
       aria-label={t("userPanel.menuLabel")}
       className="user-account-menu"
     >
+      <PresenceModeMenu onDone={onDone} />
       <hr className="shell-menu-separator" />
       <Link
         to="/settings/$area"
@@ -203,14 +214,12 @@ export function AccountMenu({
 }
 
 /** The popover's top: who you are right now, and the status text to edit. */
-function StatusCard({
-  user,
-  presence,
-}: {
-  user: User;
-  presence: PresenceStatus;
-}) {
+function StatusCard({ user, presence }: { user: User; presence: OwnPresence }) {
   const t = useT(shell);
+  // "Nicht stören bis 18:30" while a mode with an end lasts.
+  const chosen = usePresenceMode((state) =>
+    state.until !== null && modeAt(state) !== "auto" ? modeLabel(state) : null,
+  );
   const tc = useT(common);
   const [text, setText] = useState(user.status_text ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -263,7 +272,7 @@ function StatusCard({
         />
         <span>
           <strong>{user.name}</strong>
-          <small>{t(`presence.${presence}`)}</small>
+          <small>{chosen ?? t(`presence.${presence}`)}</small>
         </span>
       </div>
       <form className="user-status-card__form" onSubmit={onSubmit} noValidate>

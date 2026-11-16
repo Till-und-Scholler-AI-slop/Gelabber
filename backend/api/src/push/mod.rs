@@ -7,6 +7,8 @@
 //! device (`ClientFrame::Focus`), nor for a conversation they muted or set
 //! to "nothing" (#242). In a server channel only a mention pushes.
 //!
+//! An account in Do not disturb (#590) gets no push at all while it lasts.
+//!
 //! An account that hides the content of its notifications (#268) gets only
 //! "Neue Nachricht von Ada": no preview, no conversation.
 //!
@@ -343,7 +345,8 @@ async fn deliver(
     // Live sessions only, not from someone the recipient blocks (#565), and
     // not where the conversation is muted or set to "nothing"; the
     // channel's own level wins over its server's.
-    let targets: Vec<Target> = sqlx::query_as(
+    // Do not disturb (#590): no push of any kind while it lasts.
+    let targets: Vec<Target> = sqlx::query_as(concat!(
         "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
                 u.notifications_hide_content AS hide_content, u.locale
          FROM push_subscriptions p
@@ -358,8 +361,10 @@ async fn deliver(
            AND NOT (cs.muted IS TRUE AND (cs.muted_until IS NULL OR cs.muted_until>now()))
            AND NOT (ss.muted IS TRUE AND (ss.muted_until IS NULL OR ss.muted_until>now()))
            AND NOT EXISTS (SELECT 1 FROM user_blocks b
-                           WHERE b.blocker_id=p.user_id AND b.blocked_id=$4)",
-    )
+                           WHERE b.blocker_id=p.user_id AND b.blocked_id=$4)
+           AND NOT ",
+        crate::dnd_active!()
+    ))
     .bind(&recipients)
     .bind(message.channel_id)
     .bind(server)
@@ -583,7 +588,8 @@ async fn deliver_invite(
         Invite::Message { channel, .. } => Some(channel),
         Invite::Friend => None,
     };
-    let targets: Vec<Target> = sqlx::query_as(
+    // Do not disturb (#590) holds these back too.
+    let targets: Vec<Target> = sqlx::query_as(concat!(
         "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
                 u.notifications_hide_content AS hide_content, u.locale
          FROM push_subscriptions p
@@ -593,8 +599,10 @@ async fn deliver_invite(
            AND cs.scope_kind='channel' AND cs.scope_id=$2
          WHERE p.user_id=$1
            AND COALESCE(cs.level, 'all')<>'none'
-           AND NOT (cs.muted IS TRUE AND (cs.muted_until IS NULL OR cs.muted_until>now()))",
-    )
+           AND NOT (cs.muted IS TRUE AND (cs.muted_until IS NULL OR cs.muted_until>now()))
+           AND NOT ",
+        crate::dnd_active!()
+    ))
     .bind(to)
     .bind(channel)
     .fetch_all(&state.db)

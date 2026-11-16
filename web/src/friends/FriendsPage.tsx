@@ -135,7 +135,11 @@ function FriendRow({ friend }: { friend: Friend }) {
         <span>{user.name}</span>
         {friend.status ? (
           <span className="friend-row__detail">
-            {friend.status === "o" ? t("status.online") : t("status.idle")}
+            {friend.status === "o"
+              ? t("status.online")
+              : friend.status === "d"
+                ? t("status.dnd")
+                : t("status.idle")}
           </span>
         ) : null}
       </span>

@@ -15,6 +15,7 @@ import {
   resetLiveStores,
 } from "./live.ts";
 import { createIdlePresence } from "./idlePresence.ts";
+import { isInvisible } from "../presence/mode.ts";
 import { applyVoiceSig, resetVoiceRoster } from "../voice/roster.ts";
 import { useVoice, type VoiceState } from "../voice/voiceStore.ts";
 
@@ -137,7 +138,8 @@ export function useTypingInput(
 
   return {
     onChange: (value: string) => {
-      if (!enabled || !me) return;
+      // Invisible (#590): nobody is to see you type.
+      if (!enabled || !me || isInvisible()) return;
       sender.current?.input(serverId, channelId, value);
     },
     stop,

@@ -34,6 +34,24 @@ describe("message toast rules", () => {
     ).toEqual({ toast: false, desktop: false });
   });
 
+  it("shows nothing while do not disturb lasts (#590)", () => {
+    const base = {
+      toastEnabled: true,
+      desktopEnabled: true,
+      hidden: true,
+      type: "c" as const,
+      own: false,
+      channelId: "c1",
+      viewingChannelId: "c2",
+    };
+    expect(
+      messageNotificationDecision({ ...base, doNotDisturb: true }),
+    ).toEqual({ toast: false, desktop: false });
+    expect(
+      messageNotificationDecision({ ...base, doNotDisturb: false }),
+    ).toEqual({ toast: true, desktop: true });
+  });
+
   it("delivers desktop messages independently, including the hidden open chat", () => {
     const base = {
       toastEnabled: false,

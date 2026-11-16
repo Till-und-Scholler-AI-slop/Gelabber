@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::hub::ConnId;
 use super::protocol::{
-    CatchUp, ClientFrame, PresenceStatus, ServerFrame, SigKind, Topic, VoiceEntry,
+    CatchUp, ClientFrame, PresenceMode, PresenceStatus, ServerFrame, SigKind, Topic, VoiceEntry,
 };
 use crate::auth::session::CurrentSession;
 use crate::auth::user::User;
@@ -61,7 +61,9 @@ impl From<ApiError> for SubscribeError {
     }
 }
 
-pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
+/// `dnd`: the client knows the presence status `d` (#590); other clients
+/// hear Do not disturb as online.
+pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dnd: bool) {
     let user = &session.user;
     let (tx, mut rx) = mpsc::channel(super::hub::OUTBOUND_CAPACITY);
     let (conn, mut revoked) = state
@@ -71,6 +73,9 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let Some(recheck) = state.gateway.recheck_signal(conn).await else {
         return;
     };
+    if dnd {
+        state.gateway.allow_dnd(conn).await;
+    }
     // The upgrade itself just checked the session.
     let mut checked = Instant::now();
     // Fast path for the session's end; `lock_live` enforces it as well. The
@@ -80,6 +85,8 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let expired = tokio::time::sleep_until(until(expires_at));
     tokio::pin!(expired);
     debug!(user_id = %user.id, "ws connected");
+    // Redis lost the manual mode (a restart): put the record's back.
+    crate::presence::restore(&state, None, user.id).await;
 
     let mut last_client = Instant::now();
     let mut last_activity = Instant::now();
@@ -217,7 +224,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
-                let Ok(batch) = take_batch(frame, &mut rx) else { break };
+                let Ok(batch) = take_batch(frame, &mut rx, dnd) else { break };
                 match deliver(&state, &session, user.id, conn, &mut sink, batch, &mut rosters).await {
                     Ok(true) => checked = Instant::now(),
                     Ok(false) => {}
@@ -521,13 +528,18 @@ async fn subscribe(
     // never looks like catch-up and never bumps `n`. A failure here leaves
     // the chat subscription standing; the roster pass and later presence
     // frames fill in.
+    // After a Redis restart the sockets only subscribe again (`resync`):
+    // the manual mode has to be back before this one announces (#590).
+    crate::presence::restore(state, Some(&mut *db), user.id).await;
     if let Err(err) = state.gateway.announce_server(conn, server_id).await {
         warn!(error = err.code(), "presence announce on subscribe failed");
     }
     match state.gateway.presence_snapshot(server_id).await {
-        Ok(snap) => send(sink, ServerFrame::presence_snap(server_id, snap))
-            .await
-            .map_err(SubscribeError::Write)?,
+        Ok(snap) => {
+            let dnd = state.gateway.knows_dnd(conn).await;
+            let frame = client_frame(ServerFrame::presence_snap(server_id, snap), dnd);
+            send(sink, frame).await.map_err(SubscribeError::Write)?
+        }
         Err(err) => warn!(error = err.code(), "presence snapshot on subscribe failed"),
     }
     let roster = match state.gateway.voice_snapshot(server_id).await {
@@ -613,6 +625,18 @@ async fn typing(
         }
         Err(other) => return Err(other),
     }
+    // Invisible (#590): nobody sees this account type. A stop still goes
+    // out, for a start sent before the switch.
+    if on
+        && state
+            .gateway
+            .presence_mode(user.id)
+            .await
+            .unwrap_or_default()
+            == PresenceMode::Invisible
+    {
+        return Ok(());
+    }
     // A DM closed by a block carries no typing either way (#565); stopping
     // still goes through so nothing is left on.
     if on
@@ -687,15 +711,23 @@ type Scope = (Uuid, Option<Uuid>);
 /// something happened there.
 type Rosters = HashMap<Uuid, Vec<VoiceEntry>>;
 
+/// The frame as this client can take it (see [`run`]'s `dnd`).
+fn client_frame(frame: ServerFrame, dnd: bool) -> ServerFrame {
+    if dnd { frame } else { frame.without_dnd() }
+}
+
 fn take_batch(
     first: ServerFrame,
     rx: &mut mpsc::Receiver<ServerFrame>,
+    dnd: bool,
 ) -> Result<Vec<(ServerFrame, String)>, ApiError> {
+    let first = client_frame(first, dnd);
     let json = to_json(&first)?;
     let mut bytes = json.len();
     let mut batch = vec![(first, json)];
     while batch.len() < BATCH_FRAMES && bytes < BATCH_BYTES {
         let Ok(frame) = rx.try_recv() else { break };
+        let frame = client_frame(frame, dnd);
         let json = to_json(&frame)?;
         bytes += json.len();
         batch.push((frame, json));

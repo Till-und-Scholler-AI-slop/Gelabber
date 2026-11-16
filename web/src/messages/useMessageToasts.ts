@@ -11,6 +11,7 @@ import type { DirectMessage } from "../dms/types.ts";
 import { serverKeys } from "../servers/queries.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { playMessageSound } from "../voice/callSounds.ts";
+import { isDoNotDisturb } from "../presence/mode.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import { useVoice } from "../voice/session.ts";
 import { useInstallation } from "../pwa/install.ts";
@@ -212,6 +213,7 @@ export function useMessageToastsBridge(): void {
         // burst. Measured on the server clock: a fast local clock must not
         // suppress every live notification.
         ageMs: serverNow() - Date.parse(message.created_at),
+        doNotDisturb: isDoNotDisturb(),
       });
       if (!decision.toast && !decision.desktop) return;
       const label = channelLabel(client, userId, generation, event, dm);

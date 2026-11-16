@@ -289,13 +289,7 @@ pub fn avatar(
 pub fn presence_dot(painter: &Painter, theme: &Theme, avatar: Rect, presence: Presence) {
     let size = (avatar.width() * 0.23).max(10.0);
     let center = avatar.max - Vec2::splat(size / 2.0);
-    let fill = match presence {
-        Presence::Online => theme.c.online,
-        Presence::Away => theme.c.warning,
-        Presence::Offline => theme.c.muted,
-    };
-    painter.circle_filled(center, size / 2.0, theme.c.bg);
-    painter.circle_filled(center, size / 2.0 - 2.0, fill);
+    presence.paint(painter, theme, center, size, theme.c.bg);
 }
 
 /// The wire presence as the widget's.
@@ -303,7 +297,24 @@ pub fn presence(status: gelabber_client::PresenceStatus) -> Presence {
     match status {
         gelabber_client::PresenceStatus::Online => Presence::Online,
         gelabber_client::PresenceStatus::Idle => Presence::Away,
+        gelabber_client::PresenceStatus::Dnd => Presence::Dnd,
         gelabber_client::PresenceStatus::Offline => Presence::Offline,
+    }
+}
+
+/// Your own presence (`ownShown`, presence/mode.ts): the mode you chose
+/// wins over what a server reports, which is offline while invisible.
+pub fn own_presence(
+    mode: gelabber_client::PresenceMode,
+    reported: gelabber_client::PresenceStatus,
+) -> Presence {
+    use gelabber_client::{PresenceMode, PresenceStatus};
+    match mode {
+        PresenceMode::Idle => Presence::Away,
+        PresenceMode::Dnd => Presence::Dnd,
+        PresenceMode::Invisible => Presence::Invisible,
+        PresenceMode::Auto if reported == PresenceStatus::Offline => Presence::Online,
+        PresenceMode::Auto => presence(reported),
     }
 }
 

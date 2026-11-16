@@ -433,6 +433,8 @@ struct AccountRow {
     locale: Locale,
     avatar_url: Option<String>,
     banner_url: Option<String>,
+    presence_mode: String,
+    presence_mode_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -606,7 +608,8 @@ impl Archive {
             sqlx::query_as(
                 "SELECT id, email, name, created_at, email_verified_at, bio, pronouns, \
                         status_text, accent_color, banner_color, avatar_decoration, \
-                        notifications_hide_content, locale, avatar_url, banner_url \
+                        notifications_hide_content, locale, avatar_url, banner_url, \
+                        presence_mode, presence_mode_until \
                  FROM users WHERE id = $1",
             )
             .bind(user_id)
@@ -705,6 +708,9 @@ impl Archive {
                 "avatar_decoration": row.avatar_decoration,
                 "notifications_hide_content": row.notifications_hide_content,
                 "locale": row.locale,
+                // The manual presence (#590) as set, end included.
+                "presence_mode": row.presence_mode,
+                "presence_mode_until": row.presence_mode_until,
                 "themes": themes.map(|document| document.0),
                 "notification_settings": notification_settings,
                 "sessions": sessions,

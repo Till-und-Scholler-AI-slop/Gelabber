@@ -1769,12 +1769,81 @@ pub struct ImageStaged {
 pub enum PresenceStatus {
     #[serde(rename = "i")]
     Idle,
+    /// Do not disturb, set by hand (#590).
+    #[serde(rename = "d")]
+    Dnd,
     #[serde(rename = "x")]
     Offline,
     /// Also a status this client does not know: connected all the same
     /// (`other` must come last).
     #[serde(rename = "o", other)]
     Online,
+}
+
+/// The presence an account sets by hand (#590), for all its devices.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PresenceMode {
+    Idle,
+    Dnd,
+    Invisible,
+    /// Online while used, away after a while without input. Also a mode
+    /// this client does not know (`other` must come last).
+    #[default]
+    #[serde(other)]
+    Auto,
+}
+
+impl PresenceMode {
+    pub const ALL: [Self; 4] = [Self::Auto, Self::Idle, Self::Dnd, Self::Invisible];
+}
+
+/// How long a manual mode lasts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ModeDuration {
+    #[serde(rename = "1h")]
+    Hour,
+    #[serde(rename = "8h")]
+    EightHours,
+    #[serde(rename = "24h")]
+    Day,
+    #[serde(rename = "forever")]
+    Forever,
+}
+
+impl ModeDuration {
+    pub const ALL: [Self; 4] = [Self::Hour, Self::EightHours, Self::Day, Self::Forever];
+
+    /// Its end from `now`; none until changed.
+    pub fn until(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let hours = match self {
+            Self::Hour => 1,
+            Self::EightHours => 8,
+            Self::Day => 24,
+            Self::Forever => return None,
+        };
+        Some(now + chrono::Duration::hours(hours))
+    }
+}
+
+/// `GET`/`PUT /api/me/presence`: the mode and when it ends (none: until
+/// changed, always none for automatic).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeState {
+    #[serde(default)]
+    pub mode: PresenceMode,
+    #[serde(default)]
+    pub until: Option<DateTime<Utc>>,
+}
+
+impl ModeState {
+    /// The mode in effect at `now`: an end that passed is automatic.
+    pub fn at(&self, now: DateTime<Utc>) -> PresenceMode {
+        match self.until {
+            Some(until) if until <= now => PresenceMode::Auto,
+            _ => self.mode,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1953,6 +2022,14 @@ pub enum ServerFrame {
     /// The account's language changed (on another device, or here).
     #[serde(rename = "lc")]
     Locale { l: String },
+    /// The account's manual presence (#590) changed on some device or ran
+    /// out: `m` until `u` (none: until changed).
+    #[serde(rename = "pm")]
+    PresenceMode {
+        m: PresenceMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        u: Option<DateTime<Utc>>,
+    },
     /// A request to join `s` was accepted: the account is a member now.
     #[serde(rename = "jn")]
     Joined { s: Uuid },

@@ -26,8 +26,8 @@ pub mod protocol;
 mod signal;
 
 use axum::Router;
-use axum::extract::State;
 use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::http::header::{HOST, ORIGIN};
 use axum::response::{IntoResponse, Response};
@@ -40,6 +40,7 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub use hub::{ConnTable, EventLog, Gateway, Recheck, VoiceRoster};
+pub use live::ModeCheck;
 
 /// Sockets one account may hold on one API process: several tabs, a phone
 /// and the desktop app fit. Each socket can hold a pool connection while it
@@ -51,12 +52,25 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/ws", get(upgrade))
 }
 
+/// `/ws?caps=dnd`: what the client understands beyond the base protocol.
+/// `dnd`: the presence status `d` (#590); without it the socket hears `o`.
+#[derive(Debug, Default, serde::Deserialize)]
+struct UpgradeQuery {
+    #[serde(default)]
+    caps: Option<String>,
+}
+
 async fn upgrade(
     State(state): State<AppState>,
     session: CurrentSession,
     headers: HeaderMap,
+    Query(query): Query<UpgradeQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
+    let dnd = query
+        .caps
+        .as_deref()
+        .is_some_and(|caps| caps.split(',').any(|cap| cap == "dnd"));
     if !origin_allowed(&headers, state.cookie_secure) {
         // Behind a proxy that rewrites `Host` every browser lands here; the
         // two values say which. Header values only, never cookies.
@@ -94,7 +108,7 @@ async fn upgrade(
         .max_message_size(conn::MAX_CLIENT_BYTES)
         .max_frame_size(conn::MAX_CLIENT_BYTES)
         .on_upgrade(move |socket| async move {
-            conn::run(socket, state, session).await;
+            conn::run(socket, state, session, dnd).await;
             drop(slot);
         }))
 }

@@ -2,10 +2,12 @@
 //! (components/UserPanel.tsx, index.css `.user-panel`): your avatar with
 //! presence, name and status line, and the settings gear. A click on the
 //! name opens the account popover (#570): the status card, then the
-//! account's entries as a menu.
+//! presence modes (#590) and the account's entries as a menu.
 
 use egui::{Id, Rect, Ui, Vec2, pos2};
-use gelabber_client::{OpState, PresenceStatus, ProfilePatch};
+use gelabber_client::{
+    ModeDuration, ModeState, OpState, PresenceMode, PresenceStatus, ProfilePatch,
+};
 use gelabber_i18n::shell;
 use uuid::Uuid;
 
@@ -28,6 +30,8 @@ struct StatusDraft {
     saving: bool,
     /// Focus the field on the next frame (the popover's initial focus).
     focus: bool,
+    /// The mode whose durations show below its row (`asking`).
+    asking: Option<PresenceMode>,
 }
 
 fn draft_id() -> Id {
@@ -51,7 +55,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
     painter.rect_filled(inner, 0.0, c.panel);
     hairline_h(&painter, &theme, inner.left()..=inner.right(), inner.top());
 
-    let (name, avatar_url, status_text, presence) = app.client.with_state(|s| {
+    let (name, avatar_url, status_text, presence, mode) = app.client.with_state(|s| {
         let me = s.me();
         let id = me.map(|m| m.id);
         let presence = id.map_or(PresenceStatus::Online, |id| {
@@ -65,6 +69,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
             me.and_then(|m| m.avatar_url.clone()),
             me.and_then(|m| m.status_text.clone()),
             presence,
+            s.presence_mode,
         )
     });
     // Before the client knows the account, the session's user stands in.
@@ -83,7 +88,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
             .and_then(|v| v.as_str())
             .map(str::to_owned)
     });
-    let presence = common::presence(presence);
+    // The mode wins over what the servers report (`ownShown`).
+    let mode = ModeState {
+        mode: mode.at(chrono::Utc::now()),
+        ..mode
+    };
+    let presence = common::own_presence(mode.mode, presence);
     let label = presence.label();
     let subtitle = match status_text.as_deref().filter(|t| !t.is_empty()) {
         Some(text) => format!("{label} · {text}"),
@@ -161,6 +171,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
         draft.text = status_text.clone().unwrap_or_default();
         draft.saved = None;
         draft.focus = draft.open;
+        draft.asking = None;
     }
 
     // Always Settings, in a call too: the call's own settings are in the
@@ -179,6 +190,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
             &name,
             avatar_url.as_deref(),
             presence,
+            mode,
             &current,
             &mut draft,
             Entries { feedback, unread },
@@ -347,15 +359,227 @@ fn account_menu(
     picked
 }
 
+/// A row of the presence modes (`PresenceModeMenu`): a mode, or one of the
+/// durations below the mode that asks.
+fn mode_id(mode: PresenceMode) -> Id {
+    Id::unique(("user-presence-mode", mode))
+}
+
+fn duration_id(duration: ModeDuration) -> Id {
+    Id::unique(("user-presence-duration", duration))
+}
+
+/// The modes' rows in order, the durations under the one that asks.
+fn mode_ids(asking: Option<PresenceMode>) -> Vec<Id> {
+    let mut ids = Vec::new();
+    for mode in PresenceMode::ALL {
+        ids.push(mode_id(mode));
+        if asking == Some(mode) {
+            ids.extend(ModeDuration::ALL.into_iter().map(duration_id));
+        }
+    }
+    ids
+}
+
+fn mode_name(mode: PresenceMode) -> &'static str {
+    match mode {
+        PresenceMode::Auto => shell::presence_mode_auto(),
+        PresenceMode::Idle => shell::presence_mode_idle(),
+        PresenceMode::Dnd => shell::presence_mode_dnd(),
+        PresenceMode::Invisible => shell::presence_mode_invisible(),
+    }
+}
+
+/// What the mode shows on your avatar (`DOT`).
+fn mode_dot(mode: PresenceMode) -> crate::widgets::Presence {
+    use crate::widgets::Presence;
+    match mode {
+        PresenceMode::Auto => Presence::Online,
+        PresenceMode::Idle => Presence::Away,
+        PresenceMode::Dnd => Presence::Dnd,
+        PresenceMode::Invisible => Presence::Invisible,
+    }
+}
+
+/// What the mode does, under its name while it asks.
+fn mode_hint(mode: PresenceMode) -> Option<&'static str> {
+    match mode {
+        PresenceMode::Dnd => Some(shell::presence_mode_hint_dnd()),
+        PresenceMode::Invisible => Some(shell::presence_mode_hint_invisible()),
+        _ => None,
+    }
+}
+
+fn duration_name(duration: ModeDuration) -> &'static str {
+    match duration {
+        ModeDuration::Hour => shell::presence_mode_duration_h1(),
+        ModeDuration::EightHours => shell::presence_mode_duration_h8(),
+        ModeDuration::Day => shell::presence_mode_duration_h24(),
+        ModeDuration::Forever => shell::presence_mode_duration_forever(),
+    }
+}
+
+/// The label column of a mode's row: after the 10px dot with 4px either
+/// side, the item's 10px padding and its 8px gap.
+const MODE_TEXT_X: f32 = 10.0 + 18.0 + 8.0;
+
+/// The hint under the asking mode's name, wrapped to the row.
+fn hint_block(ui: &Ui, width: f32, mode: PresenceMode) -> Option<Block> {
+    let theme = Theme::of(ui.ctx());
+    mode_hint(mode).map(|hint| {
+        Block::wrapped(
+            ui,
+            hint,
+            text::META,
+            theme.c.muted,
+            width - MODE_TEXT_X - 10.0,
+        )
+    })
+}
+
+/// A mode's row: one line, or two with the hint while it asks.
+fn mode_row_height(ui: &Ui, width: f32, mode: PresenceMode, asking: bool) -> f32 {
+    match asking.then(|| hint_block(ui, width, mode)).flatten() {
+        Some(hint) => (8.0 + text::UI.line_px() + hint.height() + 8.0).max(ITEM_H),
+        None => ITEM_H,
+    }
+}
+
+/// The height of [`mode_menu`].
+fn modes_height(ui: &Ui, width: f32, asking: Option<PresenceMode>) -> f32 {
+    PresenceMode::ALL
+        .into_iter()
+        .map(|mode| {
+            let open = asking == Some(mode);
+            let durations = if open {
+                ModeDuration::ALL.len() as f32 * (ITEM_H + MENU_GAP)
+            } else {
+                0.0
+            };
+            mode_row_height(ui, width, mode, open) + MENU_GAP + durations
+        })
+        .sum()
+}
+
+/// A choice in the modes: open or close a mode's durations, or set one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ModeChoice {
+    Ask(Option<PresenceMode>),
+    Set(PresenceMode, ModeDuration),
+}
+
+/// The presence modes at the top of the account menu (#590): Automatic
+/// takes at once, the others ask for how long first, right below their row.
+fn mode_menu(
+    ui: &mut Ui,
+    left: f32,
+    top: f32,
+    width: f32,
+    current: PresenceMode,
+    asking: Option<PresenceMode>,
+) -> Option<ModeChoice> {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let mut chosen = None;
+    let mut y = top;
+    for mode in PresenceMode::ALL {
+        let open = asking == Some(mode);
+        let height = mode_row_height(ui, width, mode, open);
+        let row = Rect::from_min_size(pos2(left, y), Vec2::new(width, height));
+        let response = common::click(ui, row, mode_id(mode));
+        let name = mode_name(mode);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::Role::MenuItemRadio, true, current == mode, name)
+        });
+        if response.hovered() {
+            common::fill(ui.painter(), row, theme.radius.sm, c.hover);
+        }
+        common::focus_visible(ui, &response, row, theme.radius.sm);
+        let hint = open.then(|| hint_block(ui, width, mode)).flatten();
+        let block = Block::single(ui, name, text::UI, c.text);
+        let line_y = if hint.is_some() {
+            row.top() + 8.0 + text::UI.line_px() / 2.0
+        } else {
+            row.center().y
+        };
+        // The cut-outs take the menu's surface.
+        mode_dot(mode).paint(
+            ui.painter(),
+            &theme,
+            pos2(row.left() + 10.0 + 4.0 + 5.0, line_y),
+            10.0,
+            c.elevated,
+        );
+        paint_mid(ui.painter(), &block, row.left() + MODE_TEXT_X, line_y);
+        if let Some(hint) = &hint {
+            hint.paint(
+                ui.painter(),
+                pos2(
+                    row.left() + MODE_TEXT_X,
+                    row.top() + 8.0 + text::UI.line_px(),
+                ),
+            );
+        }
+        if response.clicked() {
+            chosen = Some(match mode {
+                PresenceMode::Auto => ModeChoice::Set(mode, ModeDuration::Forever),
+                _ if open => ModeChoice::Ask(None),
+                _ => ModeChoice::Ask(Some(mode)),
+            });
+        }
+        y += height + MENU_GAP;
+        if !open {
+            continue;
+        }
+        for duration in ModeDuration::ALL {
+            let item = Rect::from_min_size(pos2(left, y), Vec2::new(width, ITEM_H));
+            let response = common::click(ui, item, duration_id(duration));
+            let label = duration_name(duration);
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MenuItem, true, label));
+            if response.hovered() {
+                common::fill(ui.painter(), item, theme.radius.sm, c.hover);
+            }
+            common::focus_visible(ui, &response, item, theme.radius.sm);
+            let block = Block::single(ui, label, text::UI, c.text);
+            // `.presence-mode__durations`: indented to the modes' names.
+            paint_mid(
+                ui.painter(),
+                &block,
+                item.left() + MODE_TEXT_X,
+                item.center().y,
+            );
+            if response.clicked() {
+                chosen = Some(ModeChoice::Set(mode, duration));
+            }
+            y += ITEM_H + MENU_GAP;
+        }
+    }
+    chosen
+}
+
+/// When a mode ends (`modeLabel`): "18:30" today, else "Mo., 09:00".
+fn mode_end(until: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::{Datelike, Local, Timelike};
+    let local = until.with_timezone(&Local);
+    let time = format!("{:02}:{:02}", local.hour(), local.minute());
+    if local.date_naive() == Local::now().date_naive() {
+        time
+    } else {
+        let weekday =
+            gelabber_i18n::intl::weekday_name(local.weekday().num_days_from_monday(), true);
+        format!("{weekday}, {time}")
+    }
+}
+
 /// The height of [`account_menu`] for `count` entries.
 fn menu_height(count: usize) -> f32 {
     2.0 * SEPARATOR_H + count as f32 * ITEM_H + (count + 1) as f32 * MENU_GAP
 }
 
 /// The popover's keys (`moveInAccount`): ↓ from the status field to the
-/// first entry, the arrows, Home and End within the menu.
-fn account_keys(ui: &Ui, items: &[(MenuItem, &'static str)], field: Id) {
-    let ids: Vec<Id> = items.iter().map(|(item, _)| item_id(*item)).collect();
+/// first entry, the arrows, Home and End within the menu (the modes, their
+/// durations while open, then the account's entries).
+fn account_keys(ui: &Ui, ids: &[Id], field: Id) {
     let focused = ui.memory(|m| m.focused());
     let at = focused.and_then(|f| ids.iter().position(|id| *id == f));
     if let Some(at) = at {
@@ -453,6 +677,7 @@ fn account_popover(
     name: &str,
     avatar_url: Option<&str>,
     presence: crate::widgets::Presence,
+    mode: ModeState,
     current: &str,
     draft: &mut StatusDraft,
     entries: Entries,
@@ -484,7 +709,9 @@ fn account_popover(
     }
     let changed = draft.text.trim() != current;
     let items = menu_items(app.session.operator(), entries.feedback);
-    account_keys(ui, &items, field_id);
+    let mut ids = mode_ids(draft.asking);
+    ids.extend(items.iter().map(|(item, _)| item_id(*item)));
+    account_keys(ui, &ids, field_id);
     let out = Popover::new("user-status", anchor)
         .min_width(320.0)
         .show(ui.ctx(), |ui| {
@@ -498,7 +725,8 @@ fn account_popover(
             };
             let card_h = 4.0 + 44.8 + 12.0 + 17.55 + 6.0 + 37.0 + status_h + 4.0;
             // `.user-account`: 4px between the card and the menu.
-            let height = card_h + 4.0 + menu_height(items.len());
+            let modes_h = modes_height(ui, width, draft.asking);
+            let height = card_h + 4.0 + modes_h + menu_height(items.len());
             let (card, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
             let left = card.left() + 4.0;
             let inner_w = width - 8.0;
@@ -512,7 +740,14 @@ fn account_popover(
             let x = avatar.right() + 10.0;
             let strong = line(ui, name, text::TITLE_SM, c.text, left + inner_w - x);
             strong.paint(ui.painter(), pos2(x, top));
-            let small = Block::single(ui, presence.label(), text::META, c.muted);
+            // "Nicht stören bis 18:30" while the mode has an end.
+            let presence_label = match mode.until {
+                Some(until) if mode.mode != PresenceMode::Auto => {
+                    shell::presence_mode_until(presence.label(), &mode_end(until))
+                }
+                _ => presence.label().to_owned(),
+            };
+            let small = Block::single(ui, &presence_label, text::META, c.muted);
             // The label sits on the 16px/1.5 line of its inline parent.
             let strut = text::TextStyle::new(16.0, 400.0, 1.5);
             small.paint(
@@ -570,8 +805,16 @@ fn account_popover(
                 status_ui.add(InlineStatus::new(Some(msg), tone));
             }
             let menu_top = card.top() + card_h + 4.0;
-            let picked = account_menu(ui, card.left(), menu_top, width, &items, entries.unread);
-            (save, picked)
+            let chosen = mode_menu(ui, card.left(), menu_top, width, mode.mode, draft.asking);
+            let picked = account_menu(
+                ui,
+                card.left(),
+                menu_top + modes_h,
+                width,
+                &items,
+                entries.unread,
+            );
+            (save, chosen, picked)
         });
     match out {
         None => {
@@ -581,7 +824,20 @@ fn account_popover(
                 ui.memory_mut(|m| m.request_focus(profile_id()));
             }
         }
-        Some((save, picked)) => {
+        Some((save, chosen, picked)) => {
+            match chosen {
+                Some(ModeChoice::Ask(asking)) => {
+                    draft.asking = asking;
+                    // The focus stays on the mode's row.
+                }
+                Some(ModeChoice::Set(mode, duration)) => {
+                    draft.asking = None;
+                    draft.open = false;
+                    ui.memory_mut(|m| m.request_focus(profile_id()));
+                    app.client.set_presence_mode(mode, duration);
+                }
+                None => {}
+            }
             if save && changed && !saving {
                 draft.saving = true;
                 draft.saved = None;
@@ -605,6 +861,7 @@ mod tests {
 
     use crate::app::testkit::{
         FakeApi, Reply, account_button, launcher, open_account, wait_for, wait_for_label,
+        wait_for_text,
     };
     use crate::platform::paths::testing::TempConfig;
 
@@ -964,20 +1221,162 @@ mod tests {
         let field = crate::widgets::field::field_id("user-status-text");
         let focused = |h: &App<'_>| h.ctx.memory(|m| m.focused());
         assert_eq!(focused(&harness), Some(field));
+        let auto = super::mode_id(gelabber_client::PresenceMode::Auto);
+        let invisible = super::mode_id(gelabber_client::PresenceMode::Invisible);
         for (key, want) in [
+            // The modes come first (#590).
+            (egui::Key::ArrowDown, auto),
+            (egui::Key::End, super::item_id(SignOut)),
+            (egui::Key::ArrowDown, auto),
+            (egui::Key::ArrowUp, field),
+            (egui::Key::ArrowDown, auto),
+            (
+                egui::Key::ArrowDown,
+                super::mode_id(gelabber_client::PresenceMode::Idle),
+            ),
+            (
+                egui::Key::ArrowDown,
+                super::mode_id(gelabber_client::PresenceMode::Dnd),
+            ),
+            (egui::Key::ArrowDown, invisible),
             (egui::Key::ArrowDown, super::item_id(Profile)),
             (egui::Key::ArrowDown, super::item_id(SwitchServer)),
-            (egui::Key::End, super::item_id(SignOut)),
-            (egui::Key::ArrowDown, super::item_id(Profile)),
-            (egui::Key::ArrowUp, field),
-            (egui::Key::ArrowDown, super::item_id(Profile)),
         ] {
             harness.key_press(key);
             harness.run_steps(3);
             assert_eq!(focused(&harness), Some(want), "{key:?}");
         }
+        harness.key_press(egui::Key::ArrowUp);
+        harness.run_steps(3);
+        assert_eq!(focused(&harness), Some(super::item_id(Profile)));
         harness.key_press(egui::Key::Enter);
         wait_for_path(&mut harness, "/settings/profil");
+    }
+
+    /// The modes (#590): Automatic is checked; another mode asks for how
+    /// long first, right below its row, and the choice goes to the server
+    /// and onto your avatar.
+    #[test]
+    fn a_mode_asks_for_how_long_and_is_saved() {
+        let _config = TempConfig::new("presence-mode");
+        let until = (chrono::Utc::now() + chrono::Duration::hours(8)).to_rfc3339();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/auth/session") => Some(Reply::json(serde_json::json!({
+                "user": crate::app::testkit::lena(), "csrf_token": "csrf", "operator": false
+            }))),
+            ("PUT", "/me/presence") => Some(Reply::json(
+                serde_json::json!({"mode": "dnd", "until": until}),
+            )),
+            _ => crate::app::testkit::workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{}", crate::app::testkit::HOME));
+        open_menu(&mut harness);
+        harness.run_steps(3);
+        let radios: Vec<(String, bool)> = harness
+            .query_all_by_role(Role::MenuItemRadio)
+            .map(|n| {
+                let node = n.accesskit_node();
+                (
+                    node.label().unwrap_or_default(),
+                    node.toggled() == Some(egui::accesskit::Toggled::True),
+                )
+            })
+            .collect();
+        assert_eq!(
+            radios,
+            [
+                ("Automatisch".to_owned(), true),
+                ("Abwesend".to_owned(), false),
+                ("Nicht stören".to_owned(), false),
+                ("Unsichtbar".to_owned(), false),
+            ]
+        );
+        assert!(!entries(&harness).iter().any(|e| e == "8 Stunden"));
+        harness
+            .get_by_role_and_label(Role::MenuItemRadio, "Nicht stören")
+            .click();
+        harness.run_steps(3);
+        assert_eq!(
+            entries(&harness)[..4],
+            ["1 Stunde", "8 Stunden", "24 Stunden", "Bis ich es ändere"]
+        );
+        harness
+            .get_by_role_and_label(Role::MenuItem, "8 Stunden")
+            .click();
+        wait_for(&mut harness, "the mode saved", |_| {
+            api.saw("PUT /me/presence")
+        });
+        harness.run_steps(3);
+        assert!(
+            harness.query_by_label("Abmelden").is_none(),
+            "the menu closed"
+        );
+        let client = harness.state_mut().app().unwrap().client().clone();
+        wait_for(&mut harness, "the mode shown", |_| {
+            client.with_state(|s| s.presence_mode.mode == gelabber_client::PresenceMode::Dnd)
+        });
+        open_menu(&mut harness);
+        harness.run_steps(3);
+        assert!(client.with_state(|s| s.presence_mode.until.is_some()));
+        let checked = harness
+            .get_by_role_and_label(Role::MenuItemRadio, "Nicht stören")
+            .accesskit_node()
+            .toggled();
+        assert_eq!(checked, Some(egui::accesskit::Toggled::True));
+    }
+
+    /// `modeLabel`'s end: the time today, the weekday before it otherwise.
+    #[test]
+    fn a_mode_end_names_its_day_when_not_today() {
+        use chrono::{Local, TimeZone};
+        let today = Local::now()
+            .date_naive()
+            .and_hms_opt(18, 30, 0)
+            .and_then(|t| Local.from_local_datetime(&t).single())
+            .expect("today 18:30");
+        assert_eq!(super::mode_end(today.to_utc()), "18:30");
+        let later = super::mode_end((today + chrono::Duration::days(1)).to_utc());
+        assert!(later.ends_with(", 18:30"), "{later}");
+    }
+
+    /// A mode the server turns down comes back as it was, with a toast.
+    #[test]
+    fn a_refused_mode_goes_back() {
+        let _config = TempConfig::new("presence-mode-refused");
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/auth/session") => Some(Reply::json(serde_json::json!({
+                "user": crate::app::testkit::lena(), "csrf_token": "csrf", "operator": false
+            }))),
+            ("PUT", "/me/presence") => Some(Reply::error(500, "internal")),
+            _ => crate::app::testkit::workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{}", crate::app::testkit::HOME));
+        open_menu(&mut harness);
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(Role::MenuItemRadio, "Abwesend")
+            .click();
+        harness.run_steps(3);
+        harness
+            .get_by_role_and_label(Role::MenuItem, "Bis ich es ändere")
+            .click();
+        let client = harness.state_mut().app().unwrap().client().clone();
+        wait_for(&mut harness, "the refusal", |_| {
+            client.with_state(|s| {
+                matches!(
+                    s.op("presence_mode"),
+                    Some(gelabber_client::OpState::Failed(_))
+                )
+            })
+        });
+        wait_for_text(&mut harness, "Status nicht geändert.");
+        let mode = harness
+            .state_mut()
+            .app()
+            .unwrap()
+            .client()
+            .with_state(|s| s.presence_mode.mode);
+        assert_eq!(mode, gelabber_client::PresenceMode::Auto);
     }
 
     /// The gear is Settings, in a call too (#570), and the call goes on.

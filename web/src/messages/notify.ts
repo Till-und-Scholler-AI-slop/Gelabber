@@ -50,7 +50,11 @@ export function messageNotificationDecision(input: {
   viewingChannelId: string | undefined;
   /** Since the message was created, on the server clock. Absent is live. */
   ageMs?: number;
+  /** Do not disturb (#590): no toast and no notification (so no sound);
+   * badges are counted elsewhere and stay. */
+  doNotDisturb?: boolean;
 }): { toast: boolean; desktop: boolean } {
+  if (input.doNotDisturb) return { toast: false, desktop: false };
   const live = input.ageMs === undefined || input.ageMs < LIVE_MESSAGE_MS;
   return {
     toast:

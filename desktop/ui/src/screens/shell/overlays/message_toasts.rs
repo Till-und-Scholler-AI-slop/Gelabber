@@ -198,6 +198,10 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
         Route::Channel(_, c) | Route::Dm(c) => Some(*c),
         _ => None,
     };
+    // Do not disturb (#590): no message or Live toasts; the rest stays.
+    let quiet = app
+        .client
+        .with_state(|s| s.presence_mode_now() == gelabber_client::PresenceMode::Dnd);
     for notice in app.client.take_notices() {
         match notice {
             Notice::Kicked { server, text }
@@ -222,7 +226,7 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
                 error,
             } => app.toasts.failure(failed, gone, &error),
             Notice::Message { server, message } => {
-                if !prefs::get(ctx).message_toasts || viewing == Some(message.channel_id) {
+                if quiet || !prefs::get(ctx).message_toasts || viewing == Some(message.channel_id) {
                     continue;
                 }
                 if let Some(incoming) = incoming(app, server, &message) {
@@ -235,8 +239,11 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
             }
         }
     }
+    // Counted while quiet too, so they do not all come once it ends.
     for incoming in live_toasts(ctx, app, &mut toasts.live_seen, viewing) {
-        toasts.push(incoming, now);
+        if !quiet {
+            toasts.push(incoming, now);
+        }
     }
 }
 

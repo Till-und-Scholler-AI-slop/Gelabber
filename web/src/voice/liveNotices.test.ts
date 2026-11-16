@@ -241,6 +241,13 @@ describe("whether a new Live is announced", () => {
 
   it("announces someone else's Live where I am not", () => {
     expect(liveNoticeDecision(base)).toEqual({ toast: true, desktop: true });
+    // Do not disturb (#590): not even a Live.
+    expect(
+      liveNoticeDecision({
+        ...base,
+        device: { ...hiddenWindow, doNotDisturb: true },
+      }),
+    ).toEqual({ toast: false, desktop: false });
     expect(
       liveNoticeDecision({ ...base, start: { ...base.start, userId: "me" } }),
     ).toEqual({ toast: false, desktop: false });

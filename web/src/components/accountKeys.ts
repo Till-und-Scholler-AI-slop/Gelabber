@@ -5,7 +5,11 @@ import type { KeyboardEvent } from "react";
 
 /** The account menu's entries, in DOM order. */
 function accountItems(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  return [
+    ...root.querySelectorAll<HTMLElement>(
+      '[role="menuitem"], [role="menuitemradio"]',
+    ),
+  ];
 }
 
 /**

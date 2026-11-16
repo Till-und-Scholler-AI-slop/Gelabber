@@ -208,6 +208,9 @@ crate::strings! {
     discard_message = "Deine Eingaben gehen verloren." | "What you entered will be lost.";
     discard_confirm = "Verwerfen" | "Discard";
     presence_away = "Abwesend" | "Away";
+    /// Manual presence (#590), web shell `presence.d`, `presence.v`.
+    presence_dnd = "Nicht stören" | "Do not disturb";
+    presence_invisible = "Unsichtbar" | "Invisible";
 }
 
 /// "seit {when}", after the unread bar's count.

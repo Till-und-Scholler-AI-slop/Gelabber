@@ -128,6 +128,8 @@ pub(super) struct Socket {
     /// Live Pub/Sub frames held until catch-up finishes. Dropping them
     /// here would punch a hole the replay log can miss.
     catching_up: HashMap<Topic, Vec<Event>>,
+    /// The client knows the presence status `d` (#590, `/ws?caps=dnd`).
+    dnd: bool,
     pub(super) tx: mpsc::Sender<ServerFrame>,
 }
 
@@ -211,6 +213,7 @@ impl ConnTable {
                 recheck: Arc::new(tokio::sync::Notify::new()),
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
+                dnd: false,
                 tx,
             },
         );
@@ -1033,6 +1036,23 @@ impl Gateway {
 
     pub async fn attach(&self, user_id: Uuid, tx: mpsc::Sender<ServerFrame>) -> ConnId {
         self.connections.attach(user_id, tx).await
+    }
+
+    /// This socket's client knows the presence status `d` (#590).
+    pub async fn allow_dnd(&self, id: ConnId) {
+        if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+            socket.dnd = true;
+        }
+    }
+
+    pub async fn knows_dnd(&self, id: ConnId) -> bool {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .is_some_and(|socket| socket.dnd)
     }
 
     pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {

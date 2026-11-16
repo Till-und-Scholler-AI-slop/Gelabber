@@ -1,9 +1,11 @@
 import type { PresenceStatus } from "../ws/protocol.ts";
+import type { OwnPresence } from "../presence/mode.ts";
 import { translate } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
 
-/** "Online", "Abwesend" or "Offline", in the language shown now. */
-export function presenceLabel(presence: PresenceStatus): string {
+/** "Online", "Abwesend", "Nicht stören", "Unsichtbar" or "Offline", in the
+ * language shown now. */
+export function presenceLabel(presence: OwnPresence): string {
   return translate(shell, `presence.${presence}`);
 }
 
@@ -25,7 +27,7 @@ export function ownPresence(
 
 /** The line under your name: presence, then the status text if there is one. */
 export function panelSubtitle(
-  presence: PresenceStatus,
+  presence: OwnPresence,
   statusText: string | null | undefined,
 ): string {
   return statusText

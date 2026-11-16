@@ -26,6 +26,7 @@ pub mod notifications;
 pub mod operator;
 pub mod password;
 pub mod path;
+pub mod presence;
 pub mod previews;
 pub mod profile;
 pub mod push;
@@ -58,12 +59,14 @@ pub fn app(state: AppState) -> Router {
     account::deletion::start(state.clone());
     account::export::start(state.clone());
     previews::start(state.clone());
+    presence::start(state.clone());
     feedback::public::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).
     let api = Router::new()
         .merge(auth::router())
         .merge(profile::router())
+        .merge(presence::router())
         .merge(avatars::router())
         .merge(themes::router())
         .merge(servers::router())

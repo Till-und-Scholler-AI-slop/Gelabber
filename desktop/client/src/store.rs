@@ -247,6 +247,7 @@ pub fn failure_text(op: &str) -> Option<&'static str> {
         // A row menu's choices; the dialog shows its own failure.
         "notify_menu" => shell::row_menu_not_saved(),
         "read" | "read_all" => shell::row_menu_not_marked_read(),
+        "presence_mode" => shell::presence_mode_not_saved(),
         _ => return None,
     })
 }
@@ -559,6 +560,8 @@ pub struct State {
     pub read: HashMap<Uuid, ReadState>,
     pub notification_settings: Vec<NotificationSetting>,
     pub notification_privacy: Option<NotificationPrivacy>,
+    /// The account's manual presence (#590), as the server last said.
+    pub presence_mode: ModeState,
     pub themes: Option<ThemeDocument>,
     pub mail: Option<MailStatus>,
     pub gifs: Option<GifStatus>,
@@ -978,6 +981,11 @@ impl State {
         }
     }
 
+    /// The manual mode in effect now: an end that passed is automatic.
+    pub fn presence_mode_now(&self) -> PresenceMode {
+        self.presence_mode.at(chrono::Utc::now())
+    }
+
     pub fn presence_of(&self, server: Uuid, user: Uuid) -> PresenceStatus {
         self.presence
             .get(&server)
@@ -986,8 +994,8 @@ impl State {
             .unwrap_or(PresenceStatus::Offline)
     }
 
-    /// The member list's groups (`live.ts`): Online, Abwesend, Offline, each
-    /// sorted by name; empty groups left out.
+    /// The member list's groups (`live.ts`): Online (with do not disturb),
+    /// Abwesend, Offline, each sorted by name; empty groups left out.
     pub fn member_groups(&self, server: Uuid) -> Vec<(PresenceStatus, Vec<&Member>)> {
         let Some(detail) = self.server_details.get(&server) else {
             return Vec::new();
@@ -1001,7 +1009,7 @@ impl State {
             let mut members: Vec<&Member> = detail
                 .members
                 .iter()
-                .filter(|m| self.presence_of(server, m.user_id) == status)
+                .filter(|m| group_of(self.presence_of(server, m.user_id)) == status)
                 .collect();
             members.sort_by_cached_key(|m| collation_key(&m.name));
             if !members.is_empty() {
@@ -1475,6 +1483,14 @@ pub fn collation_key(name: &str) -> String {
             other => other,
         })
         .collect()
+}
+
+/// The member list's group of a status: do not disturb is online.
+fn group_of(status: PresenceStatus) -> PresenceStatus {
+    match status {
+        PresenceStatus::Dnd => PresenceStatus::Online,
+        other => other,
+    }
 }
 
 #[cfg(test)]

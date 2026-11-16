@@ -349,13 +349,14 @@ impl Client {
         let http = self.http().clone();
         let epoch = self.epoch();
         self.write(|s| s.ops.insert("bootstrap".into(), OpState::Pending));
-        let (servers, dms, unread, settings, privacy, themes) = tokio::join!(
+        let (servers, dms, unread, settings, privacy, themes, mode) = tokio::join!(
             http.servers(),
             http.dms(),
             http.unread(),
             http.notification_settings(),
             http.notification_privacy(),
             http.themes(),
+            http.presence_mode(),
         );
         let mut failure: Option<ApiError> = None;
         let current = self.write_in(epoch, |s| {
@@ -389,6 +390,10 @@ impl Client {
             }
             if let Ok(doc) = themes {
                 s.themes = Some(doc);
+            }
+            // An old server without manual presence: automatic, as there.
+            if let Ok(mode) = mode {
+                s.presence_mode = mode;
             }
             s.bootstrapped = true;
             s.ops.insert(
@@ -1224,6 +1229,10 @@ impl Client {
             self.stop_typing();
             return;
         }
+        // Invisible (#590): nobody is to see you type.
+        if self.with_state(|s| s.presence_mode_now() == PresenceMode::Invisible) {
+            return;
+        }
         let server = self.with_state(|s| {
             if s.dm(channel).is_some() {
                 Some(channel)
@@ -1957,6 +1966,59 @@ impl Client {
         });
     }
 
+    /// Sets the account's manual presence (#590): shown at once, the
+    /// server's answer kept; on failure the earlier mode comes back and op
+    /// `presence_mode` says so.
+    pub fn set_presence_mode(&self, mode: PresenceMode, duration: ModeDuration) {
+        let before = self.write(|s| {
+            let before = s.presence_mode;
+            s.presence_mode = ModeState {
+                mode,
+                until: match mode {
+                    PresenceMode::Auto => None,
+                    _ => duration.until(chrono::Utc::now()),
+                },
+            };
+            before
+        });
+        let http = self.http().clone();
+        let epoch = self.epoch();
+        let this = self.clone();
+        self.write(|s| s.ops.insert("presence_mode".into(), OpState::Pending));
+        self.spawn(async move {
+            match http.set_presence_mode(mode, duration).await {
+                Ok(saved) => {
+                    this.write_in(epoch, |s| {
+                        s.ops.insert("presence_mode".into(), OpState::Done);
+                        // A newer choice made meanwhile keeps its own.
+                        if s.presence_mode.mode == mode {
+                            s.presence_mode = saved;
+                        }
+                    });
+                }
+                Err(error) => {
+                    this.write_in(epoch, |s| {
+                        if s.presence_mode.mode == mode {
+                            s.presence_mode = before;
+                        }
+                    });
+                    if this.epoch() == epoch {
+                        this.fail_op("presence_mode", error);
+                    }
+                }
+            }
+        });
+    }
+
+    /// The mode again after a reconnect: a `pm` may have gone by.
+    async fn reload_presence_mode(&self) {
+        let http = self.http().clone();
+        let epoch = self.epoch();
+        if let Ok(mode) = http.presence_mode().await {
+            self.write_in(epoch, |s| s.presence_mode = mode);
+        }
+    }
+
     pub fn set_notification_privacy(&self, hide_content: bool) {
         let http = self.http().clone();
         self.run(
@@ -2255,6 +2317,8 @@ impl Client {
                 self.write(|s| s.gateway = status);
             }
             GatewayEvent::Ready => {
+                let this = self.clone();
+                self.spawn(async move { this.reload_presence_mode().await });
                 // The server marks a new socket online; say so if we idle.
                 if self.inner.local.lock().presence.idle() {
                     self.send_frame(ClientFrame::Presence {
@@ -2371,6 +2435,9 @@ impl Client {
             }
             ServerFrame::Dm { .. } => self.schedule_recovery(false),
             ServerFrame::Locale { l } => self.write(|s| record_locale(s, l)),
+            ServerFrame::PresenceMode { m, u } => self.write(|s| {
+                s.presence_mode = ModeState { mode: m, until: u };
+            }),
             ServerFrame::Joined { s } => {
                 let this = self.clone();
                 self.spawn(async move { this.joined(s).await });

@@ -779,7 +779,8 @@ impl Failure {
 
 async fn connect(http: Http) -> Result<Socket, Failure> {
     let mut request = http
-        .ws_url("/ws")
+        // `caps=dnd`: this client knows the presence status `d` (#590).
+        .ws_url("/ws?caps=dnd")
         .into_client_request()
         .map_err(|e| Failure::Refused(e.to_string()))?;
     if let Some(cookie) = http.cookie_header()

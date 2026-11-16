@@ -23,6 +23,7 @@ import {
 } from "../ws/useGateway.ts";
 import { useFocusReport, useIdlePresence } from "../ws/useLive.ts";
 import { usePushSubscription } from "../pwa/push.ts";
+import { usePresenceModeBridge } from "../presence/mode.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { RouteErrorPage } from "../pages/RouteErrorPage.tsx";
 import { ConfirmHost } from "./ConfirmHost.tsx";
@@ -71,6 +72,7 @@ export function AppShell() {
   useGatewaySession(user?.id ?? null);
   useIdlePresence(user?.id ?? null);
   useFocusReport(user?.id ?? null);
+  usePresenceModeBridge(user?.id ?? null);
   usePushSubscription(user?.id ?? null);
   useMessageToastsBridge();
   useLiveNotices();

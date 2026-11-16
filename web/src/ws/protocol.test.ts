@@ -88,6 +88,43 @@ describe("ws protocol", () => {
     expect(decode('{"op":"lc","l":"en"}')).toEqual({ op: "lc", l: "en" });
   });
 
+  it("accepts the manual presence frame (#590)", () => {
+    expect(decode('{"op":"pm","m":"dnd","u":"2026-11-15T18:30:00Z"}')).toEqual({
+      op: "pm",
+      m: "dnd",
+      u: "2026-11-15T18:30:00Z",
+    });
+    expect(decode('{"op":"pm","m":"auto"}')).toEqual({ op: "pm", m: "auto" });
+  });
+
+  it("shows do not disturb, and a status it does not know as online", () => {
+    expect(decode('{"op":"p","s":"srv","u":"ada","st":"d"}')).toEqual({
+      op: "p",
+      s: "srv",
+      u: "ada",
+      st: "d",
+    });
+    // A newer server's letter: connected all the same.
+    expect(decode('{"op":"p","s":"srv","u":"ada","st":"z"}')).toEqual({
+      op: "p",
+      s: "srv",
+      u: "ada",
+      st: "o",
+    });
+    expect(
+      decode(
+        '{"op":"p","s":"srv","snap":[{"u":"a","st":"d"},{"u":"b","st":"q"}]}',
+      ),
+    ).toEqual({
+      op: "p",
+      s: "srv",
+      snap: [
+        { u: "a", st: "d" },
+        { u: "b", st: "o" },
+      ],
+    });
+  });
+
   it("accepts the directory's account frames", () => {
     expect(decode('{"op":"jn","s":"srv"}')).toEqual({ op: "jn", s: "srv" });
     expect(decode('{"op":"jq","s":"srv","n":3}')).toEqual({

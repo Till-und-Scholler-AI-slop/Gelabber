@@ -27,6 +27,7 @@ import { showMessageNotification } from "../pwa/notifications.ts";
 import { ensureServer } from "../servers/queries.ts";
 import { getGateway } from "../ws/client.ts";
 import { playLiveSound } from "./callSounds.ts";
+import { isDoNotDisturb } from "../presence/mode.ts";
 import {
   createLiveNoticeMemory,
   createLiveNotices,
@@ -102,6 +103,7 @@ export function useLiveNotices(): void {
             hidden: typeof document !== "undefined" && document.hidden,
             focused: typeof document === "undefined" || document.hasFocus(),
             viewingChannelId: viewing.current,
+            doNotDisturb: isDoNotDisturb(),
             mobile: useInstallation.getState().mobile,
             deafened: useVoice.getState().deafened,
             hideContent: hidesContent(

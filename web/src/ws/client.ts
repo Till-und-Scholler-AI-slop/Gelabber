@@ -52,10 +52,11 @@ const DEFAULT_MAX_RETRY_MS = 2_000;
 
 export function gatewayUrl(): string {
   if (typeof location === "undefined") {
-    return "/ws";
+    return "/ws?caps=dnd";
   }
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${location.host}/ws`;
+  // `caps=dnd`: this client knows the presence status `d` (#590).
+  return `${proto}://${location.host}/ws?caps=dnd`;
 }
 
 export type GapNotice = Topic;
@@ -627,6 +628,7 @@ export class Gateway {
       case "ns":
       case "rd":
       case "lc":
+      case "pm":
       case "jn":
       case "jq":
       case "fr":

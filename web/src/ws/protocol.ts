@@ -35,7 +35,18 @@ export type SigClientFrame = {
   o?: string;
 };
 
-export type PresenceStatus = "o" | "i" | "x";
+/** Online, away, do not disturb (#590), offline. */
+export type PresenceStatus = "o" | "i" | "d" | "x";
+
+const PRESENCE_STATUSES: readonly string[] = ["o", "i", "d", "x"];
+
+/** A status this client does not know (a newer server's) is someone who is
+ * connected all the same: online. */
+export function presenceStatusOf(raw: unknown): PresenceStatus {
+  return typeof raw === "string" && PRESENCE_STATUSES.includes(raw)
+    ? (raw as PresenceStatus)
+    : "o";
+}
 
 export type ClientFrame =
   | { op: "h" }
@@ -111,6 +122,13 @@ export type AccountFrame =
       /** The account's language changed on some device. */
       op: "lc";
       l: Locale;
+    }
+  | {
+      /** The account's manual presence (#590) changed on some device or
+       * ran out: `m` the mode, `u` its end (none: until changed). */
+      op: "pm";
+      m: string;
+      u?: string;
     }
   | {
       /** A join request was accepted: the account is now a member of `s`. */
@@ -195,15 +213,29 @@ export function decode(raw: string): ServerFrame | null {
     op === "ns" ||
     op === "rd" ||
     op === "lc" ||
+    op === "pm" ||
     op === "jn" ||
     op === "jq" ||
     op === "fr" ||
     op === "mr" ||
     op === "bl"
   ) {
+    if (op === "p") return presenceFrame(value as PresenceFrame);
     return value as ServerFrame;
   }
   return null;
+}
+
+/** Presence with every status one this client knows. */
+function presenceFrame(frame: PresenceFrame): PresenceFrame {
+  const known = { ...frame };
+  if (frame.st !== undefined) known.st = presenceStatusOf(frame.st);
+  if (Array.isArray(frame.snap))
+    known.snap = frame.snap.map((entry) => ({
+      ...entry,
+      st: presenceStatusOf(entry.st),
+    }));
+  return known;
 }
 
 /** Subscribe frame for reconnect: include last seq so the server can fill the hole. */

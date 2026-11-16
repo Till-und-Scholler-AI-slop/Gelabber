@@ -11,7 +11,7 @@ export type Friend = {
   user: FriendPerson;
   since: string;
   /** `o` online, `i` idle; absent when offline or not known. */
-  status?: "o" | "i";
+  status?: "o" | "i" | "d";
 };
 
 export type FriendRequest = {
