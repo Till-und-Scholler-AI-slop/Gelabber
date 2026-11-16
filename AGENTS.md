@@ -57,7 +57,15 @@ Work is tracked in the organization project
   is unclear which one, ask. Create, rename or close milestones only when
   asked or as part of a release (below).
 - **Pull requests** say `Closes #<n>` for their issue, so merging the PR
-  closes it.
+  closes it, into a version branch too.
+- **Status** on the project follows the work, and keeping it current is part
+  of the work: **In progress** while someone works on the issue, **In review**
+  once its PR is ready for review, **Done** when the PR is merged.
+  `.github/workflows/project-status.yml` moves the card from the assignee and
+  from the PR's `Closes #<n>`. After assigning and after marking the PR ready,
+  check the issue's Status; if it did not move, run that workflow by hand
+  (`workflow_dispatch` with the issue number and the Status), and if that
+  fails too, say so on the issue.
 - **Each milestone** states the release goal in its description, in one to
   three sentences. After a release: close its milestone, move open issues to
   the next one, write that one's goal.
