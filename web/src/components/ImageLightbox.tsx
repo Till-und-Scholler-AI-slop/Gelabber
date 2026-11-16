@@ -111,8 +111,16 @@ export function ImageLightbox({
   useEffect(() => {
     const element = stage.current;
     if (!element) return;
-    const measure = () =>
-      setStageSize({ w: element.clientWidth, h: element.clientHeight });
+    // The content box: client sizes include the stage's padding.
+    const measure = () => {
+      const style = getComputedStyle(element);
+      const px = (value: string) => parseFloat(value) || 0;
+      setStageSize({
+        w: element.clientWidth - px(style.paddingLeft) - px(style.paddingRight),
+        h:
+          element.clientHeight - px(style.paddingTop) - px(style.paddingBottom),
+      });
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
@@ -220,6 +228,9 @@ export function ImageLightbox({
     /** Went down on the picture. Pointer capture makes the stage the
      *  target of every later event, so this is decided here. */
     onPicture: boolean;
+    /** The finger left over from a pinch: it pans when zoomed, but never
+     *  drags, steps or closes at fit. */
+    noSwipe?: boolean;
   } | null>(null);
   const lastTap = useRef(0);
 
@@ -279,7 +290,7 @@ export function ImageLightbox({
     if (!g.moved) return;
     if (g.view.scale > 1) {
       setView({ ...g.view, x: g.view.x + dx, y: g.view.y + dy });
-    } else if (g.touch) {
+    } else if (g.touch && !g.noSwipe) {
       // The picture follows the finger: sideways to step, down to close.
       setDrag({ x: dx, y: Math.max(0, dy) });
     }
@@ -304,6 +315,7 @@ export function ImageLightbox({
         moved: true,
         touch: true,
         onPicture: false,
+        noSwipe: true,
       };
       setDrag({ x: 0, y: 0 });
       return;
@@ -314,7 +326,7 @@ export function ImageLightbox({
     const dy = event.clientY - g.start.y;
     setDrag({ x: 0, y: 0 });
     if (g.moved) {
-      if (g.view.scale > 1 || !g.touch) return;
+      if (g.view.scale > 1 || !g.touch || g.noSwipe) return;
       if (Math.abs(dx) > SWIPE_MIN && Math.abs(dx) > Math.abs(dy))
         go(dx < 0 ? 1 : -1);
       else if (dy > SWIPE_MIN * 1.5 && dy > Math.abs(dx)) onClose();
