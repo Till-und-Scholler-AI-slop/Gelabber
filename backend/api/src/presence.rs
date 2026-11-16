@@ -300,7 +300,11 @@ pub fn start(state: AppState) {
         return;
     }
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(SWEEP_EVERY);
+        // The first sweep waits a round: a mode that ran out already reads as
+        // automatic, and a starting process should not add to the boot rush
+        // on the pool.
+        let first = tokio::time::Instant::now() + SWEEP_EVERY;
+        let mut tick = tokio::time::interval_at(first, SWEEP_EVERY);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
