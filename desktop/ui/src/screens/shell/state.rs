@@ -126,7 +126,6 @@ pub struct ShellState {
     pub memory: HashMap<Uuid, Memory>,
     pub dialog: Option<Dialog>,
     pub server_menu: bool,
-    pub user_menu: bool,
     /// channel → its preview.
     pub previews: HashMap<Uuid, Preview>,
     /// The location the route effects ran for last.

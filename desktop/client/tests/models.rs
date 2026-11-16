@@ -955,3 +955,22 @@ fn the_feedback_context_of_this_app() {
     let long = format!("/{}", "ä".repeat(400));
     assert_eq!(feedback_page(&long).chars().count(), FEEDBACK_PAGE_MAX);
 }
+
+/// A DM says whether it is blocked either way (#565); both flags are left
+/// out while false, as the server writes them, and a block list entry reads.
+#[test]
+fn blocked_dms_and_the_block_list() {
+    let mut json: Value = serde_json::from_str(include_str!("fixtures/dm.json")).expect("fixture");
+    let dm: DirectMessage = serde_json::from_value(json.clone()).unwrap();
+    assert!(!dm.blocked && !dm.closed);
+    assert_eq!(serde_json::to_value(&dm).unwrap(), json);
+    json["blocked"] = Value::Bool(true);
+    let dm: DirectMessage = serde_json::from_value(json.clone()).unwrap();
+    assert!(dm.blocked && !dm.closed);
+    assert_eq!(serde_json::to_value(&dm).unwrap(), json);
+    let list: Vec<BlockedUser> = serde_json::from_str(
+        r#"[{"id":"7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab","name":"Jonas","avatar_url":null,"created_at":"2026-11-15T10:00:00Z"}]"#,
+    )
+    .unwrap();
+    assert_eq!(list[0].name, "Jonas");
+}

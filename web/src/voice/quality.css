@@ -44,49 +44,26 @@
 .media-settings-reveal > p {
   flex: 1 1 220px;
 }
-/* The settings dialog's tabs, held at the top while the panel scrolls. */
-.voice-settings-tablist {
-  position: sticky;
-  top: calc(-1 * var(--lr-space-2));
-  z-index: 1;
+/* The diagnostics after the audio form in Settings → Audio, where the
+   call bar's links scroll them to the top. */
+.settings-diagnostics {
   display: flex;
-  gap: 4px;
-  margin: calc(-1 * var(--lr-space-2)) 0 20px;
-  padding-top: var(--lr-space-2);
-  border-bottom: 1px solid var(--lr-border);
-  background: var(--lr-elevated);
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 28px;
+  scroll-margin-top: var(--lr-space-4);
 }
-.voice-settings-tablist > button {
-  min-height: var(--lr-control-md);
-  margin-bottom: -1px;
-  padding: 0 12px;
-  border-bottom: 2px solid transparent;
-  color: var(--lr-muted);
-  font: var(--lr-type-ui);
-  white-space: nowrap;
-  cursor: pointer;
+.settings-diagnostics .media-group-head h3:focus {
+  outline: none;
 }
-.voice-settings-tablist > button:hover {
-  color: var(--lr-text);
-}
-.voice-settings-tablist > button[aria-selected="true"] {
-  border-bottom-color: var(--lr-accent);
-  color: var(--lr-text);
-  font-weight: 600;
-}
-.voice-settings-tablist > button:focus-visible {
+.settings-diagnostics .media-group-head h3:focus-visible {
   outline: 2px solid var(--lr-focus);
-  outline-offset: -2px;
-}
-@media (pointer: coarse) {
-  .voice-settings-tablist > button {
-    min-height: 44px;
-  }
+  outline-offset: 2px;
 }
 
 /* The Audio & Video forms (settingsLayout.tsx): groups under a small
    heading, rows with the name left and the control right. They stack when
-   the form is narrow, in a phone's sheet or the settings page. */
+   the form is narrow. */
 .media-settings-form {
   container-type: inline-size;
   display: flex;

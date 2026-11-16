@@ -170,6 +170,7 @@ async fn setup(pool: PgPool) -> World {
         .send(Method::POST, &format!("/api/invites/{code}/join"), None)
         .await;
     assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+    a.befriend(b.user_id()).await;
     let dm = a
         .send(
             Method::POST,
@@ -994,4 +995,124 @@ async fn a_hidden_channel_pushes_nothing(pool: PgPool) {
     post(&mut a, &channel, &format!("<@{bob}> schau mal")).await;
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
+}
+
+/// A message request rings once, however its messages are deleted and
+/// sent again, and a friend request taken back and sent again within the
+/// hour rings no second time (#563).
+#[sqlx::test]
+async fn requests_ring_once(pool: PgPool) {
+    let World {
+        state,
+        mut a,
+        mut b,
+        server,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let mut cara = user(&state, "c@test.example", "Cara").await;
+    let invite = a
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    let code = invite.body["code"].as_str().unwrap();
+    let joined = cara
+        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .await;
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+
+    let request = cara
+        .send(Method::POST, "/api/dms", Some(json!({"user_id": bob})))
+        .await;
+    let request = request.body["id"].as_str().unwrap().to_owned();
+    let first = post(&mut cara, &request, "hallo").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["path"], "/d/requests");
+    let id = first["id"].as_str().unwrap();
+    let r = cara
+        .send(Method::DELETE, &format!("/api/messages/{id}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    post(&mut cara, &request, "hallo nochmal").await;
+
+    let send = json!({"user_id": bob});
+    let r = cara
+        .send(Method::POST, "/api/friends/requests", Some(send.clone()))
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(browser.open(&next(&mut hits).await)["path"], "/d/friends");
+    let r = cara
+        .send(
+            Method::DELETE,
+            &format!("/api/friends/requests/{bob}"),
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let r = cara
+        .send(Method::POST, "/api/friends/requests", Some(send))
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    post(&mut a, &dm, "marker").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
+}
+
+/// Nothing from someone the recipient blocks (#565): not their mentions,
+/// not `@everyone`. Cara's mention after them is the only push.
+#[sqlx::test]
+async fn nothing_pushes_from_someone_blocked(pool: PgPool) {
+    let World {
+        state,
+        mut a,
+        mut b,
+        server,
+        channel,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let mut c = user(&state, "c@test.example", "Cara").await;
+    let invite = a
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    let code = invite.body["code"].as_str().unwrap().to_owned();
+    let joined = c
+        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .await;
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+    let r = b
+        .send(
+            Method::PUT,
+            &format!("/api/users/me/blocks/{}", a.user_id()),
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+
+    post(&mut a, &channel, &format!("<@{bob}> hallo")).await;
+    post(&mut a, &channel, "@everyone Essen").await;
+    post(&mut c, &channel, &format!("<@{bob}> marker")).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["body"], "@Bob marker");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), hits.recv())
+            .await
+            .is_err(),
+        "nothing from Ada"
+    );
 }

@@ -275,8 +275,6 @@ summary {
   .server-create-button,
   .server-sidebar-menu-button,
   .user-panel-profile,
-  .user-panel-menu > nav > :is(a, button),
-  .user-status-card__link,
   .shell-icon-button,
   .shell-menu-item,
   .member-profile-button,
@@ -759,32 +757,31 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   width: max(100%, 208px);
   transform-origin: top left;
 }
-/* The two <details> menus (server, user) open like a Popover: out of their
-   button, scaling up and fading in. Where ::details-content transitions,
-   they also close that way; elsewhere they vanish at once. */
-:is(.server-sidebar-menu > .shell-menu, .user-panel-menu > nav) {
+/* The server's <details> menu opens like a Popover: out of its button,
+   scaling up and fading in. Where ::details-content transitions, it also
+   closes that way; elsewhere it vanishes at once. */
+.server-sidebar-menu > .shell-menu {
   transition:
     opacity var(--lr-dur-exit) var(--lr-ease-exit),
     scale var(--lr-dur-exit) var(--lr-ease-exit);
 }
-:is(.server-sidebar-menu, .user-panel-menu):not([open])
-  > :is(.shell-menu, nav) {
+.server-sidebar-menu:not([open]) > .shell-menu {
   opacity: 0;
   scale: 0.96;
   pointer-events: none;
 }
-:is(.server-sidebar-menu, .user-panel-menu)[open] > :is(.shell-menu, nav) {
+.server-sidebar-menu[open] > .shell-menu {
   transition:
     opacity var(--lr-dur) var(--lr-ease-enter),
     scale var(--lr-dur) var(--lr-ease-enter);
 }
 @starting-style {
-  :is(.server-sidebar-menu, .user-panel-menu)[open] > :is(.shell-menu, nav) {
+  .server-sidebar-menu[open] > .shell-menu {
     opacity: 0;
     scale: 0.96;
   }
 }
-:is(.server-sidebar-menu, .user-panel-menu)::details-content {
+.server-sidebar-menu::details-content {
   transition: content-visibility var(--lr-dur-exit) allow-discrete;
 }
 .sidebar-overview {
@@ -1150,6 +1147,24 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
 .user-panel-profile > span:last-child {
   min-width: 0;
 }
+/* The avatar carries the dot of an unread feedback reply, opposite the
+   presence dot. */
+.user-panel-avatar {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.user-panel-avatar > .unread-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  margin: 0;
+  box-shadow: 0 0 0 2px var(--lr-panel);
+}
+.user-panel-profile:hover .user-panel-avatar > .unread-dot,
+.user-panel-profile[aria-expanded="true"] .user-panel-avatar > .unread-dot {
+  box-shadow: 0 0 0 2px var(--lr-hover);
+}
 .user-panel-profile strong {
   display: block;
   font-size: 14px;
@@ -1186,9 +1201,23 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
 .user-panel .shell-icon-button {
   height: var(--lr-control-md);
 }
-/* Your status, from the name in the user panel. */
-.ui-popover.user-status-popover {
+/* Your account, from the avatar in the user panel: the status card, then
+   the account's entries. */
+.ui-popover.user-account-popover {
   width: 320px;
+}
+.user-account {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.user-account-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.user-account-menu > .shell-menu-item > .unread-dot {
+  margin-left: auto;
 }
 .user-status-card {
   display: flex;
@@ -1228,58 +1257,6 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
 .user-status-card__row .ui-field {
   flex: 1;
   min-width: 0;
-}
-.user-status-card__link {
-  display: flex;
-  align-items: center;
-  min-height: var(--lr-control-md);
-  margin: 0 -4px -4px;
-  padding: 0 8px;
-  border-top: 1px solid var(--lr-border);
-  border-radius: 0 0 var(--lr-radius-sm) var(--lr-radius-sm);
-  font: var(--lr-type-ui);
-  color: var(--lr-text);
-}
-.user-status-card__link:hover {
-  background: var(--lr-hover);
-}
-.user-panel-menu {
-  position: relative;
-}
-.user-panel-menu > summary {
-  list-style: none;
-}
-.user-panel-menu > summary::-webkit-details-marker {
-  display: none;
-}
-.user-panel-menu > summary svg {
-  transform: rotate(180deg);
-}
-.user-panel-menu > nav {
-  position: absolute;
-  right: 0;
-  bottom: 43px;
-  z-index: 35;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 180px;
-  padding: 8px;
-  background: var(--lr-panel);
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius);
-  box-shadow: 0 8px 25px #0003;
-  transform-origin: bottom right;
-}
-.user-panel-menu > nav > :is(a, button) {
-  display: block;
-  text-align: left;
-  font-size: 14px;
-  padding: 8px 10px;
-  border-radius: var(--lr-radius-small);
-}
-.user-panel-menu > nav > :is(a, button):hover {
-  background: var(--lr-hover);
 }
 .gel-avatar {
   --avatar-size: 32px;
@@ -2120,12 +2097,6 @@ html[data-reduced-motion="true"] *::after {
   .sidebar-action-small {
     width: 44px;
     height: 44px;
-  }
-  .user-panel-menu > nav {
-    bottom: 52px;
-  }
-  .user-panel-menu > nav > :is(a, button) {
-    padding-block: 12px;
   }
 }
 /* A phone on its side has room for the call and the user panel only if the

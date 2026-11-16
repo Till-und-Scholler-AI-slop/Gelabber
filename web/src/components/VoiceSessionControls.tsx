@@ -43,6 +43,7 @@ import { useSpeakingUsers } from "../voice/speaking.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { Avatar } from "./Avatar.tsx";
 import { useUserId } from "../auth/scope.ts";
+import { useOpenMediaSettings } from "../voice/mediaSettingsLink.ts";
 import { sharesSourceAudio, useMediaSettings } from "../voice/settings.ts";
 import {
   callAnnouncement,
@@ -351,7 +352,7 @@ export function ConnectionDetails({ onDone }: { onDone: () => void }) {
   const volumeId = useId();
   const sample = useVoiceDiagnostics((s) => s.latest?.voice ?? null);
   const watch = useVoiceDiagnostics((s) => s.latest?.watch ?? null);
-  const openSettings = useMediaSettings((s) => s.openDialog);
+  const openSettings = useOpenMediaSettings();
   const sent = directionTotal([sample], "send");
   const received = directionTotal([sample, watch], "recv");
   const show = (section: "audio" | "diagnostics") => {

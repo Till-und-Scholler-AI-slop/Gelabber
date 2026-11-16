@@ -226,6 +226,7 @@ async fn an_edit_changes_what_a_message_mentions(pool: PgPool) {
 #[sqlx::test]
 async fn a_dm_mentions_the_other_participant(pool: PgPool) {
     let World { mut a, mut b, .. } = setup(&pool).await;
+    a.befriend(b.user_id()).await;
     let dm = a
         .send(
             Method::POST,

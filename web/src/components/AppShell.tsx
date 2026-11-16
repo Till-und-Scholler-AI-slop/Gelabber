@@ -11,6 +11,8 @@ import { useNotificationSettingsBridge } from "../messages/notificationSettings.
 import { useSession } from "../auth/session.ts";
 import { useAccountLocaleBridge } from "../i18n/account.ts";
 import { useDirectoryBridge } from "../discover/queries.ts";
+import { useBlocksBridge } from "../blocks/queries.ts";
+import { useFriendsBridge } from "../friends/queries.ts";
 import { FeedbackDialog } from "../feedback/FeedbackDialog.tsx";
 import { useVoice } from "../voice/session.ts";
 import { useLiveNotices } from "../voice/useLiveNotices.ts";
@@ -30,7 +32,6 @@ import { isChromeLongPress } from "./longPress.ts";
 import { MessageToasts } from "./MessageToasts.tsx";
 import { NotificationSettingsHost } from "./NotificationSettingsDialog.tsx";
 import { Toasts } from "./Toasts.tsx";
-import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
 import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
 import { SessionRecoveryNotice } from "./SessionRecoveryNotice.tsx";
 import { useT } from "../i18n/catalog.ts";
@@ -43,6 +44,8 @@ function AuthenticatedRealtime() {
   useNotificationSettingsBridge();
   useAccountLocaleBridge();
   useDirectoryBridge();
+  useFriendsBridge();
+  useBlocksBridge();
   return null;
 }
 
@@ -118,7 +121,6 @@ export function AppShell() {
       <Toasts />
       <MessageToasts />
       <ConfirmHost />
-      {user ? <VoiceSettingsDialog /> : null}
       {user ? (
         <NotificationSettingsHost key={`notifications-${user.id}`} />
       ) : null}

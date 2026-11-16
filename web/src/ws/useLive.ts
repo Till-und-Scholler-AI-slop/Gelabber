@@ -7,7 +7,6 @@ import { getGateway } from "./client.ts";
 import {
   CLIENT_IDLE_MS,
   PRESENCE_ACTIVITY_EVENTS,
-  PRESENCE_PULSE_MS,
   applyPresence,
   applyPresenceSnap,
   applyTyping,
@@ -15,7 +14,9 @@ import {
   pruneTyping,
   resetLiveStores,
 } from "./live.ts";
+import { createIdlePresence } from "./idlePresence.ts";
 import { applyVoiceSig, resetVoiceRoster } from "../voice/roster.ts";
+import { useVoice, type VoiceState } from "../voice/voiceStore.ts";
 
 export function useLiveBridge(): void {
   useEffect(() => {
@@ -53,36 +54,21 @@ export function useIdlePresence(userId: string | null): void {
       return undefined;
     }
     const gateway = getGateway();
-    let idle = false;
-    let lastPulse = 0;
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const goIdle = () => {
-      if (idle) return;
-      idle = true;
-      gateway.sendPresence("i");
-    };
-    const goActive = () => {
-      const now = Date.now();
-      if (idle) {
-        idle = false;
-        gateway.sendPresence("o");
-        lastPulse = now;
-      } else if (now - lastPulse >= PRESENCE_PULSE_MS) {
-        gateway.sendPresence("o");
-        lastPulse = now;
-      }
-      if (idleTimer) window.clearTimeout(idleTimer);
-      idleTimer = window.setTimeout(goIdle, CLIENT_IDLE_MS);
-    };
-
-    goActive();
-    const onActivity = () => goActive();
+    const presence = createIdlePresence((st) => gateway.sendPresence(st));
+    const inCall = (voice: VoiceState) =>
+      voice.status === "joined" && !voice.deafened;
+    presence.input();
+    presence.setInCall(inCall(useVoice.getState()));
+    const offVoice = useVoice.subscribe((voice) =>
+      presence.setInCall(inCall(voice)),
+    );
+    const onActivity = () => presence.input();
     for (const type of PRESENCE_ACTIVITY_EVENTS) {
       window.addEventListener(type, onActivity);
     }
     return () => {
-      if (idleTimer) window.clearTimeout(idleTimer);
+      presence.stop();
+      offVoice();
       for (const type of PRESENCE_ACTIVITY_EVENTS) {
         window.removeEventListener(type, onActivity);
       }

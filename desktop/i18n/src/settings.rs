@@ -20,6 +20,8 @@ crate::strings! {
     area_konto_label = "Sicherheit" | "Security";
     area_konto_description = "Anmeldung, Geräte und Kontodaten."
         | "Sign-in, devices and account data.";
+    area_blockiert_label = "Blockiert" | "Blocked";
+    area_blockiert_description = "Wen du blockierst." | "People you block.";
     area_darstellung_label = "Darstellung" | "Appearance";
     area_darstellung_description = "Sprache, Farbschema, Textgröße und Bewegung."
         | "Language, colour scheme, text size and motion.";

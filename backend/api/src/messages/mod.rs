@@ -301,6 +301,14 @@ async fn create_message(
             "invalid",
         )])));
     }
+    let draft = crate::dms::request::Draft {
+        content: &content,
+        files: !attachment_ids.is_empty(),
+        gif: body.gif.is_some(),
+    };
+    if let MessagingChannel::Dm { .. } = access {
+        crate::dms::request::precheck(&state.db, channel_id, user.id, &draft).await?;
+    }
     // Resolving asks Klipy (up to its 8 s timeout) before the channel lock
     // is taken, so a slow provider holds only this request, not the channel.
     let gif = match &body.gif {
@@ -371,6 +379,19 @@ async fn create_message(
     if !attachment_ids.is_empty() {
         access.require_send_files()?;
     }
+    let gate = match &access {
+        MessagingChannel::Dm { .. } => {
+            match crate::dms::request::gate(&mut tx, channel_id, user.id, &draft).await {
+                Ok(gate) => gate,
+                Err(err) => {
+                    tx.rollback().await?;
+                    discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
+                    return Err(err);
+                }
+            }
+        }
+        MessagingChannel::Server { .. } => crate::dms::request::Gate::Open,
+    };
     let row = sqlx::query_as::<_, MessageInsert>(
         "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to, here_users) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
@@ -416,15 +437,44 @@ async fn create_message(
     .await?;
     tx.commit().await?;
     info!(channel_id = %channel_id, message_id = %message.id, "message created");
-    if let (Some(gif), Some(pick), Some(gifs)) = (&message.gif, &body.gif, &state.gifs) {
-        gifs.shared(&gif.slug, pick.query.trim(), user.id);
+    if let (Some(_), Some(pick), Some(gifs)) = (&message.gif, &body.gif, &state.gifs) {
+        // The slug as Klipy handed it out, search token included: the
+        // token ties the share to the search that found it.
+        gifs.shared(pick.slug.trim(), pick.query.trim(), user.id);
     }
     delivery::wake(&state);
     let server = match &access {
         MessagingChannel::Server { member, .. } => Some(member.server.id),
         MessagingChannel::Dm { .. } => None,
     };
-    crate::push::announce(&state, &message, server);
+    match gate {
+        crate::dms::request::Gate::Open => crate::push::announce(&state, &message, server),
+        crate::dms::request::Gate::Request {
+            to,
+            announce,
+            silent,
+        } => {
+            if announce {
+                crate::push::invite(
+                    &state,
+                    to,
+                    &user.name,
+                    crate::push::Invite::Message {
+                        channel: channel_id,
+                        message: message.id,
+                    },
+                );
+            }
+            if !silent {
+                crate::dms::publish(
+                    &state,
+                    to,
+                    crate::gateway::protocol::UserFrame::MessageRequests,
+                )
+                .await;
+            }
+        }
+    }
     previews::enqueue(
         &state,
         user.id,
@@ -552,10 +602,26 @@ async fn update_message(
         &current.mentions,
         here_users.as_deref(),
     );
+    if let MessagingChannel::Dm { .. } = access {
+        crate::dms::request::precheck(
+            &state.db,
+            current.channel_id,
+            user.id,
+            &crate::dms::request::Draft {
+                content: &content,
+                files: false,
+                gif: false,
+            },
+        )
+        .await?;
+    }
     let mentioned = mentions::resolve(&state, &access, user.id, &content, granted).await?;
     let mut tx = state.db.begin().await?;
     let access = lock_access(&mut tx, current.channel_id, user.id).await?;
     access.require_send()?;
+    if let MessagingChannel::Dm { .. } = access {
+        crate::dms::request::check_edit(&mut tx, current.channel_id, user.id, &content).await?;
+    }
     // Only a new text marks the message edited; alt texts alone do not.
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, \
@@ -630,6 +696,12 @@ async fn describe_only(
     let mut tx = state.db.begin().await?;
     let access = lock_access(&mut tx, channel_id, user_id).await?;
     access.require_send()?;
+    // A DM closed by a block takes no edits, alt texts included (#565).
+    if let MessagingChannel::Dm { .. } = access {
+        crate::blocks::in_dm(&mut *tx, channel_id, user_id)
+            .await?
+            .refuse(ApiError::DmClosed)?;
+    }
     let changed = attachments::describe(&mut tx, message_id, descriptions).await?;
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)

@@ -67,3 +67,25 @@ describe("new message candidates", () => {
     ]);
   });
 });
+
+describe("new message candidates with friends (#563)", () => {
+  const friend = (id: string, name: string) => ({ id, name, avatar_url: null });
+
+  it("offers friends without a shared server before server members", () => {
+    const people = dmCandidates(details, [], "me", [friend("u-ida", "Ida")]);
+    expect(people.map((person) => person.name)).toEqual([
+      "Ida",
+      "Ben",
+      "Mia",
+      "Zoe",
+    ]);
+    expect(people[0]?.friend).toBe(true);
+    expect(people[0]?.servers).toEqual([]);
+    expect(people[1]?.friend).toBe(false);
+  });
+
+  it("keeps an accepted DM with someone who shares nothing any more", () => {
+    const people = dmCandidates(details, [dm("d9", "u-old")], "me");
+    expect(people[0]).toMatchObject({ id: "u-old", dmId: "d9", servers: [] });
+  });
+});

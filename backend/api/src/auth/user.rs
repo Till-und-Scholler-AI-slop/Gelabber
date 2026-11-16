@@ -67,12 +67,14 @@ macro_rules! card_visible_to_viewer {
      OR EXISTS (SELECT 1 FROM channel_members a \
                 JOIN channel_members b ON b.channel_id = a.channel_id \
                 JOIN channels c ON c.id = a.channel_id AND c.kind = 'dm' \
-                WHERE a.user_id = $1 AND b.user_id = u.id))"
+                WHERE a.user_id = $1 AND b.user_id = u.id) \
+     OR EXISTS (SELECT 1 FROM friendships f \
+                WHERE f.user_low = LEAST($1, u.id) AND f.user_high = GREATEST($1, u.id)))"
     };
 }
 
 /// `PublicProfile` of `target` if `viewer` may see it: themselves, someone
-/// sharing a server, or the peer of a DM. Otherwise `None`, so a stranger's
+/// sharing a server, the peer of a DM, or a friend (#563). Otherwise `None`, so a stranger's
 /// id is indistinguishable from a missing one.
 pub async fn public_profile(
     db: &PgPool,
