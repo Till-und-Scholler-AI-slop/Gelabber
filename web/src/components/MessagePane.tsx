@@ -52,7 +52,7 @@ import { gifBox } from "../gifs/api.ts";
 import { Avatar } from "./Avatar.tsx";
 import { confirmAction } from "./confirm.ts";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
-import { imageBoxHeight } from "./imageBox.ts";
+import { picturesHeight } from "./imageBox.ts";
 import { ArrowDownIcon, HashIcon, SearchIcon } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
 import { FieldShell } from "./ui/FieldShell.tsx";
@@ -167,11 +167,13 @@ export function MessagePane({
   const [lightbox, setLightbox] = useState<{
     scope: string;
     image: LightboxImage;
+    gallery?: LightboxImage[];
     /** Its message was in the list; gone from it again means deleted. */
     listed?: boolean;
   } | null>(null);
   const openImage = useCallback(
-    (image: LightboxImage) => setLightbox({ scope: searchScope, image }),
+    (image: LightboxImage, gallery?: LightboxImage[]) =>
+      setLightbox({ scope: searchScope, image, gallery }),
     [searchScope],
   );
   const panesRef = useRef<HTMLDivElement>(null);
@@ -638,6 +640,7 @@ export function MessagePane({
           <ImageLightbox
             key={lightbox.image.id}
             image={lightbox.image}
+            gallery={lightbox.gallery}
             onClose={() => setLightbox(null)}
             fallbackFocus={focusList}
           />
@@ -793,13 +796,10 @@ function MessageList({
             gifBox(gif).height +
             (isContinued(items[index - 1], message) ? 16 : 60)
           );
-        // One picture's box is at most 240 px (imageBox.ts), several
-        // pictures a grid of 160 px rows, plus header and gaps.
+        // One picture's box is at most 400 px, several pictures a mosaic
+        // of known shape (imageBox.ts), plus header and gaps.
         if (image) {
-          const box =
-            images > 1
-              ? Math.ceil(images / 2) * 164
-              : imageBoxHeight(pictures[0]!);
+          const box = picturesHeight(pictures);
           return (
             breaks + box + (isContinued(items[index - 1], message) ? 16 : 60)
           );

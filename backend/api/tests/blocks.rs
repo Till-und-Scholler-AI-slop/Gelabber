@@ -119,6 +119,37 @@ async fn friends(client: &mut Client) -> Value {
     res.body
 }
 
+/// A message with one small PNG; its id and the picture's.
+async fn picture_message(client: &mut Client, channel: &str) -> (String, String) {
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(4, 4, image::Rgb([200, 120, 40]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let res = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/attachments"),
+            Some(json!({ "filename": "dog.png", "content_type": "image/png", "size": png.len() })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let picture = res.body["id"].as_str().unwrap().to_owned();
+    client
+        .store
+        .put(&format!("att/{picture}"), "image/png", png)
+        .await
+        .unwrap();
+    let res = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "content": "", "attachment_ids": [&picture] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    (res.body["id"].as_str().unwrap().to_owned(), picture)
+}
+
 fn refused(res: &Response, status: StatusCode, code: &str) {
     assert_eq!(res.status, status, "{}", res.body);
     assert_eq!(res.body["error"], code, "{}", res.body);
@@ -228,6 +259,7 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
     let bobs = text(&mut w.bob, &dm, "vorher").await;
     let bobs = bobs.body["id"].as_str().unwrap().to_owned();
     text(&mut w.ada, &dm, "auch vorher").await;
+    let (photo, picture) = picture_message(&mut w.bob, &dm).await;
     block(&mut w.ada, &bob).await;
 
     refused(
@@ -249,6 +281,19 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
         )
         .await;
     refused(&edit, StatusCode::FORBIDDEN, "dm_closed");
+    // An alt text alone (the text unchanged) is an edit too (#575).
+    let alt = w
+        .bob
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{photo}"),
+            Some(json!({
+                "content": "",
+                "attachment_descriptions": { picture: "Ein Hund" },
+            })),
+        )
+        .await;
+    refused(&alt, StatusCode::FORBIDDEN, "dm_closed");
 
     // Both still read it; each sees only their own side.
     let mine = w
@@ -270,7 +315,7 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
         .send(Method::GET, &format!("/api/channels/{dm}/messages"), None)
         .await;
     assert_eq!(history.status, StatusCode::OK, "{}", history.body);
-    assert_eq!(history.body["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(history.body["messages"].as_array().unwrap().len(), 3);
 
     // Unblocking opens it again; the friendship does not come back.
     unblock(&mut w.ada, &bob).await;

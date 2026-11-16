@@ -54,6 +54,7 @@ pub use state::AppState;
 pub fn app(state: AppState) -> Router {
     state.gateway.ensure_delivery(state.clone());
     attachments::cleanup::start(state.clone());
+    attachments::media::start(state.clone());
     account::deletion::start(state.clone());
     account::export::start(state.clone());
     previews::start(state.clone());

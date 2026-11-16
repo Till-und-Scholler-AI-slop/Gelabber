@@ -8,6 +8,8 @@
 //! browsers only ever talk to the app's own origin.
 
 pub mod cleanup;
+pub mod media;
+pub mod metadata;
 pub mod sniff;
 pub mod validate;
 
@@ -66,6 +68,34 @@ pub struct Attachment {
     pub filename: String,
     pub content_type: String,
     pub size: i64,
+    /// Pictures (#574): the size as shown, known before any byte loads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<i32>,
+    /// Shown while the picture loads; its form depends on the version
+    /// (1: average colour as `#rrggbb`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder_version: Option<i16>,
+    /// More than one frame: browsers play it, a thumbnail does not.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub animated: bool,
+    /// `?size=400` and `?size=800` answer with a thumbnail.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub thumbnail: bool,
+    /// The picture's alt text (#575), set by the uploader.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// The attachment columns the JSON is made from.
+macro_rules! row_columns {
+    () => {
+        "id, message_id, filename, content_type, size_bytes, width, height, \
+         placeholder, placeholder_version, animated, thumb_type, description"
+    };
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -75,6 +105,13 @@ struct AttachmentRow {
     filename: String,
     content_type: String,
     size_bytes: i64,
+    width: Option<i32>,
+    height: Option<i32>,
+    placeholder: Option<String>,
+    placeholder_version: Option<i16>,
+    animated: bool,
+    thumb_type: Option<String>,
+    description: Option<String>,
 }
 
 impl From<AttachmentRow> for Attachment {
@@ -84,6 +121,13 @@ impl From<AttachmentRow> for Attachment {
             filename: row.filename,
             content_type: row.content_type,
             size: row.size_bytes,
+            width: row.width,
+            height: row.height,
+            placeholder: row.placeholder,
+            placeholder_version: row.placeholder_version,
+            animated: row.animated,
+            thumbnail: row.thumb_type.is_some(),
+            description: row.description,
         }
     }
 }
@@ -100,6 +144,8 @@ struct PendingRow {
     size_bytes: i64,
     message_id: Option<Uuid>,
     expired: bool,
+    /// Set once `check_uploads` has prepared the picture (`media::prepare`).
+    stripped_size: Option<i64>,
 }
 
 #[derive(Debug, FromRow)]
@@ -241,6 +287,13 @@ async fn presign(
                 filename,
                 content_type,
                 size,
+                width: None,
+                height: None,
+                placeholder: None,
+                placeholder_version: None,
+                animated: false,
+                thumbnail: false,
+                description: None,
             },
         }),
     ))
@@ -251,6 +304,17 @@ struct DownloadParams {
     /// `?download=1`: the file to save, not to show (see `ObjectStore::download`).
     #[serde(default)]
     download: Option<String>,
+    /// `?size=400|800`: a picture's thumbnail with that long edge (#574).
+    /// Until the media worker has made it, the original, not to be cached.
+    #[serde(default)]
+    size: Option<String>,
+}
+
+#[derive(Debug, FromRow)]
+struct DownloadRow {
+    #[sqlx(flatten)]
+    row: StoredRow,
+    thumb_type: Option<String>,
 }
 
 async fn download(
@@ -260,9 +324,20 @@ async fn download(
     Query(params): Query<DownloadParams>,
     request_headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let row = sqlx::query_as::<_, StoredRow>(
+    // Before the lookup: a stranger gets the same answer for any id.
+    let edge = match params.size.as_deref() {
+        None => None,
+        Some("400") => Some(400),
+        Some("800") => Some(800),
+        Some(_) => {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "size", "invalid",
+            )])));
+        }
+    };
+    let DownloadRow { row, thumb_type } = sqlx::query_as::<_, DownloadRow>(
         "SELECT id, message_id, channel_id, uploader_id, object_key, \
-                filename, content_type, size_bytes \
+                filename, content_type, size_bytes, thumb_type \
          FROM attachments WHERE id = $1 AND (message_id IS NOT NULL OR expires_at > now())",
     )
     .bind(attachment_id)
@@ -282,7 +357,21 @@ async fn download(
     let save = params.download.as_deref() == Some("1") || !is_inline(&row.content_type);
     let disposition =
         content_disposition(if save { "attachment" } else { "inline" }, &row.filename);
-    let served = served_type(&row.content_type);
+    // A thumbnail when one was asked for and exists; while the worker has
+    // not made it yet, the original, which the browser must not keep under
+    // the thumbnail's URL.
+    let thumb = match (edge, &thumb_type) {
+        (Some(edge), Some(kind)) if !save => {
+            Some((media::thumb_key(&row.object_key, edge), kind.as_str()))
+        }
+        _ => None,
+    };
+    let interim = edge.is_some() && thumb.is_none() && !save;
+    let thumbnail = thumb.is_some();
+    let (object_key, served) = match thumb {
+        Some((key, kind)) => (key, kind),
+        None => (row.object_key.clone(), served_type(&row.content_type)),
+    };
     // One clock read: the link's signing window and the redirect's cache
     // time must come from the same window.
     let now = SystemTime::now();
@@ -292,7 +381,7 @@ async fn download(
     let body = state
         .store
         .serve(
-            &row.object_key,
+            &object_key,
             served,
             // Always signed, so MinIO never replays one sent with the PUT.
             Some(disposition.as_str()),
@@ -307,7 +396,7 @@ async fn download(
             // The answer belongs to this session: after a logout, or for
             // another account in the same browser, it is asked for anew.
             headers.insert(VARY, HeaderValue::from_static("Cookie"));
-            if save {
+            if save || interim {
                 // A click on "Herunterladen" is rare; check membership anew.
                 headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
             } else {
@@ -320,11 +409,16 @@ async fn download(
             }
             Ok(response)
         }
-        Ok(ObjectBody::Stream(object)) => Ok(streamed(&disposition, served, save, object)),
+        Ok(ObjectBody::Stream(object)) => {
+            Ok(streamed(&disposition, served, save || interim, object))
+        }
         Err(StoreError::NotFound) => Err(ApiError::NotFound),
         Err(StoreError::RangeNotSatisfiable) => {
             let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
-            if let Ok(value) = HeaderValue::from_str(&format!("bytes */{}", row.size_bytes)) {
+            // The original's length; a thumbnail's is not in the row.
+            if !thumbnail
+                && let Ok(value) = HeaderValue::from_str(&format!("bytes */{}", row.size_bytes))
+            {
                 response.headers_mut().insert(CONTENT_RANGE, value);
             }
             Ok(response)
@@ -513,11 +607,11 @@ pub async fn for_messages(db: &PgPool, messages: &mut [Message]) -> Result<(), A
     if ids.is_empty() {
         return Ok(());
     }
-    let rows = sqlx::query_as::<_, AttachmentRow>(
-        "SELECT id, message_id, filename, content_type, size_bytes \
-         FROM attachments WHERE message_id = ANY($1) \
-         ORDER BY created_at, id",
-    )
+    let rows = sqlx::query_as::<_, AttachmentRow>(concat!(
+        "SELECT ",
+        row_columns!(),
+        " FROM attachments WHERE message_id = ANY($1) ORDER BY created_at, id"
+    ))
     .bind(&ids)
     .fetch_all(db)
     .await?;
@@ -537,10 +631,11 @@ pub async fn for_message(
     db: impl sqlx::PgExecutor<'_>,
     message_id: Uuid,
 ) -> Result<Vec<Attachment>, ApiError> {
-    let rows = sqlx::query_as::<_, AttachmentRow>(
-        "SELECT id, message_id, filename, content_type, size_bytes \
-         FROM attachments WHERE message_id = $1 ORDER BY created_at, id",
-    )
+    let rows = sqlx::query_as::<_, AttachmentRow>(concat!(
+        "SELECT ",
+        row_columns!(),
+        " FROM attachments WHERE message_id = $1 ORDER BY created_at, id"
+    ))
     .bind(message_id)
     .fetch_all(db)
     .await?;
@@ -562,7 +657,7 @@ const AT: [&str; validate::ATTACHMENTS_MAX] = [
     "attachment_ids.9",
 ];
 
-fn invalid() -> ApiError {
+pub(super) fn invalid() -> ApiError {
     ApiError::Validation(FieldErrors::from([("attachment_ids", "invalid")]))
 }
 
@@ -591,7 +686,8 @@ pub async fn check_uploads(
     }
     let rows = sqlx::query_as::<_, PendingRow>(
         "SELECT id, channel_id, uploader_id, object_key, filename, \
-                content_type, size_bytes, message_id, expires_at <= now() AS expired \
+                content_type, size_bytes, message_id, expires_at <= now() AS expired, \
+                stripped_size \
          FROM attachments WHERE id = ANY($1)",
     )
     .bind(ids)
@@ -623,7 +719,10 @@ pub async fn check_uploads(
             Err(StoreError::NotFound) => return Err(invalid()),
             Err(err) => return Err(store_internal(err)),
         };
-        if meta.size != row.size_bytes {
+        // The upload as declared, or what `prepare` wrote over it (it
+        // records the stripped size before it overwrites the object).
+        let original = meta.size == row.size_bytes;
+        if !original && row.stripped_size != Some(meta.size) {
             // The caller quarantines objects of the wrong size.
             return Err(ApiError::Validation(FieldErrors::from([(
                 "size", "invalid",
@@ -649,6 +748,20 @@ pub async fn check_uploads(
                 AT[index], "too_long",
             )])));
         }
+        // Not prepared yet, or maybe not to the end (a send cancelled or
+        // failed while it ran): the object may still be the original.
+        // Stripping a clean file again changes nothing.
+        if metadata::strips(&row.content_type) && (row.stripped_size.is_none() || original) {
+            media::prepare(
+                db,
+                store,
+                row.id,
+                &row.object_key,
+                &row.content_type,
+                row.size_bytes,
+            )
+            .await?;
+        }
         Ok(())
     });
     // The first failing file in the order the client sent them.
@@ -672,7 +785,8 @@ pub async fn bind_to_message(
     for id in ids {
         let row = sqlx::query_as::<_, PendingRow>(
             "SELECT id, channel_id, uploader_id, object_key, filename, \
-                    content_type, size_bytes, message_id, expires_at <= now() AS expired \
+                    content_type, size_bytes, message_id, expires_at <= now() AS expired, \
+                    stripped_size \
              FROM attachments WHERE id = $1 FOR UPDATE",
         )
         .bind(id)
@@ -686,11 +800,15 @@ pub async fn bind_to_message(
         {
             return Err(invalid());
         }
-        let updated = sqlx::query_as::<_, AttachmentRow>(
-            "UPDATE attachments SET message_id = $2, quota_state='consumed' \
+        // The quota triggers account the size as reserved (the upload's);
+        // from now on the file is the one without metadata.
+        let updated = sqlx::query_as::<_, AttachmentRow>(concat!(
+            "UPDATE attachments SET message_id = $2, quota_state='consumed', \
+                 size_bytes = COALESCE(stripped_size, size_bytes) \
              WHERE id = $1 AND message_id IS NULL AND expires_at > clock_timestamp() \
-             RETURNING id, message_id, filename, content_type, size_bytes",
-        )
+             RETURNING ",
+            row_columns!()
+        ))
         .bind(id)
         .bind(message_id)
         .fetch_optional(&mut **tx)
@@ -701,7 +819,48 @@ pub async fn bind_to_message(
     Ok(bound)
 }
 
-fn store_internal(err: StoreError) -> ApiError {
+/// Sets the alt texts (#575) of pictures of `message_id`, which the caller
+/// has checked is the author's. Every id must be a picture of that message,
+/// else nothing is written. Returns whether a text changed.
+pub async fn describe(
+    tx: &mut Transaction<'_, Postgres>,
+    message_id: Uuid,
+    texts: &[(Uuid, Option<String>)],
+) -> Result<bool, ApiError> {
+    let mut changed = false;
+    for (id, text) in texts {
+        let before: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT description FROM attachments \
+             WHERE id = $1 AND message_id = $2 AND content_type = ANY($3) FOR UPDATE",
+        )
+        .bind(id)
+        .bind(message_id)
+        .bind(PICTURE_TYPES)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let Some(before) = before else {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "attachment_descriptions",
+                "invalid",
+            )])));
+        };
+        if before != *text {
+            sqlx::query("UPDATE attachments SET description = $2 WHERE id = $1")
+                .bind(id)
+                .bind(text)
+                .execute(&mut **tx)
+                .await?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// The types shown as pictures ([`validate::is_image`]): only they take an
+/// alt text.
+pub(crate) const PICTURE_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+pub(crate) fn store_internal(err: StoreError) -> ApiError {
     match err {
         StoreError::Unconfigured => ApiError::Internal("object store is not configured".into()),
         other => ApiError::Internal(format!("object store: {other}")),

@@ -16,6 +16,8 @@ const GIF_PREFIX_LEN: usize = 4096;
 /// many pixels a side, and 8192² in all.
 const IMAGE_EDGE_MAX: u32 = 16384;
 const IMAGE_PIXELS_MAX: u64 = 1 << 26;
+/// Edge and pixel bounds, for the thumbnail decoder (`media`).
+pub(crate) const IMAGE_BOUNDS: (u32, u64) = (IMAGE_EDGE_MAX, IMAGE_PIXELS_MAX);
 
 /// How many leading bytes `matches` and `too_many_pixels` want.
 pub fn prefix_len(content_type: &str) -> usize {
@@ -44,7 +46,7 @@ pub fn too_many_pixels(content_type: &str, head: &[u8]) -> bool {
 /// A GIF's canvas: the logical screen, enlarged to the first frame as
 /// browsers do when that frame is larger. Without the frame in `head`, the
 /// screen alone.
-fn gif_size(head: &[u8]) -> Option<(u32, u32)> {
+pub(crate) fn gif_size(head: &[u8]) -> Option<(u32, u32)> {
     let word = |at: usize| {
         head.get(at..at + 2)
             .map(|b| u32::from(u16::from_le_bytes([b[0], b[1]])))
@@ -100,6 +102,15 @@ pub fn matches(content_type: &str, head: &[u8]) -> bool {
         "audio/flac" => at(0, b"fLaC"),
         "audio/webm" | "video/webm" => at(0, &[0x1A, 0x45, 0xDF, 0xA3]),
         "audio/mp4" | "video/mp4" => at(4, b"ftyp"),
+        // ISO base media with a HEIF brand.
+        "image/heic" | "image/heif" => {
+            at(4, b"ftyp")
+                && [
+                    b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1",
+                ]
+                .iter()
+                .any(|brand| at(8, *brand))
+        }
         // Older QuickTime files may open with another top-level atom.
         "video/quicktime" => [b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip"]
             .iter()
@@ -139,6 +150,9 @@ mod tests {
         assert!(matches("audio/wav", b"RIFF\0\0\0\0WAVEfmt "));
         assert!(matches("video/mp4", b"\0\0\0\x20ftypisom"));
         assert!(matches("video/quicktime", b"\0\0\0\x14ftypqt  "));
+        assert!(matches("image/heic", b"\0\0\0\x18ftypheic"));
+        assert!(matches("image/heif", b"\0\0\0\x18ftypmif1"));
+        assert!(!matches("image/heic", b"\0\0\0\x20ftypisom"));
         assert!(matches("video/webm", &[0x1A, 0x45, 0xDF, 0xA3, 1]));
         assert!(matches("audio/mpeg", &[0xFF, 0xFB, 0x90, 0x64]));
         assert!(matches("audio/mpeg", b"ID3\x04"));

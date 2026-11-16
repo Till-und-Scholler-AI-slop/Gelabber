@@ -800,8 +800,8 @@ Web usage (`messages/queries.ts:336-347`, `pages.ts:147-182`, `rules.ts:7`): fir
 
 | Method & path | Web fn | Request | Success | Errors |
 |---|---|---|---|---|
-| `POST /api/channels/{id}/messages` | `createMessage` (`messages/api.ts:29-46`) | Text: `{content, attachment_ids: uuid[], reply_to?: uuid, nonce?: uuid}`. GIF: `{content: "", gif: {slug, query}, reply_to?, nonce?}` (no `attachment_ids`). | `201 Message` (with `nonce` echoed) | `send_messages` (server); `send_files` when attachments; `422`: `content: required` (nothing to send) / `too_long` (> 2000) / `invalid` (control chars other than `\n`,`\t`); `attachment_ids: invalid` (duplicate, unknown, not yours, other channel, expired) / `too_long` (> 10) / `too_large` (sum > 100 MiB); `attachment_ids.N: mismatch` (bytes don't match type); `size: invalid`; `gif: exclusive\|unavailable\|invalid`; `429` msg bucket, `gif` bucket |
-| `PATCH /api/messages/{id}` | `updateMessage` (48) | `{content}` | `200 Message` (unchanged content returns current) | author only (`403 You can only edit your own messages.`); `send_messages`; `422 gif: not_editable`, `system: not_editable`, `content …` |
+| `POST /api/channels/{id}/messages` | `createMessage` (`messages/api.ts:29-46`) | Text: `{content, attachment_ids: uuid[], attachment_descriptions?: {uuid: string\|null}, reply_to?: uuid, nonce?: uuid}` (alt texts of pictures among `attachment_ids`, #575). GIF: `{content: "", gif: {slug, query}, reply_to?, nonce?}` (no `attachment_ids`). | `201 Message` (with `nonce` echoed) | `send_messages` (server); `send_files` when attachments; `422`: `content: required` (nothing to send) / `too_long` (> 2000) / `invalid` (control chars other than `\n`,`\t`); `attachment_ids: invalid` (duplicate, unknown, not yours, other channel, expired) / `too_long` (> 10) / `too_large` (sum > 100 MiB); `attachment_ids.N: mismatch` (bytes don't match type); `attachment_descriptions: too_long` (> 1000 chars) / `invalid` (control chars, id not a picture of this send); `size: invalid`; `gif: exclusive\|unavailable\|invalid`; `429` msg bucket, `gif` bucket |
+| `PATCH /api/messages/{id}` | `updateMessage` (48) | `{content?, attachment_descriptions?: {uuid: string\|null}}` (no `content`: the text stays; `""`/`null` clears an alt text) | `200 Message` (nothing changed returns current; alt texts alone keep `edited_at`, but bump `revision` and send the edit event) | author only (`403 You can only edit your own messages.`); `send_messages`; `422 gif: not_editable`, `system: not_editable`, `content …` |
 | `DELETE /api/messages/{id}` | `deleteMessage` (51) | — | `204` (also if already gone) | author, or `manage_messages` on a server; in a DM non-author → `403 You can only delete your own messages.` |
 | `DELETE /api/messages/{id}/previews` | `removePreviews` (55) | — | `204`; previews removed for good (`suppress_embeds`) | author or `manage_messages` |
 | `PUT /api/messages/{id}/reactions/{emoji}` | `messages/reactions.ts:71-76` | — ; `{emoji}` = `encodeURIComponent(emoji)` | `200 Message` (full, updated) | add needs `send_messages`; `422 emoji: invalid` (not in Unicode 18 emoji list, FE0F-insensitive) / `emoji: limit` (20 distinct emoji per message); idempotent |
@@ -888,6 +888,21 @@ Limits (`attachments/validate.rs:7-35`; web `messages/rules.ts:7-14`): file ≤ 
    The pending upload expires after 1 h (`PENDING_TTL`).
 2. `PUT {upload_url}` with the raw file bytes and **every** header from `headers` (the browser skips `Content-Length` because fetch sets it from the body; a native client must send the exact length) (`putPresigned`, `api.ts:71-109`). No cookies to MinIO. In proxy mode the request carries the session cookie and the listed `X-CSRF-Token`. Success = any 2xx (proxy answers `204`). Proxy errors: `404` (not your pending upload, older than 600 s, or proxy mode off), `422 content_type: invalid` (header ≠ presigned type), `422 size: invalid` (Content-Length or body length ≠ declared). Web error copy (`messages/api.ts:93-108`): timeout (120 s) `Der Upload hat zu lange gedauert und wurde abgebrochen.`, abort `Der Upload wurde abgebrochen.`, any other fetch failure → `ApiError("network")` = `Keine Verbindung zum Server.`, non-2xx `Der Upload ist fehlgeschlagen.` (the response body is not read).
 3. `POST /api/channels/{id}/messages` with `attachment_ids` in the order they should appear. The server HEADs each object and checks size and magic bytes (`mismatch`).
+   For pictures (`image/jpeg|png|gif|webp`) the server then reads the whole file once (`attachments/media.rs`, `prepare`): it removes privacy metadata from the original in place, without re-encoding (`attachments/metadata.rs`: GPS/EXIF except the orientation, XMP, IPTC, comments, MPF and data after the JPEG's end such as motion-photo video; PNG and WebP keep only the chunks that draw the picture, so text chunks, XMP, `tIME` and C2PA go; GIF XMP extensions; ICC profiles stay), so the bound attachment's `size` can be smaller than the upload's. HEIC/HEIF (`image/heic|heif`, stored as plain files, never decoded) keep their size: the `Exif` item and XMP items are overwritten with zeros in place.
+
+### 9.1a Picture fields (#574)
+
+The `Attachment` JSON of a picture carries, when known:
+
+| Field | Meaning |
+|---|---|
+| `width`, `height` | size as shown (EXIF orientation applied), set at binding from the header; reserve the box before any byte loads |
+| `placeholder`, `placeholder_version` | version 1: average colour `#rrggbb`, shown while the picture loads; ignore versions you don't know |
+| `animated` | `true` when the file has more than one frame (GIF, APNG, animated WebP); omitted when false |
+| `thumbnail` | `true` once `?size=400` / `?size=800` answer with a thumbnail; omitted when false |
+| `description` | alt text (#575), 1–1000 chars, trimmed, `\n` line breaks; omitted when none. Set by the uploader on send or edit; pictures (`image/jpeg\|png\|gif\|webp`) only; in the data export |
+
+All of them are omitted when unknown: pictures from before #574 get them from the backfill, a picture that does not decode never gets `thumbnail`/`placeholder`. The media worker makes them a few seconds after the message is sent and then sends the message again as an `e` event (new `revision`, `edited_at` unchanged), so a client that showed it with `thumbnail` missing switches to the thumbnail. The backfill of pictures older than an hour sends no events.
 
 ### 9.2 Download
 
@@ -895,6 +910,7 @@ Limits (`attachments/validate.rs:7-35`; web `messages/rules.ts:7-14`): file ≤ 
 
 - Auth: session cookie; pending uploads only for the uploader; bound ones for any member of the channel/DM; else `404`.
 - `download=1` or a non-inline type → `Content-Disposition: attachment; filename…`; inline types → `inline`.
+- `size=400|800` (pictures, #574): the thumbnail with that long edge, upright, no metadata but the ICC profile; JPEG (quality 80), or lossless WebP for transparent pictures (`Content-Type` says which). Same auth and caching as the original. Until the thumbnail exists (or when the picture has none) the original is served with `Cache-Control: private, no-store`, so the thumbnail URL is never cached with the original's bytes. Any other `size` → `422 size: invalid`. Thumbnails are deleted with their attachment.
 - Redirect mode: `307 Temporary Redirect` to a presigned MinIO GET URL (signed per 30-min window, valid 60 min), `Vary: Cookie`, `Cache-Control: private, max-age=<seconds left in window>` (inline) or `private, no-store` (download). Follow the redirect **without** cookies/Authorization.
 - Proxy mode: `200`/`206` stream with `Content-Type` (text types served as `text/plain`), `Cache-Control: private, max-age=3600` or `private, no-store`, `Vary: Cookie`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Accept-Ranges: bytes`, `Content-Length`, `Content-Range` for ranges; `416` with `Content-Range: bytes */<size>`.
 - The web reads text attachments with a plain `fetch(attachmentUrl(id))` and decodes the bytes (`components/Attachments.tsx:272-300`).
