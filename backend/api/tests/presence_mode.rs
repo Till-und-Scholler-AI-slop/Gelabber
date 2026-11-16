@@ -75,9 +75,14 @@ async fn setup(pool: PgPool) -> World {
     }
 }
 
+/// A client that knows `d` (#590).
 async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
+    connect_to(addr, client, "/ws?caps=dnd").await
+}
+
+async fn connect_to(addr: std::net::SocketAddr, client: &Client, path: &str) -> Ws {
     let cookie = client.jar.get(SESSION).cloned().expect("session cookie");
-    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    let mut request = format!("ws://{addr}{path}").into_client_request().unwrap();
     request
         .headers_mut()
         .insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
@@ -226,6 +231,43 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
     assert_eq!(modes, ["idle", "invisible", "auto"]);
 }
 
+/// A client from before #590 never hears `d`: Do not disturb reaches it
+/// as online, in snapshots and live.
+#[sqlx::test]
+async fn an_old_client_hears_do_not_disturb_as_online(pool: PgPool) {
+    let World {
+        mut owner,
+        mut member,
+        server,
+        ..
+    } = setup(pool.clone()).await;
+    let bob = member.user_id().to_owned();
+    let (addr, _state) = common::serve_ws(pool).await;
+    let mut old = connect_to(addr, &owner, "/ws").await;
+    watch(&mut old, server).await;
+    let mut bob_ws = connect(addr, &member).await;
+    watch(&mut bob_ws, server).await;
+    recv_until(&mut old, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+
+    // Each change reaches the old client, Do not disturb as online.
+    for (mode, heard) in [("dnd", "o"), ("idle", "i"), ("dnd", "o")] {
+        set_mode(&mut member, json!({ "mode": mode })).await;
+        let (frame, _) = recv_until(&mut old, presence_of(&bob)).await;
+        assert_eq!(frame["st"], heard, "{mode}: {frame}");
+    }
+    let mut late = connect_to(addr, &owner, "/ws").await;
+    assert_eq!(
+        listed(&watch(&mut late, server).await, &bob).as_deref(),
+        Some("o")
+    );
+    let mut new = connect(addr, &owner).await;
+    assert_eq!(
+        listed(&watch(&mut new, server).await, &bob).as_deref(),
+        Some("d")
+    );
+    let _ = &mut owner;
+}
+
 #[sqlx::test]
 async fn invisible_typing_reaches_nobody(pool: PgPool) {
     let World {
@@ -312,6 +354,8 @@ async fn a_mode_runs_out_and_is_announced(pool: PgPool) {
         .unwrap();
     let res = member.send(Method::GET, "/api/me/presence", None).await;
     assert_eq!(res.body, json!({ "mode": "auto", "until": null }));
+    // The Redis copy ran out with it, as it does in production.
+    del(&[format!("{REDIS_PREFIX}p:m:{bob}")]).await;
     // ... and the sweep clears it and tells everyone.
     assert_eq!(gelabber_api::presence::sweep(&state).await.unwrap(), 1);
     assert_eq!(gelabber_api::presence::sweep(&state).await.unwrap(), 0);
@@ -329,6 +373,104 @@ async fn a_mode_runs_out_and_is_announced(pool: PgPool) {
     let _ = &mut owner;
 }
 
+async fn redis() -> redis::aio::MultiplexedConnection {
+    redis::Client::open(common::redis_url())
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap()
+}
+
+async fn del(keys: &[String]) {
+    let _: i64 = redis::cmd("DEL")
+        .arg(keys)
+        .query_async(&mut redis().await)
+        .await
+        .unwrap();
+}
+
+/// The last socket of an invisible account closes: nobody hears it leave,
+/// as nobody saw it there.
+#[sqlx::test]
+async fn an_invisible_account_leaves_without_a_word(pool: PgPool) {
+    let World {
+        mut owner,
+        mut member,
+        server,
+        ..
+    } = setup(pool.clone()).await;
+    let bob = member.user_id().to_owned();
+    let (addr, _state) = common::serve_ws(pool).await;
+    let mut ada_ws = connect(addr, &owner).await;
+    watch(&mut ada_ws, server).await;
+    let mut bob_ws = connect(addr, &member).await;
+    watch(&mut bob_ws, server).await;
+    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    set_mode(&mut member, json!({ "mode": "invisible" })).await;
+    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "x").await;
+
+    bob_ws.close(None).await.ok();
+    drop(bob_ws);
+    // Bob's status is gone once the server let the socket go.
+    let key = format!("{REDIS_PREFIX}p:u:{bob}");
+    let mut conn = redis().await;
+    let start = std::time::Instant::now();
+    loop {
+        let exists: i64 = redis::cmd("EXISTS")
+            .arg(&key)
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        if exists == 0 {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "socket not dropped"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // Ada's own change comes after anything Bob's leaving sent.
+    set_mode(&mut owner, json!({ "mode": "dnd" })).await;
+    let (_, skipped) = recv_until(&mut ada_ws, |f| f["op"] == "pm").await;
+    assert!(
+        skipped.iter().all(|f| !presence_of(&bob)(f)),
+        "Bob's leaving was announced: {skipped:?}"
+    );
+}
+
+/// Redis restarted under open sockets: they only subscribe again
+/// (`resync`), and the record's mode is back before they announce.
+#[sqlx::test]
+async fn a_subscribe_after_a_redis_restart_restores_the_mode(pool: PgPool) {
+    let World {
+        mut owner,
+        mut member,
+        server,
+        ..
+    } = setup(pool.clone()).await;
+    let bob = member.user_id().to_owned();
+    let (addr, _state) = common::serve_ws(pool).await;
+    let mut bob_ws = connect(addr, &member).await;
+    watch(&mut bob_ws, server).await;
+    set_mode(&mut member, json!({ "mode": "dnd" })).await;
+    recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
+    // What a restart loses: the copy and its check marker.
+    del(&[
+        format!("{REDIS_PREFIX}p:m:{bob}"),
+        format!("{REDIS_PREFIX}p:mc:{bob}"),
+    ])
+    .await;
+
+    watch(&mut bob_ws, server).await;
+    let mut ada_ws = connect(addr, &owner).await;
+    assert_eq!(
+        listed(&watch(&mut ada_ws, server).await, &bob).as_deref(),
+        Some("d")
+    );
+    let _ = &mut owner;
+}
+
 /// Redis lost the mode (a restart): the next socket of the account puts the
 /// record's back.
 #[sqlx::test]
@@ -342,16 +484,11 @@ async fn a_new_socket_restores_a_lost_mode(pool: PgPool) {
     let bob = member.user_id().to_owned();
     let (addr, _state) = common::serve_ws(pool).await;
     set_mode(&mut member, json!({ "mode": "dnd" })).await;
-    let mut redis = redis::Client::open(common::redis_url())
-        .unwrap()
-        .get_multiplexed_async_connection()
-        .await
-        .unwrap();
-    let _: i64 = redis::cmd("DEL")
-        .arg(format!("{REDIS_PREFIX}p:m:{bob}"))
-        .query_async(&mut redis)
-        .await
-        .unwrap();
+    del(&[
+        format!("{REDIS_PREFIX}p:m:{bob}"),
+        format!("{REDIS_PREFIX}p:mc:{bob}"),
+    ])
+    .await;
 
     let mut bob_ws = connect(addr, &member).await;
     watch(&mut bob_ws, server).await;

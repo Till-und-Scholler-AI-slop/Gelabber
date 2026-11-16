@@ -162,6 +162,9 @@ async fn put_mode(
         PresenceMode::Auto => None,
         _ => duration.until(Utc::now()),
     };
+    // The row stays locked until Redis has the copy, so two changes (or a
+    // change and the sweep) reach Redis in the order they were saved.
+    let mut tx = state.db.begin().await?;
     let row: (String, Option<DateTime<Utc>>) = sqlx::query_as(
         "UPDATE users SET presence_mode = $2, presence_mode_until = $3 \
          WHERE id = $1 AND deleted_at IS NULL \
@@ -170,12 +173,13 @@ async fn put_mode(
     .bind(user.id)
     .bind(mode.as_str())
     .bind(until)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?
     // The account went between the extractor and the update.
     .ok_or(ApiError::Unauthenticated)?;
     let saved = ModeState::from_row(row);
     announce(&state, user.id, saved).await;
+    tx.commit().await?;
     Ok(Json(saved))
 }
 
@@ -194,44 +198,86 @@ async fn announce(state: &AppState, user_id: Uuid, mode: ModeState) {
     }
 }
 
-/// A socket connects: if Redis lost the manual mode (a restart), put the
-/// record's back before the socket announces itself.
-pub async fn restore(state: &AppState, user_id: Uuid) {
-    let Ok(record) = load(&state.db, user_id).await else {
-        return;
+/// A socket connects or subscribes: if Redis lost the manual mode (a
+/// restart, after which the sockets stay open and only subscribe again),
+/// put the record's back before the socket announces itself. A marker that
+/// goes with the copy makes this one Redis call once it was checked.
+/// `db` is the caller's connection when it holds one (a subscribe), else
+/// one is taken from the pool.
+pub async fn restore(state: &AppState, db: Option<&mut sqlx::PgConnection>, user_id: Uuid) {
+    match state.gateway.claim_mode_check(user_id).await {
+        Ok(true) => {}
+        // Checked already, or no Redis: nothing to restore into.
+        Ok(false) | Err(_) => return,
+    }
+    let result = match db {
+        Some(db) => restore_locked(state, db, user_id).await,
+        None => match state.db.acquire().await {
+            Ok(mut db) => restore_locked(state, &mut db, user_id).await,
+            Err(error) => Err(error.into()),
+        },
     };
-    if record.mode == PresenceMode::Auto {
-        return;
-    }
-    if matches!(
-        state.gateway.presence_mode(user_id).await,
-        Ok(PresenceMode::Auto)
-    ) && let Err(error) = state
-        .gateway
-        .set_presence_mode(user_id, record.mode, record.until)
-        .await
-    {
+    if let Err(error) = result {
         tracing::debug!(error = error.code(), "presence mode not restored");
+        // The next socket tries again.
+        let _ = state.gateway.drop_mode_check(user_id).await;
     }
+}
+
+/// The record, locked while Redis takes it, wins over the copy.
+async fn restore_locked(
+    state: &AppState,
+    db: &mut sqlx::PgConnection,
+    user_id: Uuid,
+) -> Result<(), ApiError> {
+    use sqlx::Acquire;
+    let mut tx = db.begin().await?;
+    let row: Option<(String, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT presence_mode, presence_mode_until FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let record = row.map(ModeState::from_row).unwrap_or_default();
+    if state.gateway.presence_mode(user_id).await? != record.mode {
+        state
+            .gateway
+            .set_presence_mode(user_id, record.mode, record.until)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Clears modes that ran out, a batch at a time, and announces each; with
 /// several API processes each mode is cleared, and announced, once.
 pub async fn sweep(state: &AppState) -> Result<usize, ApiError> {
-    let expired: Vec<Uuid> = sqlx::query_scalar(
+    // Locked until announced, like a change (`put_mode`).
+    let mut tx = state.db.begin().await?;
+    let expired: Vec<(Uuid, String)> = sqlx::query_as(
         "WITH due AS ( \
-             SELECT id FROM users \
+             SELECT id, presence_mode FROM users \
              WHERE presence_mode_until IS NOT NULL AND presence_mode_until <= now() \
              ORDER BY presence_mode_until LIMIT $1 FOR UPDATE SKIP LOCKED) \
          UPDATE users u SET presence_mode = 'auto', presence_mode_until = NULL \
-         FROM due WHERE u.id = due.id RETURNING u.id",
+         FROM due WHERE u.id = due.id RETURNING u.id, due.presence_mode",
     )
     .bind(SWEEP_BATCH)
-    .fetch_all(&state.db)
+    .fetch_all(&mut *tx)
     .await?;
-    for user_id in &expired {
-        announce(state, *user_id, ModeState::default()).await;
+    for (user_id, old) in &expired {
+        // The Redis copy ran out with the mode, so the gateway is told what
+        // it hid: the members still see that.
+        let old = PresenceMode::parse(old).unwrap_or_default();
+        if let Err(error) = state.gateway.presence_mode_ended(*user_id, old).await {
+            tracing::debug!(error = error.code(), "presence mode end not applied");
+        }
+        let frame = ModeState::default().frame();
+        if let Err(error) = state.gateway.publish_user(*user_id, &frame).await {
+            tracing::debug!(error = error.code(), "presence mode end not announced");
+        }
     }
+    tx.commit().await?;
     Ok(expired.len())
 }
 

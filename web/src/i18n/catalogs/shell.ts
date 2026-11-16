@@ -42,7 +42,7 @@ export const shell = defineCatalog(
     "presenceMode.hint.dnd":
       "Keine Töne, Hinweise und Pushes. Ungelesenes zählt weiter.",
     "presenceMode.hint.invisible":
-      "Andere sehen dich offline. Wer mit dir im Sprachkanal ist, sieht dich trotzdem.",
+      "Andere sehen dich offline. In einem Sprachkanal sieht dich jeder, der den Kanal sieht.",
     "presenceMode.notSaved": "Status nicht geändert.",
     "presence.d": "Nicht stören",
     "presence.v": "Unsichtbar",
@@ -236,7 +236,7 @@ export const shell = defineCatalog(
     "presenceMode.hint.dnd":
       "No sounds, pop-ups or pushes. Unread messages still count.",
     "presenceMode.hint.invisible":
-      "Others see you offline. People in the same voice channel can see you.",
+      "Others see you offline. In a voice channel, everyone who can see it sees you.",
     "presenceMode.notSaved": "Status not changed.",
     "presence.d": "Do not disturb",
     "presence.v": "Invisible",

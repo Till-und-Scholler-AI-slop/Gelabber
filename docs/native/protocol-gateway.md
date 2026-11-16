@@ -42,7 +42,8 @@ Signaling split (by design, `backend/api/src/gateway/mod.rs:15-17`,
 
 | Item | Value | Ref |
 |---|---|---|
-| URL | `wss://<host>/ws` when the app origin is https, else `ws://<host>/ws` | `web/src/ws/client.ts:53-59` |
+| URL | `wss://<host>/ws?caps=dnd` when the app origin is https, else `ws://<host>/ws?caps=dnd` | `web/src/ws/client.ts:53-60` |
+| `caps` query | Comma-separated things the client understands beyond the base protocol. `dnd` (v0.11, #590): the presence status `d`. A socket without it hears Do not disturb as `o`, in snapshots and live, because clients from before v0.11 break on `d` (the web member list crashed on a status it had no group for) | `backend/api/src/gateway/mod.rs` (`UpgradeQuery`), `conn.rs` (`client_frame`), `protocol.rs` (`ServerFrame::without_dnd`) |
 | Method | HTTP GET upgrade | `backend/api/src/gateway/mod.rs:44-46` |
 | Auth | Cookie `gelabber_session=<raw token>` (the raw token from the login/register `Set-Cookie`) | `backend/api/src/cookies.rs:8`, `backend/api/src/auth/session.rs:282` |
 | CSRF | Not needed for `/ws` (GET) | `backend/api/src/auth/session.rs:270-272` |
@@ -269,7 +270,7 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `dm` | `{"op":"dm","c":"<dmChannelId>"}` | a DM involving this account appeared (new DM / first message); verify via REST then subscribe. From v0.10 also sent when the peer's account was deleted and the DM channel with it: the REST check then answers `404` and the DM leaves the list | `protocol.rs:432-433`, `delivery.rs:193-204` |
 | `sig` | `{"op":"sig","t":"j","s":"<srv>",["c":"<chan>",]["u":"<user>",]["k":"a",]["on":true,]["m":false,]["d":false,]["snap":[…],]["replay":true,]["w":["<owner>",…]]}` | voice presence, see §5 | `protocol.rs:469-489` |
 | `err` | `{"op":"err","e":"not_found",["s":"<uuid>",]["c":"<uuid>"]}` | see §3.1 | `protocol.rs:490-497` |
-| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `d` do not disturb (#590), `x` offline; a letter the client does not know counts as `o` | `protocol.rs:96-129,498-508,829-844` |
+| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `d` do not disturb (#590, only to sockets opened with `caps=dnd`, see §1.1), `x` offline. A client should count a letter it does not know as `o`; clients from before v0.11 do not, which is why `d` needs the capability | `protocol.rs:96-129,498-508,829-844` |
 | `y` | `{"op":"y","s":"<srv>","c":"<chan>","u":"<user>","on":true}` | typing; delivered only to sockets subscribed to channel topic `c` | `protocol.rs:509-511`, `hub/fanout.rs:206-221` |
 | `ns` | `{"op":"ns"}` | notification settings changed on some device → refetch them | `protocol.rs:512-515` |
 | `rd` | `{"op":"rd","d":[ReadSync,…]}` | read positions moved on another device | `protocol.rs:516-534` |
@@ -501,15 +502,20 @@ per subscribe (§2.2 step 4); entries with missing keys come back as `x`
 Manual mode (#590, `backend/api/src/presence.rs`): the account's
 `presence_mode` is applied on top of the sockets' aggregate before anyone
 else sees it: `idle` → always `i`, `dnd` → `d`, `invisible` → treated as
-offline (no frame, left out of snapshots; `@here` still reaches the
-account). Sockets only ever send `o`/`i`. The account's own sockets get the
+offline (no frame, left out of snapshots and the friend list, and no `x`
+when its last socket closes; `@here` still reaches the account). Sockets
+only ever send `o`/`i`. The account's own sockets get the
 mode itself as `pm` and show it instead of what the server reports (an
 invisible account shows "Unsichtbar", not offline). While `invisible` the
 server drops the account's typing starts, and the client does not send
 them. While `dnd` the server sends no Web Push and the client plays no
 message sounds and shows no toasts or system notifications; unread badges
-stay. A mode with an end is automatic at once when it passes; a sweep every
-15 s clears it and sends `p` and `pm`.
+stay. A mode with an end is automatic at once when it passes (its Redis copy
+expires with it); a sweep every 15 s clears the record and sends `p` (what
+the mode hid, worked out from the cleared mode) and `pm`. After a Redis
+restart the record's mode is put back before a socket connects or
+subscribes again (a marker key `p:mc:<user>` that goes with the copy keeps
+that to one database read per account).
 
 Client (`web/src/ws/idlePresence.ts`, `web/src/ws/useLive.ts`; native:
 `desktop/client/src/presence.rs`):

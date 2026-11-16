@@ -42,8 +42,8 @@ crate::strings! {
     presence_mode_duration_forever = "Bis ich es ändere" | "Until I change it";
     presence_mode_hint_dnd = "Keine Töne, Hinweise und Pushes. Ungelesenes zählt weiter."
         | "No sounds, pop-ups or pushes. Unread messages still count.";
-    presence_mode_hint_invisible = "Andere sehen dich offline. Wer mit dir im Sprachkanal ist, sieht dich trotzdem."
-        | "Others see you offline. People in the same voice channel can see you.";
+    presence_mode_hint_invisible = "Andere sehen dich offline. In einem Sprachkanal sieht dich jeder, der den Kanal sieht."
+        | "Others see you offline. In a voice channel, everyone who can see it sees you.";
     presence_mode_not_saved = "Status nicht geändert." | "Status not changed.";
     user_panel_menu_label = "Benutzermenü" | "User menu";
     /// The avatar's popover: the status card and the account's entries.

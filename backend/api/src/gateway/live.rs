@@ -146,6 +146,14 @@ fn mode_key(user_id: Uuid) -> String {
     format!("{REDIS_PREFIX}p:m:{user_id}")
 }
 
+/// Set once the manual mode's copy was checked against the record (#590).
+fn mode_check_key(user_id: Uuid) -> String {
+    format!("{REDIS_PREFIX}p:mc:{user_id}")
+}
+
+/// A day: an account's copy is checked again at least that often.
+const MODE_CHECK_MS: i64 = 24 * 60 * 60 * 1000;
+
 fn server_set_key(server_id: Uuid) -> String {
     format!("{REDIS_PREFIX}p:s:{server_id}")
 }
@@ -167,6 +175,8 @@ struct Aggregate {
     prev: PresenceStatus,
     now: PresenceStatus,
     connected: bool,
+    /// The manual mode read in the same step.
+    mode: PresenceMode,
 }
 
 impl Aggregate {
@@ -177,6 +187,7 @@ impl Aggregate {
             prev: parse_st(&prev).shown(mode),
             now: agg.shown(mode),
             connected: agg != PresenceStatus::Offline,
+            mode,
         }
     }
 }
@@ -365,6 +376,66 @@ impl Gateway {
             let servers = self.presence_targets(user_id, &HashSet::new()).await?;
             self.broadcast_presence(user_id, after, &servers).await?;
         }
+        Ok(())
+    }
+
+    /// A mode ran out (#590): its Redis copy is gone by now, so the members
+    /// are told what `old` hid, from what the sockets report.
+    pub async fn presence_mode_ended(
+        &self,
+        user_id: Uuid,
+        old: PresenceMode,
+    ) -> Result<(), ApiError> {
+        let (_, agg): (String, String) = self
+            .with_conn(|mut conn| async move {
+                redis::Script::new(SET_MODE_LUA)
+                    .key(mode_key(user_id))
+                    .key(user_key(user_id))
+                    .arg("")
+                    .arg(0)
+                    .invoke_async(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        let agg = parse_st(&agg);
+        let (before, after) = (agg.shown(old), agg.shown(PresenceMode::Auto));
+        if before != after {
+            let servers = self.presence_targets(user_id, &HashSet::new()).await?;
+            self.broadcast_presence(user_id, after, &servers).await?;
+        }
+        Ok(())
+    }
+
+    /// True once per Redis lifetime and account (a day at most): whether
+    /// the manual mode's copy still has to be checked against the record.
+    /// The marker goes with the copy when Redis restarts.
+    pub async fn claim_mode_check(&self, user_id: Uuid) -> Result<bool, ApiError> {
+        let set: Option<String> = self
+            .with_conn(|mut conn| async move {
+                redis::cmd("SET")
+                    .arg(mode_check_key(user_id))
+                    .arg("1")
+                    .arg("NX")
+                    .arg("PX")
+                    .arg(MODE_CHECK_MS)
+                    .query_async(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        Ok(set.is_some())
+    }
+
+    pub async fn drop_mode_check(&self, user_id: Uuid) -> Result<(), ApiError> {
+        self.with_conn(|mut conn| async move {
+            redis::cmd("DEL")
+                .arg(mode_check_key(user_id))
+                .query_async::<i64>(&mut conn)
+                .await
+        })
+        .await
+        .map_err(super::hub::redis_err)?;
         Ok(())
     }
 
@@ -582,7 +653,7 @@ impl Gateway {
                     PresenceStatus::Offline => {}
                     st => snap.push(PresenceEntry { u: user_id, st }),
                 },
-                None => stale.push(user_id),
+                None => stale.push((user_id, mode)),
             }
         }
         if !malformed.is_empty() {
@@ -607,7 +678,7 @@ impl Gateway {
         if !stale.is_empty() {
             let pruned = self
                 .with_conn(|mut conn| {
-                    let stale = stale.clone();
+                    let stale: Vec<Uuid> = stale.iter().map(|(user_id, _)| *user_id).collect();
                     async move {
                         let prune = redis::Script::new(PRUNE_STALE_LUA);
                         let mut call = prune.prepare_invoke();
@@ -624,8 +695,12 @@ impl Gateway {
                 .await;
             // A status that ran out never said offline: whoever saw the
             // member online hears it now, from the first snapshot to notice.
+            // An invisible one (#590) was never seen, so it stays quiet.
             for user_id in pruned.unwrap_or_default() {
-                if let Ok(user_id) = user_id.parse()
+                if let Ok(user_id) = user_id.parse::<Uuid>()
+                    && !stale
+                        .iter()
+                        .any(|(id, mode)| *id == user_id && *mode == PresenceMode::Invisible)
                     && let Err(err) = self
                         .publish_presence(server_id, user_id, PresenceStatus::Offline)
                         .await
@@ -751,8 +826,12 @@ impl Gateway {
         let servers = self.presence_targets(user_id, local).await?;
         if !agg.connected {
             self.forget_user_servers(user_id, &servers).await?;
-            self.broadcast_presence(user_id, PresenceStatus::Offline, &servers)
-                .await?;
+            // Invisible (#590): nobody saw this account online, so nobody
+            // hears it leave either.
+            if agg.mode != PresenceMode::Invisible {
+                self.broadcast_presence(user_id, PresenceStatus::Offline, &servers)
+                    .await?;
+            }
         } else if agg.prev != agg.now {
             self.broadcast_presence(user_id, agg.now, &servers).await?;
         }

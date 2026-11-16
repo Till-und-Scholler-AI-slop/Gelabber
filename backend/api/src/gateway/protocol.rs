@@ -756,6 +756,32 @@ impl ServerFrame {
         }
     }
 
+    /// For a client that does not know `d` (web bundles and apps from
+    /// before #590, which may break on it): Do not disturb as online, the
+    /// way Online stands in for any status it does not know.
+    pub fn without_dnd(self) -> Self {
+        let plain = |st: PresenceStatus| match st {
+            PresenceStatus::Dnd => PresenceStatus::Online,
+            st => st,
+        };
+        match self {
+            Self::Presence { s, u, st, snap } => Self::Presence {
+                s,
+                u,
+                st: st.map(plain),
+                snap: snap.map(|snap| {
+                    snap.into_iter()
+                        .map(|entry| PresenceEntry {
+                            st: plain(entry.st),
+                            ..entry
+                        })
+                        .collect()
+                }),
+            },
+            frame => frame,
+        }
+    }
+
     pub fn presence_snap(server_id: Uuid, snap: Vec<PresenceEntry>) -> Self {
         Self::Presence {
             s: server_id,
