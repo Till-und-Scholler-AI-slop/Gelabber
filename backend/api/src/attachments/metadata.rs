@@ -658,6 +658,9 @@ fn heif_metadata_items(iinf: &[u8]) -> Option<Vec<u32>> {
     Some(ids)
 }
 
+/// More extents than any real metadata item has.
+const HEIF_EXTENTS_MAX: usize = 1024;
+
 /// The file ranges of `items`, from `iloc` (offsets into this file only).
 fn heif_extents(iloc: &[u8], items: &[u32]) -> Option<Vec<(usize, usize)>> {
     let version = *iloc.first()?;
@@ -670,6 +673,15 @@ fn heif_extents(iloc: &[u8], items: &[u32]) -> Option<Vec<(usize, usize)>> {
     let (offset_size, length_size) = (sizes >> 4, sizes & 0x0F);
     let base_size = more >> 4;
     let index_size = if version == 0 { 0 } else { more & 0x0F };
+    // The spec allows only these field widths; anything else is not a
+    // file we understand.
+    if ![offset_size, length_size, base_size, index_size]
+        .iter()
+        .all(|n| matches!(n, 0 | 4 | 8))
+    {
+        return None;
+    }
+    let entry = index_size + offset_size + length_size;
     let count = be(iloc, &mut at, if version < 2 { 2 } else { 4 })?;
     let mut ranges = Vec::new();
     for _ in 0..count {
@@ -681,21 +693,31 @@ fn heif_extents(iloc: &[u8], items: &[u32]) -> Option<Vec<(usize, usize)>> {
         };
         let reference = be(iloc, &mut at, 2)?;
         let base = be(iloc, &mut at, base_size)?;
-        let extents = be(iloc, &mut at, 2)?;
+        let extents = be(iloc, &mut at, 2)? as usize;
+        if !items.contains(&id) {
+            // Skipped without a loop: zero-width fields would otherwise
+            // make 65535 empty reads per item cost CPU, not bytes.
+            at = at.checked_add(extents.checked_mul(entry)?)?;
+            if at > iloc.len() {
+                return None;
+            }
+            continue;
+        }
+        if ranges.len() + extents > HEIF_EXTENTS_MAX {
+            return None;
+        }
         for _ in 0..extents {
             be(iloc, &mut at, index_size)?;
             let offset = be(iloc, &mut at, offset_size)?;
             let length = be(iloc, &mut at, length_size)?;
-            if items.contains(&id) {
-                // Only data in this file; a length of 0 ("to the end")
-                // is not something a metadata item uses.
-                if method != 0 || reference != 0 || length == 0 {
-                    return None;
-                }
-                let start = usize::try_from(base.checked_add(offset)?).ok()?;
-                let len = usize::try_from(length).ok()?;
-                ranges.push((start, start.checked_add(len)?));
+            // Only data in this file; a length of 0 ("to the end") is not
+            // something a metadata item uses.
+            if method != 0 || reference != 0 || length == 0 {
+                return None;
             }
+            let start = usize::try_from(base.checked_add(offset)?).ok()?;
+            let len = usize::try_from(length).ok()?;
+            ranges.push((start, start.checked_add(len)?));
         }
     }
     Some(ranges)
@@ -991,6 +1013,34 @@ mod tests {
         mdat.extend_from_slice(xmp);
         file.extend(iso(b"mdat", &mdat));
         (file, mdat_start..mdat_start + pixels.len())
+    }
+
+    /// An `iloc` v1 body: field widths, then `entries` items of
+    /// (id, method 0, data reference 0, extent count).
+    fn iloc_v1(widths: [u8; 2], entries: &[(u16, u16)]) -> Vec<u8> {
+        let mut body = vec![1, 0, 0, 0, widths[0], widths[1]];
+        body.extend_from_slice(&(entries.len() as u16).to_be_bytes());
+        for (id, extents) in entries {
+            body.extend_from_slice(&id.to_be_bytes());
+            body.extend_from_slice(&[0, 0, 0, 0]);
+            body.extend_from_slice(&extents.to_be_bytes());
+        }
+        body
+    }
+
+    #[test]
+    fn heif_iloc_with_empty_fields_costs_no_cpu() {
+        // Zero-width fields and 0xFFFF extents per item: once took
+        // seconds per few KB, now skipped arithmetically.
+        let others: Vec<(u16, u16)> = (2..60_000).map(|id| (id, 0xFFFF)).collect();
+        let started = std::time::Instant::now();
+        assert_eq!(heif_extents(&iloc_v1([0, 0], &others), &[1]), Some(vec![]));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        // The metadata item itself with that many extents is refused.
+        assert_eq!(heif_extents(&iloc_v1([0, 0], &[(1, 0xFFFF)]), &[1]), None);
+        // Field widths the spec does not allow.
+        assert_eq!(heif_extents(&iloc_v1([0x11, 0], &[(1, 1)]), &[1]), None);
+        assert_eq!(heif_extents(&iloc_v1([0x44, 0x03], &[(1, 1)]), &[1]), None);
     }
 
     #[test]

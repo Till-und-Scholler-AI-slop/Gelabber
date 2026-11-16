@@ -378,6 +378,46 @@ async fn clients_hear_when_the_thumbnails_are_there(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn a_failed_strip_put_keeps_the_upload(pool: PgPool) {
+    let (mut owner, _member, channel) = owner_and_member(pool.clone()).await;
+    let photo = phone_photo();
+    let id = upload(&mut owner, &channel, "photo.jpg", "image/jpeg", &photo).await;
+    // `prepare` recorded the stripped length, then its `put` failed: the
+    // object is still the original.
+    sqlx::query("UPDATE attachments SET stripped_size = $2 WHERE id = $1")
+        .bind(Uuid::parse_str(&id).unwrap())
+        .bind(photo.len() as i64 - 100)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A send that fails on another file discards its mismatches.
+    let res = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/attachments"),
+            Some(json!({ "filename": "cut.jpg", "content_type": "image/jpeg", "size": 8 })),
+        )
+        .await;
+    let cut = res.body["id"].as_str().unwrap().to_owned();
+    owner
+        .store
+        .put(&format!("att/{cut}"), "image/jpeg", vec![1, 2, 3])
+        .await
+        .unwrap();
+    let res = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "content": "", "attachment_ids": [&id, &cut] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    // The photo survived and sends on its own.
+    let sent = post(&mut owner, &channel, &[&id]).await;
+    assert_eq!(sent["attachments"][0]["id"], id.as_str());
+}
+
+#[sqlx::test]
 async fn a_picture_that_keeps_killing_the_worker_is_given_up(pool: PgPool) {
     let (mut owner, mut member, channel) = owner_and_member(pool.clone()).await;
     let id = upload(
