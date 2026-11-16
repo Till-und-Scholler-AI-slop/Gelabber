@@ -740,6 +740,110 @@ pub struct DirectMessage {
     pub kind: ChannelKind,
     pub created_at: Timestamp,
     pub peer: Peer,
+    /// Set while the DM is a message request (#563); absent once accepted
+    /// and from servers before v0.11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<DmRequest>,
+    /// The user blocks the peer (#565): the composer says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blocked: bool,
+    /// The peer blocks the user: nothing can be sent, without saying why.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
+}
+
+/// A pending message request. `incoming`: the peer started it and waits
+/// for an answer. Otherwise the user sent it and may write `remaining`
+/// more text-only messages until it is accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DmRequest {
+    pub incoming: bool,
+    #[serde(default)]
+    pub remaining: i64,
+}
+
+// ------------------------------------------------------------------- blocks
+
+/// Someone the user blocks (`GET /api/users/me/blocks`, #565).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BlockedUser {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    pub created_at: Timestamp,
+}
+
+// ------------------------------------------------------------------ friends
+
+/// Someone on the friend list or in a friend request (`/api/friends`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendPerson {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Friend {
+    pub user: FriendPerson,
+    pub since: Timestamp,
+    /// Online or idle; absent when offline or not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<PresenceStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendRequest {
+    pub user: FriendPerson,
+    pub created_at: Timestamp,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FriendList {
+    #[serde(default, deserialize_with = "lenient_list")]
+    pub friends: Vec<Friend>,
+    #[serde(default, deserialize_with = "lenient_list")]
+    pub incoming: Vec<FriendRequest>,
+    #[serde(default, deserialize_with = "lenient_list")]
+    pub outgoing: Vec<FriendRequest>,
+}
+
+/// How the user stands to someone, for a profile card's button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Relation {
+    Friend,
+    Outgoing,
+    Incoming,
+    None,
+}
+
+impl FriendList {
+    pub fn relation(&self, user: Uuid) -> Relation {
+        if self.friends.iter().any(|f| f.user.id == user) {
+            Relation::Friend
+        } else if self.outgoing.iter().any(|r| r.user.id == user) {
+            Relation::Outgoing
+        } else if self.incoming.iter().any(|r| r.user.id == user) {
+            Relation::Incoming
+        } else {
+            Relation::None
+        }
+    }
+}
+
+/// `POST /api/friends/requests`: `pending`, or `friends` when they had
+/// asked already.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendAnswer {
+    pub status: String,
+    pub peer: FriendPerson,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FriendCode {
+    pub code: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -824,12 +928,32 @@ impl Message {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Attachment {
     pub id: Uuid,
     pub filename: String,
     pub content_type: String,
     pub size: i64,
+    /// A picture's size as shown (after its orientation), from the server
+    /// (#574); absent for other files and pictures not yet looked at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// The colour drawn before the picture arrives ("#rrggbb").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder_version: Option<u16>,
+    /// A GIF, APNG or WebP with more than one frame.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub animated: bool,
+    /// The server has `?size=400` and `?size=800` of it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub thumbnail: bool,
+    /// The uploader's alt text (#575).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -932,6 +1056,9 @@ pub struct NewMessage {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachment_ids: Option<Vec<Uuid>>,
+    /// Alt texts of pictures among `attachment_ids` (#575).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub attachment_descriptions: std::collections::BTreeMap<Uuid, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gif: Option<GifPick>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1642,12 +1769,81 @@ pub struct ImageStaged {
 pub enum PresenceStatus {
     #[serde(rename = "i")]
     Idle,
+    /// Do not disturb, set by hand (#590).
+    #[serde(rename = "d")]
+    Dnd,
     #[serde(rename = "x")]
     Offline,
     /// Also a status this client does not know: connected all the same
     /// (`other` must come last).
     #[serde(rename = "o", other)]
     Online,
+}
+
+/// The presence an account sets by hand (#590), for all its devices.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PresenceMode {
+    Idle,
+    Dnd,
+    Invisible,
+    /// Online while used, away after a while without input. Also a mode
+    /// this client does not know (`other` must come last).
+    #[default]
+    #[serde(other)]
+    Auto,
+}
+
+impl PresenceMode {
+    pub const ALL: [Self; 4] = [Self::Auto, Self::Idle, Self::Dnd, Self::Invisible];
+}
+
+/// How long a manual mode lasts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ModeDuration {
+    #[serde(rename = "1h")]
+    Hour,
+    #[serde(rename = "8h")]
+    EightHours,
+    #[serde(rename = "24h")]
+    Day,
+    #[serde(rename = "forever")]
+    Forever,
+}
+
+impl ModeDuration {
+    pub const ALL: [Self; 4] = [Self::Hour, Self::EightHours, Self::Day, Self::Forever];
+
+    /// Its end from `now`; none until changed.
+    pub fn until(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let hours = match self {
+            Self::Hour => 1,
+            Self::EightHours => 8,
+            Self::Day => 24,
+            Self::Forever => return None,
+        };
+        Some(now + chrono::Duration::hours(hours))
+    }
+}
+
+/// `GET`/`PUT /api/me/presence`: the mode and when it ends (none: until
+/// changed, always none for automatic).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeState {
+    #[serde(default)]
+    pub mode: PresenceMode,
+    #[serde(default)]
+    pub until: Option<DateTime<Utc>>,
+}
+
+impl ModeState {
+    /// The mode in effect at `now`: an end that passed is automatic.
+    pub fn at(&self, now: DateTime<Utc>) -> PresenceMode {
+        match self.until {
+            Some(until) if until <= now => PresenceMode::Auto,
+            _ => self.mode,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1826,6 +2022,14 @@ pub enum ServerFrame {
     /// The account's language changed (on another device, or here).
     #[serde(rename = "lc")]
     Locale { l: String },
+    /// The account's manual presence (#590) changed on some device or ran
+    /// out: `m` until `u` (none: until changed).
+    #[serde(rename = "pm")]
+    PresenceMode {
+        m: PresenceMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        u: Option<DateTime<Utc>>,
+    },
     /// A request to join `s` was accepted: the account is a member now.
     #[serde(rename = "jn")]
     Joined { s: Uuid },
@@ -1833,6 +2037,15 @@ pub enum ServerFrame {
     /// the owner and holders of `moderate_members` get it.
     #[serde(rename = "jq")]
     JoinRequests { s: Uuid, n: i64 },
+    /// Friends or friend requests changed (#563): fetch `/friends` again.
+    #[serde(rename = "fr")]
+    Friends,
+    /// Incoming message requests changed (#563): fetch `/dms/requests`.
+    #[serde(rename = "mr")]
+    MessageRequests,
+    /// The user blocked or unblocked someone (#565): fetch the blocks.
+    #[serde(rename = "bl")]
+    Blocks,
     #[serde(other)]
     Unknown,
 }

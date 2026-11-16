@@ -41,7 +41,7 @@ pub struct Area {
     pub scope: Option<Scope>,
 }
 
-pub const AREAS: [Area; 10] = [
+pub const AREAS: [Area; 11] = [
     Area {
         id: "profil",
         group: "konto",
@@ -69,6 +69,13 @@ pub const AREAS: [Area; 10] = [
         group: "konto",
         label: texts::area_feedback_label,
         description: texts::area_feedback_description,
+        scope: Some(Scope::Account),
+    },
+    Area {
+        id: "blockiert",
+        group: "konto",
+        label: texts::area_blockiert_label,
+        description: texts::area_blockiert_description,
         scope: Some(Scope::Account),
     },
     Area {
@@ -120,6 +127,71 @@ const GROUPS: [(&str, Text); 2] = [("konto", texts::group_konto), ("app", texts:
 
 /// Where `/settings` and the gear lead.
 pub const DEFAULT_AREA: &str = "darstellung";
+
+/// Where a way to the call's settings leads (#570, voice/mediaSettingsLink.ts):
+/// Settings → Audio or Video, the diagnostics a section at the end of
+/// Audio. The call goes on meanwhile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaTarget {
+    Audio,
+    Video,
+    Diagnostics,
+}
+
+fn media_link_id() -> Id {
+    Id::unique("gelabber-media-link")
+}
+
+fn diagnostics_wanted_id() -> Id {
+    Id::unique("gelabber-diagnostics-wanted")
+}
+
+/// Asks for Settings on `target`; the shell follows it this frame
+/// ([`follow_media_link`]), so a popover or a dialog can ask with only the
+/// context at hand.
+pub fn open_media(ctx: &egui::Context, target: MediaTarget) {
+    ctx.data_mut(|d| d.insert_temp(media_link_id(), Some(target)));
+}
+
+/// The way to the call's settings asked for and not yet followed.
+#[cfg(test)]
+pub(crate) fn pending_media(ctx: &egui::Context) -> Option<MediaTarget> {
+    ctx.data(|d| d.get_temp::<Option<MediaTarget>>(media_link_id()))
+        .flatten()
+}
+
+/// Goes where [`open_media`] asked, once.
+pub fn follow_media_link(ctx: &egui::Context, app: &mut AppCtx) {
+    let Some(target) = ctx
+        .data_mut(|d| d.remove_temp::<Option<MediaTarget>>(media_link_id()))
+        .flatten()
+    else {
+        return;
+    };
+    app.nav.navigate(match target {
+        MediaTarget::Video => "/settings/video",
+        MediaTarget::Audio => "/settings/audio",
+        MediaTarget::Diagnostics => DIAGNOSTICS_HREF,
+    });
+    // Asked again while already there: scroll there again.
+    ctx.data_mut(|d| d.remove_temp::<u64>(diagnostics_wanted_id()));
+}
+
+/// The diagnostics section's link, as on the web (`#diagnostics`).
+pub const DIAGNOSTICS_HREF: &str = "/settings/audio#diagnostics";
+
+/// Whether the diagnostics were just asked for (the `#diagnostics`
+/// fragment, as the web's hash): for a few frames after arriving, while
+/// the page lays itself out, they scroll to the top and hold the focus.
+fn diagnostics_wanted(ctx: &egui::Context, fragment: &str) -> bool {
+    if fragment != media::DIAGNOSTICS_SECTION {
+        ctx.data_mut(|d| d.remove_temp::<u64>(diagnostics_wanted_id()));
+        return false;
+    }
+    let now = ctx.cumulative_frame_nr();
+    let at = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(diagnostics_wanted_id(), || now));
+    now <= at + 4
+}
 
 fn area_of(id: Option<&str>) -> &'static Area {
     let id = id.unwrap_or(DEFAULT_AREA);
@@ -481,9 +553,14 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             "profil" => profile::profile(&mut child, app, &user, &mut st.profile),
             "profilkarte" => card::area(&mut child, app, &user, &mut st.card, viewport),
             "konto" => security::area(&mut child, app, &user, &mut st.security),
+            "blockiert" => crate::screens::shell::blocks::area(&mut child, app),
             "darstellung" => appearance::area(&mut child, app, &mut st.appearance),
             "themes" => themes::area(&mut child, app, &mut st.themes, viewport),
-            "audio" => media::audio(&mut child, app, &mut st.media),
+            "audio" => {
+                media::audio(&mut child, app, &mut st.media);
+                let wanted = diagnostics_wanted(&ctx, &app.nav.location().fragment);
+                media::diagnostics(&mut child, app, wanted);
+            }
             "video" => media::video(&mut child, app, &mut st.media),
             "benachrichtigungen" => notifications::area(&mut child, app, &mut st.notifications),
             "app" => desktop_app::area(&mut child, &mut st.desktop_app),

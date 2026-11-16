@@ -1,4 +1,5 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
+import { Badge as Pill } from "./ui/Badge.tsx";
 import { useBadge } from "../messages/useBadge.ts";
 import { useChannelMuted } from "../messages/notificationSettings.ts";
 import { Link } from "@tanstack/react-router";
@@ -34,7 +35,10 @@ import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 import { useT } from "../i18n/catalog.ts";
 import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
+import { friends as friendsCatalog } from "../i18n/catalogs/friends.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
+import { useDmRequests, useFriends } from "../friends/queries.ts";
+import "../friends/friends.css";
 
 const ROW_PX = 48;
 
@@ -67,6 +71,7 @@ export function DmSidebar({
           onClick={startNew}
         />
       </header>
+      <FriendNav />
       {dms.length === 0 ? (
         <div className="sidebar-empty dm-sidebar-empty">
           <p>{t("sidebar.empty")}</p>
@@ -88,6 +93,43 @@ export function DmSidebar({
             document.body,
           )}
     </aside>
+  );
+}
+
+/** "Freunde" and "Anfragen" above the conversations (#563), with counts. */
+function FriendNav() {
+  const t = useT(friendsCatalog);
+  const { data: list } = useFriends();
+  const { data: requests } = useDmRequests();
+  const pendingFriends = list?.incoming.length ?? 0;
+  const pendingMessages = requests?.length ?? 0;
+  return (
+    <nav aria-label={t("nav.label")} className="dm-nav">
+      <Link
+        to="/d/friends"
+        className="dm-row"
+        activeProps={{ className: "dm-row is-active", "aria-current": "page" }}
+      >
+        <span className="dm-row-name">{t("nav.friends")}</span>
+        {pendingFriends > 0 ? (
+          <Pill tone="count" className="unread-count">
+            {pendingFriends > 99 ? "99+" : pendingFriends}
+          </Pill>
+        ) : null}
+      </Link>
+      <Link
+        to="/d/requests"
+        className="dm-row"
+        activeProps={{ className: "dm-row is-active", "aria-current": "page" }}
+      >
+        <span className="dm-row-name">{t("nav.requests")}</span>
+        {pendingMessages > 0 ? (
+          <Pill tone="count" className="unread-count">
+            {pendingMessages > 99 ? "99+" : pendingMessages}
+          </Pill>
+        ) : null}
+      </Link>
+    </nav>
   );
 }
 

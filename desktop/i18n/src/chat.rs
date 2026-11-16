@@ -85,6 +85,11 @@ crate::strings! {
     send_presign_failed = "Dateifreigabe fehlgeschlagen." | "Preparing the upload failed.";
     send_upload_failed = "Dateiübertragung fehlgeschlagen." | "File upload failed.";
     send_bind_failed = "Nachricht speichern fehlgeschlagen." | "Saving the message failed.";
+    send_gif_gone = "Dieses GIF ist nicht mehr verfügbar." | "This GIF is no longer available.";
+    send_gif_off = "GIFs sind auf diesem Server ausgeschaltet." | "GIFs are turned off on this server.";
+    send_gif_rate_limited = "Zu viele GIFs. Warte einen Moment." | "Too many GIFs. Wait a moment.";
+    send_rate_limited = "Zu viele Nachrichten. Warte einen Moment." | "Too many messages. Wait a moment.";
+    send_forbidden = "Du darfst hier keine Nachrichten senden." | "You can't send messages here.";
     upload_timed_out = "Der Upload hat zu lange gedauert und wurde abgebrochen."
         | "The upload took too long and was cancelled.";
     upload_aborted = "Der Upload wurde abgebrochen." | "The upload was cancelled.";
@@ -101,6 +106,19 @@ crate::strings! {
     attachment_preview_loading = "Vorschau wird geladen…" | "Loading preview…";
     /// The desktop app's save dialog for a downloaded file.
     attachment_save_title = "Datei speichern" | "Save file";
+    attachment_animated = "GIF" | "GIF";
+    lightbox_previous = "Vorheriges Bild" | "Previous picture";
+    lightbox_next = "Nächstes Bild" | "Next picture";
+    alt_badge = "ALT" | "ALT";
+    alt_show = "Alt-Text anzeigen" | "Show alt text";
+    alt_add = "Alt-Text hinzufügen" | "Add alt text";
+    alt_edit = "Alt-Text bearbeiten" | "Edit alt text";
+    alt_title = "Bild beschreiben" | "Describe this picture";
+    alt_hint = "Für alle, die das Bild nicht sehen können, etwa mit Screenreader." | "For everyone who can’t see the picture, for example with a screen reader.";
+    alt_save_failed = "Alt-Text nicht gespeichert." | "Alt text not saved.";
+    alt_message_unloaded = "Die Nachricht ist nicht mehr geladen. Scroll zu ihr und versuch es noch mal." | "The message is no longer loaded. Scroll to it and try again.";
+    composer_filter_pictures = "Bilder" | "Pictures";
+    composer_filter_all = "Alle Dateien" | "All files";
     /// The desktop app decodes pictures itself and leaves out huge ones.
     attachment_image_too_large = "Bild ist zu groß zum Anzeigen." | "The image is too large to show.";
 
@@ -190,6 +208,9 @@ crate::strings! {
     discard_message = "Deine Eingaben gehen verloren." | "What you entered will be lost.";
     discard_confirm = "Verwerfen" | "Discard";
     presence_away = "Abwesend" | "Away";
+    /// Manual presence (#590), web shell `presence.d`, `presence.v`.
+    presence_dnd = "Nicht stören" | "Do not disturb";
+    presence_invisible = "Unsichtbar" | "Invisible";
 }
 
 /// "seit {when}", after the unread bar's count.
@@ -213,6 +234,34 @@ pub fn pane_new_messages(count: u64, n: &str) -> String {
             count,
             format!("{n} new message"),
             format!("{n} new messages"),
+        ),
+    }
+}
+
+/// A refused send with the wait the server named (`send.gifRateLimitedWait`,
+/// `send.rateLimitedWait`).
+pub fn send_rate_limited_wait(gif: bool, seconds: u64) -> String {
+    let n = seconds;
+    match (get(), gif) {
+        (Locale::De, true) => plural(
+            n,
+            format!("Zu viele GIFs. Versuch es in {n} Sekunde noch mal."),
+            format!("Zu viele GIFs. Versuch es in {n} Sekunden noch mal."),
+        ),
+        (Locale::De, false) => plural(
+            n,
+            format!("Zu viele Nachrichten. Versuch es in {n} Sekunde noch mal."),
+            format!("Zu viele Nachrichten. Versuch es in {n} Sekunden noch mal."),
+        ),
+        (Locale::En, true) => plural(
+            n,
+            format!("Too many GIFs. Try again in {n} second."),
+            format!("Too many GIFs. Try again in {n} seconds."),
+        ),
+        (Locale::En, false) => plural(
+            n,
+            format!("Too many messages. Try again in {n} second."),
+            format!("Too many messages. Try again in {n} seconds."),
         ),
     }
 }
@@ -376,6 +425,40 @@ pub fn attachment_enlarge_label(name: &str) -> String {
     match get() {
         Locale::De => format!("{name} vergrößern"),
         Locale::En => format!("Enlarge {name}"),
+    }
+}
+
+/// "{count} weitere Bilder" on the last tile of a mosaic.
+pub fn attachment_more(count: usize) -> String {
+    match get() {
+        Locale::De => format!("{count} weitere Bilder"),
+        Locale::En => format!("{count} more pictures"),
+    }
+}
+
+/// "Alt-Text für {name}", the alt text field's label.
+pub fn alt_label(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Alt-Text für {name}"),
+        Locale::En => format!("Alt text for {name}"),
+    }
+}
+
+/// "{count} / {max}" under the alt text field.
+pub fn alt_count(count: usize, max: usize) -> String {
+    format!("{count} / {max}")
+}
+
+/// "{n} / {total}" in the lightbox.
+pub fn lightbox_count(n: usize, total: usize) -> String {
+    format!("{n} / {total}")
+}
+
+/// "Bild {n} von {total}: {name}", the lightbox's accessible name.
+pub fn lightbox_label(n: usize, total: usize, name: &str) -> String {
+    match get() {
+        Locale::De => format!("Bild {n} von {total}: {name}"),
+        Locale::En => format!("Picture {n} of {total}: {name}"),
     }
 }
 

@@ -42,7 +42,8 @@ Signaling split (by design, `backend/api/src/gateway/mod.rs:15-17`,
 
 | Item | Value | Ref |
 |---|---|---|
-| URL | `wss://<host>/ws` when the app origin is https, else `ws://<host>/ws` | `web/src/ws/client.ts:53-59` |
+| URL | `wss://<host>/ws?caps=dnd` when the app origin is https, else `ws://<host>/ws?caps=dnd` | `web/src/ws/client.ts:53-60` |
+| `caps` query | Comma-separated things the client understands beyond the base protocol. `dnd` (v0.11, #590): the presence status `d`. A socket without it hears Do not disturb as `o`, in snapshots and live, because clients from before v0.11 break on `d` (the web member list crashed on a status it had no group for) | `backend/api/src/gateway/mod.rs` (`UpgradeQuery`), `conn.rs` (`client_frame`), `protocol.rs` (`ServerFrame::without_dnd`) |
 | Method | HTTP GET upgrade | `backend/api/src/gateway/mod.rs:44-46` |
 | Auth | Cookie `gelabber_session=<raw token>` (the raw token from the login/register `Set-Cookie`) | `backend/api/src/cookies.rs:8`, `backend/api/src/auth/session.rs:282` |
 | CSRF | Not needed for `/ws` (GET) | `backend/api/src/auth/session.rs:270-272` |
@@ -64,7 +65,7 @@ Server (env-configurable, defaults shown) — `backend/api/src/config.rs:20-25,8
 |---|---|---|---|---|
 | `ws_heartbeat` | `API_WS_HEARTBEAT_MS` | 15 000 ms | server sends `{"op":"h"}` every tick (first tick skipped, so first `h` at t+15 s) | `conn.rs:70-74,170-191` |
 | `ws_dead` | `API_WS_DEAD_MS` | 30 000 ms | server closes when nothing (text/ping/pong/binary) arrived for ≥ 30 s, checked on each heartbeat tick | `conn.rs:177-180` |
-| `ws_idle` | `API_WS_IDLE_MS` | 300 000 ms | without an *activity* frame for 5 min the server marks this socket idle (`i`) | `conn.rs:181-184` |
+| `ws_idle` | `API_WS_IDLE_MS` | 300 000 ms | without an *activity* frame for 5 min the server marks this socket idle (`i`); never while the socket holds a voice seat that is not deafened, and the 5 min start when it leaves or deafens (#566) | `conn.rs` `idle_timer` |
 | presence TTL | `API_WS_PRESENCE_TTL_MS` | 45 000 ms | Redis TTL of presence keys, refreshed by heartbeats | `config.rs:86`, `live.rs:241-248` |
 | typing TTL | `API_WS_TYPING_TTL_MS` | 6 000 ms | Redis TTL of a typing key. **The server sends no `on:false` at expiry** — the client must time out | `live.rs:441-485` |
 | replay buffer | `API_WS_REPLAY` | 256 events per topic | bounded Redis list for resume | `config.rs:84`, `event_log.rs:78` |
@@ -269,15 +270,19 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `dm` | `{"op":"dm","c":"<dmChannelId>"}` | a DM involving this account appeared (new DM / first message); verify via REST then subscribe. From v0.10 also sent when the peer's account was deleted and the DM channel with it: the REST check then answers `404` and the DM leaves the list | `protocol.rs:432-433`, `delivery.rs:193-204` |
 | `sig` | `{"op":"sig","t":"j","s":"<srv>",["c":"<chan>",]["u":"<user>",]["k":"a",]["on":true,]["m":false,]["d":false,]["snap":[…],]["replay":true,]["w":["<owner>",…]]}` | voice presence, see §5 | `protocol.rs:469-489` |
 | `err` | `{"op":"err","e":"not_found",["s":"<uuid>",]["c":"<uuid>"]}` | see §3.1 | `protocol.rs:490-497` |
-| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `x` offline | `protocol.rs:96-129,498-508,829-844` |
+| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `d` do not disturb (#590, only to sockets opened with `caps=dnd`, see §1.1), `x` offline. A client should count a letter it does not know as `o`; clients from before v0.11 do not, which is why `d` needs the capability | `protocol.rs:96-129,498-508,829-844` |
 | `y` | `{"op":"y","s":"<srv>","c":"<chan>","u":"<user>","on":true}` | typing; delivered only to sockets subscribed to channel topic `c` | `protocol.rs:509-511`, `hub/fanout.rs:206-221` |
 | `ns` | `{"op":"ns"}` | notification settings changed on some device → refetch them | `protocol.rs:512-515` |
 | `rd` | `{"op":"rd","d":[ReadSync,…]}` | read positions moved on another device | `protocol.rs:516-534` |
+| `pm` | `{"op":"pm","m":"dnd","u":"2026-11-15T18:30:00Z"}` | the account's manual presence (#590) changed on some device (`PUT /api/me/presence`) or ran out → show `m` (`auto` \| `idle` \| `dnd` \| `invisible`) until `u` (absent: until changed). Servers older than v0.11 never send it; older clients ignore it | `protocol.rs` (`ServerFrame::PresenceMode`, `UserFrame::PresenceMode`), `presence.rs` |
 | `lc` | `{"op":"lc","l":"en"}` | the account's language changed (`PUT /api/me/locale`) → switch to `l` (`de` \| `en`) and keep it as the device's cached language. Servers older than v0.10 never send it; older clients ignore it | `protocol.rs` (`ServerFrame::Locale`, `UserFrame::Locale`), `profile.rs` (`put_locale`) |
 | `jn` | `{"op":"jn","s":"<srv>"}` | v0.10: this account is now a member of server `s`, because its request to join was accepted (protocol-rest-auth §4.7) → refetch the server list and show "Du bist jetzt Mitglied von {name}." | `protocol.rs` (`ServerFrame::Joined`, `UserFrame::Joined`), `directory/requests.rs` (`accept`) |
 | `jq` | `{"op":"jq","s":"<srv>","n":3}` | v0.10: server `s` now has `n` pending requests to join. Only to the owner and the members holding `moderate_members`, after a new request, a withdrawal, an accept or a decline → set the queue's count badge and refetch the queue if it is open | `protocol.rs` (`ServerFrame::JoinRequests`, `UserFrame::JoinRequests`), `directory/requests.rs` (`publish_queue`) |
+| `fr` | `{"op":"fr"}` | v0.11 (#563): friends or friend requests of this account changed (a new, accepted, declined or withdrawn request, a removed friend) → refetch `GET /api/friends` | `protocol.rs` (`ServerFrame::Friends`, `UserFrame::Friends`), `friends/mod.rs` (`announce`) |
+| `mr` | `{"op":"mr"}` | v0.11: the incoming message requests of this account changed (a first message, an accept, a decline) → refetch `GET /api/dms/requests` | `protocol.rs` (`ServerFrame::MessageRequests`), `dms/mod.rs`, `messages/mod.rs` |
+| `bl` | `{"op":"bl"}` | v0.11 (#565): this account blocked or unblocked someone, on any device → refetch `GET /api/users/me/blocks` and `GET /api/dms` (their `blocked`/`closed`). Only to the blocker | `protocol.rs` (`ServerFrame::Blocks`, `UserFrame::Blocks`), `blocks/mod.rs` |
 
-`ns`, `rd`, `lc`, `jn`, `jq`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`). `jn` and `jq` are best effort: they are not replayed, `n` is read after the change commits (two quick changes can both carry the final count), and a client that missed one catches up on its next REST read. Servers older than v0.10 never send them.
+`ns`, `rd`, `lc`, `pm`, `jn`, `jq`, `fr`, `mr`, `bl`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`). `jn` and `jq` are best effort: they are not replayed, `n` is read after the change commits (two quick changes can both carry the final count), and a client that missed one catches up on its next REST read. Servers older than v0.10 never send them; `fr`, `mr` and `bl` are best effort the same way and come from v0.11 on.
 
 ### 3.1 Error codes on `/ws`
 
@@ -487,23 +492,47 @@ If the gateway socket dies the seat expires ≤ 5 s later and others see `l`
 ### 6.1 Presence
 
 Server: socket status is `o` on connect/subscribe, `i` after 300 s without
-activity or on `{"op":"p","st":"i"}`; aggregated per user across sockets;
+activity (not while the socket sits in a voice channel undeafened) or on
+`{"op":"p","st":"i"}`; aggregated per user across sockets;
 `x` when the last socket goes (`live.rs:221-240,564-575`). Broadcast as
 `{"op":"p","s","u","st"}` to each server the user is announced in. Snapshot
 per subscribe (§2.2 step 4); entries with missing keys come back as `x`
 (`live.rs:337-360,774`).
 
-Client (`web/src/ws/live.ts:8-77`, `web/src/ws/useLive.ts:48-90`):
+Manual mode (#590, `backend/api/src/presence.rs`): the account's
+`presence_mode` is applied on top of the sockets' aggregate before anyone
+else sees it: `idle` → always `i`, `dnd` → `d`, `invisible` → treated as
+offline (no frame, left out of snapshots and the friend list, and no `x`
+when its last socket closes; `@here` still reaches the account). Sockets
+only ever send `o`/`i`. The account's own sockets get the
+mode itself as `pm` and show it instead of what the server reports (an
+invisible account shows "Unsichtbar", not offline). While `invisible` the
+server drops the account's typing starts, and the client does not send
+them. While `dnd` the server sends no Web Push and the client plays no
+message sounds and shows no toasts or system notifications; unread badges
+stay. A mode with an end is automatic at once when it passes (its Redis copy
+expires with it); a sweep every 15 s clears the record and sends `p` (what
+the mode hid, worked out from the cleared mode) and `pm`. After a Redis
+restart the record's mode is put back before a socket connects or
+subscribes again (a marker key `p:mc:<user>` that goes with the copy keeps
+that to about one database read per account; while it is still `pending`,
+other sockets of the account check too, so none announces itself first).
+
+Client (`web/src/ws/idlePresence.ts`, `web/src/ws/useLive.ts`; native:
+`desktop/client/src/presence.rs`):
 
 | Constant | Value |
 |---|---|
 | `CLIENT_IDLE_MS` | 300 000 (5 min) |
 | `PRESENCE_PULSE_MS` | 10 000 |
+| `CALL_PULSE_MS` | 60 000 |
 | activity events | `pointerdown`, `keydown`, `mousemove` (not visibility) |
 
 - On sign-in and on each activity event: if idle → send `{"op":"p","st":"o"}`; else send it at most every 10 s. Re-arm a 5 min timer that sends `{"op":"p","st":"i"}` once.
+- In a voice channel and not deafened (#566): never send `i`; send `{"op":"p","st":"o"}` at once if idle, then every 60 s. Leaving or deafening re-arms the 5 min timer from that moment.
+- Native app only: input anywhere on the computer counts as activity (system idle time read every 30 s: Windows `GetLastInputInfo`, Wayland `ext-idle-notify-v1`, X11 MIT-SCREEN-SAVER, GNOME `org.gnome.Mutter.IdleMonitor`; without one, window input only). `f` (in front) still follows window input alone.
 - Store `byServer[s][u] = st`; `x` deletes the key. Snapshot replaces the server's map (dropping `x`). Unknown user ⇒ `x`.
-- Member list groups (`live.ts:157-177`): order `o` "Online", `i` "Abwesend", `x` "Offline"; each sorted by `name.localeCompare(b, "de")`; empty groups hidden.
+- Member list groups (`live.ts:157-177`): order `o` "Online" (with `d`), `i` "Abwesend", `x` "Offline"; each sorted by `name.localeCompare(b, "de")`; empty groups hidden.
 - Wire form: `sendPresence("o")` sends `{"op":"p","st":"o"}`, `sendPresence("i")` sends `{"op":"p","st":"i"}` (`client.ts:292-294`); frames while the socket is closed are dropped.
 - Reconnect quirk (copy it): nothing re-sends `p` on reconnect. A new socket becomes `o` on the server with its first subscribe (`announce_server` writes `Online`, `live.rs:287-293`), so a client that was idle when the socket dropped shows as `o` until its next own `i` (5 min later, or never if no input arrives: the idle timer already fired). The native client may re-send `{"op":"p","st":"i"}` after `open` while locally idle; the web does not.
 

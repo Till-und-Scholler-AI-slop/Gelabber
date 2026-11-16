@@ -109,7 +109,7 @@ impl ApiError {
 // A marker `code()` reads, not text of its own.
 const TIMEOUT_PREFIX: &str = "Zeitüberschreitung: "; // i18n-ok
 
-const KNOWN_CODES: [&str; 39] = [
+const KNOWN_CODES: [&str; 48] = [
     "validation_failed",
     "bad_request",
     "unauthenticated",
@@ -149,6 +149,15 @@ const KNOWN_CODES: [&str; 39] = [
     "already_member",
     "owns_servers",
     "export_pending",
+    "dm_not_allowed",
+    "message_request_pending",
+    "message_request_limit",
+    "already_friends",
+    "friend_request_declined",
+    "friend_requests_full",
+    "blocked",
+    "dm_closed",
+    "blocks_full",
 ];
 
 /// The copy per error code, as web/src/auth/rules.ts (the auth catalog's
@@ -190,6 +199,15 @@ pub fn error_message(code: &str) -> &'static str {
         "join_request_declined" => auth::error_join_request_declined(),
         "join_requests_full" => auth::error_join_requests_full(),
         "already_member" => auth::error_already_member(),
+        "dm_not_allowed" => auth::error_dm_not_allowed(),
+        "message_request_pending" => auth::error_message_request_pending(),
+        "message_request_limit" => auth::error_message_request_limit(),
+        "already_friends" => auth::error_already_friends(),
+        "friend_request_declined" => auth::error_friend_request_declined(),
+        "friend_requests_full" => auth::error_friend_requests_full(),
+        "blocked" => auth::error_blocked(),
+        "dm_closed" => auth::error_dm_closed(),
+        "blocks_full" => auth::error_blocks_full(),
         "owns_servers" => auth::error_owns_servers(),
         "export_pending" => auth::error_export_pending(),
         _ => auth::error_internal(),

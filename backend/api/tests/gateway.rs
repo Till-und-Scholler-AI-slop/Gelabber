@@ -1468,6 +1468,7 @@ async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
 
+    ada.befriend(bob.user_id()).await;
     let opened = ada
         .send(
             Method::POST,
@@ -1555,6 +1556,7 @@ async fn dm_presence_arrives_live(pool: PgPool) {
         .register("bob-dmp@example.com", "password123", "Bob")
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    ada.befriend(bob.user_id()).await;
     let opened = ada
         .send(
             Method::POST,
@@ -1948,6 +1950,7 @@ async fn dm_discovery_reaches_already_connected_recipient_and_no_other_user(pool
     let (addr, _) = common::serve_ws(pool).await;
     let mut bob = connect(addr, &session_cookie(&recipient), None).await;
     let mut cara = connect(addr, &session_cookie(&foreign), None).await;
+    owner.befriend(recipient.user_id()).await;
     let created = owner
         .send(
             Method::POST,
@@ -2008,6 +2011,7 @@ async fn parallel_message_edits_deliver_in_database_revision_order(pool: PgPool)
         jar: owner.jar.clone(),
         csrf: owner.csrf.clone(),
         user_id: owner.user_id.clone(),
+        db: owner.db.clone(),
     };
     let (a, b) = tokio::join!(
         owner.send(Method::PATCH, &path, Some(json!({"content":"A"}))),

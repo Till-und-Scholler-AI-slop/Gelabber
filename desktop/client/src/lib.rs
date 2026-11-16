@@ -4,11 +4,14 @@
 //! (`commands.rs`), which run on the client's own tokio runtime.
 
 pub mod api;
+mod blocks;
 mod commands;
+mod friends;
 pub mod gateway;
 pub mod http;
 pub mod models;
 pub mod oidc;
+pub mod presence;
 pub mod store;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -17,8 +20,9 @@ use std::time::Instant;
 
 use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 
-pub use api::HistoryQuery;
+pub use api::{FriendTarget, HistoryQuery};
 pub use commands::SettingTarget;
+pub use friends::FriendAction;
 pub use gateway::{Gateway, GatewayConfig, GatewayEvent, GatewayStatus};
 pub use http::{ApiError, Download, DownloadError, Http, error_message};
 pub use models::*;
@@ -52,9 +56,7 @@ struct Local {
     /// The conversation my typing was announced in, `(s, c)`.
     typing: Option<(uuid::Uuid, uuid::Uuid)>,
     typing_sent: Option<Instant>,
-    last_activity: Option<Instant>,
-    last_pulse: Option<Instant>,
-    idle: bool,
+    presence: presence::Presence,
     focused: bool,
     in_front: bool,
     muted_before_deafen: bool,

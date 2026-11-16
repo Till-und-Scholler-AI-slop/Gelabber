@@ -2,6 +2,7 @@
 //! composer (web components/MessagePane.tsx, pages/ChannelPage.tsx,
 //! pages/DmChannelPage.tsx).
 
+pub(crate) mod alt_text;
 pub(crate) mod attachments;
 pub mod clipboard;
 mod composer;
@@ -15,6 +16,7 @@ pub mod markdown;
 mod mentions;
 mod notice;
 mod pane;
+pub(crate) mod pictures;
 mod reactions;
 mod row;
 mod search;
@@ -239,6 +241,10 @@ struct Conversation {
     mentionable: Vec<Member>,
     /// Limited to roles: the header's lock.
     limited: bool,
+    /// A DM that is still a message request (#563): its bar or note.
+    request: Option<gelabber_client::DirectMessage>,
+    /// A DM nobody can write in (#565): its bar instead of the composer.
+    closed: Option<gelabber_client::DirectMessage>,
 }
 
 /// A server text channel: header and body, drawn into `ui.max_rect()`.
@@ -284,6 +290,8 @@ pub fn channel_page(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) 
                     })
                     .collect(),
                 limited: ch.limited,
+                request: None,
+                closed: None,
             }
         }))
     });
@@ -324,11 +332,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
     let found = app.client.with_state(|s| {
         let dm = s.dm(channel)?;
         let me = s.me();
-        let presence = match s.presence_of(channel, dm.peer.id) {
-            gelabber_client::PresenceStatus::Online => Presence::Online,
-            gelabber_client::PresenceStatus::Idle => Presence::Away,
-            _ => Presence::Offline,
-        };
+        let presence = crate::screens::shell::common::presence(s.presence_of(channel, dm.peer.id));
         let mut members = vec![Member {
             id: dm.peer.id,
             name: dm.peer.name.clone(),
@@ -348,8 +352,8 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
                 name: dm.peer.name.clone(),
                 avatar: dm.peer.avatar_url.clone(),
             },
-            can_send: true,
-            can_send_files: true,
+            can_send: !(dm.blocked || dm.closed),
+            can_send_files: dm.request.is_none(),
             can_moderate: false,
             can_everyone: false,
             mentionable: members.clone(),
@@ -357,6 +361,8 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             peer: Some((dm.peer.name.clone(), dm.peer.avatar_url.clone(), presence)),
             muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
             limited: false,
+            request: dm.request.is_some().then(|| dm.clone()),
+            closed: (dm.blocked || dm.closed).then(|| dm.clone()),
         })
     });
     // Each opening fetches the conversation itself (`useDm`), also one the
@@ -556,7 +562,31 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         mentionable: &conv.mentionable,
     };
     let composer_state = chat.composers.entry(channel).or_default();
-    let composer_h = composer::height(ui.ctx(), composer_state, &composer_input, page.width());
+    // A message request (#563): the peer's waits for an answer in a bar
+    // instead of the composer; the user's own says what may still go.
+    let incoming = conv
+        .request
+        .as_ref()
+        .filter(|dm| dm.request.is_some_and(|r| r.incoming));
+    let note = conv
+        .request
+        .as_ref()
+        .and_then(crate::screens::shell::friends::outgoing_note)
+        .map(|note| {
+            crate::text::Block::wrapped(
+                ui,
+                &note,
+                crate::text::META.line_height(1.5),
+                c.muted,
+                page.width() - 32.0,
+            )
+        });
+    let note_h = note.as_ref().map_or(0.0, |b| b.height() + 8.0);
+    let composer_h = if incoming.is_some() || conv.closed.is_some() {
+        crate::screens::shell::friends::BAR_HEIGHT
+    } else {
+        composer::height(ui.ctx(), composer_state, &composer_input, page.width()) + note_h
+    };
     // `.lr-toast-space` between the typing bar and the composer.
     let toasts = crate::toasts::space(ui.ctx());
     let room = toasts + toasts.min(12.0);
@@ -610,6 +640,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             now,
             images: app.images,
             http: client.http(),
+            fold: conv.server.is_some(),
         };
         let view = chat.contexts.get_mut(&channel).expect("context state");
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
@@ -652,6 +683,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             now,
             images: app.images,
             http: client.http(),
+            fold: conv.server.is_some(),
         };
         list_actions = pane::show(ui, list_rect, &input, pane_state);
     }
@@ -663,7 +695,30 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     // Composer.
     let composer_rect = Rect::from_min_max(pos2(page.left(), page.bottom() - composer_h), page.max);
     let composer_state = chat.composers.entry(channel).or_default();
-    let composer_actions = composer::show(ui, composer_rect, composer_state, &composer_input);
+    let composer_actions = match (&conv.closed, incoming) {
+        (Some(dm), _) => {
+            crate::screens::shell::blocks::closed_bar(ui, app, composer_rect, dm);
+            Vec::new()
+        }
+        (None, Some(dm)) => {
+            crate::screens::shell::friends::incoming_bar(ui, app, composer_rect, dm);
+            Vec::new()
+        }
+        (None, None) => {
+            if let Some(note) = &note {
+                ui.painter().rect_filled(
+                    Rect::from_min_size(composer_rect.min, vec2(page.width(), note_h)),
+                    0.0,
+                    c.bg,
+                );
+                note.paint(
+                    ui.painter(),
+                    pos2(composer_rect.left() + 16.0, composer_rect.top() + 4.0),
+                );
+            }
+            composer::show(ui, composer_rect, composer_state, &composer_input)
+        }
+    };
     // `.lr-message-pane.is-drop-target`: a dashed accent outline 6px inside.
     if composer::dropping(ui.ctx(), &composer_input) {
         let r = page.shrink(6.0 + 1.0);
@@ -769,6 +824,8 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
 
     let overlay_open = pane_state.menu.is_some()
         || pane_state.lightbox.is_some()
+        || pane_state.alt.is_some()
+        || chat.composers.get(&channel).is_some_and(|c| c.alt.is_some())
         || chat.composers.get(&channel).is_some_and(|c| c.gif_open)
         || pane_state.picker.is_some()
         || pane_state.confirm_delete.is_some()
@@ -908,7 +965,30 @@ fn row_action(
             }
         },
         RowAction::Media(media) => match media {
-            attachments::MediaAction::Open(url, name) => pane.lightbox = Some((url, name)),
+            attachments::MediaAction::Open(url, name) => {
+                pane.lightbox = Some(attachments::Lightbox::single(url, name));
+            }
+            attachments::MediaAction::Gallery(items, index) => {
+                pane.lightbox = Some(attachments::Lightbox::new(items, index));
+            }
+            attachments::MediaAction::EditAlt {
+                message,
+                attachment,
+                name,
+                text,
+            } => {
+                let content =
+                    client.with_state(|s| s.find_message(message).map(|m| m.content.clone()));
+                pane.alt = Some(alt_text::AltDialog::new(
+                    alt_text::AltTarget::Sent {
+                        message,
+                        attachment,
+                        content,
+                    },
+                    &name,
+                    text.as_deref(),
+                ));
+            }
             attachments::MediaAction::External(url) => {
                 let full = if url.starts_with('/') {
                     client.http().url(&url)
@@ -1272,9 +1352,10 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
     }
     // A picture shown large.
     let pane = chat.panes.entry(channel).or_default();
-    if let Some((url, name)) = pane.lightbox.clone() {
-        let (close, download) = attachments::lightbox(&ctx, app.images, &url, &name);
-        if download {
+    if let Some(view) = pane.lightbox.as_mut() {
+        let (close, download) = attachments::lightbox(&ctx, app.images, view);
+        if let Some(shown) = view.current().filter(|_| download) {
+            let (url, name) = (shown.url.clone(), shown.name.clone());
             // An attachment as a download; a preview's picture as it is.
             let fetch = if url.starts_with("/api/attachments/") {
                 format!("{url}?download=1")
@@ -1296,6 +1377,65 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
         }
         if close {
             pane.lightbox = None;
+        }
+    }
+    // An alt text being written (#575): for a composer file, or one of my
+    // sent pictures.
+    let pane = chat.panes.entry(channel).or_default();
+    // A save in flight keeps the dialog open: it closes once the server took
+    // the text, and stays with the text (and a toast) when it did not.
+    if let Some(dialog) = pane.alt.as_mut()
+        && let alt_text::AltTarget::Sent { message, .. } = &dialog.target
+        && dialog.saving
+    {
+        let op = format!("alt:{message}");
+        match client.with_state(|s| s.op(&op).cloned()) {
+            Some(gelabber_client::OpState::Pending) => {}
+            Some(gelabber_client::OpState::Failed(_)) => {
+                dialog.saving = false;
+                client.clear_op(op);
+            }
+            _ => {
+                pane.alt = None;
+                client.clear_op(op);
+            }
+        }
+    }
+    if let Some(dialog) = pane.alt.as_mut() {
+        match alt_text::show(&ctx, dialog) {
+            alt_text::AltOutcome::Open => {}
+            alt_text::AltOutcome::Close => pane.alt = None,
+            alt_text::AltOutcome::Save(_) if dialog.saving => {}
+            alt_text::AltOutcome::Save(text) => {
+                if let alt_text::AltTarget::Sent {
+                    message,
+                    attachment,
+                    content,
+                } = &dialog.target
+                {
+                    let text = alt_text::normalised(&text).unwrap_or_default();
+                    client.edit_alt_text(*message, *attachment, content.as_deref(), &text);
+                    dialog.saving = true;
+                } else {
+                    pane.alt = None;
+                }
+            }
+        }
+    }
+    if let Some(composer) = chat.composers.get_mut(&channel)
+        && let Some(dialog) = composer.alt.as_mut()
+    {
+        match alt_text::show(&ctx, dialog) {
+            alt_text::AltOutcome::Open => {}
+            alt_text::AltOutcome::Close => composer.alt = None,
+            alt_text::AltOutcome::Save(text) => {
+                if let alt_text::AltTarget::Composer(i) = dialog.target
+                    && let Some(file) = composer.files.get_mut(i)
+                {
+                    file.description = alt_text::normalised(&text);
+                }
+                composer.alt = None;
+            }
         }
     }
     // The composer's GIF picker.

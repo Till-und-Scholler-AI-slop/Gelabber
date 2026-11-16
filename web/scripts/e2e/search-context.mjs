@@ -472,9 +472,9 @@ try {
       const canceled = member.page.waitForEvent("requestfailed", {
         predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
       });
-      await member.page.locator('summary[aria-label="Benutzermenü"]').click();
+      await member.page.locator(".user-panel-profile").first().click();
       await member.page
-        .getByRole("button", { name: "Abmelden", exact: true })
+        .getByRole("menuitem", { name: "Abmelden", exact: true })
         .click();
       await member.page.waitForURL((url) => url.pathname === "/login");
       await canceled;

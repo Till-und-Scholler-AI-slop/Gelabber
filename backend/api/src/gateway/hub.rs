@@ -128,6 +128,8 @@ pub(super) struct Socket {
     /// Live Pub/Sub frames held until catch-up finishes. Dropping them
     /// here would punch a hole the replay log can miss.
     catching_up: HashMap<Topic, Vec<Event>>,
+    /// The client knows the presence status `d` (#590, `/ws?caps=dnd`).
+    dnd: bool,
     pub(super) tx: mpsc::Sender<ServerFrame>,
 }
 
@@ -211,6 +213,7 @@ impl ConnTable {
                 recheck: Arc::new(tokio::sync::Notify::new()),
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
+                dnd: false,
                 tx,
             },
         );
@@ -1035,6 +1038,23 @@ impl Gateway {
         self.connections.attach(user_id, tx).await
     }
 
+    /// This socket's client knows the presence status `d` (#590).
+    pub async fn allow_dnd(&self, id: ConnId) {
+        if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+            socket.dnd = true;
+        }
+    }
+
+    pub async fn knows_dnd(&self, id: ConnId) -> bool {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .is_some_and(|socket| socket.dnd)
+    }
+
     pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {
         self.connections.watch_server(id, server_id).await
     }
@@ -1131,6 +1151,11 @@ impl Gateway {
 
     pub async fn in_voice(&self, id: ConnId, server_id: Uuid, channel_id: Uuid) -> bool {
         self.voice.in_voice(id, server_id, channel_id).await
+    }
+
+    /// In a voice channel on this socket and not deafened (#566).
+    pub async fn listening(&self, id: ConnId) -> bool {
+        self.voice.listening(id).await
     }
 
     /// Seat this socket in `channel_id`, leaving any other voice room first.

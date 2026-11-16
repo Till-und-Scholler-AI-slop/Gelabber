@@ -779,7 +779,8 @@ impl Failure {
 
 async fn connect(http: Http) -> Result<Socket, Failure> {
     let mut request = http
-        .ws_url("/ws")
+        // `caps=dnd`: this client knows the presence status `d` (#590).
+        .ws_url("/ws?caps=dnd")
         .into_client_request()
         .map_err(|e| Failure::Refused(e.to_string()))?;
     if let Some(cookie) = http.cookie_header()
@@ -951,6 +952,22 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// The friend, message request and block frames (#563, #565) carry
+    /// nothing but their op.
+    #[test]
+    fn friend_and_block_frames_decode_like_the_server_sends_them() {
+        for (op, frame) in [
+            ("fr", ServerFrame::Friends),
+            ("mr", ServerFrame::MessageRequests),
+            ("bl", ServerFrame::Blocks),
+        ] {
+            let text = format!(r#"{{"op":"{op}"}}"#);
+            let f: ServerFrame = serde_json::from_str(&text).unwrap();
+            assert_eq!(f, frame);
+            assert_eq!(serde_json::to_string(&f).unwrap(), text);
+        }
     }
 
     #[test]

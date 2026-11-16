@@ -2,6 +2,7 @@ pub mod account;
 pub mod attachments;
 pub mod auth;
 pub mod avatars;
+pub mod blocks;
 pub mod config;
 pub mod cookies;
 pub mod csrf;
@@ -9,6 +10,7 @@ pub mod directory;
 pub mod dms;
 pub mod error;
 pub mod feedback;
+pub mod friends;
 pub mod gateway;
 pub mod gifs;
 pub mod health;
@@ -24,6 +26,7 @@ pub mod notifications;
 pub mod operator;
 pub mod password;
 pub mod path;
+pub mod presence;
 pub mod previews;
 pub mod profile;
 pub mod push;
@@ -52,19 +55,24 @@ pub use state::AppState;
 pub fn app(state: AppState) -> Router {
     state.gateway.ensure_delivery(state.clone());
     attachments::cleanup::start(state.clone());
+    attachments::media::start(state.clone());
     account::deletion::start(state.clone());
     account::export::start(state.clone());
     previews::start(state.clone());
+    presence::start(state.clone());
     feedback::public::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).
     let api = Router::new()
         .merge(auth::router())
         .merge(profile::router())
+        .merge(presence::router())
         .merge(avatars::router())
         .merge(themes::router())
         .merge(servers::router())
         .merge(dms::router())
+        .merge(friends::router())
+        .merge(blocks::router())
         .merge(messages::router())
         .merge(media::router())
         .merge(attachments::router())

@@ -28,7 +28,26 @@ crate::strings! {
         | "No connection – refused by the server";
 
     user_panel_settings = "Einstellungen" | "Settings";
+
+    // Manual presence (#590), web shell `presenceMode.*`.
+    presence_mode_label = "Anwesenheit" | "Presence";
+    presence_mode_auto = "Automatisch" | "Automatic";
+    presence_mode_idle = "Abwesend" | "Away";
+    presence_mode_dnd = "Nicht stören" | "Do not disturb";
+    presence_mode_invisible = "Unsichtbar" | "Invisible";
+    presence_mode_for = "Wie lange?" | "For how long?";
+    presence_mode_duration_h1 = "1 Stunde" | "1 hour";
+    presence_mode_duration_h8 = "8 Stunden" | "8 hours";
+    presence_mode_duration_h24 = "24 Stunden" | "24 hours";
+    presence_mode_duration_forever = "Bis ich es ändere" | "Until I change it";
+    presence_mode_hint_dnd = "Keine Töne, Hinweise und Pushes. Ungelesenes zählt weiter."
+        | "No sounds, pop-ups or pushes. Unread messages still count.";
+    presence_mode_hint_invisible = "Andere sehen dich offline. In einem Sprachkanal sieht dich jeder, der den Kanal sieht."
+        | "Others see you offline. In a voice channel, everyone who can see it sees you.";
+    presence_mode_not_saved = "Status nicht geändert." | "Status not changed.";
     user_panel_menu_label = "Benutzermenü" | "User menu";
+    /// The avatar's popover: the status card and the account's entries.
+    user_panel_account_label = "Benutzerkonto" | "User account";
     user_panel_edit_profile = "Profil bearbeiten" | "Edit profile";
     user_panel_sign_out = "Abmelden" | "Sign out";
     user_panel_status = "Status" | "Status";
@@ -152,7 +171,6 @@ crate::strings! {
     /// The desktop app's own: an older page of history had nothing readable.
     error_unreadable_page = "keine lesbare Nachricht auf der älteren Seite"
         | "no readable message on the older page";
-    user_panel_call_settings = "Anrufeinstellungen" | "Call settings";
     /// The user menu's way to the operator area (operators only).
     user_panel_operator = "Betrieb" | "Operations";
     /// The rail's tile to the directory, while the instance runs one.
@@ -162,9 +180,6 @@ crate::strings! {
     user_panel_feedback = "Feedback geben" | "Give feedback";
     /// The item's accessible suffix while a reply is unread.
     user_panel_feedback_unread = "neue Antwort auf dein Feedback" | "new reply to your feedback";
-    /// The chevron's accessible label while a reply is unread.
-    user_panel_menu_unread_label = "Benutzermenü, neue Antwort auf dein Feedback"
-        | "User menu, new reply to your feedback";
 }
 
 /// The desktop app's own: the server turned the upgrade down, with why
@@ -173,6 +188,14 @@ pub fn connection_refused_with(reason: &str) -> String {
     match get() {
         Locale::De => format!("Keine Verbindung – vom Server abgelehnt ({reason})"),
         Locale::En => format!("No connection – refused by the server ({reason})"),
+    }
+}
+
+/// "Nicht stören bis 18:30" (web `presenceMode.until`).
+pub fn presence_mode_until(mode: &str, when: &str) -> String {
+    match get() {
+        Locale::De => format!("{mode} bis {when}"),
+        Locale::En => format!("{mode} until {when}"),
     }
 }
 

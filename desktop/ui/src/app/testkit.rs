@@ -292,3 +292,30 @@ pub fn wait_for_label(harness: &mut Harness<'_, Launcher>, label: &str) {
 pub fn wait_for_text(harness: &mut Harness<'_, Launcher>, text: &str) {
     wait_for(harness, text, |h| h.query_by_label_contains(text).is_some());
 }
+
+/// The user panel's avatar button, which opens the account popover: the
+/// lowest button named after `name` (an unread feedback reply adds to its
+/// name).
+pub fn account_button<'a>(
+    harness: &'a Harness<'_, Launcher>,
+    name: &str,
+) -> Option<egui_kittest::Node<'a>> {
+    use egui_kittest::kittest::NodeT;
+    harness
+        .query_all_by_role(egui::accesskit::Role::Button)
+        .filter(|n| {
+            n.accesskit_node()
+                .label()
+                .is_some_and(|l| l == name || l.starts_with(&format!("{name}, ")))
+        })
+        .max_by(|a, b| a.rect().min.y.total_cmp(&b.rect().min.y))
+}
+
+/// Opens the account popover from `name`'s avatar, once it is drawn.
+pub fn open_account(harness: &mut Harness<'_, Launcher>, name: &str) {
+    wait_for(harness, "the user panel", |h| {
+        account_button(h, name).is_some()
+    });
+    account_button(harness, name).expect("the avatar").click();
+    wait_for_label(harness, "Abmelden");
+}

@@ -12,6 +12,14 @@ use crate::models::*;
 
 type Result<T> = std::result::Result<T, ApiError>;
 
+/// Whom a friend request goes to (#563): someone the user can see, or the
+/// owner of a friend code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FriendTarget {
+    User(Uuid),
+    Code(String),
+}
+
 /// Paging of `GET /api/channels/{id}/messages`; `before` and `after` take
 /// `ts|uuid` cursors ([`Message::cursor`]), a message id or a time.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -589,6 +597,83 @@ impl Http {
             .await
     }
 
+    /// Message requests to the user (#563).
+    pub async fn dm_requests(&self) -> Result<Vec<DirectMessage>> {
+        self.get("/dms/requests").await.map(|Lenient(v)| v)
+    }
+
+    pub async fn accept_dm_request(&self, id: Uuid) -> Result<DirectMessage> {
+        self.send_empty(Method::POST, &format!("/dms/{id}/accept"))
+            .await
+    }
+
+    pub async fn decline_dm_request(&self, id: Uuid) -> Result<()> {
+        self.send_empty(Method::POST, &format!("/dms/{id}/decline"))
+            .await
+    }
+
+    // ------------------------------------------------------------ blocks
+
+    /// Whom the user blocks, newest first (#565).
+    pub async fn blocks(&self) -> Result<Vec<BlockedUser>> {
+        self.get("/users/me/blocks").await.map(|Lenient(v)| v)
+    }
+
+    /// Idempotent.
+    pub async fn block_user(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::PUT, &format!("/users/me/blocks/{user}"))
+            .await
+    }
+
+    /// Idempotent.
+    pub async fn unblock_user(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::DELETE, &format!("/users/me/blocks/{user}"))
+            .await
+    }
+
+    // ----------------------------------------------------------- friends
+
+    pub async fn friends(&self) -> Result<FriendList> {
+        self.get("/friends").await
+    }
+
+    /// By user id (someone the user can see) or by friend code.
+    pub async fn send_friend_request(&self, target: FriendTarget) -> Result<FriendAnswer> {
+        let body = match target {
+            FriendTarget::User(id) => json!({ "user_id": id }),
+            FriendTarget::Code(code) => json!({ "code": code }),
+        };
+        self.send(Method::POST, "/friends/requests", &body).await
+    }
+
+    pub async fn accept_friend(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::POST, &format!("/friends/requests/{user}/accept"))
+            .await
+    }
+
+    pub async fn decline_friend(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::POST, &format!("/friends/requests/{user}/decline"))
+            .await
+    }
+
+    pub async fn withdraw_friend(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::DELETE, &format!("/friends/requests/{user}"))
+            .await
+    }
+
+    pub async fn remove_friend(&self, user: Uuid) -> Result<()> {
+        self.send_empty(Method::DELETE, &format!("/friends/{user}"))
+            .await
+    }
+
+    pub async fn friend_code(&self) -> Result<FriendCode> {
+        self.get("/me/friend-code").await
+    }
+
+    pub async fn regenerate_friend_code(&self) -> Result<FriendCode> {
+        self.send_empty(Method::POST, "/me/friend-code").await
+    }
+
     // ---------------------------------------------------------- messages
 
     pub async fn messages(&self, channel: Uuid, q: &HistoryQuery) -> Result<MessagePage> {
@@ -633,6 +718,26 @@ impl Http {
             Method::PATCH,
             &format!("/messages/{id}"),
             &json!({"content": content}),
+        )
+        .await
+    }
+
+    /// `PATCH` with only `attachment_descriptions`: an empty text clears it.
+    /// `content` is the message's text as shown: unchanged it leaves the
+    /// message unedited, and an older server, which ignores the alt text,
+    /// keeps the text instead of reading a missing one as empty.
+    pub async fn edit_alt_text(
+        &self,
+        id: Uuid,
+        attachment: Uuid,
+        content: &str,
+        text: &str,
+    ) -> Result<Message> {
+        let text = (!text.is_empty()).then_some(text);
+        self.send(
+            Method::PATCH,
+            &format!("/messages/{id}"),
+            &json!({"content": content, "attachment_descriptions": {attachment.to_string(): text}}),
         )
         .await
     }
@@ -724,6 +829,27 @@ impl Http {
             body,
         )
         .await
+    }
+
+    /// The account's manual presence (#590).
+    pub async fn presence_mode(&self) -> Result<ModeState> {
+        self.get("/me/presence").await
+    }
+
+    pub async fn set_presence_mode(
+        &self,
+        mode: PresenceMode,
+        duration: ModeDuration,
+    ) -> Result<ModeState> {
+        #[derive(Serialize)]
+        struct Body {
+            mode: PresenceMode,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            duration: Option<ModeDuration>,
+        }
+        let duration = (mode != PresenceMode::Auto).then_some(duration);
+        self.send(Method::PUT, "/me/presence", &Body { mode, duration })
+            .await
     }
 
     pub async fn notification_privacy(&self) -> Result<NotificationPrivacy> {

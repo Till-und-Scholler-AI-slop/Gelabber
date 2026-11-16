@@ -207,6 +207,32 @@ describe("durable send attempts with controlled HTTP responses", () => {
     expect(presigns).toBe(2);
   });
 
+  it("shows the server's reason when a GIF send is refused (#581)", async () => {
+    routes(() =>
+      json(422, { error: "validation_failed", fields: { gif: "invalid" } }),
+    );
+    await login(user.email, "password");
+    const gif = {
+      slug: "hello-hi-662--kgmD1VZja",
+      query: "hello",
+      gif: {
+        provider: "klipy",
+        slug: "hello-hi-662--kgmD1VZja",
+        title: "Hello",
+        url: "https://static.klipy.com/a.webp",
+        still: null,
+        width: 220,
+        height: 220,
+      },
+    };
+    await sendMessageAttempt("c", author, { content: "", gif }).catch(
+      () => undefined,
+    );
+    const failed = attempts()[0]!;
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toBe("Dieses GIF ist nicht mehr verfügbar.");
+  });
+
   it("uploads only the turned-down file again, naming it", async () => {
     let presigns = 0;
     let writes = 0;

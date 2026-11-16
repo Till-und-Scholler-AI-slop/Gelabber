@@ -42,6 +42,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     children,
     className,
     title,
+    role,
     "aria-label": label,
   }: {
     to: string;
@@ -49,10 +50,12 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     children?: ReactNode;
     className?: string;
     title?: string;
+    role?: string;
     "aria-label"?: string;
   }) => (
     <a
       href={to.replace(/\$(\w+)/g, (_, name: string) => params?.[name] ?? "")}
+      role={role}
       className={className}
       aria-label={label}
       title={title}
@@ -65,7 +68,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 
 import { useConfirm } from "./confirm.ts";
 import { logOut, logoutEndsCall } from "./logout.ts";
-import { UserPanel } from "./UserPanel.tsx";
+import { accountStep } from "./accountKeys.ts";
+import { AccountMenu, UserPanel } from "./UserPanel.tsx";
 import { ownPresence, panelSubtitle } from "./userPresence.ts";
 
 const lena = {
@@ -131,127 +135,154 @@ describe("user panel subtitle", () => {
   });
 });
 
-describe("user menu", () => {
+/** The account menu's entries (the popover's lower part), as rendered. */
+const menuMarkup = (feedback = false, unread = false) =>
+  renderToStaticMarkup(
+    <AccountMenu
+      feedback={feedback}
+      unread={unread}
+      onDone={() => undefined}
+      onFeedback={() => undefined}
+    />,
+  );
+const menuLabels = (markup: string) =>
+  [...markup.matchAll(/<(?:a|button)[^>]*role="menuitem"[^>]*>([^<]+)</g)].map(
+    ([, label]) => label,
+  );
+
+describe("account menu", () => {
   afterEach(() => {
     fixture.session = { user: null, operator: false };
   });
 
-  const menu = () => {
-    const html = renderToStaticMarkup(<UserPanel />);
-    const nav = html.match(/<nav aria-label="Benutzerkonto">(.*?)<\/nav>/)?.[1];
-    return [...(nav ?? "").matchAll(/<(?:a|button)[^>]*>([^<]+)</g)].map(
-      ([, label]) => label,
+  it("is a menu of the account's entries, without Einstellungen", () => {
+    fixture.session = { user: lena, operator: false };
+    const markup = menuMarkup();
+    expect(markup).toMatch(/^<div role="menu" aria-label="Benutzermenü"/);
+    expect(menuLabels(markup)).toEqual(["Profil bearbeiten", "Abmelden"]);
+    // A line under the status card, and one before signing out.
+    expect(markup.match(/<hr class="shell-menu-separator"\/>/g)).toHaveLength(
+      2,
     );
-  };
-  it("offers Betrieb to an operator, between Einstellungen and Abmelden", () => {
+    expect(markup).toContain('href="/settings/profil"');
+  });
+
+  it("offers Betrieb to an operator, before Abmelden", () => {
     fixture.session = { user: lena, operator: true };
-    expect(menu()).toEqual([
+    const markup = menuMarkup();
+    expect(menuLabels(markup)).toEqual([
       "Profil bearbeiten",
-      "Einstellungen",
       "Betrieb",
       "Abmelden",
     ]);
-    expect(renderToStaticMarkup(<UserPanel />)).toContain(
-      'href="/betrieb/server"',
-    );
+    expect(markup).toContain('href="/betrieb/server"');
   });
 
-  it("has no Betrieb for anyone else", () => {
-    fixture.session = { user: lena, operator: false };
-    expect(menu()).toEqual(["Profil bearbeiten", "Einstellungen", "Abmelden"]);
-  });
-});
-
-describe("Feedback geben in the user menu", () => {
-  beforeEach(() => {
+  it("puts Feedback geben after the profile while feedback is on", () => {
     fixture.session = { user: lena, operator: true };
-  });
-  afterEach(() => {
-    fixture.session = { user: null, operator: false };
-    fixture.feedback = undefined;
-  });
-  const html = () => renderToStaticMarkup(<UserPanel />);
-  const labels = () =>
-    [
-      ...(
-        html().match(/<nav aria-label="Benutzerkonto">(.*?)<\/nav>/)?.[1] ?? ""
-      ).matchAll(/<(?:a|button)[^>]*>([^<]+)</g),
-    ].map(([, label]) => label);
-
-  it("sits between Einstellungen and Betrieb while feedback is on", () => {
-    fixture.feedback = { enabled: true, unread: 0 };
-    expect(labels()).toEqual([
+    expect(menuLabels(menuMarkup(true))).toEqual([
       "Profil bearbeiten",
-      "Einstellungen",
       "Feedback geben",
       "Betrieb",
       "Abmelden",
     ]);
-    expect(html()).toContain(
-      '<button type="button" class="user-panel-feedback">Feedback geben</button>',
-    );
-  });
-
-  it("is missing while feedback is off or its status is not loaded", () => {
-    for (const status of [undefined, { enabled: false, unread: 0 }]) {
-      fixture.feedback = status;
-      expect(labels()).not.toContain("Feedback geben");
-      expect(html()).not.toContain("unread-dot");
-    }
-  });
-
-  it("carries the dot, on the item and on the chevron, while a reply is unread", () => {
-    fixture.feedback = { enabled: true, unread: 2 };
-    const markup = html();
-    expect(markup).toContain(
+    expect(menuMarkup(true)).not.toContain("unread-dot");
+    expect(menuMarkup(true, true)).toContain(
       'Feedback geben<span class="sr-only">, neue Antwort auf dein Feedback</span><span class="unread-dot" aria-hidden="true"></span></button>',
     );
-    expect(markup).toMatch(
-      /<summary class="shell-icon-button" aria-label="Benutzermenü, neue Antwort auf dein Feedback"><svg[^]*?<\/svg><span class="unread-dot" aria-hidden="true"><\/span><\/summary>/,
+  });
+
+  it("starts with the presence modes, the current one checked (#590)", () => {
+    fixture.session = { user: lena, operator: false };
+    // A server render reads the store's first state: automatic.
+    const markup = menuMarkup();
+    const radios = [
+      ...markup.matchAll(
+        /role="menuitemradio" aria-checked="(true|false)"[^>]*data-presence-mode="(\w+)"/g,
+      ),
+    ].map(([, checked, mode]) => [mode, checked]);
+    expect(radios).toEqual([
+      ["auto", "true"],
+      ["idle", "false"],
+      ["dnd", "false"],
+      ["invisible", "false"],
+    ]);
+    // Away and the others ask for how long first; automatic does not.
+    expect(markup.match(/aria-expanded="false"/g)).toHaveLength(3);
+    expect(markup).toContain('<span class="presence-mode__dot gel-presence-d"');
+    // The modes come before the account's entries.
+    expect(markup.indexOf("Nicht stören")).toBeLessThan(
+      markup.indexOf("Profil bearbeiten"),
     );
   });
 
-  it("leaves the chevron's name alone without an unread reply", () => {
-    fixture.feedback = { enabled: true, unread: 0 };
-    expect(html()).toContain(
-      '<summary class="shell-icon-button" aria-label="Benutzermenü">',
-    );
+  it("moves with the arrows, round the ends, and up into the status field", () => {
+    expect(accountStep("ArrowDown", 0, 3)).toBe(1);
+    expect(accountStep("ArrowDown", 2, 3)).toBe(0);
+    expect(accountStep("ArrowUp", 2, 3)).toBe(1);
+    // -1: the status field above the menu.
+    expect(accountStep("ArrowUp", 0, 3)).toBe(-1);
+    expect(accountStep("Home", 2, 3)).toBe(0);
+    expect(accountStep("End", 0, 3)).toBe(2);
+    expect(accountStep("Enter", 0, 3)).toBeNull();
+    expect(accountStep("ArrowLeft", 0, 3)).toBeNull();
   });
 });
 
-describe("user panel gear", () => {
+describe("user panel", () => {
   beforeEach(() => {
     fixture.session = { user: lena, operator: false };
   });
   afterEach(() => {
     fixture.voice = { status: "idle" };
     fixture.session = { user: null, operator: false };
+    fixture.feedback = undefined;
   });
-  /** The panel's controls before the chevron menu: the gear and its kind. */
-  const gear = () => {
-    const html = renderToStaticMarkup(<UserPanel />);
-    return html.slice(0, html.indexOf("<details"));
-  };
+  const html = () => renderToStaticMarkup(<UserPanel />);
 
-  it("is the link to the settings outside a call", () => {
-    const html = gear();
-    expect(html).toMatch(
-      /<a href="\/settings\/darstellung" class="shell-icon-button" aria-label="Einstellungen"/,
+  it("has the avatar's popover and the gear, and no chevron", () => {
+    const markup = html();
+    expect(markup).not.toContain("<details");
+    expect(markup).not.toContain("<summary");
+    expect(markup).toMatch(
+      /<button type="button" class="user-panel-profile" aria-haspopup="dialog" aria-expanded="false">/,
     );
-    expect(html).not.toContain("Anrufeinstellungen");
   });
 
-  it("opens the call settings during a call", () => {
-    fixture.voice = { status: "joined" };
-    const html = gear();
-    expect(html).toMatch(
-      /<button type="button" class="shell-icon-button" aria-label="Anrufeinstellungen"[^>]*aria-haspopup="dialog" aria-expanded="false"/,
+  it("opens Settings from the gear, in a call too", () => {
+    for (const status of ["idle", "joined"]) {
+      fixture.voice = { status };
+      const markup = html();
+      expect(markup).toMatch(
+        /<a href="\/settings\/darstellung" class="shell-icon-button" aria-label="Einstellungen"/,
+      );
+      expect(markup).not.toContain("Anrufeinstellungen");
+    }
+  });
+
+  it("carries an unread reply's dot on the avatar, and says so", () => {
+    fixture.feedback = { enabled: true, unread: 2 };
+    const markup = html();
+    expect(markup).toMatch(
+      /<span class="user-panel-avatar" aria-hidden="true">[^]*?<span class="unread-dot" aria-hidden="true"><\/span><\/span>/,
     );
-    expect(html).not.toContain('href="/settings/darstellung"');
-    // The app's settings stay in the chevron menu.
-    const menu = renderToStaticMarkup(<UserPanel />);
-    expect(menu).toMatch(
-      /<a href="\/settings\/darstellung">Einstellungen<\/a>/,
+    // Inside the avatar's button, so its name ("Lena Online, neue Antwort
+    // …") ends with it; the avatar's presence label stays out of the name.
+    const button = markup.slice(0, markup.indexOf("</button>"));
+    expect(button).toContain(
+      '<span class="sr-only">, neue Antwort auf dein Feedback</span>',
     );
+  });
+
+  it("has no dot while every reply is read or feedback is off", () => {
+    for (const status of [
+      undefined,
+      { enabled: false, unread: 3 },
+      { enabled: true, unread: 0 },
+    ]) {
+      fixture.feedback = status;
+      expect(html()).not.toContain("unread-dot");
+      expect(html()).not.toContain("neue Antwort");
+    }
   });
 });

@@ -1,9 +1,8 @@
-//! The voice dialogs: "Audio & Video" (components/VoiceSettingsDialog.tsx,
-//! the `openDialog` of voice/settings.ts) with the tabs Audio, "Video &
-//! Stream" and Diagnose, and "Mikrofon testen" (voice/MicrophoneTest.tsx,
-//! the desktop branch of voice/native/microphoneTest.ts: meters, no
-//! recordings). Opened from the call bar, the room, the overview and the
-//! settings, drawn once per frame by the shell.
+//! The voice dialog "Mikrofon testen" (voice/MicrophoneTest.tsx, the
+//! desktop branch of voice/native/microphoneTest.ts: meters, no
+//! recordings), opened from the room and the settings, drawn once per frame
+//! by the shell. The call's settings are a page: Settings → Audio and Video
+//! (#570, [`crate::screens::settings::open_media`]).
 
 use egui::{Color32, Id, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use gelabber_call::{MicTest, MicTestPhase};
@@ -14,37 +13,13 @@ use crate::icons::{self, Icon};
 use crate::screens::settings::{controls, media, prefs};
 use crate::text::{self, Block};
 use crate::theme::{Theme, corner};
-use crate::widgets::{Button, Modal, ModalWidth};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Tab {
-    Audio,
-    Video,
-    Diagnose,
-}
-
-impl Tab {
-    const ALL: [Tab; 3] = [Tab::Audio, Tab::Video, Tab::Diagnose];
-
-    fn label(self) -> &'static str {
-        match self {
-            Tab::Audio => texts::tabs_audio(),
-            Tab::Video => texts::tabs_video(),
-            Tab::Diagnose => texts::tabs_diagnostics(),
-        }
-    }
-}
+use crate::widgets::{Button, Modal};
 
 #[derive(Clone, Default)]
 struct Open {
-    settings: Option<Tab>,
     mic_test: bool,
-    /// The forms' own state (key recording, disclosures) while open.
-    form: media::State,
     /// The message of the microphone test once stopped by the person.
     stopped: bool,
-    /// The dialog opens with the focus on its tab (`autoFocus`).
-    focus_tab: bool,
 }
 
 fn id() -> Id {
@@ -53,17 +28,6 @@ fn id() -> Id {
 
 fn with<R>(ctx: &egui::Context, f: impl FnOnce(&mut Open) -> R) -> R {
     ctx.data_mut(|d| f(d.get_temp_mut_or_default::<Open>(id())))
-}
-
-/// `openDialog(section)`: "Audio & Video" on `tab`.
-pub fn open_settings(ctx: &egui::Context, tab: Tab) {
-    with(ctx, |o| {
-        if o.settings.is_none() {
-            o.form = media::State::default();
-        }
-        o.settings = Some(tab);
-        o.focus_tab = true;
-    });
 }
 
 /// "Mikrofon testen", over whatever is open.
@@ -76,198 +40,20 @@ pub fn open_mic_test(ctx: &egui::Context) {
 
 /// A voice dialog is open (the room's keys keep off then).
 pub fn open(ctx: &egui::Context) -> bool {
-    with(ctx, |o| o.settings.is_some() || o.mic_test)
+    with(ctx, |o| o.mic_test)
 }
 
-/// The open dialogs, the settings under the microphone test.
+/// The open dialog, and a way to the call's settings asked for this frame.
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let ctx = ui.ctx().clone();
     super::window::show(&ctx, app.call);
-    let (settings, mic_test) = with(&ctx, |o| (o.settings, o.mic_test));
-    if let Some(tab) = settings {
-        settings_dialog(ui, app, tab, !mic_test);
-    }
-    if mic_test {
+    crate::screens::settings::follow_media_link(&ctx, app);
+    if with(&ctx, |o| o.mic_test) {
         mic_test_dialog(ui, app);
     } else if app.call.mic_test().phase != MicTestPhase::Idle {
         // A test runs only while its dialog is open.
         app.call.stop_mic_test();
     }
-}
-
-fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
-    let ctx = ui.ctx().clone();
-    let mut form = with(&ctx, |o| o.form.clone());
-    let mut chosen = tab;
-    let mut done = false;
-    let focus_tab = with(&ctx, |o| std::mem::take(&mut o.focus_tab));
-    let mut footer = |ui: &mut Ui| {
-        let w = Block::single(ui, common::done(), text::UI.weight(600.0), Color32::WHITE).width()
-            + 34.0;
-        if ui
-            .add(Button::new(common::done()).ghost().width(w))
-            .clicked()
-        {
-            done = true;
-        }
-    };
-    // The body scrolls without a gutter of its own, as in the browser.
-    let saved = ctx.global_style().spacing.scroll;
-    ctx.all_styles_mut(|s| s.spacing.scroll.floating_allocated_width = 0.0);
-    let output = Modal::new("voice-settings", texts::dialog_title())
-        .width(ModalWidth::Large)
-        .show(
-            &ctx,
-            |ui| {
-                ui.spacing_mut().item_spacing = Vec2::ZERO;
-                // The web's title line is a pixel shorter than the modal's.
-                ui.add_space(-1.0);
-                let width = ui.available_width();
-                if let Some(next) = tabs(ui, chosen, width, focus_tab) {
-                    chosen = next;
-                }
-                ui.add_space(20.0);
-                match chosen {
-                    Tab::Audio => {
-                        media::set_in_dialog(ui.ctx(), true);
-                        media::audio(ui, app, &mut form);
-                        media::set_in_dialog(ui.ctx(), false);
-                    }
-                    Tab::Video => {
-                        media::set_in_dialog(ui.ctx(), true);
-                        media::video(ui, app, &mut form);
-                        media::set_in_dialog(ui.ctx(), false);
-                    }
-                    Tab::Diagnose => super::diagnostics::tab(ui, app, width),
-                }
-            },
-            Some(&mut footer),
-        );
-    ctx.all_styles_mut(|s| s.spacing.scroll = saved);
-    let close = done || (on_top && output.close_requested);
-    with(&ctx, |o| {
-        o.form = form;
-        if close {
-            o.settings = None;
-        } else if o.settings.is_some() {
-            o.settings = Some(chosen);
-        }
-    });
-}
-
-/// The tab list (`.voice-settings-tablist`); returns a newly chosen tab.
-/// Only the chosen tab is in the Tab order; the arrows, Home and End move
-/// between them (`nextChipIndex`).
-fn tabs(ui: &mut Ui, current: Tab, width: f32, focus: bool) -> Option<Tab> {
-    let theme = Theme::of(ui.ctx());
-    let c = theme.c;
-    let top = ui.cursor().min;
-    let mut x = top.x;
-    let mut chosen = None;
-    // By the tab, not its label, so a language switch keeps the focus.
-    let tab_id = |tab: Tab| Id::unique(("gelabber-voice-tab", tab));
-    // The keys first, so the tab they choose is the focusable one this frame.
-    let mut current = current;
-    let mut focus = focus;
-    if ui.memory(|m| m.has_focus(tab_id(current))) {
-        // The arrows choose a tab instead of moving egui's focus.
-        ui.memory_mut(|m| {
-            m.set_focus_lock_filter(
-                tab_id(current),
-                egui::EventFilter {
-                    horizontal_arrows: true,
-                    vertical_arrows: true,
-                    ..Default::default()
-                },
-            )
-        });
-        let (prev, next, home, end) = ui.input(|i| {
-            (
-                i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowUp),
-                i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowDown),
-                i.key_pressed(egui::Key::Home),
-                i.key_pressed(egui::Key::End),
-            )
-        });
-        let at = Tab::ALL.iter().position(|t| *t == current).unwrap_or(0);
-        let n = Tab::ALL.len();
-        let to = if prev {
-            Some((at + n - 1) % n)
-        } else if next {
-            Some((at + 1) % n)
-        } else if home {
-            Some(0)
-        } else if end {
-            Some(n - 1)
-        } else {
-            None
-        };
-        if let Some(to) = to.filter(|t| *t != at) {
-            current = Tab::ALL[to];
-            chosen = Some(current);
-            focus = true;
-        }
-    }
-    for tab in Tab::ALL {
-        let selected = tab == current;
-        let style = if selected {
-            text::UI.weight(600.0)
-        } else {
-            text::UI
-        };
-        let block = Block::single(ui, tab.label(), style, c.text);
-        let rect = Rect::from_min_size(pos2(x, top.y), vec2(block.width() + 24.0, 36.0));
-        // Only the chosen tab is in the Tab order (`tabIndex`).
-        let response = ui.interact(
-            rect,
-            tab_id(tab),
-            if selected {
-                Sense::click()
-            } else {
-                Sense::CLICK
-            },
-        );
-        if selected && focus {
-            response.request_focus();
-        }
-        if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
-            crate::widgets::focus_ring(ui.painter(), rect, theme.radius.sm, &theme);
-        }
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::Role::Tab, true, selected, tab.label())
-        });
-        let color = if selected || response.hovered() {
-            c.text
-        } else {
-            c.muted
-        };
-        block.paint_tinted(
-            ui.painter(),
-            pos2(rect.left() + 12.0, rect.center().y - block.height() / 2.0),
-            Some(color),
-        );
-        if selected {
-            ui.painter().rect_filled(
-                Rect::from_min_max(
-                    pos2(rect.left(), rect.bottom() - 1.0),
-                    pos2(rect.right(), rect.bottom() + 1.0),
-                ),
-                0.0,
-                c.accent,
-            );
-        }
-        if response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if response.clicked() && !selected {
-            chosen = Some(tab);
-            response.request_focus();
-        }
-        x = rect.right() + 4.0;
-    }
-    crate::widgets::rule_h(ui.painter(), c.border, top.x..=top.x + width, top.y + 36.0);
-    ui.allocate_rect(Rect::from_min_size(top, vec2(width, 37.0)), Sense::hover());
-    chosen
 }
 
 /// `.voice-microphone-test meter`, styled as `.voice-quick-level`: a 6px
@@ -490,13 +276,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dialogs_open_and_close_by_their_state() {
+    fn the_mic_test_opens_by_its_state() {
         let ctx = egui::Context::default();
         assert!(!open(&ctx));
-        open_settings(&ctx, Tab::Diagnose);
-        assert!(open(&ctx));
-        assert_eq!(with(&ctx, |o| o.settings), Some(Tab::Diagnose));
         open_mic_test(&ctx);
+        assert!(open(&ctx));
         assert!(with(&ctx, |o| o.mic_test));
     }
 }

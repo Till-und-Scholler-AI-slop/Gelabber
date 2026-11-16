@@ -46,6 +46,8 @@ lettre = { version = "0.11.23", default-features = false, features = ["builder",
 aws-lc-rs = { version = "1.18.1", default-features = false, features = ["aws-lc-sys"] }
 # Data export archives (#519): stored entries only, no compression codecs.
 zip = { version = "9.1.3", default-features = false }
+# Picture metadata and thumbnails (#574): pure-Rust decoders and encoders only.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 gelabber-shared.workspace = true
 
 [dev-dependencies]

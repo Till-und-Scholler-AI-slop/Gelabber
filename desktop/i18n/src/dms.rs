@@ -12,8 +12,8 @@ crate::strings! {
     new_message_person = "Person" | "Person";
     new_message_placeholder = "Name suchen" | "Search for a name";
     new_message_continue = "Unterhaltung fortsetzen" | "Continue conversation";
-    new_message_nobody = "Keine Personen. Direktnachrichten gehen an Mitglieder deiner Server."
-        | "Nobody here. Direct messages go to members of your servers.";
+    new_message_nobody = "Keine Personen. Schreiben kannst du Freunden und Mitgliedern deiner Server."
+        | "Nobody here. You can message friends and members of your servers.";
     open_failed = "Unterhaltung nicht geöffnet." | "Conversation not opened.";
     index_load_failed = "Die Direktnachrichten konnten nicht geladen werden."
         | "Couldn’t load your direct messages.";

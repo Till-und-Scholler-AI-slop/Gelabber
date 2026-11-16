@@ -233,7 +233,12 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
     let second = post(
         &mut ada,
         &channel_id,
-        json!({ "content": "mit bild", "attachment_ids": [file_id], "reply_to": id_of(&bobs) }),
+        json!({
+            "content": "mit bild",
+            "attachment_ids": [file_id],
+            "attachment_descriptions": { file_id.clone(): "Eine graue Katze" },
+            "reply_to": id_of(&bobs),
+        }),
     )
     .await;
     let res = ada
@@ -245,6 +250,7 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 
+    ada.befriend(bob.user_id()).await;
     let res = ada
         .send(
             Method::POST,
@@ -256,6 +262,17 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
     let dm = id_of(&res.body);
     let in_dm = post(&mut ada, &dm, json!({ "content": "hallo bob" })).await;
     post(&mut bob, &dm, json!({ "content": "bobs antwort" })).await;
+    // Whom Ada blocks goes with the account (#565). Blocking ends a
+    // friendship, so the block goes to someone else than Bob.
+    let cleo = signed_up(&state, "cleo@example.com", "Cleo").await;
+    let res = ada
+        .send(
+            Method::PUT,
+            &format!("/api/users/me/blocks/{}", cleo.user_id()),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
 
     let res = request(&mut ada).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
@@ -311,10 +328,21 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
     assert_eq!(account["servers"].as_array().unwrap().len(), 1);
     assert_eq!(account["servers"][0]["id"], server_id.as_str());
     assert_eq!(account["servers"][0]["owner"], false);
+    assert_eq!(account["friends"][0]["id"], bob.user_id());
+    assert_eq!(account["friends"][0]["name"], "Bob");
+    assert!(
+        account["friend_requests"]["incoming"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert!(account["sessions"][0]["client"].is_string());
     assert!(account["sessions"][0].get("token_hash").is_none());
     assert!(account.get("password_hash").is_none());
     assert_eq!(account["invites"], json!([]));
+    assert_eq!(account["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(account["blocks"][0]["id"], cleo.user_id());
+    assert_eq!(account["blocks"][0]["name"], "Cleo");
 
     let channel = json_entry(&entries, &server_file);
     assert_eq!(channel["channel"]["id"], channel_id.as_str());
@@ -335,6 +363,7 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
             "filename": "../sub\\cat.png",
             "content_type": "image/png",
             "size_bytes": PNG.len(),
+            "description": "Eine graue Katze",
             "path": attachment_path,
         }])
     );

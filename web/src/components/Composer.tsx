@@ -9,15 +9,19 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
   type Ref,
+  type RefObject,
 } from "react";
 import { setReplyTarget, useReplyTarget } from "../messages/replyTarget.ts";
 import { useChatDraft } from "../messages/drafts.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { discardAttempt, type SendAttempt } from "../messages/pending.ts";
 import { useSendMessage } from "../messages/queries.ts";
+import { altTextOf, setAltText } from "../messages/altText.ts";
+import { AltTextDialog } from "./AltTextDialog.tsx";
 import {
   carriesFiles,
   droppedFiles,
@@ -53,6 +57,7 @@ import { T, useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { FieldShell } from "./ui/FieldShell.tsx";
 import { Textarea } from "./ui/Textarea.tsx";
+import { useMediaQuery } from "./useMediaQuery.ts";
 
 export function Composer({
   handle,
@@ -102,7 +107,6 @@ export function Composer({
   const gifs = useGifStatus();
   const gifsEnabled = gifs.data?.enabled === true;
   const replyTarget = useReplyTarget(channelId);
-  const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const composerForm = useRef<HTMLFormElement>(null);
   const keepKeyboard = useRef(false);
@@ -212,6 +216,8 @@ export function Composer({
     setFileError(null);
     setFiles(files.filter((_, i) => i !== index));
   };
+  // The picture whose alt text is being written (#575).
+  const [describing, setDescribing] = useState<File | null>(null);
 
   // Files dropped anywhere on the conversation attach like the paperclip.
   const [dropping, setDropping] = useState(false);
@@ -405,6 +411,25 @@ export function Composer({
                       <p>{attached.name}</p>
                       <p>{formatSize(attached.size)}</p>
                     </div>
+                    {preview ? (
+                      <button
+                        type="button"
+                        className={
+                          altTextOf(attached)
+                            ? "lr-composer-alt is-set"
+                            : "lr-composer-alt"
+                        }
+                        onClick={() => setDescribing(attached)}
+                        aria-label={`${
+                          altTextOf(attached)
+                            ? t("altText.edit")
+                            : t("altText.add")
+                        }: ${attached.name}`}
+                        title={altTextOf(attached) ?? t("altText.add")}
+                      >
+                        {t("altText.badge")}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => removeFile(index)}
@@ -420,33 +445,29 @@ export function Composer({
               })}
             </ul>
           ) : null}
+          {describing ? (
+            <AltTextDialog
+              key={`${describing.name}:${describing.lastModified}`}
+              open
+              name={describing.name}
+              preview={previews.get(describing)}
+              initial={altTextOf(describing) ?? ""}
+              onSave={(text) => {
+                setAltText(describing, text);
+                setDescribing(null);
+              }}
+              onClose={() => setDescribing(null)}
+            />
+          ) : null}
           {suggestions.list}
           <div className="lr-composer-row">
             {canSendFiles ? (
-              <>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept={ACCEPT}
-                  multiple
-                  className="sr-only"
-                  onChange={(event) => {
-                    const selected = Array.from(event.target.files ?? []);
-                    addFiles(selected);
-                    event.target.value = "";
-                    if (selected.length > 0) composerInput.current?.focus();
-                  }}
-                />
-                <button
-                  type="button"
-                  title={t("composer.attachFile")}
-                  aria-label={t("composer.attachFile")}
-                  onClick={() => fileInput.current?.click()}
-                  className="lr-composer-icon"
-                >
-                  <PaperclipIcon size={18} />
-                </button>
-              </>
+              <AttachPicker
+                onFiles={(selected) => {
+                  addFiles(selected);
+                  if (selected.length > 0) composerInput.current?.focus();
+                }}
+              />
             ) : null}
             <Textarea
               bare
@@ -572,4 +593,114 @@ export function Composer({
 
 function normalisedLength(raw: string): string {
   return raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/** The paperclip (#574). On touch screens a small menu: "Fotos & Videos"
+ *  opens the system photo picker (`image/*,video/*`, which Android gives
+ *  its photo picker and not the file chooser), "Kamera" takes one picture,
+ *  "Datei" is the full list of types. Elsewhere the one file dialog. */
+function AttachPicker({ onFiles }: { onFiles: (files: File[]) => void }) {
+  const t = useT(chat);
+  const touch = useMediaQuery("(pointer: coarse)");
+  const [open, setOpen] = useState(false);
+  const files = useRef<HTMLInputElement>(null);
+  const photos = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    menu.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+    const away = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (menu.current?.contains(target) || toggle.current?.contains(target))
+        return;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [open]);
+  const picked = (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    onFiles(selected);
+  };
+  const choose = (input: RefObject<HTMLInputElement | null>) => {
+    setOpen(false);
+    input.current?.click();
+  };
+  return (
+    <span className="lr-composer-attach">
+      <input
+        ref={files}
+        type="file"
+        accept={ACCEPT}
+        multiple
+        className="sr-only"
+        tabIndex={-1}
+        onChange={picked}
+      />
+      <input
+        ref={photos}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={picked}
+      />
+      <input
+        ref={camera}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={picked}
+      />
+      <button
+        ref={toggle}
+        type="button"
+        title={t(touch ? "composer.attachMenu" : "composer.attachFile")}
+        aria-label={t(touch ? "composer.attachMenu" : "composer.attachFile")}
+        aria-haspopup={touch ? "menu" : undefined}
+        aria-expanded={touch ? open : undefined}
+        onClick={() => (touch ? setOpen((was) => !was) : choose(files))}
+        className="lr-composer-icon"
+      >
+        <PaperclipIcon size={18} />
+      </button>
+      {open ? (
+        <div
+          ref={menu}
+          role="menu"
+          aria-label={t("composer.attachMenu")}
+          className="lr-composer-attach-menu"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
+              toggle.current?.focus();
+            }
+          }}
+        >
+          <button type="button" role="menuitem" onClick={() => choose(photos)}>
+            <span aria-hidden="true">🖼</span>
+            {t("composer.attachPhotos")}
+          </button>
+          <button type="button" role="menuitem" onClick={() => choose(camera)}>
+            <span aria-hidden="true">📷</span>
+            {t("composer.attachCamera")}
+          </button>
+          <button type="button" role="menuitem" onClick={() => choose(files)}>
+            <PaperclipIcon size={16} />
+            {t("composer.attachDocument")}
+          </button>
+        </div>
+      ) : null}
+    </span>
+  );
 }

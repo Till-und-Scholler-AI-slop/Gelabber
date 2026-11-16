@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use gelabber_i18n::{chat, dms, servers, shell};
+use gelabber_i18n::{chat, dms, friends, servers, shell};
 use uuid::Uuid;
 
 use crate::gateway::GatewayStatus;
@@ -135,6 +135,45 @@ pub enum UploadState {
     Done,
 }
 
+/// Why a send failed, for its row (`sendFailureText`, #581): the reason the
+/// server named where one is known, else the stage's text, with status and
+/// code for a refusal. A lost answer keeps the stage's text.
+pub fn send_failure_text(stage: SendStage, error: &ApiError, gif: bool) -> String {
+    let fallback = stage.failed();
+    if send_uncertain(stage, error) {
+        return fallback.to_owned();
+    }
+    let ApiError::Api {
+        status,
+        code,
+        fields,
+        retry_after,
+        ..
+    } = error
+    else {
+        return fallback.to_owned();
+    };
+    match fields.get("gif").and_then(|v| v.as_str()) {
+        Some("invalid") => return chat::send_gif_gone().to_owned(),
+        Some("unavailable") => return chat::send_gif_off().to_owned(),
+        _ => {}
+    }
+    if code == "rate_limited" {
+        return match retry_after.filter(|wait| *wait > 0.0) {
+            Some(wait) => chat::send_rate_limited_wait(gif, wait.ceil() as u64),
+            None if gif => chat::send_gif_rate_limited().to_owned(),
+            None => chat::send_rate_limited().to_owned(),
+        };
+    }
+    if code == "forbidden" {
+        return chat::send_forbidden().to_owned();
+    }
+    if (400..500).contains(status) {
+        return format!("{fallback} ({status} {code})");
+    }
+    fallback.to_owned()
+}
+
 /// Whether a failed send may be saved anyway: only a bind whose answer
 /// was lost (network, timeout, 408, 5xx) is in doubt.
 pub fn send_uncertain(stage: SendStage, error: &ApiError) -> bool {
@@ -199,10 +238,16 @@ pub fn failure_text(op: &str) -> Option<&'static str> {
         "edit" => chat::row_edit_failed(),
         "delete" => chat::delete_failed(),
         "react" => chat::reactions_not_saved(),
+        "alt" => chat::alt_save_failed(),
         "dm" => dms::open_failed(),
+        "friend_send" => friends::send_failed(),
+        "friend_accept" | "friend_decline" | "friend_withdraw" | "friend_remove" | "dm_accept"
+        | "dm_decline" => friends::action_failed(),
+        "friend_code_new" => friends::code_regenerate_failed(),
         // A row menu's choices; the dialog shows its own failure.
         "notify_menu" => shell::row_menu_not_saved(),
         "read" | "read_all" => shell::row_menu_not_marked_read(),
+        "presence_mode" => shell::presence_mode_not_saved(),
         _ => return None,
     })
 }
@@ -217,11 +262,13 @@ pub fn gone_text(op: &str) -> Option<&'static str> {
 }
 
 /// A file to attach; kept with the pending row so a retry can send it again.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct OutgoingFile {
     pub filename: String,
     pub content_type: String,
     pub data: std::sync::Arc<Vec<u8>>,
+    /// The picture's alt text (#575), written before sending.
+    pub description: Option<String>,
 }
 
 /// One conversation's loaded history.
@@ -450,6 +497,8 @@ pub enum Notice {
         text: String,
     },
     Error(String),
+    /// An info toast ("Anfrage an Ada gesendet.").
+    Info(String),
     /// An optimistic write the server turned down: `failed` names it
     /// ("Nachricht nicht gelöscht."), the UI adds the error's text, or
     /// `gone` when the error is `not_found`.
@@ -499,10 +548,20 @@ pub struct State {
     pub server_details: HashMap<Uuid, ServerDetail>,
     pub dms: Vec<DirectMessage>,
     pub dms_loaded: bool,
+    /// Friends and friend requests (#563); `None` until read.
+    pub friends: Option<FriendList>,
+    /// Incoming message requests (#563), newest first; `None` until read.
+    pub dm_requests: Option<Vec<DirectMessage>>,
+    /// Whom the user blocks (#565), newest first; `None` until read.
+    pub blocks: Option<Vec<BlockedUser>>,
+    /// The account's friend code; `None` until read.
+    pub friend_code: Option<String>,
     pub channels: HashMap<Uuid, ChannelMessages>,
     pub read: HashMap<Uuid, ReadState>,
     pub notification_settings: Vec<NotificationSetting>,
     pub notification_privacy: Option<NotificationPrivacy>,
+    /// The account's manual presence (#590), as the server last said.
+    pub presence_mode: ModeState,
     pub themes: Option<ThemeDocument>,
     pub mail: Option<MailStatus>,
     pub gifs: Option<GifStatus>,
@@ -599,8 +658,21 @@ impl State {
             .find(|c| c.id == id)
     }
 
+    /// The user blocks `user` (#565); false until the list is read.
+    pub fn blocks_user(&self, user: Uuid) -> bool {
+        self.blocks
+            .as_ref()
+            .is_some_and(|list| list.iter().any(|b| b.id == user))
+    }
+
+    /// A listed DM, or an incoming message request (#563), which stays out
+    /// of the list until accepted.
     pub fn dm(&self, id: Uuid) -> Option<&DirectMessage> {
-        self.dms.iter().find(|d| d.id == id)
+        self.dms.iter().find(|d| d.id == id).or_else(|| {
+            self.dm_requests
+                .as_ref()
+                .and_then(|list| list.iter().find(|d| d.id == id))
+        })
     }
 
     pub fn messages(&self, channel: Uuid) -> Option<&ChannelMessages> {
@@ -909,6 +981,11 @@ impl State {
         }
     }
 
+    /// The manual mode in effect now: an end that passed is automatic.
+    pub fn presence_mode_now(&self) -> PresenceMode {
+        self.presence_mode.at(chrono::Utc::now())
+    }
+
     pub fn presence_of(&self, server: Uuid, user: Uuid) -> PresenceStatus {
         self.presence
             .get(&server)
@@ -917,8 +994,8 @@ impl State {
             .unwrap_or(PresenceStatus::Offline)
     }
 
-    /// The member list's groups (`live.ts`): Online, Abwesend, Offline, each
-    /// sorted by name; empty groups left out.
+    /// The member list's groups (`live.ts`): Online (with do not disturb),
+    /// Abwesend, Offline, each sorted by name; empty groups left out.
     pub fn member_groups(&self, server: Uuid) -> Vec<(PresenceStatus, Vec<&Member>)> {
         let Some(detail) = self.server_details.get(&server) else {
             return Vec::new();
@@ -932,7 +1009,7 @@ impl State {
             let mut members: Vec<&Member> = detail
                 .members
                 .iter()
-                .filter(|m| self.presence_of(server, m.user_id) == status)
+                .filter(|m| group_of(self.presence_of(server, m.user_id)) == status)
                 .collect();
             members.sort_by_cached_key(|m| collation_key(&m.name));
             if !members.is_empty() {
@@ -1003,6 +1080,8 @@ impl State {
         let names: Vec<String> = self
             .typers(channel, now)
             .into_iter()
+            // Someone the user blocks types unseen (#565).
+            .filter(|u| !self.blocks_user(*u))
             .map(|u| {
                 self.name_of(channel, u)
                     .unwrap_or_else(|| shell::someone().into())
@@ -1406,6 +1485,14 @@ pub fn collation_key(name: &str) -> String {
         .collect()
 }
 
+/// The member list's group of a status: do not disturb is online.
+fn group_of(status: PresenceStatus) -> PresenceStatus {
+    match status {
+        PresenceStatus::Dnd => PresenceStatus::Online,
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1714,6 +1801,7 @@ mod tests {
                 filename: "a.txt".into(),
                 content_type: "text/plain".into(),
                 data: Default::default(),
+                description: None,
             };
             3
         ];
@@ -1965,6 +2053,91 @@ mod tests {
         );
         assert_eq!(failure_text("kick:1"), Some("Member not removed."));
         assert_eq!(SendStage::Upload.failed(), "File upload failed.");
+    }
+
+    #[test]
+    fn a_refused_send_names_the_servers_reason() {
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let gone = api(
+            422,
+            "validation_failed",
+            serde_json::json!({ "gif": "invalid" }),
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &gone, true),
+            "This GIF is no longer available."
+        );
+        let off = api(
+            422,
+            "validation_failed",
+            serde_json::json!({ "gif": "unavailable" }),
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &off, true),
+            "GIFs are turned off on this server."
+        );
+        let mut busy = api(429, "rate_limited", serde_json::json!({}));
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &busy, true),
+            "Too many GIFs. Wait a moment."
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &busy, false),
+            "Too many messages. Wait a moment."
+        );
+        if let ApiError::Api { retry_after, .. } = &mut busy {
+            *retry_after = Some(41.2);
+        }
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &busy, true),
+            "Too many GIFs. Try again in 42 seconds."
+        );
+        let forbidden = api(403, "forbidden", serde_json::json!({}));
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &forbidden, false),
+            "You can't send messages here."
+        );
+        let other = api(
+            422,
+            "validation_failed",
+            serde_json::json!({ "content": "too_long" }),
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &other, false),
+            "Saving the message failed. (422 validation_failed)"
+        );
+        // A lost answer and a server fault keep the stage's text.
+        let lost = ApiError::Transport("reset".into());
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &lost, true),
+            "Saving the message failed."
+        );
+        let fault = api(502, "upstream_unavailable", serde_json::json!({}));
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &fault, true),
+            "Saving the message failed."
+        );
+    }
+
+    #[test]
+    fn a_refused_gif_reads_in_german() {
+        let gone = api(
+            422,
+            "validation_failed",
+            serde_json::json!({ "gif": "invalid" }),
+        );
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &gone, true),
+            "Dieses GIF ist nicht mehr verfügbar."
+        );
+        let mut busy = api(429, "rate_limited", serde_json::json!({}));
+        if let ApiError::Api { retry_after, .. } = &mut busy {
+            *retry_after = Some(1.0);
+        }
+        assert_eq!(
+            send_failure_text(SendStage::Bind, &busy, false),
+            "Zu viele Nachrichten. Versuch es in 1 Sekunde noch mal."
+        );
     }
 
     #[test]

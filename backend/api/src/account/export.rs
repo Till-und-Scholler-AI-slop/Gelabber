@@ -433,6 +433,8 @@ struct AccountRow {
     locale: Locale,
     avatar_url: Option<String>,
     banner_url: Option<String>,
+    presence_mode: String,
+    presence_mode_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -459,6 +461,15 @@ struct ServerRow {
     name: String,
     owner: bool,
     joined_at: DateTime<Utc>,
+}
+
+/// A friend, or the other side of a pending friend request (#563), and
+/// since when.
+#[derive(Serialize, FromRow)]
+struct FriendRow {
+    id: Uuid,
+    name: String,
+    at: DateTime<Utc>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -501,6 +512,7 @@ struct AttachmentRow {
     filename: String,
     content_type: String,
     size_bytes: i64,
+    description: Option<String>,
 }
 
 #[derive(FromRow)]
@@ -596,7 +608,8 @@ impl Archive {
             sqlx::query_as(
                 "SELECT id, email, name, created_at, email_verified_at, bio, pronouns, \
                         status_text, accent_color, banner_color, avatar_decoration, \
-                        notifications_hide_content, locale, avatar_url, banner_url \
+                        notifications_hide_content, locale, avatar_url, banner_url, \
+                        presence_mode, presence_mode_until \
                  FROM users WHERE id = $1",
             )
             .bind(user_id)
@@ -641,6 +654,44 @@ impl Archive {
             .bind(user_id)
             .fetch_all(&db),
         )?;
+        // Whom the person blocks (#565).
+        let blocks = self
+            .handle
+            .block_on(crate::blocks::blocked_by(&db, user_id))?;
+        let friend_code: Option<String> = self.wait(
+            sqlx::query_scalar("SELECT friend_code FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_one(&db),
+        )?;
+        let friends: Vec<FriendRow> = self.wait(
+            sqlx::query_as(
+                "SELECT u.id, u.name, f.created_at AS at FROM friendships f \
+                 JOIN users u ON u.id = CASE WHEN f.user_low = $1 THEN f.user_high ELSE f.user_low END \
+                 WHERE (f.user_low = $1 OR f.user_high = $1) AND u.deleted_at IS NULL \
+                 ORDER BY f.created_at, u.id",
+            )
+            .bind(user_id)
+            .fetch_all(&db),
+        )?;
+        let requests = |sql: &'static str| sqlx::query_as::<_, FriendRow>(sql).bind(user_id);
+        let incoming: Vec<FriendRow> = self.wait(
+            requests(
+                "SELECT u.id, u.name, r.created_at AS at FROM friend_requests r \
+                 JOIN users u ON u.id = r.sender_id \
+                 WHERE r.recipient_id = $1 AND r.status = 'pending' AND u.deleted_at IS NULL \
+                 ORDER BY r.created_at, u.id",
+            )
+            .fetch_all(&db),
+        )?;
+        let outgoing: Vec<FriendRow> = self.wait(
+            requests(
+                "SELECT u.id, u.name, r.created_at AS at FROM friend_requests r \
+                 JOIN users u ON u.id = r.recipient_id \
+                 WHERE r.sender_id = $1 AND r.status = 'pending' AND u.deleted_at IS NULL \
+                 ORDER BY r.created_at, u.id",
+            )
+            .fetch_all(&db),
+        )?;
         self.json(
             "account.json",
             &json!({
@@ -657,11 +708,18 @@ impl Archive {
                 "avatar_decoration": row.avatar_decoration,
                 "notifications_hide_content": row.notifications_hide_content,
                 "locale": row.locale,
+                // The manual presence (#590) as set, end included.
+                "presence_mode": row.presence_mode,
+                "presence_mode_until": row.presence_mode_until,
                 "themes": themes.map(|document| document.0),
                 "notification_settings": notification_settings,
                 "sessions": sessions,
                 "servers": servers,
                 "invites": invites,
+                "blocks": blocks,
+                "friend_code": friend_code,
+                "friends": friends,
+                "friend_requests": {"incoming": incoming, "outgoing": outgoing},
             }),
         )?;
 
@@ -1044,7 +1102,7 @@ impl Serialize for MessagePages<'_> {
                 .handle
                 .block_on(
                     sqlx::query_as(
-                        "SELECT id, message_id, filename, content_type, size_bytes \
+                        "SELECT id, message_id, filename, content_type, size_bytes, description \
                          FROM attachments WHERE message_id = ANY($1) AND uploader_id = $2 \
                          ORDER BY created_at, id",
                     )
@@ -1064,6 +1122,7 @@ impl Serialize for MessagePages<'_> {
                             "filename": file.filename,
                             "content_type": file.content_type,
                             "size_bytes": file.size_bytes,
+                            "description": file.description,
                             "path": self.copied.contains(&file.id).then_some(path),
                         })
                     })

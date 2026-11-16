@@ -1,4 +1,4 @@
-import type { PresenceStatus } from "../ws/protocol.ts";
+import type { OwnPresence } from "../presence/mode.ts";
 import type { AvatarDecoration } from "../auth/types.ts";
 import { Avatar, type AvatarSize } from "./Avatar.tsx";
 import { AvatarFrame } from "./AvatarFrame.tsx";
@@ -16,7 +16,8 @@ export function PresenceAvatar({
 }: {
   name: string;
   url: string | null;
-  status: PresenceStatus;
+  /** `v`: you, invisible (#590); only your own avatar shows it. */
+  status: OwnPresence;
   size?: AvatarSize;
   className?: string;
   decoration?: AvatarDecoration | null | undefined;

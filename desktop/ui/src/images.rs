@@ -414,6 +414,19 @@ impl Images {
         ImageState::Ready(texture.clone())
     }
 
+    /// The texture already decoded for `url` at `fit`, if any, without
+    /// starting a load or counting as drawn: a stand-in while another
+    /// version of the same picture loads.
+    pub fn peek(&self, url: &str, fit: Fit) -> Option<TextureHandle> {
+        match self.cache.lock().entries.get(&(url.to_owned(), fit)) {
+            Some(Entry {
+                kind: Kind::Ready { texture, .. },
+                ..
+            }) => Some(texture.clone()),
+            _ => None,
+        }
+    }
+
     /// Whether the picture at `fit` failed for good because it is too
     /// large to show, without counting as drawn.
     pub fn too_large(&self, url: &str, fit: Fit) -> bool {
@@ -656,7 +669,18 @@ fn decode_still(bytes: &[u8], limit: &Limit) -> Option<ColorImage> {
         .with_guessed_format()
         .ok()?;
     reader.limits(limits());
-    let image = reader.decode().ok()?;
+    // The server keeps the EXIF orientation in the original and sends the
+    // size as shown, so the picture is turned upright here (#574).
+    let mut decoder = reader.into_decoder().ok()?;
+    // `into_decoder` checks the edges only; `decode` would check this.
+    if image::ImageDecoder::total_bytes(&decoder) > limits().max_alloc.unwrap_or(u64::MAX) {
+        return None;
+    }
+    let orientation = image::ImageDecoder::orientation(&mut decoder).ok();
+    let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+    if let Some(orientation) = orientation {
+        image.apply_orientation(orientation);
+    }
     let [w, h] = fitted(image.width(), image.height(), limit);
     let image = if [w, h] == [image.width(), image.height()] {
         image
@@ -799,6 +823,40 @@ pub(crate) mod tests {
             }
         }
         out
+    }
+
+    /// A 4×2 JPEG whose EXIF says "turn 90° clockwise" (orientation 6), as
+    /// a phone writes it.
+    fn rotated_jpeg() -> Vec<u8> {
+        let mut plain = Vec::new();
+        image::RgbImage::from_pixel(4, 2, image::Rgb([200, 30, 30]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut plain),
+                image::ImageFormat::Jpeg,
+            )
+            .expect("jpeg");
+        let tiff: &[u8] = &[
+            b'M', b'M', 0, 42, 0, 0, 0, 8, // header, IFD at 8
+            0, 1, // one entry
+            0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, // orientation = 6
+            0, 0, 0, 0, // no next IFD
+        ];
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(tiff);
+        let len = u16::try_from(app1.len() + 2).expect("short");
+        let mut out = plain[..2].to_vec();
+        out.extend_from_slice(&[0xFF, 0xE1]);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&app1);
+        out.extend_from_slice(&plain[2..]);
+        out
+    }
+
+    #[test]
+    fn a_rotated_photo_is_turned_upright() {
+        let frames = decode_fitted(&rotated_jpeg(), &ANY);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].0.size, [2, 4]);
     }
 
     #[test]

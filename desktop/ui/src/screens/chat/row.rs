@@ -76,22 +76,34 @@ impl SendState {
     }
 }
 
-/// `attempt.error`: "{stage} fehlgeschlagen." and the uploads the server
-/// turned down, by file name.
+/// `attempt.error`: the server's reason (`sendFailureText`), or
+/// "{stage} fehlgeschlagen." and the uploads the server turned down, by
+/// file name.
 pub fn failure_line(pending: &gelabber_client::PendingMessage) -> String {
     let mut line = pending.stage.failed().to_owned();
-    if let Some(error) = &pending.failed
-        && let Some(rejected) = gelabber_client::store::rejected_uploads(error)
-    {
-        for (index, field, code) in rejected {
-            if let Some(file) = index.and_then(|i| pending.files.get(i)) {
-                line.push(' ');
-                line.push_str(&format!(
-                    "{}: {}",
-                    file.filename,
-                    crate::rules::field_message(&field, &code)
-                ));
+    let Some(error) = &pending.failed else {
+        return line;
+    };
+    match gelabber_client::store::rejected_uploads(error) {
+        // A rejection naming its files says why itself.
+        Some(rejected) => {
+            for (index, field, code) in rejected {
+                if let Some(file) = index.and_then(|i| pending.files.get(i)) {
+                    line.push(' ');
+                    line.push_str(&format!(
+                        "{}: {}",
+                        file.filename,
+                        crate::rules::field_message(&field, &code)
+                    ));
+                }
             }
+        }
+        None => {
+            line = gelabber_client::store::send_failure_text(
+                pending.stage,
+                error,
+                pending.gif.is_some(),
+            );
         }
     }
     line
@@ -466,6 +478,7 @@ fn add_extras(ui: &Ui, cx: &RowCx, out: &mut RowLayout, stack: &mut Stack, colum
         &msg.attachments,
         column,
         cx.uploads.as_deref(),
+        (cx.mine && !cx.pending()).then_some(msg.id),
     ) {
         let top = stack.add(6.0, media.height, 0.0);
         out.media = Some((top, media));
@@ -1250,6 +1263,32 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_gif_says_why() {
+        let mut p =
+            gelabber_client::PendingMessage::new(Uuid::nil(), String::new(), chrono::Utc::now());
+        p.gif = Some(gelabber_client::GifPick {
+            slug: "hello-hi-662--kgmD1VZja".into(),
+            query: "hallo".into(),
+        });
+        p.failed = Some(gelabber_client::ApiError::Api {
+            status: 422,
+            code: "validation_failed".into(),
+            message: String::new(),
+            fields: serde_json::json!({"gif": "invalid"}),
+            retry_after: None,
+        });
+        let state = SendState::Failed {
+            error: failure_line(&p),
+            uncertain: false,
+        };
+        assert_eq!(state.status(), "Nicht gesendet");
+        assert_eq!(
+            state.failure().as_deref(),
+            Some("Dieses GIF ist nicht mehr verfügbar.")
+        );
+    }
+
+    #[test]
     fn a_lost_answer_reads_as_unknown() {
         use gelabber_client::store::SendStage;
         let mut p =
@@ -1274,6 +1313,7 @@ mod tests {
             filename: "liste.txt".into(),
             content_type: "text/plain".into(),
             data: Default::default(),
+            description: None,
         }];
         p.failed = Some(gelabber_client::ApiError::Api {
             status: 422,

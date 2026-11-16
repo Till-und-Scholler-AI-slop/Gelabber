@@ -14,14 +14,19 @@ import {
   useSession,
 } from "../auth/session.ts";
 import type { User } from "../auth/types.ts";
-import { QuickCallSettings } from "../voice/QuickCallSettings.tsx";
-import { useVoice } from "../voice/session.ts";
 import { usePresenceStore } from "../ws/live.ts";
-import type { PresenceStatus } from "../ws/protocol.ts";
-import { ChevronIcon, GearIcon } from "./Icons.tsx";
+import {
+  modeAt,
+  modeLabel,
+  ownShown,
+  usePresenceMode,
+  type OwnPresence,
+} from "../presence/mode.ts";
+import { moveInAccount } from "./accountKeys.ts";
+import { GearIcon } from "./Icons.tsx";
 import { logOut } from "./logout.ts";
-import { useMenuDetails } from "./menuDetails.ts";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
+import { PresenceModeMenu } from "./PresenceModeMenu.tsx";
 import { Button } from "./ui/Button.tsx";
 import { InlineStatus } from "./ui/InlineStatus.tsx";
 import { Input } from "./ui/Input.tsx";
@@ -35,19 +40,19 @@ import { DEFAULT_OPERATOR_PAGE } from "../operator/areas.ts";
 import { openFeedbackDialog } from "../feedback/dialogStore.ts";
 import { useFeedbackStatus } from "../feedback/queries.ts";
 import "../feedback/feedback.css";
+import "./shell.css";
 
 export function UserPanel({ contextId }: { contextId?: string }) {
   const t = useT(shell);
   const user = useSession((state) => state.user);
-  const operator = useSession((state) => state.operator);
-  const presence = usePresenceStore((state) =>
+  const reported = usePresenceStore((state) =>
     user ? ownPresence(state.byServer, user.id, contextId) : "o",
   );
-  const navigate = useNavigate();
-  const menu = useMenuDetails();
+  // The mode you chose wins (#590): invisible shows as such, not offline.
+  const mode = usePresenceMode((state) => modeAt(state));
+  const presence = ownShown(mode, reported);
   const profileButton = useRef<HTMLButtonElement>(null);
-  const [statusOpen, setStatusOpen] = useState(false);
-  const inCall = useVoice((state) => state.status === "joined");
+  const [open, setOpen] = useState(false);
   const feedbackStatus = useFeedbackStatus().data;
   const feedback = feedbackStatus?.enabled === true;
   const unread = feedback && feedbackStatus.unread > 0;
@@ -61,161 +66,160 @@ export function UserPanel({ contextId }: { contextId?: string }) {
           type="button"
           className="user-panel-profile"
           aria-haspopup="dialog"
-          aria-expanded={statusOpen}
-          onClick={() => setStatusOpen((open) => !open)}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
         >
-          <PresenceAvatar
-            name={user.name}
-            url={user.avatar_url}
-            status={presence}
-            size="md"
-            decoration={user.avatar_decoration}
-            accent={user.accent_color}
-          />
+          {/* The subtitle names the presence; the avatar adds nothing to the
+              button's name, which starts with the person's name. */}
+          <span className="user-panel-avatar" aria-hidden="true">
+            <PresenceAvatar
+              name={user.name}
+              url={user.avatar_url}
+              status={presence}
+              size="md"
+              decoration={user.avatar_decoration}
+              accent={user.accent_color}
+            />
+            {unread ? <span className="unread-dot" aria-hidden="true" /> : null}
+          </span>
           <span>
             <strong>{user.name}</strong>
             <small>{panelSubtitle(presence, user.status_text)}</small>
+            {unread ? (
+              <span className="sr-only">
+                {", "}
+                {t("userPanel.feedbackUnread")}
+              </span>
+            ) : null}
           </span>
         </button>
         <Popover
-          open={statusOpen}
-          onClose={() => setStatusOpen(false)}
+          open={open}
+          onClose={() => setOpen(false)}
           anchor={profileButton}
-          label={t("userPanel.statusLabel")}
+          label={t("userPanel.accountLabel")}
           placement="top-start"
-          className="user-status-popover"
+          className="user-account-popover"
         >
-          <StatusCard
-            user={user}
-            presence={presence}
-            onDone={() => setStatusOpen(false)}
-          />
-        </Popover>
-        {inCall ? (
-          <CallSettingsGear />
-        ) : (
-          <Link
-            to="/settings/$area"
-            params={{ area: "darstellung" }}
-            className="shell-icon-button"
-            aria-label={t("userPanel.settings")}
-            title={t("userPanel.settings")}
-          >
-            <GearIcon size={21} />
-          </Link>
-        )}
-        <details ref={menu} className="user-panel-menu">
-          <summary
-            className="shell-icon-button"
-            aria-label={t(
-              unread ? "userPanel.menuUnreadLabel" : "userPanel.menuLabel",
-            )}
-          >
-            <ChevronIcon size={18} />
-            {unread ? <span className="unread-dot" aria-hidden="true" /> : null}
-          </summary>
-          <nav aria-label={t("userPanel.accountLabel")}>
-            <Link to="/settings/$area" params={{ area: "profil" }}>
-              {t("userPanel.editProfile")}
-            </Link>
-            <Link to="/settings/$area" params={{ area: "darstellung" }}>
-              {t("userPanel.settings")}
-            </Link>
-            {feedback ? (
-              <button
-                type="button"
-                className="user-panel-feedback"
-                onClick={(event) => {
-                  // The menu closes first, and its chevron holds focus, so
-                  // the dialog hands focus back there when it closes.
-                  const details = event.currentTarget.closest("details");
-                  details?.removeAttribute("open");
-                  details
-                    ?.querySelector<HTMLElement>(":scope > summary")
-                    ?.focus();
-                  openFeedbackDialog();
-                }}
-              >
-                {t("userPanel.feedback")}
-                {unread ? (
-                  <>
-                    <span className="sr-only">
-                      {", "}
-                      {t("userPanel.feedbackUnread")}
-                    </span>
-                    <span className="unread-dot" aria-hidden="true" />
-                  </>
-                ) : null}
-              </button>
-            ) : null}
-            {operator ? (
-              <Link
-                to="/betrieb/$page"
-                params={{ page: DEFAULT_OPERATOR_PAGE }}
-              >
-                {t("userPanel.operator")}
-              </Link>
-            ) : null}
-            <button
-              type="button"
-              onClick={async () => {
-                if (await logOut()) void navigate({ to: "/login" });
+          <div className="user-account" onKeyDown={moveInAccount}>
+            <StatusCard user={user} presence={presence} />
+            <AccountMenu
+              feedback={feedback}
+              unread={unread}
+              onDone={() => setOpen(false)}
+              onFeedback={() => {
+                // The popover closes first, and the avatar holds the focus,
+                // so the dialog hands it back there when it closes.
+                setOpen(false);
+                profileButton.current?.focus({ preventScroll: true });
+                openFeedbackDialog();
               }}
-            >
-              {t("userPanel.signOut")}
-            </button>
-          </nav>
-        </details>
+            />
+          </div>
+        </Popover>
+        {/* Always Settings, in a call too: the call's own settings are in
+            the voice room and in Settings → Audio (#570). */}
+        <Link
+          to="/settings/$area"
+          params={{ area: "darstellung" }}
+          className="shell-icon-button"
+          aria-label={t("userPanel.settings")}
+          title={t("userPanel.settings")}
+        >
+          <GearIcon size={21} />
+        </Link>
       </footer>
     </div>
   );
 }
 
-/** The gear during a call: the call's quick settings, as the call bar's
- * gear opened them. The app's settings stay in the chevron menu. */
-function CallSettingsGear() {
+/** The account's entries under the status card: the presence modes
+ * (#590), then profile, feedback, operator, then signing out after a
+ * line. */
+export function AccountMenu({
+  feedback,
+  unread,
+  onDone,
+  onFeedback,
+}: {
+  feedback: boolean;
+  unread: boolean;
+  onDone: () => void;
+  onFeedback: () => void;
+}) {
   const t = useT(shell);
-  const [open, setOpen] = useState(false);
-  const anchor = useRef<HTMLButtonElement>(null);
+  const operator = useSession((state) => state.operator);
+  const navigate = useNavigate();
   return (
-    <>
+    <div
+      role="menu"
+      aria-label={t("userPanel.menuLabel")}
+      className="user-account-menu"
+    >
+      <PresenceModeMenu onDone={onDone} />
+      <hr className="shell-menu-separator" />
+      <Link
+        to="/settings/$area"
+        params={{ area: "profil" }}
+        role="menuitem"
+        className="shell-menu-item"
+        onClick={onDone}
+      >
+        {t("userPanel.editProfile")}
+      </Link>
+      {feedback ? (
+        <button
+          type="button"
+          role="menuitem"
+          className="shell-menu-item"
+          onClick={onFeedback}
+        >
+          {t("userPanel.feedback")}
+          {unread ? (
+            <>
+              <span className="sr-only">
+                {", "}
+                {t("userPanel.feedbackUnread")}
+              </span>
+              <span className="unread-dot" aria-hidden="true" />
+            </>
+          ) : null}
+        </button>
+      ) : null}
+      {operator ? (
+        <Link
+          to="/betrieb/$page"
+          params={{ page: DEFAULT_OPERATOR_PAGE }}
+          role="menuitem"
+          className="shell-menu-item"
+          onClick={onDone}
+        >
+          {t("userPanel.operator")}
+        </Link>
+      ) : null}
+      <hr className="shell-menu-separator" />
       <button
-        ref={anchor}
         type="button"
-        className="shell-icon-button"
-        aria-label={t("userPanel.callSettings")}
-        title={t("userPanel.callSettings")}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        role="menuitem"
+        className="shell-menu-item"
+        onClick={async () => {
+          onDone();
+          if (await logOut()) void navigate({ to: "/login" });
+        }}
       >
-        <GearIcon size={21} />
+        {t("userPanel.signOut")}
       </button>
-      <Popover
-        open={open}
-        onClose={() => setOpen(false)}
-        anchor={anchor}
-        label={t("userPanel.callSettings")}
-        placement="top-start"
-        className="voice-quick-settings"
-      >
-        <QuickCallSettings onMore={() => setOpen(false)} />
-      </Popover>
-    </>
+    </div>
   );
 }
 
-/** The status popover: who you are right now, and the status text to edit. */
-function StatusCard({
-  user,
-  presence,
-  onDone,
-}: {
-  user: User;
-  presence: PresenceStatus;
-  onDone: () => void;
-}) {
+/** The popover's top: who you are right now, and the status text to edit. */
+function StatusCard({ user, presence }: { user: User; presence: OwnPresence }) {
   const t = useT(shell);
+  // "Nicht stören bis 18:30" while a mode with an end lasts.
+  const chosen = usePresenceMode((state) =>
+    state.until !== null && modeAt(state) !== "auto" ? modeLabel(state) : null,
+  );
   const tc = useT(common);
   const [text, setText] = useState(user.status_text ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -268,7 +272,7 @@ function StatusCard({
         />
         <span>
           <strong>{user.name}</strong>
-          <small>{t(`presence.${presence}`)}</small>
+          <small>{chosen ?? t(`presence.${presence}`)}</small>
         </span>
       </div>
       <form className="user-status-card__form" onSubmit={onSubmit} noValidate>
@@ -304,14 +308,6 @@ function StatusCard({
         ) : null}
         <InlineStatus status={status.status} />
       </form>
-      <Link
-        to="/settings/$area"
-        params={{ area: "profil" }}
-        className="user-status-card__link"
-        onClick={onDone}
-      >
-        {t("userPanel.editProfile")}
-      </Link>
     </div>
   );
 }

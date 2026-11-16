@@ -18,6 +18,8 @@ async fn two_users(pool: PgPool) -> (Client, Client) {
     bob.bootstrap().await;
     let res = bob.register("bob@example.com", "password123", "Bob").await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    // Friends since #563, so their DM opens as an ordinary one.
+    ada.befriend(bob.user_id()).await;
     (ada, bob)
 }
 

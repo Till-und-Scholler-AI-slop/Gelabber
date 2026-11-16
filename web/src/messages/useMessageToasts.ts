@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
 import { serverNow } from "../api/client.ts";
+import { blocksAuthor, useBlocks } from "../blocks/queries.ts";
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { dmKeys } from "../dms/queries.ts";
@@ -10,6 +11,7 @@ import type { DirectMessage } from "../dms/types.ts";
 import { serverKeys } from "../servers/queries.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { playMessageSound } from "../voice/callSounds.ts";
+import { isDoNotDisturb } from "../presence/mode.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import { useVoice } from "../voice/session.ts";
 import { useInstallation } from "../pwa/install.ts";
@@ -128,6 +130,8 @@ export function useMessageToastsBridge(): void {
   useNotificationSettings();
   // Whether notifications show the message at all (#268).
   useNotificationPrivacy();
+  // Keeps the block list cached: blocked authors raise nothing (#565).
+  useBlocks();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
@@ -175,6 +179,9 @@ export function useMessageToastsBridge(): void {
       const focused = typeof document === "undefined" || document.hasFocus();
       const hidden = typeof document !== "undefined" && document.hidden;
       const own = message.author.id === userId;
+      // Someone blocked raises nothing, not even a mention (#565).
+      if (!own && blocksAuthor(client, userId, generation, message.author.id))
+        return;
       const dm = isDmTopic(event.s, event.c);
       const mentioned = !own && mentionsMe(message, userId);
       // Level and mute of the conversation (#242), from the unread rows.
@@ -206,6 +213,7 @@ export function useMessageToastsBridge(): void {
         // burst. Measured on the server clock: a fast local clock must not
         // suppress every live notification.
         ageMs: serverNow() - Date.parse(message.created_at),
+        doNotDisturb: isDoNotDisturb(),
       });
       if (!decision.toast && !decision.desktop) return;
       const label = channelLabel(client, userId, generation, event, dm);

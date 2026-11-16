@@ -15,6 +15,7 @@ use crate::api::HistoryQuery;
 use crate::gateway::{Gateway, GatewayEvent, GatewayStatus};
 use crate::http::ApiError;
 use crate::models::*;
+use crate::presence;
 use crate::store::{
     Notice, OpState, OutgoingFile, PAGE_SIZE, PendingMessage, SendStage, Session, State, View,
     VoiceSelf,
@@ -28,8 +29,6 @@ const SESSION_RETRY: [Duration; 4] = [
     Duration::from_millis(30_000),
 ];
 const TYPING_REFRESH: Duration = Duration::from_millis(3_000);
-const PRESENCE_PULSE: Duration = Duration::from_millis(10_000);
-const CLIENT_IDLE: Duration = Duration::from_secs(300);
 /// Recovery after a reconnect waits up to this long so clients spread out.
 const READY_SPREAD: Duration = Duration::from_millis(1_000);
 /// A failed recovery round is tried again after this, doubling up to the
@@ -93,7 +92,11 @@ impl Client {
     }
 
     /// `None` also when the account changed meanwhile: the answer is dropped.
-    async fn op<T>(&self, key: &str, work: impl Future<Output = Result<T, ApiError>>) -> Option<T> {
+    pub(crate) async fn op<T>(
+        &self,
+        key: &str,
+        work: impl Future<Output = Result<T, ApiError>>,
+    ) -> Option<T> {
         let epoch = self.epoch();
         self.write(|s| s.ops.insert(key.to_owned(), OpState::Pending));
         match work.await {
@@ -346,13 +349,14 @@ impl Client {
         let http = self.http().clone();
         let epoch = self.epoch();
         self.write(|s| s.ops.insert("bootstrap".into(), OpState::Pending));
-        let (servers, dms, unread, settings, privacy, themes) = tokio::join!(
+        let (servers, dms, unread, settings, privacy, themes, mode) = tokio::join!(
             http.servers(),
             http.dms(),
             http.unread(),
             http.notification_settings(),
             http.notification_privacy(),
             http.themes(),
+            http.presence_mode(),
         );
         let mut failure: Option<ApiError> = None;
         let current = self.write_in(epoch, |s| {
@@ -387,6 +391,10 @@ impl Client {
             if let Ok(doc) = themes {
                 s.themes = Some(doc);
             }
+            // An old server without manual presence: automatic, as there.
+            if let Ok(mode) = mode {
+                s.presence_mode = mode;
+            }
             s.bootstrapped = true;
             s.ops.insert(
                 "bootstrap".into(),
@@ -397,6 +405,10 @@ impl Client {
             );
         });
         if current.is_some() && self.with_state(|s| s.me().is_some()) {
+            // For the sidebar's counts; their pages read them again.
+            self.load_friends();
+            self.load_dm_requests();
+            self.load_blocks();
             self.ensure_gateway();
             self.activity();
             self.sync_topics();
@@ -599,6 +611,17 @@ impl Client {
             let http = this.http().clone();
             let key = format!("dm_load:{channel}");
             match this.op(&key, http.dm(channel)).await {
+                Some(dm) if dm.request.is_some_and(|r| r.incoming) => {
+                    // Someone's message request: kept with the requests.
+                    this.write_in(epoch, |s| {
+                        let list = s.dm_requests.get_or_insert_with(Vec::new);
+                        match list.iter_mut().find(|d| d.id == dm.id) {
+                            Some(known) => *known = dm,
+                            None => list.insert(0, dm),
+                        }
+                    });
+                    this.open_conversation(None, channel);
+                }
                 Some(dm) => {
                     let added =
                         this.write_in(epoch, |s| match s.dms.iter_mut().find(|d| d.id == dm.id) {
@@ -889,9 +912,19 @@ impl Client {
             Some(failure) => Err(failure),
             None => {
                 self.update_pending(epoch, channel, nonce, |p| p.stage = SendStage::Bind);
+                let attachment_descriptions = pending
+                    .files
+                    .iter()
+                    .zip(&ids)
+                    .filter_map(|(file, id)| {
+                        let text = file.description.as_deref()?.trim();
+                        (!text.is_empty()).then(|| (*id, text.to_owned()))
+                    })
+                    .collect();
                 let body = NewMessage {
                     content: pending.content.clone(),
                     attachment_ids: pending.gif.is_none().then_some(ids),
+                    attachment_descriptions,
                     gif: pending.gif.clone(),
                     reply_to: pending.reply_to,
                     nonce: Some(nonce),
@@ -903,7 +936,16 @@ impl Client {
         };
         match result {
             Ok(message) => {
-                self.write_in(epoch, |s| s.apply_message(message));
+                let request = self
+                    .write_in(epoch, |s| {
+                        s.apply_message(message);
+                        s.dm(channel).is_some_and(|d| d.request.is_some())
+                    })
+                    .unwrap_or(false);
+                // A message request counts down what may still go (#563).
+                if request {
+                    self.load_dm(channel);
+                }
             }
             Err((stage, error)) => self.update_pending(epoch, channel, nonce, |row| {
                 row.stage = stage;
@@ -988,6 +1030,43 @@ impl Client {
             format!("edit:{id}"),
             id,
             async move { http.edit_message(id, &content).await },
+            |s, m| s.apply_message(m),
+        );
+    }
+
+    /// Sets or (blank) clears the alt text of a picture of my message
+    /// (#575); the text stays. `opened_with` is the message's text when the
+    /// dialog opened, for a message no longer loaded. Op key `alt:<id>`.
+    pub fn edit_alt_text(&self, id: Uuid, attachment: Uuid, opened_with: Option<&str>, text: &str) {
+        let http = self.http().clone();
+        let text = text.trim().to_owned();
+        let op = format!("alt:{id}");
+        // Pending before anything runs, so the dialog waiting on it never
+        // reads a missing or stale state as done.
+        self.write(|s| s.ops.insert(op.clone(), OpState::Pending));
+        // The text as shown goes along: a server from before #575 reads a
+        // PATCH without `content` as an empty text and would delete it.
+        // Without a known text nothing is sent, as an empty one would be a
+        // text edit that deletes it.
+        let content = self
+            .with_state(|s| s.find_message(id).map(|m| m.content.clone()))
+            .or_else(|| opened_with.map(str::to_owned));
+        let Some(content) = content else {
+            // Never asked the server: an error of its own, not a lost connection.
+            let error = ApiError::Api {
+                status: 0,
+                code: "unloaded".into(),
+                message: gelabber_i18n::chat::alt_message_unloaded().into(),
+                fields: serde_json::Value::Null,
+                retry_after: None,
+            };
+            self.fail_op(&op, error);
+            return;
+        };
+        self.message_write(
+            op,
+            id,
+            async move { http.edit_alt_text(id, attachment, &content, &text).await },
             |s, m| s.apply_message(m),
         );
     }
@@ -1150,6 +1229,10 @@ impl Client {
             self.stop_typing();
             return;
         }
+        // Invisible (#590): nobody is to see you type.
+        if self.with_state(|s| s.presence_mode_now() == PresenceMode::Invisible) {
+            return;
+        }
         let server = self.with_state(|s| {
             if s.dm(channel).is_some() {
                 Some(channel)
@@ -1191,24 +1274,15 @@ impl Client {
         }
     }
 
-    /// Pointer or key input (`useIdlePresence`): active again after idle,
-    /// otherwise a presence pulse at most every 10 s.
+    /// Pointer or key input in the window (`useIdlePresence`): active again
+    /// after idle, otherwise a presence pulse at most every 10 s.
     pub fn activity(&self) {
-        let now = Instant::now();
         let (send, front) = {
             let mut local = self.inner.local.lock();
-            local.last_activity = Some(now);
-            let send = local.idle || local.last_pulse.is_none_or(|t| now - t >= PRESENCE_PULSE);
-            local.idle = false;
-            if send {
-                local.last_pulse = Some(now);
-            }
-            (send, local.focused)
+            (local.presence.window_input(Instant::now()), local.focused)
         };
-        if send {
-            self.send_frame(ClientFrame::Presence {
-                st: Some(PresenceStatus::Online),
-            });
+        if let Some(st) = send {
+            self.send_frame(ClientFrame::Presence { st: Some(st) });
         }
         self.update_front(front);
     }
@@ -1227,7 +1301,7 @@ impl Client {
     fn update_front(&self, focused: bool) {
         let front = {
             let mut local = self.inner.local.lock();
-            let front = focused && !local.idle;
+            let front = focused && !local.presence.window_idle(Instant::now());
             let changed = local.in_front != front;
             local.in_front = front;
             changed.then_some(front)
@@ -1262,7 +1336,10 @@ impl Client {
         if expired {
             self.write(|s| s.prune_typing(now));
         }
-        let (refresh, idle_now, focused) = {
+        // In a voice channel and able to hear it: never away (#566).
+        let in_call = self.with_state(|s| s.voice_self.channel.is_some() && !s.voice_self.deafened);
+        let system_input = presence::system_last_input();
+        let (refresh, presence, focused) = {
             let mut local = self.inner.local.lock();
             let refresh = match (local.typing, local.typing_sent) {
                 (Some(target), Some(sent)) if now - sent >= TYPING_REFRESH => {
@@ -1271,22 +1348,18 @@ impl Client {
                 }
                 _ => None,
             };
-            let idle_now =
-                !local.idle && local.last_activity.is_some_and(|t| now - t >= CLIENT_IDLE);
-            if idle_now {
-                local.idle = true;
-            }
-            (refresh, idle_now, local.focused)
+            let back = system_input.and_then(|at| local.presence.system_input(at, now));
+            let presence = local.presence.tick(now, in_call).or(back);
+            (refresh, presence, local.focused)
         };
         if let Some((s, c)) = refresh {
             self.send_frame(ClientFrame::Typing { s, c, on: true });
         }
-        if idle_now {
-            self.send_frame(ClientFrame::Presence {
-                st: Some(PresenceStatus::Idle),
-            });
-            self.update_front(focused);
+        if let Some(st) = presence {
+            self.send_frame(ClientFrame::Presence { st: Some(st) });
         }
+        // The window leaves the front five minutes after its last input.
+        self.update_front(focused);
     }
 
     // --------------------------------------------------------------- voice
@@ -1893,6 +1966,59 @@ impl Client {
         });
     }
 
+    /// Sets the account's manual presence (#590): shown at once, the
+    /// server's answer kept; on failure the earlier mode comes back and op
+    /// `presence_mode` says so.
+    pub fn set_presence_mode(&self, mode: PresenceMode, duration: ModeDuration) {
+        let before = self.write(|s| {
+            let before = s.presence_mode;
+            s.presence_mode = ModeState {
+                mode,
+                until: match mode {
+                    PresenceMode::Auto => None,
+                    _ => duration.until(chrono::Utc::now()),
+                },
+            };
+            before
+        });
+        let http = self.http().clone();
+        let epoch = self.epoch();
+        let this = self.clone();
+        self.write(|s| s.ops.insert("presence_mode".into(), OpState::Pending));
+        self.spawn(async move {
+            match http.set_presence_mode(mode, duration).await {
+                Ok(saved) => {
+                    this.write_in(epoch, |s| {
+                        s.ops.insert("presence_mode".into(), OpState::Done);
+                        // A newer choice made meanwhile keeps its own.
+                        if s.presence_mode.mode == mode {
+                            s.presence_mode = saved;
+                        }
+                    });
+                }
+                Err(error) => {
+                    this.write_in(epoch, |s| {
+                        if s.presence_mode.mode == mode {
+                            s.presence_mode = before;
+                        }
+                    });
+                    if this.epoch() == epoch {
+                        this.fail_op("presence_mode", error);
+                    }
+                }
+            }
+        });
+    }
+
+    /// The mode again after a reconnect: a `pm` may have gone by.
+    async fn reload_presence_mode(&self) {
+        let http = self.http().clone();
+        let epoch = self.epoch();
+        if let Ok(mode) = http.presence_mode().await {
+            self.write_in(epoch, |s| s.presence_mode = mode);
+        }
+    }
+
     pub fn set_notification_privacy(&self, hide_content: bool) {
         let http = self.http().clone();
         self.run(
@@ -2191,8 +2317,10 @@ impl Client {
                 self.write(|s| s.gateway = status);
             }
             GatewayEvent::Ready => {
+                let this = self.clone();
+                self.spawn(async move { this.reload_presence_mode().await });
                 // The server marks a new socket online; say so if we idle.
-                if self.inner.local.lock().idle {
+                if self.inner.local.lock().presence.idle() {
                     self.send_frame(ClientFrame::Presence {
                         st: Some(PresenceStatus::Idle),
                     });
@@ -2214,7 +2342,10 @@ impl Client {
                     let created = (event.t == EventKind::C)
                         .then(|| event.message())
                         .flatten()
-                        .filter(|m| Some(m.author.id) != me);
+                        .filter(|m| Some(m.author.id) != me)
+                        // Someone blocked raises nothing, not even a
+                        // mention (#565).
+                        .filter(|m| !s.blocks_user(m.author.id));
                     (removed, created)
                 });
                 if let Some((server, banned)) = removed {
@@ -2304,11 +2435,17 @@ impl Client {
             }
             ServerFrame::Dm { .. } => self.schedule_recovery(false),
             ServerFrame::Locale { l } => self.write(|s| record_locale(s, l)),
+            ServerFrame::PresenceMode { m, u } => self.write(|s| {
+                s.presence_mode = ModeState { mode: m, until: u };
+            }),
             ServerFrame::Joined { s } => {
                 let this = self.clone();
                 self.spawn(async move { this.joined(s).await });
             }
             ServerFrame::JoinRequests { s, n } => self.write(|st| st.set_join_requests(s, n)),
+            ServerFrame::Friends => self.load_friends(),
+            ServerFrame::MessageRequests => self.load_dm_requests(),
+            ServerFrame::Blocks => self.blocks_changed(),
             _ => {}
         }
     }
@@ -2949,6 +3086,47 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(5), "{what}");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// A message from someone blocked raises no notice; anyone else's does.
+    #[test]
+    fn a_blocked_author_raises_no_notice() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let (home, channel) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let blocked = Uuid::from_u128(2);
+        client.write(|s| {
+            s.blocks = Some(vec![BlockedUser {
+                id: blocked,
+                name: "Bob".into(),
+                avatar_url: None,
+                created_at: "2026-11-01T00:00:00Z".parse().unwrap(),
+            }]);
+        });
+        let created = |n: u64, author: Uuid| EventFrame {
+            t: EventKind::C,
+            s: home,
+            c: Some(channel),
+            n,
+            ep: None,
+            i: Some(Uuid::from_u128(100 + n as u128)),
+            d: Some(serde_json::json!({
+                "id": Uuid::from_u128(100 + n as u128), "channel_id": channel,
+                "author": {"id": author, "name": "Wer"},
+                "content": "@everyone", "created_at": "2026-11-01T00:00:00Z",
+                "mention_everyone": true, "revision": 1, "created_order": n,
+            })),
+            r: None,
+        };
+        client.on_gateway(GatewayEvent::Event(created(1, blocked)));
+        assert!(client.take_notices().is_empty());
+        client.on_gateway(GatewayEvent::Event(created(2, Uuid::from_u128(3))));
+        let notices = client.take_notices();
+        assert!(
+            matches!(notices.as_slice(), [Notice::Message { .. }]),
+            "{notices:?}"
+        );
     }
 
     /// `k: "o"` (`isOwnerChange`): the list and that server's detail are

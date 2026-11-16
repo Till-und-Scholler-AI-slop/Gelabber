@@ -674,7 +674,8 @@ try {
 
   {
     // A picture's box is the picture: a small, wide screenshot got the
-    // 240 px box of a picture still loading, the rest of it empty.
+    // box of a picture still loading, the rest of it empty. Wider than
+    // 3:1, it is cropped to 3:1 (#574).
     const label = "picture size";
     const opened = await open();
     const { page, send } = opened;
@@ -717,14 +718,13 @@ try {
           return {
             name: img.alt,
             box: [outer.width, outer.height],
-            // Without its 1 px border.
-            drawn: [drawn.width - 2, drawn.height - 2],
+            drawn: [drawn.width, drawn.height],
             natural: [img.naturalWidth, img.naturalHeight],
           };
         }),
       };
     });
-    const wanted = { "zeile.png": [358, 42], "klein.png": [120, 40] };
+    const wanted = { "zeile.png": [342, 114], "klein.png": [120, 40] };
     for (const { name, box, drawn, natural } of placed.boxes) {
       const size = (pair) => pair.map((v) => Math.round(v)).join("×");
       assert.equal(
@@ -733,8 +733,7 @@ try {
         `${label}: ${name} (${size(natural)}) is drawn at ${size(drawn)}`,
       );
       assert.ok(
-        Math.abs(box[0] - drawn[0] - 2) < 1 &&
-          Math.abs(box[1] - drawn[1] - 2) < 1,
+        Math.abs(box[0] - drawn[0]) < 1 && Math.abs(box[1] - drawn[1]) < 1,
         `${label}: ${name} is drawn at ${size(drawn)} in a box of ${size(box)}`,
       );
     }

@@ -1,11 +1,13 @@
 // The body of a personal settings area. Loaded on its own, after the
 // settings header and navigation (see UserSettingsPage).
 
+import { BlockedArea } from "../blocks/BlockedArea.tsx";
 import { FeedbackArea } from "../feedback/FeedbackArea.tsx";
 import { MessageAlertSettings } from "../components/MessageAlertSettings.tsx";
 import { NotificationPrivacySetting } from "../components/NotificationPrivacy.tsx";
 import { InstallApp } from "../pwa/InstallApp.tsx";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
+import { DiagnosticsSection } from "../voice/DiagnosticsSection.tsx";
 import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
 import { AppearanceSettings } from "./AppearanceSettings.tsx";
 import { ProfileArea, ProfileCardArea } from "./ProfilePage.tsx";
@@ -20,6 +22,8 @@ export function SettingsAreaContent({ area }: { area: SettingsArea }) {
       return <ProfileCardArea />;
     case "konto":
       return <SecurityArea />;
+    case "blockiert":
+      return <BlockedArea />;
     case "feedback":
       return <FeedbackArea />;
     case "darstellung":
@@ -27,6 +31,12 @@ export function SettingsAreaContent({ area }: { area: SettingsArea }) {
     case "themes":
       return <ThemesPanel />;
     case "audio":
+      return (
+        <>
+          <MediaSettingsForm key={area} section={area} />
+          <DiagnosticsSection />
+        </>
+      );
     case "video":
       return <MediaSettingsForm key={area} section={area} />;
     case "benachrichtigungen":

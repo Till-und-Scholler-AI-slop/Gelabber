@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // A static render keeps a hook's first state: the device list is set here.
 const listing = vi.hoisted(() => ({ loaded: false }));
@@ -14,13 +14,25 @@ vi.mock("./devices.ts", async (original) => {
     }),
   };
 });
+// Outside a router: the diagnostics section reads the hash, the links
+// navigate.
+const route = vi.hoisted(() => ({ hash: "" }));
+vi.mock("@tanstack/react-router", async (original) => ({
+  ...(await original<typeof import("@tanstack/react-router")>()),
+  useLocation: (options?: {
+    select?: (location: { hash: string }) => unknown;
+  }) =>
+    options?.select
+      ? options.select({ hash: route.hash })
+      : { hash: route.hash },
+  useNavigate: () => () => Promise.resolve(),
+}));
 
-import { VoiceSettingsTabs } from "../components/VoiceSettingsDialog.tsx";
 import { useLocale } from "../i18n/locale.ts";
+import { SettingsAreaContent } from "../pages/SettingsAreaContent.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { CallSound, QuickCallSettings } from "./QuickCallSettings.tsx";
 import { MediaSettingsForm } from "./VoiceSettings.tsx";
-import { VoiceSettingsPanelPart } from "./voiceSettingsPanelPart.ts";
 
 describe("stream settings form", () => {
   it("shows camera and screen profiles with resolution, fps, and budget", () => {
@@ -93,30 +105,24 @@ describe("source-audio form", () => {
   });
 });
 
-describe("settings dialog", () => {
-  // The tab bodies are a chunk of their own; loaded, they render at once.
-  beforeAll(() => VoiceSettingsPanelPart.preload());
-  it("shows one area at a time, opening where it was asked to", () => {
-    const tabs = (initial: "audio" | "video" | "diagnostics") =>
-      renderToStaticMarkup(<VoiceSettingsTabs initial={initial} />);
-    const audio = tabs("audio");
-    expect(audio.match(/role="tab"/g)).toHaveLength(3);
-    expect(audio).toMatch(/aria-selected="true"[^>]*>Audio</);
+describe("settings → audio and video", () => {
+  // #570: the one place for the call's settings; the diagnostics are a
+  // section at the end of Audio, where the call bar's links lead.
+  it("ends Audio with the diagnostics, and Video without them", () => {
+    const audio = renderToStaticMarkup(<SettingsAreaContent area="audio" />);
     expect(audio).toContain('id="audio-input"');
     expect(audio).not.toContain('id="video-input"');
-    expect(audio).not.toContain("Sprachdiagnose");
-    const video = tabs("video");
-    expect(video).toMatch(/aria-selected="true"[^>]*>Video &amp; Live</);
+    expect(audio).toMatch(/<section id="diagnostics"[^>]*>/);
+    expect(audio).toMatch(/<h3[^>]*tabindex="-1"[^>]*>Diagnose<\/h3>/);
+    expect(audio).toContain('aria-label="Sprachdiagnose"');
+    expect(audio.indexOf('id="audio-input"')).toBeLessThan(
+      audio.indexOf('id="diagnostics"'),
+    );
+    const video = renderToStaticMarkup(<SettingsAreaContent area="video" />);
     expect(video).toContain('id="video-input"');
     expect(video).toContain('id="economy-mode"');
+    expect(video).not.toContain('id="diagnostics"');
     expect(video).not.toContain('id="audio-input"');
-    // The call bar's quality bars open the diagnostics.
-    const diagnostics = tabs("diagnostics");
-    expect(diagnostics).toMatch(/aria-selected="true"[^>]*>Diagnose</);
-    expect(diagnostics).toContain('aria-label="Sprachdiagnose"');
-    // The dialog's focus starts on the tab it opened, not the first one.
-    expect(diagnostics.match(/autofocus=""/g)).toHaveLength(1);
-    expect(diagnostics).toMatch(/autofocus=""[^>]*aria-selected="true"/);
   });
 });
 
@@ -141,7 +147,7 @@ describe("quick call settings", () => {
     expect(html).toContain(">Gespräche</label>");
     expect(html).toContain(">Live-Ton</label>");
     expect(html).toContain('role="radiogroup" aria-label="Sprachübertragung"');
-    expect(html).toContain("Alle Einstellungen …");
+    expect(html).toContain("Alle Audio-Einstellungen →");
     // A browser that has named no device yet is asked on request only.
     expect(html).toContain("Gerätenamen anzeigen");
     // No meter outside a call: there is nothing being sent.
@@ -174,7 +180,6 @@ describe("microphone test", () => {
 });
 
 describe("in English", () => {
-  beforeAll(() => VoiceSettingsPanelPart.preload());
   afterEach(() => useLocale.setState({ locale: "de" }));
 
   it("names the settings, devices and limits in English", () => {
@@ -186,13 +191,12 @@ describe("in English", () => {
     // Numbers in the language's own form: 2.5, not 2,5.
     expect(form).toContain("video 2.5 Mbit/s combined");
     expect(form).toContain('<output for="input-gain">100%</output>');
-    const tabs = renderToStaticMarkup(<VoiceSettingsTabs initial="audio" />);
-    expect(tabs).toMatch(/role="tablist" aria-label="Sections"/);
-    expect(tabs).toContain(">Diagnostics</button>");
+    const audio = renderToStaticMarkup(<SettingsAreaContent area="audio" />);
+    expect(audio).toMatch(/<h3[^>]*>Diagnostics<\/h3>/);
     const quick = renderToStaticMarkup(
       <QuickCallSettings onMore={() => undefined} />,
     );
     expect(quick).toContain(">Calls</label>");
-    expect(quick).toContain("All settings…");
+    expect(quick).toContain("All audio settings →");
   });
 });

@@ -36,6 +36,7 @@ export function ProfileCardView({
   const presenceLabel: Record<PresenceStatus, string> = {
     o: tc("online"),
     i: t("card.away"),
+    d: t("card.dnd"),
     x: tc("offline"),
   };
   const banner = bannerOf(person);
