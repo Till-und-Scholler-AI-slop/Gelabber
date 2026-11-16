@@ -414,6 +414,19 @@ impl Images {
         ImageState::Ready(texture.clone())
     }
 
+    /// The texture already decoded for `url` at `fit`, if any, without
+    /// starting a load or counting as drawn: a stand-in while another
+    /// version of the same picture loads.
+    pub fn peek(&self, url: &str, fit: Fit) -> Option<TextureHandle> {
+        match self.cache.lock().entries.get(&(url.to_owned(), fit)) {
+            Some(Entry {
+                kind: Kind::Ready { texture, .. },
+                ..
+            }) => Some(texture.clone()),
+            _ => None,
+        }
+    }
+
     /// Whether the picture at `fit` failed for good because it is too
     /// large to show, without counting as drawn.
     pub fn too_large(&self, url: &str, fit: Fit) -> bool {

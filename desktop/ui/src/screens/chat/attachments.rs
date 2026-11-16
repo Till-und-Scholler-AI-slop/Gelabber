@@ -625,7 +625,16 @@ fn paint_image(
 ) {
     let theme = Theme::of(ui.ctx());
     let painter = ui.painter();
-    let state = images.frame(ui.ctx(), url, play, Fit::Inline);
+    let mut state = images.frame(ui.ctx(), url, play, Fit::Inline);
+    // A fresh picture switches to its thumbnail once the server has made
+    // it; the original already on screen stays until the thumbnail is in.
+    let original = attachment_url(att.id);
+    if !matches!(state, ImageState::Ready(_))
+        && url != original
+        && let Some(texture) = images.peek(&original, Fit::Inline)
+    {
+        state = ImageState::Ready(texture);
+    }
     if !matches!(state, ImageState::Ready(_))
         && let Some(color) = pictures::placeholder(att)
     {
@@ -1387,15 +1396,13 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, view: &mut Lightbox) -> (b
                     _ => None,
                 }),
         };
-        // The picture's own size in points: the server's, else the
-        // original's texture, as the thumbnail is smaller. Pixels are not
-        // points: on a 2x screen, actual size is half as many points.
-        let ppp = ctx.pixels_per_point();
+        // The picture's own size, image pixels as points like the chat
+        // and web: the server's, else the original's texture, as the
+        // thumbnail is smaller.
         let natural = item
             .size
             .or_else(|| images.natural(ctx, &item.url, Fit::Full))
-            .or_else(|| texture.as_ref().map(|t| t.size_vec2()))
-            .map(|size| size / ppp);
+            .or_else(|| texture.as_ref().map(|t| t.size_vec2()));
         let mut image_rect = None;
         // Where the alt caption was last frame: the wheel scrolls it there.
         let caption_id = egui::Id::unique("gelabber-lightbox-alt-rect");
