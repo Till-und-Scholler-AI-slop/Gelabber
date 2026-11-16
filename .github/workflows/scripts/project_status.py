@@ -12,9 +12,11 @@ deploy/compose/tests/test_project_status.py); `main` carries them out.
     PR back to draft                -> In progress   (from In review)
     PR closed without merge         -> In progress while assigned, else as above
                                        (from In review/In progress)
-    PR merged                       -> Done; into a version branch the issue is
+    PR merged into main or vX.Y     -> Done; into a version branch the issue is
                                        closed too, since GitHub only closes
                                        issues for merges into the default branch
+    PR merged into another branch   -> In progress   (from In review): a stacked
+                                       PR's work has not landed yet
     manual dispatch                 -> the given Status, from any
 
 Moves need PROJECT_TOKEN (GITHUB_TOKEN cannot reach projects); closing issues
@@ -34,6 +36,8 @@ NOT_STARTED = (None, 'Backlog', 'Planned')
 # else Planned with a milestone, else Backlog.
 RESTING = 'resting'
 # GitHub's closing keywords, e.g. "Closes #12", "fixes: #3".
+# Version branches, as in the `Version branches` ruleset (refs/heads/v[0-9]*).
+VERSION_BRANCH = re.compile(r'v[0-9]+\.[0-9]+(?:\.[0-9]+)?')
 CLOSING = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b', re.IGNORECASE)
 
 
@@ -83,7 +87,10 @@ def decide(event_name, event, default_branch):
     if action == 'converted_to_draft':
         return [move(n, 'In progress', ('In review',)) for n in refs]
     if action == 'closed' and pull.get('merged'):
-        into_version_branch = pull['base']['ref'] != default_branch
+        base = pull['base']['ref']
+        into_version_branch = VERSION_BRANCH.fullmatch(base) is not None
+        if base != default_branch and not into_version_branch:
+            return [move(n, 'In progress', ('In review',)) for n in refs]
         steps = []
         for n in refs:
             if into_version_branch:

@@ -59,6 +59,16 @@ class Decide(unittest.TestCase):
         steps = decide('pull_request', pr('closed', merged=True, base='main'))
         self.assertEqual(steps, [m.move(12, 'Done')])
 
+    def test_merge_into_a_patch_version_branch_closes_too(self):
+        steps = decide('pull_request', pr('closed', merged=True, base='v0.10.3'))
+        self.assertEqual(steps, [m.close(12), m.move(12, 'Done')])
+
+    def test_merge_of_a_stacked_pull_request_keeps_the_issue_open(self):
+        steps = decide('pull_request', pr('closed', merged=True, base='feature/574-image-thumbnails'))
+        self.assertEqual(steps, [m.move(12, 'In progress', ('In review',))])
+        for base in ('v0.11-backup', 'vendor/x', 'release/v0.11.0'):
+            self.assertNotIn(m.close(12), decide('pull_request', pr('closed', merged=True, base=base)))
+
     def test_closing_without_merge_takes_it_out_of_review(self):
         steps = decide('pull_request', pr('closed'))
         self.assertEqual(steps, [m.move(12, m.RESTING, ('In review', 'In progress'))])
