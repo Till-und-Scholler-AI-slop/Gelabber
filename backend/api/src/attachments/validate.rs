@@ -142,6 +142,46 @@ pub fn attachment_ids(raw: &[uuid::Uuid], errors: &mut FieldErrors) -> Option<Ve
     Some(out)
 }
 
+/// Alt text of a picture (#575): as long as Discord's, a little shorter.
+pub const DESCRIPTION_MAX: usize = 1000;
+
+/// Alt texts by attachment id, as a send or an edit names them: trimmed,
+/// line breaks as `\n`, empty or `null` for none. Same rules as message
+/// content: no control characters besides line breaks and tabs.
+pub fn descriptions(
+    raw: &std::collections::BTreeMap<uuid::Uuid, Option<String>>,
+    errors: &mut FieldErrors,
+) -> Option<Vec<(uuid::Uuid, Option<String>)>> {
+    if raw.len() > ATTACHMENTS_MAX {
+        errors.insert("attachment_descriptions", "too_long");
+        return None;
+    }
+    let mut out = Vec::with_capacity(raw.len());
+    for (id, text) in raw {
+        let text = text
+            .as_deref()
+            .map(|t| {
+                t.replace("\r\n", "\n")
+                    .replace('\r', "\n")
+                    .trim()
+                    .to_owned()
+            })
+            .filter(|t| !t.is_empty());
+        if let Some(t) = &text {
+            if t.chars().count() > DESCRIPTION_MAX {
+                errors.insert("attachment_descriptions", "too_long");
+                return None;
+            }
+            if t.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+                errors.insert("attachment_descriptions", "invalid");
+                return None;
+            }
+        }
+        out.push((*id, text));
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +255,43 @@ mod tests {
             run(|e| size(SIZE_MAX + 1, e)).1.get("size"),
             Some(&"too_long")
         );
+    }
+
+    #[test]
+    fn descriptions_are_trimmed_capped_and_clean() {
+        use std::collections::BTreeMap;
+        let a = uuid::Uuid::from_u128(1);
+        let b = uuid::Uuid::from_u128(2);
+        let one = |t: Option<&str>| BTreeMap::from([(a, t.map(str::to_owned))]);
+        assert_eq!(
+            run(|e| descriptions(&one(Some("  Fehler\r\n413 ")), e)).0,
+            Some(vec![(a, Some("Fehler\n413".into()))])
+        );
+        assert_eq!(
+            run(|e| descriptions(&one(Some("   ")), e)).0,
+            Some(vec![(a, None)])
+        );
+        assert_eq!(
+            run(|e| descriptions(&one(None), e)).0,
+            Some(vec![(a, None)])
+        );
+        let long = "ä".repeat(DESCRIPTION_MAX);
+        assert!(run(|e| descriptions(&one(Some(&long)), e)).0.is_some());
+        let longer = "ä".repeat(DESCRIPTION_MAX + 1);
+        assert_eq!(
+            run(|e| descriptions(&one(Some(&longer)), e))
+                .1
+                .get("attachment_descriptions"),
+            Some(&"too_long")
+        );
+        assert_eq!(
+            run(|e| descriptions(&one(Some("a\u{7}b")), e))
+                .1
+                .get("attachment_descriptions"),
+            Some(&"invalid")
+        );
+        let two = BTreeMap::from([(a, None), (b, Some("x".into()))]);
+        assert_eq!(run(|e| descriptions(&two, e)).0.map(|d| d.len()), Some(2));
     }
 
     #[test]

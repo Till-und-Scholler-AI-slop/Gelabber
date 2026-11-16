@@ -330,6 +330,7 @@ async fn postgres_search_tracks_edits_deletes_and_pages_stably(pool: PgPool) {
 #[sqlx::test]
 async fn dm_unread_and_search_are_participant_scoped(pool: PgPool) {
     let (mut a, mut b, _, _) = setup(pool.clone()).await;
+    a.befriend(b.user_id()).await;
     let dm = a
         .send(
             Method::POST,
@@ -607,6 +608,7 @@ async fn message_context_requires_channel_or_dm_membership(pool: PgPool) {
         .await;
     assert_eq!(malformed.status, StatusCode::NOT_FOUND);
     assert_eq!(malformed.body["error"], "not_found");
+    a.befriend(peer.as_str().unwrap()).await;
     let dm = a
         .send(Method::POST, "/api/dms", Some(json!({"user_id":peer})))
         .await;

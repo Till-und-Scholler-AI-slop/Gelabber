@@ -73,7 +73,10 @@ pub(super) fn follow_route(ctx: &egui::Context, route: &Route) {
         Route::Server(s) | Route::Channel(s, _) => Some(*s),
         _ => None,
     };
-    let dms = matches!(route, Route::Dms | Route::Dm(_));
+    let dms = matches!(
+        route,
+        Route::Dms | Route::Friends | Route::DmRequests | Route::Dm(_)
+    );
     s.overlay = match s.overlay.take() {
         Some(Overlay::Member(m)) if Some(m.server()) != server => None,
         Some(Overlay::User(_)) if !matches!(route, Route::Dm(_)) => None,

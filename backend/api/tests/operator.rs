@@ -2357,6 +2357,7 @@ async fn usage_counts_the_instance(pool: PgPool) {
         .await
         .unwrap();
     }
+    tom.befriend(ben.user_id()).await;
     let dm = tom
         .send(
             Method::POST,

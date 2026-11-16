@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
+import { blockKeys, blocksAuthor } from "../blocks/queries.ts";
 import { serverKeys } from "../servers/queries.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import type { ChatEvent } from "../ws/protocol.ts";
@@ -33,5 +34,18 @@ describe("channelLabel", () => {
     expect(channelLabel(client, "me", 0, event("srv", "x"), false)).toBe(
       "Kanal",
     );
+  });
+});
+
+describe("blocksAuthor", () => {
+  it("knows a blocked author from the cached list, nobody before it", () => {
+    const client = new QueryClient();
+    expect(blocksAuthor(client, "me", 0, "bob")).toBe(false);
+    client.setQueryData(blockKeys.list("me", 0), [
+      { id: "bob", name: "Bob", avatar_url: null, created_at: "" },
+    ]);
+    expect(blocksAuthor(client, "me", 0, "bob")).toBe(true);
+    expect(blocksAuthor(client, "me", 0, "cara")).toBe(false);
+    expect(blocksAuthor(client, "me", 1, "bob")).toBe(false);
   });
 });

@@ -376,6 +376,35 @@ impl Gateway {
         Ok(())
     }
 
+    /// The aggregate status of each of `users` (online or idle), in one
+    /// round trip; someone without a live socket is left out. For the friend
+    /// list (#563), which is not a server topic and so has no live frames.
+    pub async fn statuses_of(
+        &self,
+        users: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, PresenceStatus>, ApiError> {
+        if users.is_empty() {
+            return Ok(Default::default());
+        }
+        let statuses: Vec<Option<String>> = self
+            .with_conn(|mut conn| {
+                let mut cmd = redis::cmd("MGET");
+                for user_id in users {
+                    cmd.arg(user_key(*user_id));
+                }
+                async move { cmd.query_async::<Vec<Option<String>>>(&mut conn).await }
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        Ok(users
+            .iter()
+            .zip(statuses)
+            .filter_map(|(user, raw)| {
+                Some((*user, raw.as_deref().and_then(PresenceStatus::parse)?))
+            })
+            .collect())
+    }
+
     pub async fn presence_snapshot(&self, server_id: Uuid) -> Result<Vec<PresenceEntry>, ApiError> {
         let users: Vec<String> = self
             .with_conn(|mut conn| {

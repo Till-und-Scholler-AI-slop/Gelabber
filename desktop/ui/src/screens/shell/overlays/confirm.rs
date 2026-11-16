@@ -33,6 +33,16 @@ pub enum ConfirmAction {
     },
     /// Signing out ends the call (components/logout.ts).
     Logout,
+    /// Ends a friendship (#563); the conversation stays.
+    RemoveFriend {
+        user: Uuid,
+    },
+    /// A new friend code; the old one stops working.
+    RegenerateFriendCode,
+    /// Blocks someone (#565).
+    Block {
+        user: Uuid,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +78,16 @@ impl Question {
             Some(members::moderation_kick_message()),
             common::remove(),
             ConfirmAction::Kick { server, user },
+        )
+    }
+
+    /// `confirmBlock` (blocks/queries.ts, #565).
+    pub fn block(user: Uuid, name: &str) -> Self {
+        Self::danger(
+            gelabber_i18n::blocks::confirm_title(name),
+            Some(gelabber_i18n::blocks::confirm_message()),
+            gelabber_i18n::blocks::action_block(),
+            ConfirmAction::Block { user },
         )
     }
 
@@ -183,5 +203,10 @@ fn run(app: &mut AppCtx, action: ConfirmAction) {
             app.client.delete_category(server, category)
         }
         ConfirmAction::Logout => crate::screens::shell::user_panel::sign_out(app),
+        ConfirmAction::RemoveFriend { user } => app
+            .client
+            .friend_action(gelabber_client::FriendAction::Remove, user),
+        ConfirmAction::RegenerateFriendCode => app.client.regenerate_friend_code(),
+        ConfirmAction::Block { user } => app.client.block_user(user),
     }
 }

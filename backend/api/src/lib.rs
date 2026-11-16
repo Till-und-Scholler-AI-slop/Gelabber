@@ -2,6 +2,7 @@ pub mod account;
 pub mod attachments;
 pub mod auth;
 pub mod avatars;
+pub mod blocks;
 pub mod config;
 pub mod cookies;
 pub mod csrf;
@@ -9,6 +10,7 @@ pub mod directory;
 pub mod dms;
 pub mod error;
 pub mod feedback;
+pub mod friends;
 pub mod gateway;
 pub mod gifs;
 pub mod health;
@@ -66,6 +68,8 @@ pub fn app(state: AppState) -> Router {
         .merge(themes::router())
         .merge(servers::router())
         .merge(dms::router())
+        .merge(friends::router())
+        .merge(blocks::router())
         .merge(messages::router())
         .merge(media::router())
         .merge(attachments::router())

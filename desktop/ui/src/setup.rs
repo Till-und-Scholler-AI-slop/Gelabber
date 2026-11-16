@@ -717,19 +717,15 @@ mod tests {
         api.origin.trim_start_matches("http://").to_owned()
     }
 
-    /// "Server wechseln …" in the user menu: the setup with the way back.
+    /// "Server wechseln …" in the account menu: the setup with the way back.
     #[test]
     fn the_user_menu_switches_servers() {
         let _config = TempConfig::new("setup-menu");
         let api = FakeApi::start(true, |_, _, _| None);
         let mut harness = launcher(&api, "/");
-        wait_for_label(&mut harness, "Benutzermenü");
+        crate::app::testkit::open_account(&mut harness, "Lena");
         harness
-            .get_by_role_and_label(Role::Button, "Benutzermenü")
-            .click();
-        wait_for_label(&mut harness, "Server wechseln …");
-        harness
-            .get_by_role_and_label(Role::Button, "Server wechseln …")
+            .get_by_role_and_label(Role::MenuItem, "Server wechseln …")
             .click();
         wait_for(&mut harness, "the setup", |h| h.state().in_setup());
         let back = format!("Zurück zu {}", host(&api));
@@ -740,7 +736,7 @@ mod tests {
         let asked = api.seen.lock().len();
         harness.get_by_role_and_label(Role::Button, &back).click();
         wait_for(&mut harness, "the app", |h| !h.state().in_setup());
-        wait_for_label(&mut harness, "Benutzermenü");
+        wait_for_label(&mut harness, "Einstellungen");
         assert!(
             api.seen.lock()[asked..]
                 .iter()
@@ -755,7 +751,7 @@ mod tests {
         let _config = TempConfig::new("setup-shortcut");
         let api = FakeApi::start(true, |_, _, _| None);
         let mut harness = launcher(&api, "/settings/darstellung");
-        wait_for_label(&mut harness, "Benutzermenü");
+        wait_for_label(&mut harness, "Einstellungen");
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::S,

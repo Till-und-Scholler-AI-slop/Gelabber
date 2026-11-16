@@ -951,36 +951,66 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   gap: 6px;
   margin-top: 6px;
 }
-/* A picture whose size is not known yet (the API does not store image
-   sizes) has the full height until it loads; its row then only shrinks. */
+/* Pictures (#574). The API sends each picture's size, so its box is set
+   before any byte loads (imageBox.ts) and the placeholder colour fills it
+   meanwhile. A picture of unknown size (a local preview, an older server)
+   keeps a 300 px box until it loads. */
 .lr-attachment-image {
+  position: relative;
   display: flex;
   align-items: flex-start;
-  height: 240px;
-  max-width: min(100%, 360px);
+  overflow: hidden;
+  max-width: min(100%, 400px);
+  border-radius: var(--lr-radius);
+  background-color: var(--lr-surface);
   cursor: zoom-in;
 }
-.lr-attachment-image img {
-  max-height: 100%;
+.lr-attachment-image.is-unsized {
+  height: 300px;
+  background-color: transparent;
+}
+.lr-attachment-image.is-unsized img {
   max-width: 100%;
+  max-height: 100%;
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius);
   object-fit: contain;
 }
-/* Size known: the box is the picture, drawn at the size imageBox.ts gives
-   it (never enlarged); a narrow column scales it down in shape. */
-.lr-attachment-image.is-sized {
-  align-items: center;
-  justify-content: center;
-  height: auto;
-  min-width: 24px;
-  min-height: 24px;
+/* Size known: the box is the picture in its shape (never enlarged, 1:3 at
+   the most, cropped beyond); a narrow column scales it down in shape. */
+.lr-attachment-image.is-sized,
+.lr-attachment-image.is-tile {
+  box-shadow: inset 0 0 0 1px var(--lr-border);
 }
-.lr-attachment-image.is-sized img {
-  box-sizing: content-box;
-  max-width: calc(100% - 2px);
-  max-height: none;
-  height: auto;
+.lr-attachment-image.is-sized img,
+.lr-attachment-image.is-tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.lr-attachment-badge,
+.lr-attachment-more {
+  position: absolute;
+  pointer-events: none;
+  color: #fff;
+  font-weight: 800;
+}
+.lr-attachment-badge {
+  left: 6px;
+  top: 6px;
+  padding: 1px 5px;
+  border-radius: var(--lr-radius-small);
+  background: rgb(0 0 0 / 0.6);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.lr-attachment-more {
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.5);
+  font-size: 24px;
 }
 .lr-message-gif {
   position: relative;
@@ -1088,23 +1118,87 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-lightbox::backdrop {
   transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
 }
-.lr-lightbox > img {
+/* The whole screen takes pointers: a drag pans or swipes, a tap next to
+   the picture closes it. */
+.lr-lightbox-stage {
+  position: absolute;
+  inset: 56px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0 16px 16px;
+  touch-action: none;
+  user-select: none;
+}
+.lr-lightbox-stage > img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--lr-radius);
+  transform-origin: center;
+  cursor: zoom-in;
+  will-change: transform;
   transition: scale var(--lr-dur-large) var(--lr-ease-enter);
+}
+.lr-lightbox-stage > img:not(.is-dragging) {
+  transition:
+    scale var(--lr-dur-large) var(--lr-ease-enter),
+    transform 180ms var(--lr-ease-standard);
 }
 @starting-style {
   .lr-lightbox[open],
   .lr-lightbox[open]::backdrop {
     opacity: 0;
   }
-  .lr-lightbox[open] > img {
+  .lr-lightbox[open] .lr-lightbox-stage > img {
     scale: 0.97;
   }
 }
-.lr-lightbox > img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  border-radius: var(--lr-radius);
+.lr-lightbox-stage.is-zoomed > img {
+  cursor: grab;
+}
+.lr-lightbox-step {
+  position: fixed;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+  font-size: 28px;
+  line-height: 1;
+}
+.lr-lightbox-step:hover {
+  background: rgb(0 0 0 / 0.65);
+}
+.lr-lightbox-step.is-previous {
+  left: 12px;
+}
+.lr-lightbox-step.is-next {
+  right: 12px;
+}
+/* Touch steps by swiping; the arrows would cover the picture. */
+@media (pointer: coarse) {
+  .lr-lightbox-step {
+    display: none;
+  }
+}
+.lr-lightbox-count,
+.lr-lightbox-size {
+  font-variant-numeric: tabular-nums;
+  color: rgb(255 255 255 / 0.75);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-lightbox,
+  .lr-lightbox::backdrop,
+  .lr-lightbox-stage > img,
+  .lr-lightbox-stage > img:not(.is-dragging) {
+    transition: none;
+  }
 }
 .lr-lightbox-bar {
   position: fixed;
@@ -1174,25 +1268,59 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-muted);
 }
 
-/* Several pictures of one message: a grid of fixed cells, so the row
-   height is known before any picture loads (issue #255). */
+/* Several pictures of one message: a mosaic by count whose shape is fixed,
+   so the row height is known before any picture loads (imageBox.ts
+   `mosaic`, same ratios). */
 .lr-attachment-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   width: min(100%, 400px);
+  /* The shape wins over the pictures' own sizes. */
+  overflow: hidden;
+}
+.lr-attachment-grid.is-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  aspect-ratio: 2 / 1;
+}
+.lr-attachment-grid.is-three {
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  aspect-ratio: 3 / 2;
+}
+.lr-attachment-grid.is-three > :first-child {
+  grid-row: span 2;
+}
+.lr-attachment-grid.is-four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  aspect-ratio: 1;
+}
+.lr-attachment-grid.is-five {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-rows: 3fr 2fr;
+  aspect-ratio: 6 / 5;
+}
+.lr-attachment-grid.is-five > * {
+  grid-column: span 2;
+}
+.lr-attachment-grid.is-five > :nth-child(-n + 2) {
+  grid-column: span 3;
+}
+.lr-attachment-grid.is-six {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  aspect-ratio: 3 / 2;
 }
 .lr-attachment-grid .lr-attachment-image {
-  height: 160px;
-  max-width: none;
-}
-.lr-attachment-grid .lr-attachment-image img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  max-width: none;
+  min-height: 0;
+  border-radius: var(--lr-radius-small);
 }
-.lr-attachment-image {
-  position: relative;
+.lr-attachment-grid .lr-attachment-image img {
+  position: absolute;
+  inset: 0;
 }
 .lr-attachment-upload {
   font-size: 11px;
@@ -1201,6 +1329,8 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 /* A picture that did not load (#348): the same box, saying so. */
 .lr-attachment-image.is-failed {
   width: 240px;
+  min-height: 120px;
+  background: none;
   cursor: default;
 }
 .lr-attachment-grid .lr-attachment-image.is-failed {
@@ -1254,9 +1384,28 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   position: absolute;
   left: 6px;
   bottom: 6px;
+  overflow: hidden;
   padding: 2px 6px;
   border-radius: var(--lr-radius-small);
   background: color-mix(in srgb, var(--lr-panel) 85%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.lr-attachment-image .lr-attachment-upload.has-progress {
+  right: 6px;
+  padding-bottom: 5px;
+}
+.lr-attachment-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--lr-accent);
+  transition: width 120ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-attachment-progress {
+    transition: none;
+  }
 }
 .lr-attachment-media {
   display: flex;
@@ -1536,8 +1685,8 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   background: var(--lr-surface);
 }
 .lr-composer-attachment img {
-  width: 40px;
-  height: 40px;
+  width: 64px;
+  height: 64px;
   border-radius: var(--lr-radius-small);
   object-fit: cover;
 }
@@ -1774,6 +1923,25 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-reactions > .lr-reaction:last-child:not([aria-pressed]) {
   /* The inline add chip (no toolbar slot yet) stays quiet. */
   color: var(--lr-muted);
+}
+
+/* A run of messages by someone the user blocks (#565). */
+.lr-blocked-fold {
+  margin: 2px 0;
+  padding: 4px 22px 4px 72px;
+  font-size: 13px;
+  color: var(--lr-muted);
+}
+.lr-blocked-fold__show {
+  color: var(--lr-accent-text);
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.lr-blocked-fold__show:hover {
+  text-decoration: underline;
 }
 
 .lr-typing-bar {
@@ -2076,4 +2244,43 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .server-tile.is-muted {
   opacity: 0.6;
+}
+
+/* The paperclip's menu on touch screens (#574), above the composer. */
+.lr-composer-attach {
+  position: relative;
+  display: inline-flex;
+}
+.lr-composer-attach-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+  box-shadow: var(--lr-shadow-popover, 0 8px 24px rgb(0 0 0 / 0.2));
+}
+.lr-composer-attach-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--lr-radius-small);
+  font-size: 15px;
+  color: var(--lr-text);
+  text-align: left;
+}
+.lr-composer-attach-menu > button:hover,
+.lr-composer-attach-menu > button:focus-visible {
+  background: var(--lr-hover);
+}
+.lr-composer-attach-menu > button > :first-child {
+  width: 20px;
+  text-align: center;
 }
