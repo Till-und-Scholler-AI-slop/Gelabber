@@ -515,7 +515,8 @@ expires with it); a sweep every 15 s clears the record and sends `p` (what
 the mode hid, worked out from the cleared mode) and `pm`. After a Redis
 restart the record's mode is put back before a socket connects or
 subscribes again (a marker key `p:mc:<user>` that goes with the copy keeps
-that to one database read per account).
+that to about one database read per account; while it is still `pending`,
+other sockets of the account check too, so none announces itself first).
 
 Client (`web/src/ws/idlePresence.ts`, `web/src/ws/useLive.ts`; native:
 `desktop/client/src/presence.rs`):

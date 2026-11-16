@@ -500,6 +500,48 @@ async fn a_new_socket_restores_a_lost_mode(pool: PgPool) {
     let _ = &mut owner;
 }
 
+/// Two sockets of an account subscribe again at once after a restart: the
+/// one that finds another's check still under way checks too, rather than
+/// announcing itself before the copy is back.
+#[sqlx::test]
+async fn a_socket_does_not_skip_a_check_still_under_way(pool: PgPool) {
+    let World {
+        mut owner,
+        mut member,
+        server,
+        ..
+    } = setup(pool.clone()).await;
+    let bob = member.user_id().to_owned();
+    let (addr, _state) = common::serve_ws(pool).await;
+    set_mode(&mut member, json!({ "mode": "dnd" })).await;
+    del(&[format!("{REDIS_PREFIX}p:m:{bob}")]).await;
+    // Another socket claimed the check and has not written the copy yet.
+    let mut conn = redis().await;
+    redis::cmd("SET")
+        .arg(format!("{REDIS_PREFIX}p:mc:{bob}"))
+        .arg("pending")
+        .arg("PX")
+        .arg(30_000)
+        .query_async::<()>(&mut conn)
+        .await
+        .unwrap();
+
+    let mut bob_ws = connect(addr, &member).await;
+    watch(&mut bob_ws, server).await;
+    let mut ada_ws = connect(addr, &owner).await;
+    assert_eq!(
+        listed(&watch(&mut ada_ws, server).await, &bob).as_deref(),
+        Some("d")
+    );
+    let marker: String = redis::cmd("GET")
+        .arg(format!("{REDIS_PREFIX}p:mc:{bob}"))
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(marker, "done");
+    let _ = &mut owner;
+}
+
 #[sqlx::test]
 async fn a_bad_mode_or_duration_is_refused(pool: PgPool) {
     let World { mut member, .. } = setup(pool).await;

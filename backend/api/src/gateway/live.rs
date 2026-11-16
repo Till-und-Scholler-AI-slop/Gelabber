@@ -153,6 +153,28 @@ fn mode_check_key(user_id: Uuid) -> String {
 
 /// A day: an account's copy is checked again at least that often.
 const MODE_CHECK_MS: i64 = 24 * 60 * 60 * 1000;
+/// How long a check may stay `pending` before another socket claims it.
+const MODE_CHECK_PENDING_MS: i64 = 30 * 1000;
+
+/// Claims the check (`pending`) unless one is under way or done; returns
+/// `claimed`, `pending` or `done`.
+const CLAIM_MODE_CHECK_LUA: &str = r#"
+if redis.call('SET', KEYS[1], 'pending', 'NX', 'PX', ARGV[1]) then
+  return 'claimed'
+end
+return redis.call('GET', KEYS[1]) or 'claimed'
+"#;
+
+/// Where the manual mode's check against the record stands (#590).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeCheck {
+    /// This socket checks.
+    Claimed,
+    /// Another socket is checking: this one checks too, after it.
+    Pending,
+    /// Checked; nothing to do.
+    Done,
+}
 
 fn server_set_key(server_id: Uuid) -> String {
     format!("{REDIS_PREFIX}p:s:{server_id}")
@@ -407,24 +429,41 @@ impl Gateway {
         Ok(())
     }
 
-    /// True once per Redis lifetime and account (a day at most): whether
-    /// the manual mode's copy still has to be checked against the record.
-    /// The marker goes with the copy when Redis restarts.
-    pub async fn claim_mode_check(&self, user_id: Uuid) -> Result<bool, ApiError> {
-        let set: Option<String> = self
+    /// Whether the manual mode's copy still has to be checked against the
+    /// record: claimed once per Redis lifetime and account (a day at most),
+    /// as the marker goes with the copy when Redis restarts.
+    pub async fn claim_mode_check(&self, user_id: Uuid) -> Result<ModeCheck, ApiError> {
+        let state: String = self
             .with_conn(|mut conn| async move {
-                redis::cmd("SET")
-                    .arg(mode_check_key(user_id))
-                    .arg("1")
-                    .arg("NX")
-                    .arg("PX")
-                    .arg(MODE_CHECK_MS)
-                    .query_async(&mut conn)
+                redis::Script::new(CLAIM_MODE_CHECK_LUA)
+                    .key(mode_check_key(user_id))
+                    .arg(MODE_CHECK_PENDING_MS)
+                    .invoke_async(&mut conn)
                     .await
             })
             .await
             .map_err(super::hub::redis_err)?;
-        Ok(set.is_some())
+        Ok(match state.as_str() {
+            "claimed" => ModeCheck::Claimed,
+            "pending" => ModeCheck::Pending,
+            _ => ModeCheck::Done,
+        })
+    }
+
+    /// The copy matches the record: later sockets skip the check.
+    pub async fn finish_mode_check(&self, user_id: Uuid) -> Result<(), ApiError> {
+        self.with_conn(|mut conn| async move {
+            redis::cmd("SET")
+                .arg(mode_check_key(user_id))
+                .arg("done")
+                .arg("PX")
+                .arg(MODE_CHECK_MS)
+                .query_async::<()>(&mut conn)
+                .await
+        })
+        .await
+        .map_err(super::hub::redis_err)?;
+        Ok(())
     }
 
     pub async fn drop_mode_check(&self, user_id: Uuid) -> Result<(), ApiError> {

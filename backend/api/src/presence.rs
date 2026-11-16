@@ -201,15 +201,17 @@ async fn announce(state: &AppState, user_id: Uuid, mode: ModeState) {
 /// A socket connects or subscribes: if Redis lost the manual mode (a
 /// restart, after which the sockets stay open and only subscribe again),
 /// put the record's back before the socket announces itself. A marker that
-/// goes with the copy makes this one Redis call once it was checked.
+/// goes with the copy makes this one Redis call once it was checked; while
+/// another socket of the account is still checking, this one checks too
+/// (the row lock waits for that one), so it never announces itself first.
 /// `db` is the caller's connection when it holds one (a subscribe), else
 /// one is taken from the pool.
 pub async fn restore(state: &AppState, db: Option<&mut sqlx::PgConnection>, user_id: Uuid) {
-    match state.gateway.claim_mode_check(user_id).await {
-        Ok(true) => {}
-        // Checked already, or no Redis: nothing to restore into.
-        Ok(false) | Err(_) => return,
-    }
+    use crate::gateway::ModeCheck;
+    let check = match state.gateway.claim_mode_check(user_id).await {
+        Ok(ModeCheck::Done) | Err(_) => return,
+        Ok(check) => check,
+    };
     let result = match db {
         Some(db) => restore_locked(state, db, user_id).await,
         None => match state.db.acquire().await {
@@ -217,10 +219,19 @@ pub async fn restore(state: &AppState, db: Option<&mut sqlx::PgConnection>, user
             Err(error) => Err(error.into()),
         },
     };
-    if let Err(error) = result {
-        tracing::debug!(error = error.code(), "presence mode not restored");
-        // The next socket tries again.
-        let _ = state.gateway.drop_mode_check(user_id).await;
+    match result {
+        Ok(()) => {
+            if let Err(error) = state.gateway.finish_mode_check(user_id).await {
+                tracing::debug!(error = error.code(), "presence mode check not noted");
+            }
+        }
+        Err(error) => {
+            tracing::debug!(error = error.code(), "presence mode not restored");
+            // The next socket tries again.
+            if check == ModeCheck::Claimed {
+                let _ = state.gateway.drop_mode_check(user_id).await;
+            }
+        }
     }
 }
 
@@ -233,7 +244,7 @@ async fn restore_locked(
     use sqlx::Acquire;
     let mut tx = db.begin().await?;
     let row: Option<(String, Option<DateTime<Utc>>)> = sqlx::query_as(
-        "SELECT presence_mode, presence_mode_until FROM users WHERE id = $1 FOR UPDATE",
+        "SELECT presence_mode, presence_mode_until FROM users WHERE id = $1 FOR NO KEY UPDATE",
     )
     .bind(user_id)
     .fetch_optional(&mut *tx)
@@ -258,7 +269,7 @@ pub async fn sweep(state: &AppState) -> Result<usize, ApiError> {
         "WITH due AS ( \
              SELECT id, presence_mode FROM users \
              WHERE presence_mode_until IS NOT NULL AND presence_mode_until <= now() \
-             ORDER BY presence_mode_until LIMIT $1 FOR UPDATE SKIP LOCKED) \
+             ORDER BY presence_mode_until LIMIT $1 FOR NO KEY UPDATE SKIP LOCKED) \
          UPDATE users u SET presence_mode = 'auto', presence_mode_until = NULL \
          FROM due WHERE u.id = due.id RETURNING u.id, due.presence_mode",
     )
