@@ -20,6 +20,8 @@ import type { Member } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { useTypingInput } from "../ws/useLive.ts";
 import { notify } from "../components/toasts.ts";
+import { ClosedBar } from "../blocks/ClosedBar.tsx";
+import { RequestBar } from "../friends/RequestsPage.tsx";
 import { translate, useT } from "../i18n/catalog.ts";
 import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
 
@@ -119,8 +121,25 @@ function DmChat({ dm }: { dm: DirectMessage }) {
               }
               channelId={dm.id}
               channelName={dm.peer.name}
-              canSend
-              canSendFiles
+              canSend={!dm.request?.incoming && !dm.blocked && !dm.closed}
+              canSendFiles={!dm.request}
+              composer={
+                dm.blocked || dm.closed ? (
+                  <ClosedBar
+                    peerId={dm.peer.id}
+                    peerName={dm.peer.name}
+                    blocked={Boolean(dm.blocked)}
+                  />
+                ) : dm.request?.incoming ? (
+                  <RequestBar
+                    channelId={dm.id}
+                    peerId={dm.peer.id}
+                    peerName={dm.peer.name}
+                    incoming
+                    remaining={dm.request.remaining}
+                  />
+                ) : undefined
+              }
               mention="@"
               members={mentionable}
               peer={dm.peer}
@@ -130,7 +149,20 @@ function DmChat({ dm }: { dm: DirectMessage }) {
                 name: dm.peer.name,
                 dm: true,
               }}
-              footer={<TypingBar channelId={dm.id} members={members} />}
+              footer={
+                <>
+                  {dm.request && !dm.request.incoming ? (
+                    <RequestBar
+                      channelId={dm.id}
+                      peerId={dm.peer.id}
+                      peerName={dm.peer.name}
+                      incoming={false}
+                      remaining={dm.request.remaining}
+                    />
+                  ) : null}
+                  <TypingBar channelId={dm.id} members={members} />
+                </>
+              }
               onDraftChange={typing.onChange}
               onDraftStop={typing.stop}
             />

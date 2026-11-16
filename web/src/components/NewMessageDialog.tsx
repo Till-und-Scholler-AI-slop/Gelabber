@@ -1,5 +1,6 @@
-// "Neue Nachricht": pick anyone from the servers you share and open the
-// conversation with them, new or existing.
+// "Neue Nachricht": friends, people already written to, and everyone from
+// the servers you share, whose conversation starts as a message request
+// (#563). Opens the conversation, new or existing.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -12,6 +13,8 @@ import {
   type DmCandidate,
 } from "../dms/people.ts";
 import { findCachedDm, useDms, useOpenDm } from "../dms/queries.ts";
+import { useFriends } from "../friends/queries.ts";
+import { friends as friendsCatalog } from "../i18n/catalogs/friends.ts";
 import { useServerDetails, useServers } from "../servers/queries.ts";
 import { Avatar } from "./Avatar.tsx";
 import { Modal } from "./Modal.tsx";
@@ -37,8 +40,10 @@ export function NewMessageDialog({
 
 function NewMessageBody({ onClose }: { onClose: () => void }) {
   const t = useT(dmsCatalog);
+  const tf = useT(friendsCatalog);
   const tc = useT(common);
   const client = useQueryClient();
+  const { data: friendList } = useFriends();
   const navigate = useNavigate();
   const me = useUserId();
   const [query, setQuery] = useState("");
@@ -55,8 +60,14 @@ function NewMessageBody({ onClose }: { onClose: () => void }) {
     [],
   );
   const people = useMemo(
-    () => dmCandidates(details, dms ?? [], me),
-    [details, dms, me],
+    () =>
+      dmCandidates(
+        details,
+        dms ?? [],
+        me,
+        friendList?.friends.map((f) => f.user) ?? [],
+      ),
+    [details, dms, me, friendList],
   );
   const loading = isPending || details.length < (servers?.length ?? 0);
 
@@ -86,7 +97,9 @@ function NewMessageBody({ onClose }: { onClose: () => void }) {
         label: person.name,
         detail: person.dmId
           ? t("newMessage.continue")
-          : person.servers.join(", "),
+          : person.friend
+            ? tf("newMessage.friend")
+            : tf("newMessage.request", { servers: person.servers.join(", ") }),
         icon: <Avatar name={person.name} url={person.avatar_url} decorative />,
       }))}
       onPick={(option) => write(option.value)}

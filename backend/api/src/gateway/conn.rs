@@ -627,6 +627,14 @@ async fn typing(
     {
         return Ok(());
     }
+    // A DM closed by a block carries no typing either way (#565); stopping
+    // still goes through so nothing is left on.
+    if on
+        && channel_id == server_id
+        && crate::blocks::in_dm(&mut *db, channel_id, user.id).await? != crate::blocks::Block::None
+    {
+        return Ok(());
+    }
     state
         .gateway
         .set_typing(conn, server_id, channel_id, user.id, on)

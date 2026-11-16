@@ -15,6 +15,22 @@ pub fn new_message_from(locale: Locale, author: &str) -> String {
     }
 }
 
+/// A message request (#563): who, never what.
+pub fn message_request_from(locale: Locale, sender: &str) -> String {
+    match locale {
+        Locale::De => format!("{sender} möchte dir schreiben"),
+        Locale::En => format!("{sender} wants to message you"),
+    }
+}
+
+/// A friend request (#563).
+pub fn friend_request_from(locale: Locale, sender: &str) -> String {
+    match locale {
+        Locale::De => format!("{sender} hat dir eine Freundschaftsanfrage geschickt"),
+        Locale::En => format!("{sender} sent you a friend request"),
+    }
+}
+
 /// What a recalled push says instead of the deleted message (#277).
 pub fn message_deleted(locale: Locale) -> &'static str {
     match locale {

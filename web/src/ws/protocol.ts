@@ -140,6 +140,18 @@ export type AccountFrame =
       op: "jq";
       s: string;
       n: number;
+    }
+  | {
+      /** Friends or friend requests changed (#563): fetch them again. */
+      op: "fr";
+    }
+  | {
+      /** Incoming message requests changed (#563): fetch them again. */
+      op: "mr";
+    }
+  | {
+      /** The signed-in user blocked or unblocked someone (#565). */
+      op: "bl";
     };
 
 /** A conversation's new read position, as `PUT …/read` answers it. */
@@ -203,7 +215,10 @@ export function decode(raw: string): ServerFrame | null {
     op === "lc" ||
     op === "pm" ||
     op === "jn" ||
-    op === "jq"
+    op === "jq" ||
+    op === "fr" ||
+    op === "mr" ||
+    op === "bl"
   ) {
     if (op === "p") return presenceFrame(value as PresenceFrame);
     return value as ServerFrame;

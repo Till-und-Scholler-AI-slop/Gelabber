@@ -480,6 +480,46 @@ impl Gateway {
         Ok(())
     }
 
+    /// The status each of `users` is shown with, in one round trip: the
+    /// sockets' aggregate with the manual mode (#590) on top; someone
+    /// without a live socket, or invisible, is left out. For the friend
+    /// list (#563), which is not a server topic and so has no live frames.
+    pub async fn statuses_of(
+        &self,
+        users: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, PresenceStatus>, ApiError> {
+        if users.is_empty() {
+            return Ok(Default::default());
+        }
+        let mut statuses: Vec<Option<String>> = self
+            .with_conn(|mut conn| {
+                let mut cmd = redis::cmd("MGET");
+                for user_id in users {
+                    cmd.arg(user_key(*user_id));
+                }
+                for user_id in users {
+                    cmd.arg(mode_key(*user_id));
+                }
+                async move { cmd.query_async::<Vec<Option<String>>>(&mut conn).await }
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        let modes = statuses.split_off(users.len().min(statuses.len()));
+        Ok(users
+            .iter()
+            .zip(statuses)
+            .enumerate()
+            .filter_map(|(index, (user, raw))| {
+                let mode = modes
+                    .get(index)
+                    .and_then(Option::as_deref)
+                    .map_or(PresenceMode::Auto, PresenceMode::from_redis);
+                let shown = raw.as_deref().and_then(PresenceStatus::parse)?.shown(mode);
+                (shown != PresenceStatus::Offline).then_some((*user, shown))
+            })
+            .collect())
+    }
+
     /// Who is shown on a server and how, the manual modes (#590) applied:
     /// an invisible member is left out.
     pub async fn presence_snapshot(&self, server_id: Uuid) -> Result<Vec<PresenceEntry>, ApiError> {

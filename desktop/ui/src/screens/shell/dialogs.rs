@@ -1071,11 +1071,36 @@ fn new_message(
             *waiting = None;
         }
     }
-    // dmCandidates: everyone you share a server with (details loaded on
-    // demand); people already written to first, in DM order, then by name.
+    // dmCandidates (#563): people already written to first, in DM order,
+    // then friends, then everyone else you share a server with (details
+    // loaded on demand), by name; with them a DM starts as a request.
     let (people, missing) = app.client.with_state(|s| {
         let me = s.me().map(|m| m.id);
-        let mut people: Vec<(Uuid, String, Option<String>, String, bool)> = Vec::new();
+        // id, name, avatar, servers, friend, has a DM.
+        type Person = (Uuid, String, Option<String>, Vec<String>, bool, bool);
+        let mut people: Vec<Person> = Vec::new();
+        fn add<'a>(
+            people: &'a mut Vec<Person>,
+            id: Uuid,
+            name: &str,
+            avatar: Option<&str>,
+        ) -> &'a mut Person {
+            let i = match people.iter().position(|p| p.0 == id) {
+                Some(i) => i,
+                None => {
+                    people.push((
+                        id,
+                        name.to_owned(),
+                        avatar.map(str::to_owned),
+                        Vec::new(),
+                        false,
+                        false,
+                    ));
+                    people.len() - 1
+                }
+            };
+            &mut people[i]
+        }
         let missing: Vec<Uuid> = s
             .servers
             .iter()
@@ -1090,33 +1115,52 @@ fn new_message(
                 if Some(m.user_id) == me {
                     continue;
                 }
-                match people.iter_mut().find(|p| p.0 == m.user_id) {
-                    Some(p) => {
-                        p.3.push_str(", ");
-                        p.3.push_str(&server.name);
-                    }
-                    None => people.push((
-                        m.user_id,
-                        m.name.clone(),
-                        m.avatar_url.clone(),
-                        server.name.clone(),
-                        false,
-                    )),
-                }
+                add(&mut people, m.user_id, &m.name, m.avatar_url.as_deref())
+                    .3
+                    .push(server.name.clone());
+            }
+        }
+        for friend in s.friends.iter().flat_map(|f| f.friends.iter()) {
+            if Some(friend.user.id) != me {
+                add(
+                    &mut people,
+                    friend.user.id,
+                    &friend.user.name,
+                    friend.user.avatar_url.as_deref(),
+                )
+                .4 = true;
             }
         }
         let mut recent = Vec::new();
         for dm in &s.dms {
+            // An accepted DM stays open whatever the two share now.
+            add(
+                &mut people,
+                dm.peer.id,
+                &dm.peer.name,
+                dm.peer.avatar_url.as_deref(),
+            )
+            .5 = true;
             if let Some(i) = people.iter().position(|p| p.0 == dm.peer.id) {
-                let mut p = people.remove(i);
-                p.3 = dms::new_message_continue().into();
-                p.4 = true;
-                recent.push(p);
+                recent.push(people.remove(i));
             }
         }
-        people.sort_by_cached_key(|p| gelabber_client::store::collation_key(&p.1));
+        people.sort_by_cached_key(|p| (!p.4, gelabber_client::store::collation_key(&p.1)));
         recent.extend(people);
-        (recent, missing)
+        let rows: Vec<(Uuid, String, Option<String>, String)> = recent
+            .into_iter()
+            .map(|(id, name, avatar, servers, friend, dm)| {
+                let detail = if dm {
+                    dms::new_message_continue().to_owned()
+                } else if friend {
+                    gelabber_i18n::friends::new_message_friend().to_owned()
+                } else {
+                    gelabber_i18n::friends::new_message_request(&servers.join(", "))
+                };
+                (id, name, avatar, detail)
+            })
+            .collect();
+        (rows, missing)
     });
     if !*loaded {
         for id in &missing {
@@ -1136,7 +1180,7 @@ fn new_message(
     let shown: Vec<_> = scored.iter().map(|(_, i)| &people[*i]).collect();
     let rows: Vec<Row> = shown
         .iter()
-        .map(|(_, name, avatar, detail, _)| Row {
+        .map(|(_, name, avatar, detail)| Row {
             label: name.clone(),
             detail: Some(detail.clone()),
             icon: RowIcon::Avatar {

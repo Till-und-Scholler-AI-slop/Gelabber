@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
 import { serverNow } from "../api/client.ts";
+import { blocksAuthor, useBlocks } from "../blocks/queries.ts";
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { dmKeys } from "../dms/queries.ts";
@@ -129,6 +130,8 @@ export function useMessageToastsBridge(): void {
   useNotificationSettings();
   // Whether notifications show the message at all (#268).
   useNotificationPrivacy();
+  // Keeps the block list cached: blocked authors raise nothing (#565).
+  useBlocks();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
@@ -176,6 +179,9 @@ export function useMessageToastsBridge(): void {
       const focused = typeof document === "undefined" || document.hasFocus();
       const hidden = typeof document !== "undefined" && document.hidden;
       const own = message.author.id === userId;
+      // Someone blocked raises nothing, not even a mention (#565).
+      if (!own && blocksAuthor(client, userId, generation, message.author.id))
+        return;
       const dm = isDmTopic(event.s, event.c);
       const mentioned = !own && mentionsMe(message, userId);
       // Level and mute of the conversation (#242), from the unread rows.

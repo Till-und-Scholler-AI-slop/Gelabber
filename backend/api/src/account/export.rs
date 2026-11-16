@@ -463,6 +463,15 @@ struct ServerRow {
     joined_at: DateTime<Utc>,
 }
 
+/// A friend, or the other side of a pending friend request (#563), and
+/// since when.
+#[derive(Serialize, FromRow)]
+struct FriendRow {
+    id: Uuid,
+    name: String,
+    at: DateTime<Utc>,
+}
+
 #[derive(Serialize, FromRow)]
 struct InviteRow {
     code: String,
@@ -644,6 +653,44 @@ impl Archive {
             .bind(user_id)
             .fetch_all(&db),
         )?;
+        // Whom the person blocks (#565).
+        let blocks = self
+            .handle
+            .block_on(crate::blocks::blocked_by(&db, user_id))?;
+        let friend_code: Option<String> = self.wait(
+            sqlx::query_scalar("SELECT friend_code FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_one(&db),
+        )?;
+        let friends: Vec<FriendRow> = self.wait(
+            sqlx::query_as(
+                "SELECT u.id, u.name, f.created_at AS at FROM friendships f \
+                 JOIN users u ON u.id = CASE WHEN f.user_low = $1 THEN f.user_high ELSE f.user_low END \
+                 WHERE (f.user_low = $1 OR f.user_high = $1) AND u.deleted_at IS NULL \
+                 ORDER BY f.created_at, u.id",
+            )
+            .bind(user_id)
+            .fetch_all(&db),
+        )?;
+        let requests = |sql: &'static str| sqlx::query_as::<_, FriendRow>(sql).bind(user_id);
+        let incoming: Vec<FriendRow> = self.wait(
+            requests(
+                "SELECT u.id, u.name, r.created_at AS at FROM friend_requests r \
+                 JOIN users u ON u.id = r.sender_id \
+                 WHERE r.recipient_id = $1 AND r.status = 'pending' AND u.deleted_at IS NULL \
+                 ORDER BY r.created_at, u.id",
+            )
+            .fetch_all(&db),
+        )?;
+        let outgoing: Vec<FriendRow> = self.wait(
+            requests(
+                "SELECT u.id, u.name, r.created_at AS at FROM friend_requests r \
+                 JOIN users u ON u.id = r.recipient_id \
+                 WHERE r.sender_id = $1 AND r.status = 'pending' AND u.deleted_at IS NULL \
+                 ORDER BY r.created_at, u.id",
+            )
+            .fetch_all(&db),
+        )?;
         self.json(
             "account.json",
             &json!({
@@ -668,6 +715,10 @@ impl Archive {
                 "sessions": sessions,
                 "servers": servers,
                 "invites": invites,
+                "blocks": blocks,
+                "friend_code": friend_code,
+                "friends": friends,
+                "friend_requests": {"incoming": incoming, "outgoing": outgoing},
             }),
         )?;
 

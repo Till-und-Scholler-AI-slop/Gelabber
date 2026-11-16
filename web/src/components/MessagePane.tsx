@@ -12,6 +12,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { blockedRuns, type BlockedRuns } from "../blocks/runs.ts";
 import { MessageSearch } from "../messages/MessageSearch.tsx";
 import { MessageContextView } from "../messages/MessageContext.tsx";
 import {
@@ -67,6 +68,8 @@ import { useMuteClock } from "../messages/notificationSettings.ts";
 import { isMuted } from "../messages/notifyLevel.ts";
 import "./chat.css";
 import { Composer } from "./Composer.tsx";
+import { useBlockedIds } from "../blocks/queries.ts";
+import { blocks as blocksCatalog } from "../i18n/catalogs/blocks.ts";
 import { MessageRow } from "./MessageRow.tsx";
 import { clearEditDrafts, saveEdit } from "./editDrafts.ts";
 import {
@@ -103,6 +106,7 @@ export function MessagePane({
   notify,
   peer,
   footer,
+  composer: composerSlot,
   onDraftChange,
   onDraftStop,
 }: {
@@ -131,6 +135,8 @@ export function MessagePane({
   /** A DM's other person, shown where its history begins. */
   peer?: { name: string; avatar_url: string | null };
   footer?: ReactNode;
+  /** In place of the composer: a message request's answer bar (#563). */
+  composer?: ReactNode;
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
 }) {
@@ -523,6 +529,7 @@ export function MessagePane({
                     unreadJump={unreadJump}
                     onOpened={setOpenedAtUnread}
                     attempts={attemptsById}
+                    fold={!peer}
                     historyStart={
                       <HistoryStart
                         mention={mention}
@@ -637,21 +644,23 @@ export function MessagePane({
         ) : null}
         {footer}
         <div className="lr-toast-space" />
-        <Composer
-          key={user?.id ?? "anonymous"}
-          handle={composer}
-          channelId={channelId}
-          channelName={channelName}
-          canSend={canSend}
-          canSendFiles={canSendFiles}
-          mention={mention}
-          author={author}
-          attempts={channelAttempts}
-          onSent={toLatest}
-          onShowAttempt={showAttempt}
-          onDraftChange={onDraftChange}
-          onDraftStop={onDraftStop}
-        />
+        {composerSlot ?? (
+          <Composer
+            key={user?.id ?? "anonymous"}
+            handle={composer}
+            channelId={channelId}
+            channelName={channelName}
+            canSend={canSend}
+            canSendFiles={canSendFiles}
+            mention={mention}
+            author={author}
+            attempts={channelAttempts}
+            onSent={toLatest}
+            onShowAttempt={showAttempt}
+            onDraftChange={onDraftChange}
+            onDraftStop={onDraftStop}
+          />
+        )}
       </div>
     </MentionContext.Provider>
   );
@@ -677,6 +686,7 @@ function MessageList({
   unreadJump,
   onOpened,
   attempts,
+  fold,
   historyStart,
 }: {
   active: boolean;
@@ -704,10 +714,18 @@ function MessageList({
   onOpened: (atUnread: boolean) => void;
   /** Send attempts by the `tmp:` id of their row. */
   attempts: ReadonlyMap<string, SendAttempt>;
+  /** Fold the messages of people the user blocks (#565): on servers. */
+  fold: boolean;
   /** Above the oldest message once there is nothing older. */
   historyStart: ReactNode;
 }) {
   const t = useT(chat);
+  const runs = useBlockedRuns(items, fold);
+  // Runs opened with "Anzeigen", by their first message, while the list is
+  // shown.
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
   // Day dividers and the times beside the rows read the clock as they
@@ -837,6 +855,14 @@ function MessageList({
           const firstNew = row.index === newIndex;
           const continued =
             !newDay && !firstNew && isContinued(previous, message);
+          const start = runs?.start[row.index] ?? -1;
+          const startId = start === -1 ? undefined : items[start]?.id;
+          const folded: "first" | "hidden" | null =
+            startId === undefined || unfolded.has(startId)
+              ? null
+              : start === row.index
+                ? "first"
+                : "hidden";
           return (
             <div
               key={row.key}
@@ -860,20 +886,29 @@ function MessageList({
                   <span>{t("list.newDivider")}</span>
                 </div>
               ) : null}
-              <MessageRow
-                message={message}
-                continued={continued}
-                arrival={arrived.get(message.id)}
-                mine={message.author.id === meId}
-                canSend={canSend}
-                canDelete={message.author.id === meId || canModerate}
-                attempt={attempts.get(message.id)}
-                onEdit={saveEdit(edit, message.id)}
-                onDelete={async (skipConfirm) => {
-                  if (skipConfirm || (await confirmDelete(message, meId)))
-                    remove.mutate(message.id);
-                }}
-              />
+              {folded === "hidden" ? null : folded === "first" ? (
+                <BlockedFold
+                  count={runs?.length.get(row.index) ?? 1}
+                  onShow={() =>
+                    setUnfolded((current) => new Set(current).add(message.id))
+                  }
+                />
+              ) : (
+                <MessageRow
+                  message={message}
+                  continued={continued}
+                  arrival={arrived.get(message.id)}
+                  mine={message.author.id === meId}
+                  canSend={canSend}
+                  canDelete={message.author.id === meId || canModerate}
+                  attempt={attempts.get(message.id)}
+                  onEdit={saveEdit(edit, message.id)}
+                  onDelete={async (skipConfirm) => {
+                    if (skipConfirm || (await confirmDelete(message, meId)))
+                      remove.mutate(message.id);
+                  }}
+                />
+              )}
             </div>
           );
         })}
@@ -889,6 +924,32 @@ function MessageList({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** Blocked runs to fold, in server channels only (#565). */
+function useBlockedRuns(
+  items: readonly Message[],
+  fold: boolean,
+): BlockedRuns | null {
+  const blocked = useBlockedIds();
+  return useMemo(
+    () => (fold ? blockedRuns(items, blocked) : null),
+    [blocked, fold, items],
+  );
+}
+
+/** "Blockierte Nachricht · Anzeigen" in place of a blocked run. */
+function BlockedFold({ count, onShow }: { count: number; onShow: () => void }) {
+  const t = useT(blocksCatalog);
+  return (
+    <p className="lr-blocked-fold">
+      <span>{t("folded", { count })}</span>
+      {" · "}
+      <button type="button" className="lr-blocked-fold__show" onClick={onShow}>
+        {t("folded.show")}
+      </button>
+    </p>
   );
 }
 

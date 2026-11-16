@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use gelabber_i18n::{chat, dms, servers, shell};
+use gelabber_i18n::{chat, dms, friends, servers, shell};
 use uuid::Uuid;
 
 use crate::gateway::GatewayStatus;
@@ -239,6 +239,10 @@ pub fn failure_text(op: &str) -> Option<&'static str> {
         "delete" => chat::delete_failed(),
         "react" => chat::reactions_not_saved(),
         "dm" => dms::open_failed(),
+        "friend_send" => friends::send_failed(),
+        "friend_accept" | "friend_decline" | "friend_withdraw" | "friend_remove" | "dm_accept"
+        | "dm_decline" => friends::action_failed(),
+        "friend_code_new" => friends::code_regenerate_failed(),
         // A row menu's choices; the dialog shows its own failure.
         "notify_menu" => shell::row_menu_not_saved(),
         "read" | "read_all" => shell::row_menu_not_marked_read(),
@@ -490,6 +494,8 @@ pub enum Notice {
         text: String,
     },
     Error(String),
+    /// An info toast ("Anfrage an Ada gesendet.").
+    Info(String),
     /// An optimistic write the server turned down: `failed` names it
     /// ("Nachricht nicht gelöscht."), the UI adds the error's text, or
     /// `gone` when the error is `not_found`.
@@ -539,6 +545,14 @@ pub struct State {
     pub server_details: HashMap<Uuid, ServerDetail>,
     pub dms: Vec<DirectMessage>,
     pub dms_loaded: bool,
+    /// Friends and friend requests (#563); `None` until read.
+    pub friends: Option<FriendList>,
+    /// Incoming message requests (#563), newest first; `None` until read.
+    pub dm_requests: Option<Vec<DirectMessage>>,
+    /// Whom the user blocks (#565), newest first; `None` until read.
+    pub blocks: Option<Vec<BlockedUser>>,
+    /// The account's friend code; `None` until read.
+    pub friend_code: Option<String>,
     pub channels: HashMap<Uuid, ChannelMessages>,
     pub read: HashMap<Uuid, ReadState>,
     pub notification_settings: Vec<NotificationSetting>,
@@ -641,8 +655,21 @@ impl State {
             .find(|c| c.id == id)
     }
 
+    /// The user blocks `user` (#565); false until the list is read.
+    pub fn blocks_user(&self, user: Uuid) -> bool {
+        self.blocks
+            .as_ref()
+            .is_some_and(|list| list.iter().any(|b| b.id == user))
+    }
+
+    /// A listed DM, or an incoming message request (#563), which stays out
+    /// of the list until accepted.
     pub fn dm(&self, id: Uuid) -> Option<&DirectMessage> {
-        self.dms.iter().find(|d| d.id == id)
+        self.dms.iter().find(|d| d.id == id).or_else(|| {
+            self.dm_requests
+                .as_ref()
+                .and_then(|list| list.iter().find(|d| d.id == id))
+        })
     }
 
     pub fn messages(&self, channel: Uuid) -> Option<&ChannelMessages> {
@@ -1050,6 +1077,8 @@ impl State {
         let names: Vec<String> = self
             .typers(channel, now)
             .into_iter()
+            // Someone the user blocks types unseen (#565).
+            .filter(|u| !self.blocks_user(*u))
             .map(|u| {
                 self.name_of(channel, u)
                     .unwrap_or_else(|| shell::someone().into())

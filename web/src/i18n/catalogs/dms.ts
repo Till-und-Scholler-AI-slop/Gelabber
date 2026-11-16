@@ -14,7 +14,7 @@ export const dms = defineCatalog(
     "newMessage.placeholder": "Name suchen",
     "newMessage.continue": "Unterhaltung fortsetzen",
     "newMessage.nobody":
-      "Keine Personen. Direktnachrichten gehen an Mitglieder deiner Server.",
+      "Keine Personen. Schreiben kannst du Freunden und Mitgliedern deiner Server.",
     "newMessage.notFound": "Niemand gefunden für „{query}“.",
     "open.failed": "Unterhaltung nicht geöffnet.",
     "conversation.loadFailed":
@@ -36,7 +36,7 @@ export const dms = defineCatalog(
     "newMessage.placeholder": "Search for a name",
     "newMessage.continue": "Continue conversation",
     "newMessage.nobody":
-      "Nobody here. Direct messages go to members of your servers.",
+      "Nobody here. You can message friends and members of your servers.",
     "newMessage.notFound": "Nobody found for “{query}”.",
     "open.failed": "Conversation not opened.",
     "conversation.loadFailed": "Couldn’t load this conversation.",

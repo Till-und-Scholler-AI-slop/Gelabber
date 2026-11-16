@@ -219,6 +219,7 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
                 }
             }
             Notice::Error(text) => app.toasts.error(text),
+            Notice::Info(text) => app.toasts.notify(text),
             Notice::Failed {
                 failed,
                 gone,

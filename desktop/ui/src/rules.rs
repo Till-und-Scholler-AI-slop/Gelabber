@@ -160,6 +160,10 @@ pub fn field_message(field: &str, code: &str) -> String {
         "unavailable" => auth::field_error_unavailable().into(),
         "not_editable" => auth::field_error_not_editable().into(),
         "too_many" => auth::field_error_too_many_roles().into(),
+        "self" => auth::field_error_self().into(),
+        "request_link" => auth::field_error_request_link().into(),
+        "request_mention" => auth::field_error_request_mention().into(),
+        "request_text_only" => auth::field_error_request_text_only().into(),
         _ => match field {
             "email" => auth::field_error_email_invalid().into(),
             "avatar_url" => auth::field_error_avatar_url_invalid().into(),
@@ -169,6 +173,7 @@ pub fn field_message(field: &str, code: &str) -> String {
             "content_type" => auth::field_error_content_type_invalid().into(),
             "role_ids" => auth::field_error_role_ids_invalid().into(),
             "invitation" => auth::error_invitation_invalid().into(),
+            "code" => auth::field_error_friend_code_invalid().into(),
             _ => auth::field_error_invalid(label),
         },
     }
@@ -212,6 +217,12 @@ pub fn error_message(code: &str) -> &'static str {
         "join_request_declined" => auth::error_join_request_declined(),
         "join_requests_full" => auth::error_join_requests_full(),
         "already_member" => auth::error_already_member(),
+        "dm_not_allowed" => auth::error_dm_not_allowed(),
+        "message_request_pending" => auth::error_message_request_pending(),
+        "message_request_limit" => auth::error_message_request_limit(),
+        "already_friends" => auth::error_already_friends(),
+        "friend_request_declined" => auth::error_friend_request_declined(),
+        "friend_requests_full" => auth::error_friend_requests_full(),
         _ => auth::error_internal(),
     }
 }

@@ -11,6 +11,8 @@ import { useNotificationSettingsBridge } from "../messages/notificationSettings.
 import { useSession } from "../auth/session.ts";
 import { useAccountLocaleBridge } from "../i18n/account.ts";
 import { useDirectoryBridge } from "../discover/queries.ts";
+import { useBlocksBridge } from "../blocks/queries.ts";
+import { useFriendsBridge } from "../friends/queries.ts";
 import { FeedbackDialog } from "../feedback/FeedbackDialog.tsx";
 import { useVoice } from "../voice/session.ts";
 import { useLiveNotices } from "../voice/useLiveNotices.ts";
@@ -43,6 +45,8 @@ function AuthenticatedRealtime() {
   useNotificationSettingsBridge();
   useAccountLocaleBridge();
   useDirectoryBridge();
+  useFriendsBridge();
+  useBlocksBridge();
   return null;
 }
 
