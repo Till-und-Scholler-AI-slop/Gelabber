@@ -722,6 +722,26 @@ impl Http {
         .await
     }
 
+    /// `PATCH` with only `attachment_descriptions`: an empty text clears it.
+    /// `content` is the message's text as shown: unchanged it leaves the
+    /// message unedited, and an older server, which ignores the alt text,
+    /// keeps the text instead of reading a missing one as empty.
+    pub async fn edit_alt_text(
+        &self,
+        id: Uuid,
+        attachment: Uuid,
+        content: &str,
+        text: &str,
+    ) -> Result<Message> {
+        let text = (!text.is_empty()).then_some(text);
+        self.send(
+            Method::PATCH,
+            &format!("/messages/{id}"),
+            &json!({"content": content, "attachment_descriptions": {attachment.to_string(): text}}),
+        )
+        .await
+    }
+
     pub async fn delete_message(&self, id: Uuid) -> Result<()> {
         self.send_empty(Method::DELETE, &format!("/messages/{id}"))
             .await

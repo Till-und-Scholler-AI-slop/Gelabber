@@ -13,10 +13,24 @@ export type Attachment = {
   filename: string;
   content_type: string;
   size: number;
+  /** Pictures (#574): the size as shown, known before the bytes load. */
+  width?: number;
+  height?: number;
+  /** Shown while the picture loads; version 1 is a colour `#rrggbb`. */
+  placeholder?: string;
+  placeholder_version?: number;
+  /** More than one frame (GIF, APNG, animated WebP). */
+  animated?: boolean;
+  /** `?size=400|800` answer with a thumbnail. */
+  thumbnail?: boolean;
+  /** Alt text the uploader wrote (#575), 1–1000 characters. */
+  description?: string;
   /** Client-only: local object URL while the PUT is still in flight. */
   preview_url?: string;
   /** Client-only: where this file of an unsent message stands. */
   upload?: "waiting" | "uploading" | "done";
+  /** Client-only: share of the file sent so far, 0..1, while uploading. */
+  progress?: number;
 };
 
 export type Message = {

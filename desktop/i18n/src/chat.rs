@@ -106,6 +106,19 @@ crate::strings! {
     attachment_preview_loading = "Vorschau wird geladen…" | "Loading preview…";
     /// The desktop app's save dialog for a downloaded file.
     attachment_save_title = "Datei speichern" | "Save file";
+    attachment_animated = "GIF" | "GIF";
+    lightbox_previous = "Vorheriges Bild" | "Previous picture";
+    lightbox_next = "Nächstes Bild" | "Next picture";
+    alt_badge = "ALT" | "ALT";
+    alt_show = "Alt-Text anzeigen" | "Show alt text";
+    alt_add = "Alt-Text hinzufügen" | "Add alt text";
+    alt_edit = "Alt-Text bearbeiten" | "Edit alt text";
+    alt_title = "Bild beschreiben" | "Describe this picture";
+    alt_hint = "Für alle, die das Bild nicht sehen können, etwa mit Screenreader." | "For everyone who can’t see the picture, for example with a screen reader.";
+    alt_save_failed = "Alt-Text nicht gespeichert." | "Alt text not saved.";
+    alt_message_unloaded = "Die Nachricht ist nicht mehr geladen. Scroll zu ihr und versuch es noch mal." | "The message is no longer loaded. Scroll to it and try again.";
+    composer_filter_pictures = "Bilder" | "Pictures";
+    composer_filter_all = "Alle Dateien" | "All files";
     /// The desktop app decodes pictures itself and leaves out huge ones.
     attachment_image_too_large = "Bild ist zu groß zum Anzeigen." | "The image is too large to show.";
 
@@ -412,6 +425,40 @@ pub fn attachment_enlarge_label(name: &str) -> String {
     match get() {
         Locale::De => format!("{name} vergrößern"),
         Locale::En => format!("Enlarge {name}"),
+    }
+}
+
+/// "{count} weitere Bilder" on the last tile of a mosaic.
+pub fn attachment_more(count: usize) -> String {
+    match get() {
+        Locale::De => format!("{count} weitere Bilder"),
+        Locale::En => format!("{count} more pictures"),
+    }
+}
+
+/// "Alt-Text für {name}", the alt text field's label.
+pub fn alt_label(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Alt-Text für {name}"),
+        Locale::En => format!("Alt text for {name}"),
+    }
+}
+
+/// "{count} / {max}" under the alt text field.
+pub fn alt_count(count: usize, max: usize) -> String {
+    format!("{count} / {max}")
+}
+
+/// "{n} / {total}" in the lightbox.
+pub fn lightbox_count(n: usize, total: usize) -> String {
+    format!("{n} / {total}")
+}
+
+/// "Bild {n} von {total}: {name}", the lightbox's accessible name.
+pub fn lightbox_label(n: usize, total: usize, name: &str) -> String {
+    match get() {
+        Locale::De => format!("Bild {n} von {total}: {name}"),
+        Locale::En => format!("Picture {n} of {total}: {name}"),
     }
 }
 

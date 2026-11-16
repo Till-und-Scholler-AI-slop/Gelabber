@@ -18,6 +18,7 @@ import {
 } from "@tanstack/react-query";
 
 import { ApiError } from "../api/client.ts";
+import { altTextOf } from "./altText.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { refreshReplyTarget } from "./replyTarget.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
@@ -404,6 +405,7 @@ function localAttachment(file: File): Attachment {
     preview_url: isImageType(contentType)
       ? URL.createObjectURL(file)
       : undefined,
+    description: isImageType(contentType) ? altTextOf(file) : undefined,
   };
 }
 
@@ -525,11 +527,20 @@ export async function sendMessageAttempt(
       requireAttempt(attempt);
       attempt = { ...attempt, stage: "upload" };
       saveAttempt(attempt);
+      // Whole percents only: every step re-renders the row.
+      let shown = -1;
+      const uploading = attempt.id;
       await remote.putPresigned(
         presign.upload_url,
         file,
         presign.headers,
         attempt.controller.signal,
+        (share) => {
+          const percent = Math.floor(share * 100);
+          if (percent === shown) return;
+          shown = percent;
+          markUpload(channelId, uploading, index, "uploading", percent / 100);
+        },
       );
       requireAttempt(attempt);
       arrived.set(file, {
@@ -547,6 +558,14 @@ export async function sendMessageAttempt(
     requireAttempt(attempt);
     attempt = { ...attempt, stage: "bind" };
     saveAttempt(attempt);
+    const descriptions: Record<string, string> = {};
+    const uploadedIds = attempt.uploadedIds;
+    attempt.files.forEach((file, index) => {
+      const text = altTextOf(file);
+      const id = uploadedIds[index];
+      if (text && id && isImageType(inferContentType(file)))
+        descriptions[id] = text;
+    });
     const message = await remote.createMessage(
       channelId,
       attempt.content,
@@ -554,6 +573,7 @@ export async function sendMessageAttempt(
       attempt.gif,
       attempt.reply?.id,
       attemptNonce(attempt.id),
+      descriptions,
     );
     requireAttempt(attempt);
     // Bound now; attaching the same file again needs a new upload.
@@ -828,6 +848,34 @@ type EditContext = import("../auth/scope.ts").ScopeStamp & {
   optimistic?: Message;
   version: number;
 };
+
+/** Sets or clears the alt text of one of my pictures (#575): an edit of
+ *  the message that leaves its text alone. */
+export function useEditAltText(channelId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      messageId,
+      attachmentId,
+      text,
+    }: {
+      messageId: string;
+      attachmentId: string;
+      text: string;
+      scope: import("../auth/scope.ts").ScopeStamp;
+    }) => remote.updateAltText(messageId, attachmentId, text),
+    onSuccess: (message: Message, { scope }) => {
+      if (stampHolds(scope))
+        applyMessageEdited(
+          client,
+          scope.userId,
+          scope.generation,
+          channelId,
+          message,
+        );
+    },
+  });
+}
 
 export function useEditMessage(channelId: string) {
   const client = useQueryClient();

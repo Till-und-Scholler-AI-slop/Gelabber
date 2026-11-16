@@ -63,6 +63,7 @@ pub struct AppState {
     /// MinIO (or in-memory in tests) for attachment bytes.
     pub store: ObjectStore,
     pub(crate) storage_worker_started: Arc<AtomicBool>,
+    pub(crate) media_worker_started: Arc<AtomicBool>,
     pub limits: Limits,
     pub limiter: Arc<Limiter>,
     pub metrics: Arc<HttpMetrics>,
@@ -206,6 +207,7 @@ impl AppState {
             media_ticket_ttl: config.media_ticket_ttl,
             store,
             storage_worker_started: Arc::new(AtomicBool::new(false)),
+            media_worker_started: Arc::new(AtomicBool::new(false)),
             limits: config.limits,
             limiter: Arc::new(Limiter::new()),
             metrics,
