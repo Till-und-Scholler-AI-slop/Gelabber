@@ -501,6 +501,7 @@ struct AttachmentRow {
     filename: String,
     content_type: String,
     size_bytes: i64,
+    description: Option<String>,
 }
 
 #[derive(FromRow)]
@@ -1044,7 +1045,7 @@ impl Serialize for MessagePages<'_> {
                 .handle
                 .block_on(
                     sqlx::query_as(
-                        "SELECT id, message_id, filename, content_type, size_bytes \
+                        "SELECT id, message_id, filename, content_type, size_bytes, description \
                          FROM attachments WHERE message_id = ANY($1) AND uploader_id = $2 \
                          ORDER BY created_at, id",
                     )
@@ -1064,6 +1065,7 @@ impl Serialize for MessagePages<'_> {
                             "filename": file.filename,
                             "content_type": file.content_type,
                             "size_bytes": file.size_bytes,
+                            "description": file.description,
                             "path": self.copied.contains(&file.id).then_some(path),
                         })
                     })

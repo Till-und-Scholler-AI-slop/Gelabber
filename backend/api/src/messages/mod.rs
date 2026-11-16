@@ -19,6 +19,8 @@ pub mod system;
 pub mod validate;
 mod workflows;
 
+use std::collections::BTreeMap;
+
 use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -216,6 +218,9 @@ pub struct CreateBody {
     pub content: String,
     #[serde(default)]
     pub attachment_ids: Vec<Uuid>,
+    /// Alt texts of pictures among `attachment_ids` (#575), by id.
+    #[serde(default)]
+    pub attachment_descriptions: BTreeMap<Uuid, Option<String>>,
     /// Post this GIF instead of text or files.
     #[serde(default)]
     pub gif: Option<GifPick>,
@@ -229,8 +234,12 @@ pub struct CreateBody {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateBody {
+    /// The new text; left out, the text stays (an edit of alt texts only).
     #[serde(default)]
-    pub content: String,
+    pub content: Option<String>,
+    /// Alt texts to set or (empty, `null`) clear, by attachment id (#575).
+    #[serde(default)]
+    pub attachment_descriptions: BTreeMap<Uuid, Option<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -277,9 +286,21 @@ async fn create_message(
     let content = validate::content_optional(&body.content, &mut errors);
     let attachment_ids =
         crate::attachments::validate::attachment_ids(&body.attachment_ids, &mut errors);
+    let descriptions =
+        crate::attachments::validate::descriptions(&body.attachment_descriptions, &mut errors);
     validate::finish(errors)?;
     let content = content.expect("validated");
     let attachment_ids = attachment_ids.expect("validated");
+    let descriptions = descriptions.expect("validated");
+    if descriptions
+        .iter()
+        .any(|(id, _)| !attachment_ids.contains(id))
+    {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "attachment_descriptions",
+            "invalid",
+        )])));
+    }
     // Resolving asks Klipy (up to its 8 s timeout) before the channel lock
     // is taken, so a slow provider holds only this request, not the channel.
     let gif = match &body.gif {
@@ -307,6 +328,24 @@ async fn create_message(
     {
         discard_uploads(&state, channel_id, user.id, &attachment_ids).await;
         return Err(err);
+    }
+    // Alt texts only for pictures, also before the mentions, so a send that
+    // fails on them does not use up an `@everyone` either. The uploads are
+    // fine and stay.
+    if !descriptions.is_empty() {
+        let pictures: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM attachments WHERE id = ANY($1) AND content_type = ANY($2)",
+        )
+        .bind(&attachment_ids)
+        .bind(attachments::PICTURE_TYPES)
+        .fetch_all(&state.db)
+        .await?;
+        if descriptions.iter().any(|(id, _)| !pictures.contains(id)) {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "attachment_descriptions",
+                "invalid",
+            )])));
+        }
     }
     // After the uploads check: a send that fails on its files does not use
     // up an `@everyone` of the limit.
@@ -357,6 +396,14 @@ async fn create_message(
             return Err(err);
         }
     };
+    // Alt texts only for pictures; a text on another file fails the send
+    // but keeps the uploads, which are fine.
+    let bound = if descriptions.is_empty() {
+        bound
+    } else {
+        attachments::describe(&mut tx, row.id, &descriptions).await?;
+        with_descriptions(bound, &descriptions)
+    };
     let mut message = row.into_message(&user);
     message.attachments = bound;
     message.nonce = body.nonce;
@@ -390,6 +437,19 @@ async fn create_message(
         },
     );
     Ok((StatusCode::CREATED, Json(message)).into_response())
+}
+
+/// `attachments` with the alt texts just written.
+fn with_descriptions(
+    mut attachments: Vec<attachments::Attachment>,
+    texts: &[(Uuid, Option<String>)],
+) -> Vec<attachments::Attachment> {
+    for attachment in &mut attachments {
+        if let Some((_, text)) = texts.iter().find(|(id, _)| *id == attachment.id) {
+            attachment.description = text.clone();
+        }
+    }
+    attachments
 }
 
 /// Quarantine only this uploader's invalid objects, after any rollback; no
@@ -428,18 +488,54 @@ async fn update_message(
     }
 
     let mut errors = FieldErrors::new();
-    let content = validate::content_optional(&body.content, &mut errors);
+    let content = match &body.content {
+        Some(raw) => validate::content_optional(raw, &mut errors),
+        None => Some(current.content.clone()),
+    };
+    let descriptions =
+        crate::attachments::validate::descriptions(&body.attachment_descriptions, &mut errors);
     validate::finish(errors)?;
     let content = content.expect("validated");
+    let descriptions = descriptions.expect("validated");
 
     if content.is_empty() && current.attachments.is_empty() {
         return Err(ApiError::Validation(FieldErrors::from([(
             "content", "required",
         )])));
     }
+    if descriptions.iter().any(|(id, _)| {
+        !current
+            .attachments
+            .iter()
+            .any(|a| a.id == *id && crate::attachments::validate::is_image(&a.content_type))
+    }) {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "attachment_descriptions",
+            "invalid",
+        )])));
+    }
+    let texts_change = descriptions.iter().any(|(id, text)| {
+        current
+            .attachments
+            .iter()
+            .any(|a| a.id == *id && a.description != *text)
+    });
 
-    if content == current.content {
+    if content == current.content && !texts_change {
         return Ok(Json(current));
+    }
+    // Alt texts only, also with the text sent along unchanged (the desktop
+    // app does, for servers from before #575).
+    if content == current.content {
+        return describe_only(
+            &state,
+            user.id,
+            message_id,
+            current.channel_id,
+            &descriptions,
+        )
+        .await
+        .map(Json);
     }
 
     // An edit names its mentions anew. Only a mention still unread counts:
@@ -460,8 +556,11 @@ async fn update_message(
     let mut tx = state.db.begin().await?;
     let access = lock_access(&mut tx, current.channel_id, user.id).await?;
     access.require_send()?;
+    // Only a new text marks the message edited; alt texts alone do not.
     let row = sqlx::query_as::<_, MessageInsert>(
-        "UPDATE messages SET content = $2, edited_at = now(), mentions = $3, mentions_everyone = $4, here_users = $5 \
+        "UPDATE messages SET content = $2, \
+             edited_at = CASE WHEN content IS DISTINCT FROM $2 THEN now() ELSE edited_at END, \
+             mentions = $3, mentions_everyone = $4, here_users = $5 \
          WHERE id = $1 \
          RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone, system_kind, system_params",
     )
@@ -489,8 +588,10 @@ async fn update_message(
         .bind(message_id)
         .fetch_one(&mut *tx)
         .await?;
+    attachments::describe(&mut tx, message_id, &descriptions).await?;
     let mut message = row.into_message(&user);
-    message.attachments = current.attachments;
+    // Read under the lock: a concurrent alt edit may have changed others.
+    message.attachments = attachments::for_message(&mut *tx, message_id).await?;
     persist_event(
         &mut tx,
         access.event_server_id(),
@@ -514,6 +615,46 @@ async fn update_message(
         );
     }
     Ok(Json(message))
+}
+
+/// An edit of alt texts only: the text, its mentions and previews stay as
+/// they are, and the message sent out is the one read under the lock, so
+/// a concurrent text edit is neither reverted nor shown stale.
+async fn describe_only(
+    state: &AppState,
+    user_id: Uuid,
+    message_id: Uuid,
+    channel_id: Uuid,
+    descriptions: &[(Uuid, Option<String>)],
+) -> Result<Message, ApiError> {
+    let mut tx = state.db.begin().await?;
+    let access = lock_access(&mut tx, channel_id, user_id).await?;
+    access.require_send()?;
+    let changed = attachments::describe(&mut tx, message_id, descriptions).await?;
+    let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
+        .bind(message_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let mut message = Message::from(row);
+    message.attachments = attachments::for_message(&mut *tx, message_id).await?;
+    if !changed {
+        // Someone else's request already wrote these texts.
+        tx.rollback().await?;
+        replies::for_messages(&state.db, std::slice::from_mut(&mut message)).await?;
+        previews::for_messages(&state.db, std::slice::from_mut(&mut message)).await?;
+        return Ok(message);
+    }
+    persist_event(
+        &mut tx,
+        access.event_server_id(),
+        EventKind::E,
+        &mut message,
+    )
+    .await?;
+    tx.commit().await?;
+    delivery::wake(state);
+    Ok(message)
 }
 
 async fn delete_message(
