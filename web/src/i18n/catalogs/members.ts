@@ -9,6 +9,8 @@ export const members = defineCatalog(
     "toggle.hide": "Mitgliederliste ausblenden",
     "panel.title": "Mitglieder",
     "panel.countLabel": "Mitglieder ({count})",
+    "panel.keyHint":
+      "Pfeiltasten hoch und runter wechseln zwischen den Mitgliedern.",
     "row.profileLabel": "Profil von {name}",
     "row.you": "Du",
     "row.live": "Live",
@@ -50,6 +52,7 @@ export const members = defineCatalog(
     "toggle.hide": "Hide member list",
     "panel.title": "Members",
     "panel.countLabel": "Members ({count})",
+    "panel.keyHint": "The up and down arrow keys move between members.",
     "row.profileLabel": "{name}’s profile",
     "row.you": "You",
     "row.live": "Live",
