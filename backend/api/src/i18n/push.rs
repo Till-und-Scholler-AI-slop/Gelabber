@@ -39,6 +39,34 @@ pub fn message_deleted(locale: Locale) -> &'static str {
     }
 }
 
+/// Title of the notice that this device's pushes are about to end with its
+/// session (#616).
+pub fn last_call_title(locale: Locale) -> &'static str {
+    match locale {
+        Locale::De => "Benachrichtigungen enden bald",
+        Locale::En => "Notifications are about to stop",
+    }
+}
+
+/// What to do about it. `last`: the session reached the end of its life, so
+/// only a new sign-in helps; otherwise opening the app does.
+pub fn last_call_body(locale: Locale, last: bool) -> &'static str {
+    match (locale, last) {
+        (Locale::De, false) => {
+            "Du warst länger nicht hier. Öffne Gelabber, damit Benachrichtigungen auf diesem Gerät weiter ankommen."
+        }
+        (Locale::De, true) => {
+            "Die Anmeldung auf diesem Gerät läuft bald ab. Melde dich neu an, damit Benachrichtigungen weiter ankommen."
+        }
+        (Locale::En, false) => {
+            "You have not been here for a while. Open Gelabber to keep notifications coming on this device."
+        }
+        (Locale::En, true) => {
+            "The sign-in on this device ends soon. Sign in again to keep notifications coming."
+        }
+    }
+}
+
 /// A channel whose name could not be read any more.
 pub fn unnamed_channel(locale: Locale) -> &'static str {
     match locale {

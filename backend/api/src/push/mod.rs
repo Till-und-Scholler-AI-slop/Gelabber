@@ -28,6 +28,7 @@
 //! The words of a push come from `crate::i18n`, in each recipient's locale
 //! (#314).
 
+pub mod last_call;
 pub mod webpush;
 
 use std::time::Duration;
@@ -102,6 +103,8 @@ pub struct Push {
     channel_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
     /// When this process last dropped expired receipts (Unix seconds).
     pruned_at: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    /// The [`last_call`] worker runs once per process.
+    last_call_started: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Push {
@@ -120,6 +123,7 @@ impl Push {
             server_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
             channel_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
             pruned_at: Default::default(),
+            last_call_started: Default::default(),
         })
     }
 
@@ -228,7 +232,9 @@ async fn subscribe(
         "INSERT INTO push_subscriptions (endpoint,user_id,session_hash,p256dh,auth)
          VALUES ($1,$2,$3,$4,$5) ON CONFLICT (endpoint) DO UPDATE
          SET user_id=EXCLUDED.user_id, session_hash=EXCLUDED.session_hash,
-             p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, created_at=now()
+             p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, created_at=now(),
+             warned_at=CASE WHEN push_subscriptions.session_hash=EXCLUDED.session_hash
+                            THEN push_subscriptions.warned_at END
          WHERE push_subscriptions.user_id=EXCLUDED.user_id
             OR (push_subscriptions.p256dh=EXCLUDED.p256dh
                 AND push_subscriptions.auth=EXCLUDED.auth)",
@@ -581,7 +587,7 @@ async fn deliver(
                 // the rest may wait for its next look at the network.
                 let urgency = if target.addressed { "high" } else { "normal" };
                 (
-                    send(push, &target, &raw, urgency, message.id).await,
+                    send(push, &target, &raw, urgency, message.id, TTL_SECS).await,
                     target.endpoint,
                 )
             }),
@@ -790,7 +796,7 @@ async fn deliver_invite(
     }))
     .map(|(target, raw)| async move {
         (
-            send(push, &target, &raw, "normal", message).await,
+            send(push, &target, &raw, "normal", message, TTL_SECS).await,
             target.endpoint,
         )
     })
@@ -896,7 +902,7 @@ async fn send_recall(
     }))
     .map(|(target, raw)| async move {
         (
-            send(push, &target, &raw, "normal", message.id).await,
+            send(push, &target, &raw, "normal", message.id, TTL_SECS).await,
             target.endpoint,
         )
     })
@@ -1019,8 +1025,16 @@ enum Outcome {
 }
 
 /// `topic` names what the push is about: a later push with the same topic
-/// replaces it at the push service while it is not delivered yet.
-async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str, topic: Uuid) -> Outcome {
+/// replaces it at the push service while it is not delivered yet. `ttl` is
+/// how many seconds the service keeps it for a device it cannot reach.
+async fn send(
+    push: &Push,
+    target: &Target,
+    payload: &[u8],
+    urgency: &str,
+    topic: Uuid,
+    ttl: u64,
+) -> Outcome {
     let Some(audience) = push.audience(&target.endpoint) else {
         return Outcome::Gone;
     };
@@ -1038,7 +1052,7 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str, topic
             "Authorization",
             push.vapid.authorization(&audience, expires),
         )
-        .header("TTL", TTL_SECS.to_string())
+        .header("TTL", ttl.to_string())
         .header("Urgency", urgency)
         // 32 hex digits: within the 32 URL-safe base64 characters RFC 8030
         // allows a topic.
