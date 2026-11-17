@@ -52,7 +52,7 @@ Work is planned in the Linear project
 Each Linear issue is synced both ways with a GitHub issue in this repository
 (title, description, comments, open or closed), so people without Linear can
 still read and report on GitHub. Plan in Linear, not on GitHub: GitHub
-milestones, labels and the old GitHub project board are not kept up to date.
+milestones and the old GitHub project board are not kept up to date.
 
 - **Issue first:** all work has a Linear issue in the project Gelabber, with
   the label Bug, Feature or Improvement. If there is none, create it in
