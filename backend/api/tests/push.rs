@@ -1695,3 +1695,129 @@ async fn a_last_call_waits_for_do_not_disturb_and_is_tried_again(pool: PgPool) {
     assert_eq!(sweep(&state).await.unwrap(), 1);
     assert_eq!(next(&mut hits).await.path, "fail/bob");
 }
+
+async fn voice(client: &mut Client, server: &str, name: &str) -> String {
+    let r = client
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/channels"),
+            Some(json!({"name": name, "kind": "voice"})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    r.body["id"].as_str().unwrap().to_owned()
+}
+
+/// Sends a voice frame and waits until the socket hears it back: the server
+/// has handled it then.
+async fn sig(ws: &mut Ws, server: &str, channel: &str, t: &str, k: Option<&str>) {
+    let mut frame = json!({"op": "sig", "t": t, "s": server, "c": channel});
+    if let Some(k) = k {
+        frame["k"] = json!(k);
+    }
+    ws.send(Message::Text(frame.to_string().into()))
+        .await
+        .unwrap();
+    loop {
+        let heard = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .expect("the voice frame comes back")
+            .expect("socket open")
+            .expect("frame");
+        if let Message::Text(text) = heard {
+            let heard: Value = serde_json::from_str(text.as_str()).unwrap();
+            if heard["op"] == "sig"
+                && heard["t"] == t
+                && heard["c"] == channel
+                && k.is_none_or(|k| heard["k"] == k)
+            {
+                return;
+            }
+        }
+    }
+}
+
+/// Joins the voice channel and goes live there.
+async fn go_live(ws: &mut Ws, server: &str, channel: &str) {
+    sig(ws, server, channel, "j", None).await;
+    sig(ws, server, channel, "p", Some("s")).await;
+}
+
+/// A Live reaches the closed apps as the pages announce it (#616): at the
+/// server's level "all", once in a while, and not who is in voice there.
+#[sqlx::test]
+async fn a_live_pushes_at_the_level_all(pool: PgPool) {
+    let World {
+        state,
+        mut a,
+        mut b,
+        server,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    subscribe(&mut a, &Browser::new(&service, "sub/ada")).await;
+    let lounge = voice(&mut a, &server, "Lounge").await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app(state.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .unwrap();
+    let mut ada = connect(addr, &a).await;
+
+    go_live(&mut ada, &server, &lounge).await;
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    assert_eq!(hit.headers["urgency"], "normal");
+    // Not kept for long: a Live heard of late is over.
+    assert_eq!(hit.headers["ttl"], "600");
+    let payload = browser.open(&hit);
+    assert_eq!(payload["title"], "Ada · Chat");
+    assert_eq!(payload["body"], "Ada ist live in Lounge.");
+    assert_eq!(payload["path"], format!("/s/{server}/c/{lounge}"));
+    assert_eq!(payload["channel"], lounge);
+
+    // Off and on again within the cooldown: not again.
+    sig(&mut ada, &server, &lounge, "u", Some("s")).await;
+    sig(&mut ada, &server, &lounge, "p", Some("s")).await;
+    post(&mut a, &dm, "marker 1").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1");
+
+    // At "mentions" for the server a Live, which names nobody, stays quiet.
+    level(&mut b, "servers", &server, json!("mentions")).await;
+    let second = voice(&mut a, &server, "Zwei").await;
+    go_live(&mut ada, &server, &second).await;
+    post(&mut a, &dm, "marker 2").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 2");
+
+    // With content hidden: who, not where.
+    level(&mut b, "servers", &server, Value::Null).await;
+    sqlx::query("UPDATE users SET notifications_hide_content=true")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let third = voice(&mut a, &server, "Drei").await;
+    go_live(&mut ada, &server, &third).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Ada ist live");
+    assert_eq!(payload["body"], "");
+
+    // Bob sits in a voice channel of the server: his app shows it.
+    let mut bob = connect(addr, &b).await;
+    sig(&mut bob, &server, &lounge, "j", None).await;
+    let fourth = voice(&mut a, &server, "Vier").await;
+    go_live(&mut ada, &server, &fourth).await;
+    post(&mut a, &dm, "marker 3").await;
+    assert_eq!(
+        browser.open(&next(&mut hits).await)["title"],
+        "Neue Nachricht von Ada"
+    );
+    assert!(hits.try_recv().is_err());
+}

@@ -99,17 +99,29 @@ pub fn file(locale: Locale) -> &'static str {
     }
 }
 
+/// "Ada ist live in Lounge.", as the pages say it (`liveText` in
+/// web/src/voice/liveNotices.ts).
+pub fn live_in(locale: Locale, author: &str, voice: &str) -> String {
+    match locale {
+        Locale::De => format!("{author} ist live in {voice}."),
+        Locale::En => format!("{author} is live in {voice}."),
+    }
+}
+
+/// The same with the content of notifications hidden (#268): who, not where.
+pub fn is_live(locale: Locale, author: &str) -> String {
+    match locale {
+        Locale::De => format!("{author} ist live"),
+        Locale::En => format!("{author} is live"),
+    }
+}
+
 /// A system message as a sentence; `author` is the person it is about.
 /// The same wording as `systemText` in web/src/messages/system.ts.
 pub fn system_text(locale: Locale, message: &SystemMessage, author: &str) -> String {
     match (locale, message.kind.as_str()) {
-        (Locale::De, system::LIVE_STARTED) => {
-            format!("{author} ist live in {}.", message.param("voice_name"))
-        }
+        (_, system::LIVE_STARTED) => live_in(locale, author, message.param("voice_name")),
         (Locale::De, _) => format!("Systemnachricht von {author}"),
-        (Locale::En, system::LIVE_STARTED) => {
-            format!("{author} is live in {}.", message.param("voice_name"))
-        }
         (Locale::En, _) => format!("System message from {author}"),
     }
 }
