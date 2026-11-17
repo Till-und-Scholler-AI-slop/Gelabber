@@ -744,12 +744,10 @@ pub struct DirectMessage {
     /// and from servers before v0.11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<DmRequest>,
-    /// The user blocks the peer (#565): the composer says so.
+    /// The user blocks the peer (#565): the composer says so. A peer who
+    /// blocks the user is not told (#619): nothing marks it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub blocked: bool,
-    /// The peer blocks the user: nothing can be sent, without saying why.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub closed: bool,
 }
 
 /// A pending message request. `incoming`: the peer started it and waits

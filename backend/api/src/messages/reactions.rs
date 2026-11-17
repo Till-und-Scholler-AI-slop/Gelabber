@@ -88,11 +88,18 @@ async fn mutate(
         .ok_or_else(|| ApiError::Validation(FieldErrors::from([("emoji", "invalid")])))?;
     let mut tx = state.db.begin().await?;
     let access = lock_access(&mut tx, initial.channel_id, user).await?;
+    // The one blocked reacts on as before, but only on what the peer never
+    // sees; a reaction on the peer's messages is dropped without a word
+    // (#619). The blocker gets `blocked` from the precheck.
+    let mut dropped = false;
     if add {
         access.require_send()?;
         // A reaction answers too: not before a message request is accepted,
-        // and not where a block closed the DM (#565).
+        // and not by someone who blocks the peer (#565).
         if let super::MessagingChannel::Dm { .. } = &access {
+            dropped = crate::blocks::in_dm(&mut *tx, initial.channel_id, user).await?
+                == crate::blocks::Block::Theirs
+                && !initial.sender_only;
             let draft = crate::dms::request::Draft {
                 content: "",
                 files: false,
@@ -109,6 +116,11 @@ async fn mutate(
     let mut current = Message::from(row);
     current.attachments = initial.attachments;
     super::replies::for_messages(&mut *tx, std::slice::from_mut(&mut current)).await?;
+    if dropped {
+        tx.rollback().await?;
+        crate::previews::for_messages(&state.db, std::slice::from_mut(&mut current)).await?;
+        return Ok(current);
+    }
     if add {
         // The channel lock serializes the limit check with every reaction write.
         // Existing emoji and idempotent retries remain valid at the limit.

@@ -89,23 +89,26 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
     LEFT JOIN notification_settings ss ON ss.user_id=$1 AND ss.scope_kind='server' AND ss.scope_id=v.server_id
 ) SELECT v.channel_id, v.server_id, r.message_id AS read_message_id, r.message_at AS read_at,
     r.created_order AS read_order, v.joined_at AS membership_at,
-    (SELECT max(m.created_order) FROM messages m WHERE m.channel_id=v.channel_id) AS latest_order,
+    -- A sender-only message (#619) is its author's alone, here and below.
+    (SELECT max(m.created_order) FROM messages m WHERE m.channel_id=v.channel_id
+      AND (NOT m.sender_only OR m.author_id=$1)) AS latest_order,
     -- Without a read position since joining, everything since joining is
     -- unread: that range is walked by time, so a quiet channel costs one
     -- index probe instead of its whole history (issue #277). With one, by
     -- order from it. The ORDER BY keeps the planner on those indexes.
     CASE WHEN r.created_order IS NULL OR r.message_at<v.joined_at THEN
       (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
-        AND m.created_at>=v.joined_at AND (r.created_order IS NULL OR m.created_order>r.created_order)
+        AND NOT m.sender_only AND m.created_at>=v.joined_at AND (r.created_order IS NULL OR m.created_order>r.created_order)
         ORDER BY m.created_at DESC LIMIT 100) bounded)
     ELSE
       (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
-        AND m.created_at>=v.joined_at AND m.created_order>r.created_order
+        AND NOT m.sender_only AND m.created_at>=v.joined_at AND m.created_order>r.created_order
         ORDER BY m.created_order DESC LIMIT 100) bounded)
     END AS unread_count,
     CASE WHEN r.created_order IS NULL OR r.message_at<v.joined_at THEN
       (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
         WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
+        AND NOT m.sender_only
         AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id=$1 AND b.blocked_id=m.author_id)
         AND m.created_at>=v.joined_at AND (r.created_order IS NULL OR m.created_order>r.created_order)
         ORDER BY m.created_at DESC LIMIT 1000) recent
@@ -113,6 +116,7 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
     ELSE
       (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
         WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
+        AND NOT m.sender_only
         AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id=$1 AND b.blocked_id=m.author_id)
         AND m.created_at>=v.joined_at AND m.created_order>r.created_order
         ORDER BY m.created_order DESC LIMIT 1000) recent
@@ -156,7 +160,7 @@ struct ReadBody {
 /// channel quiet since then it would pass the whole history to find none
 /// (issue #277): the time index answers first whether there is any.
 const NEWEST_SINCE: &str = "SELECT id,created_at,created_order FROM messages \
-    WHERE channel_id=$1 AND created_at>=$2 \
+    WHERE channel_id=$1 AND created_at>=$2 AND (NOT sender_only OR author_id=$3) \
       AND EXISTS (SELECT 1 FROM messages q WHERE q.channel_id=$1 AND q.created_at>=$2) \
     ORDER BY created_order DESC LIMIT 1";
 
@@ -211,6 +215,7 @@ async fn mark_read(
             sqlx::query_as(NEWEST_SINCE)
                 .bind(channel_id)
                 .bind(joined_at)
+                .bind(user.id)
                 .fetch_optional(&mut *tx)
                 .await?
         }
@@ -324,6 +329,7 @@ async fn read_up_to_latest(
         CROSS JOIN LATERAL (
             SELECT m.id, m.created_at, m.created_order FROM messages m
             WHERE m.channel_id=v.channel_id AND m.created_at>=v.joined_at
+              AND (NOT m.sender_only OR m.author_id=$1)
               AND EXISTS (SELECT 1 FROM messages q WHERE q.channel_id=v.channel_id AND q.created_at>=v.joined_at)
             ORDER BY m.created_order DESC LIMIT 1
         ) l
@@ -481,9 +487,10 @@ async fn search(
         FROM messages m JOIN users u ON u.id=m.author_id
         WHERE m.channel_id=$1 AND to_tsvector('simple',m.content) @@ websearch_to_tsquery('simple',$2)
           AND ($3::timestamptz IS NULL OR (m.created_at,m.id)<($3,$4))
+          AND (NOT m.sender_only OR m.author_id=$6)
         ORDER BY m.created_at DESC,m.id DESC LIMIT $5")
         .bind(channel_id).bind(q).bind(bound.map(|b| b.0)).bind(bound.map(|b| b.1))
-        .bind(limit+1).fetch_all(&state.db).await?;
+        .bind(limit+1).bind(user.id).fetch_all(&state.db).await?;
     let has_more = rows.len() as i64 > limit;
     let mut messages: Vec<Message> = rows
         .into_iter()
@@ -514,14 +521,15 @@ async fn context(
 ) -> Result<Json<MessageContext>, ApiError> {
     messaging_channel(&state.db, channel_id, user.id).await?;
     let rows: Vec<MessageRow> = sqlx::query_as(
-        "WITH target AS (SELECT created_at,id FROM messages WHERE channel_id=$1 AND id=$2),
+        "WITH target AS (SELECT created_at,id FROM messages WHERE channel_id=$1 AND id=$2
+            AND (NOT sender_only OR author_id=$3)),
         selected AS (
           (SELECT m.id FROM messages m,target t WHERE m.channel_id=$1
-             AND (m.created_at,m.id)<(t.created_at,t.id)
+             AND (m.created_at,m.id)<(t.created_at,t.id) AND (NOT m.sender_only OR m.author_id=$3)
            ORDER BY m.created_at DESC,m.id DESC LIMIT 30)
           UNION ALL
           (SELECT m.id FROM messages m,target t WHERE m.channel_id=$1
-             AND (m.created_at,m.id)>=(t.created_at,t.id)
+             AND (m.created_at,m.id)>=(t.created_at,t.id) AND (NOT m.sender_only OR m.author_id=$3)
            ORDER BY m.created_at,m.id LIMIT 31)
         ) SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
             u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,m.mentions,m.mentions_everyone,m.system_kind,m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
@@ -530,6 +538,7 @@ async fn context(
     )
     .bind(channel_id)
     .bind(message_id)
+    .bind(user.id)
     .fetch_all(&state.db)
     .await?;
     let mut messages: Vec<Message> = rows.into_iter().map(Message::from).collect();

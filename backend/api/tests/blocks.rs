@@ -1,5 +1,7 @@
 //! One person blocks another (#565): the routes, every private path closed
 //! both ways, what a block takes away, mentions, unblocking and the event.
+//! The one blocked writes on into an existing DM, unseen by the blocker
+//! (#619).
 
 mod common;
 
@@ -248,6 +250,23 @@ async fn new_ways_in_are_closed_both_ways(pool: PgPool) {
     );
 }
 
+async fn history(client: &mut Client, channel: &str) -> Vec<String> {
+    let res = client
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    res.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["content"].as_str().unwrap().to_owned())
+        .collect()
+}
+
 #[sqlx::test]
 async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
     let mut w = world(common::state(pool)).await;
@@ -262,16 +281,25 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
     let (photo, picture) = picture_message(&mut w.bob, &dm).await;
     block(&mut w.ada, &bob).await;
 
-    refused(
-        &text(&mut w.bob, &dm, "nachher").await,
-        StatusCode::FORBIDDEN,
-        "dm_closed",
-    );
+    // Bob writes on as if nothing happened (#619); Ada is refused.
+    let hidden = text(&mut w.bob, &dm, "nachher").await;
+    assert_eq!(hidden.status, StatusCode::CREATED, "{}", hidden.body);
+    let hidden = hidden.body["id"].as_str().unwrap().to_owned();
     refused(
         &text(&mut w.ada, &dm, "nachher").await,
         StatusCode::FORBIDDEN,
         "blocked",
     );
+    // What only Bob reads he may change; what Ada has seen stays.
+    let fixed = w
+        .bob
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{hidden}"),
+            Some(json!({ "content": "nachher!" })),
+        )
+        .await;
+    assert_eq!(fixed.status, StatusCode::OK, "{}", fixed.body);
     let edit = w
         .bob
         .send(
@@ -302,22 +330,41 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
         .await;
     assert_eq!(mine.body["blocked"], true, "{}", mine.body);
     assert!(mine.body.get("closed").is_none());
+    // Bob's DM looks as before: nothing says it is closed.
     let theirs = w
         .bob
         .send(Method::GET, &format!("/api/dms/{dm}"), None)
         .await;
-    assert_eq!(theirs.body["closed"], true, "{}", theirs.body);
+    assert!(theirs.body.get("closed").is_none(), "{}", theirs.body);
     assert!(theirs.body.get("blocked").is_none());
     let again = open_dm(&mut w.bob, &ada).await;
     assert_eq!(again.status, StatusCode::OK, "{}", again.body);
-    let history = w
-        .bob
-        .send(Method::GET, &format!("/api/channels/{dm}/messages"), None)
+    assert_eq!(
+        history(&mut w.bob, &dm).await,
+        ["vorher", "auch vorher", "", "nachher!"]
+    );
+    assert_eq!(
+        history(&mut w.ada, &dm).await,
+        ["vorher", "auch vorher", ""]
+    );
+    // Ada cannot reach it by id either.
+    let jump = w
+        .ada
+        .send(
+            Method::GET,
+            &format!("/api/channels/{dm}/messages/{hidden}/context"),
+            None,
+        )
         .await;
-    assert_eq!(history.status, StatusCode::OK, "{}", history.body);
-    assert_eq!(history.body["messages"].as_array().unwrap().len(), 3);
+    assert_eq!(jump.status, StatusCode::NOT_FOUND, "{}", jump.body);
+    let delete = w
+        .ada
+        .send(Method::DELETE, &format!("/api/messages/{hidden}"), None)
+        .await;
+    refused(&delete, StatusCode::NOT_FOUND, "not_found");
 
-    // Unblocking opens it again; the friendship does not come back.
+    // Unblocking opens it again; the friendship does not come back, and
+    // what Bob wrote meanwhile stays his.
     unblock(&mut w.ada, &bob).await;
     assert_eq!(
         text(&mut w.bob, &dm, "wieder").await.status,
@@ -327,6 +374,21 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
         text(&mut w.ada, &dm, "ja").await.status,
         StatusCode::CREATED
     );
+    assert_eq!(
+        history(&mut w.ada, &dm).await,
+        ["vorher", "auch vorher", "", "wieder", "ja"]
+    );
+    // An answer to the hidden message does not quote it to Ada.
+    let answer = w
+        .bob
+        .send(
+            Method::POST,
+            &format!("/api/channels/{dm}/messages"),
+            Some(json!({ "content": "siehe oben", "reply_to": hidden })),
+        )
+        .await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    assert!(answer.body.get("reply").is_none(), "{}", answer.body);
     let list = friends(&mut w.ada).await;
     assert_eq!(list["friends"], json!([]));
     let dm_now = w
@@ -373,11 +435,32 @@ async fn blocking_ends_friendship_and_requests(pool: PgPool) {
     block(&mut w.ada, &bob).await;
     let res = w.ada.send(Method::GET, "/api/dms/requests", None).await;
     assert_eq!(res.body, json!([]));
-    refused(
-        &text(&mut w.bob, &dm, "noch was").await,
-        StatusCode::FORBIDDEN,
-        "dm_closed",
+    // Bob writes on into his request, within its limit, unseen (#619).
+    assert_eq!(
+        text(&mut w.bob, &dm, "noch was").await.status,
+        StatusCode::CREATED
     );
+    let mine = w
+        .bob
+        .send(Method::GET, &format!("/api/dms/{dm}"), None)
+        .await;
+    assert_eq!(mine.body["request"]["remaining"], 1, "{}", mine.body);
+    refused(
+        &text(&mut w.bob, &dm, "https://example.com").await,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "validation_failed",
+    );
+    assert_eq!(
+        text(&mut w.bob, &dm, "letzte").await.status,
+        StatusCode::CREATED
+    );
+    refused(
+        &text(&mut w.bob, &dm, "zu viel").await,
+        StatusCode::CONFLICT,
+        "message_request_limit",
+    );
+    let res = w.ada.send(Method::GET, "/api/dms/requests", None).await;
+    assert_eq!(res.body, json!([]));
 }
 
 async fn react(client: &mut Client, message: &str) -> Response {
@@ -391,7 +474,7 @@ async fn react(client: &mut Client, message: &str) -> Response {
 }
 
 #[sqlx::test]
-async fn reactions_in_a_closed_dm_are_refused_both_ways(pool: PgPool) {
+async fn reactions_in_a_closed_dm_reach_nobody(pool: PgPool) {
     let mut w = world(common::state(pool)).await;
     let bob = w.bob.user_id().to_owned();
     w.ada.befriend(&bob).await;
@@ -403,11 +486,29 @@ async fn reactions_in_a_closed_dm_are_refused_both_ways(pool: PgPool) {
     let bobs = bobs.body["id"].as_str().unwrap().to_owned();
     block(&mut w.ada, &bob).await;
 
-    refused(
-        &react(&mut w.bob, &adas).await,
-        StatusCode::FORBIDDEN,
-        "dm_closed",
+    // Bob's reaction on Ada's message is dropped without a word (#619).
+    let dropped = react(&mut w.bob, &adas).await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    assert_eq!(dropped.body["reactions"], json!([]), "{}", dropped.body);
+    let seen = w
+        .ada
+        .send(Method::GET, &format!("/api/channels/{dm}/messages"), None)
+        .await;
+    assert!(
+        seen.body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["reactions"] == json!([])),
+        "{}",
+        seen.body
     );
+    // On his own hidden message it sticks, for him.
+    let hidden = text(&mut w.bob, &dm, "nur für mich").await;
+    let hidden = hidden.body["id"].as_str().unwrap().to_owned();
+    let own = react(&mut w.bob, &hidden).await;
+    assert_eq!(own.status, StatusCode::OK, "{}", own.body);
+    assert_eq!(own.body["reactions"][0]["emoji"], "👍", "{}", own.body);
     refused(
         &react(&mut w.ada, &bobs).await,
         StatusCode::FORBIDDEN,
@@ -627,5 +728,117 @@ async fn only_the_blocker_hears_of_a_block(pool: PgPool) {
             .await
             .is_none(),
         "Bob is not told"
+    );
+}
+
+#[sqlx::test]
+async fn the_blocker_hears_nothing_of_hidden_messages(pool: PgPool) {
+    let state = common::ws_state(pool);
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut w = world(state.clone()).await;
+    let mut cara = person(&state, "cara@example.com", "Cara").await;
+    let ada = w.ada.user_id().to_owned();
+    let bob = w.bob.user_id().to_owned();
+    let cara_id = cara.user_id().to_owned();
+    w.ada.befriend(&bob).await;
+    w.ada.befriend(&cara_id).await;
+    let with_bob = open_dm(&mut w.ada, &bob).await;
+    let with_bob = with_bob.body["id"].as_str().unwrap().to_owned();
+    text(&mut w.ada, &with_bob, "hallo bob").await;
+    let with_cara = open_dm(&mut w.ada, &cara_id).await;
+    let with_cara = with_cara.body["id"].as_str().unwrap().to_owned();
+    text(&mut cara, &with_cara, "hallo ada").await;
+    // Ada reads both, then blocks Bob.
+    for dm in [&with_bob, &with_cara] {
+        let res = w
+            .ada
+            .send(
+                Method::PUT,
+                &format!("/api/channels/{dm}/read"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+    block(&mut w.ada, &bob).await;
+    let mut ada_ws = socket(addr, &w.ada).await;
+    let mut bob_ws = socket(addr, &w.bob).await;
+    for (ws, dm) in [(&mut ada_ws, &with_bob), (&mut bob_ws, &with_bob)] {
+        ws.send(Message::Text(
+            json!({ "op": "s", "s": dm, "c": dm }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+        assert!(
+            frame(ws, Duration::from_secs(5), |f| f["op"] == "ok")
+                .await
+                .is_some()
+        );
+    }
+
+    let sent = text(&mut w.bob, &with_bob, &format!("<@{ada}> geheim")).await;
+    assert_eq!(sent.status, StatusCode::CREATED, "{}", sent.body);
+    let id = sent.body["id"].as_str().unwrap().to_owned();
+    let edited = w
+        .bob
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{id}"),
+            Some(json!({ "content": "geheim!" })),
+        )
+        .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    let event = |f: &Value| f["op"] == "e";
+    assert!(
+        frame(&mut ada_ws, Duration::from_millis(800), event)
+            .await
+            .is_none(),
+        "no event reaches Ada"
+    );
+
+    // Nothing unread, no mention, and Bob's DM does not move up for Ada.
+    let row = unread_row(&mut w.ada, &with_bob).await;
+    assert_eq!(row["unread_count"], 0, "{row}");
+    assert_eq!(row["mention_count"], 0, "{row}");
+    let list = w.ada.send(Method::GET, "/api/dms", None).await;
+    let order: Vec<&str> = list
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        order,
+        [with_cara.as_str(), with_bob.as_str()],
+        "{}",
+        list.body
+    );
+    let list = w.bob.send(Method::GET, "/api/dms", None).await;
+    assert_eq!(list.body[0]["id"], with_bob.as_str(), "{}", list.body);
+
+    // Search finds it for Bob only.
+    let search = format!("/api/channels/{with_bob}/messages/search?q=geheim");
+    let theirs = w.ada.send(Method::GET, &search, None).await;
+    assert_eq!(theirs.body["messages"], json!([]), "{}", theirs.body);
+    let mine = w.bob.send(Method::GET, &search, None).await;
+    assert_eq!(
+        mine.body["messages"].as_array().unwrap().len(),
+        1,
+        "{}",
+        mine.body
+    );
+
+    // Deleting it tells nobody either.
+    let gone = w
+        .bob
+        .send(Method::DELETE, &format!("/api/messages/{id}"), None)
+        .await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.body);
+    assert!(
+        frame(&mut ada_ws, Duration::from_millis(800), event)
+            .await
+            .is_none(),
+        "no delete event reaches Ada"
     );
 }
