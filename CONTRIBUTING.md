@@ -33,11 +33,11 @@ against them will not be merged:
 
 ## Planning
 
-Issues are planned in the project
-[Gelabber](https://github.com/orgs/Till-und-Scholler-AI-slop/projects/2).
-Each release is a milestone whose description states its goal, and the
-assignee of an issue is the person working on it right now. The rules are in
-[AGENTS.md](AGENTS.md#planning).
+Maintainers plan the work in Linear. Every Linear issue is mirrored as a
+GitHub issue in this repository and kept in sync both ways, so you can read,
+open and discuss issues here as usual. Each release is a milestone whose
+description states its goal, and the assignee of an issue is the person
+working on it right now. The rules are in [AGENTS.md](AGENTS.md#planning).
 
 ## Setting up
 
