@@ -304,7 +304,7 @@ Limits: `@everyone` and `@here` need the server permission "@everyone und @here"
 
 On iPhone and iPad (iOS 16.4 or later), push works only in Gelabber added to the home screen, not in a Safari tab.
 
-A subscription ends with the session that made it (see "Session lifetime"), so a phone whose app stayed closed for two weeks would go silent without a word. Up to 48 hours before that, each of the session's subscriptions gets one push that says so: "open Gelabber" while opening it still renews the session, "sign in again" once the session reaches its absolute end. The notice carries no content, waits while the account is in Do not disturb, and is sent again only after the session was used in between. With an idle window under 8 days it comes later, a quarter of the window before the end. Migration 0042 adds `push_subscriptions.warned_at` for it.
+A subscription ends with the session that made it (see "Session lifetime"), so a phone whose app stayed closed for two weeks would go silent without a word. Up to 48 hours before that, each of the session's subscriptions gets one push that says so: "open Gelabber" while opening it still renews the session, "sign in again" once the session reaches its absolute end. The notice carries no content, waits while the account is in Do not disturb, and is sent again only after the session was used in between. With an idle window under 8 days it comes later, a quarter of the window before the end. Migration 0043 adds `push_subscriptions.warned_at` for it.
 
 Every push is a declarative push message (`"web_push": 8030` of the Push API). Safari from iOS 18.4 and macOS 15.5 builds the notification from it and shows it even where Gelabber's service worker is gone or fails, so a push that the worker could not show no longer costs the subscription; the worker still gets it first and keeps one notification per conversation. Other browsers hand the same JSON to the worker as before. A tap on a notification that Safari showed by itself opens `APP_PUBLIC_URL` plus the conversation's path; without `APP_PUBLIC_URL` the message carries the path alone.
 
@@ -383,7 +383,12 @@ Logs name the provider, the account ID and the outcome, never an address, code o
 
 ## Database connections
 
-The API keeps up to `API_DB_MAX_CONNECTIONS` (default 20) Postgres connections; every open WebSocket checks its session once a second. The stack runs one API process, so keep the value well below Postgres' `max_connections` (100 in the bundled Postgres). After changing it, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
+The API keeps two pools of Postgres connections:
+
+- `API_DB_MAX_CONNECTIONS` (default 20) for requests, sign-ins and the worker that hands new messages to the gateway.
+- `API_DB_GATEWAY_CONNECTIONS` (default 10) for the checks of open WebSockets. Each socket checks its session and access before it writes a batch of events, on every frame the client sends, and on a timer (once a second while in a voice channel, otherwise every 10 seconds). With their own pool, thousands of sockets cannot hold up requests or the delivery of new messages; when the sockets wait for this pool, each check carries more events at once. `0` puts the checks back into the main pool.
+
+The stack runs one API process, so keep both together well below Postgres' `max_connections` (100 in the bundled Postgres). After changing them, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
 
 ## Public pages
 

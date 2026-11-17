@@ -4,6 +4,8 @@
 //! with `t` = create/edit/delete. Voice presence is `op: "sig"` — live
 //! only, no seq, never mixed into the chat stream.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -431,8 +433,10 @@ pub struct Event {
     pub r: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub i: Option<Uuid>,
+    /// Shared: one fan-out queues a clone of the event per recipient socket,
+    /// and a socket that waits for its check can hold hundreds of them.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub d: Option<Value>,
+    pub d: Option<Arc<Value>>,
 }
 
 impl Event {
@@ -549,7 +553,7 @@ pub enum ServerFrame {
         #[serde(skip_serializing_if = "Option::is_none")]
         i: Option<Uuid>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        d: Option<Value>,
+        d: Option<Arc<Value>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         r: Option<i64>,
     },
@@ -985,7 +989,7 @@ mod tests {
             ep: None,
             r: None,
             i: Some(Uuid::from_u128(3)),
-            d: Some(serde_json::json!({"b":"hi"})),
+            d: Some(Arc::new(serde_json::json!({"b":"hi"}))),
         };
         let json = ServerFrame::event(event).to_json().unwrap();
         assert!(json.starts_with(r#"{"op":"e","t":"c""#));
@@ -1007,7 +1011,7 @@ mod tests {
             ep: None,
             r: Some(9),
             i: Some(Uuid::from_u128(3)),
-            d: Some(serde_json::json!({"n":0,"ep":null,"x":[{"n":0}]})),
+            d: Some(Arc::new(serde_json::json!({"n":0,"ep":null,"x":[{"n":0}]}))),
         })
         .unwrap();
         let delta = template.find(r#""d":"#).expect("delta");

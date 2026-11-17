@@ -174,7 +174,7 @@ session expiry (throttled) — `conn.rs:122-129,165-168,247-273`. A heartbeat do
 
 | Topic | Addressing | Receives | Ref |
 |---|---|---|---|
-| Server topic | `{s: serverId}` | `e` events with no `c` (kick/ban), `gap` for that topic | `protocol.rs:14-18,61-66` |
+| Server topic | `{s: serverId}` | `e` events with no `c` (kick/ban, join, access, owner), `gap` for that topic | `protocol.rs:14-18,61-66` |
 | Channel topic | `{s: serverId, c: channelId}` (text **or voice** channel) | `e` message create/edit/delete for that channel, `y` typing for that channel | same |
 | DM topic | `{s: dmId, c: dmId}` (s == c) | as a channel topic | `conn.rs:383-385,512-551`, `web/src/ws/useGateway.ts:51-65` |
 
@@ -280,7 +280,7 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `jq` | `{"op":"jq","s":"<srv>","n":3}` | v0.10: server `s` now has `n` pending requests to join. Only to the owner and the members holding `moderate_members`, after a new request, a withdrawal, an accept or a decline → set the queue's count badge and refetch the queue if it is open | `protocol.rs` (`ServerFrame::JoinRequests`, `UserFrame::JoinRequests`), `directory/requests.rs` (`publish_queue`) |
 | `fr` | `{"op":"fr"}` | v0.11 (#563): friends or friend requests of this account changed (a new, accepted, declined or withdrawn request, a removed friend) → refetch `GET /api/friends` | `protocol.rs` (`ServerFrame::Friends`, `UserFrame::Friends`), `friends/mod.rs` (`announce`) |
 | `mr` | `{"op":"mr"}` | v0.11: the incoming message requests of this account changed (a first message, an accept, a decline) → refetch `GET /api/dms/requests` | `protocol.rs` (`ServerFrame::MessageRequests`), `dms/mod.rs`, `messages/mod.rs` |
-| `bl` | `{"op":"bl"}` | v0.11 (#565): this account blocked or unblocked someone, on any device → refetch `GET /api/users/me/blocks` and `GET /api/dms` (their `blocked`/`closed`). Only to the blocker | `protocol.rs` (`ServerFrame::Blocks`, `UserFrame::Blocks`), `blocks/mod.rs` |
+| `bl` | `{"op":"bl"}` | v0.11 (#565): this account blocked or unblocked someone, on any device → refetch `GET /api/users/me/blocks` and `GET /api/dms` (their `blocked`). Only to the blocker | `protocol.rs` (`ServerFrame::Blocks`, `UserFrame::Blocks`), `blocks/mod.rs` |
 
 `ns`, `rd`, `lc`, `pm`, `jn`, `jq`, `fr`, `mr`, `bl`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`). `jn` and `jq` are best effort: they are not replayed, `n` is read after the change commits (two quick changes can both carry the final count), and a client that missed one catches up on its next REST read. Servers older than v0.10 never send them; `fr`, `mr` and `bl` are best effort the same way and come from v0.11 on.
 
@@ -352,11 +352,13 @@ without orders compare `read_at`. Never move a cached read position backwards.
 | access changed: roles, role assignments, `member_permissions`, a channel's `role_ids` | server | `e` | omitted | `{"k":"a"}` | omitted | `servers/access.rs` |
 | member deleted their account (`DELETE /api/me`, v0.10) | server | `d` | the deleted user's id | `{"k":"x"}` | omitted | `servers/moderation.rs` (`after_removal_with`, reason `deleted`) |
 | ownership transferred (`POST /api/servers/{id}/transfer`, v0.10) | server | `e` | omitted | `{"k":"o","owner_id":"<new owner>"}` | omitted | `servers/mod.rs` (`transfer_server`) |
+| member joined: invite, open listing, accepted join request (v0.12, #621) | server | `c` | the new member's user id | `{"k":"j","member":<Member>}`: the row `GET /api/servers/{id}` lists in `members` (role `member`) | omitted | `servers/mod.rs` (`publish_joined`) |
 
 There are **no** gateway events for channel create/rename/delete, server
 rename, member changes other than kick, ban, a deleted account (`{"k":"x"}`),
-ownership (`{"k":"o"}`) and access (`{"k":"a"}`: refetch
-the server detail and the server list), profile changes, or member join. Those surfaces refresh via REST refetch on reconnect/gap (§6.4) or the
+ownership (`{"k":"o"}`), access (`{"k":"a"}`: refetch
+the server detail and the server list) and joins (`{"k":"j"}`), or for
+profile changes or a member leaving on their own. Those surfaces refresh via REST refetch on reconnect/gap (§6.4) or the
 user's own mutations. (Gap: a native client cannot see another user's
 channel/server edits live; the web client cannot either.)
 
@@ -407,6 +409,7 @@ Client hardening (keep it): the web normalises lists defensively —
 | `e` without `c`, `t:"d"`, `i` == me | server removed me: `d.k == "b"` → banned else kicked → §6.3 |
 | `e` without `c`, `t:"d"`, `i` ≠ me | drop member `i` from that server's member list |
 | `e` without `c`, `t:"d"`, `i` ≠ me, `d.k == "x"` (v0.10) | as above, and also drop `i`'s messages from every cached page of that server's channels: the account is deleted and its messages follow in the background, without per-message `t:"d"` events |
+| `e` without `c`, `t:"c"`, `d.k == "j"` (v0.12) | add `d.member` to that server's cached member list, at its end; when `i` is listed already (a replay), replace that row; ignore it when `i` == me or `d.member.user_id` ≠ `i` |
 | `e` without `c`, `t:"e"`, `d.k == "o"` (v0.10) | refetch that server's list entry and detail: `owner_id` and the caller's `role`/`permissions` changed |
 
 ---
@@ -910,7 +913,7 @@ Voice connection states exposed to UI (`web/src/voice/voiceStore.ts:16-21`):
 ## 10. Gaps / caveats for implementers
 
 - `replay` on sig `j` is never transmitted (§5.2). Distinguish existing occupants by timing (frames received before your own `j` echo).
-- No live events for channel/server/role/profile changes; only kick/ban. Native must refetch on reconnect/gap like the web, or poll.
+- No live events for channel/server/role/profile changes; only kick/ban, deleted accounts, joins (v0.12) and the access/owner refetch hints. Native must refetch on reconnect/gap like the web, or poll.
 - Typing expiry is client-side only (6 s); the server never sends `on:false` for a vanished typer except on its socket's disconnect cleanup.
 - Media `result` vs event ordering is not guaranteed; queue consumer events until the recv transport exists, and key consumers by `(consumerId, generation)`.
 - The desktop app of that time (`desktop/app`, removed in 0.9) embedded the web UI via Tauri and a native libwebrtc media device (`web/src/voice/native/*`, `desktop/core`); a pure egui client needs its own mediasoup-compatible client (device.load, transports, produce/consume) — mediasoup-client semantics (RTP capabilities/parameters JSON) are what `/media/ws` expects.

@@ -1,5 +1,5 @@
 //! Blocking people (#565, web/src/blocks/): the composer's place in a DM
-//! nobody can write in (`ClosedBar`) and the "Blockiert" settings area
+//! the user blocks (`ClosedBar`) and the "Blockiert" settings area
 //! (`BlockedArea`).
 
 use chrono::{Datelike, Timelike};
@@ -13,27 +13,15 @@ use crate::text::{self, Block};
 use crate::theme::Theme;
 use crate::widgets::{Button, hairline_h, load_error};
 
-/// `ClosedBar`: "Du hast {name} blockiert." with "Blockierung aufheben"
-/// for the one who blocks; for the other a neutral line that does not say
-/// why. As tall as the request bar.
+/// `ClosedBar`: "Du hast {name} blockiert." with "Blockierung aufheben".
+/// The one blocked keeps the composer and is not told (#619). As tall as
+/// the request bar.
 pub fn closed_bar(ui: &mut Ui, app: &mut AppCtx, rect: Rect, dm: &DirectMessage) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     ui.painter().rect_filled(rect, 0.0, c.bg);
     hairline_h(ui.painter(), &theme, rect.x_range(), rect.top());
     let inner = rect.shrink2(vec2(16.0, 12.0));
-    if !dm.blocked {
-        let note = Block::wrapped(
-            ui,
-            t::composer_closed(),
-            text::BODY.line_height(1.5),
-            c.muted,
-            inner.width(),
-        );
-        let at = pos2(inner.left(), inner.center().y - note.height() / 2.0);
-        note.paint(ui.painter(), at);
-        return;
-    }
     let user = dm.peer.id;
     let busy = app
         .client

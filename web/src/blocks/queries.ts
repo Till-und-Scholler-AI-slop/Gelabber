@@ -67,7 +67,11 @@ export function useBlockedIds(): ReadonlySet<string> {
   return useMemo(() => new Set((data ?? []).map((b) => b.id)), [data]);
 }
 
-function refresh(client: QueryClient, userId: string): Promise<void> {
+/** Reads the blocks and everything they shape again: DMs, friends. */
+export function refreshBlocks(
+  client: QueryClient,
+  userId: string,
+): Promise<void> {
   const generation = scopeGeneration();
   return Promise.all([
     client.invalidateQueries({ queryKey: blockKeys.list(userId, generation) }),
@@ -92,7 +96,7 @@ function useBlockAction(
     onSettled: (_data, error, _id, stamp) => {
       if (!stamp || !stampHolds(stamp)) return;
       if (error) notifyError(error, translate(blocksCatalog, failed));
-      void refresh(client, stamp.userId);
+      void refreshBlocks(client, stamp.userId);
     },
   });
 }
@@ -117,7 +121,7 @@ export function applyBlockFrame(
   userId: string,
   frame: AccountFrame,
 ): void {
-  if (frame.op === "bl") void refresh(client, userId);
+  if (frame.op === "bl") void refreshBlocks(client, userId);
 }
 
 /** Mounted once in the app shell. */

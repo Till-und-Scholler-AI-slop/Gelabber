@@ -3,9 +3,11 @@
 //! While A blocks B, every private path between the two is closed in both
 //! directions: opening a DM, writing into theirs, a message request and a
 //! friend request. B gets the error an unreachable person gives
-//! (`dm_not_allowed`, `not_found`, `dm_closed`), never "blocked"; A gets
-//! `blocked`. Blocking ends their friendship, drops friend requests between
-//! them and declines a pending message request from B, in one transaction. B's
+//! (`dm_not_allowed`, `not_found`), never "blocked"; A gets `blocked`. B's
+//! writes into an existing DM are not refused but stored for B alone
+//! (#619, `messages.sender_only`): B's composer stays and nothing tells B.
+//! Blocking ends their friendship, drops friend requests between them and
+//! declines a pending message request from B, in one transaction. B's
 //! pushes and mention counts do not reach A (`crate::push`,
 //! `crate::messages::workflows`); on shared servers the clients fold B's
 //! messages and typing for A. Unblocking leaves an accepted DM usable and
@@ -73,6 +75,16 @@ impl Block {
             Self::None => Ok(()),
             Self::Mine => Err(ApiError::Blocked),
             Self::Theirs => Err(neutral),
+        }
+    }
+
+    /// An edit in their DM (#619): the blocker gets `blocked`;
+    /// the one blocked may change only what the peer never saw, their
+    /// sender-only messages, and gets `dm_closed` for the rest.
+    pub fn refuse_edit(self, sender_only: bool) -> Result<(), ApiError> {
+        match self {
+            Self::Theirs if sender_only => Ok(()),
+            other => other.refuse(ApiError::DmClosed),
         }
     }
 }

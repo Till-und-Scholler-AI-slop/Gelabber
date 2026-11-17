@@ -1496,19 +1496,32 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 14px 10px 16px;
   scrollbar-width: thin;
 }
-.member-group {
-  margin-top: 8px;
-  margin-bottom: 18px;
+/* Rows of the virtual list (#613): placed by the list, measured as they
+   are, so the gaps live in padding, not margins. */
+.member-list-row {
+  position: absolute;
+  top: 0;
+  inset-inline: 0;
+}
+.member-list-row.is-heading {
+  padding-top: 16px;
+  padding-bottom: 6px;
+}
+.member-list-row.is-heading.is-first {
+  padding-top: 8px;
 }
 .member-group-heading {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin: 0 6px 6px;
+  margin: 0 6px;
   font-size: 11px;
+  /* Whole pixels: the virtual list rounds a row's measured height. */
+  line-height: 17px;
   font-weight: 650;
   color: var(--lr-muted);
   text-transform: uppercase;
@@ -1518,7 +1531,7 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   opacity: 0.65;
 }
 .member-row {
-  margin-bottom: 2px;
+  padding-bottom: 2px;
 }
 /* Offline people step back: a faded picture and a muted name, so who is
    around reads at a glance. The name keeps its 4.5:1 (--lr-muted). */
