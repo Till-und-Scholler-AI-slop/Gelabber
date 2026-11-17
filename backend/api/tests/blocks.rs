@@ -550,6 +550,58 @@ async fn reactions_in_a_closed_dm_reach_nobody(pool: PgPool) {
     assert_eq!(react(&mut w.ada, &open).await.status, StatusCode::OK);
 }
 
+fn reaction_path(message: &str, emoji: &str) -> String {
+    let encoded: String = emoji.bytes().map(|b| format!("%{b:02X}")).collect();
+    format!("/api/messages/{message}/reactions/{encoded}")
+}
+
+#[sqlx::test]
+async fn hidden_reactions_leave_the_blockers_emoji_slots_free(pool: PgPool) {
+    let mut w = world(common::state(pool)).await;
+    let bob = w.bob.user_id().to_owned();
+    w.ada.befriend(&bob).await;
+    let dm = open_dm(&mut w.ada, &bob).await;
+    let dm = dm.body["id"].as_str().unwrap().to_owned();
+    let adas = text(&mut w.ada, &dm, "von ada").await;
+    let adas = adas.body["id"].as_str().unwrap().to_owned();
+    block(&mut w.ada, &bob).await;
+
+    // Bob fills all 20 slots on Ada's message, hidden (#619).
+    let emojis = [
+        "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "🥰",
+        "😗", "😙", "😚", "😋", "😍",
+    ];
+    for emoji in emojis {
+        let res = w
+            .bob
+            .send(Method::PUT, &reaction_path(&adas, emoji), None)
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{emoji}: {}", res.body);
+    }
+    // His limit holds for him.
+    refused(
+        &w.bob
+            .send(Method::PUT, &reaction_path(&adas, "😘"), None)
+            .await,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "validation_failed",
+    );
+    // They stay hidden after the unblock, so they must not use up Ada's
+    // slots: she still reacts on her message and sees only her reaction.
+    unblock(&mut w.ada, &bob).await;
+    let own = w
+        .ada
+        .send(Method::PUT, &reaction_path(&adas, "😎"), None)
+        .await;
+    assert_eq!(own.status, StatusCode::OK, "{}", own.body);
+    assert_eq!(
+        own.body["reactions"],
+        json!([{"emoji": "😎", "user_ids": [w.ada.user_id()]}]),
+        "{}",
+        own.body
+    );
+}
+
 #[sqlx::test]
 async fn the_blockers_own_request_waits_out_the_block(pool: PgPool) {
     let mut w = world(common::state(pool)).await;

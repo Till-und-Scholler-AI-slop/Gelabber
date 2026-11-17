@@ -120,11 +120,16 @@ async fn mutate(
     if add {
         // The channel lock serializes the limit check with every reaction write.
         // Existing emoji and idempotent retries remain valid at the limit.
-        let emojis: Vec<String> =
-            sqlx::query_scalar("SELECT DISTINCT emoji FROM message_reactions WHERE message_id=$1")
-                .bind(id)
-                .fetch_all(&mut *tx)
-                .await?;
+        // Only what the caller sees counts: hidden reactions of someone the
+        // caller blocks must not use up the caller's slots (#619).
+        let emojis: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT emoji FROM message_reactions \
+             WHERE message_id=$1 AND (NOT sender_only OR user_id=$2)",
+        )
+        .bind(id)
+        .bind(user)
+        .fetch_all(&mut *tx)
+        .await?;
         if emojis.len() >= 20 && !emojis.iter().any(|existing| existing == emoji) {
             return Err(ApiError::Validation(FieldErrors::from([(
                 "emoji", "limit",
