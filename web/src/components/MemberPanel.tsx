@@ -192,6 +192,10 @@ function MemberList({
   const t = useT(membersCatalog);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rows = useMemo(() => memberListRows(groups), [groups]);
+  const memberCount = groups.reduce(
+    (total, group) => total + group.members.length,
+    0,
+  );
   // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
@@ -267,8 +271,10 @@ function MemberList({
               ref={virtualizer.measureElement}
               data-index={item.index}
               role="listitem"
-              aria-setsize={rows.length}
-              aria-posinset={item.index + 1}
+              // Members count among members only (headings sit between
+              // them as list items too): "3 of 1000", not "of 1002".
+              aria-setsize={row.kind === "member" ? memberCount : undefined}
+              aria-posinset={row.kind === "member" ? row.position : undefined}
               className={memberRowClass(row)}
               style={{ transform: `translateY(${item.start}px)` }}
               {...(row.kind === "member" ? LIST_ROW : {})}

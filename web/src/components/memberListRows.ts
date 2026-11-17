@@ -15,12 +15,21 @@ export type MemberListRow<T> =
       /** The list's first row: no gap above it. */
       first: boolean;
     }
-  | { kind: "member"; key: string; group: PresenceGroup; member: T };
+  | {
+      kind: "member";
+      key: string;
+      group: PresenceGroup;
+      member: T;
+      /** 1-based among the members, headings not counted: what a screen
+       * reader announces as "3 of 1000". */
+      position: number;
+    };
 
 export function memberListRows<T extends { user_id: string }>(
   groups: readonly { group: PresenceGroup; label: string; members: T[] }[],
 ): MemberListRow<T>[] {
   const rows: MemberListRow<T>[] = [];
+  let position = 0;
   for (const { group, label, members } of groups) {
     rows.push({
       kind: "heading",
@@ -31,7 +40,13 @@ export function memberListRows<T extends { user_id: string }>(
       first: rows.length === 0,
     });
     for (const member of members)
-      rows.push({ kind: "member", key: member.user_id, group, member });
+      rows.push({
+        kind: "member",
+        key: member.user_id,
+        group,
+        member,
+        position: ++position,
+      });
   }
   return rows;
 }
