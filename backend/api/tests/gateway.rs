@@ -999,7 +999,8 @@ async fn presence_online_idle_offline_without_bumping_chat_seq(pool: PgPool) {
 
     send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
     let owner_ok = recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
-    assert_eq!(owner_ok["n"], 0);
+    // The member's join is the topic's one event so far (#621).
+    assert_eq!(owner_ok["n"], 1);
     let snap = recv_until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
     assert_eq!(snap["s"], server_id.to_string());
     assert!(snap.get("n").is_none(), "{snap}");
