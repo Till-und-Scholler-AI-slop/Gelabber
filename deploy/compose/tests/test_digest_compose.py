@@ -68,13 +68,16 @@ class DigestCompose(unittest.TestCase):
                               if p['target'] == 3478 and str(p['published']) == '3479'},
                              {'udp', 'tcp'})
 
-    def test_db_pool_size_defaults_to_20_and_is_set_from_env(self):
+    def test_db_pool_sizes_default_and_are_set_from_env(self):
         # #293: the homelab overlay must merge api.environment, not replace it.
-        environ = {key: value for key, value in os.environ.items()
-                   if key != 'API_DB_MAX_CONNECTIONS'}
+        # #611: the gateway's own pool is set the same way.
+        keys = ('API_DB_MAX_CONNECTIONS', 'API_DB_GATEWAY_CONNECTIONS')
+        environ = {key: value for key, value in os.environ.items() if key not in keys}
+        cases = (('', ('20', '10')),
+                 ('API_DB_MAX_CONNECTIONS=40\nAPI_DB_GATEWAY_CONNECTIONS=16\n', ('40', '16')))
         with tempfile.TemporaryDirectory() as tmp:
             env = Path(tmp) / 'pool.env'
-            for extra, expected in (('', '20'), ('API_DB_MAX_CONNECTIONS=40\n', '40')):
+            for extra, expected in cases:
                 env.write_text(SECRETS + extra)
                 for files in (['compose.yaml'], ['compose.yaml', 'compose.homelab.yaml']):
                     cmd = ['docker', 'compose', '--project-directory', str(ROOT),
@@ -83,9 +86,8 @@ class DigestCompose(unittest.TestCase):
                         cmd += ['-f', str(ROOT / name)]
                     config = json.loads(subprocess.check_output(
                         cmd + ['config', '--format', 'json'], text=True, env=environ))
-                    self.assertEqual(
-                        config['services']['api']['environment']['API_DB_MAX_CONNECTIONS'],
-                        expected, files)
+                    environment = config['services']['api']['environment']
+                    self.assertEqual(tuple(environment[key] for key in keys), expected, files)
 
 
 @unittest.skipUnless(shutil.which('docker'), 'Docker CLI is unavailable')
