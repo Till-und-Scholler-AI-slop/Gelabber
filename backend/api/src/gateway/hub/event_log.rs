@@ -98,7 +98,7 @@ impl EventLog {
             ep: None,
             r: revision,
             i: draft.entity_id,
-            d: draft.delta,
+            d: draft.delta.map(std::sync::Arc::new),
         };
         let template = serde_json::to_string(&placeholder)
             .map_err(|err| ApiError::Internal(format!("serialize event: {err}")))?;

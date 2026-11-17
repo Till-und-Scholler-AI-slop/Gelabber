@@ -1651,7 +1651,7 @@ async fn publish_substitutes_only_the_envelope_placeholders(pool: PgPool) {
     assert_eq!(log, [published]);
     assert!(log[0].n >= 1);
     assert!(log[0].ep.is_some());
-    assert_eq!(log[0].d, Some(delta));
+    assert_eq!(log[0].d, Some(std::sync::Arc::new(delta)));
 }
 
 /// Subscribe with cursor 0 and collect the replayed `(n, t, body)` up to `ok`.
