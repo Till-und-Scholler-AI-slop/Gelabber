@@ -57,6 +57,10 @@ const sentAt = new Map(); // message nonce -> send time
 let received = 0;
 let onTime = 0;
 let delaySum = 0;
+let closedByServer = 0; // sockets the server closed, over the whole run
+function onClose() {
+  closedByServer++;
+}
 function onFrame(frame) {
   if (frame.op !== "e") return;
   const m = /load-(\d+)/.exec(JSON.stringify(frame));
@@ -79,7 +83,7 @@ for (const target of STEPS) {
     const c = new Client(API);
     await c.register(`u${i}-${RUN}@example.test`, `User ${i}`);
     await c.req("POST", `/invites/${invite.code}/join`, {});
-    await c.connect(onFrame);
+    await c.connect(onFrame, onClose);
     c.subscribe(server.id, channel.id);
     users.push(c);
   });
@@ -94,6 +98,7 @@ for (const target of STEPS) {
 
   phase(`chat-burst-${target}`);
   received = onTime = delaySum = 0;
+  const closedBefore = closedByServer;
   sentAt.clear();
   let sent = 0;
   let failed = 0;
@@ -138,6 +143,10 @@ for (const target of STEPS) {
       received / (burstSeconds + (Date.now() - drainStart) / 1000),
     ),
     averageDelayMs: received ? Math.round(delaySum / received) : null,
+    // A socket whose outbound queue overflows is closed by the server; the
+    // load client does not reconnect, so its missing deliveries show here.
+    closedByServer: closedByServer - closedBefore,
+    closedTotal: closedByServer,
     observer: await observerSample(),
   };
   log(record);

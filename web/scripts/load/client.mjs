@@ -48,8 +48,12 @@ export class Client {
       locale: "de",
     });
   }
-  /** Opens the gateway; resolves once open. `onFrame` gets every frame but heartbeats. */
-  connect(onFrame) {
+  /**
+   * Opens the gateway; resolves once open. `onFrame` gets every frame but
+   * heartbeats; `onClose` runs when the server closes the socket (a full
+   * outbound queue, a failed session check), not after `close()`.
+   */
+  connect(onFrame, onClose) {
     const url = new URL("/ws", this.base);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     // Node's WebSocket (undici) accepts request headers here; browsers do not.
@@ -57,6 +61,11 @@ export class Client {
       headers: { Cookie: this.cookieHeader(), Origin: this.base },
     });
     this.socket = ws;
+    this.closing = false;
+    ws.onclose = (event) => {
+      clearInterval(this.beat);
+      if (!this.closing) onClose?.(event);
+    };
     ws.onmessage = (message) => {
       let frame;
       try {
@@ -80,6 +89,7 @@ export class Client {
     this.socket.send(JSON.stringify({ op: "s", s: serverId, c: channelId }));
   }
   close() {
+    this.closing = true;
     clearInterval(this.beat);
     this.socket?.close();
   }

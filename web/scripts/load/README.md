@@ -79,6 +79,11 @@ leaves its accounts and servers behind: run it against a throwaway database.
   one fully used core.
 - The chat result's `onTime` counts deliveries within `ON_TIME_MS` (3 s) of
   sending; `deliveredPerSecond` is the gateway's real throughput.
+  `closedByServer` counts sockets the server closed during the burst, for
+  example because their outbound queue overflowed. The load client does not
+  reconnect, so `expected` still counts them: when it is above zero, part of
+  the gap between `expected` and `received` is closed sockets, not slow
+  delivery.
 - Everything on one machine shares its CPUs: the load generator and the
   browsers compete with the server. Large calls end on the machine's CPU long
   before the media gateway's memory matters. Say which numbers were limited
