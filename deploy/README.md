@@ -383,7 +383,12 @@ Logs name the provider, the account ID and the outcome, never an address, code o
 
 ## Database connections
 
-The API keeps up to `API_DB_MAX_CONNECTIONS` (default 20) Postgres connections; every open WebSocket checks its session once a second. The stack runs one API process, so keep the value well below Postgres' `max_connections` (100 in the bundled Postgres). After changing it, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
+The API keeps two pools of Postgres connections:
+
+- `API_DB_MAX_CONNECTIONS` (default 20) for requests, sign-ins and the worker that hands new messages to the gateway.
+- `API_DB_GATEWAY_CONNECTIONS` (default 10) for the checks of open WebSockets. Each socket checks its session and access before it writes a batch of events, on every frame the client sends, and on a timer (once a second while in a voice channel, otherwise every 10 seconds). With their own pool, thousands of sockets cannot hold up requests or the delivery of new messages; when the sockets wait for this pool, each check carries more events at once. `0` puts the checks back into the main pool.
+
+The stack runs one API process, so keep both together well below Postgres' `max_connections` (100 in the bundled Postgres). After changing them, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
 
 ## Public pages
 

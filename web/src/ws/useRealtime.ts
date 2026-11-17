@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { ApiError } from "../api/client.ts";
 import { scopeGeneration, stampHolds, type ScopeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
+import { isDecoration } from "../components/profileStyle.ts";
 import { notify } from "../components/toasts.ts";
 import { listDms } from "../dms/api.ts";
 import { dmKeys } from "../dms/queries.ts";
@@ -21,12 +22,13 @@ import {
   messageQueryOptions,
 } from "../messages/queries.ts";
 import {
+  applyMemberJoined,
   applyMemberRemoved,
   forgetServer,
   markServerBlocked,
   refetchOnAccessChange,
 } from "../servers/queries.ts";
-import type { Server, ServerDetail } from "../servers/types.ts";
+import type { Member, Server, ServerDetail } from "../servers/types.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
 import type { ChatEvent } from "./protocol.ts";
@@ -411,6 +413,44 @@ export function attachRealtimeRecovery(
 }
 
 /**
+ * The member a join event (`t: "c"`, `d: {"k": "j", "member": …}`, #621)
+ * carries, or `null` for any other event or a shape this client does not
+ * know.
+ */
+export function joinedMember(event: ChatEvent): Member | null {
+  if (event.t !== "c" || event.c || !event.i) return null;
+  const d = event.d;
+  if (d === null || typeof d !== "object" || !("k" in d) || d.k !== "j")
+    return null;
+  const raw = "member" in d ? d.member : null;
+  if (raw === null || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  if (
+    row.user_id !== event.i ||
+    typeof row.name !== "string" ||
+    typeof row.joined_at !== "string"
+  )
+    return null;
+  return {
+    user_id: event.i,
+    name: row.name,
+    avatar_url: text(row.avatar_url),
+    joined_at: row.joined_at,
+    // Joining never makes the owner.
+    role: "member",
+    role_ids: Array.isArray(row.role_ids)
+      ? row.role_ids.filter((id): id is string => typeof id === "string")
+      : [],
+    status_text: text(row.status_text),
+    accent_color: text(row.accent_color),
+    avatar_decoration: isDecoration(row.avatar_decoration)
+      ? row.avatar_decoration
+      : null,
+  };
+}
+
+/**
  * One gateway event into the cache, as the bridge applies it. Answers
  * whether this account was removed from the event's server, and how.
  */
@@ -428,6 +468,13 @@ export function applyGatewayEvent(
   // role changed too.
   if (isAccessChange(event) || isOwnerChange(event)) {
     applyAccessChange(client, userId, generation, event.s);
+    return null;
+  }
+  const joined = joinedMember(event);
+  if (joined) {
+    // This account's own join came with its answer; the list refetches.
+    if (joined.user_id !== userId)
+      applyMemberJoined(client, userId, generation, event.s, joined);
     return null;
   }
   if (event.t !== "d" || !event.i) return null;

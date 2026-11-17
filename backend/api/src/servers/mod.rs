@@ -307,8 +307,9 @@ fn visible_to(
     (categories, channels)
 }
 
-async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, ApiError> {
-    Ok(sqlx::query_as::<_, MemberRow>(
+/// The member list's columns, for every member of server `$1`.
+macro_rules! member_rows {
+    () => {
         "SELECT m.user_id, u.name, u.avatar_url, m.joined_at, u.status_text, u.accent_color, \
              u.avatar_decoration, \
              ARRAY(SELECT mr.role_id FROM server_member_roles mr \
@@ -316,12 +317,55 @@ async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, Ap
                     WHERE mr.server_id = m.server_id AND mr.user_id = m.user_id \
                     ORDER BY r.position, r.id) AS role_ids \
          FROM server_members m JOIN users u ON u.id = m.user_id \
-         WHERE m.server_id = $1 \
-         ORDER BY m.joined_at, m.user_id",
+         WHERE m.server_id = $1"
+    };
+}
+
+async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, ApiError> {
+    Ok(
+        sqlx::query_as::<_, MemberRow>(concat!(member_rows!(), " ORDER BY m.joined_at, m.user_id"))
+            .bind(server_id)
+            .fetch_all(db)
+            .await?,
     )
-    .bind(server_id)
-    .fetch_all(db)
-    .await?)
+}
+
+/// After the commit of a join (invite, open listing, accepted request):
+/// the server's members see the new member in their lists at once (#621).
+/// A server event `{"t": "c", "i": <user>, "d": {"k": "j", "member": …}}`
+/// carrying the row `GET /api/servers/{id}` lists. Best effort, like the
+/// other server events: a client that misses it has the member on its next
+/// detail read. Nothing when they already left again.
+pub(crate) async fn publish_joined(state: &AppState, server_id: Uuid, user_id: Uuid) {
+    let row = sqlx::query_as::<_, MemberRow>(concat!(member_rows!(), " AND m.user_id = $2"))
+        .bind(server_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+    let row = match row {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(err) => {
+            warn!(error = %err, %server_id, "joined member not loaded for the event");
+            return;
+        }
+    };
+    // Joining never makes the owner: the owner created the server.
+    let member = Member {
+        user: row,
+        role: Role::Member,
+    };
+    if let Err(err) = publish_server(
+        state,
+        server_id,
+        EventKind::C,
+        Some(user_id),
+        Some(serde_json::json!({ "k": "j", "member": member })),
+    )
+    .await
+    {
+        warn!(error = err.code(), %server_id, "member joined event not published");
+    }
 }
 
 async fn update_server(

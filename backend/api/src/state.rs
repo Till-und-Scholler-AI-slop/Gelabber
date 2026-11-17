@@ -32,6 +32,12 @@ pub const REPLAY_DEADLINE: Duration = Duration::from_secs(5);
 pub struct AppState {
     /// Connection pool for domain queries (later issues).
     pub db: PgPool,
+    /// The gateway's per-socket session and access checks (every frame in,
+    /// every delivered batch, the security timer). A pool of their own keeps
+    /// thousands of sockets from queueing ahead of REST requests and the
+    /// outbox worker, whose events they wait for (#611, #612). The same pool
+    /// as `db` when `API_DB_GATEWAY_CONNECTIONS` is 0 and in tests.
+    pub gateway_db: PgPool,
     /// Parsed `DATABASE_URL`; `/ready` opens a fresh connection from it so a
     /// refused or misconfigured Postgres surfaces its real error immediately
     /// instead of the pool's retry-until-timeout behaviour.
@@ -125,6 +131,10 @@ impl fmt::Display for StateError {
 
 impl std::error::Error for StateError {}
 
+/// How long a socket's check waits for a connection of the gateway pool
+/// before the socket ends.
+const GATEWAY_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl AppState {
     pub fn from_config(config: &Config) -> Result<Self, StateError> {
         let pg_connect =
@@ -134,8 +144,19 @@ impl AppState {
             .max_connections(config.db_max_connections)
             .acquire_timeout(config.ready_timeout)
             .connect_lazy_with(pg_connect.clone());
-
-        Self::with_pool(config, db)
+        let mut state = Self::with_pool(config, db)?;
+        if config.db_gateway_connections > 0 {
+            // Sockets queue for this pool under load; waiting delays their
+            // next batch, so it may take longer than a request would.
+            state.gateway_db = PgPoolOptions::new()
+                .max_connections(config.db_gateway_connections)
+                .acquire_timeout(GATEWAY_ACQUIRE_TIMEOUT)
+                // A wait of a few seconds is normal here during a connect
+                // wave; warn only when it nears the timeout.
+                .acquire_slow_threshold(GATEWAY_ACQUIRE_TIMEOUT / 2)
+                .connect_lazy_with(pg_connect);
+        }
+        Ok(state)
     }
 
     /// Like `from_config` but with a caller-supplied pool. Integration tests
@@ -184,6 +205,7 @@ impl AppState {
         );
 
         Ok(Self {
+            gateway_db: db.clone(),
             db,
             pg_connect,
             redis: redis.clone(),

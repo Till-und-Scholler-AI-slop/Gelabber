@@ -10,10 +10,15 @@
 //! hidden from the recipient and says nothing to the sender: what is left
 //! of the limit can still be written, stored without a push, and the
 //! sender's view is the same as for a request nobody answers.
+//!
+//! A block (#565) refuses the blocker's writes with `blocked`. The one
+//! blocked writes on as before (#619): the same rules apply, and what passes
+//! is stored for them alone ([`Gate::SenderOnly`]), so they learn nothing.
 
 use sqlx::{FromRow, PgConnection, PgExecutor};
 use uuid::Uuid;
 
+use crate::blocks::Block;
 use crate::error::{ApiError, FieldErrors};
 
 pub const MAX_MESSAGES: i64 = 3;
@@ -23,6 +28,9 @@ pub const MAX_MESSAGES: i64 = 3;
 pub enum Gate {
     /// An ordinary DM.
     Open,
+    /// The peer blocks the writer (#619): stored for the writer only, with
+    /// no event, push or request notice for the peer.
+    SenderOnly,
     /// A message request from the writer to `to`. `announce`: the first
     /// message, which pushes "X wants to message you" and shows the
     /// request; `silent`: written after a decline.
@@ -77,9 +85,9 @@ pub async fn precheck_in(
     user_id: Uuid,
     draft: &Draft<'_>,
 ) -> Result<(), ApiError> {
-    crate::blocks::in_dm(&mut *db, channel_id, user_id)
-        .await?
-        .refuse(ApiError::DmClosed)?;
+    if crate::blocks::in_dm(&mut *db, channel_id, user_id).await? == Block::Mine {
+        return Err(ApiError::Blocked);
+    }
     match row(&mut *db, channel_id).await?.request_by {
         None => Ok(()),
         Some(by) if by != user_id => Err(ApiError::MessageRequestPending),
@@ -96,12 +104,14 @@ pub async fn gate(
     draft: &Draft<'_>,
 ) -> Result<Gate, ApiError> {
     // Blocks are checked under the lock too: one may have come meanwhile.
-    crate::blocks::in_dm(&mut *tx, channel_id, user_id)
-        .await?
-        .refuse(ApiError::DmClosed)?;
+    let block = crate::blocks::in_dm(&mut *tx, channel_id, user_id).await?;
+    if block == Block::Mine {
+        return Err(ApiError::Blocked);
+    }
+    let hidden = block == Block::Theirs;
     let current = row(&mut *tx, channel_id).await?;
     let Some(by) = current.request_by else {
-        return Ok(Gate::Open);
+        return Ok(if hidden { Gate::SenderOnly } else { Gate::Open });
     };
     if by != user_id {
         return Err(ApiError::MessageRequestPending);
@@ -112,10 +122,14 @@ pub async fn gate(
         return Err(ApiError::MessageRequestLimit);
     }
     // In the insert's transaction: a send that fails later takes it back.
+    // A hidden one counts too, so what is left goes down as it would.
     sqlx::query("UPDATE channels SET dm_request_sent = dm_request_sent + 1 WHERE id = $1")
         .bind(channel_id)
         .execute(&mut *tx)
         .await?;
+    if hidden {
+        return Ok(Gate::SenderOnly);
+    }
     let to: Uuid = sqlx::query_scalar(
         "SELECT user_id FROM channel_members WHERE channel_id = $1 AND user_id <> $2",
     )
@@ -131,15 +145,18 @@ pub async fn gate(
 }
 
 /// An edit by the sender of a pending request follows the same text rules.
+/// Under a block only the one blocked edits, and only their sender-only
+/// messages: the peer has seen the others.
 pub async fn check_edit(
     tx: &mut PgConnection,
     channel_id: Uuid,
     user_id: Uuid,
     content: &str,
+    sender_only: bool,
 ) -> Result<(), ApiError> {
     crate::blocks::in_dm(&mut *tx, channel_id, user_id)
         .await?
-        .refuse(ApiError::DmClosed)?;
+        .refuse_edit(sender_only)?;
     match row(&mut *tx, channel_id).await?.request_by {
         Some(by) if by == user_id => refuse(&Draft {
             content,

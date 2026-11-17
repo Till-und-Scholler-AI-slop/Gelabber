@@ -25,7 +25,8 @@ hook = load()
 
 class Names(unittest.TestCase):
     def test_rule_names_pass(self):
-        for name in ('fix/123-reconnect-after-sleep', 'feature/124-message-search', 'docs/9-readme',
+        for name in ('fix/gel-21-edit-under-block', 'chore/gel-23-plan-in-linear',
+                     'fix/123-reconnect-after-sleep', 'feature/124-message-search', 'docs/9-readme',
                      'ci/577-branch-name-hook', 'refactor/1-x', 'chore/2-deps', 'release/v0.10.2',
                      'hotfix/v0.10.1-login-loop', 'sync/main-into-v0.10', 'v0.11', 'main',
                      'dependabot/cargo/backend/tokio-1.54.1'):
@@ -35,6 +36,7 @@ class Names(unittest.TestCase):
     def test_other_names_fail(self):
         for name in ('claude/project-thread-fildot', 'cursor/dependabot-improvements-0658', 'fix/reconnect',
                      'fix/123_Reconnect', 'feat/1-x', 'Fix/1-x', 'release/0.10.2', 'hotfix/v0.10.1',
+                     'fix/GEL-21-x', 'fix/gel-x', 'fix/lin-21-x',
                      'my-branch'):
             with self.subTest(name=name):
                 self.assertFalse(hook.NAME.match(name))

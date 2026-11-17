@@ -12,10 +12,11 @@
 //! Incoming requests are not in `GET /api/dms` but in
 //! `GET /api/dms/requests`, answered with `accept` or `decline`.
 //!
-//! A block (#565, `crate::blocks`) closes every DM path between the two
-//! both ways: no new DM, no writing into one that exists. The history stays
-//! readable; each DM says `blocked` (the user blocks the peer) or `closed`
-//! (the peer blocks the user).
+//! A block (#565, `crate::blocks`) closes every new DM path between the
+//! two both ways. In a DM that exists the blocker cannot write, and the DM
+//! says `blocked`; the one blocked sees nothing change and writes on, into
+//! messages only they read (#619, `messages.sender_only`). The history
+//! stays readable.
 //!
 //! The protocol `s` field for a DM is the channel id itself, so subscribe
 //! / typing / events stay on the existing frames.
@@ -65,10 +66,6 @@ pub struct DirectMessage {
     /// The caller blocks the peer (#565): unblock to write.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub blocked: bool,
-    /// The caller cannot write here and is not told why (#565: the peer
-    /// blocks them).
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub closed: bool,
 }
 
 /// A pending message request as one side sees it.
@@ -98,7 +95,6 @@ struct DmRow {
     /// Messages sent into the request, deleted ones too.
     request_sent: i16,
     blocked: bool,
-    closed: bool,
 }
 
 impl From<DmRow> for DirectMessage {
@@ -117,7 +113,6 @@ impl From<DmRow> for DirectMessage {
                 avatar_url: row.peer_avatar_url,
             },
             blocked: row.blocked,
-            closed: row.closed,
         }
     }
 }
@@ -127,9 +122,7 @@ macro_rules! request_columns {
     () => {
         ", c.dm_request_by AS request_by, c.dm_request_sent AS request_sent, \
          EXISTS (SELECT 1 FROM user_blocks b \
-                 WHERE b.blocker_id = me.user_id AND b.blocked_id = p.user_id) AS blocked, \
-         EXISTS (SELECT 1 FROM user_blocks b \
-                 WHERE b.blocker_id = p.user_id AND b.blocked_id = me.user_id) AS closed "
+                 WHERE b.blocker_id = me.user_id AND b.blocked_id = p.user_id) AS blocked "
     };
 }
 
@@ -213,7 +206,9 @@ async fn list_requests(
            AND NOT EXISTS (SELECT 1 FROM user_blocks b \
                            WHERE (b.blocker_id = me.user_id AND b.blocked_id = p.user_id) \
                               OR (b.blocker_id = p.user_id AND b.blocked_id = me.user_id)) \
-         ORDER BY (SELECT MAX(m.created_at) FROM messages m WHERE m.channel_id = c.id) DESC NULLS LAST, c.id"
+         ORDER BY (SELECT MAX(m.created_at) FROM messages m \
+                   WHERE m.channel_id = c.id AND (NOT m.sender_only OR m.author_id = $1)) \
+           DESC NULLS LAST, c.id"
     ))
     .bind(user.id)
     .fetch_all(&state.db)
@@ -455,7 +450,6 @@ async fn open_or_create(
                 remaining: request::MAX_MESSAGES,
             }),
             blocked: false,
-            closed: false,
         },
         true,
     ))
@@ -534,7 +528,8 @@ async fn load_list(db: &PgPool, user_id: Uuid) -> Result<Vec<DirectMessage>, Api
          JOIN users u ON u.id = p.user_id \
          WHERE me.user_id = $1 AND (c.dm_request_by IS NULL OR c.dm_request_by = $1) \
          ORDER BY COALESCE(\
-            (SELECT MAX(m.created_at) FROM messages m WHERE m.channel_id = c.id), \
+            (SELECT MAX(m.created_at) FROM messages m \
+             WHERE m.channel_id = c.id AND (NOT m.sender_only OR m.author_id = $1)), \
             c.created_at\
          ) DESC, c.id"
     ))

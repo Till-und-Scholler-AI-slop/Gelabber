@@ -293,6 +293,7 @@ async fn join(
     tx.commit().await?;
     if !already {
         info!(server_id = %invite.server_id, user_id = %user.id, "member joined via invite");
+        super::publish_joined(&state, invite.server_id, user.id).await;
     }
 
     let member: Membership = membership::load(&state.db, invite.server_id, user.id).await?;

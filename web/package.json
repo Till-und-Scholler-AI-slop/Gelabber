@@ -17,6 +17,7 @@
     "test:source-audio-smoke": "node scripts/smoke-source-audio.mjs",
     "test:phone-smoke": "node scripts/smoke-phone-layout.mjs",
     "test:chat-scroll-smoke": "node scripts/smoke-chat-scroll.mjs",
+    "test:member-list-smoke": "node scripts/smoke-member-list.mjs",
     "test:lazy-parts-smoke": "node scripts/smoke-lazy-parts.mjs",
     "test:browser-smoke": "node scripts/smoke-two-browsers.mjs",
     "test:e2e-app": "node scripts/e2e/run.mjs",
@@ -32,7 +33,10 @@
     "test:e2e-chat-workflows": "node scripts/e2e/chat-workflows.mjs",
     "test:reactions-smoke": "node scripts/smoke-reactions.mjs",
     "test:e2e-search-context": "node scripts/e2e/search-context.mjs",
-    "test:field-gallery": "node scripts/field-gallery.mjs"
+    "test:field-gallery": "node scripts/field-gallery.mjs",
+    "test:load-chat": "node scripts/load/chat.mjs",
+    "test:load-connections": "node scripts/load/connections.mjs",
+    "test:load-call": "node scripts/load/call.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.106.1",
