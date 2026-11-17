@@ -1,6 +1,6 @@
 // The public landing page: what Gelabber is, how to get on the hosted
-// instance, and how to run your own. Drawn as a photocopied flyer pasted on
-// a dark wall, its tear-off strips the actions
+// instance, and how to run your own. Drawn as a LAN party: a row of monitors
+// with tape name labels, two of them live
 // (.impeccable/surfaces/web-src-public-landingpage-tsx.md). Static HTML;
 // every link is a plain link.
 
@@ -52,22 +52,26 @@ function InviteButton({
   );
 }
 
-/** The cut line's scissors, drawn at the start of the tear-off strips. */
-function Scissors() {
-  return (
-    <svg
-      className="lp-scissors"
-      viewBox="0 0 24 24"
-      width="22"
-      height="22"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <circle cx="6" cy="6" r="3" />
-      <circle cx="6" cy="18" r="3" />
-      <path d="M8.1 8.1 20 20M8.1 15.9 20 4" />
-    </svg>
-  );
+/** Ada's Live on the left monitor: the self-host commands' first run.
+ * Terminal output, the same in both languages. */
+const TERMINAL = [
+  ["$ ", "docker compose up"],
+  ["", "[+] Running 10/10"],
+  ["", " Network compose_default", "Created"],
+  ["", " Container compose-postgres-1", "Healthy"],
+  ["", " Container compose-redis-1", "Healthy"],
+  ["", " Container compose-minio-1", "Healthy"],
+  ["", " Container compose-minio-init-1", "Exited"],
+  ["", " Container compose-coturn-1", "Started"],
+  ["", " Container compose-api-1", "Started"],
+  ["", " Container compose-media-1", "Started"],
+  ["", " Container compose-web-1", "Started"],
+  ["", " Container compose-proxy-1", "Started"],
+] as const;
+
+/** A strip of masking tape with a name on it, as on a LAN party monitor. */
+function NameTape({ name }: { name: string }) {
+  return <span className="lp-tape">{name}</span>;
 }
 
 export function LandingPage({
@@ -103,42 +107,76 @@ export function LandingPage({
           </nav>
         </header>
         <main>
-          {/* The flyer on the wall, its tear-off strips the actions, and
-              the app's picture taped up beside it. */}
           <div className="public-container lp-hero">
-            <div className="lp-flyer lp-paper">
-              <div className="lp-flyer__sheet">
-                <h1>{text("landing.hero.title")}</h1>
-                <p className="lp-lead">{text("landing.hero.lead")}</p>
-                <p className="lp-note">{text("landing.hero.note")}</p>
-              </div>
-              <div className="lp-tabs">
-                <Scissors />
+            <h1>{text("landing.hero.title")}</h1>
+            <div className="lp-intro">
+              <p className="lp-lead">{text("landing.hero.lead")}</p>
+              <div className="lp-actions">
                 <InviteButton
                   locale={locale}
-                  className="lp-tab lp-tab--invite"
+                  className="lp-button lp-button--primary"
                 />
-                <a className="lp-tab" href="/login">
-                  {text("landing.nav.signIn")}
-                </a>
-                <a className="lp-tab" href="#self-host">
+                <a className="lp-button lp-button--ghost" href="#self-host">
                   {text("landing.nav.selfHost")}
                 </a>
-                <a className="lp-tab" href={value(KEY.sourceUrl)}>
-                  {text("landing.nav.source")}
-                </a>
+              </div>
+              <p className="lp-note">{text("landing.hero.note")}</p>
+            </div>
+          </div>
+          {/* A LAN party table: Ada and Jonas are live, Lena's own screen
+              in the middle is the real app. The side screens are made up. */}
+          <div className="lp-desk">
+            <div className="public-container lp-monitors">
+              <div className="lp-monitor lp-monitor--left" aria-hidden="true">
+                <div className="lp-monitor__frame">
+                  <div className="lp-monitor__screen lp-term">
+                    {TERMINAL.map(([prompt, line, state]) => (
+                      <span key={line}>
+                        {prompt ? <b>{prompt}</b> : null}
+                        {line}
+                        {state ? <em> {state}</em> : null}
+                      </span>
+                    ))}
+                    <span className="lp-live">
+                      {text("landing.monitors.live")}
+                    </span>
+                  </div>
+                </div>
+                <NameTape name="Ada" /* i18n-ok */ />
+              </div>
+              <figure className="lp-monitor lp-monitor--main">
+                <div className="lp-monitor__frame">
+                  <div className="lp-monitor__screen">
+                    <img
+                      src={`/images/landing/app-${locale}.png`}
+                      width={1280}
+                      height={800}
+                      alt={text("landing.screenshotAlt")}
+                    />
+                  </div>
+                </div>
+                <NameTape name="Lena" /* i18n-ok */ />
+              </figure>
+              <div className="lp-monitor lp-monitor--right" aria-hidden="true">
+                <div className="lp-monitor__frame">
+                  <div className="lp-monitor__screen">
+                    <img
+                      src="/images/landing/lan-map.svg"
+                      width={1280}
+                      height={800}
+                      alt=""
+                    />
+                    <span className="lp-live">
+                      {text("landing.monitors.live")}
+                    </span>
+                  </div>
+                </div>
+                <NameTape name="Jonas" /* i18n-ok */ />
               </div>
             </div>
-            <figure className="lp-print">
-              <img
-                src={`/images/landing/app-${locale}.png`}
-                width={1280}
-                height={800}
-                alt={text("landing.screenshotAlt")}
-              />
-            </figure>
           </div>
-          {/* The bill: the headliner first, then the rest. */}
+          {/* The stations: each feature under its tape label, the
+              headliner first. */}
           <div className="public-container lp-bill">
             {FEATURES.map((feature) => (
               <section key={feature}>
@@ -148,14 +186,14 @@ export function LandingPage({
             ))}
           </div>
           <div className="public-container lp-host">
-            <section id="self-host" className="lp-sheet lp-paper">
+            <section id="self-host" className="lp-panel">
               <h2>{text("landing.selfHost.title")}</h2>
               <p>{text("landing.selfHost.body")}</p>
               <pre>
                 <code>{SELF_HOST_COMMANDS.join("\n")}</code>
               </pre>
               <a
-                className="lp-button lp-button--outline"
+                className="lp-button lp-button--ghost"
                 href={value(KEY.guideUrl)}
               >
                 {text("landing.selfHost.guide")}

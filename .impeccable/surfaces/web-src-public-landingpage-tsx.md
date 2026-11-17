@@ -13,14 +13,14 @@ Audience: private groups (friends, gamers) who have never met the authors. Job: 
 
 ## Direction contract
 
-THESIS: The landing page is a photocopied night flyer pasted on a dark wall, with tear-off strips as the actions. It refuses the category default: headline over subcopy, a product screenshot, three equal feature cards.
+THESIS: The landing page is a LAN party at night: a row of monitors on a folding table, each with a masking-tape name label, each showing someone's screen. Several Lives at once, shown instead of told. It refuses the category default of a lone product screenshot under a headline with three equal feature cards.
 
-OWN-WORLD: The wall is Gelabber Dunkel's near-black with toner grain. Paper is the theme's text colour, ink is the background colour, amber is the riso spot colour and the coloured copy paper. Condensed heavy grotesk caps (Archivo, width 62) for headlines and labels, Inter for running text. Masking tape, dashed perforations, square paper corners, tiny rotations.
+OWN-WORLD: The hall is Gelabber Dunkel's near-black with faint toner grain. Monitors have dark bezels and stands and cast a soft light onto the wall. Name labels are amber masking tape with serrated ends, set in condensed Archivo caps (width 62). Live tags are the app's coral live colour. Running text is Inter. Paper notes are taped up where a sign belongs.
 
-STORY: Visitors see a flyer for their own group's evening: voice, chat and several live screens. They read the bill (several Lives at once, open source, private), tear off "request an invite" or "sign in", or take the amber DIY sheet to run it themselves.
+STORY: Visitors see three screens side by side: Ada live with a terminal starting Gelabber, Lena's own view of the app, and Jonas live with a game. They read the headline, request an invite or sign in, scan the features as tape-labelled stations, and find the self-host commands.
 
-FIRST VIEWPORT: Left, a portrait paper flyer (about 600px, rotated -1deg) with the headline, lead, small print and a row of vertical tear-off tabs along its bottom edge; the invite tab is amber and first. Right, the app screenshot as a taped print, overlapped by the flyer. The top bar stays above, on the wall.
+FIRST VIEWPORT: The headline sits top left; lead, the amber invite button, self-host and small print sit top right. Across the full width below them, three monitors stand on a table edge: the centre monitor is largest and shows the real app screenshot, and the two side monitors are angled in. Each monitor has a tape name label, and the side ones have a coral LIVE tag.
 
-FORM: Pasted-flyer wall (tear-off flyer), candidate 6 of 7, seed:49b42b88889a368f
+FORM: LAN party monitor row, candidate 1 of 7 (Silas picked it on the decision card over the assigned candidate 6; seed:49b42b88889a368f)
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance

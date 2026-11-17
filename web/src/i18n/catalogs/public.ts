@@ -27,6 +27,8 @@ const publicPages = defineCatalog(
       "Die gehostete Instanz ist eine kostenlose Beta, nur mit Einladung. Auf Deutsch und Englisch.",
     "landing.screenshotAlt":
       "Gelabber im Browser: ein Server mit seinen Kanälen und dem Chat, während jemand im Sprachkanal live ist.",
+    // The tag on a monitor whose screen is live, as in the app.
+    "landing.monitors.live": "Live",
     "landing.features.lives.title": "Mehrere Lives gleichzeitig",
     "landing.features.lives.body":
       "Jede Person, die live geht, bekommt ein eigenes Bild. Schau eins groß, alle nebeneinander oder eins über das ganze Fenster.",
@@ -117,6 +119,7 @@ const publicPages = defineCatalog(
       "The hosted instance is in a free, invitation-only beta. In German and English.",
     "landing.screenshotAlt":
       "Gelabber in the browser: a server with its channels and chat while someone is live in a voice channel.",
+    "landing.monitors.live": "Live",
     "landing.features.lives.title": "Several Lives at once",
     "landing.features.lives.body":
       "Each person who goes live gets a picture of their own. Watch one large, all of them side by side, or one across the whole window.",
