@@ -140,7 +140,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
             }
             incoming = stream.next() => {
                 let mut active = false;
-                let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
+                let Ok(Some(mut session_guard)) = session.lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
                 checked = Instant::now();
                 match incoming {
@@ -200,7 +200,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
                 }
             }
             _ = beat.tick() => {
-                let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
+                let Ok(Some(mut session_guard)) = session.lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
                 checked = Instant::now();
                 // Nothing below needs the transaction: return the connection
@@ -338,11 +338,9 @@ async fn security_tick(
     if !forced && checked.elapsed() < SECURITY_BACKSTOP && !state.gateway.holds_seat(conn).await {
         return true;
     }
-    let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        session.lock_live(&state.db),
-    )
-    .await
+    let Ok(Some(mut session_guard)) = session
+        .lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT)
+        .await
     else {
         return false;
     };
@@ -701,6 +699,10 @@ async fn authorize(
 /// before taking the next frame, so a batch holds at most `BATCH_BYTES` plus
 /// one frame of any size.
 const BATCH_FRAMES: usize = 64;
+
+/// How long a socket's check waits for its session row lock, after it has a
+/// pool connection ([`CurrentSession::lock_live_within`]).
+const SESSION_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 const BATCH_BYTES: usize = 16 * 1024;
 
 type Scope = (Uuid, Option<Uuid>);
@@ -754,13 +756,10 @@ async fn deliver(
     let mut checked = false;
     let dms = state.gateway.socket_dms(conn).await;
     for run in server_runs(batch) {
-        let mut db = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            session.lock_live(&state.db),
-        )
-        .await
-        .map_err(|_| ApiError::Internal("session lock timed out".into()))??
-        .ok_or(ApiError::Unauthenticated)?;
+        let mut db = session
+            .lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT)
+            .await?
+            .ok_or(ApiError::Unauthenticated)?;
         state.gateway.reconcile_access(conn, &mut db).await?;
         checked = true;
         let mut allowed = HashMap::new();
@@ -1198,5 +1197,84 @@ mod tests {
         );
         assert!(state.gateway.in_voice(conn, server, voice).await);
         state.gateway.detach(conn).await;
+    }
+
+    /// #612: a socket's check waits for a busy pool (bounded by the pool's
+    /// acquire timeout) instead of ending the socket after a second, but a
+    /// session row held by a logout still ends it after `SESSION_LOCK_WAIT`.
+    #[sqlx::test]
+    async fn socket_check_waits_for_the_pool_but_not_for_a_held_session(pool: sqlx::PgPool) {
+        use std::time::Duration;
+        let small = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(5))
+            .connect_with(pool.connect_options().as_ref().clone())
+            .await
+            .unwrap();
+        let user = crate::auth::user::insert(
+            &pool,
+            "wait@example.test",
+            "wait",
+            "unused",
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        let raw = crate::auth::session::create(
+            &pool,
+            user.id,
+            Duration::from_secs(600),
+            crate::auth::device::Device::UNKNOWN,
+        )
+        .await
+        .unwrap();
+        let hash = crate::token::hash(&raw);
+        let (created_at, expires_at) =
+            sqlx::query_as("SELECT created_at, expires_at FROM sessions WHERE token_hash = $1")
+                .bind(&hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let session = CurrentSession {
+            user,
+            hash: hash.clone(),
+            created_at,
+            expires_at,
+            id: uuid::Uuid::nil(),
+            device_client: crate::auth::device::DeviceClient::Unknown,
+        };
+
+        // The only connection is busy for longer than the row lock may wait.
+        let busy = small.acquire().await.unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(SESSION_LOCK_WAIT + Duration::from_millis(500)).await;
+            drop(busy);
+        });
+        let started = std::time::Instant::now();
+        let tx = session
+            .lock_live_within(&small, SESSION_LOCK_WAIT)
+            .await
+            .expect("waits for the pool")
+            .expect("session is live");
+        assert!(started.elapsed() > SESSION_LOCK_WAIT);
+        tx.rollback().await.unwrap();
+        release.await.unwrap();
+
+        // A logout holding the row ends the check after the lock wait.
+        let mut logout = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM sessions WHERE token_hash = $1 FOR UPDATE")
+            .bind(&hash)
+            .execute(&mut *logout)
+            .await
+            .unwrap();
+        let started = std::time::Instant::now();
+        assert!(
+            session
+                .lock_live_within(&small, SESSION_LOCK_WAIT)
+                .await
+                .is_err()
+        );
+        assert!(started.elapsed() < SESSION_LOCK_WAIT + Duration::from_secs(1));
+        logout.rollback().await.unwrap();
     }
 }

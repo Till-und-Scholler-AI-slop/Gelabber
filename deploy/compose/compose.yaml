@@ -86,8 +86,10 @@ services:
       # Empty keeps the API defaults: 30 days absolute, 14 days idle.
       API_SESSION_TTL_HOURS: ${API_SESSION_TTL_HOURS:-}
       API_SESSION_IDLE_HOURS: ${API_SESSION_IDLE_HOURS:-}
-      # One API process; keep it well below Postgres max_connections (100).
+      # One API process; keep both together well below Postgres
+      # max_connections (100).
       API_DB_MAX_CONNECTIONS: ${API_DB_MAX_CONNECTIONS:-20}
+      API_DB_GATEWAY_CONNECTIONS: ${API_DB_GATEWAY_CONNECTIONS:-10}
       TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=udp,turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=tcp}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:?set TURN_PASSWORD in .env (see deploy/README.md)}
