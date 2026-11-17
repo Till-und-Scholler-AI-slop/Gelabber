@@ -15,7 +15,11 @@ describe("member list rows", () => {
     ).toEqual(["Online", "a", "b", "Offline", "c"]);
     expect(rows[0]).toMatchObject({ kind: "heading", count: 2, first: true });
     expect(rows[3]).toMatchObject({ kind: "heading", count: 1, first: false });
-    expect(rows[4]).toMatchObject({ kind: "member", group: "x" });
+    expect(rows[4]).toMatchObject({ kind: "member", group: "x", position: 3 });
+    // Positions count members across groups, headings left out.
+    expect(
+      rows.flatMap((row) => (row.kind === "member" ? [row.position] : [])),
+    ).toEqual([1, 2, 3]);
   });
 
   it("keys rows apart from each other, headings from members", () => {

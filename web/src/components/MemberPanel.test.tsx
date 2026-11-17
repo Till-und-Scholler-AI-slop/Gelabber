@@ -52,8 +52,10 @@ describe("member panel", () => {
     const mounted = html.match(/role="listitem"/g)?.length ?? 0;
     expect(mounted).toBeGreaterThan(5);
     expect(mounted).toBeLessThan(60);
-    // The whole list is still announced: one heading and 2000 members.
-    expect(html).toContain('aria-setsize="2001"');
+    // The whole list is still announced, as members: headings not counted.
+    expect(html).toContain('aria-setsize="2000"');
+    expect(html).toContain('aria-posinset="1"');
+    expect(html).not.toContain('aria-setsize="2001"');
     expect(html).toContain("Member 00000");
     expect(html).not.toContain("Member 01999");
   });
