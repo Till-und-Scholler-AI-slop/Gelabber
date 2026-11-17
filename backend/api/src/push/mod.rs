@@ -15,6 +15,10 @@
 //! per channel in [`ORDINARY_WINDOW`], and in a server with more than
 //! [`SMALL_SERVER`] members only those who chose "all" themselves.
 //!
+//! Someone going live in a voice channel pushes like a message that names
+//! nobody (`voice`): a voice channel has no setting, so its server's level
+//! decides.
+//!
 //! An account in Do not disturb (#590) gets no push at all while it lasts.
 //!
 //! An account that hides the content of its notifications (#268) gets only
@@ -29,6 +33,7 @@
 //! (#314).
 
 pub mod last_call;
+pub mod voice;
 pub mod webpush;
 
 use std::time::Duration;
@@ -954,14 +959,7 @@ async fn listening(
     message: &Message,
     server: Uuid,
 ) -> Result<(Vec<Uuid>, &'static str), ApiError> {
-    let members: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM (SELECT 1 FROM server_members WHERE server_id=$1 LIMIT $2) m",
-    )
-    .bind(server)
-    .bind(SMALL_SERVER + 1)
-    .fetch_one(&state.db)
-    .await?;
-    if members <= SMALL_SERVER {
+    if default_level(state, server).await? == "all" {
         let everyone = sqlx::query_scalar(
             "SELECT m.user_id FROM server_members m
              JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
@@ -989,6 +987,23 @@ async fn listening(
     .fetch_all(&state.db)
     .await?;
     Ok((chose, "mentions"))
+}
+
+/// The level a member without a setting of their own has for push in this
+/// server: "all" up to [`SMALL_SERVER`] members, "mentions" above.
+async fn default_level(state: &AppState, server: Uuid) -> Result<&'static str, ApiError> {
+    let members: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT 1 FROM server_members WHERE server_id=$1 LIMIT $2) m",
+    )
+    .bind(server)
+    .bind(SMALL_SERVER + 1)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(if members <= SMALL_SERVER {
+        "all"
+    } else {
+        "mentions"
+    })
 }
 
 /// Whether this server's `@everyone` may still page its members by push.

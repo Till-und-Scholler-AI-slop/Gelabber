@@ -161,6 +161,10 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     if !ok {
         return bad(call).await;
     }
+    // A Live began: the closed apps hear of it by push (#616).
+    if track == TrackKind::S && call.kind == SigKind::P {
+        crate::push::voice::live(call.state, call.user, call.server_id, call.channel_id);
+    }
     Ok(())
 }
 
