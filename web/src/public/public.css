@@ -1,7 +1,7 @@
 /* The public landing, legal and feedback pages (render.tsx). Static pages without
    script, so no theme runtime: always the default dark theme "Gelabber
    Dunkel". The colours below are its values (theme/defaults.json through
-   themeVariables() in theme/model.ts); render.test.tsx holds them equal.
+   themeVariables() in theme/model.ts); publicCss.test.mjs holds them equal.
    Nothing animates. */
 
 @font-face {
@@ -25,6 +25,20 @@
     U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
     U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
     U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* The landing page's display face (fonts/ARCHIVO-PROVENANCE.json). */
+@font-face {
+  font-family: "Gelabber Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+  src: url("../fonts/ArchivoVariable-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
 }
 
 :root {
@@ -102,6 +116,13 @@ img {
 }
 a {
   color: inherit;
+}
+::selection {
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
+}
+html {
+  scrollbar-color: var(--lr-border-strong) var(--lr-bg);
 }
 :focus-visible {
   outline: 2px solid var(--lr-focus);
@@ -181,136 +202,352 @@ a {
   background: var(--lr-hover);
 }
 
-/* Landing: the hero over the Living Room artwork, dimmed and fading into
-   the page like the sign-in pages' (auth.css). */
-.landing-hero {
-  position: relative;
-  isolation: isolate;
-  padding-bottom: 48px;
+/* Landing (LandingPage.tsx): a photocopied flyer pasted on a dark wall.
+   The wall is the theme's background with toner grain, paper is its text
+   colour, ink its background colour, and amber the spot colour and the
+   coloured copy paper. Headlines in condensed Archivo caps, running text
+   in Inter. */
+.lp {
+  --lp-paper: var(--lr-text);
+  --lp-ink: var(--lr-bg);
+  --lp-ink-soft: #3a3f42;
+  --lp-ink-faint: #555b5f;
+  --lp-tape: rgb(243 183 82 / 0.58);
+  --lp-tape-pale: rgb(238 240 238 / 0.6);
+  /* Torn tape: both short ends serrated. */
+  --lp-tape-ends: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 30' preserveAspectRatio='none'%3E%3Cpath d='M3 0h94l3 5-3 5 3 5-3 5 3 5-3 5H3l-3-5 3-5-3-5 3-5-3-5z'/%3E%3C/svg%3E")
+    0 0 / 100% 100% no-repeat;
+  --lp-shadow: 0 2px 3px rgb(0 0 0 / 0.35), 0 22px 44px rgb(0 0 0 / 0.45);
+  /* Light toner specks for the wall. */
+  --lp-specks: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.7' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .93 0 0 0 0 .94 0 0 0 0 .93 0 0 0 .9 -.43'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23s)'/%3E%3C/svg%3E");
+  --lp-display: "Gelabber Archivo", var(--lr-font);
+  --lp-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -.6 .38'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  overflow-x: clip;
+  background: var(--lp-specks) var(--lr-bg);
 }
-.landing-hero::before,
-.landing-hero::after {
+.lp .public-container {
+  width: min(100% - 2 * var(--public-gutter), 1200px);
+}
+
+/* The wall's top bar: links set like the flyer's lettering. */
+.lp .public-nav a:not(.public-button),
+.lp .public-button {
+  font-family: var(--lp-display);
+  font-stretch: 80%;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+/* The strips are the actions; the bar's invite is lettering in amber. */
+.lp .public-bar .public-button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lr-accent);
+}
+.lp .public-bar .public-button:hover {
+  filter: none;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* Paper: grain over the paper colour, square corners, a soft shadow, and a
+   strip of tape. Focus rings are ink, which shows on paper and on amber. */
+.lp-paper {
+  position: relative;
+  background: var(--lp-paper) var(--lp-grain);
+  color: var(--lp-ink);
+  box-shadow: var(--lp-shadow);
+}
+.lp-paper::before {
   content: "";
   position: absolute;
-  inset: 0 0 -160px;
-  z-index: -1;
-  pointer-events: none;
+  top: -14px;
+  left: 50%;
+  width: 116px;
+  height: 30px;
+  margin-left: -58px;
+  background: var(--lp-grain) var(--lp-tape);
+  transform: rotate(-2.5deg);
+  mask: var(--lp-tape-ends);
 }
-.landing-hero::before {
-  background: url("/images/living-room/community-banner.webp") center 35% /
-    cover no-repeat;
-  opacity: 0.3;
+.lp-paper :focus-visible {
+  outline-color: var(--lp-ink);
+  outline-offset: 3px;
 }
-.landing-hero::after {
-  background: linear-gradient(transparent 45%, var(--lr-bg) 92%);
-}
-.landing-intro {
-  padding-top: 72px;
-}
-.landing-intro h1 {
-  max-width: 13em;
-  font-size: clamp(36px, 6vw, 66px);
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.035em;
+.lp-paper h1,
+.lp-paper h2,
+.lp-bill h2 {
+  font-family: var(--lp-display);
+  font-stretch: 62%;
+  font-weight: 850;
+  text-transform: uppercase;
   text-wrap: balance;
 }
-.landing-lead {
-  max-width: 600px;
-  margin-top: var(--lr-space-6);
-  color: color-mix(in srgb, var(--lr-text) 86%, var(--lr-bg));
-  font-size: 18px;
-  line-height: 1.55;
-}
-.landing-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--lr-space-3);
-  margin-top: var(--lr-space-8);
-}
-.landing-note {
-  margin-top: var(--lr-space-6);
-  color: var(--lr-muted);
-  font-size: 13px;
-}
 
-/* Positioned, so it paints over the artwork's fade that reaches into it. */
-.landing-main {
-  position: relative;
-  padding-bottom: 96px;
-}
-.landing-shot {
-  overflow: hidden;
-  border: 1px solid var(--lr-border);
-  border-radius: 12px;
-  background: var(--lr-panel);
-  box-shadow: var(--lr-shadow-2);
-}
-.landing-shot img {
-  width: 100%;
-}
-
-.landing-features {
+/* The first viewport: the flyer, and the app's picture taped up behind it
+   on the right. */
+.lp-hero {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--lr-space-10);
-  margin-top: 88px;
-}
-.landing-features section {
+  grid-template-columns: minmax(0, 620px) minmax(0, 1fr);
+  align-items: start;
   padding-top: var(--lr-space-6);
-  border-top: 1px solid var(--lr-border-strong);
 }
-.landing-features h2 {
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
+.lp-flyer {
+  z-index: 1;
+  background: none;
+  box-shadow: none;
+  filter: drop-shadow(0 2px 2px rgb(0 0 0 / 0.35))
+    drop-shadow(0 20px 26px rgb(0 0 0 / 0.4));
+  transform: rotate(-1deg);
 }
-.landing-features p {
-  margin-top: var(--lr-space-2);
-  color: var(--lr-muted);
+.lp-flyer__sheet {
+  padding: 48px 44px var(--lr-space-8);
+  background: var(--lp-paper) var(--lp-grain);
+}
+.lp-flyer h1 {
+  font-size: clamp(44px, 5vw, 70px);
+  line-height: 0.9;
+  letter-spacing: 0;
+}
+.lp-lead {
+  max-width: 34em;
+  margin-top: var(--lr-space-6);
+  color: var(--lp-ink-soft);
+  font-size: 18px;
+  line-height: 1.5;
+}
+.lp-note {
+  margin-top: var(--lr-space-5);
+  color: var(--lp-ink-faint);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-/* "Run it on your own server" and, when the instance offers it, "Or get an
-   instance of your own": two columns, or the first alone at full width. */
-.landing-host {
-  display: grid;
-  grid-auto-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
-  gap: 64px;
-  margin-top: 104px;
+/* Tear-off strips along the flyer's bottom edge: a dashed cut line with
+   scissors, one strip per action, the invite on amber copy paper. */
+.lp-tabs {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
 }
-.landing-host section {
+.lp-scissors {
+  position: absolute;
+  top: -12px;
+  left: 18px;
+  z-index: 1;
+  padding: 0 3px;
+  background: var(--lp-paper);
+  fill: none;
+  stroke: var(--lp-ink);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+.lp-tab {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 172px;
+  padding: var(--lr-space-5) 0;
+  border-top: 2px dashed rgb(23 25 26 / 0.5);
+  background: var(--lp-paper) var(--lp-grain);
+  color: var(--lp-ink);
+  font-family: var(--lp-display);
+  font-size: 17px;
+  font-stretch: 75%;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+}
+/* Torn by hand: the strips end at slightly different lengths. */
+.lp-tabs > :nth-child(odd of .lp-tab) {
+  min-height: 166px;
+}
+.lp-tabs > :nth-child(3n of .lp-tab) {
+  min-height: 178px;
+}
+.lp-tab--invite {
+  flex-grow: 1.5;
+  background: var(--lp-grain) var(--lr-accent);
+  font-size: 20px;
+  font-weight: 850;
+}
+/* Pulled at: the strip gives a little, as if half torn. */
+.lp-tab:hover {
+  background-color: color-mix(in srgb, var(--lp-paper) 92%, var(--lp-ink));
+  transform: translateY(4px) rotate(1.5deg);
+}
+.lp-tab--invite:hover {
+  background-color: color-mix(in srgb, var(--lr-accent) 88%, white);
+}
+
+/* The app's picture: a print with a paper border, taped at both corners. */
+.lp-print {
+  margin: 112px -96px 0 -56px;
+  padding: 10px;
+  transform: rotate(1.6deg);
+  background: var(--lp-paper);
+  box-shadow: var(--lp-shadow);
+  position: relative;
+}
+.lp-print::before,
+.lp-print::after {
+  content: "";
+  position: absolute;
+  top: -10px;
+  width: 92px;
+  height: 26px;
+  background: var(--lp-grain) var(--lp-tape);
+  mask: var(--lp-tape-ends);
+}
+.lp-print::before {
+  left: 32px;
+  transform: rotate(-6deg);
+}
+.lp-print::after {
+  right: 32px;
+  transform: rotate(5deg);
+}
+.lp-print img {
+  width: 100%;
+  outline: 1px solid rgb(23 25 26 / 0.25);
+}
+
+/* The bill: each act a line of condensed caps on the wall, the headliner
+   first and largest, in amber. */
+.lp-bill {
+  margin-top: 128px;
+}
+.lp-bill section {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
+  gap: var(--lr-space-4) var(--lr-space-10);
+  align-items: end;
+  padding-block: 28px;
+  border-top: 1px dashed var(--lr-border-strong);
+}
+.lp-bill section:first-child {
+  border-top: 2px dashed var(--lr-accent);
+}
+.lp-bill section:last-child {
+  border-bottom: 1px dashed var(--lr-border-strong);
+}
+.lp-bill h2 {
+  font-size: clamp(36px, 4.6vw, 64px);
+  line-height: 0.92;
+}
+.lp-bill section:first-child h2 {
+  color: var(--lr-accent);
+  font-size: clamp(48px, 7vw, 96px);
+}
+.lp-bill p {
+  max-width: 36em;
+  color: var(--lr-muted);
+  font-size: 16px;
+}
+
+/* Running it: the DIY sheet on amber copy paper, and the index card for
+   an instance run by the operators. */
+.lp-host {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 56px;
+  align-items: start;
+  margin-top: 136px;
+  padding-bottom: 120px;
+}
+.lp-host section {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  padding: 44px 40px 40px;
 }
-.landing-host h2 {
-  max-width: 13em;
-  font-size: 34px;
-  font-weight: 700;
-  line-height: 1.12;
-  letter-spacing: -0.03em;
+.lp-host h2 {
+  font-size: clamp(36px, 4vw, 56px);
+  line-height: 0.92;
 }
-.landing-host p {
-  max-width: 420px;
+.lp-host p {
+  max-width: 34em;
   margin-top: var(--lr-space-4);
-  color: var(--lr-muted);
+  color: var(--lp-ink-soft);
 }
-.landing-host pre {
+.lp-sheet {
+  transform: rotate(0.7deg);
+  background-color: var(--lr-accent);
+}
+.lp-sheet::before {
+  background-color: var(--lp-tape-pale);
+}
+.lp-sheet pre {
   align-self: stretch;
-  max-width: 508px;
-  margin-top: var(--lr-space-8);
+  margin-top: var(--lr-space-6);
   overflow-x: auto;
-  padding: 18px;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius-lg);
-  background: var(--lr-rail);
-  font: 400 13px / 1.7 var(--public-mono);
+  padding: 18px 20px;
+  background: var(--lp-ink);
+  color: var(--lp-paper);
+  font: 400 13px / 1.75 var(--public-mono);
 }
-.landing-host pre + .public-button,
-.landing-host p + .public-button {
-  margin-top: var(--lr-space-5);
+.lp-card {
+  margin-top: 64px;
+  transform: rotate(-1.4deg);
+  background-image:
+    repeating-linear-gradient(
+      transparent 0 27px,
+      rgb(23 25 26 / 0.1) 27px 28px
+    ),
+    var(--lp-grain);
+}
+/* An index card: the heading over its coloured rule, ruled lines below. */
+.lp-card h2 {
+  align-self: stretch;
+  padding-bottom: var(--lr-space-3);
+  border-bottom: 3px solid var(--lr-accent);
+  font-size: clamp(30px, 3vw, 40px);
+}
+.lp-card::before {
+  transform: rotate(3deg);
+}
+
+/* Buttons on paper: ink, or an ink outline. */
+.lp-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-top: var(--lr-space-6);
+  padding: 10px 18px;
+  line-height: 1.2;
+  border: 2px solid var(--lp-ink);
+  border-radius: 2px;
+  background: var(--lp-ink);
+  color: var(--lp-paper);
+  font-family: var(--lp-display);
+  font-size: 16px;
+  font-stretch: 80%;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+.lp-button:hover {
+  background: var(--lp-ink-soft);
+  border-color: var(--lp-ink-soft);
+}
+.lp-button--outline {
+  background: transparent;
+  color: var(--lp-ink);
+}
+.lp-button--outline:hover {
+  background: rgb(23 25 26 / 0.1);
+  border-color: var(--lp-ink);
 }
 
 .public-footer {
@@ -545,22 +782,38 @@ a {
   overflow: hidden;
 }
 
-@media (max-width: 799px) {
-  .landing-features,
-  .landing-host {
-    grid-auto-flow: row;
+@media (max-width: 999px) {
+  .lp-hero,
+  .lp-host {
     grid-template-columns: minmax(0, 1fr);
   }
-  .landing-features {
-    gap: var(--lr-space-8);
-    margin-top: 64px;
+  .lp-flyer {
+    max-width: 620px;
   }
-  .landing-host {
-    gap: 56px;
-    margin-top: 72px;
+  .lp-print {
+    margin: 40px 0 0;
   }
-  .landing-host h2 {
-    font-size: 28px;
+  .lp-card {
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 799px) {
+  /* The flyer's strips carry the invite on phones. */
+  .lp .public-bar .public-button {
+    display: none;
+  }
+  .lp-bill {
+    margin-top: 88px;
+  }
+  .lp-bill section {
+    grid-template-columns: minmax(0, 1fr);
+    padding-block: 22px 24px;
+  }
+  .lp-host {
+    gap: 48px;
+    margin-top: 96px;
+    padding-bottom: 88px;
   }
   .legal-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -599,21 +852,57 @@ a {
     font-size: 13px;
   }
   /* Long commands wrap, and a wrapped line is indented under its start. */
-  .landing-host pre {
+  .lp-sheet pre {
     font-size: 12px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     text-indent: 2ch hanging each-line;
   }
-  .landing-intro {
-    padding-top: var(--lr-space-8);
+  .lp-hero {
+    padding-top: var(--lr-space-2);
   }
-  .landing-intro h1 {
-    font-size: 36px;
-    line-height: 1.05;
+  .lp-flyer {
+    transform: rotate(-0.6deg);
   }
-  .landing-lead {
+  .lp-flyer__sheet {
+    padding: 36px 24px var(--lr-space-6);
+  }
+  .lp-flyer h1 {
+    font-size: clamp(36px, 11vw, 52px);
+  }
+  .lp .public-nav a:not(.public-button),
+  .lp .public-bar .public-button {
+    font-size: 14px;
+    font-stretch: 68%;
+    letter-spacing: 0.03em;
+  }
+  .lp-lead {
     font-size: 16px;
+  }
+  .lp-tab {
+    min-height: 156px;
+    font-size: 15px;
+  }
+  .lp-tabs > :nth-child(odd of .lp-tab) {
+    min-height: 150px;
+  }
+  .lp-tabs > :nth-child(3n of .lp-tab) {
+    min-height: 162px;
+  }
+  .lp-tab--invite {
+    font-size: 17px;
+  }
+  .lp-print {
+    padding: 6px;
+    transform: rotate(1deg);
+  }
+  .lp-print::before,
+  .lp-print::after {
+    width: 60px;
+    height: 18px;
+  }
+  .lp-host section {
+    padding: 36px 24px 28px;
   }
   .legal-content h1,
   .feedback-form h1 {

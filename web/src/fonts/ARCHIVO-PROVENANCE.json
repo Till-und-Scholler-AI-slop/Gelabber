@@ -1,0 +1,18 @@
+{
+  "upstream": "https://github.com/Omnibus-Type/Archivo",
+  "package": "@fontsource-variable/archivo 5.3.0 (npm)",
+  "packageSha256": "20c4384ed6219fc792761ad56fd578a70ba8758374b307f2f8da3db2009924a9",
+  "fontVersion": "2.001",
+  "license": "SIL Open Font License 1.1, served as /archivo-license.txt (web/public/archivo-license.txt)",
+  "usedBy": "src/public/public.css only (the landing page's headlines); the app does not load it",
+  "files": {
+    "ArchivoVariable-latin.woff2": {
+      "from": "files/archivo-latin-wdth-normal.woff2 (sha256 e3a28eade21a900c7155a247757f4b2834c07bb7ef07ad7efa55cebaac1e8f5e)",
+      "axes": "wght 100-900, wdth 62-125",
+      "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+      "sha256": "c07809b867887b133b8305642393b513bdf689b81ef60250c6df3630e370054f",
+      "changes": "fontTools 4.68.0: U+2010 and U+2011 added to the cmap as the hyphen glyph, so the headline's non-breaking hyphen stays in Archivo; nothing else changed"
+    }
+  },
+  "note": "Latin only; other headline text falls back to Gelabber Inter."
+}

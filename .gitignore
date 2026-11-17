@@ -36,3 +36,7 @@ deploy/compose/legal/*.html
 
 # web/scripts/field-gallery.mjs: pictures of a mismatch.
 web/field-gallery-out/
+
+# Impeccable design skill: review screenshots and roll records stay local.
+.impeccable/review/
+.impeccable/questions/
