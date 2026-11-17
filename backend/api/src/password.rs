@@ -2,22 +2,148 @@
 //!
 //! Hashing takes tens of milliseconds by design, so both operations run on
 //! Tokio's blocking pool and never stall the request executor. Each run
-//! holds 19 MiB, so only [`concurrent_runs`] go at once.
+//! holds 19 MiB, so only [`concurrent_runs`] go at once. That memory is
+//! kept for the next run and handed back to the OS once sign-ins stop
+//! ([`release_idle_memory`], #614).
 
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
-use argon2::password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash};
-use argon2::{Algorithm, Argon2, Params, Version};
+use argon2::password_hash::phc::{Output, ParamsString, PasswordHash, Salt};
+use argon2::password_hash::{PasswordHasher, try_generate_salt};
+use argon2::{Algorithm, Argon2, Block, Params, Version};
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 
 use crate::error::ApiError;
 
 /// OWASP's current recommendation for Argon2id: 19 MiB, 2 iterations, 1 lane.
+fn params() -> Params {
+    Params::new(19 * 1024, 2, 1, None).expect("static Argon2 params are valid")
+}
+
 fn hasher() -> Argon2<'static> {
-    let params = Params::new(19 * 1024, 2, 1, None).expect("static Argon2 params are valid");
-    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params())
+}
+
+/// Argon2's working memory, one buffer per run that finished, kept for the
+/// next run. Memory of 1 MiB and more goes straight back to the OS when it
+/// is freed (#614), so a fresh 19 MiB per run would fault in every page
+/// again: a quarter fewer sign-ins per second.
+struct Scratch {
+    buffers: Vec<Vec<Block>>,
+    last_run: Instant,
+}
+
+impl Scratch {
+    fn release_if_idle(&mut self, idle: Duration) {
+        if self.last_run.elapsed() >= idle {
+            self.buffers = Vec::new();
+        }
+    }
+}
+
+fn scratch() -> MutexGuard<'static, Scratch> {
+    static SCRATCH: OnceLock<Mutex<Scratch>> = OnceLock::new();
+    SCRATCH
+        .get_or_init(|| {
+            Mutex::new(Scratch {
+                buffers: Vec::new(),
+                last_run: Instant::now(),
+            })
+        })
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Runs `work` with `blocks` blocks of memory. Buffers of the current
+/// parameters' size are reused; any other size (a hash stored with other
+/// parameters) gets a buffer of its own that is freed afterwards.
+fn with_memory<T>(blocks: usize, work: impl FnOnce(&mut [Block]) -> T) -> T {
+    let pooled = blocks == params().block_count();
+    let reused = if pooled {
+        scratch().buffers.pop()
+    } else {
+        None
+    };
+    let mut memory = reused.unwrap_or_else(|| vec![Block::new(); blocks]);
+    let result = work(&mut memory);
+    if pooled {
+        let mut scratch = scratch();
+        scratch.buffers.push(memory);
+        scratch.last_run = Instant::now();
+    }
+    result
+}
+
+/// How long the working memory outlives the last run.
+pub const IDLE_RELEASE: Duration = Duration::from_secs(30);
+
+/// Frees the kept working memory once no run has finished for `idle`.
+pub fn release_idle_memory(idle: Duration) {
+    scratch().release_if_idle(idle);
+}
+
+/// Checks every [`IDLE_RELEASE`] whether the working memory can go.
+pub fn spawn_idle_release() {
+    tokio::spawn(async {
+        let mut tick = tokio::time::interval(IDLE_RELEASE);
+        loop {
+            tick.tick().await;
+            release_idle_memory(IDLE_RELEASE);
+        }
+    });
+}
+
+/// Argon2id with [`params`] and a fresh salt, as a PHC string. The same
+/// string `PasswordHasher::hash_password` builds, on reused memory.
+fn hash_with_memory(password: &[u8]) -> Result<String, String> {
+    let params = params();
+    let salt = try_generate_salt().map_err(|err| format!("no salt: {err}"))?;
+    let mut buffer = [0u8; Output::MAX_LENGTH];
+    let out = buffer
+        .get_mut(..params.output_len().unwrap_or(Params::DEFAULT_OUTPUT_LEN))
+        .ok_or("output length")?;
+    with_memory(params.block_count(), |memory| {
+        hasher().hash_password_into_with_memory(password, &salt, out, memory)
+    })
+    .map_err(|err| err.to_string())?;
+    let hash = PasswordHash {
+        algorithm: Algorithm::Argon2id.ident(),
+        version: Some(Version::V0x13.into()),
+        params: ParamsString::try_from(&params).map_err(|err| err.to_string())?,
+        salt: Some(Salt::new(&salt).map_err(|err| err.to_string())?),
+        hash: Some(Output::new(out).map_err(|err| err.to_string())?),
+    };
+    Ok(hash.to_string())
+}
+
+/// Whether `password` matches `stored`, with the algorithm, version and
+/// parameters the stored hash names, as `PasswordVerifier` checks it: the
+/// outputs are compared in constant time.
+fn verify_with_memory(password: &[u8], stored: &PasswordHash) -> bool {
+    let (Some(salt), Some(expected)) = (&stored.salt, &stored.hash) else {
+        return false;
+    };
+    let Ok(algorithm) = Algorithm::try_from(stored.algorithm.as_str()) else {
+        return false;
+    };
+    let Ok(version) = stored.version.map(Version::try_from).transpose() else {
+        return false;
+    };
+    let Ok(params) = Params::try_from(stored) else {
+        return false;
+    };
+    let blocks = params.block_count();
+    let argon2 = Argon2::new(algorithm, version.unwrap_or_default(), params);
+    let mut buffer = [0u8; Output::MAX_LENGTH];
+    let Some(out) = buffer.get_mut(..expected.len()) else {
+        return false;
+    };
+    let hashed = with_memory(blocks, |memory| {
+        argon2.hash_password_into_with_memory(password, salt, out, memory)
+    });
+    hashed.is_ok() && Output::new(out).is_ok_and(|computed| computed == *expected)
 }
 
 /// How long a request waits for a free run before it is answered `429`.
@@ -56,9 +182,7 @@ async fn limited<T: Send + 'static>(
 /// goes into `users.password_hash`.
 pub async fn hash(password: String) -> Result<String, ApiError> {
     limited(concurrent_runs(), RUN_WAIT, move || {
-        hasher()
-            .hash_password(password.as_bytes())
-            .map(|hash| hash.to_string())
+        hash_with_memory(password.as_bytes())
             .map_err(|err| ApiError::Internal(format!("argon2 hash failed: {err}")))
     })
     .await?
@@ -75,10 +199,7 @@ pub async fn verify(password: String, stored: Option<String>) -> Result<bool, Ap
         let Ok(parsed) = PasswordHash::new(&stored) else {
             return false;
         };
-        let matches = hasher()
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok();
-        matches && has_account
+        verify_with_memory(password.as_bytes(), &parsed) && has_account
     })
     .await
 }
@@ -163,6 +284,59 @@ mod tests {
         })
         .await
         .expect("released once the run ended");
+    }
+
+    /// The strings agree with the crate's own hasher and verifier both ways,
+    /// so hashes stored before #614 still verify and new ones stay standard.
+    #[tokio::test]
+    async fn hashes_match_the_crate_both_ways() {
+        let ours = hash("correct horse".into()).await.unwrap();
+        let parsed = PasswordHash::new(&ours).unwrap();
+        use argon2::PasswordVerifier;
+        assert!(hasher().verify_password(b"correct horse", &parsed).is_ok());
+        assert!(hasher().verify_password(b"wrong", &parsed).is_err());
+
+        let theirs = hasher()
+            .hash_password(b"battery staple")
+            .unwrap()
+            .to_string();
+        assert!(
+            verify("battery staple".into(), Some(theirs.clone()))
+                .await
+                .unwrap()
+        );
+        assert!(!verify("battery".into(), Some(theirs)).await.unwrap());
+    }
+
+    /// A hash stored with other parameters verifies with its own, on memory
+    /// that is not kept.
+    #[tokio::test]
+    async fn other_parameters_still_verify() {
+        let small = Argon2::new(
+            Algorithm::Argon2id,
+            Version::V0x13,
+            Params::new(8 * 1024, 1, 1, None).unwrap(),
+        );
+        let stored = small.hash_password(b"old account").unwrap().to_string();
+        assert!(stored.contains("m=8192,t=1,p=1"));
+        assert!(
+            verify("old account".into(), Some(stored.clone()))
+                .await
+                .unwrap()
+        );
+        assert!(!verify("other".into(), Some(stored)).await.unwrap());
+    }
+
+    #[test]
+    fn idle_memory_is_released_and_recent_memory_kept() {
+        let mut scratch = Scratch {
+            buffers: vec![vec![Block::new(); 1]],
+            last_run: Instant::now(),
+        };
+        scratch.release_if_idle(Duration::from_secs(3600));
+        assert_eq!(scratch.buffers.len(), 1, "released while recent");
+        scratch.release_if_idle(Duration::ZERO);
+        assert!(scratch.buffers.is_empty(), "kept after idle");
     }
 
     #[tokio::test]

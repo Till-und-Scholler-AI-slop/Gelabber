@@ -5,4 +5,5 @@
 
 pub mod client_addr;
 pub mod ice;
+pub mod memory;
 pub mod ticket;
