@@ -126,6 +126,7 @@ async fn accept(
 
     if joined {
         info!(server_id = %server_id, user_id = %requester, by = %user.id, "join request accepted");
+        servers::publish_joined(&state, server_id, requester).await;
         if let Err(error) = state
             .gateway
             .publish_user(requester, &UserFrame::Joined { s: server_id })

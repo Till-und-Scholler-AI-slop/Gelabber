@@ -2109,6 +2109,17 @@ impl EventFrame {
     pub fn kind(&self) -> Option<&str> {
         self.d.as_ref()?.get("k")?.as_str()
     }
+
+    /// The member a join event (`t: "c"`, `k: "j"`, #621) carries, when it
+    /// is the event's entity and reads as a member row.
+    pub fn joined_member(&self) -> Option<Member> {
+        if self.c.is_some() || self.kind() != Some("j") {
+            return None;
+        }
+        let row = self.d.as_ref()?.get("member")?.clone();
+        let member: Member = serde_json::from_value(row).ok()?;
+        (Some(member.user_id) == self.i).then_some(member)
+    }
 }
 
 /// Voice presence (`op: "sig"`).

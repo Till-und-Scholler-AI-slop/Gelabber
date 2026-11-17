@@ -28,6 +28,7 @@ import {
   attachRealtimeRecovery,
   isAccessChange,
   isOwnerChange,
+  joinedMember,
 } from "./useRealtime.ts";
 
 class Socket implements SocketLike {
@@ -1397,5 +1398,117 @@ describe("a member's account deleted, and ownership moved (#519)", () => {
       );
     expect(removed("b")).toBe("banned");
     expect(removed("k")).toBe("kicked");
+  });
+});
+
+describe("member joined (#621)", () => {
+  const row = (user_id: string, extra: Record<string, unknown> = {}) => ({
+    user_id,
+    name: `Name ${user_id}`,
+    avatar_url: null,
+    joined_at: "2026-11-17T10:00:00Z",
+    status_text: null,
+    accent_color: null,
+    avatar_decoration: null,
+    role_ids: [],
+    role: "member",
+    ...extra,
+  });
+  const joined = (
+    user_id: string,
+    member: unknown = row(user_id),
+    overrides: Partial<ChatEvent> = {},
+  ): ChatEvent => ({
+    op: "e",
+    t: "c",
+    s: "s1",
+    n: 6,
+    i: user_id,
+    d: { k: "j", member },
+    ...overrides,
+  });
+  const listed = (queryClient: QueryClient) =>
+    queryClient
+      .getQueryData<{
+        members: { user_id: string; name: string }[];
+      }>(serverKeys.detail("user-a", 1, "s1"))
+      ?.members.map((m) => `${m.user_id}:${m.name}`);
+
+  it("reads the member a join event carries, and nothing else", () => {
+    expect(joinedMember(joined("user-b"))).toMatchObject({
+      user_id: "user-b",
+      name: "Name user-b",
+      role: "member",
+      role_ids: [],
+      avatar_decoration: null,
+    });
+    // A member row that is not the event's entity, or half of one.
+    expect(joinedMember(joined("user-b", row("user-c")))).toBeNull();
+    expect(joinedMember(joined("user-b", { user_id: "user-b" }))).toBeNull();
+    expect(joinedMember(joined("user-b", null))).toBeNull();
+    // Other server events, and channel events.
+    expect(
+      joinedMember(joined("user-b", row("user-b"), { t: "d" })),
+    ).toBeNull();
+    expect(
+      joinedMember(joined("user-b", row("user-b"), { c: "channel" })),
+    ).toBeNull();
+    expect(
+      joinedMember(joined("user-b", row("user-b"), { d: { k: "a" } })),
+    ).toBeNull();
+    // An owner role or an unknown decoration is not taken from the wire.
+    expect(
+      joinedMember(
+        joined(
+          "user-b",
+          row("user-b", { role: "owner", avatar_decoration: "sparkles" }),
+        ),
+      ),
+    ).toMatchObject({ role: "member", avatar_decoration: null });
+  });
+
+  it("the bridge adds the member to the cached list, once", () => {
+    const queryClient = client();
+    queryClient.setQueryData(serverKeys.detail("user-a", 1, "s1"), {
+      id: "s1",
+      channels: [],
+      members: [row("user-a")],
+    });
+
+    expect(
+      applyGatewayEvent(queryClient, "user-a", 1, joined("user-b")),
+    ).toBeNull();
+    expect(listed(queryClient)).toEqual([
+      "user-a:Name user-a",
+      "user-b:Name user-b",
+    ]);
+
+    // A replay after a gap updates the row instead of adding it again.
+    applyGatewayEvent(
+      queryClient,
+      "user-a",
+      1,
+      joined("user-b", row("user-b", { name: "Renamed" })),
+    );
+    expect(listed(queryClient)).toEqual([
+      "user-a:Name user-a",
+      "user-b:Renamed",
+    ]);
+  });
+
+  it("leaves a server whose detail is not cached, and this account's own join", () => {
+    const queryClient = client();
+    applyGatewayEvent(queryClient, "user-a", 1, joined("user-b"));
+    expect(
+      queryClient.getQueryData(serverKeys.detail("user-a", 1, "s1")),
+    ).toBeUndefined();
+
+    queryClient.setQueryData(serverKeys.detail("user-a", 1, "s1"), {
+      id: "s1",
+      channels: [],
+      members: [row("user-b")],
+    });
+    applyGatewayEvent(queryClient, "user-a", 1, joined("user-a"));
+    expect(listed(queryClient)).toEqual(["user-b:Name user-b"]);
   });
 });
