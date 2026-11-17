@@ -58,9 +58,9 @@ milestones and the old GitHub project board are not kept up to date.
   the label Bug, Feature or Improvement. If there is none, create it in
   Linear before the branch. An issue opened on GitHub appears in Linear by
   itself; add it to the project there. Without Linear access (most agent
-  sessions), open the GitHub issue, take the `GEL-<n>` it gets in Linear
-  from the issue page, and ask someone with Linear access to set its
-  project, milestone and assignee.
+  sessions), open the GitHub issue and ask someone with Linear access for
+  the `GEL-<n>` it gets there and to set its project, milestone and
+  assignee.
 - **Assignee** means "working on it now". When you start, assign the issue to
   the person who asked for the work, not to the author of the PR. When you
   stop without finishing, remove the assignee and say on the issue why.
