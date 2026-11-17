@@ -22,10 +22,10 @@ crate::strings! {
     alerts_sound_hint = "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung."
         | "One sound for several messages in a row, none while you are deafened. On a phone, the device setting applies.";
 
-    permission_push_on = "Direktnachrichten und @Erwähnungen kommen auch an, wenn Gelabber geschlossen ist."
-        | "Direct messages and @mentions arrive even when Gelabber is closed.";
-    permission_push_after_allow = "Danach kommen Direktnachrichten und @Erwähnungen auch bei geschlossener App an, sofern der Server das unterstützt."
-        | "Then direct messages and @mentions arrive even when the app is closed, if the server supports it.";
+    permission_push_on = "Benachrichtigungen kommen auch an, wenn Gelabber geschlossen ist."
+        | "Notifications arrive even when Gelabber is closed.";
+    permission_push_after_allow = "Danach kommen Benachrichtigungen auch bei geschlossener App an, sofern der Server das unterstützt."
+        | "Then notifications arrive even when the app is closed, if the server supports it.";
     permission_while_running = "Auf diesem Gerät kommen Benachrichtigungen nur an, solange Gelabber im Hintergrund läuft."
         | "On this device, notifications only arrive while Gelabber runs in the background.";
     permission_allow = "Benachrichtigungen erlauben" | "Allow notifications";

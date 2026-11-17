@@ -15,9 +15,9 @@ export const notifications = defineCatalog(
       "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung.",
 
     "permission.pushOn":
-      "Direktnachrichten und @Erwähnungen kommen auch an, wenn Gelabber geschlossen ist.",
+      "Benachrichtigungen kommen auch an, wenn Gelabber geschlossen ist.",
     "permission.pushAfterAllow":
-      "Danach kommen Direktnachrichten und @Erwähnungen auch bei geschlossener App an, sofern der Server das unterstützt.",
+      "Danach kommen Benachrichtigungen auch bei geschlossener App an, sofern der Server das unterstützt.",
     "permission.whileRunning":
       "Auf diesem Gerät kommen Benachrichtigungen nur an, solange Gelabber im Hintergrund läuft.",
     "permission.allow": "Benachrichtigungen erlauben",
@@ -83,10 +83,9 @@ export const notifications = defineCatalog(
     "alerts.soundHint":
       "One sound for several messages in a row, none while you are deafened. On a phone, the device setting applies.",
 
-    "permission.pushOn":
-      "Direct messages and @mentions arrive even when Gelabber is closed.",
+    "permission.pushOn": "Notifications arrive even when Gelabber is closed.",
     "permission.pushAfterAllow":
-      "Then direct messages and @mentions arrive even when the app is closed, if the server supports it.",
+      "Then notifications arrive even when the app is closed, if the server supports it.",
     "permission.whileRunning":
       "On this device, notifications only arrive while Gelabber runs in the background.",
     "permission.allow": "Allow notifications",
