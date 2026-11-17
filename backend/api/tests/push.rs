@@ -345,8 +345,31 @@ async fn a_dm_pushes_an_encrypted_preview(pool: PgPool) {
     assert_eq!(next(&mut hits).await.path, "sub/bob");
 }
 
+async fn level(client: &mut Client, scope: &str, id: &str, level: Value) {
+    let r = client
+        .send(
+            Method::PUT,
+            &format!("/api/{scope}/{id}/notification-settings"),
+            Some(json!({ "level": level })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+}
+
+async fn channel(client: &mut Client, server: &str, name: &str) -> String {
+    let r = client
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/channels"),
+            Some(json!({ "name": name })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    r.body["id"].as_str().unwrap().to_owned()
+}
+
 #[sqlx::test]
-async fn in_a_server_only_mentions_push_and_settings_hold_them_back(pool: PgPool) {
+async fn in_a_server_the_level_decides_what_pushes(pool: PgPool) {
     let World {
         mut a,
         mut b,
@@ -360,13 +383,35 @@ async fn in_a_server_only_mentions_push_and_settings_hold_them_back(pool: PgPool
     let browser = Browser::new(&service, "sub/bob");
     subscribe(&mut b, &browser).await;
     let bob = b.user_id().to_owned();
-    // No mention: nothing. The DM after it is the first to arrive.
+    // "All" is what a member has without a setting: a message that names
+    // nobody pushes too, without waking a sleeping phone for it.
     post(&mut a, &channel, "plain").await;
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.headers["urgency"], "normal");
+    let payload = browser.open(&hit);
+    assert_eq!(payload["title"], "Ada · #allgemein");
+    assert_eq!(payload["body"], "plain");
+    assert_eq!(payload["path"], format!("/s/{server}/c/{channel}"));
+
+    // At "mentions" it does not. The DM after it is the next to arrive.
+    let second = self::channel(&mut a, &server, "zwei").await;
+    level(&mut b, "servers", &server, json!("mentions")).await;
+    post(&mut a, &second, "plain").await;
     post(&mut a, &dm, "marker 1").await;
-    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1");
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.headers["urgency"], "high");
+    assert_eq!(browser.open(&hit)["body"], "marker 1");
+    // A channel's own "all" wins over its server's "mentions".
+    let third = self::channel(&mut a, &server, "drei").await;
+    level(&mut b, "channels", &third, json!("all")).await;
+    post(&mut a, &third, "hier schon").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "hier schon");
 
     post(&mut a, &channel, &format!("<@{bob}> schau mal")).await;
-    let payload = browser.open(&next(&mut hits).await);
+    let hit = next(&mut hits).await;
+    // A mention wakes the phone, as a direct message does.
+    assert_eq!(hit.headers["urgency"], "high");
+    let payload = browser.open(&hit);
     assert_eq!(payload["title"], "Ada · #allgemein");
     assert_eq!(payload["path"], format!("/s/{server}/c/{channel}"));
     post(&mut a, &channel, "@everyone Essen").await;
@@ -687,6 +732,103 @@ async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
     assert!(left[1].ends_with("/denied/old"), "{left:?}");
 }
 
+#[sqlx::test]
+async fn a_lively_channel_pushes_once_in_a_while(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        channel,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+    post(&mut a, &channel, "eins").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "eins");
+    // The next lines of the conversation stay quiet; the DM is the next
+    // push to arrive.
+    post(&mut a, &channel, "zwei").await;
+    post(&mut a, &channel, "drei").await;
+    post(&mut a, &dm, "marker").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
+    // A mention is not held back by the lines before it.
+    post(&mut a, &channel, &format!("<@{bob}> vier")).await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "@Bob vier");
+}
+
+/// Adds members to the server until it has `total`, without accounts
+/// anyone could sign in to.
+async fn crowd(pool: &PgPool, server: &str, total: i64) {
+    let server = Uuid::parse_str(server).unwrap();
+    sqlx::query(
+        "WITH people AS (
+            INSERT INTO users (email, name, password_hash)
+            SELECT 'crowd-' || gen_random_uuid() || '@test.example', 'Crowd ' || n, 'unused'
+            FROM generate_series(1, $2 - (SELECT count(*) FROM server_members WHERE server_id=$1)) AS n
+            RETURNING id
+         )
+         INSERT INTO server_members (server_id, user_id) SELECT $1, id FROM people",
+    )
+    .bind(server)
+    .bind(total)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test]
+async fn a_large_server_pushes_ordinary_messages_only_where_someone_chose_all(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        server,
+        channel,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+    // 50 members are still a group: the default "all" pushes.
+    crowd(&pool, &server, 50).await;
+    post(&mut a, &channel, "klein").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "klein");
+
+    // One more, and a message that names nobody pushes to nobody who did
+    // not ask for it.
+    crowd(&pool, &server, 51).await;
+    let second = self::channel(&mut a, &server, "zwei").await;
+    post(&mut a, &second, "gross").await;
+    post(&mut a, &dm, "marker 1").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1");
+    // A mention still does.
+    post(&mut a, &second, &format!("<@{bob}> du")).await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "@Bob du");
+
+    // Bob's own "all" for the server brings them back, but not into a
+    // channel he set to "mentions".
+    level(&mut b, "servers", &server, json!("all")).await;
+    let third = self::channel(&mut a, &server, "drei").await;
+    post(&mut a, &third, "gewollt").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "gewollt");
+    let fourth = self::channel(&mut a, &server, "vier").await;
+    level(&mut b, "channels", &fourth, json!("mentions")).await;
+    post(&mut a, &fourth, "nicht hier").await;
+    post(&mut a, &dm, "marker 2").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 2");
+    // An "all" on one channel alone is enough for that channel.
+    level(&mut b, "servers", &server, Value::Null).await;
+    let fifth = self::channel(&mut a, &server, "fuenf").await;
+    level(&mut b, "channels", &fifth, json!("all")).await;
+    post(&mut a, &fifth, "nur hier").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "nur hier");
+}
+
 type Ws =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -718,6 +860,7 @@ async fn a_page_in_front_holds_pushes_back(pool: PgPool) {
         state,
         mut a,
         mut b,
+        channel,
         dm,
         mut hits,
         service,
@@ -780,6 +923,12 @@ async fn a_page_in_front_holds_pushes_back(pool: PgPool) {
     .await
     .unwrap();
     focus_is(&state, b.user_id(), true).await;
+    // While it is in front, wherever: an ordinary message of a server
+    // channel stays off the phone, a mention there does not.
+    post(&mut a, &channel, "nebenbei").await;
+    let bob = b.user_id().to_owned();
+    post(&mut a, &channel, &format!("<@{bob}> doch")).await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "@Bob doch");
     drop(ws);
     focus_is(&state, b.user_id(), false).await;
 }

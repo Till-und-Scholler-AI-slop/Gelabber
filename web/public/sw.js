@@ -62,8 +62,8 @@ self.addEventListener("fetch", (event) => {
 
 // Message notifications are shown through this worker's registration
 // (src/pwa/notifications.ts), because phones do not let a page create one
-// itself. While the app is closed, direct messages and mentions arrive here
-// as Web Push (src/pwa/push.ts, backend/api/src/push).
+// itself. While the app is closed, messages arrive here as Web Push
+// (src/pwa/push.ts, backend/api/src/push).
 function notificationTarget(data) {
   try {
     const url = new URL(data.path, self.location.origin);
