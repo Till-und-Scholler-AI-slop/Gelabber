@@ -77,6 +77,17 @@ fn push_state(pool: PgPool, vapid_private: Option<&str>) -> AppState {
 
 /// As [`push_state`], for an instance that knows its public address.
 fn push_state_at(pool: PgPool, vapid_private: Option<&str>, public_url: Option<&str>) -> AppState {
+    push_state_for(pool, vapid_private, public_url, 2)
+}
+
+/// As [`push_state_at`], with sessions that live `ttl_hours`; the idle
+/// window is the default one, or as long where that is shorter.
+fn push_state_for(
+    pool: PgPool,
+    vapid_private: Option<&str>,
+    public_url: Option<&str>,
+    ttl_hours: u64,
+) -> AppState {
     let redis = common::redis_url();
     let private = vapid_private.map(str::to_owned);
     let public_url = public_url.map(str::to_owned);
@@ -84,7 +95,7 @@ fn push_state_at(pool: PgPool, vapid_private: Option<&str>, public_url: Option<&
         "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
         "REDIS_URL" => Some(redis.clone()),
-        "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
+        "API_SESSION_TTL_HOURS" => Some(ttl_hours.to_string()),
         "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
         "API_WS_DEAD_MS" => Some("5000".to_owned()),
         "VAPID_PRIVATE_KEY" => private.clone(),
@@ -151,8 +162,18 @@ async fn setup(pool: PgPool) -> World {
 }
 
 async fn setup_at(pool: PgPool, public_url: Option<&str>) -> World {
+    setup_for(pool, public_url, 2).await
+}
+
+/// A world whose sessions live 30 days and end after 14 unused, as a real
+/// one's do.
+async fn setup_long(pool: PgPool) -> World {
+    setup_for(pool, None, 30 * 24).await
+}
+
+async fn setup_for(pool: PgPool, public_url: Option<&str>, ttl_hours: u64) -> World {
     let (private, vapid_public) = Vapid::generate();
-    let state = push_state_at(pool, Some(&private), public_url);
+    let state = push_state_for(pool, Some(&private), public_url, ttl_hours);
     let (service, hits) = fake_service().await;
     let mut a = user(&state, "a@test.example", "Ada").await;
     let mut b = user(&state, "b@test.example", "Bob").await;
@@ -1494,4 +1515,183 @@ async fn do_not_disturb_holds_back_requests(pool: PgPool) {
     let hit = next(&mut hits).await;
     assert_eq!(hit.path, "sub/ada");
     assert_eq!(ada_browser.open(&hit)["body"], "marker");
+}
+
+/// Moves the end of every session of `user` to `ends` from now (an
+/// interval), as time passing without a use would.
+async fn session_ends_in(pool: &PgPool, user: &str, ends: &str) {
+    let done = sqlx::query(
+        "UPDATE sessions SET expires_at = now() + $2::text::interval WHERE user_id = $1::uuid",
+    )
+    .bind(user)
+    .bind(ends)
+    .execute(pool)
+    .await
+    .unwrap();
+    assert_eq!(done.rows_affected(), 1);
+}
+
+async fn warned(pool: &PgPool) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM push_subscriptions WHERE warned_at IS NOT NULL")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A session nobody used takes its push subscription with it (#616): two
+/// days before, the device hears that once, and again only after a use.
+#[sqlx::test]
+async fn a_session_about_to_end_says_so_once(pool: PgPool) {
+    use gelabber_api::push::last_call::sweep;
+    let World {
+        state,
+        mut a,
+        mut b,
+        mut hits,
+        service,
+        ..
+    } = setup_long(pool.clone()).await;
+    let bob_browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &bob_browser).await;
+    subscribe(&mut a, &Browser::new(&service, "sub/ada")).await;
+    let bob = b.user_id().to_owned();
+
+    // Fresh, and with three days left: nothing to say.
+    assert_eq!(sweep(&state).await.unwrap(), 0);
+    session_ends_in(&pool, &bob, "3 days").await;
+    assert_eq!(sweep(&state).await.unwrap(), 0);
+
+    session_ends_in(&pool, &bob, "47 hours").await;
+    assert_eq!(sweep(&state).await.unwrap(), 1);
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    assert_eq!(hit.headers["urgency"], "normal");
+    // Kept by the push service while the session lasts.
+    let ttl: i64 = hit.headers["ttl"].to_str().unwrap().parse().unwrap();
+    assert!((46 * 3600..=47 * 3600).contains(&ttl), "{ttl}");
+    let payload = bob_browser.open(&hit);
+    assert_eq!(payload["title"], "Benachrichtigungen enden bald");
+    assert_eq!(
+        payload["body"],
+        "Du warst länger nicht hier. Öffne Gelabber, damit Benachrichtigungen auf diesem Gerät weiter ankommen."
+    );
+    assert_eq!(payload["path"], "/");
+    assert_eq!(payload["notification"]["navigate"], "/");
+    // A notification of its own: no conversation's tag.
+    assert_eq!(payload["channel"], Uuid::nil().to_string());
+    assert_eq!(payload.get("recall"), None);
+
+    // Once.
+    assert_eq!(sweep(&state).await.unwrap(), 0);
+    assert_eq!(warned(&pool).await, 1);
+
+    // Bob opens the app: the session is renewed, and says so again the next
+    // time it runs low.
+    let r = b.send(Method::GET, "/api/auth/session", None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(sweep(&state).await.unwrap(), 0);
+    session_ends_in(&pool, &bob, "1 hour").await;
+    assert_eq!(sweep(&state).await.unwrap(), 1);
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    assert!(hits.try_recv().is_err());
+}
+
+/// At the end of a session's life opening the app no longer helps: the
+/// notice asks for a new sign-in, in the reader's language, once.
+#[sqlx::test]
+async fn at_the_end_of_its_life_a_session_asks_for_a_new_sign_in(pool: PgPool) {
+    use gelabber_api::push::last_call::sweep;
+    let World {
+        state,
+        mut b,
+        mut hits,
+        service,
+        ..
+    } = setup_long(pool.clone()).await;
+    let bob_browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &bob_browser).await;
+    let r = b
+        .send(
+            Method::PUT,
+            "/api/me/locale",
+            Some(json!({ "locale": "en" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    // Signed in 29 days ago and used ever since.
+    sqlx::query(
+        "UPDATE sessions SET created_at = now() - interval '29 days', \
+         expires_at = now() + interval '1 day', last_used_at = now() WHERE user_id = $1::uuid",
+    )
+    .bind(b.user_id())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(sweep(&state).await.unwrap(), 1);
+    let payload = bob_browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Notifications are about to stop");
+    assert_eq!(
+        payload["body"],
+        "The sign-in on this device ends soon. Sign in again to keep notifications coming."
+    );
+    assert_eq!(payload["notification"]["lang"], "en");
+
+    // Using the app renews nothing now, and brings no second notice.
+    let r = b.send(Method::GET, "/api/auth/session", None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(sweep(&state).await.unwrap(), 0);
+    assert!(hits.try_recv().is_err());
+
+    // A new sign-in on the same browser starts over.
+    let mut again = Client::from_state(state.clone());
+    again.bootstrap().await;
+    let r = again.login("b@test.example", "password123").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    subscribe(&mut again, &bob_browser).await;
+    assert_eq!(warned(&pool).await, 0);
+    assert_eq!(sweep(&state).await.unwrap(), 0);
+}
+
+/// Do not disturb (#590) holds the notice back until it ends; one no push
+/// service took comes again.
+#[sqlx::test]
+async fn a_last_call_waits_for_do_not_disturb_and_is_tried_again(pool: PgPool) {
+    use gelabber_api::push::last_call::sweep;
+    let World {
+        state,
+        mut b,
+        mut hits,
+        service,
+        ..
+    } = setup_long(pool.clone()).await;
+    subscribe(&mut b, &Browser::new(&service, "fail/bob")).await;
+    let bob = b.user_id().to_owned();
+    let r = b
+        .send(
+            Method::PUT,
+            "/api/me/presence",
+            Some(json!({"mode": "dnd", "duration": "8h"})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    session_ends_in(&pool, &bob, "10 hours").await;
+    assert_eq!(sweep(&state).await.unwrap(), 0);
+    assert!(hits.try_recv().is_err());
+
+    sqlx::query(
+        "UPDATE users SET presence_mode_until = now() - interval '1 second' WHERE id = $1::uuid",
+    )
+    .bind(&bob)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The push service is down: asked, but not counted as told.
+    assert_eq!(sweep(&state).await.unwrap(), 1);
+    assert_eq!(next(&mut hits).await.path, "fail/bob");
+    assert_eq!(warned(&pool).await, 0);
+    assert_eq!(subscriptions(&pool).await, 1);
+    assert_eq!(sweep(&state).await.unwrap(), 1);
+    assert_eq!(next(&mut hits).await.path, "fail/bob");
 }
