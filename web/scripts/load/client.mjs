@@ -1,12 +1,33 @@
-/* global fetch, WebSocket, URL, setTimeout, setInterval, clearInterval */
+/* global fetch, WebSocket, URL, process, setTimeout, setInterval, clearInterval */
 // A small Gelabber client for load tests: cookie jar, the CSRF double submit
 // and the gateway WebSocket, with no browser. Used by chat.mjs,
 // connections.mjs and call.mjs.
 
 export const PASSWORD = "loadtest-password-123";
 
+/** True for a URL on this machine: `localhost`, 127.0.0.0/8 or `::1`. */
+export function isLoopback(url) {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  return (
+    host === "localhost" || host === "::1" || /^127(\.\d{1,3}){3}$/.test(host)
+  );
+}
+
+/**
+ * The scenarios register accounts with the public `PASSWORD` and leave them
+ * behind, so they refuse any other host unless `GELABBER_LOAD_ALLOW_REMOTE=1`.
+ */
+export function checkTarget(url, env = process.env) {
+  if (isLoopback(url) || env.GELABBER_LOAD_ALLOW_REMOTE === "1") return;
+  throw new Error(
+    `${url} is not on this machine; the load scenarios create accounts with a public password. ` +
+      "Set GELABBER_LOAD_ALLOW_REMOTE=1 to run against a throwaway remote instance.",
+  );
+}
+
 export class Client {
   constructor(base) {
+    checkTarget(base);
     this.base = base;
     this.jar = new Map();
   }

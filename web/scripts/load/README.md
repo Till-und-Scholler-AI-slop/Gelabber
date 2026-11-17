@@ -42,6 +42,11 @@ desktop Chrome), `GELABBER_LOAD_PHASE_FILE` and
 `GELABBER_LOAD_LABEL_FILE` (default in the temp directory; the sampler reads
 the same ones).
 
+The scenarios register accounts with a fixed, public password and leave them
+behind, so they refuse an API or web address that is not on this machine.
+`GELABBER_LOAD_ALLOW_REMOTE=1` lifts that for a throwaway remote instance;
+never point them at an instance people use.
+
 ## Run
 
 From `web/`, the sampler in a second shell for the whole session:
