@@ -856,7 +856,7 @@ Moves are pushed to the account's other sockets as a `read` user frame (gateway 
 
 ### 8.1 Settings (`notifications/settings.rs`; web `messages/notificationSettings.ts:25-56`)
 
-`Setting`: `{scope: "server" | "channel", id: uuid, level: "all"|"mentions"|"none"|null, muted: bool, muted_until: nullable ts, voice: bool}`. Only explicit settings are listed (ordered by scope, id); an absent row means inherit (`level: null`, not muted, `voice: false`). `voice` (v0.12, #616, migration 0043) is a server's only: a Web Push when someone joins a voice channel nobody was in. It is missing from servers older than v0.12; read it as `false`.
+`Setting`: `{scope: "server" | "channel", id: uuid, level: "all"|"mentions"|"none"|null, muted: bool, muted_until: nullable ts, voice: bool}`. Only explicit settings are listed (ordered by scope, id); an absent row means inherit (`level: null`, not muted, `voice: false`). `voice` (v0.12, #616, migration 0044) is a server's only: a Web Push when someone joins a voice channel nobody was in. It is missing from servers older than v0.12; read it as `false`.
 
 | Method & path | Request | Success | Errors |
 |---|---|---|---|
