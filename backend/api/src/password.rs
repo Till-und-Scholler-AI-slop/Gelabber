@@ -14,6 +14,7 @@ use argon2::password_hash::{PasswordHasher, try_generate_salt};
 use argon2::{Algorithm, Argon2, Block, Params, Version};
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
+use zeroize::Zeroize;
 
 use crate::error::ApiError;
 
@@ -59,6 +60,14 @@ fn scratch() -> MutexGuard<'static, Scratch> {
 /// Runs `work` with `blocks` blocks of memory. Buffers of the current
 /// parameters' size are reused; any other size (a hash stored with other
 /// parameters) gets a buffer of its own that is freed afterwards.
+///
+/// The pool holds at most one buffer per run that was ever in flight at
+/// once, so its size is bounded only by [`concurrent_runs`] (one per core,
+/// 19 MiB each). Raising that limit raises the memory kept here with it.
+///
+/// Every buffer is wiped before it is kept or freed: the blocks hold state
+/// derived from the password, and with caller-supplied memory the crate
+/// does not wipe them itself.
 fn with_memory<T>(blocks: usize, work: impl FnOnce(&mut [Block]) -> T) -> T {
     let pooled = blocks == params().block_count();
     let reused = if pooled {
@@ -68,6 +77,7 @@ fn with_memory<T>(blocks: usize, work: impl FnOnce(&mut [Block]) -> T) -> T {
     };
     let mut memory = reused.unwrap_or_else(|| vec![Block::new(); blocks]);
     let result = work(&mut memory);
+    memory.iter_mut().for_each(Zeroize::zeroize);
     if pooled {
         let mut scratch = scratch();
         scratch.buffers.push(memory);
@@ -325,6 +335,26 @@ mod tests {
                 .unwrap()
         );
         assert!(!verify("other".into(), Some(stored)).await.unwrap());
+    }
+
+    #[test]
+    fn kept_memory_is_wiped() {
+        with_memory(params().block_count(), |memory| {
+            for block in memory.iter_mut() {
+                block.as_mut().fill(7);
+            }
+        });
+        // Only wiped buffers may ever sit in the pool, whichever test put
+        // them there.
+        let scratch = scratch();
+        for buffer in &scratch.buffers {
+            assert!(
+                buffer
+                    .iter()
+                    .all(|block| block.as_ref().iter().all(|&word| word == 0)),
+                "a kept buffer still holds run state"
+            );
+        }
     }
 
     #[test]

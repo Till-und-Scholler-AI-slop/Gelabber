@@ -19,7 +19,9 @@ tower-http = { version = "0.7.1", features = ["trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 # Password hashing (issue #3): Argon2id via RustCrypto, PHC string format.
-argon2 = "0.6.0"
+argon2 = { version = "0.6.0", features = ["zeroize"] }
+# Wipes Argon2's reused working memory after each run (#614).
+zeroize = "1.9.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 uuid = { version = "1.26.1", features = ["serde", "v4"] }
 rand = "0.10.2"
