@@ -486,22 +486,32 @@ async fn reactions_in_a_closed_dm_reach_nobody(pool: PgPool) {
     let bobs = bobs.body["id"].as_str().unwrap().to_owned();
     block(&mut w.ada, &bob).await;
 
-    // Bob's reaction on Ada's message is dropped without a word (#619).
-    let dropped = react(&mut w.bob, &adas).await;
-    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
-    assert_eq!(dropped.body["reactions"], json!([]), "{}", dropped.body);
-    let seen = w
-        .ada
-        .send(Method::GET, &format!("/api/channels/{dm}/messages"), None)
-        .await;
-    assert!(
-        seen.body["messages"]
+    // Bob's reaction on Ada's message sticks for him and only him (#619).
+    let hidden = react(&mut w.bob, &adas).await;
+    assert_eq!(hidden.status, StatusCode::OK, "{}", hidden.body);
+    assert_eq!(
+        hidden.body["reactions"][0]["emoji"], "👍",
+        "{}",
+        hidden.body
+    );
+    let reactions_on = |page: &Response, id: &str| {
+        page.body["messages"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|m| m["reactions"] == json!([])),
+            .find(|m| m["id"] == id)
+            .unwrap()["reactions"]
+            .clone()
+    };
+    let history = format!("/api/channels/{dm}/messages");
+    let seen = w.ada.send(Method::GET, &history, None).await;
+    assert_eq!(reactions_on(&seen, &adas), json!([]), "{}", seen.body);
+    let own = w.bob.send(Method::GET, &history, None).await;
+    assert_eq!(
+        reactions_on(&own, &adas)[0]["user_ids"],
+        json!([bob]),
         "{}",
-        seen.body
+        own.body
     );
     // On his own hidden message it sticks, for him.
     let hidden = text(&mut w.bob, &dm, "nur für mich").await;
@@ -514,6 +524,26 @@ async fn reactions_in_a_closed_dm_reach_nobody(pool: PgPool) {
         StatusCode::FORBIDDEN,
         "blocked",
     );
+    // Given again after the unblock, it is open.
+    unblock(&mut w.ada, &bob).await;
+    let removed = w
+        .bob
+        .send(
+            Method::DELETE,
+            &format!("/api/messages/{adas}/reactions/%F0%9F%91%8D"),
+            None,
+        )
+        .await;
+    assert_eq!(removed.body["reactions"], json!([]), "{}", removed.body);
+    assert_eq!(react(&mut w.bob, &adas).await.status, StatusCode::OK);
+    let seen = w.ada.send(Method::GET, &history, None).await;
+    assert_eq!(
+        reactions_on(&seen, &adas)[0]["user_ids"],
+        json!([bob]),
+        "{}",
+        seen.body
+    );
+    block(&mut w.ada, &bob).await;
     // On a shared server reactions stay open: the clients fold there.
     let open = text(&mut w.bob, &w.channel.clone(), "im server").await;
     let open = open.body["id"].as_str().unwrap().to_owned();
@@ -788,6 +818,20 @@ async fn the_blocker_hears_nothing_of_hidden_messages(pool: PgPool) {
         )
         .await;
     assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    let adas: Vec<Value> = w
+        .ada
+        .send(
+            Method::GET,
+            &format!("/api/channels/{with_bob}/messages"),
+            None,
+        )
+        .await
+        .body["messages"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let adas = adas[0]["id"].as_str().unwrap().to_owned();
+    assert_eq!(react(&mut w.bob, &adas).await.status, StatusCode::OK);
     let event = |f: &Value| f["op"] == "e";
     assert!(
         frame(&mut ada_ws, Duration::from_millis(800), event)

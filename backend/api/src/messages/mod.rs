@@ -700,6 +700,8 @@ async fn update_message(
         &mut message,
     )
     .await?;
+    // The event shows open reactions; the answer the caller's hidden ones too.
+    reactions::populate_for(&mut tx, &mut message, Some(user.id)).await?;
     tx.commit().await?;
     delivery::wake(&state);
     if !suppressed {
@@ -742,6 +744,7 @@ async fn describe_only(
     let changed = attachments::describe(&mut tx, message_id, descriptions).await?;
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
+        .bind(user_id)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -761,6 +764,8 @@ async fn describe_only(
         &mut message,
     )
     .await?;
+    // The event shows open reactions; the answer the caller's hidden ones too.
+    reactions::populate_for(&mut tx, &mut message, Some(user_id)).await?;
     tx.commit().await?;
     delivery::wake(state);
     Ok(message)
@@ -925,6 +930,7 @@ async fn suppress_previews(
         // Read again under the lock: an edit may have landed since `current`.
         let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
             .bind(message_id)
+            .bind(None::<Uuid>)
             .fetch_one(&mut *tx)
             .await?;
         let mut message = Message::from(row);
@@ -992,6 +998,7 @@ pub(crate) async fn attach_previews(
     }
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(job.message_id)
+        .bind(None::<Uuid>)
         .fetch_one(&mut *tx)
         .await?;
     let mut message = Message::from(row);
@@ -1020,6 +1027,7 @@ pub(crate) async fn attachments_ready(state: &AppState, message_id: Uuid) -> Res
     delivery::lock_channel(&mut tx, channel_id).await?;
     let Some(row) = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
+        .bind(None::<Uuid>)
         .fetch_optional(&mut *tx)
         .await?
     else {
@@ -1148,8 +1156,10 @@ pub(crate) async fn lock_access(
     Ok(MessagingChannel::Dm { channel })
 }
 
+/// `$1` the message; `$2` the viewer whose hidden reactions (#619) count,
+/// or NULL for what everyone sees.
 const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, m.sender_only, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, m.sender_only, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$2) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
          FROM messages m JOIN users u ON u.id = m.author_id \
          WHERE m.id = $1";
 
@@ -1168,6 +1178,7 @@ async fn message_for(
 ) -> Result<(MessagingChannel, Message), ApiError> {
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
+        .bind(user_id)
         .fetch_optional(db)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -1196,7 +1207,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) AND ",
             readable_by!("5"),
@@ -1214,7 +1225,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) AND ",
             readable_by!("5"),
@@ -1241,7 +1252,7 @@ async fn load_page(
     } else {
         sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$3) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND ",
             readable_by!("3"),
