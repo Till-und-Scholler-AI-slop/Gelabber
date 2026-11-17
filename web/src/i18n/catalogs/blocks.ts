@@ -1,5 +1,6 @@
 // Blocking people (#565): the button and its question, the "Blockiert"
-// settings area, a blocked DM's composer and folded messages on servers.
+// settings area, the composer of a DM the user blocks and folded messages
+// on servers.
 import { defineCatalog } from "../catalog.ts";
 
 export const blocks = defineCatalog(
@@ -18,8 +19,6 @@ export const blocks = defineCatalog(
     "area.loadFailed": "Die Liste konnte nicht geladen werden.",
     "area.since": "Seit {date}",
     "composer.blocked": "Du hast {name} blockiert.",
-    "composer.closed":
-      "Du kannst in dieser Unterhaltung keine Nachrichten senden.",
     folded: {
       one: "Blockierte Nachricht",
       other: "{count} blockierte Nachrichten",
@@ -40,7 +39,6 @@ export const blocks = defineCatalog(
     "area.loadFailed": "Couldn’t load the list.",
     "area.since": "Since {date}",
     "composer.blocked": "You blocked {name}.",
-    "composer.closed": "You can’t send messages in this conversation.",
     folded: {
       one: "Blocked message",
       other: "{count} blocked messages",

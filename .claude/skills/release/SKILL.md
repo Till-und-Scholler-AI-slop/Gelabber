@@ -1,6 +1,6 @@
 ---
 name: release
-description: Prepare and ship a Gelabber release vX.Y.Z from the development line to main, then close the milestone and sync main back.
+description: Prepare and ship a Gelabber release vX.Y.Z from the development line to main, then complete the Linear milestone and sync main back.
 disable-model-invocation: true
 ---
 
@@ -9,8 +9,8 @@ disable-model-invocation: true
 The rules are in AGENTS.md ("Branches and pull requests", "Planning"). This
 is the order of the work; check each step's result before the next one.
 
-1. **Scope.** The milestone vX.Y.Z has no open issue that should ship; move
-   the rest to the next milestone. CI on the development line's head is
+1. **Scope.** The Linear milestone vX.Y.Z has no open issue that should
+   ship; move the rest to the next milestone. CI on the development line's head is
    green.
 2. **Branch.** `release/vX.Y.Z` from the development line, then
    `git merge origin/main`, so hotfixes on `main` stay in.
@@ -46,8 +46,8 @@ is the order of the work; check each step's result before the next one.
    agent. The `libwebrtc-packages` and `build-deps` releases stay
    pre-releases: as "Latest", the apps' updater and the web client's
    download links would point at them.
-8. **Planning.** Close the milestone, move its open issues to the next one,
-   and write the next milestone's goal if it has none.
+8. **Planning.** In Linear, complete the milestone, move its open issues to
+   the next one, and write the next milestone's goal if it has none.
 9. **Sync** `main` into the development line: branch `sync/main-into-vX.Y`,
    PR to the development line, keeping the release commits.
 

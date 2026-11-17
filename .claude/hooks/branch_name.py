@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 NAME = re.compile(r"""^(
-    (feature|fix|docs|ci|refactor|chore)/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*
+    (feature|fix|docs|ci|refactor|chore)/(gel-)?[0-9]+-[a-z0-9]+(-[a-z0-9]+)*
   | release/v[0-9]+\.[0-9]+\.[0-9]+
   | hotfix/v[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9]+(-[a-z0-9]+)*
   | sync/main-into-v[0-9]+\.[0-9]+
@@ -24,10 +24,10 @@ NAME = re.compile(r"""^(
 
 RULE = (
     "Branch names follow AGENTS.md (\"Branches and pull requests\"): "
-    "<type>/<issue>-<short-description>, lowercase with hyphens, type one of "
-    "feature, fix, docs, ci, refactor, chore (e.g. fix/123-reconnect-after-sleep). "
+    "<type>/<issue>-<short-description>, lowercase with hyphens, <issue> the Linear ID, "
+    "type one of feature, fix, docs, ci, refactor, chore (e.g. fix/gel-21-edit-under-block). "
     "Release work uses release/vX.Y.Z, hotfix/vX.Y.Z-<short-description> and "
-    "sync/main-into-vX.Y. Without an issue, open one first. There is no exception "
+    "sync/main-into-vX.Y. Without an issue, open one in Linear first. There is no exception "
     "for names a tool suggests. Rename the branch with `git branch -m <new-name>` and push that."
 )
 

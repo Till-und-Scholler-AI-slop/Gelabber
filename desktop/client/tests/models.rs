@@ -974,17 +974,18 @@ fn the_feedback_context_of_this_app() {
     assert_eq!(feedback_page(&long).chars().count(), FEEDBACK_PAGE_MAX);
 }
 
-/// A DM says whether it is blocked either way (#565); both flags are left
-/// out while false, as the server writes them, and a block list entry reads.
+/// A DM says whether the user blocks the peer (#565), left out while
+/// false as the server writes it; a block the other way is not told (#619),
+/// and a block list entry reads.
 #[test]
 fn blocked_dms_and_the_block_list() {
     let mut json: Value = serde_json::from_str(include_str!("fixtures/dm.json")).expect("fixture");
     let dm: DirectMessage = serde_json::from_value(json.clone()).unwrap();
-    assert!(!dm.blocked && !dm.closed);
+    assert!(!dm.blocked);
     assert_eq!(serde_json::to_value(&dm).unwrap(), json);
     json["blocked"] = Value::Bool(true);
     let dm: DirectMessage = serde_json::from_value(json.clone()).unwrap();
-    assert!(dm.blocked && !dm.closed);
+    assert!(dm.blocked);
     assert_eq!(serde_json::to_value(&dm).unwrap(), json);
     let list: Vec<BlockedUser> = serde_json::from_str(
         r#"[{"id":"7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab","name":"Jonas","avatar_url":null,"created_at":"2026-11-15T10:00:00Z"}]"#,

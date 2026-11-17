@@ -91,6 +91,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         addr = %local_addr,
         ready_timeout_ms = config.ready_timeout.as_millis() as u64,
         db_max_connections = config.db_max_connections,
+        db_gateway_connections = config.db_gateway_connections,
         "gelabber-api listening"
     );
 

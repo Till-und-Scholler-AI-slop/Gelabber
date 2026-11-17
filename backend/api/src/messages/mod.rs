@@ -108,6 +108,10 @@ pub struct Message {
     /// message in one render, whichever of the two arrives first.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nonce: Option<Uuid>,
+    /// Written into a DM whose peer blocks the author (#619): only the
+    /// author reads it, and no event or push goes out for it.
+    #[serde(skip)]
+    pub sender_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -138,6 +142,9 @@ struct MessageRow {
     mentions_everyone: bool,
     system_kind: Option<String>,
     system_params: Option<sqlx::types::Json<serde_json::Value>>,
+    /// Only [`MESSAGE_BY_ID_SQL`] reads it; lists filter by viewer instead.
+    #[sqlx(default)]
+    sender_only: bool,
 }
 
 impl From<MessageRow> for Message {
@@ -164,6 +171,7 @@ impl From<MessageRow> for Message {
             previews: Vec::new(),
             system: SystemMessage::from_columns(row.system_kind, row.system_params),
             nonce: None,
+            sender_only: row.sender_only,
         }
     }
 }
@@ -208,6 +216,7 @@ impl MessageInsert {
             previews: Vec::new(),
             system: SystemMessage::from_columns(self.system_kind, self.system_params),
             nonce: None,
+            sender_only: false,
         }
     }
 }
@@ -265,7 +274,7 @@ async fn list_messages(
     validate::both_bounds_rejected(before, after)?;
     let limit = limit.expect("validated");
 
-    let mut page = load_page(&state.db, channel_id, before, after, limit).await?;
+    let mut page = load_page(&state.db, channel_id, user.id, before, after, limit).await?;
     attachments::for_messages(&state.db, &mut page.messages).await?;
     replies::for_messages(&state.db, &mut page.messages).await?;
     previews::for_messages(&state.db, &mut page.messages).await?;
@@ -392,9 +401,22 @@ async fn create_message(
         }
         MessagingChannel::Server { .. } => crate::dms::request::Gate::Open,
     };
+    let sender_only = gate == crate::dms::request::Gate::SenderOnly;
+    // An answer the peer can read must not quote one they cannot (#619).
+    let reply_to = match body.reply_to {
+        Some(id) if !sender_only => {
+            let hidden: Option<bool> =
+                sqlx::query_scalar("SELECT sender_only FROM messages WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            (hidden != Some(true)).then_some(id)
+        }
+        other => other,
+    };
     let row = sqlx::query_as::<_, MessageInsert>(
-        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to, here_users) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to, here_users, sender_only) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
          RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone, system_kind, system_params",
     )
     .bind(channel_id)
@@ -403,8 +425,9 @@ async fn create_message(
     .bind(gif.as_ref().map(sqlx::types::Json))
     .bind(&mentioned.users)
     .bind(mentioned.everyone)
-    .bind(body.reply_to)
+    .bind(reply_to)
     .bind(&mentioned.here_users)
+    .bind(sender_only)
     .fetch_one(&mut *tx)
     .await?;
     let bound =
@@ -428,6 +451,7 @@ async fn create_message(
     let mut message = row.into_message(&user);
     message.attachments = bound;
     message.nonce = body.nonce;
+    message.sender_only = sender_only;
     persist_event(
         &mut tx,
         access.event_server_id(),
@@ -449,6 +473,8 @@ async fn create_message(
     };
     match gate {
         crate::dms::request::Gate::Open => crate::push::announce(&state, &message, server),
+        // Nobody else hears of it (#619).
+        crate::dms::request::Gate::SenderOnly => {}
         crate::dms::request::Gate::Request {
             to,
             announce,
@@ -582,6 +608,7 @@ async fn update_message(
             user.id,
             message_id,
             current.channel_id,
+            current.sender_only,
             &descriptions,
         )
         .await
@@ -620,7 +647,14 @@ async fn update_message(
     let access = lock_access(&mut tx, current.channel_id, user.id).await?;
     access.require_send()?;
     if let MessagingChannel::Dm { .. } = access {
-        crate::dms::request::check_edit(&mut tx, current.channel_id, user.id, &content).await?;
+        crate::dms::request::check_edit(
+            &mut tx,
+            current.channel_id,
+            user.id,
+            &content,
+            current.sender_only,
+        )
+        .await?;
     }
     // Only a new text marks the message edited; alt texts alone do not.
     let row = sqlx::query_as::<_, MessageInsert>(
@@ -656,6 +690,7 @@ async fn update_message(
         .await?;
     attachments::describe(&mut tx, message_id, &descriptions).await?;
     let mut message = row.into_message(&user);
+    message.sender_only = current.sender_only;
     // Read under the lock: a concurrent alt edit may have changed others.
     message.attachments = attachments::for_message(&mut *tx, message_id).await?;
     persist_event(
@@ -665,6 +700,8 @@ async fn update_message(
         &mut message,
     )
     .await?;
+    // The event shows open reactions; the answer the caller's hidden ones too.
+    reactions::populate_for(&mut tx, &mut message, Some(user.id)).await?;
     tx.commit().await?;
     delivery::wake(&state);
     if !suppressed {
@@ -691,20 +728,23 @@ async fn describe_only(
     user_id: Uuid,
     message_id: Uuid,
     channel_id: Uuid,
+    sender_only: bool,
     descriptions: &[(Uuid, Option<String>)],
 ) -> Result<Message, ApiError> {
     let mut tx = state.db.begin().await?;
     let access = lock_access(&mut tx, channel_id, user_id).await?;
     access.require_send()?;
-    // A DM closed by a block takes no edits, alt texts included (#565).
+    // A DM closed by a block takes no edits, alt texts included (#565),
+    // but the one blocked edits what only they see (#619).
     if let MessagingChannel::Dm { .. } = access {
         crate::blocks::in_dm(&mut *tx, channel_id, user_id)
             .await?
-            .refuse(ApiError::DmClosed)?;
+            .refuse_edit(sender_only)?;
     }
     let changed = attachments::describe(&mut tx, message_id, descriptions).await?;
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
+        .bind(user_id)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -724,6 +764,8 @@ async fn describe_only(
         &mut message,
     )
     .await?;
+    // The event shows open reactions; the answer the caller's hidden ones too.
+    reactions::populate_for(&mut tx, &mut message, Some(user_id)).await?;
     tx.commit().await?;
     delivery::wake(state);
     Ok(message)
@@ -760,6 +802,12 @@ async fn delete_message(
         message_id = %message_id,
         "message deleted"
     );
+    // Nobody else saw a sender-only message (#619): its author's other
+    // devices drop it on their next history load.
+    if current.sender_only {
+        tx.commit().await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
     let revision = delivery::revision(&mut tx).await?;
     delivery::enqueue(
         &mut tx,
@@ -798,6 +846,11 @@ async fn persist_event(
         .bind(message.revision)
         .execute(&mut *db)
         .await?;
+    // A sender-only message (#619) reaches its author through the answer
+    // and the history; an event would reach the peer's sockets too.
+    if message.sender_only {
+        return Ok(());
+    }
     delivery::enqueue(
         db,
         message.revision,
@@ -877,6 +930,7 @@ async fn suppress_previews(
         // Read again under the lock: an edit may have landed since `current`.
         let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
             .bind(message_id)
+            .bind(None::<Uuid>)
             .fetch_one(&mut *tx)
             .await?;
         let mut message = Message::from(row);
@@ -944,6 +998,7 @@ pub(crate) async fn attach_previews(
     }
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(job.message_id)
+        .bind(None::<Uuid>)
         .fetch_one(&mut *tx)
         .await?;
     let mut message = Message::from(row);
@@ -972,6 +1027,7 @@ pub(crate) async fn attachments_ready(state: &AppState, message_id: Uuid) -> Res
     delivery::lock_channel(&mut tx, channel_id).await?;
     let Some(row) = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
+        .bind(None::<Uuid>)
         .fetch_optional(&mut *tx)
         .await?
     else {
@@ -1100,10 +1156,20 @@ pub(crate) async fn lock_access(
     Ok(MessagingChannel::Dm { channel })
 }
 
+/// `$1` the message; `$2` the viewer whose hidden reactions (#619) count,
+/// or NULL for what everyone sees.
 const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, m.sender_only, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$2) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
          FROM messages m JOIN users u ON u.id = m.author_id \
          WHERE m.id = $1";
+
+/// SQL condition: message `m` is one the viewer (bound at `$n`) may read.
+/// A sender-only message (#619) is its author's alone.
+macro_rules! readable_by {
+    ($n:literal) => {
+        concat!("(NOT m.sender_only OR m.author_id = $", $n, ")")
+    };
+}
 
 async fn message_for(
     db: &PgPool,
@@ -1112,9 +1178,14 @@ async fn message_for(
 ) -> Result<(MessagingChannel, Message), ApiError> {
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
+        .bind(user_id)
         .fetch_optional(db)
         .await?
         .ok_or(ApiError::NotFound)?;
+    // Someone else's sender-only message does not exist for the caller.
+    if row.sender_only && row.author_id != user_id {
+        return Err(ApiError::NotFound);
+    }
     let access = messaging_channel(db, row.channel_id, user_id).await?;
     let mut message = Message::from(row);
     message.attachments = attachments::for_message(db, message.id).await?;
@@ -1126,6 +1197,7 @@ async fn message_for(
 async fn load_page(
     db: &PgPool,
     channel_id: Uuid,
+    viewer: Uuid,
     before: Option<Cursor>,
     after: Option<Cursor>,
     limit: i64,
@@ -1133,34 +1205,38 @@ async fn load_page(
     let take = limit + 1;
     let rows = if let Some(cursor) = before {
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
-        sqlx::query_as::<_, MessageRow>(
+        sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
-             WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) \
-             ORDER BY m.created_at DESC, m.id DESC \
+             WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) AND ",
+            readable_by!("5"),
+            " ORDER BY m.created_at DESC, m.id DESC \
              LIMIT $4",
-        )
+        ))
         .bind(channel_id)
         .bind(at)
         .bind(id)
         .bind(take)
+        .bind(viewer)
         .fetch_all(db)
         .await?
     } else if let Some(cursor) = after {
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
-        let mut newer = sqlx::query_as::<_, MessageRow>(
+        let mut newer = sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
-             WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) \
-             ORDER BY m.created_at ASC, m.id ASC \
+             WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) AND ",
+            readable_by!("5"),
+            " ORDER BY m.created_at ASC, m.id ASC \
              LIMIT $4",
-        )
+        ))
         .bind(channel_id)
         .bind(at)
         .bind(id)
         .bind(take)
+        .bind(viewer)
         .fetch_all(db)
         .await?;
         // `has_more` is computed on this order; then flip to oldest → newest
@@ -1174,16 +1250,18 @@ async fn load_page(
             has_more,
         });
     } else {
-        sqlx::query_as::<_, MessageRow>(
+        sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$3) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
-             WHERE m.channel_id = $1 \
-             ORDER BY m.created_at DESC, m.id DESC \
+             WHERE m.channel_id = $1 AND ",
+            readable_by!("3"),
+            " ORDER BY m.created_at DESC, m.id DESC \
              LIMIT $2",
-        )
+        ))
         .bind(channel_id)
         .bind(take)
+        .bind(viewer)
         .fetch_all(db)
         .await?
     };

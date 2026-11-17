@@ -243,7 +243,7 @@ struct Conversation {
     limited: bool,
     /// A DM that is still a message request (#563): its bar or note.
     request: Option<gelabber_client::DirectMessage>,
-    /// A DM nobody can write in (#565): its bar instead of the composer.
+    /// A DM the user blocks (#565): its bar instead of the composer.
     closed: Option<gelabber_client::DirectMessage>,
 }
 
@@ -352,7 +352,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
                 name: dm.peer.name.clone(),
                 avatar: dm.peer.avatar_url.clone(),
             },
-            can_send: !(dm.blocked || dm.closed),
+            can_send: !dm.blocked,
             can_send_files: dm.request.is_none(),
             can_moderate: false,
             can_everyone: false,
@@ -362,7 +362,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
             limited: false,
             request: dm.request.is_some().then(|| dm.clone()),
-            closed: (dm.blocked || dm.closed).then(|| dm.clone()),
+            closed: dm.blocked.then(|| dm.clone()),
         })
     });
     // Each opening fetches the conversation itself (`useDm`), also one the

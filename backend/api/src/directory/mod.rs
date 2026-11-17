@@ -394,6 +394,7 @@ async fn join(
     tx.commit().await?;
     if !already {
         info!(server_id = %server_id, user_id = %user.id, "member joined via directory");
+        servers::publish_joined(&state, server_id, user.id).await;
     }
     let member = membership::load(&state.db, server_id, user.id).await?;
     Ok(Json(member.into()))
