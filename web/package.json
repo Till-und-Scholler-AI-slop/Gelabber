@@ -33,7 +33,10 @@
     "test:e2e-chat-workflows": "node scripts/e2e/chat-workflows.mjs",
     "test:reactions-smoke": "node scripts/smoke-reactions.mjs",
     "test:e2e-search-context": "node scripts/e2e/search-context.mjs",
-    "test:field-gallery": "node scripts/field-gallery.mjs"
+    "test:field-gallery": "node scripts/field-gallery.mjs",
+    "test:load-chat": "node scripts/load/chat.mjs",
+    "test:load-connections": "node scripts/load/connections.mjs",
+    "test:load-call": "node scripts/load/call.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.106.1",
