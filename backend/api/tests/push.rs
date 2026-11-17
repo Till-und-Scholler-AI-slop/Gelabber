@@ -72,8 +72,14 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
 }
 
 fn push_state(pool: PgPool, vapid_private: Option<&str>) -> AppState {
+    push_state_at(pool, vapid_private, None)
+}
+
+/// As [`push_state`], for an instance that knows its public address.
+fn push_state_at(pool: PgPool, vapid_private: Option<&str>, public_url: Option<&str>) -> AppState {
     let redis = common::redis_url();
     let private = vapid_private.map(str::to_owned);
+    let public_url = public_url.map(str::to_owned);
     let config = Config::from_source(|key| match key {
         "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
@@ -84,6 +90,7 @@ fn push_state(pool: PgPool, vapid_private: Option<&str>) -> AppState {
         "VAPID_PRIVATE_KEY" => private.clone(),
         "VAPID_SUBJECT" => Some("mailto:admin@test.example".to_owned()),
         "PUSH_ALLOWED_HOSTS" => Some("127.0.0.1".to_owned()),
+        "APP_PUBLIC_URL" => public_url.clone(),
         _ => None,
     })
     .expect("push test config");
@@ -140,8 +147,12 @@ async fn user(state: &AppState, email: &str, name: &str) -> Client {
 }
 
 async fn setup(pool: PgPool) -> World {
+    setup_at(pool, None).await
+}
+
+async fn setup_at(pool: PgPool, public_url: Option<&str>) -> World {
     let (private, vapid_public) = Vapid::generate();
-    let state = push_state(pool, Some(&private));
+    let state = push_state_at(pool, Some(&private), public_url);
     let (service, hits) = fake_service().await;
     let mut a = user(&state, "a@test.example", "Ada").await;
     let mut b = user(&state, "b@test.example", "Bob").await;
@@ -366,6 +377,93 @@ async fn channel(client: &mut Client, server: &str, name: &str) -> String {
         .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     r.body["id"].as_str().unwrap().to_owned()
+}
+
+#[sqlx::test]
+async fn a_push_declares_its_notification(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+    let message = post(&mut a, &dm, "hallo").await;
+    let id = message["id"].as_str().unwrap();
+    let payload = browser.open(&next(&mut hits).await);
+    // A declarative push message: a browser that knows them shows this
+    // without the worker's help.
+    assert_eq!(payload["web_push"], 8030);
+    assert_eq!(payload["mutable"], true);
+    assert_eq!(
+        payload["notification"],
+        json!({
+            "title": "Ada",
+            "body": "hallo",
+            // No public address is set: the path, for the app's own.
+            "navigate": format!("/d/{dm}"),
+            "tag": format!("gelabber:{bob}:{dm}"),
+            "lang": "de",
+            "renotify": true,
+            "silent": false,
+            "data": {
+                "path": format!("/d/{dm}"),
+                "user": bob,
+                "channel": dm,
+                "message": id,
+                "at": message["created_at"],
+            },
+        })
+    );
+    // And what a worker from before v0.12 reads.
+    assert_eq!(payload["title"], "Ada");
+    assert_eq!(payload["body"], "hallo");
+    assert_eq!(payload["path"], format!("/d/{dm}"));
+    assert_eq!(payload["message"], id);
+
+    // A recall replaces it without a sound.
+    let r = a
+        .send(Method::DELETE, &format!("/api/messages/{id}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let recalled = browser.open(&next(&mut hits).await);
+    let declared = &recalled["notification"];
+    assert_eq!(declared["body"], "Nachricht gelöscht");
+    assert_eq!(declared["tag"], format!("gelabber:{bob}:{dm}"));
+    assert_eq!(declared["renotify"], false);
+    assert_eq!(declared["silent"], true);
+    assert_eq!(declared["data"]["recall"], true);
+    assert_eq!(declared["data"]["message"], id);
+}
+
+#[sqlx::test]
+async fn a_declared_notification_leads_to_the_public_address(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        server,
+        channel,
+        mut hits,
+        service,
+        ..
+    } = setup_at(pool, Some("https://chat.test.example/")).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    post(&mut a, &channel, "plain").await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(
+        payload["notification"]["navigate"],
+        format!("https://chat.test.example/s/{server}/c/{channel}")
+    );
+    // The worker still gets the path: it opens it in the running app.
+    assert_eq!(
+        payload["notification"]["data"]["path"],
+        format!("/s/{server}/c/{channel}")
+    );
 }
 
 #[sqlx::test]

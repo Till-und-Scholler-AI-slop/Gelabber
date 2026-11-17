@@ -271,8 +271,8 @@ async fn unsubscribe(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// What the service worker shows (`web/public/sw.js`): the same fields the
-/// page puts on its own notifications, so taps and dedupe work alike.
+/// What a push is about: the fields the page puts on its own notifications,
+/// so taps and dedupe work alike (`web/public/sw.js`).
 #[derive(Serialize)]
 struct Payload<'a> {
     title: &'a str,
@@ -285,6 +285,88 @@ struct Payload<'a> {
     /// The message was deleted: its notification goes, whatever it said.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     recall: bool,
+}
+
+impl Payload<'_> {
+    /// The push message, as a declarative one (Push API, `"web_push": 8030`;
+    /// #616). A browser that knows them (Safari from iOS 18.4) builds the
+    /// notification itself and, the message being `mutable`, hands it to the
+    /// worker first; whatever the worker does not manage (it was removed, it
+    /// failed, it showed nothing) the browser shows as declared, and no
+    /// subscription is lost over a push that showed nothing. Every other
+    /// browser hands the worker the JSON as before.
+    ///
+    /// `navigate` is where a tap leads when no worker answers it. The fields
+    /// of the payload stand at the top level too: a worker installed before
+    /// v0.12 reads them there, and stays in charge until its app is opened
+    /// again.
+    fn encode(&self, navigate: &str, locale: Locale) -> serde_json::Result<Vec<u8>> {
+        #[derive(Serialize)]
+        struct Message<'a> {
+            web_push: u16,
+            notification: Declared<'a>,
+            mutable: bool,
+            #[serde(flatten)]
+            payload: &'a Payload<'a>,
+        }
+        #[derive(Serialize)]
+        struct Declared<'a> {
+            title: &'a str,
+            body: &'a str,
+            navigate: &'a str,
+            /// The tag of the worker and the pages: one notification per
+            /// conversation and account.
+            tag: String,
+            lang: &'static str,
+            renotify: bool,
+            silent: bool,
+            data: Data<'a>,
+        }
+        #[derive(Serialize)]
+        struct Data<'a> {
+            path: &'a str,
+            user: Uuid,
+            channel: Uuid,
+            message: Uuid,
+            at: chrono::DateTime<chrono::Utc>,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            recall: bool,
+        }
+        serde_json::to_vec(&Message {
+            web_push: 8030,
+            notification: Declared {
+                title: self.title,
+                body: self.body,
+                navigate,
+                tag: format!("gelabber:{}:{}", self.user, self.channel),
+                lang: locale.as_str(),
+                // A recall replaces what is on screen without a sound.
+                renotify: !self.recall,
+                silent: self.recall,
+                data: Data {
+                    path: self.path,
+                    user: self.user,
+                    channel: self.channel,
+                    message: self.message,
+                    at: self.at,
+                    recall: self.recall,
+                },
+            },
+            mutable: true,
+            payload: self,
+        })
+    }
+}
+
+/// Where a tap on a declared notification leads: the page of `path` under
+/// `APP_PUBLIC_URL`. Without that setting the path alone, which a browser
+/// resolves against the app's own address, or else treats the message as an
+/// ordinary one for the worker.
+fn navigate(state: &AppState, path: &str) -> String {
+    match &state.public_url {
+        Some(base) => format!("{}{path}", base.as_str().trim_end_matches('/')),
+        None => path.to_owned(),
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -426,6 +508,8 @@ async fn deliver(
         return Ok(());
     }
     let (place, path) = heading(state, message, server).await?;
+    let link = navigate(state, &path);
+    let link = link.as_str();
     let named = if targets.iter().all(|t| t.hide_content) {
         String::new()
     } else {
@@ -484,7 +568,7 @@ async fn deliver(
                     at: message.created_at,
                     recall: false,
                 };
-                match serde_json::to_vec(&payload) {
+                match payload.encode(link, locale) {
                     Ok(raw) => Some((target, raw)),
                     Err(err) => {
                         warn!(error = %err, "push payload not encoded");
@@ -682,6 +766,8 @@ async fn deliver_invite(
         Invite::Message { channel, message } => ("/d/requests", channel, message),
     };
     let at = chrono::Utc::now();
+    let link = navigate(state, path);
+    let link = link.as_str();
     let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
         let title = match kind {
             Invite::Friend => i18n::friend_request_from(target.locale, from),
@@ -697,7 +783,10 @@ async fn deliver_invite(
             at,
             recall: false,
         };
-        serde_json::to_vec(&payload).ok().map(|raw| (target, raw))
+        payload
+            .encode(link, target.locale)
+            .ok()
+            .map(|raw| (target, raw))
     }))
     .map(|(target, raw)| async move {
         (
@@ -778,6 +867,8 @@ async fn send_recall(
         return Ok(());
     }
     let (place, path) = heading(state, message, server).await?;
+    let link = navigate(state, &path);
+    let link = link.as_str();
     let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
         let locale = target.locale;
         let title = if target.hide_content {
@@ -795,7 +886,7 @@ async fn send_recall(
             at: message.created_at,
             recall: true,
         };
-        match serde_json::to_vec(&payload) {
+        match payload.encode(link, locale) {
             Ok(raw) => Some((target, raw)),
             Err(err) => {
                 warn!(error = %err, "push payload not encoded");

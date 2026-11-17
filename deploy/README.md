@@ -304,6 +304,8 @@ Limits: `@everyone` and `@here` need the server permission "@everyone und @here"
 
 On iPhone and iPad (iOS 16.4 or later), push works only in Gelabber added to the home screen, not in a Safari tab.
 
+Every push is a declarative push message (`"web_push": 8030` of the Push API). Safari from iOS 18.4 and macOS 15.5 builds the notification from it and shows it even where Gelabber's service worker is gone or fails, so a push that the worker could not show no longer costs the subscription; the worker still gets it first and keeps one notification per conversation. Other browsers hand the same JSON to the worker as before. A tap on a notification that Safari showed by itself opens `APP_PUBLIC_URL` plus the conversation's path; without `APP_PUBLIC_URL` the message carries the path alone.
+
 ## Account mail
 
 With outgoing mail, new accounts confirm their address and people who forgot their password get a reset link. It is off until `SMTP_HOST` is set in `.env`; the API then sends through that relay (your mail provider, a transactional mail service, or a Postfix on the same network). Gelabber runs no mail server of its own.
