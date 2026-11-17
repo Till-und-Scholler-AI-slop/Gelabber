@@ -424,7 +424,7 @@ account.json                                { id, email, name, created_at, email
                                               status_text, accent_color, banner_color, avatar_decoration,
                                               notifications_hide_content, locale,
                                               themes: <account theme document | null>,
-                                              notification_settings: [ {scope_kind, scope_id, level, muted, muted_until, updated_at} ],
+                                              notification_settings: [ {scope_kind, scope_id, level, muted, muted_until, voice, updated_at} ],
                                               sessions: [ {client, os, created_at, last_used_at} ],   live sessions only
                                               servers: [ {id, name, owner: bool, joined_at} ],
                                               invites: [ {code, server_id, created_at, expires_at, max_uses, uses} ],
@@ -856,15 +856,15 @@ Moves are pushed to the account's other sockets as a `read` user frame (gateway 
 
 ### 8.1 Settings (`notifications/settings.rs`; web `messages/notificationSettings.ts:25-56`)
 
-`Setting`: `{scope: "server" | "channel", id: uuid, level: "all"|"mentions"|"none"|null, muted: bool, muted_until: nullable ts}`. Only explicit settings are listed (ordered by scope, id); an absent row means inherit (`level: null`, not muted).
+`Setting`: `{scope: "server" | "channel", id: uuid, level: "all"|"mentions"|"none"|null, muted: bool, muted_until: nullable ts, voice: bool}`. Only explicit settings are listed (ordered by scope, id); an absent row means inherit (`level: null`, not muted, `voice: false`). `voice` (v0.12, #616, migration 0043) is a server's only: a Web Push when someone joins a voice channel nobody was in. It is missing from servers older than v0.12; read it as `false`.
 
 | Method & path | Request | Success | Errors |
 |---|---|---|---|
 | `GET /api/notification-settings` | — | `200 Setting[]` | 401 |
-| `PUT /api/servers/{id}/notification-settings` | `{level: Level\|null, muted: bool, mute_minutes?: 1..=527040}` | `200 Setting` | `404` non-member; `422 mute_minutes: invalid` (given while `muted` false, or out of range) |
-| `PUT /api/channels/{id}/notification-settings` | same; `{id}` = text channel or DM | `200 Setting` | `404` voice/foreign |
+| `PUT /api/servers/{id}/notification-settings` | `{level: Level\|null, muted: bool, mute_minutes?: 1..=527040, voice?: bool}` | `200 Setting` | `404` non-member; `422 mute_minutes: invalid` (given while `muted` false, or out of range) |
+| `PUT /api/channels/{id}/notification-settings` | same without `voice`; `{id}` = text channel or DM | `200 Setting` | `404` voice/foreign; `422 voice: invalid` for `voice: true` |
 
-`level: null` + `muted: false` deletes the row (inherit). `muted_until` = server `now() + mute_minutes`; absent `mute_minutes` with `muted: true` = until turned back on. Other sockets receive an `ns` frame and refetch.
+`level: null` + `muted: false` deletes the row (inherit), unless `voice` is on. An absent `voice` leaves the stored value as it is, so a client that does not know it never turns it off. `muted_until` = server `now() + mute_minutes`; absent `mute_minutes` with `muted: true` = until turned back on. Other sockets receive an `ns` frame and refetch.
 
 ### 8.2 Privacy (`notifications/privacy.rs`; web `messages/notificationPrivacy.ts:21-33`)
 
@@ -961,7 +961,7 @@ GIF box in messages: at most 320×240, never upscaled (`gifBox`, `gifs/api.ts:40
 | `POST /api/push/subscriptions` | `{endpoint: string ≤ 1024 on an allowed push host, keys: {p256dh, auth}}` | `204` (max 20 per user, bound to the session) — `404` push disabled, `422 endpoint|keys: invalid` |
 | `DELETE /api/push/subscriptions` | `{endpoint}` | `204` |
 
-A native desktop client has no browser push endpoint; it relies on `/ws` while running. Not needed for parity.
+A native desktop client has no browser push endpoint; it relies on `/ws` while running. Not needed for parity. What is pushed, and to whom, is in `deploy/README.md` ("Push notifications") and `backend/api/src/push/`: direct messages, server messages by notification level, Lives, a call that begins for members with `voice` on the server's setting (§8.1, the one push setting a native client shows), and a notice before the session behind a subscription ends.
 
 ---
 

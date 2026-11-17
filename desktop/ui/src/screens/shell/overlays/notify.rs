@@ -1,11 +1,11 @@
 //! `NotificationSettingsDialog` (components/NotificationSettingsDialog.tsx,
 //! notificationSettings.css): the row of mute chips or the running mute,
-//! the level of a server or channel, and "Als gelesen markieren" beside
+//! the level of a server or channel, a server's voice push, and "Als gelesen markieren" beside
 //! "Fertig". Every choice is saved at once. The row menus (row_menu.rs)
 //! offer the same choices and share what is here.
 
 use chrono::{DateTime, Datelike, Local, Utc};
-use egui::{Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2};
+use egui::{Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2};
 use gelabber_client::{
     NotificationLevel, NotificationSettingBody, OpState, ReadScope, SettingScope, SettingTarget,
 };
@@ -14,11 +14,11 @@ use uuid::Uuid;
 
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
-use crate::screens::settings::controls::radio_mark;
+use crate::screens::settings::controls::{place, radio_mark};
 use crate::screens::shell::common::paint_mid;
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
-use crate::widgets::{Button, ButtonSize, Modal, eased, focus_ring, keyboard_focus, snap};
+use crate::widgets::{Button, ButtonSize, Modal, Switch, eased, focus_ring, keyboard_focus, snap};
 
 /// `NotificationTarget`.
 #[derive(Clone, Debug, PartialEq)]
@@ -172,6 +172,8 @@ pub(crate) struct Setting {
     pub level: Option<NotificationLevel>,
     pub muted: bool,
     pub until: Option<DateTime<Utc>>,
+    /// A server's: push when someone starts a call there (#616).
+    pub voice: bool,
 }
 
 impl Setting {
@@ -185,6 +187,7 @@ impl Setting {
             level: self.level,
             muted: true,
             mute_minutes: minutes,
+            voice: None,
         }
     }
 
@@ -193,6 +196,7 @@ impl Setting {
             level: self.level,
             muted: false,
             mute_minutes: None,
+            voice: None,
         }
     }
 
@@ -211,12 +215,27 @@ impl Setting {
                 level
             },
             muted: self.muted,
-            mute_minutes: self
-                .muted
-                .then_some(self.until)
-                .flatten()
-                .map(|u| ((u - now).num_seconds() as f64 / 60.0).ceil().max(1.0) as i64),
+            mute_minutes: self.minutes_left(now),
+            voice: None,
         }
+    }
+
+    /// The voice push on or off; level and a running mute stay.
+    pub fn with_voice(&self, voice: bool, now: DateTime<Utc>) -> NotificationSettingBody {
+        NotificationSettingBody {
+            level: self.level,
+            muted: self.muted,
+            mute_minutes: self.minutes_left(now),
+            voice: Some(voice),
+        }
+    }
+
+    /// Minutes left of a running mute with an end, so a save keeps it.
+    fn minutes_left(&self, now: DateTime<Utc>) -> Option<i64> {
+        self.muted
+            .then_some(self.until)
+            .flatten()
+            .map(|u| ((u - now).num_seconds() as f64 / 60.0).ceil().max(1.0) as i64)
     }
 }
 
@@ -269,6 +288,7 @@ pub(crate) fn setting_of(s: &gelabber_client::State, scope: SettingScope, id: Uu
             level: r.level,
             muted: r.muted,
             until: r.muted_until,
+            voice: r.voice,
         })
         .unwrap_or_default()
 }
@@ -384,6 +404,16 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
                     }
                 });
             }
+            // The voice push of a server (#616).
+            if target.scope == SettingScope::Server && !target.all_dms {
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    text::label(ui, texts::dialog_voice_legend(), HEAD, c.text);
+                    if let Some(on) = voice_switch(ui, own.voice, saving) {
+                        save = Some(own.with_voice(on, now));
+                    }
+                });
+            }
             if let Some(error) = d.error {
                 let w = ui.available_width();
                 let block = Block::wrapped(ui, error, text::META, c.danger, w);
@@ -423,6 +453,54 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
         d.failures = failures;
     }
     !(output.close_requested || done)
+}
+
+/// `Switch` with label and description (`.ui-choice-row--between`): at
+/// least 36px with 4px above and below, the text left (the description
+/// 2px under the label, meta and muted), the switch right; the whole row
+/// toggles it. The new value when it was toggled.
+fn voice_switch(ui: &mut Ui, on: bool, disabled: bool) -> Option<bool> {
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
+    let label = texts::voice_call();
+    let width = ui.available_width();
+    let text_w = width - 38.0 - 12.0;
+    let label_block = Block::wrapped(ui, label, text::UI, c.text, text_w);
+    let hint = Block::wrapped(ui, texts::voice_call_hint(), text::META, c.muted, text_w);
+    let content = label_block.height() + 2.0 + hint.height();
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(width, (content + 8.0).max(36.0)),
+        if disabled {
+            Sense::hover()
+        } else {
+            Sense::click()
+        },
+    );
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, on, label));
+    let top = rect.center().y - content / 2.0;
+    label_block.paint(ui.painter(), pos2(rect.left(), top));
+    hint.paint(
+        ui.painter(),
+        pos2(rect.left(), top + label_block.height() + 2.0),
+    );
+    let at = Rect::from_min_size(
+        pos2(rect.right() - 38.0, rect.center().y - 11.0),
+        Vec2::new(38.0, 22.0),
+    );
+    let mut value = on;
+    let mut changed = place(
+        ui,
+        UiBuilder::new().max_rect(at).id_salt("notify-voice"),
+        |ui| ui.add(Switch::new(&mut value).disabled(disabled)).changed(),
+    );
+    if response.clicked() && !changed {
+        value = !value;
+        changed = true;
+    }
+    if response.hovered() && !disabled {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    changed.then_some(value)
 }
 
 /// `.notify-mute-row .ui-chip`: a 32px pill, centred label; `title` the

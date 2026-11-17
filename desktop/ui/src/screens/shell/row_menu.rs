@@ -1223,10 +1223,18 @@ mod tests {
             level: None,
             muted: true,
             until: Some(now + chrono::Duration::minutes(30)),
+            voice: true,
         };
         let body = muted.with_level(None, false, now);
         assert!(body.muted);
         assert_eq!(body.mute_minutes, Some(30));
+        // A choice that is not about the voice push leaves it alone.
+        assert_eq!(body.voice, None);
+        // The voice push keeps level and mute.
+        let body = muted.with_voice(false, now);
+        assert_eq!((body.level, body.muted), (None, true));
+        assert_eq!(body.mute_minutes, Some(30));
+        assert_eq!(body.voice, Some(false));
         let body = notify::Setting::default().with_level(Some(NotificationLevel::All), true, now);
         assert_eq!(body.level, None);
     }

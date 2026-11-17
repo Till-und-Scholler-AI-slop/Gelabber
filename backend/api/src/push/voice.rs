@@ -10,6 +10,15 @@
 //! nobody who uses the app right now. Once per person and voice channel in
 //! [`LIVE_COOLDOWN`], and the push service keeps it no longer than that: a
 //! Live heard of an hour late is over.
+//!
+//! **A call begins.** Someone sits down in a voice channel nobody was in.
+//! The pages have no notice for that (the channel list shows it), so this
+//! push is for those who asked for it: `voice` on their setting for the
+//! server, off by default, whatever their level. The same people are left
+//! out, and it wakes a sleeping phone (`Urgency: high`): who asked to be
+//! called wants to hear it while the call lasts. Once per voice channel in
+//! [`STARTED_COOLDOWN`], so someone who drops out and comes back does not
+//! ring twice.
 
 use std::time::Duration;
 
@@ -27,12 +36,36 @@ use crate::{
 /// service keeps it for a phone it cannot reach.
 const LIVE_COOLDOWN: Duration = Duration::from_secs(10 * 60);
 
+/// One "a call began" push per voice channel in this long.
+const STARTED_COOLDOWN: Duration = Duration::from_secs(10 * 60);
+
+/// What a voice push is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Occasion {
+    Live,
+    Started,
+}
+
+/// After `who` sat down in a voice channel nobody else was in: push it in
+/// the background to those who asked.
+pub fn started(state: &AppState, who: &User, server: Uuid, channel: Uuid) {
+    if state.push.is_none()
+        || state
+            .limiter
+            .hit("push-call", &channel.to_string(), 1, STARTED_COOLDOWN)
+            .is_err()
+    {
+        return;
+    }
+    announce(state, who, server, channel, Occasion::Started);
+}
+
 /// After `who` started a Live in the voice channel: push it in the
 /// background.
 pub fn live(state: &AppState, who: &User, server: Uuid, channel: Uuid) {
-    let Some(push) = state.push.clone() else {
+    if state.push.is_none() {
         return;
-    };
+    }
     if state
         .limiter
         .hit(
@@ -45,6 +78,13 @@ pub fn live(state: &AppState, who: &User, server: Uuid, channel: Uuid) {
     {
         return;
     }
+    announce(state, who, server, channel, Occasion::Live);
+}
+
+fn announce(state: &AppState, who: &User, server: Uuid, channel: Uuid, occasion: Occasion) {
+    let Some(push) = state.push.clone() else {
+        return;
+    };
     let Ok(slot) = push.channel_deliveries.clone().try_acquire_owned() else {
         state.metrics.rate_limited("push_dropped");
         return;
@@ -52,20 +92,21 @@ pub fn live(state: &AppState, who: &User, server: Uuid, channel: Uuid) {
     let state = state.clone();
     let (who, name) = (who.id, who.name.clone());
     tokio::spawn(async move {
-        if let Err(err) = deliver_live(&state, &push, who, &name, server, channel).await {
-            debug!(error = err.code(), "live push not sent");
+        if let Err(err) = deliver(&state, &push, who, &name, server, channel, occasion).await {
+            debug!(error = err.code(), ?occasion, "voice push not sent");
         }
         drop(slot);
     });
 }
 
-async fn deliver_live(
+async fn deliver(
     state: &AppState,
     push: &Push,
     who: Uuid,
     name: &str,
     server: Uuid,
     channel: Uuid,
+    occasion: Occasion,
 ) -> Result<(), ApiError> {
     let Some((voice, server_name)): Option<(String, String)> = sqlx::query_as(
         "SELECT c.name, s.name FROM channels c
@@ -79,9 +120,10 @@ async fn deliver_live(
     else {
         return Ok(());
     };
-    // Members who see the voice channel and may join it, at "all" for the
-    // server and not muting it; live sessions only, not from someone the
-    // recipient blocks (#565), not in Do not disturb (#590).
+    // Members who see the voice channel and may join it and do not mute the
+    // server: for a Live those at "all", for a call those who asked. Live
+    // sessions only, not from someone the recipient blocks (#565), not in Do
+    // not disturb (#590).
     let targets: Vec<Target> = sqlx::query_as(concat!(
         "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
                 u.notifications_hide_content AS hide_content, u.locale
@@ -96,7 +138,7 @@ async fn deliver_live(
            AND channel_visible_to($3, m.user_id)
            AND (m.user_id=sv.owner_id
                 OR server_member_bits(m.server_id, m.user_id) & $4 <> 0)
-           AND COALESCE(ss.level, $5)='all'
+           AND CASE WHEN $6 THEN ss.voice IS TRUE ELSE COALESCE(ss.level, $5)='all' END
            AND NOT (ss.muted IS TRUE AND (ss.muted_until IS NULL OR ss.muted_until>now()))
            AND NOT EXISTS (SELECT 1 FROM user_blocks b
                            WHERE b.blocker_id=m.user_id AND b.blocked_id=$2)
@@ -108,6 +150,7 @@ async fn deliver_live(
     .bind(channel)
     .bind(Permission::JoinVoice as i32)
     .bind(default_level(state, server).await?)
+    .bind(occasion == Occasion::Started)
     .fetch_all(&state.db)
     .await?;
     if targets.is_empty() {
@@ -136,19 +179,29 @@ async fn deliver_live(
     let (link, path) = (link.as_str(), path.as_str());
     let message = Uuid::new_v4();
     let at = chrono::Utc::now();
+    let (urgency, ttl) = match occasion {
+        Occasion::Live => ("normal", LIVE_COOLDOWN.as_secs()),
+        Occasion::Started => ("high", STARTED_COOLDOWN.as_secs()),
+    };
     let results = futures_util::stream::iter(
         targets
             .into_iter()
             .filter(|target| !busy.contains(&target.user_id))
             .filter_map(|target| {
                 let locale = target.locale;
-                let (title, body) = if target.hide_content {
-                    (i18n::is_live(locale, name), String::new())
-                } else {
-                    (
+                let (title, body) = match (target.hide_content, occasion) {
+                    (true, Occasion::Live) => (i18n::is_live(locale, name), String::new()),
+                    (true, Occasion::Started) => {
+                        (i18n::in_a_voice_channel(locale, name), String::new())
+                    }
+                    (false, Occasion::Live) => (
                         format!("{name} · {server_name}"),
                         i18n::live_in(locale, name, &voice),
-                    )
+                    ),
+                    (false, Occasion::Started) => (
+                        format!("{name} · {server_name}"),
+                        i18n::in_voice(locale, name, &voice),
+                    ),
                 };
                 let payload = Payload {
                     title: &title,
@@ -170,15 +223,7 @@ async fn deliver_live(
             })
             .map(|(target, raw)| async move {
                 (
-                    send(
-                        push,
-                        &target,
-                        &raw,
-                        "normal",
-                        message,
-                        LIVE_COOLDOWN.as_secs(),
-                    )
-                    .await,
+                    send(push, &target, &raw, urgency, message, ttl).await,
                     target.endpoint,
                 )
             }),
@@ -187,6 +232,6 @@ async fn deliver_live(
     .collect::<Vec<_>>()
     .await;
     let sent = settle(state, push, results).await.len();
-    debug!(channel_id = %channel, sent, "live push delivered");
+    debug!(channel_id = %channel, ?occasion, sent, "voice push delivered");
     Ok(())
 }

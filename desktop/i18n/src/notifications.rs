@@ -50,6 +50,10 @@ crate::strings! {
         | "Muted: no dot, no notification and no sound. @mentions still count.";
     dialog_server_muted = "Der ganze Server ist gerade stumm." | "The whole server is muted right now.";
     dialog_level_legend = "Benachrichtigen bei" | "Notify me about";
+    dialog_voice_legend = "Sprachkanäle" | "Voice channels";
+    voice_call = "Push, wenn ein Anruf beginnt" | "Push when a call begins";
+    voice_call_hint = "Wenn jemand einen leeren Sprachkanal betritt. Kommt auf Geräten an, auf denen Gelabber geschlossen ist."
+        | "When someone joins an empty voice channel. Arrives on devices where Gelabber is closed.";
     dialog_mark_read = "Als gelesen markieren" | "Mark as read";
 
     bell_title = "Benachrichtigungen" | "Notifications";

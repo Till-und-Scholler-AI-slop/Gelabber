@@ -2830,6 +2830,7 @@ mod tests {
                 level: Some(NotificationLevel::Unknown),
                 muted: true,
                 mute_minutes: None,
+                voice: None,
             },
         );
         let start = std::time::Instant::now();

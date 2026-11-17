@@ -11,6 +11,7 @@ import { BellIcon, BellOffIcon } from "./Icons.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { Button } from "./ui/Button.tsx";
 import { RadioCard } from "./ui/RadioCard.tsx";
+import { Switch } from "./ui/Switch.tsx";
 import "./notificationSettings.css";
 import {
   LEVELS,
@@ -48,7 +49,8 @@ export function NotificationSettingsHost() {
   );
 }
 
-function NotificationSettingsForm({
+/** The dialog's content; exported for its test. */
+export function NotificationSettingsForm({
   target,
   onDone,
 }: {
@@ -151,6 +153,22 @@ function NotificationSettingsForm({
           ))}
         </fieldset>
       )}
+      {target.scope === "server" && !target.allDms ? (
+        <section aria-labelledby="notify-voice" className="flex flex-col gap-2">
+          <h3 id="notify-voice" className="text-sm font-semibold">
+            {t("dialog.voiceLegend")}
+          </h3>
+          <Switch
+            label={t("voice.call")}
+            description={t("voice.call.hint")}
+            checked={actions.voice}
+            disabled={saving}
+            onChange={(event) =>
+              void save(actions.setVoice(event.currentTarget.checked))
+            }
+          />
+        </section>
+      ) : null}
       {error ? (
         <p role="alert" className="ui-field-error">
           {error}
