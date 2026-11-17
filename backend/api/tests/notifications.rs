@@ -273,7 +273,7 @@ async fn a_channel_setting_overrides_its_server_and_inherit_falls_back(pool: PgP
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
-        json!({"scope":"server","id":server,"level":"mentions","muted":false,"muted_until":null})
+        json!({"scope":"server","id":server,"level":"mentions","muted":false,"muted_until":null,"voice":false})
     );
     assert_eq!(row(&mut b, &channel).await["level"], "mentions");
     set(&mut b, &channel_path, json!({"level": "all"})).await;
@@ -473,4 +473,55 @@ async fn deleting_a_server_or_channel_forgets_its_settings(pool: PgPool) {
         .send(Method::GET, "/api/notification-settings", None)
         .await;
     assert_eq!(listed.body, json!([]));
+}
+
+/// The voice push of a server (#616) is asked for on its setting, kept by a
+/// change that does not name it, and never set on a channel.
+#[sqlx::test]
+async fn a_server_setting_holds_the_voice_push(pool: PgPool) {
+    let World {
+        mut b,
+        server,
+        channel,
+        ..
+    } = setup(&pool).await;
+    let server_path = format!("/api/servers/{server}/notification-settings");
+    let (status, body) = set(&mut b, &server_path, json!({"voice": true})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({"scope":"server","id":server,"level":null,"muted":false,"muted_until":null,"voice":true})
+    );
+    // The row stays although it inherits and is not muted.
+    assert_eq!(stored(&pool, &[&server]).await, 1);
+    let list = b
+        .send(Method::GET, "/api/notification-settings", None)
+        .await;
+    assert_eq!(list.body[0]["voice"], true, "{}", list.body);
+
+    // A client that does not know the switch changes the level: it stays.
+    let (_, body) = set(&mut b, &server_path, json!({"level": "mentions"})).await;
+    assert_eq!(body["voice"], true);
+    let (_, body) = set(&mut b, &server_path, json!({"level": null})).await;
+    assert_eq!(body["voice"], true);
+    assert_eq!(stored(&pool, &[&server]).await, 1);
+
+    // Turned off with nothing else set, the row goes.
+    let (_, body) = set(&mut b, &server_path, json!({"voice": false})).await;
+    assert_eq!(body["voice"], false);
+    assert_eq!(stored(&pool, &[&server]).await, 0);
+
+    // A channel has none.
+    let channel_path = format!("/api/channels/{channel}/notification-settings");
+    let (status, body) = set(&mut b, &channel_path, json!({"voice": true})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["fields"]["voice"], "invalid", "{body}");
+    let (status, body) = set(
+        &mut b,
+        &channel_path,
+        json!({"level": "none", "voice": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["voice"], false);
 }

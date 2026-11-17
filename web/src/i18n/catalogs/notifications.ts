@@ -43,6 +43,10 @@ export const notifications = defineCatalog(
       "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter.",
     "dialog.serverMuted": "Der ganze Server ist gerade stumm.",
     "dialog.levelLegend": "Benachrichtigen bei",
+    "dialog.voiceLegend": "Sprachkanäle",
+    "voice.call": "Push, wenn ein Anruf beginnt",
+    "voice.call.hint":
+      "Wenn jemand einen leeren Sprachkanal betritt. Kommt auf Geräten an, auf denen Gelabber geschlossen ist.",
     "dialog.markRead": "Als gelesen markieren",
 
     "bell.label": "Benachrichtigungen für {name}",
@@ -108,6 +112,10 @@ export const notifications = defineCatalog(
       "Muted: no dot, no notification and no sound. @mentions still count.",
     "dialog.serverMuted": "The whole server is muted right now.",
     "dialog.levelLegend": "Notify me about",
+    "dialog.voiceLegend": "Voice channels",
+    "voice.call": "Push when a call begins",
+    "voice.call.hint":
+      "When someone joins an empty voice channel. Arrives on devices where Gelabber is closed.",
     "dialog.markRead": "Mark as read",
 
     "bell.label": "Notifications for {name}",

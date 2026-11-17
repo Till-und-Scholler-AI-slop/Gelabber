@@ -430,6 +430,7 @@ mod tests {
                     level,
                     muted,
                     muted_until: until.map(at),
+                    voice: false,
                 }];
                 live_decision(&s, &start(ADA, LOUNGE), false, HIDDEN, now).0
             };
@@ -517,6 +518,7 @@ mod tests {
             level,
             muted,
             muted_until: until,
+            voice: false,
         }
     }
 

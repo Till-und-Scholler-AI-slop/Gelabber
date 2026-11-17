@@ -139,6 +139,17 @@ export function useNotificationActions(target: NotificationTarget) {
           ? { mute_minutes: minutesUntil(own.muted_until, now) }
           : {}),
       }),
+    /** The server's voice push (#616); level and mute stay as they are. */
+    voice: own.voice === true,
+    setVoice: (voice: boolean) =>
+      change(target.scope, target.id, {
+        level: own.level,
+        muted: own.muted,
+        ...(own.muted && own.muted_until
+          ? { mute_minutes: minutesUntil(own.muted_until, now) }
+          : {}),
+        voice,
+      }),
     markRead: () =>
       markMany(
         target.allDms

@@ -128,6 +128,24 @@ fn read_state_and_notifications() {
     assert_eq!(setting.level, Some(NotificationLevel::Mentions));
     assert!(setting.muted && setting.muted_until.is_some());
     let _: Vec<NotificationSetting> = round_trip("ns_list");
+    // From a server older than v0.12: no voice push, and none written back.
+    assert!(!setting.voice);
+    let mut asked = fixture("ns_set");
+    asked["voice"] = true.into();
+    let setting: NotificationSetting = serde_json::from_value(asked.clone()).unwrap();
+    assert!(setting.voice);
+    assert_eq!(serde_json::to_value(&setting).unwrap(), asked);
+    // A change that is not about the voice push does not name it.
+    let body = NotificationSettingBody {
+        level: None,
+        muted: false,
+        mute_minutes: None,
+        voice: None,
+    };
+    assert_eq!(
+        serde_json::to_value(&body).unwrap(),
+        serde_json::json!({"level": null, "muted": false})
+    );
 }
 
 #[test]

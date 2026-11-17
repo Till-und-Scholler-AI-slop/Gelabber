@@ -1821,3 +1821,116 @@ async fn a_live_pushes_at_the_level_all(pool: PgPool) {
     );
     assert!(hits.try_recv().is_err());
 }
+
+/// Someone sits down in an empty voice channel (#616): a push for those who
+/// asked for it on the server's setting, and it wakes the phone.
+#[sqlx::test]
+async fn a_call_that_begins_pushes_who_asked(pool: PgPool) {
+    let World {
+        state,
+        mut a,
+        mut b,
+        server,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    subscribe(&mut a, &Browser::new(&service, "sub/ada")).await;
+    let lounge = voice(&mut a, &server, "Lounge").await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app(state.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .unwrap();
+    let mut ada = connect(addr, &a).await;
+    let asks = |voice: bool, level: Value| json!({"level": level, "muted": false, "voice": voice});
+    let server_path = format!("/api/servers/{server}/notification-settings");
+
+    // Nobody asked: quiet, whatever the level.
+    sig(&mut ada, &server, &lounge, "j", None).await;
+    post(&mut a, &dm, "marker 1").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1");
+
+    // Bob asks, and wants nothing else from this server.
+    let r = b
+        .send(Method::PUT, &server_path, Some(asks(true, json!("none"))))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let second = voice(&mut a, &server, "Zwei").await;
+    sig(&mut ada, &server, &second, "j", None).await;
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    assert_eq!(hit.headers["urgency"], "high");
+    assert_eq!(hit.headers["ttl"], "600");
+    let payload = browser.open(&hit);
+    assert_eq!(payload["title"], "Ada · Chat");
+    assert_eq!(payload["body"], "Ada ist im Sprachkanal Zwei.");
+    assert_eq!(payload["path"], format!("/s/{server}/c/{second}"));
+    assert_eq!(payload["channel"], second);
+
+    // Out and back in within the cooldown: no second ring.
+    // (Frames are handled in order: the join's echo says the leave is done.)
+    ada.send(Message::Text(
+        json!({"op": "sig", "t": "l", "s": server, "c": second})
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    sig(&mut ada, &server, &second, "j", None).await;
+    // Someone who joins a call under way starts none: Cara sits down in a
+    // channel of her own, which rings, and Ada joining her rings nobody.
+    let mut cara = user(&state, "c@test.example", "Cara").await;
+    let invite = a
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    let code = invite.body["code"].as_str().unwrap();
+    let joined = cara
+        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .await;
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+    let third = voice(&mut a, &server, "Drei").await;
+    let mut cara_ws = connect(addr, &cara).await;
+    sig(&mut cara_ws, &server, &third, "j", None).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["body"], "Cara ist im Sprachkanal Drei.");
+    sig(&mut ada, &server, &third, "j", None).await;
+    post(&mut a, &dm, "marker 2").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 2");
+
+    // With content hidden: who, not where.
+    sqlx::query("UPDATE users SET notifications_hide_content=true")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let fourth = voice(&mut a, &server, "Vier").await;
+    sig(&mut ada, &server, &fourth, "j", None).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Ada ist in einem Sprachkanal");
+    assert_eq!(payload["body"], "");
+
+    // Bob no longer asks.
+    let r = b
+        .send(Method::PUT, &server_path, Some(asks(false, Value::Null)))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let fifth = voice(&mut a, &server, "Fuenf").await;
+    sig(&mut ada, &server, &fifth, "j", None).await;
+    post(&mut a, &dm, "marker 3").await;
+    assert_eq!(
+        browser.open(&next(&mut hits).await)["title"],
+        "Neue Nachricht von Ada"
+    );
+    assert!(hits.try_recv().is_err());
+}

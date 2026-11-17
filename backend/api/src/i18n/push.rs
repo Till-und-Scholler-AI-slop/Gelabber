@@ -116,6 +116,22 @@ pub fn is_live(locale: Locale, author: &str) -> String {
     }
 }
 
+/// Someone sits in a voice channel that was empty (#616).
+pub fn in_voice(locale: Locale, who: &str, voice: &str) -> String {
+    match locale {
+        Locale::De => format!("{who} ist im Sprachkanal {voice}."),
+        Locale::En => format!("{who} is in the voice channel {voice}."),
+    }
+}
+
+/// The same with the content of notifications hidden (#268): who, not where.
+pub fn in_a_voice_channel(locale: Locale, who: &str) -> String {
+    match locale {
+        Locale::De => format!("{who} ist in einem Sprachkanal"),
+        Locale::En => format!("{who} is in a voice channel"),
+    }
+}
+
 /// A system message as a sentence; `author` is the person it is about.
 /// The same wording as `systemText` in web/src/messages/system.ts.
 pub fn system_text(locale: Locale, message: &SystemMessage, author: &str) -> String {

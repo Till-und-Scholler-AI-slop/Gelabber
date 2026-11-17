@@ -444,6 +444,7 @@ struct NotificationSetting {
     level: Option<String>,
     muted: bool,
     muted_until: Option<DateTime<Utc>>,
+    voice: bool,
     updated_at: DateTime<Utc>,
 }
 
@@ -622,7 +623,7 @@ impl Archive {
         )?;
         let notification_settings: Vec<NotificationSetting> = self.wait(
             sqlx::query_as(
-                "SELECT scope_kind, scope_id, level, muted, muted_until, updated_at \
+                "SELECT scope_kind, scope_id, level, muted, muted_until, voice, updated_at \
                  FROM notification_settings WHERE user_id = $1 ORDER BY scope_kind, scope_id",
             )
             .bind(user_id)
