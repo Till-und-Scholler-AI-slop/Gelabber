@@ -1,7 +1,7 @@
 /* The public landing, legal and feedback pages (render.tsx). Static pages without
    script, so no theme runtime: always the default dark theme "Gelabber
    Dunkel". The colours below are its values (theme/defaults.json through
-   themeVariables() in theme/model.ts); render.test.tsx holds them equal.
+   themeVariables() in theme/model.ts); publicCss.test.mjs holds them equal.
    Nothing animates. */
 
 @font-face {
@@ -25,6 +25,20 @@
     U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
     U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
     U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* The landing page's display face (fonts/ARCHIVO-PROVENANCE.json). */
+@font-face {
+  font-family: "Gelabber Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+  src: url("../fonts/ArchivoVariable-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
 }
 
 :root {
@@ -102,6 +116,13 @@ img {
 }
 a {
   color: inherit;
+}
+::selection {
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
+}
+html {
+  scrollbar-color: var(--lr-border-strong) var(--lr-bg);
 }
 :focus-visible {
   outline: 2px solid var(--lr-focus);
@@ -181,136 +202,534 @@ a {
   background: var(--lr-hover);
 }
 
-/* Landing: the hero over the Living Room artwork, dimmed and fading into
-   the page like the sign-in pages' (auth.css). */
-.landing-hero {
-  position: relative;
-  isolation: isolate;
-  padding-bottom: 48px;
+/* Landing (LandingPage.tsx): a LAN party at night. The hall is the
+   theme's background with faint toner grain; monitors stand on a folding
+   table, each with a masking-tape name label; live screens carry the app's
+   live tag. Headlines in condensed Archivo caps, running text in Inter. */
+.lp {
+  --lp-paper: var(--lr-text);
+  --lp-ink: var(--lr-bg);
+  --lp-ink-soft: #3a3f42;
+  --lp-bezel: #212426;
+  --lp-bezel-edge: #34383a;
+  --lp-stand: #2c2f31;
+  --lp-table: #303436;
+  --lp-table-lip: #111213;
+  --lp-live: #ff7b5c;
+  --lp-on-live: #111111;
+  --lp-tape: rgb(243 183 82 / 0.9);
+  --lp-display: "Gelabber Archivo", var(--lr-font);
+  --lp-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -.6 .38'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  --lp-specks: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.7' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .93 0 0 0 0 .94 0 0 0 0 .93 0 0 0 .24 -.12'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23s)'/%3E%3C/svg%3E");
+  /* Torn tape: both short ends serrated. */
+  --lp-tape-ends:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 6 10'%3E%3Cpath d='M0 0h6v10H0l3-5z'/%3E%3C/svg%3E")
+      0 0 / 6px 10px repeat-y,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 6 10'%3E%3Cpath d='M0 0h6L3 5l3 5H0z'/%3E%3C/svg%3E")
+      100% 0 / 6px 10px repeat-y,
+    linear-gradient(#000, #000) 50% 0 / calc(100% - 12px) 100% no-repeat;
+  overflow-x: clip;
+  background: var(--lp-specks) var(--lr-bg);
 }
-.landing-hero::before,
-.landing-hero::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 -160px;
-  z-index: -1;
-  pointer-events: none;
+.lp .public-container {
+  width: min(100% - 2 * var(--public-gutter), 1200px);
 }
-.landing-hero::before {
-  background: url("/images/living-room/community-banner.webp") center 35% /
-    cover no-repeat;
-  opacity: 0.3;
+.lp .lp-monitors {
+  width: min(100% - 2 * var(--public-gutter), 1360px);
 }
-.landing-hero::after {
-  background: linear-gradient(transparent 45%, var(--lr-bg) 92%);
-}
-.landing-intro {
-  padding-top: 72px;
-}
-.landing-intro h1 {
-  max-width: 13em;
-  font-size: clamp(36px, 6vw, 66px);
+
+/* The top bar: links in the headline face; the invite is amber
+   lettering, the hero carries the button. */
+.lp .public-nav a:not(.public-button),
+.lp .public-button {
+  font-family: var(--lp-display);
+  font-stretch: 80%;
   font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.035em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.lp .public-bar .public-button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lr-accent);
+}
+.lp .public-bar .public-button:hover {
+  filter: none;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.lp h1,
+.lp h2 {
+  font-family: var(--lp-display);
+  font-stretch: 62%;
+  font-weight: 850;
+  text-transform: uppercase;
   text-wrap: balance;
 }
-.landing-lead {
-  max-width: 600px;
-  margin-top: var(--lr-space-6);
+
+/* Masking tape with a name or a heading on it. */
+.lp-tape,
+.lp-bill h2 {
+  display: inline-block;
+  padding: 3px 16px 2px;
+  background: var(--lp-grain) var(--lp-tape);
+  color: var(--lp-ink);
+  mask: var(--lp-tape-ends);
+}
+
+/* First viewport: the headline on the left, the offer on the right. */
+.lp-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--lr-space-6) 56px;
+  align-items: end;
+  padding-top: var(--lr-space-8);
+}
+.lp-hero h1 {
+  font-size: clamp(44px, 5.6vw, 84px);
+  line-height: 0.9;
+}
+.lp-lead {
+  max-width: 34em;
   color: color-mix(in srgb, var(--lr-text) 86%, var(--lr-bg));
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1.55;
 }
-.landing-actions {
+.lp-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--lr-space-3);
-  margin-top: var(--lr-space-8);
-}
-.landing-note {
   margin-top: var(--lr-space-6);
+}
+.lp-actions .lp-button {
+  margin-top: 0;
+}
+.lp-note {
+  margin-top: var(--lr-space-4);
   color: var(--lr-muted);
   font-size: 13px;
 }
 
-/* Positioned, so it paints over the artwork's fade that reaches into it. */
-.landing-main {
+/* The table and its monitors. The side monitors turn in towards the
+   middle; every monitor stands on the table's top edge. */
+.lp-desk {
   position: relative;
-  padding-bottom: 96px;
+  margin-top: 48px;
+  padding-bottom: 36px;
+  /* The table: a lit top and a dark front lip. Above it, the light each
+     screen throws onto the wall and the tabletop. */
+  background:
+    linear-gradient(var(--lp-table-lip), var(--lp-table-lip)) 0 100% / 100% 8px
+      no-repeat,
+    radial-gradient(closest-side, rgb(150 200 120 / 0.22), transparent) 83%
+      calc(100% - 8px) / 30% 56px no-repeat,
+    radial-gradient(closest-side, rgb(170 190 230 / 0.24), transparent) 50%
+      calc(100% - 8px) / 46% 56px no-repeat,
+    radial-gradient(closest-side, rgb(220 220 210 / 0.18), transparent) 17%
+      calc(100% - 8px) / 30% 56px no-repeat,
+    linear-gradient(var(--lp-table), var(--lp-table)) 0 calc(100% - 8px) / 100%
+      28px no-repeat,
+    radial-gradient(
+      ellipse 24% 64% at 17% 58%,
+      rgb(220 220 210 / 0.1),
+      transparent
+    ),
+    radial-gradient(
+      ellipse 40% 72% at 50% 46%,
+      rgb(170 190 230 / 0.12),
+      transparent
+    ),
+    radial-gradient(
+      ellipse 24% 64% at 83% 58%,
+      rgb(150 200 120 / 0.11),
+      transparent
+    );
 }
-.landing-shot {
+.lp-monitors {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.9fr) minmax(0, 1fr);
+  gap: 0 var(--lr-space-4);
+  align-items: end;
+  perspective: 1800px;
+}
+.lp-monitor {
+  position: relative;
+  margin: 0;
+  padding-bottom: 40px;
+}
+.lp-monitor--left {
+  transform: rotateY(14deg);
+  transform-origin: right bottom;
+}
+.lp-monitor--right {
+  transform: rotateY(-14deg);
+  transform-origin: left bottom;
+}
+/* The stand: a neck and a foot. */
+.lp-monitor::before,
+.lp-monitor::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  background: var(--lp-stand);
+  transform: translateX(-50%);
+}
+.lp-monitor::before {
+  bottom: 6px;
+  width: 16%;
+  height: 36px;
+}
+.lp-monitor::after {
+  bottom: 0;
+  width: 42%;
+  height: 8px;
+  border-radius: 3px 3px 0 0;
+}
+.lp-monitor__frame {
+  position: relative;
+  padding: 10px 10px 30px;
+  border-radius: 8px;
+  background: var(--lp-bezel);
+  box-shadow:
+    inset 0 0 0 1px var(--lp-bezel-edge),
+    0 24px 48px rgb(0 0 0 / 0.5);
+}
+.lp-monitor__screen {
+  position: relative;
+  aspect-ratio: 16 / 10;
   overflow: hidden;
-  border: 1px solid var(--lr-border);
-  border-radius: 12px;
-  background: var(--lr-panel);
-  box-shadow: var(--lr-shadow-2);
+  background: #0d0e0f;
 }
-.landing-shot img {
+.lp-monitor__screen img {
   width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.lp-monitor .lp-tape {
+  position: absolute;
+  bottom: 42px;
+  left: 50%;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  font-family: var(--lp-display);
+  font-stretch: 62%;
+  font-weight: 800;
+  text-transform: uppercase;
+  transform: translateX(-50%) rotate(-2deg);
+}
+.lp-monitor--main .lp-tape {
+  font-size: 16px;
+  transform: translateX(-50%) rotate(1.5deg);
+}
+/* The app's live tag, top left on a live screen. */
+.lp-live {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--lp-live);
+  color: var(--lp-on-live);
+  font: 700 11px / 1.5 var(--lr-font);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+/* Ada's terminal. */
+.lp-term {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0 7% 5%;
+  color: #c6ccc8;
+  font: 400 clamp(4px, 0.56vw, 9px) / 1.5 var(--public-mono);
+  white-space: pre;
+}
+.lp-term b {
+  color: var(--lr-accent);
+  font-weight: 400;
+}
+.lp-term em {
+  color: #8fd19e;
+  font-style: normal;
 }
 
-.landing-features {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--lr-space-10);
-  margin-top: 88px;
-}
-.landing-features section {
-  padding-top: var(--lr-space-6);
-  border-top: 1px solid var(--lr-border-strong);
-}
-.landing-features h2 {
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-}
-.landing-features p {
-  margin-top: var(--lr-space-2);
-  color: var(--lr-muted);
-}
-
-/* "Run it on your own server" and, when the instance offers it, "Or get an
-   instance of your own": two columns, or the first alone at full width. */
-.landing-host {
-  display: grid;
-  grid-auto-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
-  gap: 64px;
+/* The stations: each feature under its tape label, the headliner first
+   and largest. */
+.lp-bill {
   margin-top: 104px;
 }
-.landing-host section {
+.lp-bill section {
+  display: grid;
+  gap: var(--lr-space-4);
+  padding-block: 32px 36px;
+  border-top: 1px solid var(--lr-border);
+}
+.lp-bill section:last-child {
+  border-bottom: 1px solid var(--lr-border);
+}
+@media (min-width: 1000px) {
+  /* The headliner across the width, the other two side by side. */
+  .lp-bill {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 56px;
+  }
+  .lp-bill section:first-child {
+    grid-column: 1 / -1;
+  }
+  .lp-bill section:nth-child(2) {
+    border-bottom: 1px solid var(--lr-border);
+  }
+}
+.lp-bill h2 {
+  justify-self: start;
+  font-size: clamp(32px, 4vw, 56px);
+  line-height: 1;
+  transform: rotate(-1deg);
+}
+.lp-bill section:nth-child(2) h2 {
+  transform: rotate(0.8deg);
+}
+.lp-bill section:first-child h2 {
+  font-size: clamp(36px, 4.6vw, 64px);
+}
+.lp-bill p {
+  max-width: 36em;
+  color: var(--lr-muted);
+  font-size: 17px;
+}
+
+/* Running it: your own server on the table, and a note from the people
+   who run this instance. */
+.lp-host {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 56px;
+  align-items: start;
+  margin-top: 136px;
+  padding-bottom: 120px;
+}
+.lp-host section {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  padding: 40px;
 }
-.landing-host h2 {
-  max-width: 13em;
-  font-size: 34px;
-  font-weight: 700;
-  line-height: 1.12;
-  letter-spacing: -0.03em;
+.lp-host h2 {
+  font-size: clamp(34px, 3.6vw, 52px);
+  line-height: 0.92;
 }
-.landing-host p {
-  max-width: 420px;
+.lp-host p {
+  max-width: 34em;
   margin-top: var(--lr-space-4);
-  color: var(--lr-muted);
 }
-.landing-host pre {
-  align-self: stretch;
-  max-width: 508px;
-  margin-top: var(--lr-space-8);
-  overflow-x: auto;
-  padding: 18px;
+.lp-panel {
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius-lg);
-  background: var(--lr-rail);
-  font: 400 13px / 1.7 var(--public-mono);
+  background: var(--lr-panel);
 }
-.landing-host pre + .public-button,
-.landing-host p + .public-button {
-  margin-top: var(--lr-space-5);
+.lp-panel p {
+  color: var(--lr-muted);
+}
+.lp-panel pre {
+  align-self: stretch;
+  margin-top: var(--lr-space-6);
+  overflow-x: auto;
+  padding: 18px 20px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-rail);
+  font: 400 13px / 1.75 var(--public-mono);
+}
+/* A paper note taped to the wall, its heading over an amber rule. */
+.lp-card {
+  position: relative;
+  margin-top: 48px;
+  background: var(--lp-grain) var(--lp-paper);
+  color: var(--lp-ink);
+  box-shadow:
+    0 2px 3px rgb(0 0 0 / 0.35),
+    0 22px 44px rgb(0 0 0 / 0.45);
+  transform: rotate(-1.4deg);
+}
+.lp-card::before {
+  content: "";
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  width: 116px;
+  height: 30px;
+  margin-left: -58px;
+  background: var(--lp-grain) rgb(243 183 82 / 0.6);
+  mask: var(--lp-tape-ends);
+  transform: rotate(3deg);
+}
+.lp-card h2 {
+  align-self: stretch;
+  padding-bottom: var(--lr-space-3);
+  border-bottom: 3px solid var(--lr-accent);
+  font-size: clamp(30px, 3vw, 40px);
+}
+.lp-card p {
+  color: var(--lp-ink-soft);
+}
+.lp-card :focus-visible {
+  outline-color: var(--lp-ink);
+}
+
+/* Buttons: ink on paper; amber or a light outline on the dark hall. */
+.lp-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-top: var(--lr-space-6);
+  padding: 10px 18px;
+  border: 2px solid var(--lp-ink);
+  border-radius: var(--lr-radius-sm);
+  background: var(--lp-ink);
+  color: var(--lp-paper);
+  font-family: var(--lp-display);
+  font-size: 16px;
+  font-stretch: 80%;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+.lp-button:hover {
+  border-color: var(--lp-ink-soft);
+  background: var(--lp-ink-soft);
+}
+.lp-button--primary {
+  border-color: var(--lr-accent);
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
+}
+.lp-button--primary:hover {
+  border-color: var(--lr-accent);
+  background: var(--lr-accent);
+  filter: brightness(1.07);
+}
+.lp-button--ghost {
+  border-color: var(--lr-border-strong);
+  background: transparent;
+  color: var(--lr-text);
+}
+.lp-button--ghost:hover {
+  border-color: var(--lr-border-strong);
+  background: var(--lr-hover);
+}
+
+@media (max-width: 999px) {
+  .lp-hero,
+  .lp-host {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lp-card {
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 799px) {
+  /* The hero's button carries the invite on phones. */
+  .lp .public-bar .public-button {
+    display: none;
+  }
+  /* The real screen first and full width, the two Lives under it. */
+  .lp-monitors {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--lr-space-6) var(--lr-space-4);
+  }
+  .lp-monitor--main {
+    grid-column: 1 / -1;
+    order: -1;
+  }
+  /* The two Lives stand in front of the lower corners of Lena's screen,
+     so all three show in the first viewport. */
+  .lp-monitor--left,
+  .lp-monitor--right {
+    z-index: 1;
+    width: 88%;
+    margin-top: -104px;
+    transform: none;
+  }
+  .lp-monitor--left {
+    transform: rotate(-2deg);
+  }
+  .lp-monitor--right {
+    justify-self: end;
+    transform: rotate(2deg);
+  }
+  .lp-monitor--left .lp-monitor__frame,
+  .lp-monitor--right .lp-monitor__frame {
+    padding: 6px 6px 22px;
+  }
+  .lp-desk {
+    margin-top: var(--lr-space-8);
+    background: none;
+    padding-bottom: 0;
+  }
+  /* Below the live tag: the command and the last lines of its output. */
+  .lp-term {
+    justify-content: flex-start;
+    padding-top: 24px;
+    font-size: 1.05vw;
+  }
+  .lp-term > :nth-child(n + 3):nth-child(-n + 7) {
+    display: none;
+  }
+  .lp-monitor .lp-tape {
+    font-size: 13px;
+  }
+  .lp-bill {
+    margin-top: 88px;
+  }
+  .lp-bill section {
+    padding-block: 24px;
+  }
+  .lp-live {
+    top: 4px;
+    left: 4px;
+    padding: 0 4px;
+    font-size: 9px;
+  }
+  .lp-host {
+    gap: 48px;
+    margin-top: 96px;
+    padding-bottom: 88px;
+  }
+}
+
+@media (max-width: 600px) {
+  .lp .public-nav a:not(.public-button) {
+    font-size: 14px;
+    font-stretch: 68%;
+    letter-spacing: 0.03em;
+  }
+  .lp-hero {
+    padding-top: var(--lr-space-4);
+  }
+  .lp-hero h1 {
+    font-size: clamp(38px, 11.5vw, 56px);
+  }
+  .lp-lead {
+    font-size: 16px;
+  }
+  .lp-host section {
+    padding: 32px 22px 26px;
+  }
+  /* Long commands wrap, and a wrapped line is indented under its start. */
+  .lp-panel pre {
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-indent: 2ch hanging each-line;
+  }
 }
 
 .public-footer {
@@ -546,22 +965,6 @@ a {
 }
 
 @media (max-width: 799px) {
-  .landing-features,
-  .landing-host {
-    grid-auto-flow: row;
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .landing-features {
-    gap: var(--lr-space-8);
-    margin-top: 64px;
-  }
-  .landing-host {
-    gap: 56px;
-    margin-top: 72px;
-  }
-  .landing-host h2 {
-    font-size: 28px;
-  }
   .legal-layout {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--lr-space-8);
@@ -575,7 +978,8 @@ a {
 
 /* Phones: the header keeps the brand, "Sign in" and the invite button. */
 @media (max-width: 600px) {
-  .public-nav__wide {
+  /* Specific enough to beat the touch rule below, which shows nav links. */
+  .public-nav a.public-nav__wide:not(.public-button) {
     display: none;
   }
   /* One row down to 375 px, also with "Anmelden" and "Einladung anfragen";
@@ -597,23 +1001,6 @@ a {
   .public-bar .public-button {
     padding-inline: 10px;
     font-size: 13px;
-  }
-  /* Long commands wrap, and a wrapped line is indented under its start. */
-  .landing-host pre {
-    font-size: 12px;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    text-indent: 2ch hanging each-line;
-  }
-  .landing-intro {
-    padding-top: var(--lr-space-8);
-  }
-  .landing-intro h1 {
-    font-size: 36px;
-    line-height: 1.05;
-  }
-  .landing-lead {
-    font-size: 16px;
   }
   .legal-content h1,
   .feedback-form h1 {
