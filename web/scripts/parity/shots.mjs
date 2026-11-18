@@ -140,6 +140,9 @@ const launch = (extra) =>
 const browser = await launch([]);
 // Scenes with `media` join calls: fake devices there only, so the device
 // lists of the other scenes stay as a machine without devices shows them.
+// Scenes with `microphone` show the audio settings as after "Gerätenamen
+// anzeigen": fake devices and the microphone allowed. The app names its
+// devices without asking, so its pages have no such hint.
 let mediaBrowser = null;
 
 const sayWords = (words) =>
@@ -154,10 +157,11 @@ for (const scene of scenes) {
   let restoreLocale = null;
   // say.mjs words that set the scene up (a theme), undone by the next reset.
   if (scene.before) sayWords(scene.before);
-  if (scene.media && !mediaBrowser)
+  const devices = scene.media || scene.microphone;
+  if (devices && !mediaBrowser)
     mediaBrowser = await launch(["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"]);
-  const context = await (scene.media ? mediaBrowser : browser).newContext({
-    permissions: scene.media ? ["microphone", "camera"] : [],
+  const context = await (devices ? mediaBrowser : browser).newContext({
+    permissions: scene.media ? ["microphone", "camera"] : scene.microphone ? ["microphone"] : [],
     baseURL: fixture.base,
     viewport: { width: size[0], height: size[1] },
     deviceScaleFactor: 1,
