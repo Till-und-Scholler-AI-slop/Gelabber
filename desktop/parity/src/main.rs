@@ -25,6 +25,10 @@
 //! (`PUT /api/me/locale`) before the page loads and puts German back
 //! afterwards, also when the scene fails; a signed-out one starts the app in
 //! English (`gelabber_i18n::set`), as the web shot uses an English browser.
+//! Where the clients differ on purpose, a scene scores what they share:
+//! `mask` leaves areas out, `moved` takes a part from where the app draws
+//! it (the web shot's `microphone` scenes show the audio settings with the
+//! browser's device names, as the app shows its own).
 
 mod pixels;
 mod ssim;
@@ -69,9 +73,15 @@ struct Scene {
     /// say.mjs words run after the screenshot (undo what dialogs made).
     after: Option<String>,
     /// `[x, y, w, h]` areas left out of the comparison: picture content that
-    /// comes from the fake devices (Chromium's versus the core's), not the app.
+    /// comes from the fake devices (Chromium's versus the core's), not the
+    /// app, or words meant to differ (the browser's filters, the app's).
     #[serde(default)]
     mask: Vec<[u32; 4]>,
+    /// Parts both clients show alike, which the app draws at another place
+    /// (under a web-only text of another height): the native picture's part
+    /// is moved onto the web shot's before scoring. Masks apply after it.
+    #[serde(default)]
+    moved: Vec<Moved>,
     /// The update the app offers, in the shape of the Tauri app's
     /// `update_state` (shots.mjs answers it with this).
     update: Option<UpdateState>,
@@ -84,6 +94,33 @@ struct Scene {
     /// as a reference, render and compare pass it by.
     #[serde(default, rename = "webOnly")]
     web_only: bool,
+}
+
+/// `area` `[x, y, w, h]` in the web shot, drawn by the app `by` `[dx, dy]`
+/// pixels away from it.
+#[derive(Deserialize)]
+struct Moved {
+    area: [u32; 4],
+    by: [i32; 2],
+}
+
+/// Copies what the app drew at `area` moved `by` back onto `area`; pixels
+/// it would take from outside the picture stay as they are.
+fn move_back(img: &mut image::RgbaImage, moved: &Moved) {
+    let src = img.clone();
+    let [x, y, w, h] = moved.area;
+    let [dx, dy] = moved.by;
+    for py in y..(y + h).min(img.height()) {
+        for px in x..(x + w).min(img.width()) {
+            let (sx, sy) = (i64::from(px) + i64::from(dx), i64::from(py) + i64::from(dy));
+            if let (Ok(sx), Ok(sy)) = (u32::try_from(sx), u32::try_from(sy))
+                && sx < src.width()
+                && sy < src.height()
+            {
+                img.put_pixel(px, py, *src.get_pixel(sx, sy));
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -883,6 +920,9 @@ fn compare(
         };
         compared += 1;
         let (mut a, mut b) = (a.to_rgba8(), b.to_rgba8());
+        for moved in &scene.moved {
+            move_back(&mut b, moved);
+        }
         if let Some([x, y, w, h]) = crop {
             a = image::imageops::crop_imm(&a, x, y, w, h).to_image();
             b = image::imageops::crop_imm(&b, x, y, w, h).to_image();
@@ -1008,6 +1048,34 @@ mod tests {
         assert_eq!(crop_mask([290, 140, 50, 50], crop), Some([190, 90, 10, 10]));
         // Outside: nothing to paint.
         assert_eq!(crop_mask([0, 0, 50, 50], crop), None);
+    }
+
+    #[test]
+    fn a_moved_part_comes_back_to_the_web_place() {
+        // The app draws a 2×1 part 3 px lower and 1 px further right.
+        let mut img = image::RgbaImage::from_pixel(6, 6, image::Rgba([0, 0, 0, 255]));
+        img.put_pixel(2, 4, image::Rgba([1, 0, 0, 255]));
+        img.put_pixel(3, 4, image::Rgba([2, 0, 0, 255]));
+        move_back(
+            &mut img,
+            &Moved {
+                area: [1, 1, 2, 1],
+                by: [1, 3],
+            },
+        );
+        assert_eq!(img.get_pixel(1, 1).0, [1, 0, 0, 255]);
+        assert_eq!(img.get_pixel(2, 1).0, [2, 0, 0, 255]);
+        // Outside the area nothing changes.
+        assert_eq!(img.get_pixel(2, 4).0, [1, 0, 0, 255]);
+        // Taken from outside the picture: left as it was.
+        move_back(
+            &mut img,
+            &Moved {
+                area: [0, 5, 1, 1],
+                by: [0, 4],
+            },
+        );
+        assert_eq!(img.get_pixel(0, 5).0, [0, 0, 0, 255]);
     }
 
     #[test]

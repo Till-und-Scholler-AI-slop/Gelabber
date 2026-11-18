@@ -87,7 +87,17 @@
       "name": "settings-audio",
       "path": "/settings/audio",
       "user": "lena",
-      "desktop": true
+      "desktop": true,
+      "microphone": true,
+      "mask": [
+        [487, 200, 262, 30],
+        [589, 234, 126, 48],
+        [683, 342, 230, 22],
+        [689, 504, 235, 20],
+        [519, 553, 106, 20],
+        [733, 572, 110, 20],
+        [487, 772, 262, 24]
+      ]
     },
     {
       "name": "settings-video",
@@ -1332,6 +1342,16 @@
       "path": "/settings/audio",
       "user": "lena",
       "desktop": true,
+      "microphone": true,
+      "mask": [
+        [487, 200, 262, 30],
+        [589, 234, 126, 48],
+        [683, 342, 230, 22],
+        [689, 504, 235, 20],
+        [519, 553, 106, 20],
+        [733, 572, 110, 20],
+        [487, 772, 262, 24]
+      ],
       "before": "theme lena light"
     },
     {
@@ -1592,6 +1612,16 @@
       "path": "/settings/audio",
       "user": "lena",
       "desktop": true,
+      "microphone": true,
+      "moved": [
+        { "area": [416, 105, 448, 118], "by": [0, 49] },
+        { "area": [416, 303, 448, 315], "by": [0, 7] }
+      ],
+      "mask": [
+        [416, 223, 448, 80],
+        [626, 432, 131, 32],
+        [410, 618, 460, 90]
+      ],
       "actions": [
         {
           "click": "/^Mikrofon testen( und vergleichen)?$/"
@@ -1603,6 +1633,16 @@
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
       "desktop": true,
+      "microphone": true,
+      "mask": [
+        [487, 200, 262, 30],
+        [589, 234, 126, 48],
+        [683, 342, 230, 22],
+        [689, 504, 235, 20],
+        [519, 553, 106, 20],
+        [733, 572, 110, 20],
+        [487, 772, 262, 24]
+      ],
       "actions": [
         {
           "click": "Anrufeinstellungen"
