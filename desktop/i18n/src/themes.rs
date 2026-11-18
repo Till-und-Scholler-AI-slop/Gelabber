@@ -31,6 +31,10 @@ crate::strings! {
     system_name = "System" | "System";
     system_hint = "Folgt dem Gerät" | "Follows your device";
     system_title = "Wie dein Gerät" | "Same as your device";
+    /// "System" with the KDE colour scheme's colours.
+    system_source_kde = "KDE-Farben" | "KDE colours";
+    /// "System" with the desktop's accent colour.
+    system_source_accent = "Akzentfarbe des Geräts" | "Your device’s accent colour";
 
     action_create = "+ Eigenes Theme" | "+ Custom theme";
     action_import = "Importieren" | "Import";
@@ -124,6 +128,14 @@ pub fn color_pick_label(name: &str) -> String {
     match get() {
         Locale::De => format!("{name} wählen"),
         Locale::En => format!("Pick {name}"),
+    }
+}
+
+/// "System" with Omarchy's current theme: "Omarchy: Tokyo Night".
+pub fn system_source_omarchy(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Omarchy: {name}"),
+        Locale::En => format!("Omarchy: {name}"),
     }
 }
 
