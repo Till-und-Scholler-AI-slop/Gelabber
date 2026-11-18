@@ -870,6 +870,21 @@ impl State {
                     }
                 }
             }
+            // Someone left on their own (GEL-22): they leave the member
+            // list and the server's presence, like a kick. The own leave
+            // was handled where it was asked for and is no removal.
+            (None, EventKind::C) if event.kind() == Some("l") => {
+                let user = event.i?;
+                if Some(user) == self.me().map(|u| u.id) {
+                    return None;
+                }
+                if let Some(detail) = self.server_details.get_mut(&event.s) {
+                    detail.members.retain(|m| m.user_id != user);
+                }
+                if let Some(map) = self.presence.get_mut(&event.s) {
+                    map.remove(&user);
+                }
+            }
             // Ownership moved: the list entry and the detail name the new
             // owner at once; the caller's role follows with the refetch
             // (`Client::on_gateway`).
@@ -2548,5 +2563,43 @@ mod tests {
             serde_json::json!({"k": "j", "member": {"user_id": id(8)}}),
         ));
         assert_eq!(names(&s), ["Jonas", "Kai", "Lena", "Thomas"]);
+    }
+
+    /// `t: "c"`, `k: "l"` (GEL-22): someone who left drops out of the list
+    /// and the presence map; the own leave is no removal and changes
+    /// nothing.
+    #[test]
+    fn a_leave_drops_the_member_and_is_no_removal() {
+        let mut s = workspace();
+        let left = || serde_json::json!({"k": "l"});
+        let names = |s: &State| -> Vec<String> {
+            s.server_details[&id(1)]
+                .members
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()
+        };
+        let kai = id(3);
+        s.presence
+            .entry(id(1))
+            .or_default()
+            .insert(kai, PresenceStatus::Idle);
+        assert_eq!(
+            s.apply_event(&server_event(EventKind::C, Some(kai), left())),
+            None
+        );
+        assert_eq!(names(&s), ["Jonas", "Lena"]);
+        assert!(!s.presence[&id(1)].contains_key(&kai));
+        // A replay changes nothing.
+        s.apply_event(&server_event(EventKind::C, Some(kai), left()));
+        assert_eq!(names(&s), ["Jonas", "Lena"]);
+        // The own account: no removal, the server stays.
+        let me = s.me().unwrap().id;
+        assert_eq!(
+            s.apply_event(&server_event(EventKind::C, Some(me), left())),
+            None
+        );
+        assert_eq!(names(&s), ["Jonas", "Lena"]);
+        assert!(s.server_details.contains_key(&id(1)));
     }
 }

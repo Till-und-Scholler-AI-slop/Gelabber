@@ -1,6 +1,8 @@
-//! A join reaches the server's members live (#621): invite, open listing
-//! and accepted request each publish one `{"t": "c", "d": {"k": "j"}}`
-//! server event with the new member's list row.
+//! Joins and leaves reach the server's members live. A join (#621):
+//! invite, open listing and accepted request each publish one
+//! `{"t": "c", "d": {"k": "j"}}` server event with the new member's list
+//! row. A member leaving on their own (GEL-22) publishes one
+//! `{"t": "c", "d": {"k": "l"}}`, never the removal event `t: "d"`.
 
 mod common;
 
@@ -239,4 +241,58 @@ async fn an_accepted_request_reaches_the_members(pool: PgPool) {
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     let event = next_server_event(&mut ws).await;
     assert_joined(&event, server, &tom_id, "Tom");
+}
+
+#[sqlx::test]
+async fn a_leave_reaches_the_members_once_and_is_no_removal(pool: PgPool) {
+    let (addr, state) = serve(pool).await;
+    let mut ada = registered(&state, "ada@example.com", "Ada").await;
+    let mut bob = registered(&state, "bob@example.com", "Bob").await;
+    let server = create_server(&mut ada).await;
+    let code = invite_code(&mut ada, server).await;
+    let res = bob
+        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let bob_id = me_id(&mut bob).await;
+    let mut ws = watch(addr, &ada, server).await;
+
+    let res = bob
+        .send(Method::POST, &format!("/api/servers/{server}/leave"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let event = next_server_event(&mut ws).await;
+    assert_eq!(event["t"], "c", "not the removal event: {event}");
+    assert_eq!(event["s"], server.to_string(), "{event}");
+    assert_eq!(event["i"], bob_id, "{event}");
+    assert_eq!(event["d"], json!({ "k": "l" }), "{event}");
+    // The detail agrees: Bob is gone.
+    let detail = ada
+        .send(Method::GET, &format!("/api/servers/{server}"), None)
+        .await;
+    assert!(
+        !detail.body["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["user_id"] == bob_id.as_str()),
+        "{}",
+        detail.body
+    );
+
+    // Leaving again is refused and sends nothing.
+    let res = bob
+        .send(Method::POST, &format!("/api/servers/{server}/leave"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/roles"),
+            Some(json!({ "name": "Team", "color": "blue" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let next = next_server_event(&mut ws).await;
+    assert_eq!(next["d"]["k"], "a", "no second leave event: {next}");
 }

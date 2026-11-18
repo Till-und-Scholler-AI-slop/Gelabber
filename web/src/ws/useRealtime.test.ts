@@ -29,6 +29,7 @@ import {
   isAccessChange,
   isOwnerChange,
   joinedMember,
+  leftMember,
 } from "./useRealtime.ts";
 
 class Socket implements SocketLike {
@@ -1510,5 +1511,80 @@ describe("member joined (#621)", () => {
     });
     applyGatewayEvent(queryClient, "user-a", 1, joined("user-a"));
     expect(listed(queryClient)).toEqual(["user-b:Name user-b"]);
+  });
+});
+
+describe("member left on their own (GEL-22)", () => {
+  const row = (user_id: string) => ({
+    user_id,
+    name: `Name ${user_id}`,
+    avatar_url: null,
+    joined_at: "2026-11-17T10:00:00Z",
+    status_text: null,
+    accent_color: null,
+    avatar_decoration: null,
+    role_ids: [],
+    role: "member",
+  });
+  const left = (
+    user_id: string,
+    overrides: Partial<ChatEvent> = {},
+  ): ChatEvent => ({
+    op: "e",
+    t: "c",
+    s: "s1",
+    n: 7,
+    i: user_id,
+    d: { k: "l" },
+    ...overrides,
+  });
+  const seeded = () => {
+    const queryClient = client();
+    queryClient.setQueryData(serverKeys.list("user-a", 1), [{ id: "s1" }]);
+    queryClient.setQueryData(serverKeys.detail("user-a", 1, "s1"), {
+      id: "s1",
+      channels: [],
+      members: [row("user-a"), row("user-b"), row("user-c")],
+    });
+    return queryClient;
+  };
+  const listed = (queryClient: QueryClient) =>
+    queryClient
+      .getQueryData<{
+        members: { user_id: string }[];
+      }>(serverKeys.detail("user-a", 1, "s1"))
+      ?.members.map((m) => m.user_id);
+
+  it("reads who left, and nothing else", () => {
+    expect(leftMember(left("user-b"))).toBe("user-b");
+    expect(leftMember(left("user-b", { t: "d" }))).toBeNull();
+    expect(leftMember(left("user-b", { c: "channel" }))).toBeNull();
+    expect(leftMember(left("user-b", { d: { k: "j" } }))).toBeNull();
+    expect(leftMember(left("user-b", { d: null }))).toBeNull();
+    expect(leftMember(left("user-b", { i: undefined }))).toBeNull();
+  });
+
+  it("the bridge drops the member from the cached list, as a no-op on replay", () => {
+    const queryClient = seeded();
+    expect(
+      applyGatewayEvent(queryClient, "user-a", 1, left("user-b")),
+    ).toBeNull();
+    expect(listed(queryClient)).toEqual(["user-a", "user-c"]);
+    // A replay after a gap changes nothing.
+    expect(
+      applyGatewayEvent(queryClient, "user-a", 1, left("user-b")),
+    ).toBeNull();
+    expect(listed(queryClient)).toEqual(["user-a", "user-c"]);
+  });
+
+  it("is never a removal notice for this account's own leave", () => {
+    const queryClient = seeded();
+    expect(
+      applyGatewayEvent(queryClient, "user-a", 1, left("user-a")),
+    ).toBeNull();
+    expect(listed(queryClient)).toEqual(["user-a", "user-b", "user-c"]);
+    expect(
+      queryClient.getQueryData<{ id: string }[]>(serverKeys.list("user-a", 1)),
+    ).toEqual([{ id: "s1" }]);
   });
 });
