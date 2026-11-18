@@ -130,6 +130,10 @@ export const STREAM_PROFILES = {
 } as const;
 export type StreamProfileId = keyof typeof STREAM_PROFILES;
 export type StreamKind = "camera" | "screen";
+/** What a Live gives up first on a tight connection (GEL-26): "sharp"
+ * keeps the resolution and lowers the frame rate, so text stays readable;
+ * "smooth" keeps the frame rate and lowers the resolution. */
+export type ScreenMode = "sharp" | "smooth";
 /** Whether a profile change reached the live track or waits for the next one. */
 export type StreamApply = "idle" | "live" | "next";
 
@@ -160,6 +164,8 @@ export type MediaSettings = {
   cameraProfile: StreamProfileId;
   /** Live (a display capture). */
   screenProfile: StreamProfileId;
+  /** Whether a Live keeps text sharp or motion smooth on a tight connection. */
+  screenMode: ScreenMode;
   /** 0 = no custom limit; otherwise explicit shared video payload cap in bit/s. */
   videoUploadLimit: number;
   callSounds: boolean;
@@ -198,6 +204,7 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   economyMode: false,
   cameraProfile: "balanced",
   screenProfile: "balanced",
+  screenMode: "sharp",
   videoUploadLimit: 0,
   callSounds: true,
   callSoundVolume: 0.35,
@@ -375,6 +382,10 @@ export function asStreamProfile(value: unknown): StreamProfileId {
     : "balanced";
 }
 
+export function asScreenMode(value: unknown): ScreenMode {
+  return value === "smooth" ? "smooth" : "sharp";
+}
+
 export function clampVideoUploadLimit(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
     return 0;
@@ -408,6 +419,7 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     economyMode: state.economyMode,
     cameraProfile: state.cameraProfile,
     screenProfile: state.screenProfile,
+    screenMode: state.screenMode,
     videoUploadLimit: state.videoUploadLimit,
     callSounds: state.callSounds,
     callSoundVolume: state.callSoundVolume,
@@ -490,6 +502,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.screenProfile !== undefined
               ? asStreamProfile(partial.screenProfile)
               : prev.screenProfile,
+          screenMode:
+            partial.screenMode !== undefined
+              ? asScreenMode(partial.screenMode)
+              : prev.screenMode,
           videoUploadLimit:
             partial.videoUploadLimit !== undefined
               ? clampVideoUploadLimit(partial.videoUploadLimit)
@@ -598,6 +614,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
               ? stored.screenProfile
               : current.screenProfile,
           ),
+          screenMode: asScreenMode(stored.screenMode),
           videoUploadLimit: clampVideoUploadLimit(stored.videoUploadLimit),
           sourceAudioShare:
             "sourceAudioShare" in stored

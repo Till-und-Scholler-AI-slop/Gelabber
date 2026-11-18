@@ -624,7 +624,8 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
         let limits_changed = previous.video_upload_limit != next.video_upload_limit
             || previous.economy_mode != next.economy_mode
             || previous.camera_profile != next.camera_profile
-            || previous.screen_profile != next.screen_profile;
+            || previous.screen_profile != next.screen_profile
+            || previous.keep_text_sharp != next.keep_text_sharp;
         if limits_changed && let Some(seat) = session.seat() {
             seat.apply_parameters().await;
         }
@@ -1491,6 +1492,7 @@ impl Session {
         let Some(engine) = self.engine() else { return };
         let settings = inner.settings();
         let size = logic::capture_size(true, &settings.screen_profile);
+        let hint = logic::ScreenMode::from_sharp(settings.keep_text_sharp).content_hint();
         let turn = {
             let mut st = self.st.lock();
             st.screen_turn += 1;
@@ -1505,7 +1507,7 @@ impl Session {
                     return core::Source::test_pattern(&engine, size.width, size.height, size.fps);
                 }
                 let options = json!({
-                    "type": "any", "fps": size.fps, "cursor": true, "contentHint": "detail",
+                    "type": "any", "fps": size.fps, "cursor": true, "contentHint": hint,
                 });
                 core::Source::screen(&engine, &options)
             })
@@ -3379,7 +3381,9 @@ impl Seat {
             let state = local.source.state().unwrap_or(Value::Null);
             let width = state["width"].as_u64().unwrap_or(0) as u32;
             let height = state["height"].as_u64().unwrap_or(0) as u32;
-            logic::video_parameters(&current, profile, width, height, share)
+            let mode =
+                (kind == Kind::S).then(|| logic::ScreenMode::from_sharp(settings.keep_text_sharp));
+            logic::video_parameters(&current, profile, width, height, share, mode)
         } else {
             let bitrate = match (settings.economy_mode, kind) {
                 (true, Kind::Sa) => Some(128_000),

@@ -44,6 +44,8 @@ export type RtpSenderParameters = {
     scalabilityMode?: string;
     networkPriority?: MediaPriority;
   }>;
+  /** What the encoder gives up first; a Live sets it by its mode. */
+  degradationPreference?: RTCDegradationPreference;
   transactionId?: string;
 };
 export type MediaSender = {

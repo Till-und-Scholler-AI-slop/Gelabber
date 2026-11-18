@@ -260,6 +260,9 @@ pub struct CallSettings {
     /// `balanced`, `economy`, `detail` or `<height>p<fps>`.
     pub camera_profile: String,
     pub screen_profile: String,
+    /// "Text scharf halten" (GEL-26): a Live lowers its frame rate before
+    /// its resolution on a tight connection.
+    pub keep_text_sharp: bool,
     pub economy_mode: bool,
     /// All videos together, bit/s; 0 = no limit.
     pub video_upload_limit: f64,
@@ -291,6 +294,7 @@ impl Default for CallSettings {
             stream_muted: false,
             camera_profile: "balanced".into(),
             screen_profile: "balanced".into(),
+            keep_text_sharp: true,
             economy_mode: false,
             video_upload_limit: 0.0,
             source_audio_app: String::new(),

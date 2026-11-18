@@ -76,6 +76,7 @@ import {
 } from "./voiceStore.ts";
 import { applySourceAudioChoice } from "./localSourceAudio.ts";
 import {
+  applyScreenMode,
   applyStreamProfile,
   bumpVideoEpoch,
   captureOpen,
@@ -995,6 +996,7 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
   if (cameraProfileChanged) void applyStreamProfile("camera");
   if (screenProfileChanged) void applyStreamProfile("screen");
+  if (prev.screenMode !== next.screenMode) void applyScreenMode();
   if (
     joined &&
     (prev.videoUploadLimit !== next.videoUploadLimit ||

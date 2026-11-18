@@ -180,7 +180,10 @@ function Flows() {
               count: limits.length,
               limits: limits.join(", "),
             })}{" "}
-        {t("flows.maxFps", { fps: VIDEO_MAX_FPS })}
+        {t("flows.maxFps", { fps: VIDEO_MAX_FPS })}{" "}
+        {mediaSettings.screenMode === "sharp"
+          ? t("flows.liveSharp")
+          : t("flows.liveSmooth")}
       </p>
     </section>
   );
