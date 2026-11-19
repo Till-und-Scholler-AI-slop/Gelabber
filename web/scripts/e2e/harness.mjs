@@ -237,6 +237,11 @@ export async function startHarness() {
     const invite = await dialog
       .getByRole("textbox", { name: "Einladungslink" })
       .inputValue();
+    // Closing the dialog revokes a link nobody copied or shared
+    // (inviteSession.ts), so take it the way a user would first.
+    await dialog
+      .getByRole("button", { name: "Link kopieren", exact: true })
+      .click();
     await dialog
       .getByRole("button", { name: "Schließen", exact: true })
       .click();
