@@ -71,6 +71,7 @@ crate::strings! {
     composer_drop_hint = "Loslassen zum Anhängen" | "Drop to attach";
     composer_attachments_label = "Anhänge" | "Attachments";
     composer_remove_file = "Anhang entfernen" | "Remove attachment";
+    composer_dismiss_file_error = "Hinweis schließen" | "Dismiss note";
     composer_attach_file = "Datei anhängen" | "Attach file";
     composer_insert_emoji = "Emoji einfügen" | "Insert emoji";
     composer_send_gif = "GIF senden" | "Send GIF";

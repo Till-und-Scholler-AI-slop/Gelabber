@@ -1746,8 +1746,36 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-composer-status:empty {
   padding: 0;
 }
+/* The files left out, with a × like the reply bar's (GEL-8). */
 .lr-composer-file-error {
-  padding: 4px 6px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 0 0 6px;
+}
+.lr-composer-file-error p {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+.lr-composer-file-error button {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--lr-radius-small);
+  color: var(--lr-muted);
+}
+.lr-composer-file-error button:hover {
+  background: var(--lr-hover);
+  color: var(--lr-text);
+}
+@media (pointer: coarse) {
+  .lr-composer-file-error button {
+    width: 40px;
+    height: 40px;
+  }
 }
 /* Sends that did not go through are on their rows; this line finds them. */
 .lr-send-summary {

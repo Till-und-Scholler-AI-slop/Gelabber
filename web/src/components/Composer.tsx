@@ -58,6 +58,7 @@ import { chat } from "../i18n/catalogs/chat.ts";
 import { FieldShell } from "./ui/FieldShell.tsx";
 import { Textarea } from "./ui/Textarea.tsx";
 import { useMediaQuery } from "./useMediaQuery.ts";
+import { useFileNote } from "./useFileNote.ts";
 
 export function Composer({
   handle,
@@ -101,7 +102,8 @@ export function Composer({
   const files = savedDraft.files;
   const setDraft = (text: string) => updateDraft({ text });
   const setFiles = (files: File[]) => updateDraft({ files });
-  const [fileError, setFileError] = useState<string | null>(null);
+  // The files left out last, and why (GEL-8: it does not stay for good).
+  const fileNote = useFileNote();
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [gifOpen, setGifOpen] = useState(false);
   const gifs = useGifStatus();
@@ -184,7 +186,7 @@ export function Composer({
    *  out, and so is whatever would go over the message's limits. One note
    *  names every file left out. */
   const addFiles = (next: File[], base: File[] = files) => {
-    setFileError(null);
+    fileNote.close();
     let kept = [...base];
     const notes: string[] = [];
     const over = new Map<string, string[]>();
@@ -209,11 +211,11 @@ export function Composer({
       notes.push(
         t("composer.notAttached", { names: names.join(", "), reason }),
       );
-    if (notes.length > 0) setFileError(notes.join(" "));
+    if (notes.length > 0) fileNote.show(notes.join(" "));
     setFiles(kept);
   };
   const removeFile = (index: number) => {
-    setFileError(null);
+    fileNote.close();
     setFiles(files.filter((_, i) => i !== index));
   };
   // The picture whose alt text is being written (#575).
@@ -279,7 +281,7 @@ export function Composer({
     onSent();
     setReplyTarget(channelId, null);
     updateDraft({ text: "", files: [] });
-    setFileError(null);
+    fileNote.close();
     onDraftStop?.();
     if (keepKeyboard.current) composerInput.current?.focus();
     keepKeyboard.current = false;
@@ -312,6 +314,7 @@ export function Composer({
     const end = input?.selectionEnd ?? draft.length;
     const next = draft.slice(0, start) + text + draft.slice(end);
     setDraft(next);
+    fileNote.close();
     onDraftChange?.(next);
     requestAnimationFrame(() => {
       input?.focus();
@@ -321,6 +324,12 @@ export function Composer({
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggestions.onKeyDown(event)) return;
+    // The note first, the reply with the next Escape.
+    if (event.key === "Escape" && fileNote.text !== null) {
+      event.preventDefault();
+      fileNote.close();
+      return;
+    }
     if (event.key === "Escape" && replyTarget) {
       event.preventDefault();
       setReplyTarget(channelId, null);
@@ -477,6 +486,8 @@ export function Composer({
               {...suggestions.fieldProps}
               onChange={(e) => {
                 setDraft(e.target.value);
+                // The note was read; writing on moves past it.
+                fileNote.close();
                 onDraftChange?.(e.target.value);
                 suggestions.track(e.target);
               }}
@@ -554,10 +565,23 @@ export function Composer({
             </span>
           ) : null}
         </div>
-        {fileError ? (
-          <p role="alert" className="lr-composer-file-error lr-field-error">
-            {fileError}
-          </p>
+        {fileNote.text !== null ? (
+          <div className="lr-composer-file-error" {...fileNote.holdProps}>
+            <p role="alert" className="lr-field-error">
+              {fileNote.text}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                fileNote.close();
+                composerInput.current?.focus();
+              }}
+              aria-label={t("composer.dismissFileError")}
+              title={t("composer.dismissFileError")}
+            >
+              <CloseIcon size={14} />
+            </button>
+          </div>
         ) : null}
       </form>
       {/* Outside the form: Enter in a picker's search would submit it and

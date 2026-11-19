@@ -93,6 +93,8 @@ export const chat = defineCatalog(
     "composer.attachmentsLabel": "Anhänge",
     "composer.removeFileLabel": "{name} entfernen",
     "composer.removeFile": "Anhang entfernen",
+    // The × on the note naming the files left out (GEL-8).
+    "composer.dismissFileError": "Hinweis schließen",
     "composer.attachFile": "Datei anhängen",
     "composer.insertEmoji": "Emoji einfügen",
     "composer.sendGif": "GIF senden",
@@ -361,6 +363,7 @@ export const chat = defineCatalog(
     "composer.attachmentsLabel": "Attachments",
     "composer.removeFileLabel": "Remove {name}",
     "composer.removeFile": "Remove attachment",
+    "composer.dismissFileError": "Dismiss note",
     "composer.attachFile": "Attach file",
     "composer.insertEmoji": "Insert emoji",
     "composer.sendGif": "Send GIF",
