@@ -252,6 +252,14 @@ try {
         });
         window.dispatchEvent(new Event("focus"));
       });
+      // The focus check finds the session gone and releases the drafts. A
+      // page load before that would start with the old drafts still stored.
+      await member.page.waitForFunction(
+        () =>
+          !Object.keys(window.localStorage).some((key) =>
+            key.startsWith("gelabber:chat-draft:"),
+          ),
+      );
       await member.page.goto(`${base}/login`);
       await member.page.getByLabel("E-Mail-Adresse").fill(member.email);
       await member.page.getByLabel("Passwort", { exact: true }).fill(password);
