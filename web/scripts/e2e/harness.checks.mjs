@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   CheckFailure,
   check,
+  failureSite,
   revision,
   safeError,
   safeTarget,
@@ -47,6 +48,20 @@ test("bytes and closed receivers cannot pass decoded-frame acceptance", () => {
     }),
     4,
   );
+});
+test("a failure names the scenario's line, not the harness helper", () => {
+  const stack = [
+    "CheckFailure: x",
+    "    at until (file:///w/web/scripts/e2e/harness.mjs:45:9)",
+    "    at async f (file:///w/web/scripts/e2e/media-lease-faults.mjs:66:24)",
+    "    at async run (file:///w/web/scripts/e2e/harness.mjs:354:18)",
+  ].join("\n");
+  assert.equal(failureSite(stack), "media-lease-faults.mjs:66:24");
+  assert.equal(
+    failureSite("    at x (/w/web/scripts/e2e/harness.mjs:286:10)"),
+    "harness.mjs:286:10",
+  );
+  assert.equal(failureSite(undefined), null);
 });
 test("evidence errors discard Playwright URLs, secrets and call logs", () => {
   const e = new Error(

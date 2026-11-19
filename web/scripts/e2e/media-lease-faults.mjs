@@ -64,9 +64,11 @@ export async function leaseFaultScenarios(h, options) {
         await click(f.owner, "Live gehen");
         await click(f.watcher, "Zuschauen");
         const initial = await progress(f.watcher, options);
+        // "Zuschauen" from outside the call joins it (watchLive.ts), so
+        // the room holds the publisher and the watcher.
         const before = await until(
           () => snapshot(f.member),
-          (s) => s.liveOccupancy === 1 && s.voiceOccupancy === 1,
+          (s) => s.liveOccupancy === 1 && s.voiceOccupancy === 2,
           "fixture-positive-passive-roster-missing",
         );
         await holdActiveMedia(f.watcher);

@@ -101,7 +101,8 @@ export async function progress(
       const video = s.videos.find((v) => v.kind === kind);
       return (
         decoded(s) > 0 &&
-        [160, 640].includes(video?.width) &&
+        // Any simulcast layer of the 640×360 fixture (mediasoupConnection.ts).
+        [160, 320, 640].includes(video?.width) &&
         video.height === (video.width * 9) / 16 &&
         !video.paused &&
         sourceMatches(video, color)
