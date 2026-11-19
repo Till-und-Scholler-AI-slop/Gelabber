@@ -260,3 +260,57 @@
     display: none;
   }
 }
+
+/* Input sensitivity (InputSensitivity.tsx): the level as a bar, the
+   threshold as a line across it. The bar lines up with the slider's track
+   under it: the same columns, and half a thumb in from each end. */
+.media-gate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
+}
+.media-gate-meter {
+  position: relative;
+  height: 8px;
+  margin-inline: 7px;
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-border);
+}
+.media-gate-level {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: var(--gate-level, 0%);
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-subtle);
+  transition: width 80ms linear;
+}
+.media-gate-meter[data-open="true"] .media-gate-level {
+  background: var(--lr-online-text);
+}
+.media-gate-threshold {
+  position: absolute;
+  inset-block: -4px;
+  inset-inline-start: var(--gate-threshold, 0%);
+  width: 2px;
+  margin-inline-start: -1px;
+  border-radius: 1px;
+  background: var(--lr-text);
+}
+.media-gate-value {
+  min-width: 5ch;
+  color: var(--lr-muted);
+  font: var(--lr-type-ui);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.media-gate-state {
+  grid-column: 1 / -1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .media-gate-level {
+    transition: none;
+  }
+}

@@ -20,6 +20,9 @@ struct Open {
     mic_test: bool,
     /// The message of the microphone test once stopped by the person.
     stopped: bool,
+    /// The frame Settings → Audio last drew a running level check in: the
+    /// input sensitivity's meter uses the microphone test's capture.
+    level_check: Option<u64>,
 }
 
 fn id() -> Id {
@@ -38,6 +41,22 @@ pub fn open_mic_test(ctx: &egui::Context) {
     });
 }
 
+/// Settings → Audio shows a level check this frame: the test keeps running
+/// without its dialog.
+pub fn keep_level_check(ctx: &egui::Context) {
+    let frame = ctx.cumulative_frame_nr();
+    with(ctx, |o| o.level_check = Some(frame));
+}
+
+/// A level check drawn this frame or the one before.
+fn level_check(ctx: &egui::Context) -> bool {
+    let frame = ctx.cumulative_frame_nr();
+    with(ctx, |o| {
+        o.level_check
+            .is_some_and(|at| frame.saturating_sub(at) <= 1)
+    })
+}
+
 /// A voice dialog is open (the room's keys keep off then).
 pub fn open(ctx: &egui::Context) -> bool {
     with(ctx, |o| o.mic_test)
@@ -50,8 +69,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     crate::screens::settings::follow_media_link(&ctx, app);
     if with(&ctx, |o| o.mic_test) {
         mic_test_dialog(ui, app);
-    } else if app.call.mic_test().phase != MicTestPhase::Idle {
-        // A test runs only while its dialog is open.
+    } else if app.call.mic_test().phase != MicTestPhase::Idle && !level_check(&ctx) {
+        // A test runs only while its dialog or the level check is open.
         app.call.stop_mic_test();
     }
 }

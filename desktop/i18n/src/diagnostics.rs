@@ -172,6 +172,16 @@ crate::strings! {
         | "Microphone gain";
     mic_buffer = "Filter-Puffer"
         | "Filter buffer";
+    mic_gate = "Eingabeempfindlichkeit"
+        | "Input sensitivity";
+    mic_gate_auto = "automatisch"
+        | "automatic";
+    mic_gate_off = "aus"
+        | "off";
+    mic_gate_open = "offen"
+        | "open";
+    mic_gate_closed = "zu"
+        | "closed";
     value_on = "an"
         | "on";
     value_off = "aus"
@@ -609,5 +619,13 @@ pub fn processing_default_mic(words: &str) -> String {
     match get() {
         Locale::De => format!("{words}; Standardmikrofon"),
         Locale::En => format!("{words}; default microphone"),
+    }
+}
+
+/// The manual input sensitivity in the diagnostics: "Schwelle {db} dB".
+pub fn mic_gate_manual(db: i64) -> String {
+    match get() {
+        Locale::De => format!("Schwelle {db} dB"),
+        Locale::En => format!("threshold {db} dB"),
     }
 }

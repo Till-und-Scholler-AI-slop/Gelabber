@@ -850,6 +850,14 @@ fn the_playout_limiter_keeps_a_boost_below_full_scale() {
     run_host_test("playout_limiter_test", "the playout limiter");
 }
 
+/// Input sensitivity (GEL-27) on generated blocks: desktop/native/tests/
+/// input_gate_test.cc runs the gate without a sound card, on every platform,
+/// with the same cases as the web client's inputGate.test.mjs.
+#[test]
+fn the_input_gate_sends_silence_below_its_threshold() {
+    run_host_test("input_gate_test", "the input gate");
+}
+
 /// Switching the microphone or the speakers while they run (#296):
 /// desktop/native/tests/audio_device_switch_test.cc runs the switch against
 /// a fake device module that refuses devices, on every platform.

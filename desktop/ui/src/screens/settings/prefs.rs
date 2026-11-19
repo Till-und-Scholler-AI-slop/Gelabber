@@ -93,6 +93,9 @@ pub struct Prefs {
     pub ptt_key: String,
     pub ptt_key_label: String,
     pub ptt_release_delay: f64,
+    /// Input sensitivity (GEL-27): automatic, or below `gate_threshold_db`.
+    pub gate_auto: bool,
+    pub gate_threshold_db: f64,
     /// The account's last theme, painted at start before /me/themes answers.
     pub theme: Option<gelabber_client::Theme>,
     /// The language the app showed last, for the next start and while
@@ -135,6 +138,8 @@ impl Default for Prefs {
             ptt_key: String::new(),
             ptt_key_label: String::new(),
             ptt_release_delay: 200.0,
+            gate_auto: true,
+            gate_threshold_db: gelabber_call::logic::GATE_THRESHOLD_DEFAULT,
             theme: None,
             locale: None,
         }
@@ -195,6 +200,13 @@ impl Prefs {
             ptt_key: s("pttKey", ""),
             ptt_key_label: s("pttKeyLabel", ""),
             ptt_release_delay: n("pttReleaseDelay", d.ptt_release_delay).clamp(0.0, 1000.0),
+            gate_auto: b("gateAuto", d.gate_auto),
+            gate_threshold_db: n("gateThresholdDb", d.gate_threshold_db)
+                .clamp(
+                    gelabber_call::logic::GATE_THRESHOLD_MIN,
+                    gelabber_call::logic::GATE_THRESHOLD_MAX,
+                )
+                .round(),
             theme: v
                 .get("theme")
                 .and_then(|t| serde_json::from_value(t.clone()).ok()),
@@ -240,6 +252,8 @@ impl Prefs {
         put("pttKey", json!(self.ptt_key));
         put("pttKeyLabel", json!(self.ptt_key_label));
         put("pttReleaseDelay", json!(self.ptt_release_delay));
+        put("gateAuto", json!(self.gate_auto));
+        put("gateThresholdDb", json!(self.gate_threshold_db));
         if let Some(theme) = &self.theme {
             put("theme", serde_json::to_value(theme).unwrap_or(Value::Null));
         }

@@ -1,4 +1,5 @@
 import { useAudioProcessing } from "./audioProcessing.ts";
+import { InputSensitivity } from "./InputSensitivity.tsx";
 import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { PushToTalkSettings } from "./PushToTalkSettings.tsx";
@@ -139,6 +140,7 @@ export function MediaSettingsForm({
             />
           </SettingRow>
           <PushToTalkSettings />
+          <InputSensitivity />
           <SettingRow label={t("input.filter")}>
             <div className="media-cards">
               {(Object.keys(processingModes) as AudioProcessingMode[]).map(

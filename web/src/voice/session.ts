@@ -992,6 +992,13 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
   const screenProfileChanged = prev.screenProfile !== next.screenProfile;
   if (joined && recaptureMic) void refreshMic();
   else if (joined && prev.inputGain !== next.inputGain) queueInputGain();
+  if (
+    !recaptureMic &&
+    (prev.gateAuto !== next.gateAuto ||
+      prev.gateThresholdDb !== next.gateThresholdDb ||
+      prev.voiceInput !== next.voiceInput)
+  )
+    voice.activeMicGain?.setGate(next);
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
   if (cameraProfileChanged) void applyStreamProfile("camera");
   if (screenProfileChanged) void applyStreamProfile("screen");

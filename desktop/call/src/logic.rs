@@ -231,6 +231,73 @@ impl ProcessingMode {
     }
 }
 
+/// Input sensitivity (GEL-27): the core's gate, as the web's `GateMode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GateMode {
+    #[default]
+    Off,
+    Auto,
+    Manual,
+}
+
+impl GateMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::Manual => "manual",
+        }
+    }
+
+    pub fn parse(text: &str) -> Self {
+        match text {
+            "auto" => Self::Auto,
+            "manual" => Self::Manual,
+            _ => Self::Off,
+        }
+    }
+
+    /// Original sound stays unprocessed and push-to-talk sends what the
+    /// key opens (web `gateConfig`); otherwise the user's choice.
+    pub fn for_settings(mode: ProcessingMode, push_to_talk: bool, auto: bool) -> Self {
+        if mode == ProcessingMode::Original || push_to_talk {
+            Self::Off
+        } else if auto {
+            Self::Auto
+        } else {
+            Self::Manual
+        }
+    }
+}
+
+/// The input sensitivity slider's range and start, in dB.
+pub const GATE_THRESHOLD_MIN: f64 = -80.0;
+pub const GATE_THRESHOLD_MAX: f64 = 0.0;
+pub const GATE_THRESHOLD_DEFAULT: f64 = -50.0;
+
+/// The core's `gate` option.
+pub fn gate_options(mode: GateMode, threshold_db: f64) -> Value {
+    let threshold = if threshold_db.is_finite() {
+        threshold_db
+            .clamp(GATE_THRESHOLD_MIN, GATE_THRESHOLD_MAX)
+            .round()
+    } else {
+        GATE_THRESHOLD_DEFAULT
+    };
+    json!({ "mode": mode.as_str(), "thresholdDb": threshold })
+}
+
+/// The gate's last block from `gm_audio_levels`, if the core reports one.
+pub fn gate_levels(levels: &Value) -> Option<crate::GateLevels> {
+    let gate = levels.get("gate")?;
+    Some(crate::GateLevels {
+        mode: GateMode::parse(gate["mode"].as_str().unwrap_or_default()),
+        level_db: gate["levelDb"].as_f64()?,
+        threshold_db: gate["thresholdDb"].as_f64()?,
+        open: gate["open"].as_bool().unwrap_or(true),
+    })
+}
+
 /// Opus options for a microphone or a Live's sound (`codecOptionsFor`);
 /// video gets the start estimate only.
 pub fn codec_options(kind: Kind, mode: ProcessingMode, economy: bool) -> Value {
@@ -262,6 +329,7 @@ pub fn microphone_options(
     noise_suppression: bool,
     auto_gain_control: bool,
     input_gain: f64,
+    gate: Value,
 ) -> Value {
     json!({
         "processingMode": mode.as_str(),
@@ -269,6 +337,7 @@ pub fn microphone_options(
         "noiseSuppression": noise_suppression,
         "autoGainControl": auto_gain_control,
         "inputGain": input_gain.clamp(0.0, 2.0),
+        "gate": gate,
     })
 }
 

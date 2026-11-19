@@ -165,6 +165,19 @@ pub struct MicTest {
     pub input: f64,
     pub processed: f64,
     pub clipping: bool,
+    /// The input sensitivity gate, as the test hears it.
+    pub input_gate: Option<GateLevels>,
+}
+
+/// The input sensitivity gate's last 10 ms block (GEL-27), in dB of full
+/// scale after the input gain.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GateLevels {
+    pub mode: logic::GateMode,
+    pub level_db: f64,
+    pub threshold_db: f64,
+    /// The microphone sends; closed, it sends silence.
+    pub open: bool,
 }
 
 /// Everything the interface draws about the call.
@@ -195,6 +208,8 @@ pub struct CallState {
     /// Push-to-talk is on and its key (or the delay after it) lets the
     /// microphone send.
     pub push_to_talk_open: bool,
+    /// The input sensitivity gate of the call's microphone, while it sends.
+    pub input_gate: Option<GateLevels>,
     /// The call whose connection was lost, to offer joining it again.
     pub lost_call: Option<(Uuid, Uuid)>,
 }
@@ -273,6 +288,10 @@ pub struct CallSettings {
     pub message_sound: bool,
     pub push_to_talk: bool,
     pub ptt_release_delay_ms: u64,
+    /// Input sensitivity: the gate finds its threshold itself.
+    pub gate_auto: bool,
+    /// The threshold without `gate_auto`, in dB (-80..0).
+    pub gate_threshold_db: f64,
 }
 
 impl Default for CallSettings {
@@ -301,11 +320,21 @@ impl Default for CallSettings {
             message_sound: true,
             push_to_talk: false,
             ptt_release_delay_ms: ptt::RELEASE_DELAY_DEFAULT_MS,
+            gate_auto: true,
+            gate_threshold_db: logic::GATE_THRESHOLD_DEFAULT,
         }
     }
 }
 
 impl CallSettings {
+    /// The core's `gate` option for these settings.
+    pub fn gate_options(&self) -> serde_json::Value {
+        logic::gate_options(
+            logic::GateMode::for_settings(self.processing_mode, self.push_to_talk, self.gate_auto),
+            self.gate_threshold_db,
+        )
+    }
+
     fn sounds(&self) -> sounds::SoundSettings {
         sounds::SoundSettings {
             enabled: self.call_sounds,

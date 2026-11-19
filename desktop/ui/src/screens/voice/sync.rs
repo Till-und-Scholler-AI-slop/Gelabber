@@ -34,6 +34,8 @@ pub fn settings(p: &Prefs) -> CallSettings {
         // Without a key push-to-talk keeps the microphone closed, as on the web.
         push_to_talk: p.voice_input == "ptt",
         ptt_release_delay_ms: p.ptt_release_delay.max(0.0).round() as u64,
+        gate_auto: p.gate_auto,
+        gate_threshold_db: p.gate_threshold_db,
     }
 }
 

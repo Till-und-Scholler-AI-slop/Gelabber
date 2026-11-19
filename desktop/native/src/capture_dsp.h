@@ -1,8 +1,10 @@
 // Microphone processing after libwebrtc's APM: RNNoise ("enhanced" mode),
-// input gain and level meters. Runs on the audio capture thread as the
+// input gain, the input sensitivity gate (input_gate.h) and level meters. Runs on the audio capture thread as the
 // APM's capture post-processor; settings and levels are atomics so other
 // threads can change and read them.
 #pragma once
+
+#include "input_gate.h"
 
 #include <atomic>
 #include <cstdint>
@@ -24,6 +26,8 @@ namespace gelabber
 		// of the last one: lets callers tell live meters from stale ones.
 		uint64_t blocks{ 0 };
 		int channels{ 0 };
+		// The gate's last block.
+		GateReport gate;
 	};
 
 	class CaptureDsp
@@ -39,6 +43,8 @@ namespace gelabber
 		// Linear, clamped to 0..2 (the web client's "Mic-Gain").
 		void SetGain(float gain);
 		float Gain() const;
+		// Input sensitivity; off until set.
+		void SetGate(GateMode mode, float thresholdDb);
 
 		void Initialize(int sampleRateHz, int numChannels);
 		// One block per call; samples in libwebrtc's FloatS16 scale
@@ -57,6 +63,7 @@ namespace gelabber
 		// Capture thread only.
 		std::vector<DenoiseState*> states;
 		std::vector<float> scratch;
+		InputGate gate;
 		double rawSum{ 0 };
 		double processedSum{ 0 };
 		uint64_t samples{ 0 };

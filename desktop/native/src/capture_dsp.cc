@@ -51,6 +51,11 @@ namespace gelabber
 		return gain.load();
 	}
 
+	void CaptureDsp::SetGate(GateMode mode, float thresholdDb)
+	{
+		gate.Configure(mode, thresholdDb);
+	}
+
 	void CaptureDsp::Initialize(int sampleRateHz, int numChannels)
 	{
 		sampleRate.store(sampleRateHz);
@@ -64,6 +69,7 @@ namespace gelabber
 		windowFrames          = 0;
 		windowTarget          = std::max(1, sampleRateHz * kWindowMs / 1000);
 		windowClipping        = false;
+		gate.Reset(sampleRateHz);
 	}
 
 	void CaptureDsp::Process(float* const* channels, int numChannels, int numFrames)
@@ -82,6 +88,8 @@ namespace gelabber
 		// 48 kHz unless the device itself is slower).
 		const bool canDenoise = denoise.load() && sampleRate.load() == kRnnoiseRate &&
 		                        numFrames == rnnoise_get_frame_size();
+		// RNNoise's speech probability for the gate: the most likely channel.
+		float speech = -1.0f;
 		if (canDenoise)
 		{
 			scratch.resize(static_cast<size_t>(numFrames));
@@ -92,7 +100,7 @@ namespace gelabber
 				if (!states[c])
 					continue;
 				std::copy(channels[c], channels[c] + numFrames, scratch.begin());
-				rnnoise_process_frame(states[c], channels[c], scratch.data());
+				speech = std::max(speech, rnnoise_process_frame(states[c], channels[c], scratch.data()));
 			}
 		}
 		denoised.store(canDenoise);
@@ -100,22 +108,19 @@ namespace gelabber
 		blockCount.fetch_add(1);
 
 		const float g = gain.load();
+		if (g != 1.0f)
+			for (int c = 0; c < numChannels; ++c)
+				for (int i = 0; i < numFrames; ++i)
+					channels[c][i] = std::clamp(channels[c][i] * g, -kFullScale, kFullScale - 1.0f);
+		// Clipping is the gain's, before the gate fades it away.
 		for (int c = 0; c < numChannels; ++c)
-		{
-			float* data = channels[c];
 			for (int i = 0; i < numFrames; ++i)
-			{
-				float sample = data[i];
-				if (g != 1.0f)
-				{
-					sample  = std::clamp(sample * g, -kFullScale, kFullScale - 1.0f);
-					data[i] = sample;
-				}
-				processedSum += static_cast<double>(sample) * sample;
-				if (std::fabs(sample) >= 0.99f * kFullScale)
+				if (std::fabs(channels[c][i]) >= 0.99f * kFullScale)
 					windowClipping = true;
-			}
-		}
+		gate.Process(channels, numChannels, numFrames, kFullScale, speech);
+		for (int c = 0; c < numChannels; ++c)
+			for (int i = 0; i < numFrames; ++i)
+				processedSum += static_cast<double>(channels[c][i]) * channels[c][i];
 
 		samples += static_cast<uint64_t>(numFrames) * numChannels;
 		windowFrames += numFrames;
@@ -143,6 +148,7 @@ namespace gelabber
 		levels.denoised  = denoised.load();
 		levels.blocks    = blockCount.load();
 		levels.channels  = lastChannels.load();
+		levels.gate      = gate.Report();
 		return levels;
 	}
 } // namespace gelabber

@@ -49,10 +49,14 @@ vm.runInNewContext(
       port = { postMessage() {}, onmessage: null };
     },
     registerProcessor(name, ctor) {
-      Processor = ctor;
+      if (name === "gelabber-rnnoise") Processor = ctor;
     },
   },
 );
+// The worklet reblocks to RNNoise's 480-sample frames (10 ms) and the input
+// gate after it runs 2 frames behind (20 ms look-ahead, GEL-27), also when
+// the gate is off, so that switching it never jumps.
+const outputDelay = 480 * 3;
 const processor = new Processor({ processorOptions: { model } }),
   actual = [];
 let index = 0,
@@ -69,16 +73,16 @@ while (index < samples.length) {
   index += count;
 }
 assert.equal(
-  actual.slice(0, 480).every((value) => value === 0),
+  actual.slice(0, outputDelay).every((value) => value === 0),
   true,
 );
-for (let n = 480; n < actual.length; n++)
-  assert.equal(actual[n], direct[n - 480]);
+for (let n = outputDelay; n < actual.length; n++)
+  assert.equal(actual[n], direct[n - outputDelay]);
 const inputEnergy = samples
     .subarray(48000)
     .reduce((sum, value) => sum + value * value, 0),
   outputEnergy = actual
-    .slice(48480)
+    .slice(48000 + outputDelay)
     .reduce((sum, value) => sum + value * value, 0);
 assert.ok(outputEnergy > 0 && outputEnergy < inputEnergy);
 
@@ -134,8 +138,8 @@ while (index < voiced.length) {
   );
   index += count;
 }
-for (let n = 480; n < voiceActual.length; n++)
-  assert.equal(voiceActual[n], voiceDirect[n - 480]);
+for (let n = outputDelay; n < voiceActual.length; n++)
+  assert.equal(voiceActual[n], voiceDirect[n - outputDelay]);
 function sampleDelay(reference, processed, start, length) {
   const mean =
     reference.subarray(start, start + length).reduce((a, b) => a + b, 0) /
@@ -144,7 +148,7 @@ function sampleDelay(reference, processed, start, length) {
   for (let n = start; n < start + length; n++)
     energy += (reference[n] - mean) ** 2;
   const candidates = [];
-  for (let lag = 0; lag <= 2400; lag++) {
+  for (let lag = 0; lag <= 3360; lag++) {
     let dot = 0,
       sum = 0,
       outEnergy = 0;
@@ -178,10 +182,10 @@ const sampleDelayWindows = [48000, 120000, 216000].map((start) => {
   const length = 24000,
     directDelay = sampleDelay(voiced, voiceDirect, start, length),
     workletDelay = sampleDelay(voiced, voiceActual, start, length);
-  assert.equal(workletDelay.samples - directDelay.samples, 480);
+  assert.equal(workletDelay.samples - directDelay.samples, outputDelay);
   assert.ok(
-    workletDelay.samples > 0 && workletDelay.samples <= 1440,
-    "Synthetic PCM model + worklet delay must stay within 30 ms",
+    workletDelay.samples > 0 && workletDelay.samples <= 2880,
+    "Synthetic PCM model + worklet + gate delay must stay within 60 ms",
   );
   return {
     startSample: start,
@@ -206,10 +210,12 @@ console.log(
       frameMs: 10,
       additionalReblockingSamples: 480,
       additionalReblockingMs: 10,
+      gateLookaheadSamples: outputDelay - 480,
+      gateLookaheadMs: (outputDelay - 480) / 48,
       pcmDelayProbe: {
         signal: "deterministic aperiodic voiced harmonics and chirp",
         sampleRate: 48000,
-        searchRangeMs: [0, 50],
+        searchRangeMs: [0, 70],
         periodicAliasExclusionMs: 1,
         windows: sampleDelayWindows,
         includesRnnoiseAlgorithmicDelay: true,

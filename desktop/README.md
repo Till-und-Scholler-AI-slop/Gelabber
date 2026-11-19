@@ -481,8 +481,11 @@ separate decision.
   AGC. The web client's modes carry over: `enhanced` runs RNNoise (same
   source commit and model as `web/public/audio`) after the APM, `browser`
   uses the APM's noise suppression/AGC, `original` captures stereo without
-  either. Input gain and meters (0..100, the web formula) run in the same
-  post-processor; per-consumer playback volume replaces the web's audio
+  either. Input gain, the input sensitivity gate (`native/src/input_gate.h`,
+  the same steps and numbers as the web worklet's `InputGate`: automatic
+  from the noise floor and RNNoise's speech probability, or a threshold;
+  off for `original` and push-to-talk; 20 ms look-ahead) and meters
+  (0..100, the web formula) run in the same post-processor; per-consumer playback volume replaces the web's audio
   elements. Above 100 % no receive stream is scaled above 1 (libwebrtc
   saturates each one on its own, which clips a loud speaker): the largest
   volume becomes a master gain on the playout after the mix, every stream
