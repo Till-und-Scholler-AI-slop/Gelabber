@@ -259,10 +259,63 @@ fn system_dark(ctx: &egui::Context) -> bool {
     crate::theme::system_dark(ctx)
 }
 
-/// The definition behind a theme id of `doc` ("system" follows the OS).
+/// Where "System" takes its colours from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SystemSource {
+    /// Omarchy's current theme, by its name.
+    Omarchy(String),
+    /// The KDE colour scheme.
+    Kde,
+    /// Gelabber Dunkel or Hell with the desktop's accent colour.
+    Accent,
+    /// Gelabber Dunkel or Hell, as the desktop's light or dark says.
+    Scheme,
+}
+
+impl SystemSource {
+    /// The "System" card's line: where its colours come from.
+    pub fn hint(&self) -> String {
+        match self {
+            Self::Omarchy(name) => texts::system_source_omarchy(name),
+            Self::Kde => texts::system_source_kde().into(),
+            Self::Accent => texts::system_source_accent().into(),
+            Self::Scheme => texts::system_hint().into(),
+        }
+    }
+}
+
+/// "System": the desktop theme's palette (Omarchy's current theme, as the
+/// preset of the same name where Gelabber has one; the KDE colour scheme),
+/// else Gelabber Dunkel or Hell in the desktop's mode and accent colour.
+pub fn system_theme(ctx: &egui::Context) -> (Definition, SystemSource) {
+    match theme::desktop_palette(ctx) {
+        Some(theme::DesktopPalette::Omarchy { slug, colors }) => {
+            let known = presets()
+                .into_iter()
+                .find(|t| t.id == slug && t.id != "dark" && t.id != "light");
+            let d = known.unwrap_or_else(|| theme::fixed(colors));
+            let name = d.name.clone();
+            (d, SystemSource::Omarchy(name))
+        }
+        Some(theme::DesktopPalette::Kde(d)) => (theme::fixed(d), SystemSource::Kde),
+        None => {
+            let mut d = preset(if system_dark(ctx) { "dark" } else { "light" });
+            match theme::os_accent(ctx) {
+                Some(accent) => {
+                    d.colors.accent = accent;
+                    (theme::fixed(d), SystemSource::Accent)
+                }
+                None => (d, SystemSource::Scheme),
+            }
+        }
+    }
+}
+
+/// The definition behind a theme id of `doc` ("system" follows the
+/// desktop, [`system_theme`]).
 fn resolve(ctx: &egui::Context, doc: &ThemeDocument, id: &str) -> Definition {
     if id == "system" {
-        return preset(if system_dark(ctx) { "dark" } else { "light" });
+        return system_theme(ctx).0;
     }
     if let Some(d) = presets().into_iter().find(|t| t.id == id) {
         return d;
@@ -922,8 +975,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         .into_iter()
         .chain(doc.custom_themes.iter().filter_map(definition_of))
         .collect();
+    let (system, source) = system_theme(&ctx);
     let chosen = if selected == "system" {
-        preset(if system_dark(&ctx) { "dark" } else { "light" })
+        system
     } else {
         all.iter()
             .find(|t| t.id == selected)
@@ -1215,7 +1269,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
                     c.text,
                 )
                 .paint(ui.painter(), pos2(x, y + 41.0));
-                Block::single(ui, texts::system_hint(), controls::HINT, c.muted)
+                Block::single(ui, &source.hint(), controls::HINT, c.muted)
                     .paint(ui.painter(), pos2(x, y + 74.0));
             }
         }
@@ -2047,6 +2101,69 @@ mod tests {
         // Linux: the portal's preference, where winit reports none.
         crate::theme::set_os_dark(&ctx, true);
         assert!(frame(egui::Theme::Light));
+    }
+
+    /// "System": the desktop theme's palette first (Omarchy's theme as the
+    /// preset of its name where Gelabber has one), then light or dark with
+    /// the desktop's accent, then plain light or dark.
+    #[test]
+    fn system_takes_the_desktop_colours() {
+        let ctx = egui::Context::default();
+        crate::theme::set_os_dark(&ctx, true);
+        assert_eq!(system_theme(&ctx), (preset("dark"), SystemSource::Scheme));
+        let doc = ThemeDocument::default();
+        assert_eq!(resolve(&ctx, &doc, "system"), preset("dark"));
+
+        let accent = Color32::from_rgb(53, 132, 228);
+        crate::theme::set_os_accent(&ctx, Some(accent));
+        let (d, source) = system_theme(&ctx);
+        assert_eq!(source, SystemSource::Accent);
+        assert_eq!(d.colors.accent, accent);
+        assert_eq!(d.colors.background, preset("dark").colors.background);
+
+        let derived = Definition {
+            id: "system".into(),
+            name: "Hackerman".into(), // i18n-ok
+            ..Definition::light()
+        };
+        let omarchy = |slug: &str| {
+            crate::theme::set_desktop_palette(
+                &ctx,
+                Some(crate::theme::DesktopPalette::Omarchy {
+                    slug: slug.into(),
+                    colors: derived.clone(),
+                }),
+            );
+        };
+        omarchy("nord");
+        assert_eq!(
+            system_theme(&ctx),
+            (preset("nord"), SystemSource::Omarchy("Nord".into()))
+        );
+        assert_eq!(resolve(&ctx, &doc, "system"), preset("nord"));
+        omarchy("hackerman");
+        // Contrast fixed as the presets are.
+        let fixed = crate::theme::fixed(derived.clone());
+        assert_eq!(
+            system_theme(&ctx),
+            (fixed.clone(), SystemSource::Omarchy("Hackerman".into()))
+        );
+        // Not Gelabber's own presets: those are no Omarchy theme.
+        omarchy("light");
+        assert_eq!(system_theme(&ctx).0, fixed);
+
+        crate::theme::set_desktop_palette(
+            &ctx,
+            Some(crate::theme::DesktopPalette::Kde(derived.clone())),
+        );
+        assert_eq!(system_theme(&ctx), (fixed, SystemSource::Kde));
+        // Other themes ignore the desktop.
+        assert_eq!(resolve(&ctx, &doc, "nord"), preset("nord"));
+
+        crate::theme::set_desktop_palette(&ctx, None);
+        crate::theme::set_os_accent(&ctx, None);
+        crate::theme::set_os_dark(&ctx, false);
+        assert_eq!(system_theme(&ctx), (preset("light"), SystemSource::Scheme));
     }
 
     #[test]

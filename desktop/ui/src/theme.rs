@@ -369,6 +369,48 @@ pub fn system_dark(ctx: &egui::Context) -> bool {
         .unwrap_or_else(|| ctx.system_theme() != Some(egui::Theme::Light))
 }
 
+/// What the desktop's theme says beyond light or dark (Linux:
+/// platform/system_colors.rs). "System" shows it instead of Gelabber
+/// Dunkel or Hell.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DesktopPalette {
+    /// Omarchy's current theme: its slug (`tokyo-night`) and its
+    /// `colors.toml` as a theme.
+    Omarchy { slug: String, colors: Definition },
+    /// The KDE colour scheme (`kdeglobals`).
+    Kde(Definition),
+}
+
+fn desktop_palette_id() -> egui::Id {
+    egui::Id::unique("gelabber-desktop-palette")
+}
+
+fn os_accent_id() -> egui::Id {
+    egui::Id::unique("gelabber-os-accent")
+}
+
+/// The desktop's palette, `None` where it has none (or no longer has one).
+pub fn set_desktop_palette(ctx: &egui::Context, palette: Option<DesktopPalette>) {
+    ctx.data_mut(|d| d.insert_temp(desktop_palette_id(), palette));
+    ctx.request_repaint();
+}
+
+pub fn desktop_palette(ctx: &egui::Context) -> Option<DesktopPalette> {
+    ctx.data(|d| d.get_temp::<Option<DesktopPalette>>(desktop_palette_id()))
+        .flatten()
+}
+
+/// The desktop's accent colour (the Settings portal's `accent-color`).
+pub fn set_os_accent(ctx: &egui::Context, accent: Option<Color32>) {
+    ctx.data_mut(|d| d.insert_temp(os_accent_id(), accent));
+    ctx.request_repaint();
+}
+
+pub fn os_accent(ctx: &egui::Context) -> Option<Color32> {
+    ctx.data(|d| d.get_temp::<Option<Color32>>(os_accent_id()))
+        .flatten()
+}
+
 /// Installs the dark default unless a theme is active already (a second
 /// app on the same window keeps the one shown).
 pub fn ensure(ctx: &egui::Context) {
