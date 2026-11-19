@@ -23,6 +23,7 @@ pub fn settings(p: &Prefs) -> CallSettings {
         stream_muted: p.source_audio_muted,
         camera_profile: p.camera_profile.clone(),
         screen_profile: p.screen_profile.clone(),
+        keep_text_sharp: p.screen_mode == "sharp",
         economy_mode: p.economy_mode,
         video_upload_limit: p.video_upload_limit,
         source_audio_app: p.source_audio_app.clone(),

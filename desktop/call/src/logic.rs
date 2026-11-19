@@ -406,12 +406,18 @@ pub fn encoding_bitrates(
     scales: &[f64],
     width: f64,
     height: f64,
-    fps: f64,
+    fps: &[f64],
+    weights: &[f64],
     share: Option<u64>,
 ) -> Vec<u64> {
     let ceilings: Vec<u64> = scales
         .iter()
-        .map(|s| video_bitrate_ceiling(width / s, height / s, fps))
+        .zip(fps)
+        .enumerate()
+        .map(|(i, (s, f))| {
+            let weight = weights.get(i).copied().unwrap_or(1.0);
+            (video_bitrate_ceiling(width / s, height / s, *f) as f64 * weight).round() as u64
+        })
         .collect();
     let Some(share) = share else {
         return ceilings;
@@ -423,14 +429,94 @@ pub fn encoding_bitrates(
         .collect()
 }
 
+/// What a Live gives up first on a tight connection (GEL-26, the web's
+/// `ScreenMode`): `Sharp` keeps the resolution and lowers the frame rate,
+/// so text stays readable; `Smooth`, the default, behaves as before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScreenMode {
+    Sharp,
+    Smooth,
+}
+
+impl ScreenMode {
+    pub fn from_sharp(sharp: bool) -> Self {
+        if sharp { Self::Sharp } else { Self::Smooth }
+    }
+
+    /// The screen track's content hint (`core::Source::screen`).
+    pub fn content_hint(self) -> &'static str {
+        match self {
+            Self::Sharp => "text",
+            Self::Smooth => "detail",
+        }
+    }
+
+    /// `default` hands the choice back to libwebrtc, as before GEL-26.
+    pub fn degradation(self) -> &'static str {
+        match self {
+            Self::Sharp => "maintain-resolution",
+            Self::Smooth => "default",
+        }
+    }
+}
+
+/// Frame rate of a sharp Live's smaller layers (the web's
+/// `SHARP_FALLBACK_FPS`): they stay cheap, so the full-size layer gets the
+/// upload, and still move often enough to carry a weak viewer.
+pub const SHARP_FALLBACK_FPS: u32 = 15;
+
+/// Share of its usual bitrate ceiling a sharp Live's smaller layer gets
+/// (the web's `SHARP_FALLBACK_WEIGHT`).
+pub const SHARP_FALLBACK_WEIGHT: f64 = 0.5;
+
+/// Per-layer weights on the bitrate ceilings (the web's
+/// `layerBitrateWeights`).
+pub fn layer_bitrate_weights(scales: &[f64], mode: Option<ScreenMode>) -> Vec<f64> {
+    if mode != Some(ScreenMode::Sharp) || scales.len() < 2 {
+        return scales.iter().map(|_| 1.0).collect();
+    }
+    let top = scales.iter().copied().fold(f64::INFINITY, f64::min);
+    scales
+        .iter()
+        .map(|s| {
+            if *s == top {
+                1.0
+            } else {
+                SHARP_FALLBACK_WEIGHT
+            }
+        })
+        .collect()
+}
+
+/// Per-layer frame rates: every layer at `fps`, or for a sharp Live with
+/// layers, the full-size one only (the web's `layerFrameRates`).
+pub fn layer_frame_rates(scales: &[f64], fps: u32, mode: Option<ScreenMode>) -> Vec<u32> {
+    if mode != Some(ScreenMode::Sharp) || scales.len() < 2 {
+        return scales.iter().map(|_| fps).collect();
+    }
+    let top = scales.iter().copied().fold(f64::INFINITY, f64::min);
+    scales
+        .iter()
+        .map(|s| {
+            if *s == top {
+                fps
+            } else {
+                fps.min(SHARP_FALLBACK_FPS)
+            }
+        })
+        .collect()
+}
+
 /// The sender parameters for a video producer: bitrate and rate per
-/// layer, low priority (audio goes first, `prioritizeSender`).
+/// layer, low priority (audio goes first, `prioritizeSender`). A Live
+/// (`mode`) also gets its content hint and degradation preference.
 pub fn video_parameters(
     current: &Value,
     profile: StreamProfile,
     width: u32,
     height: u32,
     share: Option<u64>,
+    mode: Option<ScreenMode>,
 ) -> Value {
     let encodings = current["encodings"].as_array().cloned().unwrap_or_default();
     let scales: Vec<f64> = encodings
@@ -443,14 +529,25 @@ pub fn video_parameters(
     } else {
         (profile.width, profile.height)
     };
-    let bitrates = encoding_bitrates(&scales, f64::from(w), f64::from(h), f64::from(fps), share);
+    let rates = layer_frame_rates(&scales, fps, mode);
+    let rates_f: Vec<f64> = rates.iter().map(|r| f64::from(*r)).collect();
+    let weights = layer_bitrate_weights(&scales, mode);
+    let bitrates = encoding_bitrates(
+        &scales,
+        f64::from(w),
+        f64::from(h),
+        &rates_f,
+        &weights,
+        share,
+    );
     let encodings: Vec<Value> = encodings
         .iter()
         .zip(bitrates)
-        .map(|(e, bitrate)| {
+        .zip(rates)
+        .map(|((e, bitrate), rate)| {
             let mut e = e.clone();
             e["maxBitrate"] = bitrate.into();
-            e["maxFramerate"] = fps.into();
+            e["maxFramerate"] = rate.into();
             e["priority"] = "low".into();
             if e.get("networkPriority").is_some() {
                 e["networkPriority"] = "low".into();
@@ -458,7 +555,14 @@ pub fn video_parameters(
             e
         })
         .collect();
-    json!({ "encodings": encodings })
+    match mode {
+        Some(mode) => json!({
+            "encodings": encodings,
+            "degradationPreference": mode.degradation(),
+            "contentHint": mode.content_hint(),
+        }),
+        None => json!({ "encodings": encodings }),
+    }
 }
 
 /// Audio senders go first on a full uplink.
@@ -1096,9 +1200,16 @@ mod tests {
         let total: u64 = shares.iter().map(|s| s.unwrap()).sum();
         assert!(total <= VIDEO_SEND_BUDGET);
         assert!(shares[1] > shares[0]);
-        let ceilings = encoding_bitrates(&[4.0, 2.0, 1.0], 1280.0, 720.0, 30.0, None);
+        let ceilings = encoding_bitrates(&[4.0, 2.0, 1.0], 1280.0, 720.0, &[30.0; 3], &[], None);
         assert_eq!(ceilings, vec![172_800, 691_200, 2_764_800]);
-        let split = encoding_bitrates(&[4.0, 2.0, 1.0], 1280.0, 720.0, 30.0, Some(1_000_000));
+        let split = encoding_bitrates(
+            &[4.0, 2.0, 1.0],
+            1280.0,
+            720.0,
+            &[30.0; 3],
+            &[],
+            Some(1_000_000),
+        );
         assert!(split.iter().sum::<u64>() <= 1_000_000);
     }
 
@@ -1109,7 +1220,7 @@ mod tests {
             { "active": true, "scaleResolutionDownBy": 2 },
             { "active": true, "scaleResolutionDownBy": 1, "networkPriority": "medium" },
         ]});
-        let out = video_parameters(&current, stream_profile("balanced"), 1280, 720, None);
+        let out = video_parameters(&current, stream_profile("balanced"), 1280, 720, None, None);
         assert_eq!(out["encodings"][2]["maxBitrate"], 2_764_800);
         assert_eq!(out["encodings"][0]["maxFramerate"], 30);
         assert_eq!(out["encodings"][2]["networkPriority"], "low");
@@ -1117,6 +1228,48 @@ mod tests {
         let audio = audio_parameters(&json!({"encodings": [{}]}), Some(64_000));
         assert_eq!(audio["encodings"][0]["priority"], "high");
         assert_eq!(audio["encodings"][0]["maxBitrate"], 64_000);
+    }
+
+    #[test]
+    fn a_sharp_live_keeps_its_upload_for_the_full_size_layer() {
+        let current = json!({ "encodings": [
+            { "scaleResolutionDownBy": 4 },
+            { "scaleResolutionDownBy": 2 },
+            { "scaleResolutionDownBy": 1 },
+        ]});
+        let profile = stream_profile("1080p30");
+        let sharp = video_parameters(&current, profile, 1920, 1080, None, Some(ScreenMode::Sharp));
+        let rates: Vec<u64> = (0..3)
+            .map(|i| sharp["encodings"][i]["maxFramerate"].as_u64().unwrap())
+            .collect();
+        assert_eq!(rates, vec![15, 15, 30]);
+        // The smaller layers are capped for their own 15 FPS, at half weight.
+        assert_eq!(sharp["encodings"][1]["maxBitrate"], 388_800);
+        assert_eq!(sharp["encodings"][2]["maxBitrate"], 6_220_800);
+        assert_eq!(sharp["degradationPreference"], "maintain-resolution");
+        assert_eq!(sharp["contentHint"], "text");
+
+        let smooth = video_parameters(
+            &current,
+            profile,
+            1920,
+            1080,
+            None,
+            Some(ScreenMode::Smooth),
+        );
+        assert_eq!(smooth["encodings"][0]["maxFramerate"], 30);
+        assert_eq!(smooth["degradationPreference"], "default");
+        assert_eq!(smooth["contentHint"], "detail");
+
+        // One stream (AV1) or a camera: every layer at the profile's rate.
+        assert_eq!(
+            layer_frame_rates(&[1.0], 30, Some(ScreenMode::Sharp)),
+            vec![30]
+        );
+        assert_eq!(
+            layer_frame_rates(&[4.0, 2.0, 1.0], 30, None),
+            vec![30, 30, 30]
+        );
     }
 
     #[test]

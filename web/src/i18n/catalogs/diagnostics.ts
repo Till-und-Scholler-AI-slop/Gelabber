@@ -118,6 +118,10 @@ export const diagnostics = defineCatalog(
     "flows.limitVoice": "Sprache {bitrate}",
     "flows.limitVideo": "Video {bitrate}",
     "flows.maxFps": "Video höchstens {fps} FPS.",
+    "flows.liveSharp":
+      "Live hält Text scharf: Bei wenig Bandbreite sinkt zuerst die Bildrate.",
+    "flows.liveSmooth":
+      "Live bleibt flüssig: Bei wenig Bandbreite sinkt zuerst die Auflösung.",
     "flows.layers": { one: "{count} Schicht", other: "{count} Schichten" },
     "flows.sending": "Senden:",
     "flows.receiving": "Empfangen:",
@@ -299,6 +303,10 @@ export const diagnostics = defineCatalog(
     "flows.limitVoice": "Voice {bitrate}",
     "flows.limitVideo": "Video {bitrate}",
     "flows.maxFps": "Video at most {fps} FPS.",
+    "flows.liveSharp":
+      "Live keeps text sharp: with little bandwidth the frame rate drops first.",
+    "flows.liveSmooth":
+      "Live stays smooth: with little bandwidth the resolution drops first.",
     "flows.layers": { one: "{count} layer", other: "{count} layers" },
     "flows.sending": "Sending:",
     "flows.receiving": "Receiving:",

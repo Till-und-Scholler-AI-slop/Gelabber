@@ -80,6 +80,8 @@ pub struct Prefs {
     /// `balanced` or `<height>p<fps>`.
     pub camera_profile: String,
     pub screen_profile: String,
+    /// `sharp` ("Text scharf halten") or `smooth` (GEL-26).
+    pub screen_mode: String,
     /// Bits per second; 0 = no limit.
     pub video_upload_limit: f64,
     pub call_sounds: bool,
@@ -122,6 +124,7 @@ impl Default for Prefs {
             economy_mode: false,
             camera_profile: "balanced".into(),
             screen_profile: "balanced".into(),
+            screen_mode: "smooth".into(),
             video_upload_limit: 0.0,
             call_sounds: true,
             call_sound_volume: 0.35,
@@ -180,6 +183,11 @@ impl Prefs {
             economy_mode: b("economyMode", d.economy_mode),
             camera_profile: s("cameraProfile", "balanced"),
             screen_profile: s("screenProfile", "balanced"),
+            screen_mode: if s("screenMode", "smooth") == "sharp" {
+                "sharp".into()
+            } else {
+                "smooth".into()
+            },
             video_upload_limit: n("videoUploadLimit", 0.0).max(0.0),
             call_sounds: b("callSounds", d.call_sounds),
             call_sound_volume: n("callSoundVolume", d.call_sound_volume).clamp(0.0, 1.0),
@@ -229,6 +237,7 @@ impl Prefs {
         put("economyMode", json!(self.economy_mode));
         put("cameraProfile", json!(self.camera_profile));
         put("screenProfile", json!(self.screen_profile));
+        put("screenMode", json!(self.screen_mode));
         put("videoUploadLimit", json!(self.video_upload_limit));
         put("callSounds", json!(self.call_sounds));
         put("callSoundVolume", json!(self.call_sound_volume));

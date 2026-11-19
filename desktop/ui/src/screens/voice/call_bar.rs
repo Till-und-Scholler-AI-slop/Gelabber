@@ -1299,7 +1299,8 @@ fn live_menu(
             let top = ui.cursor().min;
             hairline_h(ui.painter(), &theme, top.x..=top.x + 320.0 - 18.0, top.y);
             ui.add_space(1.0 + 4.0);
-            // "Ton mitsenden" with its switch track.
+            // "Text scharf halten" and "Ton mitsenden" with their switch tracks.
+            sharp_switch(ui, &mut p, 320.0 - 18.0, 27.0);
             sound_switch(ui, &mut p, 320.0 - 18.0, 27.0);
             if menu_entry(
                 ui,
@@ -1329,31 +1330,51 @@ fn live_menu(
     }
 }
 
+/// "Text scharf halten" (`KeepSharpSwitch`, GEL-26): a Live lowers its
+/// frame rate before its resolution; it applies at once.
+fn sharp_switch(ui: &mut Ui, p: &mut prefs::Prefs, width: f32, indent: f32) {
+    let sharp = p.screen_mode == "sharp";
+    let hint = if sharp {
+        texts::live_keep_sharp_on()
+    } else {
+        texts::live_keep_sharp_off()
+    };
+    if switch_entry(ui, texts::live_keep_sharp(), hint, sharp, width, indent) {
+        p.screen_mode = if sharp { "smooth" } else { "sharp" }.into();
+    }
+}
+
 /// "Ton mitsenden" (`ShareSoundSwitch`): the title and where the sound
 /// comes from, the switch track at the end; `indent` is where the words
 /// start (after the menu's icon column, or 10 without one).
 fn sound_switch(ui: &mut Ui, p: &mut prefs::Prefs, width: f32, indent: f32) {
-    let theme = Theme::of(ui.ctx());
-    let c = theme.c;
     let sound = sound_on(&p.source_audio_share);
     let hint = if p.source_audio_app.is_empty() {
         texts::live_sound_all_apps().to_owned()
     } else {
         texts::live_sound_from(&p.source_audio_app)
     };
-    let title = Block::single(ui, texts::live_share_sound(), text::UI, c.text);
+    if switch_entry(ui, texts::live_share_sound(), &hint, sound, width, indent) {
+        p.source_audio_share = if sound { "off" } else { "on" }.into();
+    }
+}
+
+/// A menu entry with a title, a hint and a switch track at the end; true
+/// when it was clicked.
+fn switch_entry(ui: &mut Ui, label: &str, hint: &str, on: bool, width: f32, indent: f32) -> bool {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let title = Block::single(ui, label, text::UI, c.text);
     let small = Block::wrapped(
         ui,
-        &hint,
+        hint,
         text::META,
         c.muted,
         width - 10.0 - indent - 10.0 - 32.0,
     );
     let h = (16.0 + title.height() + 2.0 + small.height()).max(36.0);
     let (rect, response) = ui.allocate_exact_size(vec2(width, h), Sense::click());
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::Role::CheckBox, true, sound, texts::live_share_sound())
-    });
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, label));
     crate::widgets::popover::focus_first(&response);
     if response.hovered() {
         ui.painter()
@@ -1368,7 +1389,7 @@ fn sound_switch(ui: &mut Ui, p: &mut prefs::Prefs, width: f32, indent: f32) {
         pos2(rect.right() - 10.0 - 32.0, rect.center().y - 9.0),
         vec2(32.0, 18.0),
     );
-    let (fill, border, knob) = if sound {
+    let (fill, border, knob) = if on {
         (c.accent, c.accent, c.accent_ink)
     } else {
         (c.surface, c.border_strong, c.muted)
@@ -1380,12 +1401,10 @@ fn sound_switch(ui: &mut Ui, p: &mut prefs::Prefs, width: f32, indent: f32) {
         Stroke::new(1.0, border),
         StrokeKind::Inside,
     );
-    let kx = track.left() + 1.0 + 2.0 + if sound { 14.0 } else { 0.0 };
+    let kx = track.left() + 1.0 + 2.0 + if on { 14.0 } else { 0.0 };
     ui.painter()
         .circle_filled(pos2(kx + 6.0, track.top() + 1.0 + 2.0 + 6.0), 6.0, knob);
-    if response.clicked() {
-        p.source_audio_share = if sound { "off" } else { "on" }.into();
-    }
+    response.clicked()
 }
 
 /// Tests hand the bar the room, which the offline client cannot load.
@@ -1484,7 +1503,10 @@ fn own_live(
     };
     let mut p = prefs::get(&ctx);
     let before = p.clone();
-    let mut extra = |ui: &mut Ui| sound_switch(ui, &mut p, 272.0 - 18.0, 0.0);
+    let mut extra = |ui: &mut Ui| {
+        sharp_switch(ui, &mut p, 272.0 - 18.0, 0.0);
+        sound_switch(ui, &mut p, 272.0 - 18.0, 0.0);
+    };
     let shown = super::watchers::list(ui, app, &room, me, rect, true, Some(&mut extra));
     if p != before {
         prefs::update(&ctx, |q| *q = p.clone());

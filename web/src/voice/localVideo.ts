@@ -28,6 +28,7 @@ import {
   defaultGetUserMedia,
   hasLiveTrack,
   hintTrack,
+  screenHint,
   type LocalVideo,
   logVoice,
   publishingConnection,
@@ -75,6 +76,22 @@ function applyTrackConstraints(
   ).applyConstraints;
   if (!apply) return null;
   return apply.call(track, constraints);
+}
+
+/** A Live's mode changed (GEL-26): the screen track gets the matching
+ * content hint and the senders their layer rates and degradation
+ * preference. The capture keeps running. */
+export async function applyScreenMode(): Promise<void> {
+  voice.screenStream
+    ?.getVideoTracks()
+    .forEach((track) => hintTrack(track, screenHint()));
+  const pc = voice.seat.connection;
+  if (!pc || useVoice.getState().status !== "joined") return;
+  try {
+    await voice.videoBudget.enqueue(pc);
+  } catch {
+    // sender caps are best-effort
+  }
 }
 
 /**
@@ -437,7 +454,7 @@ export async function startLocalVideo(kind: LocalVideo): Promise<void> {
   } else {
     stopTracks(voice.screenStream);
     voice.screenStream = stream;
-    stream.getVideoTracks().forEach((track) => hintTrack(track, "detail"));
+    stream.getVideoTracks().forEach((track) => hintTrack(track, screenHint()));
     useVoice.setState({ sharing: true, localScreen: stream });
   }
   noteStreamProfileApply(kind === "v" ? "camera" : "screen", "idle");

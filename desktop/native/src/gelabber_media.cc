@@ -102,6 +102,18 @@ namespace
 {
 	thread_local std::string lastError;
 
+	/// A video track's content hint by its web name (`contentHint`).
+	webrtc::VideoTrackInterface::ContentHint ContentHintOf(const std::string& hint)
+	{
+		if (hint == "detail")
+			return webrtc::VideoTrackInterface::ContentHint::kDetailed;
+		if (hint == "text")
+			return webrtc::VideoTrackInterface::ContentHint::kText;
+		if (hint == "motion")
+			return webrtc::VideoTrackInterface::ContentHint::kFluid;
+		throw std::invalid_argument("contentHint must be detail, text or motion");
+	}
+
 	void setError(const std::string& message)
 	{
 		lastError = message;
@@ -1091,16 +1103,7 @@ gm_source* gm_source_new_screen(gm_engine* engine, const char* optionsJson)
 		screen.cursor = options.value("cursor", true);
 		if (screen.fps < 1 || screen.fps > 120)
 			throw std::invalid_argument("fps out of range");
-		const auto hint = options.value("contentHint", std::string("detail"));
-		webrtc::VideoTrackInterface::ContentHint contentHint;
-		if (hint == "detail")
-			contentHint = webrtc::VideoTrackInterface::ContentHint::kDetailed;
-		else if (hint == "text")
-			contentHint = webrtc::VideoTrackInterface::ContentHint::kText;
-		else if (hint == "motion")
-			contentHint = webrtc::VideoTrackInterface::ContentHint::kFluid;
-		else
-			throw std::invalid_argument("contentHint must be detail, text or motion");
+		const auto contentHint = ContentHintOf(options.value("contentHint", std::string("detail")));
 
 		auto source = gelabber::CreateScreenSource(screen);
 		auto track  = engine->factory->CreateVideoTrack(source, engine->TrackId("screen"));
@@ -1434,6 +1437,29 @@ int gm_producer_set_parameters(gm_producer* producer, const char* parametersJson
 		const auto update = json::parse(parametersJson ? parametersJson : "{}");
 		auto* sender      = SenderOf(producer);
 		auto params       = sender->GetParameters();
+		// A Live's mode (GEL-26): what the encoder gives up first, and the
+		// track's content hint, both changeable while it is sent.
+		if (update.contains("degradationPreference"))
+		{
+			const auto name = update["degradationPreference"].get<std::string>();
+			if (name == "maintain-resolution")
+				params.degradation_preference = webrtc::DegradationPreference::MAINTAIN_RESOLUTION;
+			else if (name == "maintain-framerate")
+				params.degradation_preference = webrtc::DegradationPreference::MAINTAIN_FRAMERATE;
+			else if (name == "balanced")
+				params.degradation_preference = webrtc::DegradationPreference::BALANCED;
+			else if (name == "default")
+				params.degradation_preference = std::nullopt;
+			else
+				throw std::invalid_argument("unknown degradation preference " + name);
+		}
+		if (update.contains("contentHint"))
+		{
+			const auto hint = ContentHintOf(update["contentHint"].get<std::string>());
+			auto track      = sender->track();
+			if (track && track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind)
+				static_cast<webrtc::VideoTrackInterface*>(track.get())->set_content_hint(hint);
+		}
 		const auto& items = update.value("encodings", json::array());
 		if (items.size() > params.encodings.size())
 			throw std::invalid_argument("more encodings than the sender has");

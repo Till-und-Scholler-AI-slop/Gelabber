@@ -44,6 +44,11 @@ export const voice = defineCatalog(
     "live.soundHint": "Wähle den Ton im Freigabedialog des Browsers aus.",
     "live.soundHintNextLive":
       "Wähle den Ton im Freigabedialog des Browsers aus. Ab dem nächsten Live.",
+    "live.keepSharp": "Text scharf halten",
+    "live.keepSharpOn":
+      "Bei schwacher Verbindung sinkt zuerst die Bildrate. Gut für Office und Terminal.",
+    "live.keepSharpOff":
+      "Bei schwacher Verbindung sinkt zuerst die Auflösung. Gut für Spiele und Videos.",
     "holdToTalk.hold": "Zum Sprechen gedrückt halten",
     "holdToTalk.talking": "Du sprichst",
     "pushToTalk.mouse4": "Maustaste 4",
@@ -270,6 +275,11 @@ export const voice = defineCatalog(
     "live.soundHint": "Pick the sound in your browser’s sharing dialog.",
     "live.soundHintNextLive":
       "Pick the sound in your browser’s sharing dialog. From your next Live.",
+    "live.keepSharp": "Keep text sharp",
+    "live.keepSharpOn":
+      "On a weak connection the frame rate drops first. Good for office work and terminals.",
+    "live.keepSharpOff":
+      "On a weak connection the resolution drops first. Good for games and videos.",
     "holdToTalk.hold": "Hold to talk",
     "holdToTalk.talking": "You’re talking",
     "pushToTalk.mouse4": "Mouse button 4",

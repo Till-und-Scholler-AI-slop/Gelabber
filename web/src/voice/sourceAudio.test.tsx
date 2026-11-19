@@ -127,10 +127,11 @@ const choose = (settings: Partial<MediaSettings>) =>
 const menu = () => renderToStaticMarkup(<LiveMenuItems canLive />);
 const session = () => renderToStaticMarkup(<VoiceSessionControls />);
 const form = () => renderToStaticMarkup(<MediaSettingsForm />);
-/** The "Ton mitsenden" entry of the Live menu, or null. */
+/** The "Ton mitsenden" entry of the Live menu, or null. The menu also has
+ * "Text scharf halten" (GEL-26), an entry of the same kind. */
 const soundEntry = (html: string) =>
   html.match(
-    /<button[^>]*role="menuitemcheckbox"[^>]*>(?:(?!<\/button>).)*<\/button>/,
+    /<button[^>]*role="menuitemcheckbox"[^>]*aria-label="Ton mitsenden"[^>]*>(?:(?!<\/button>).)*<\/button>/,
   )?.[0] ?? null;
 /** What the entry says about whose sound a share carries. */
 function soundControlHint(): string | null {
@@ -180,11 +181,29 @@ function propsOf(node: ReactNode, wanted: (props: Props) => boolean): Props {
   if (!found) throw new Error("no such element");
   return found;
 }
+/** The props of the first element of the given component. */
+function elementOf(node: ReactNode, type: unknown): Props {
+  const search = (at: ReactNode): Props | null => {
+    if (Array.isArray(at)) {
+      for (const child of at) {
+        const found = search(child);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (!isValidElement(at)) return null;
+    const props = at.props as Props;
+    return at.type === type ? props : search(props.children as ReactNode);
+  };
+  const found = search(node);
+  if (!found) throw new Error("no such element");
+  return found;
+}
 /** Presses the switch in the Live menu. */
 function pressSoundControl(): void {
-  const entry = propsOf(
+  const entry = elementOf(
     elements(() => LiveMenuItems({ canLive: true })),
-    (props) => props.role === "menuitemcheckbox",
+    ShareSoundSwitch,
   );
   // The entry is the switch's own component: what that hands to React.
   const button = propsOf(

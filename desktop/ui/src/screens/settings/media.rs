@@ -1155,6 +1155,18 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             gap(ui);
             hint(ui, texts::media_live_quality_hint());
         });
+        // "Text scharf halten" (GEL-26); the same switch sits in the Live menu.
+        setting_row(ui, texts::media_live_keep_sharp(), false, |ui| {
+            let mut sharp = p.screen_mode == "sharp";
+            let hint = if sharp {
+                texts::media_live_keep_sharp_on()
+            } else {
+                texts::media_live_keep_sharp_off()
+            };
+            if switch_line(ui, "screen-keep-sharp", hint, &mut sharp, false) {
+                p.screen_mode = if sharp { "sharp" } else { "smooth" }.into();
+            }
+        });
         setting_row(ui, texts::media_live_share_sound(), false, |ui| {
             // `sharesSourceAudio` where "every application" leaves Gelabber
             // out: unchosen means on, so off is a choice to keep.

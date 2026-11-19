@@ -21,6 +21,7 @@ import type {
   ReceivedSource,
 } from "./mediasoupConnection.ts";
 import {
+  type ScreenMode,
   type StreamProfileId,
   audioBitrate,
   sourceAudioBitrate,
@@ -294,7 +295,7 @@ export async function defaultGetDisplayMedia(
 
 export function hintTrack(
   track: MediaStreamTrack,
-  hint: "speech" | "detail" | "music",
+  hint: "speech" | "detail" | "music" | "text",
 ): void {
   try {
     (track as MediaStreamTrack & { contentHint?: string }).contentHint = hint;
@@ -413,6 +414,14 @@ export async function applySendBitrate(): Promise<void> {
         voice.seat.connection === pc && voice.seat.generation === generation,
     );
   }
+}
+
+/** The content hint of a Live by its mode (GEL-26): "text" when it keeps
+ * text sharp, otherwise "detail" as before. */
+export function screenHint(
+  mode: ScreenMode = useMediaSettings.getState().screenMode,
+): "text" | "detail" {
+  return mode === "sharp" ? "text" : "detail";
 }
 
 export function profileForVideoTrack(track: MediaStreamTrack): StreamProfileId {
