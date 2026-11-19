@@ -164,7 +164,8 @@ export type MediaSettings = {
   cameraProfile: StreamProfileId;
   /** Live (a display capture). */
   screenProfile: StreamProfileId;
-  /** Whether a Live keeps text sharp or motion smooth on a tight connection. */
+  /** Whether a Live keeps text sharp on a tight connection ("sharp") or
+   * behaves as before GEL-26 ("smooth", the default). */
   screenMode: ScreenMode;
   /** 0 = no custom limit; otherwise explicit shared video payload cap in bit/s. */
   videoUploadLimit: number;
@@ -204,7 +205,7 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   economyMode: false,
   cameraProfile: "balanced",
   screenProfile: "balanced",
-  screenMode: "sharp",
+  screenMode: "smooth",
   videoUploadLimit: 0,
   callSounds: true,
   callSoundVolume: 0.35,
@@ -383,7 +384,7 @@ export function asStreamProfile(value: unknown): StreamProfileId {
 }
 
 export function asScreenMode(value: unknown): ScreenMode {
-  return value === "smooth" ? "smooth" : "sharp";
+  return value === "sharp" ? "sharp" : "smooth";
 }
 
 export function clampVideoUploadLimit(value: unknown): number {

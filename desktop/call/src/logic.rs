@@ -431,7 +431,7 @@ pub fn encoding_bitrates(
 
 /// What a Live gives up first on a tight connection (GEL-26, the web's
 /// `ScreenMode`): `Sharp` keeps the resolution and lowers the frame rate,
-/// so text stays readable; `Smooth` keeps the frame rate.
+/// so text stays readable; `Smooth`, the default, behaves as before.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScreenMode {
     Sharp,
@@ -447,14 +447,15 @@ impl ScreenMode {
     pub fn content_hint(self) -> &'static str {
         match self {
             Self::Sharp => "text",
-            Self::Smooth => "motion",
+            Self::Smooth => "detail",
         }
     }
 
+    /// `default` hands the choice back to libwebrtc, as before GEL-26.
     pub fn degradation(self) -> &'static str {
         match self {
             Self::Sharp => "maintain-resolution",
-            Self::Smooth => "maintain-framerate",
+            Self::Smooth => "default",
         }
     }
 }
@@ -1257,8 +1258,8 @@ mod tests {
             Some(ScreenMode::Smooth),
         );
         assert_eq!(smooth["encodings"][0]["maxFramerate"], 30);
-        assert_eq!(smooth["degradationPreference"], "maintain-framerate");
-        assert_eq!(smooth["contentHint"], "motion");
+        assert_eq!(smooth["degradationPreference"], "default");
+        assert_eq!(smooth["contentHint"], "detail");
 
         // One stream (AV1) or a camera: every layer at the profile's rate.
         assert_eq!(

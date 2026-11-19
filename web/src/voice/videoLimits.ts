@@ -1,7 +1,8 @@
 // The upload budget on the seat's video senders: bitrate and FPS caps per
 // stream profile, and the senders' priorities.
 //
-// A Live in sharp mode (GEL-26) keeps text readable on a tight connection.
+// A Live in sharp mode (GEL-26, off by default) keeps text readable on a
+// tight connection.
 // libwebrtc only switches on the full-size simulcast layer once the smaller
 // ones have their bitrate, so a sharp Live makes them cheap (15 FPS, half
 // the usual ceiling) and the full-size layer stays on at a lower upload.
@@ -97,13 +98,12 @@ export function layerBitrateWeights(
   return scales.map((scale) => (scale === top ? 1 : SHARP_FALLBACK_WEIGHT));
 }
 
-/** What a sender gives up first when it is short of bits or CPU. */
+/** What a sender gives up first when it is short of bits or CPU: a sharp
+ * Live keeps its resolution, anything else keeps the browser's choice. */
 export function degradationFor(
   mode: ScreenMode | null,
 ): RTCDegradationPreference | undefined {
-  if (mode === "sharp") return "maintain-resolution";
-  if (mode === "smooth") return "maintain-framerate";
-  return undefined;
+  return mode === "sharp" ? "maintain-resolution" : undefined;
 }
 
 function sizeOf(track: MediaStreamTrack): string {
@@ -251,7 +251,9 @@ export class VideoLimits {
         encoding.maxFramerate = rates[layer]!;
       }
       const degradation = degradationFor(mode);
+      // Unset again when a Live leaves sharp mode.
       if (degradation) params.degradationPreference = degradation;
+      else delete params.degradationPreference;
       try {
         await sender.setParameters?.(params);
       } catch {

@@ -121,9 +121,9 @@ describe("a Live that keeps text sharp (GEL-26)", () => {
     ]);
   });
 
-  it("keeps the resolution when sharp and the frame rate when smooth", () => {
+  it("keeps the resolution when sharp and the browser's choice otherwise", () => {
     expect(degradationFor("sharp")).toBe("maintain-resolution");
-    expect(degradationFor("smooth")).toBe("maintain-framerate");
+    expect(degradationFor("smooth")).toBeUndefined();
     expect(degradationFor(null)).toBeUndefined();
   });
 
@@ -168,14 +168,14 @@ describe("a Live that keeps text sharp (GEL-26)", () => {
     return params;
   }
 
-  it("sets a sharp Live's sender, and a smooth one's", async () => {
+  it("sets a sharp Live's sender, and leaves a default one as before", async () => {
+    const before = await sent("s");
+    expect(before.encodings.map((e) => e.maxFramerate)).toEqual([30, 30, 30]);
+    expect(before.degradationPreference).toBeUndefined();
+    useMediaSettings.getState().patch({ screenMode: "sharp" });
     const sharp = await sent("s");
     expect(sharp.encodings.map((e) => e.maxFramerate)).toEqual([15, 15, 30]);
     expect(sharp.degradationPreference).toBe("maintain-resolution");
-    useMediaSettings.getState().patch({ screenMode: "smooth" });
-    const smooth = await sent("s");
-    expect(smooth.encodings.map((e) => e.maxFramerate)).toEqual([30, 30, 30]);
-    expect(smooth.degradationPreference).toBe("maintain-framerate");
   });
 
   it("leaves a camera as it was", async () => {
@@ -185,6 +185,7 @@ describe("a Live that keeps text sharp (GEL-26)", () => {
   });
 
   it("still caps a browser that refuses the degradation preference", async () => {
+    useMediaSettings.getState().patch({ screenMode: "sharp" });
     const refused = await sent("s", true);
     expect(refused.encodings.map((e) => e.maxFramerate)).toEqual([15, 15, 30]);
     expect(refused.degradationPreference).toBeUndefined();

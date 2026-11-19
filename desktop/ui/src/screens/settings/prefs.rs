@@ -124,7 +124,7 @@ impl Default for Prefs {
             economy_mode: false,
             camera_profile: "balanced".into(),
             screen_profile: "balanced".into(),
-            screen_mode: "sharp".into(),
+            screen_mode: "smooth".into(),
             video_upload_limit: 0.0,
             call_sounds: true,
             call_sound_volume: 0.35,
@@ -183,10 +183,10 @@ impl Prefs {
             economy_mode: b("economyMode", d.economy_mode),
             camera_profile: s("cameraProfile", "balanced"),
             screen_profile: s("screenProfile", "balanced"),
-            screen_mode: if s("screenMode", "sharp") == "smooth" {
-                "smooth".into()
-            } else {
+            screen_mode: if s("screenMode", "smooth") == "sharp" {
                 "sharp".into()
+            } else {
+                "smooth".into()
             },
             video_upload_limit: n("videoUploadLimit", 0.0).max(0.0),
             call_sounds: b("callSounds", d.call_sounds),

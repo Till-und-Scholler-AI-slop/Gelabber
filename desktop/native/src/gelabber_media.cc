@@ -1448,6 +1448,8 @@ int gm_producer_set_parameters(gm_producer* producer, const char* parametersJson
 				params.degradation_preference = webrtc::DegradationPreference::MAINTAIN_FRAMERATE;
 			else if (name == "balanced")
 				params.degradation_preference = webrtc::DegradationPreference::BALANCED;
+			else if (name == "default")
+				params.degradation_preference = std::nullopt;
 			else
 				throw std::invalid_argument("unknown degradation preference " + name);
 		}

@@ -1157,7 +1157,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         });
         // "Text scharf halten" (GEL-26); the same switch sits in the Live menu.
         setting_row(ui, texts::media_live_keep_sharp(), false, |ui| {
-            let mut sharp = p.screen_mode != "smooth";
+            let mut sharp = p.screen_mode == "sharp";
             let hint = if sharp {
                 texts::media_live_keep_sharp_on()
             } else {

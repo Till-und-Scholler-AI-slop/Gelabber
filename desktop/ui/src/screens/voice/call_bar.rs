@@ -1333,7 +1333,7 @@ fn live_menu(
 /// "Text scharf halten" (`KeepSharpSwitch`, GEL-26): a Live lowers its
 /// frame rate before its resolution; it applies at once.
 fn sharp_switch(ui: &mut Ui, p: &mut prefs::Prefs, width: f32, indent: f32) {
-    let sharp = p.screen_mode != "smooth";
+    let sharp = p.screen_mode == "sharp";
     let hint = if sharp {
         texts::live_keep_sharp_on()
     } else {
