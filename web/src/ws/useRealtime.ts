@@ -451,6 +451,18 @@ export function joinedMember(event: ChatEvent): Member | null {
 }
 
 /**
+ * Who left a server on their own (`t: "c"`, `d: {"k": "l"}`, GEL-22), or
+ * `null` for any other event.
+ */
+export function leftMember(event: ChatEvent): string | null {
+  if (event.t !== "c" || event.c || !event.i) return null;
+  const d = event.d;
+  if (d === null || typeof d !== "object" || !("k" in d) || d.k !== "l")
+    return null;
+  return event.i;
+}
+
+/**
  * One gateway event into the cache, as the bridge applies it. Answers
  * whether this account was removed from the event's server, and how.
  */
@@ -475,6 +487,14 @@ export function applyGatewayEvent(
     // This account's own join came with its answer; the list refetches.
     if (joined.user_id !== userId)
       applyMemberJoined(client, userId, generation, event.s, joined);
+    return null;
+  }
+  const left = leftMember(event);
+  if (left) {
+    // This account's own leave was handled where it was asked for; it is
+    // never a "removed" notice.
+    if (left !== userId)
+      applyMemberRemoved(client, userId, generation, event.s, left);
     return null;
   }
   if (event.t !== "d" || !event.i) return null;

@@ -482,7 +482,31 @@ async fn leave_server(
     tx.commit().await?;
     state.gateway.announce_recheck(Recheck::User(user.id)).await;
     info!(server_id = %server_id, user_id = %user.id, "member left");
+    publish_left(&state, server_id, user.id).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// After the commit of a member leaving on their own: the server's other
+/// members drop them from their lists at once (GEL-22). A server event
+/// `{"t": "c", "i": <user>, "d": {"k": "l"}}`, next to the join's `"j"`.
+/// Not the removal event `t: "d"`: released clients read a server `t: "d"`
+/// for their own id as "you were removed", and the leaver's sockets on
+/// other API processes can still be on the topic until their recheck lands.
+/// Older clients ignore a server `t: "c"` event that is not `"j"`.
+/// Best effort, like the other server events: a client that misses it
+/// loses the member on its next detail read.
+async fn publish_left(state: &AppState, server_id: Uuid, user_id: Uuid) {
+    if let Err(err) = publish_server(
+        state,
+        server_id,
+        EventKind::C,
+        Some(user_id),
+        Some(serde_json::json!({ "k": "l" })),
+    )
+    .await
+    {
+        warn!(error = err.code(), %server_id, "member left event not published");
+    }
 }
 
 /// Owner only: another member becomes the owner (#519 §4.1). The previous

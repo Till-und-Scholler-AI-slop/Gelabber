@@ -2349,7 +2349,9 @@ impl Client {
                 let (removed, created) = self.write(|s| {
                     let removed = s.apply_event(&event);
                     let me = s.me().map(|u| u.id);
-                    let created = (event.t == EventKind::C)
+                    // Server-topic `c` events are member joins and leaves,
+                    // not messages.
+                    let created = (event.t == EventKind::C && event.c.is_some())
                         .then(|| event.message())
                         .flatten()
                         .filter(|m| Some(m.author.id) != me)
