@@ -204,11 +204,15 @@ try {
         .click();
       const composer = member.page.locator("form textarea").last();
       await composer.fill("draft across navigation and reload");
-      await member.page.locator('input[type="file"]').setInputFiles({
-        name: "draft.txt",
-        mimeType: "text/plain",
-        buffer: Buffer.from("unsent file"),
-      });
+      // The first of the paperclip's inputs takes every type (#574).
+      await member.page
+        .locator('input[type="file"]')
+        .first()
+        .setInputFiles({
+          name: "draft.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("unsent file"),
+        });
       await member.page
         .locator(`.channel-sidebar a[href="${path}"]`)
         .first()
@@ -281,6 +285,60 @@ try {
       15_000,
     );
   });
+  await check(
+    "file note closes with ×, Escape, typing and its time (GEL-8)",
+    async () => {
+      const page = member.page;
+      await page.goto(`${base}${path}`);
+      const composer = page.locator("form textarea").last();
+      const note = page.locator(".lr-composer-file-error");
+      const refuse = () =>
+        page
+          .locator('input[type="file"]')
+          .first()
+          .setInputFiles({
+            name: "setup.exe",
+            mimeType: "application/x-msdownload",
+            buffer: Buffer.from("MZ"),
+          });
+      const text = "setup.exe: Dieser Dateityp ist nicht erlaubt.";
+      await refuse();
+      await note.getByText(text, { exact: true }).waitFor();
+      await page.screenshot({ path: `${output}/file-note.png` });
+      await page.getByRole("button", { name: "Hinweis schließen" }).click();
+      await note.waitFor({ state: "detached" });
+      await refuse();
+      await note.waitFor();
+      await composer.focus();
+      await page.keyboard.press("Escape");
+      await note.waitFor({ state: "detached" });
+      await refuse();
+      await note.waitFor();
+      await composer.pressSequentially("H");
+      await note.waitFor({ state: "detached" });
+      await composer.fill("");
+      // A file that is fine after one left out: no note stays.
+      await refuse();
+      await note.waitFor();
+      await page
+        .locator('input[type="file"]')
+        .first()
+        .setInputFiles({
+          name: "liste.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("Milch"),
+        });
+      await note.waitFor({ state: "detached" });
+      await page.getByRole("button", { name: "liste.txt entfernen" }).click();
+      // Held while the pointer is on it, gone 8 s after it leaves.
+      await refuse();
+      await note.hover();
+      await page.waitForTimeout(9_000);
+      assert.equal(await note.count(), 1);
+      await page.mouse.move(0, 0);
+      await note.waitFor({ state: "detached", timeout: 9_500 });
+    },
+  );
   await check("DM drafts and search use the same scoped workflow", async () => {
     const dm = (await api(owner, "/dms", "POST", { user_id: member.id })).body
       .id;

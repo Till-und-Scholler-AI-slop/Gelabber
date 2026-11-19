@@ -449,6 +449,9 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         if let Some(composer) = chat.composers.get_mut(&channel) {
             composer.emoji_open = false;
             composer.gif_open = false;
+            // The note on files left out goes with the page, as on the
+            // web, where the composer is mounted afresh (GEL-8).
+            composer.set_file_error(None);
         }
         chat.picker = Default::default();
         chat.gif = Default::default();
