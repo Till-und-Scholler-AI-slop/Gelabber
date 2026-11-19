@@ -150,8 +150,8 @@ jobs:
         run: |
           set -euo pipefail
           failed=0
-          for engine in chromium firefox; do
-            for profile in core-faults media-faults; do
+          for engine in chromium; do
+            for profile in media-faults; do
               owned_media_env="$GELABBER_E2E_MEDIA_FAULT_ENV"
               owned_media_manifest="$GELABBER_E2E_MEDIA_MANIFEST"
               if [ "$profile" = core-faults ]; then
@@ -174,7 +174,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: app-acceptance-core-faults
-          path: /tmp/gelabber-e2e/*.json
+          path: /tmp/gelabber-e2e/*
           if-no-files-found: warn
 
       # The chat in a real browser: read state, scoped search, drafts, a

@@ -362,6 +362,19 @@ export async function startHarness() {
         metrics: await task(),
       };
     } catch (error) {
+      // DEBUG ONLY (GEL-33 investigation branch, never merged).
+      console.error("DEBUG", id, String(error?.message ?? error).slice(0, 2000));
+      for (const [i, a] of actors.entries()) {
+        await a.page
+          .screenshot({ path: `/tmp/gelabber-e2e/shot-${id}-${i}-${a.label}.png` })
+          .catch(() => {});
+        const room = await a.page
+          .locator(".voice-room")
+          .first()
+          .innerText({ timeout: 1000 })
+          .catch(() => "(no .voice-room)");
+        console.error("DEBUG", a.label, a.page.url().replace(/^https?:\/\/[^/]+/, ""), JSON.stringify(room.slice(0, 600)));
+      }
       if (error instanceof NativeInterfaceFailure)
         nativeInterfaceBlocked = true;
       row = {
