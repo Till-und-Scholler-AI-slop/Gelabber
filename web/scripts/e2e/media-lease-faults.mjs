@@ -147,6 +147,20 @@ export async function leaseFaultScenarios(h, options) {
           resumed,
           freshSource,
         });
+      } catch (error) {
+        // DEBUG ONLY (GEL-33 investigation branch, never merged).
+        for (const a of [f.owner, f.member, f.watcher]) {
+          await a.page
+            .screenshot({ path: `/tmp/gelabber-e2e/lease-${plane}-${a.label}.png` })
+            .catch(() => {});
+          const room = await a.page
+            .locator(".voice-room")
+            .first()
+            .innerText({ timeout: 1000 })
+            .catch(() => "(no .voice-room)");
+          console.error("DEBUG lease", plane, a.label, JSON.stringify(room.slice(0, 800)));
+        }
+        throw error;
       } finally {
         // These faults affect only captured own child/proxy references.
         await closeLeaseFixture(h, f, restored);
