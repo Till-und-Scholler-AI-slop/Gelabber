@@ -179,7 +179,10 @@ export async function startHarness() {
     cleanup: [],
   };
   async function actor(label) {
+    // The scenarios find controls by their German names, and the
+    // app follows the browser's language (src/i18n/locale.ts), English on CI.
     const context = await browser.newContext({
+      locale: "de-DE",
       permissions:
         engine === "chromium" && !label.includes("Watch")
           ? ["camera", "microphone"]
@@ -469,7 +472,7 @@ export async function startHarness() {
       try {
         // A separate login lets logout/revocation scenarios leave the original socket untouched.
         context = await deadlineProbe(
-          () => browser.newContext(),
+          () => browser.newContext({ locale: "de-DE" }),
           Date.now() + 12_000,
         );
         const page = await deadlineProbe(
