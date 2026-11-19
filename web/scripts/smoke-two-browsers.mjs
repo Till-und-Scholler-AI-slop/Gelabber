@@ -450,7 +450,7 @@ try {
     const bytes = await readFile(
       new URL(`./fixtures/${filename}`, import.meta.url),
     );
-    await a.page.locator('input[type="file"]').setInputFiles({
+    await a.page.locator('input[type="file"]').first().setInputFiles({
       name: filename,
       mimeType: type,
       buffer: bytes,

@@ -237,6 +237,7 @@ export async function coreScenarios(h, f) {
           try {
             await f.owner.page
               .locator('input[type="file"]')
+              .first()
               .setInputFiles({ name: filename, mimeType, buffer: bytes });
             await send(
               f.owner,

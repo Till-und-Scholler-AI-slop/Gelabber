@@ -369,7 +369,7 @@ export async function startHarness() {
                 ? "test-error"
                 : "unconfirmed-failure",
         site:
-          /scripts\/e2e\/([a-z.]+:\d+:\d+)/.exec(error.stack ?? "")?.[1] ??
+          /scripts\/e2e\/([a-z.-]+:\d+:\d+)/.exec(error.stack ?? "")?.[1] ??
           null,
         ...(error instanceof CheckFailure ||
         error instanceof NativeInterfaceFailure
