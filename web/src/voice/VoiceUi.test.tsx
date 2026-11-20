@@ -188,6 +188,7 @@ beforeEach(() => {
     sourceWatchSupported: true,
     sourceAudio: { s: "off" },
     sourceSubscriptions: {},
+    liveViewModes: {},
     localCamera: null,
     localScreen: null,
     remote: {},

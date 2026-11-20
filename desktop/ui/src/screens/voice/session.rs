@@ -161,6 +161,9 @@ pub struct Picture {
     pub speaking: bool,
     /// Someone else's Live that this client watches.
     pub watching: bool,
+    /// This client's choice for that Live (GEL-32): sharp, smooth, or as
+    /// its owner set it (`None`).
+    pub view_mode: Option<bool>,
     pub own: bool,
 }
 
@@ -319,6 +322,7 @@ pub fn build(s: &State, call: &CallState, server: Uuid, channel: Uuid) -> Option
                 mirror: false,
                 speaking: false,
                 watching: !own && p.is_some_and(|p| p.watching),
+                view_mode: p.and_then(|p| p.view_mode),
                 own,
             });
         }
@@ -333,6 +337,7 @@ pub fn build(s: &State, call: &CallState, server: Uuid, channel: Uuid) -> Option
                 mirror: own,
                 speaking: speaks,
                 watching: false,
+                view_mode: None,
                 own,
             });
         }

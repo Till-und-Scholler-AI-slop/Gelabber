@@ -887,6 +887,8 @@ pub struct PictureOut {
     pub pin: bool,
     pub fullscreen: bool,
     pub watch: Option<bool>,
+    /// "Bildqualität" chosen (GEL-32): sharp, smooth, or as sent (`None`).
+    pub view_mode: Option<Option<bool>>,
 }
 
 /// A camera or Live on the stage (`VoiceTile` in `.voice-stage-item`).
@@ -1162,6 +1164,11 @@ pub fn picture(
         _ => (32.0, 6.0, 10.0, 10.0),
     };
     let mut buttons: Vec<(Icon, &str, bool, u8)> = Vec::new();
+    // `LiveViewMenu`: the picture quality of someone else's Live.
+    if live && pic.watching && !pic.own {
+        let open = view_open(ui.ctx()) == Some((pic.id, false));
+        buttons.push((Icon::Gear, texts::view_label(), open, 5));
+    }
     if live && pic.watching {
         buttons.push((Icon::EyeOff, texts::tile_stop_watching(), false, 0));
     }
@@ -1240,11 +1247,15 @@ pub fn picture(
                     let open = more_open(ui.ctx()) == Some(pic.id);
                     set_more_open(ui.ctx(), (!open).then_some((pic.id, r)));
                 }
+                5 => toggle_view(ui.ctx(), pic.id, false),
                 _ => out.fullscreen = true,
             }
         }
         if *action == 4 {
             tile_menu(ui, pic, r);
+        }
+        if *action == 5 {
+            out.view_mode = view_menu(ui, pic, r, false).or(out.view_mode);
         }
     }
     if body.double_clicked() {
@@ -1272,6 +1283,118 @@ fn more_open(ctx: &egui::Context) -> Option<stage::PicId> {
 
 fn set_more_open(ctx: &egui::Context, open: Option<(stage::PicId, Rect)>) {
     ctx.data_mut(|d| d.insert_temp(more_id(), open));
+}
+
+fn view_id() -> Id {
+    Id::unique("gelabber-voice-view-menu")
+}
+
+/// Whose "Bildqualität" menu is open, and whether from the watch strip.
+fn view_open(ctx: &egui::Context) -> Option<(stage::PicId, bool)> {
+    ctx.data(|d| d.get_temp::<Option<(stage::PicId, bool)>>(view_id()))
+        .flatten()
+}
+
+/// Opens or closes the "Bildqualität" menu of `pic`.
+pub(super) fn toggle_view(ctx: &egui::Context, pic: stage::PicId, strip: bool) {
+    let open = view_open(ctx) == Some((pic, strip));
+    ctx.data_mut(|d| d.insert_temp(view_id(), (!open).then_some((pic, strip))));
+}
+
+/// The choices of `LiveViewMenu`: as sent, sharp text, smooth.
+fn view_choices() -> [(Option<bool>, &'static str, &'static str); 3] {
+    [
+        (None, texts::view_auto(), texts::view_auto_hint()),
+        (Some(true), texts::view_sharp(), texts::view_sharp_hint()),
+        (Some(false), texts::view_smooth(), texts::view_smooth_hint()),
+    ]
+}
+
+/// `LiveViewMenu` (GEL-32): "Wie gesendet", "Text scharf" or "Flüssig"
+/// for someone else's Live, each with its hint, the chosen one checked.
+/// Under the gear on the tile, over the button in the watch strip; returns
+/// the choice once made.
+pub(super) fn view_menu(
+    ui: &mut Ui,
+    pic: &Picture,
+    anchor: Rect,
+    strip: bool,
+) -> Option<Option<bool>> {
+    let ctx = ui.ctx().clone();
+    if view_open(&ctx) != Some((pic.id, strip)) {
+        return None;
+    }
+    // `.voice-share-menu`: 320 wide, the popover's padding and border inside.
+    const WIDTH: f32 = 320.0;
+    let popover = Popover::new(("voice-view-menu", pic.id.user, strip), anchor)
+        .align_end()
+        .min_width(WIDTH);
+    let popover = if strip { popover.above() } else { popover };
+    let shown = popover.show(&ctx, |ui| {
+        let theme = Theme::of(ui.ctx());
+        let c = theme.c;
+        let width = WIDTH - 18.0;
+        // `.voice-menu-item`: 8 by 10 padding, a 17px icon, a 10px gap.
+        let text_x = 10.0 + 17.0 + 10.0;
+        // `.voice-menu`: 2px between the entries.
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        let mut chosen = None;
+        for (i, (mode, name, hint)) in view_choices().into_iter().enumerate() {
+            let hint = Block::wrapped(ui, hint, text::META, c.muted, width - text_x - 10.0);
+            let height = 8.0 + text::UI.line_px() + 2.0 + hint.height() + 8.0;
+            let (row, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+            let checked = pic.view_mode == mode;
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::Role::MenuItemRadio, true, checked, name)
+            });
+            if i == 0 {
+                crate::widgets::popover::focus_first(&response);
+            }
+            if response.hovered() {
+                ui.painter()
+                    .rect_filled(row, corner(theme.radius.sm), c.hover);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            common::focus_visible(ui, &response, row, theme.radius.sm);
+            let line_y = row.top() + 8.0 + text::UI.line_px() / 2.0;
+            if checked {
+                icons::paint(
+                    ui.painter(),
+                    Icon::Check,
+                    pos2(row.left() + 10.0, line_y - 8.5),
+                    17.0,
+                    c.muted,
+                );
+            }
+            let block = Block::single(ui, name, text::UI, c.text);
+            common::paint_mid(ui.painter(), &block, row.left() + text_x, line_y);
+            hint.paint(
+                ui.painter(),
+                pos2(
+                    row.left() + text_x,
+                    row.top() + 8.0 + text::UI.line_px() + 2.0,
+                ),
+            );
+            if response.clicked() {
+                chosen = Some(mode);
+            }
+            if i < 2 {
+                ui.add_space(2.0);
+            }
+        }
+        chosen
+    });
+    match shown {
+        Some(Some(mode)) => {
+            ctx.data_mut(|d| d.insert_temp::<Option<(stage::PicId, bool)>>(view_id(), None));
+            Some(mode)
+        }
+        Some(None) => None,
+        None => {
+            ctx.data_mut(|d| d.insert_temp::<Option<(stage::PicId, bool)>>(view_id(), None));
+            None
+        }
+    }
 }
 
 /// `TileMenu` with `OwnWindow`: "Eigenes Fenster" or "Fenster schließen",

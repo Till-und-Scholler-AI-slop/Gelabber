@@ -22,6 +22,7 @@ import {
   toggleShare,
   toggleSourceWatch,
   retryPlayback,
+  setLiveViewMode,
   useVoice,
   voiceSessionForTests,
   type RtpSender,
@@ -222,6 +223,10 @@ class FakeConnection implements MediaConnection {
       await this.options.request(paused ? "pauseProducer" : "resumeProducer", {
         producerId: sender.producerId,
       });
+  }
+  screenModes: boolean[] = [];
+  async setScreenMode(sharp: boolean): Promise<void> {
+    this.screenModes.push(sharp);
   }
   transportState(direction: "send" | "recv"): string {
     return this.states[direction];
@@ -964,6 +969,31 @@ describe("voice session", () => {
       resetVoiceForTests();
       resetVoiceRoster();
     }
+  });
+
+  it("tells the media server how this viewer wants a Live, once media stands", async () => {
+    const { mediaSent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    const viewModes = () =>
+      mediaSent
+        .filter((frame) => frame.op === "viewMode")
+        .map(({ u, sharp }) => ({ u, sharp }));
+    // Chosen before the seat stands: sent once it does.
+    setLiveViewMode("ada", "sharp");
+    setLiveViewMode("u-self", "smooth");
+    expect(useVoice.getState().liveViewModes).toEqual({ ada: "sharp" });
+    expect(viewModes()).toEqual([]);
+    await vi.waitFor(() =>
+      expect(viewModes()).toEqual([{ u: "ada", sharp: true }]),
+    );
+    setLiveViewMode("bob", "smooth");
+    setLiveViewMode("ada", null);
+    expect(useVoice.getState().liveViewModes).toEqual({ bob: "smooth" });
+    expect(viewModes()).toEqual([
+      { u: "ada", sharp: true },
+      { u: "bob", sharp: false },
+      { u: "ada", sharp: null },
+    ]);
   });
 
   it("publishes via correlated v4 media WS and keeps presence on chat WS", async () => {

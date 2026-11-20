@@ -2290,6 +2290,39 @@
       "mask": [[312, 72, 944, 530]]
     },
     {
+      "name": "voice-live-quality",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:live,mira:muted:watch",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Bildqualität"
+        },
+        {
+          "wait": 500
+        }
+      ],
+      "mask": [
+        [312, 72, 944, 55],
+        [312, 127, 462, 213],
+        [1094, 127, 162, 213],
+        [312, 340, 944, 262]
+      ]
+    },
+    {
       "name": "voice-live-viewers",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",

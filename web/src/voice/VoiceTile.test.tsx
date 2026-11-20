@@ -127,6 +127,24 @@ describe("tile actions", () => {
     expect(tile(true, false)).not.toContain("Live-Ton");
   });
 
+  it("lets a viewer choose a watched Live's picture quality (GEL-32)", () => {
+    const tile = (watching: boolean, owner?: string) =>
+      renderToStaticMarkup(
+        <VoiceTile
+          stream={null}
+          label="Mia"
+          screen
+          live
+          sourceWatch={{ watching, toggle: () => undefined, owner }}
+        />,
+      );
+    expect(tile(true, "mia")).toMatch(
+      /aria-label="Bildqualität"[^>]*aria-haspopup="menu" aria-expanded="false"/,
+    );
+    expect(tile(false, "mia")).not.toContain("Bildqualität");
+    expect(tile(true)).not.toContain("Bildqualität");
+  });
+
   it("names a camera in a participant's place without a second caption", () => {
     const html = renderToStaticMarkup(
       <VoiceTile stream={null} label="Mia" caption={false} />,

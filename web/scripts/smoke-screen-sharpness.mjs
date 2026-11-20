@@ -13,8 +13,13 @@
 //   GELABBER_SMOKE_BASE=http://127.0.0.1:5173 node scripts/smoke-screen-sharpness.mjs
 //
 // Optional: SCREEN_MODE=sharp|smooth ("Text scharf halten" in Settings →
-// Video, for a client that has it), LABEL (written into every result line), OUT (a JSON lines
-// file), STEP_S (seconds per step), DOWN / UP (comma separated kbit/s).
+// Video, for a client that has it), SCENE=busy|calm (busy, the default,
+// redraws every frame; calm scrolls one line a second like an office or
+// terminal Live, GEL-32), LABEL (written into every result line), OUT (a
+// JSON lines file), STEP_S (seconds per step), DOWN / UP (comma separated
+// kbit/s), QUEUE_PKTS (queue of the shaped link in packets, default 60),
+// VIEW_MODE=sharp|smooth (the viewer's own "Bildqualität" for the Live,
+// GEL-32; SHOTS, a folder, also gets a picture of that menu).
 
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
@@ -29,6 +34,10 @@ const stepList = (value) => value.split(",").filter(Boolean).map(Number);
 const downSteps = stepList(process.env.DOWN ?? "3000,1500,800,400");
 const upSteps = stepList(process.env.UP ?? "3000,1500,800,400");
 const screenMode = process.env.SCREEN_MODE ?? null;
+const viewMode = process.env.VIEW_MODE ?? null;
+// Packets the shaped link queues before it drops: 60 is about 0.3 s at
+// 2 Mbit/s, home routers often hold a second or more.
+const queuePackets = Number(process.env.QUEUE_PKTS ?? 60);
 const SFU_PORT = Number(process.env.SFU_PORT ?? 10000);
 const suffix = `${Date.now()}-${process.pid}`;
 const password = `Smoke-${suffix}-password`;
@@ -107,7 +116,7 @@ function limit(classid, kbit, matches) {
       `${classid}:`,
       "pfifo",
       "limit",
-      "60",
+      String(queuePackets),
     );
   } catch {
     // Already there.
@@ -183,8 +192,10 @@ async function participant(name, fakeScreen) {
         }
       };
       if (!fake.screen) return;
-      // A 1080p "terminal": small text everywhere, one line changes per frame,
-      // so every frame costs bits and blur shows in the text.
+      // A 1080p "terminal" with small text everywhere. SCENE=busy (default):
+      // every line changes every frame, so every frame costs bits. SCENE=calm:
+      // a new line scrolls in once a second and the cursor blinks, like a
+      // shell at work.
       navigator.mediaDevices.getDisplayMedia = async () => {
         const canvas = document.createElement("canvas");
         canvas.width = 1920;
@@ -192,20 +203,33 @@ async function participant(name, fakeScreen) {
         const ctx = canvas.getContext("2d");
         let frame = 0;
         const draw = () => {
+          const calm = fake.scene === "calm";
+          const tick = calm ? Math.floor(frame / 30) : frame;
           ctx.fillStyle = "#101418";
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.font = "13px monospace";
           for (let row = 0; row < 66; row += 1) {
-            ctx.fillStyle = row % 7 === 0 ? "#9fe870" : "#d0d7de";
-            const n = (row * 7919 + Math.floor(frame / 30)) % 100000;
+            const line = row + tick;
+            ctx.fillStyle = line % 7 === 0 ? "#9fe870" : "#d0d7de";
+            const n = calm
+              ? (line * 7919) % 100000
+              : (row * 7919 + Math.floor(frame / 30)) % 100000;
+            const bar = calm ? (line * 13) % 90 : (row * 13 + frame) % 90;
             ctx.fillText(
-              `${String(row).padStart(3, "0")} $ cargo test -p gelabber-media sfu::layers::case_${n} ... ok  ${"#".repeat((row * 13 + frame) % 90)}`,
+              `${String(calm ? line : row).padStart(3, "0")} $ cargo test -p gelabber-media sfu::layers::case_${n} ... ok  ${"#".repeat(bar)}`,
               8,
               15 + row * 16,
             );
           }
-          ctx.fillStyle = "#ff7b72";
-          ctx.fillRect((frame * 12) % 1920, 1060, 120, 16);
+          if (calm) {
+            if (Math.floor(frame / 15) % 2 === 0) {
+              ctx.fillStyle = "#d0d7de";
+              ctx.fillRect(8, 15 + 65 * 16 + 3, 8, 14);
+            }
+          } else {
+            ctx.fillStyle = "#ff7b72";
+            ctx.fillRect((frame * 12) % 1920, 1060, 120, 16);
+          }
           frame += 1;
         };
         draw();
@@ -220,7 +244,7 @@ async function participant(name, fakeScreen) {
         return stream;
       };
     },
-    { screen: fakeScreen },
+    { screen: fakeScreen, scene: process.env.SCENE ?? "busy" },
   );
   const page = await context.newPage();
   pages.push(page);
@@ -438,6 +462,21 @@ try {
     null,
     { timeout: 45_000 },
   );
+  if (viewMode) {
+    await liveTile.hover();
+    await liveTile
+      .getByRole("button", { name: "Bildqualität", exact: true })
+      .click();
+    const choice = b.page.getByRole("menuitemradio", {
+      name: viewMode === "sharp" ? "Text scharf" : "Flüssig",
+    });
+    await choice.waitFor();
+    if (process.env.SHOTS)
+      await b.page.screenshot({
+        path: `${process.env.SHOTS}/view-menu.png`,
+      });
+    await choice.click();
+  }
   await pause(8_000);
 
   const senderPorts = await localPorts(a.page);

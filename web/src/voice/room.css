@@ -1676,6 +1676,12 @@ a.voice-session-link:hover > span {
 .voice-menu-item > span {
   min-width: 0;
 }
+/* Where an unchosen entry's check would be. */
+.voice-menu-check {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+}
 .voice-menu-item strong {
   display: block;
   font: var(--lr-type-ui);

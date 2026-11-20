@@ -74,6 +74,20 @@ crate::strings! {
         | "On a weak connection the frame rate drops first. Good for office work and terminals.";
     live_keep_sharp_off = "Bei schwacher Verbindung sinkt zuerst die Auflösung. Gut für Spiele und Videos."
         | "On a weak connection the resolution drops first. Good for games and videos.";
+    view_label = "Bildqualität"
+        | "Picture quality";
+    view_auto = "Wie gesendet"
+        | "As sent";
+    view_auto_hint = "Wie beim Senden eingestellt."
+        | "As the sender set it.";
+    view_sharp = "Text scharf"
+        | "Sharp text";
+    view_sharp_hint = "Bei schwacher Verbindung sinkt zuerst die Bildrate."
+        | "On a weak connection the frame rate drops first.";
+    view_smooth = "Flüssig"
+        | "Smooth";
+    view_smooth_hint = "Bei schwacher Verbindung sinkt zuerst die Auflösung."
+        | "On a weak connection the resolution drops first.";
     hold_to_talk_hold = "Zum Sprechen gedrückt halten"
         | "Hold to talk";
     hold_to_talk_talking = "Du sprichst"

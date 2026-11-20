@@ -44,6 +44,7 @@ import {
   FRAME_STALLED_MS,
   fullscreenRoute,
 } from "./stage.ts";
+import { LiveViewMenu } from "./LiveViewMenu.tsx";
 import { useWake } from "./useWake.ts";
 import "./viewer.css";
 
@@ -64,7 +65,9 @@ type VoiceTileProps = {
   onSelect?: () => void;
   /** False where the name is written next to the tile already. */
   caption?: boolean;
-  sourceWatch?: { watching: boolean; toggle: () => void };
+  /** Someone else's Live in the call: whether it plays here, and its
+   * owner, whose picture quality this viewer can choose (GEL-32). */
+  sourceWatch?: { watching: boolean; toggle: () => void; owner?: string };
   /** The own Live's sound, in words: a tag beside the Live tag, the full
    * sentence for screen readers and on hover. */
   sourceAudioNotice?: string;
@@ -503,6 +506,7 @@ function VideoSurface({
             label={label}
             joined={joined}
             streamSound={streamSound}
+            viewOwner={sourceWatch?.watching ? sourceWatch.owner : undefined}
             autoFocus={viewer}
             onStopWatching={
               stopWatching
@@ -519,6 +523,9 @@ function VideoSurface({
         <>
           <div className="voice-video-scrim" aria-hidden="true" />
           <div className="voice-video-actions">
+            {sourceWatch?.watching && sourceWatch.owner ? (
+              <LiveViewMenu userId={sourceWatch.owner} name={label} />
+            ) : null}
             {sourceWatch?.watching ? (
               <IconButton
                 size="sm"
@@ -559,12 +566,13 @@ function VideoSurface({
   );
 }
 
-/** Mute, deafen, the stream's sound, stop watching and the way out, while
- * the call bar is out of sight. */
+/** Mute, deafen, the stream's sound, its picture quality, stop watching and
+ * the way out, while the call bar is out of sight. */
 function WatchStrip({
   label,
   joined,
   streamSound,
+  viewOwner,
   autoFocus,
   onStopWatching,
   onExit,
@@ -572,6 +580,8 @@ function WatchStrip({
   label: string;
   joined: boolean;
   streamSound: boolean;
+  /** Whose Live plays: its picture quality can be chosen. */
+  viewOwner: string | undefined;
   autoFocus: boolean;
   onStopWatching: (() => void) | undefined;
   onExit: () => void;
@@ -590,6 +600,9 @@ function WatchStrip({
         </div>
       ) : null}
       {streamSound ? <StreamVolume /> : null}
+      {viewOwner ? (
+        <LiveViewMenu userId={viewOwner} name={label} strip />
+      ) : null}
       {onStopWatching ? (
         <button
           type="button"

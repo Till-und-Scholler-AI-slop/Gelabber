@@ -409,11 +409,14 @@ Container: absolute top 6 right 6, gap 2 (stage: top 10 right 10, gap 6; strip: 
 
 | Order | Label (tooltip) | Icon | Shown when | Action |
 |---|---|---|---|---|
+| 0 | `Bildqualität` (pressed = menu open) | Gear 16 | watching someone else's Live | the picture-quality menu below |
 | 1 | `Nicht mehr zuschauen` | EyeOff 16 | watching a Live (source watch) | toggle watch off |
 | 2 | `Live-Ton stummschalten` (pressed = muted) | Speaker/SpeakerOff 16 | spotlight/focus, someone else's Live, watched | `sourceAudioMuted` toggle |
 | 3 | `Anheften` (pressed = pinned) | Pin 16 | `onTogglePin` (not on Kino focus) | `pinPicture(pinned==id ? null : id)` |
 | 4 | `Vollbild` (title `Vollbild (auch per Doppelklick)`) | Expand 16 | always | fullscreen (§4.4). Double-click on the picture toggles too |
 | 5 | `Weitere Aktionen` | More 16 | native consumer track | menu: `Eigenes Fenster` / `Fenster schließen` (`media_viewer_open/close`); failure text `Das Videofenster konnte nicht geöffnet werden.` (bottom 28, inset 12, padding 10, radius 5, bg `#16191bf2`) |
+
+Picture-quality menu (`LiveViewMenu.tsx`, GEL-32): a popover `role="menu"` like the Live menu (`.voice-share-menu`, 320 wide), bottom-end under the gear (top-end over the WatchStrip button), label `Bildqualität für die Live von {name}`. Three `menuitemradio` entries in `.voice-menu-item` look, the chosen one with Check 17 in the icon place (else a 17 px gap), each with its hint: `Wie gesendet` / `Wie beim Senden eingestellt.` (default: follows the owner's `Text scharf halten`), `Text scharf` / `Bei schwacher Verbindung sinkt zuerst die Bildrate.`, `Flüssig` / `Bei schwacher Verbindung sinkt zuerst die Auflösung.` A choice closes the menu and sends `viewMode` (protocol-gateway.md); it holds for this call and is sent again on a new media seat.
 
 ### 4.4 Fullscreen / large view + WatchStrip (`VoiceTile.tsx:105-139, 594-611, 702-814`; `viewer.css:125-321`)
 Route: element fullscreen where allowed, else a modal "large view" dialog: fixed inset 12 px, border 1 border, radius 12, bg `#0b0d0e`, backdrop `#000000bb`. For egui: open the tile in a fullscreen viewport (bg `#000`, video contain), with the WatchStrip; no caption, no hover actions. Keys while immersive: `M` or `Space` (not on a button/field) → `toggleMute()` when joined; Esc leaves.
@@ -425,6 +428,7 @@ WatchStrip: absolute, centred horizontally, bottom 16; flex gap 8; max-width 100
 | Label | `<strong>` 600 13px, ellipsis, margin-right 4 |
 | Group (joined only) | left border 1 `rgba(255,255,255,.14)`, padding-left 8, gap 4: mute + deafen toggles (36x36, padding 0 9, transparent, white; hover `rgba(255,255,255,.14)`; off: bg danger-bg@45% alpha, white) |
 | Stream volume (someone else's Live) | group: mute button (Speaker/SpeakerOff 17) + range 112 px (disabled when muted/deafened) |
+| `Bildqualität` (someone else's watched Live) | same button as the next, Gear 16; opens the picture-quality menu of §4.3 above it |
 | `Nicht mehr zuschauen` | button min-height 36, padding 0 12, radius 5, bg `rgba(255,255,255,.12)` (hover .2), 500 13px, gap 6, EyeOff 16 |
 | `Vollbild beenden` | same button, Collapse 16 |
 
@@ -473,7 +477,7 @@ Base (`room.css:752-777, 1161-1179`): inline flex centred, gap 4, min-width 36, 
 Live menu (`Live gehen`, role menu, placement top-end, width 320) (`VoiceControls.tsx:399-484`, `room.css:1308-1500`): entries 100% wide, flex, gap 10, min-height 36, padding 8 10, radius 5; icon 17 muted, margin-top 1; title 500 13px; hint 400 12px muted, margin-top 2; hover bg hover; disabled title+icon subtle; danger (Live beenden) title+icon danger. Keys ↑ ↓ Home End.
 1. `Live gehen` (LiveIcon) hint `Sehen alle im Sprachkanal` or the unavailable reason; or `Live beenden` (danger) while live.
 2. separator 1px border, margin 4 0.
-3. Switch item `Text scharf halten` (GEL-26, same look as the next one; every client that can go live): hint `Bei schwacher Verbindung sinkt zuerst die Bildrate. Gut für Office und Terminal.` when on, `Bei schwacher Verbindung sinkt zuerst die Auflösung. Gut für Spiele und Videos.` when off (default). Applies at once, also to a running Live; the own Live's watcher list shows it too.
+3. Switch item `Text scharf halten` (GEL-26, same look as the next one; every client that can go live): hint `Bei schwacher Verbindung sinkt zuerst die Bildrate. Gut für Office und Terminal.` when on, `Bei schwacher Verbindung sinkt zuerst die Auflösung. Gut für Spiele und Videos.` when off (default). Applies at once, also to a running Live; the own Live's watcher list shows it too. The client also tells the media gateway (`screenMode`, GEL-32), which then keeps viewers with a weak download at full size before frame rate. Each viewer can choose otherwise for itself under `Bildqualität` on the Live (below).
 4. Switch item `Ton mitsenden` (only where app audio possible) (role menuitemcheckbox, align center, space-between), label padded 27 px; hint = `sourceAudioScope` (`Ton von „{app}“` / `Ton aller Anwendungen außer Gelabber` / `Ton aller Anwendungen`; browser fallback `Wähle den Ton im Freigabedialog des Browsers aus.`) + optional `Ab dem nächsten Live.` (browser only) + optional carries-call warning (text in §5.3 notices #5), joined with spaces (`VoiceControls.tsx:420-429`). Track 32x18, radius full, border 1 border-strong, bg surface; knob 12x12 muted at 2,2; on: border+bg accent, knob accent-ink moved 14 px.
 5. Desktop: `Anwendung für den Ton wählen …` (GearIcon) → settings dialog.
 

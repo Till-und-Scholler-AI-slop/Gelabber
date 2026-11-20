@@ -75,6 +75,10 @@ pub struct Participant {
     pub live_audio: bool,
     /// This client watches the person's Live.
     pub watching: bool,
+    /// This client's choice for the person's Live (GEL-32): `Some(true)`
+    /// keeps text sharp, `Some(false)` keeps it smooth, `None` follows the
+    /// person's own "Text scharf halten".
+    pub view_mode: Option<bool>,
     /// Playback volume, 1.0 = 100 %, up to [`MAX_PLAYBACK_VOLUME`].
     pub volume: f32,
     /// Muted for this client only ("Lokal stummschalten").
@@ -878,6 +882,15 @@ impl Call {
         media::watch(&self.inner, user, on);
         #[cfg(not(feature = "media"))]
         let _ = (user, on);
+    }
+
+    /// How this client wants someone's Live (`viewMode`, GEL-32): sharp,
+    /// smooth, or as its owner set it (`None`). Holds for this call.
+    pub fn set_view_mode(&self, user: Uuid, sharp: Option<bool>) {
+        #[cfg(feature = "media")]
+        media::view_mode(&self.inner, user, sharp);
+        #[cfg(not(feature = "media"))]
+        let _ = (user, sharp);
     }
 
     /// A person's playback volume here, 1.0 = 100 %, up to 4.0.

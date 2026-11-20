@@ -150,6 +150,24 @@ pub enum ClientFrame {
         k: WatchKind,
         on: bool,
     },
+    /// GEL-32: whether the sender's Live keeps text sharp. A Live without
+    /// this frame counts as smooth.
+    #[serde(rename = "screenMode")]
+    ScreenMode {
+        id: u32,
+        #[serde(rename = "producerId")]
+        producer_id: String,
+        sharp: bool,
+    },
+    /// GEL-32: how this viewer wants `u`'s Live: `true` keeps text sharp,
+    /// `false` keeps it smooth, absent follows the sender's choice.
+    #[serde(rename = "viewMode")]
+    ViewMode {
+        id: u32,
+        u: Uuid,
+        #[serde(default)]
+        sharp: Option<bool>,
+    },
     #[serde(rename = "q")]
     ViewerLayer {
         id: u32,
@@ -178,6 +196,8 @@ impl ClientFrame {
             | Self::ConsumerReady { id, .. }
             | Self::ConsumerFailed { id, .. }
             | Self::Watch { id, .. }
+            | Self::ScreenMode { id, .. }
+            | Self::ViewMode { id, .. }
             | Self::ViewerLayer { id, .. }
             | Self::Leave { id } => *id,
         }
@@ -294,6 +314,46 @@ mod tests {
             }
         ));
         assert_eq!(frame.id(), 3);
+    }
+    #[test]
+    fn screen_mode_names_the_producer_and_the_mode() {
+        let raw = r#"{"op":"screenMode","id":9,"producerId":"p1","sharp":true}"#;
+        let frame: ClientFrame = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            frame,
+            ClientFrame::ScreenMode {
+                id: 9,
+                producer_id: "p1".into(),
+                sharp: true
+            }
+        );
+        assert_eq!(frame.id(), 9);
+        // The mode is required: a frame without it is a client bug.
+        assert!(
+            serde_json::from_str::<ClientFrame>(r#"{"op":"screenMode","id":9,"producerId":"p1"}"#)
+                .is_err()
+        );
+    }
+    #[test]
+    fn view_mode_without_a_choice_follows_the_sender() {
+        let u = "8a7d4c2e-3b1f-4f6a-9c0d-1e2f3a4b5c6d";
+        for (sharp, expected) in [
+            (",\"sharp\":false", Some(false)),
+            (",\"sharp\":null", None),
+            ("", None),
+        ] {
+            let raw = format!(r#"{{"op":"viewMode","id":4,"u":"{u}"{sharp}}}"#);
+            let frame: ClientFrame = serde_json::from_str(&raw).unwrap();
+            assert_eq!(
+                frame,
+                ClientFrame::ViewMode {
+                    id: 4,
+                    u: u.parse().unwrap(),
+                    sharp: expected
+                }
+            );
+            assert_eq!(frame.id(), 4);
+        }
     }
     #[test]
     fn old_join_can_be_rejected_before_consuming_ticket() {

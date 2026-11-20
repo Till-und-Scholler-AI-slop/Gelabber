@@ -78,15 +78,22 @@ function applyTrackConstraints(
   return apply.call(track, constraints);
 }
 
+const screenIsSharp = (): boolean =>
+  useMediaSettings.getState().screenMode === "sharp";
+
 /** A Live's mode changed (GEL-26): the screen track gets the matching
  * content hint and the senders their layer rates and degradation
- * preference. The capture keeps running. */
+ * preference, and the server hears the mode for its viewers (GEL-32).
+ * The capture keeps running. */
 export async function applyScreenMode(): Promise<void> {
   voice.screenStream
     ?.getVideoTracks()
     .forEach((track) => hintTrack(track, screenHint()));
   const pc = voice.seat.connection;
   if (!pc || useVoice.getState().status !== "joined") return;
+  void publishingConnection()
+    ?.setScreenMode(screenIsSharp())
+    .catch(() => {});
   try {
     await voice.videoBudget.enqueue(pc);
   } catch {
@@ -533,6 +540,9 @@ export async function publishLocal(
   if (!video) return;
   try {
     if (!current()) return;
+    // The server learns the Live's mode right after its producer exists.
+    if (kind === "s")
+      void connection.setScreenMode(screenIsSharp()).catch(() => {});
     const sender = await connection.publish({
       kind,
       track: video,

@@ -4,7 +4,7 @@
 
 use egui::{Rect, Ui, pos2, vec2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use gelabber_call::{Call, CallState, CallStatus, LiveSound, MicStatus, Participant, VideoKey};
 use gelabber_client::Client;
 
@@ -358,6 +358,7 @@ fn picture(user: uuid::Uuid, kind: Kind, label: &str, own: bool) -> Picture {
         mirror: false,
         speaking: false,
         watching: false,
+        view_mode: None,
         own,
     }
 }
@@ -1160,4 +1161,100 @@ fn the_own_live_button_lists_who_watches() {
     h.get_by_label("Live beenden").click();
     h.run_steps(4);
     assert!(h.query_by_label("Dein Live in Sofa").is_none());
+}
+
+/// GEL-32: a watched Live's gear opens "Bildqualität" with the three
+/// choices, the current one checked; a choice comes back once and closes it.
+#[test]
+fn a_watched_live_offers_its_picture_quality() {
+    let (client, call) = offline();
+    let mut state = in_sofa(MicStatus::Live);
+    state.participants.push(Participant {
+        user: JONAS,
+        live: Some(VideoKey::live(JONAS)),
+        watching: true,
+        view_mode: Some(true),
+        ..Participant::default()
+    });
+    call.set_state(state);
+    let jonas = person(JONAS, "Jonas", false);
+    let mut live = picture(JONAS, Kind::Live, "Jonas — Live", false);
+    live.watching = true;
+    live.view_mode = Some(true);
+    let chosen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = chosen.clone();
+    let mut h = harness(client, call, move |ui, app| {
+        let out = tile::picture(
+            ui,
+            app,
+            stage_rect(),
+            &live,
+            Some(&jonas),
+            tile::Place::Grid,
+            false,
+            false,
+            1.0,
+            None,
+        );
+        if let Some(mode) = out.view_mode {
+            seen.lock().unwrap().push(mode);
+        }
+    });
+    h.run_steps(6);
+    h.get_by_label("Bildqualität").click();
+    h.run_steps(6);
+    let radios: Vec<(String, bool)> = h
+        .query_all_by_role(egui::accesskit::Role::MenuItemRadio)
+        .map(|n| {
+            let node = n.accesskit_node();
+            (
+                node.label().unwrap_or_default(),
+                node.toggled() == Some(egui::accesskit::Toggled::True),
+            )
+        })
+        .collect();
+    assert_eq!(
+        radios,
+        [
+            ("Wie gesendet".to_owned(), false),
+            ("Text scharf".to_owned(), true),
+            ("Flüssig".to_owned(), false),
+        ]
+    );
+    h.get_by_label("Flüssig").click();
+    h.run_steps(6);
+    assert_eq!(*chosen.lock().unwrap(), [Some(false)]);
+    assert_eq!(
+        h.query_all_by_role(egui::accesskit::Role::MenuItemRadio)
+            .count(),
+        0
+    );
+}
+
+/// Someone else's Live that is not watched, and the own one, have no gear.
+#[test]
+fn only_a_watched_live_of_someone_else_has_picture_quality() {
+    for (own, watching) in [(false, false), (true, false)] {
+        let (client, call) = offline();
+        call.set_state(in_sofa(MicStatus::Live));
+        let jonas = person(JONAS, "Jonas", own);
+        let mut live = picture(JONAS, Kind::Live, "Jonas — Live", own);
+        live.watching = watching;
+        let mut h = harness(client, call, move |ui, app| {
+            tile::picture(
+                ui,
+                app,
+                stage_rect(),
+                &live,
+                Some(&jonas),
+                tile::Place::Grid,
+                false,
+                false,
+                1.0,
+                None,
+            );
+        });
+        h.run_steps(6);
+        assert!(h.query_by_label("Bildqualität").is_none());
+    }
 }
