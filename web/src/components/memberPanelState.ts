@@ -51,8 +51,13 @@ export function useMemberPanelHidden(): boolean {
 }
 
 export function toggleMemberPanel(): void {
+  setMemberPanelHidden(!hiddenOf(usePanel.getState()));
+}
+
+/** Shows or hides the list where it is now: next to pictures or not. */
+export function setMemberPanelHidden(hidden: boolean): void {
   const state = usePanel.getState();
-  const hidden = !hiddenOf(state);
+  if (hiddenOf(state) === hidden) return;
   if (state.video) {
     usePanel.setState({ withVideo: hidden });
     save(VIDEO_KEY, hidden);

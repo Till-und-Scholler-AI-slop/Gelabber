@@ -24,7 +24,13 @@ import { preloadPartsWhenIdle } from "../components/lazyPart.tsx";
 import { QuickSwitcher, ShortcutSheet } from "../components/QuickSwitcher.tsx";
 import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
+import { ChannelListToggle, SidebarEdge } from "../components/SidebarEdge.tsx";
+import {
+  useFittedWidths,
+  useSidebarWidthVariables,
+} from "../components/sidebarWidths.ts";
 import { SidebarPlaceholder } from "../components/SidebarPlaceholder.tsx";
+import { useSidebarLayout } from "../components/sidebarLayout.ts";
 import { UserPanel } from "../components/UserPanel.tsx";
 import {
   NAVIGATION_DRAWER_MAX_WIDTH,
@@ -177,6 +183,9 @@ function WorkspaceFrame({
     onHelp: () => setShowingKeys(true),
   });
   const phone = useMediaQuery(`(max-width: ${NAVIGATION_DRAWER_MAX_WIDTH}px)`);
+  useSidebarWidthVariables();
+  const fitted = useFittedWidths();
+  const collapsed = useSidebarLayout((state) => state.collapsed);
   useEdgeSwipe({
     enabled: phone,
     open: drawer.open,
@@ -200,7 +209,7 @@ function WorkspaceFrame({
         ? t("drawer.openLabelUnread")
         : t("drawer.openLabel");
   return (
-    <div className="workspace">
+    <div className={`workspace${collapsed ? " is-nav-collapsed" : ""}`}>
       <WorkspaceDrawer
         id={navigationId}
         open={drawer.open}
@@ -212,7 +221,14 @@ function WorkspaceFrame({
         <ServerRail activeId={serverId} dmActive={dmActive} />
         {sidebar}
       </WorkspaceDrawer>
+      <SidebarEdge
+        side="channels"
+        width={fitted.sidebar}
+        controls={navigationId}
+        hidden={collapsed}
+      />
       <div className="workspace-main">
+        <ChannelListToggle controls={navigationId} />
         <header className="workspace-mobile-topbar">
           <button
             type="button"
