@@ -376,6 +376,181 @@ fn labelled_select(
     controls::select(ui, id.to_owned(), options, value)
 }
 
+/// Where `db` sits on the input sensitivity's meter and slider, 0..1.
+fn gate_position(db: f64) -> f32 {
+    use gelabber_call::logic::{GATE_THRESHOLD_MAX, GATE_THRESHOLD_MIN};
+    ((db.clamp(GATE_THRESHOLD_MIN, GATE_THRESHOLD_MAX) - GATE_THRESHOLD_MIN)
+        / (GATE_THRESHOLD_MAX - GATE_THRESHOLD_MIN)) as f32
+}
+
+fn gate_db(db: f64) -> String {
+    texts::media_gate_db(db.round() as i64)
+}
+
+/// Input sensitivity (InputSensitivity.tsx, GEL-27): automatic or a
+/// threshold, and a meter with the level and where the threshold sits. The
+/// meter follows the call's microphone, or the microphone test's capture
+/// while "Pegel prüfen" runs.
+fn input_sensitivity(ui: &mut Ui, app: &mut AppCtx, p: &mut Prefs) {
+    use gelabber_call::{CallStatus, MicTestPhase};
+    let ptt = p.voice_input == "ptt";
+    if ptt || p.processing_mode == "original" {
+        setting_row(ui, texts::media_gate_title(), false, |ui| {
+            ui.add_space(9.0);
+            hint(
+                ui,
+                if ptt {
+                    texts::media_gate_ptt_off()
+                } else {
+                    texts::media_gate_original_off()
+                },
+            );
+        });
+        return;
+    }
+    let (joined, in_call) = app.call.with_state(|s| {
+        (
+            matches!(s.status, CallStatus::Connected | CallStatus::Reconnecting),
+            s.input_gate,
+        )
+    });
+    let test = app.call.mic_test();
+    let checking = !joined && matches!(test.phase, MicTestPhase::Pending | MicTestPhase::Active);
+    if checking {
+        crate::screens::voice::dialogs::keep_level_check(ui.ctx());
+        // The meter moves without input events.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(80));
+    }
+    let failed = !joined && matches!(test.phase, MicTestPhase::Error(_));
+    let live = if joined {
+        in_call
+    } else if test.phase == MicTestPhase::Active {
+        test.input_gate
+    } else {
+        None
+    }
+    .filter(|g| g.mode != gelabber_call::logic::GateMode::Off);
+    if joined {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(120));
+    }
+    setting_row(ui, texts::media_gate_title(), false, |ui| {
+        let theme = Theme::of(ui.ctx());
+        let c = &theme.c;
+        switch_line(
+            ui,
+            "gate-auto",
+            texts::media_gate_auto_hint(),
+            &mut p.gate_auto,
+            false,
+        );
+        gap(ui);
+        // `.media-gate`: the meter in the slider's columns, half a thumb in.
+        let width = ui.available_width();
+        let top = ui.cursor().min;
+        let value = Block::single(
+            ui,
+            &live.map(|g| gate_db(g.level_db)).unwrap_or_default(),
+            text::UI,
+            c.muted,
+        );
+        let value_w = value.width().max(42.0);
+        let track = Rect::from_min_size(
+            pos2(top.x + 7.0, top.y),
+            vec2(width - 12.0 - value_w - 14.0, 8.0),
+        );
+        let round = corner(theme.radius.full);
+        ui.painter().rect_filled(track, round, c.border);
+        if let Some(g) = live {
+            let filled = gate_position(g.level_db) * track.width();
+            if filled > 0.0 {
+                ui.painter().rect_filled(
+                    Rect::from_min_size(track.min, vec2(filled, track.height())),
+                    round,
+                    if g.open { c.online_text } else { c.subtle },
+                );
+            }
+        }
+        let threshold = if p.gate_auto {
+            live.map(|g| g.threshold_db)
+        } else {
+            Some(p.gate_threshold_db)
+        };
+        if let Some(db) = threshold {
+            let x = track.left() + gate_position(db) * track.width();
+            ui.painter().rect_filled(
+                Rect::from_min_max(
+                    pos2(x - 1.0, track.top() - 4.0),
+                    pos2(x + 1.0, track.bottom() + 4.0),
+                ),
+                corner(1.0),
+                c.text,
+            );
+        }
+        value.paint(
+            ui.painter(),
+            pos2(
+                top.x + width - value.width(),
+                top.y + 4.0 - text::UI.line_px() / 2.0,
+            ),
+        );
+        ui.allocate_exact_size(vec2(width, 12.0), Sense::hover());
+        let state = match live {
+            Some(g) => format!(
+                "{} · {}",
+                if g.open {
+                    texts::media_gate_open()
+                } else {
+                    texts::media_gate_closed()
+                },
+                if p.gate_auto {
+                    texts::media_gate_auto_at(g.threshold_db.round() as i64)
+                } else {
+                    gate_db(p.gate_threshold_db)
+                }
+            ),
+            None if failed => texts::media_gate_check_failed().to_owned(),
+            None => texts::media_gate_idle().to_owned(),
+        };
+        hint(ui, &state);
+        if !p.gate_auto {
+            gap(ui);
+            hint(ui, texts::media_gate_threshold());
+            gap(ui);
+            let suffix = gate_db(p.gate_threshold_db);
+            slider(
+                ui,
+                "gate-threshold",
+                &mut p.gate_threshold_db,
+                gelabber_call::logic::GATE_THRESHOLD_MIN,
+                gelabber_call::logic::GATE_THRESHOLD_MAX,
+                1.0,
+                &suffix,
+                None,
+                Some(texts::media_gate_threshold_hint()),
+                false,
+            );
+        }
+        if !joined {
+            gap(ui);
+            let label = if checking {
+                texts::media_gate_stop_check()
+            } else {
+                texts::media_gate_check()
+            };
+            if button(ui, label, false, false) {
+                if checking {
+                    app.call.stop_mic_test();
+                } else {
+                    app.call.start_mic_test();
+                    crate::screens::voice::dialogs::keep_level_check(ui.ctx());
+                }
+            }
+        }
+    });
+}
+
 fn pct(v: f64) -> String {
     texts::percent((v * 100.0).round() as i64)
 }
@@ -528,6 +703,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 );
             });
         }
+        input_sensitivity(ui, app, &mut p);
         setting_row(ui, texts::media_input_filter(), true, |ui| {
             for (mode, label, desc) in PROCESSING_MODES {
                 if controls::radio_card(

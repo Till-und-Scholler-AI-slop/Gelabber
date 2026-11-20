@@ -19,8 +19,10 @@ The full third-party license accompanies the binary.
 
 Run `npm run test:audio-dsp` to process deterministic synthetic noise, measure
 compute time per 10 ms frame, and compare the actual worklet sample-for-sample
-with direct RNNoise across varying browser render quanta. Reblocking adds
-exactly 480 samples (10 ms); this excludes RNNoise's own algorithmic delay,
+with direct RNNoise across varying browser render quanta, with the input
+sensitivity gate off (GEL-27; on, it adds a 20 ms look-ahead, covered by
+`src/voice/inputGate.test.mjs`). Reblocking adds exactly 480 samples
+(10 ms); this excludes RNNoise's own algorithmic delay,
 browser capture/output buffers, codec, transport and receiver playback delay.
 Synthetic attenuation is a functional check, not a speech-quality score.
 

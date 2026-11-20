@@ -454,6 +454,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
         let options = json!({
             "processingMode": settings.processing_mode.as_str(),
             "inputGain": settings.input_gain.clamp(0.0, 2.0),
+            "gate": settings.gate_options(),
         });
         let call2 = call.clone();
         let chosen = settings.input.clone();
@@ -514,6 +515,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
                     t.input = levels["input"].as_f64().unwrap_or(0.0);
                     t.processed = levels["processed"].as_f64().unwrap_or(0.0);
                     t.clipping = levels["clipping"].as_bool().unwrap_or(false);
+                    t.input_gate = logic::gate_levels(&levels);
                 });
             } else if now.duration_since(moved) >= MIC_TEST_STALL {
                 fail(&inner, logic::mic_test_stalled());
@@ -560,12 +562,16 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
     let (previous, next) = (previous.clone(), next.clone());
     spawn(inner, async move {
         let Some(inner) = call.upgrade() else { return };
-        // Devices and gain are engine-wide, also outside a call.
+        // Devices, gain and the gate are engine-wide, also outside a call.
         if previous.input != next.input
             || previous.output != next.output
             || previous.input_gain != next.input_gain
+            || previous.gate_options() != next.gate_options()
         {
-            let mut options = json!({ "inputGain": next.input_gain.clamp(0.0, 2.0) });
+            let mut options = json!({
+                "inputGain": next.input_gain.clamp(0.0, 2.0),
+                "gate": next.gate_options(),
+            });
             if previous.output != next.output {
                 options["output"] = next.output.clone().into();
             }
@@ -1199,6 +1205,7 @@ impl Session {
             settings.noise_suppression,
             settings.auto_gain_control,
             settings.input_gain,
+            settings.gate_options(),
         )
     }
 
@@ -2529,6 +2536,9 @@ impl Session {
         let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
         let mut levels: Vec<(Uuid, f64)> = Vec::new();
         let sending = !muted && !deafened && inner.gate_open();
+        if !sending {
+            inner.write(|s| s.input_gate = None);
+        }
         if self.fake {
             // Dummy audio captures silence; the fake microphone beeps
             // instead, as Chromium's fake device does for the web.
@@ -2538,6 +2548,8 @@ impl Session {
                 levels.push((self.me, logic::fake_beep_level(origin, now)));
             }
         } else if sending && let Ok(meters) = engine.audio_levels() {
+            let gate = logic::gate_levels(&meters);
+            inner.write(|s| s.input_gate = gate);
             let blocks = meters["blocks"].as_u64().unwrap_or(0);
             let moved = self.st.lock().mic_blocks.replace(blocks) != Some(blocks);
             levels.push((

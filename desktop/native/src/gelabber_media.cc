@@ -86,6 +86,9 @@ using gelabber::Bridge;
 using gelabber::CapturePostProcessor;
 using gelabber::CaptureTransport;
 using gelabber::FindAudioDevice;
+using gelabber::GateMode;
+using gelabber::GateModeName;
+using gelabber::ParseGateMode;
 using gelabber::MicrophoneHub;
 using gelabber::MicrophoneSource;
 using gelabber::MonitoringAudioDevice;
@@ -586,10 +589,21 @@ namespace
 
 	// The engine-wide part of a microphone's processing: one capture
 	// pipeline serves every microphone source and the microphone test.
+	// {"mode": "off|auto|manual", "thresholdDb": -80..0}; missing is off.
+	void ApplyGate(gm_engine& engine, const json& options, bool original)
+	{
+		const auto gate = options.value("gate", json::object());
+		if (!gate.is_object())
+			throw std::invalid_argument("gate must be an object");
+		engine.dsp->SetGate(original ? GateMode::Off : ParseGateMode(gate.value("mode", std::string("off"))),
+		                    gate.value("thresholdDb", -50.0f));
+	}
+
 	void ApplyCaptureMode(gm_engine& engine, const std::string& mode, const json& options)
 	{
 		engine.dsp->SetDenoise(mode == "enhanced");
 		engine.dsp->SetGain(static_cast<float>(options.value("inputGain", 1.0)));
+		ApplyGate(engine, options, mode == "original");
 	}
 } // namespace
 
@@ -745,6 +759,9 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 		const auto options = parseJson(optionsJson, "audio options");
 		if (options.contains("inputGain"))
 			engine->dsp->SetGain(options["inputGain"].get<float>());
+		// The caller sends "off" for original sound and push-to-talk.
+		if (options.contains("gate"))
+			ApplyGate(*engine, options, false);
 		const bool input  = options.contains("input");
 		const bool output = options.contains("output");
 		if (!input && !output)
@@ -893,6 +910,11 @@ char* gm_audio_levels(gm_engine* engine)
 		                       { "denoised", levels.denoised },
 		                       { "blocks", levels.blocks },
 		                       { "channels", levels.channels },
+		                       { "gate",
+		                         { { "mode", GateModeName(levels.gate.mode) },
+		                           { "levelDb", levels.gate.levelDb },
+		                           { "thresholdDb", levels.gate.thresholdDb },
+		                           { "open", levels.gate.open } } },
 		                       { "playout",
 		                         { { "gain", playout.gain },
 		                           { "peak", playout.peak },

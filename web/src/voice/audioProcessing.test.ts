@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureMicrophone,
   createProcessor,
+  gateConfig,
   resetNoiseModelForTests,
+  useInputGate,
 } from "./audioProcessing.ts";
 import { DEFAULT_MEDIA_SETTINGS } from "./settings.ts";
 function stream() {
@@ -69,7 +71,9 @@ describe("microphone processor ownership", () => {
       expect(result.processor.stream).toBe(second.raw);
       expect(result.processor.nativeFallback).toBe(true);
       expect(result.processor.info.inputGain).toBe(1);
-      expect(result.processor.info.message).toContain("Mikrofonverstärkung 100 %");
+      expect(result.processor.info.message).toContain(
+        "Mikrofonverstärkung 100 %",
+      );
       expect(result.processor.info.actual).toBe(
         mode === "original" ? "original" : "browser",
       );
@@ -514,5 +518,158 @@ describe("noise model download", () => {
     const third = captureMicrophone(getMedia, DEFAULT_MEDIA_SETTINGS);
     await vi.advanceTimersByTimeAsync(100);
     expect((await third).processor.info.actual).toBe("enhanced");
+  });
+});
+
+describe("input sensitivity gate", () => {
+  function gateGraph() {
+    const nodes: Array<{
+      name: string;
+      options: { processorOptions: Record<string, unknown> };
+      sent: unknown[];
+      port: { onmessage: ((event: { data: unknown }) => void) | null };
+    }> = [];
+    class Context {
+      state = "running";
+      sampleRate = 44_100;
+      audioWorklet = { addModule: vi.fn(async () => {}) };
+      resume = async () => {};
+      close = async () => {
+        this.state = "closed";
+      };
+      createMediaStreamSource() {
+        return { connect() {}, disconnect() {} };
+      }
+      createGain() {
+        return { gain: { value: 1 }, connect() {}, disconnect() {} };
+      }
+      createMediaStreamDestination() {
+        return { stream: stream().raw };
+      }
+    }
+    class Worklet {
+      onprocessorerror: (() => void) | null = null;
+      sent: unknown[] = [];
+      port = {
+        onmessage: null as ((event: { data: unknown }) => void) | null,
+        postMessage: (data: unknown) => this.sent.push(data),
+        close() {},
+      };
+      constructor(
+        _context: unknown,
+        public name: string,
+        public options: { processorOptions: Record<string, unknown> },
+      ) {
+        nodes.push(this);
+        queueMicrotask(() => this.port.onmessage?.({ data: { ready: true } }));
+      }
+      connect() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("AudioContext", Context);
+    vi.stubGlobal("AudioWorkletNode", Worklet);
+    return nodes;
+  }
+
+  it("runs a gate of its own with browser filters, also at 100 % gain", async () => {
+    const nodes = gateGraph();
+    const processor = await createProcessor(
+      stream().raw,
+      { ...DEFAULT_MEDIA_SETTINGS, processingMode: "browser" },
+      "browser",
+    );
+    expect(nodes.map((node) => node.name)).toEqual(["gelabber-gate"]);
+    expect(nodes[0]!.options.processorOptions).toEqual({
+      gate: { mode: "auto", thresholdDb: -50 },
+      gain: 1,
+    });
+    expect(processor.info.gate).toBe("auto");
+    expect(processor.info.addedBufferMs).toBe(30);
+    processor.dispose();
+  });
+
+  it("follows the settings and the gain, and reports what it measures", async () => {
+    const nodes = gateGraph();
+    useInputGate.setState({ report: null, at: 0 });
+    const states = vi.fn();
+    const processor = await createProcessor(
+      stream().raw,
+      { ...DEFAULT_MEDIA_SETTINGS, processingMode: "browser" },
+      "browser",
+      undefined,
+      states,
+    );
+    const node = nodes[0]!;
+    processor.setGate({
+      ...DEFAULT_MEDIA_SETTINGS,
+      gateAuto: false,
+      gateThresholdDb: -42,
+    });
+    processor.setGate({ ...DEFAULT_MEDIA_SETTINGS, voiceInput: "ptt" });
+    processor.setGain(1.5);
+    expect(node.sent).toEqual([
+      { op: "gateConfig", config: { mode: "manual", thresholdDb: -42 } },
+      { op: "gateConfig", config: { mode: "off", thresholdDb: -50 } },
+      { op: "gain", value: 1.5 },
+    ]);
+    expect(states.mock.lastCall?.[0].gate).toBe("off");
+    // Off, the gate adds no look-ahead: only the 10 ms reblocking is left.
+    expect(states.mock.lastCall?.[0].addedBufferMs).toBe(10);
+    node.port.onmessage?.({
+      data: {
+        op: "gate",
+        mode: "auto",
+        levelDb: -31,
+        thresholdDb: -44,
+        open: true,
+      },
+    });
+    expect(useInputGate.getState().report).toEqual({
+      mode: "auto",
+      levelDb: -31,
+      thresholdDb: -44,
+      open: true,
+    });
+    processor.dispose();
+    expect(node.sent.at(-1)).toEqual({ op: "dispose" });
+  });
+
+  it("keeps original sound and the fallback capture without a gate", async () => {
+    const nodes = gateGraph();
+    const original = await createProcessor(
+      stream().raw,
+      { ...DEFAULT_MEDIA_SETTINGS, processingMode: "original", inputGain: 1.5 },
+      "original",
+    );
+    const { raw } = stream();
+    const fallback = await createProcessor(
+      raw,
+      { ...DEFAULT_MEDIA_SETTINGS, processingMode: "browser" },
+      "browser",
+      undefined,
+      undefined,
+      true,
+    );
+    expect(nodes).toHaveLength(0);
+    expect(original.info.gate).toBe("off");
+    expect(fallback.stream).toBe(raw);
+    expect(fallback.info.gate).toBeNull();
+    original.dispose();
+    fallback.dispose();
+  });
+
+  it("is off for original sound and push-to-talk", () => {
+    expect(gateConfig(DEFAULT_MEDIA_SETTINGS).mode).toBe("auto");
+    expect(
+      gateConfig({ ...DEFAULT_MEDIA_SETTINGS, processingMode: "original" })
+        .mode,
+    ).toBe("off");
+    expect(
+      gateConfig({ ...DEFAULT_MEDIA_SETTINGS, voiceInput: "ptt" }).mode,
+    ).toBe("off");
+    expect(gateConfig({ ...DEFAULT_MEDIA_SETTINGS, gateAuto: false })).toEqual({
+      mode: "manual",
+      thresholdDb: -50,
+    });
   });
 });

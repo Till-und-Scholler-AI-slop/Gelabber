@@ -49,7 +49,8 @@ vm.runInNewContext(
       port = { postMessage() {}, onmessage: null };
     },
     registerProcessor(name, ctor) {
-      Processor = ctor;
+      // The file also registers "gelabber-gate", the input gate alone.
+      if (name === "gelabber-rnnoise") Processor = ctor;
     },
   },
 );

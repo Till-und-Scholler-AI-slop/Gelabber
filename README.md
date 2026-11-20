@@ -30,8 +30,9 @@ in the browser and as a native desktop app for Linux and Windows.
 - **Clients:** a web app that installs as a PWA, and a native desktop app
   for Linux and Windows with global push-to-talk, a tray icon and its own
   updater.
-- **Noise suppression in the client** (RNNoise, self-hosted assets). No
-  audio leaves your server for processing.
+- **Noise suppression in the client** (RNNoise, self-hosted assets) and an
+  input sensitivity gate (automatic or a threshold) that sends silence
+  between your words. No audio leaves your server for processing.
 - **Themes:** 14 presets and a theme editor, checked for contrast.
 - **Notifications:** Web Push and desktop notifications, per channel and
   per server.

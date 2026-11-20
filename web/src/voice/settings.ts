@@ -185,7 +185,23 @@ export type MediaSettings = {
   pttKeyLabel: string;
   /** Milliseconds the microphone stays open after the key comes up. */
   pttReleaseDelay: number;
+  /** Input sensitivity (GEL-27): the gate finds its threshold itself. */
+  gateAuto: boolean;
+  /** The threshold without `gateAuto`, in dB (`GATE_THRESHOLD_MIN`..0). */
+  gateThresholdDb: number;
 };
+
+/** The input sensitivity slider's range and start, in dB. */
+export const GATE_THRESHOLD_MIN = -80;
+export const GATE_THRESHOLD_MAX = 0;
+export const GATE_THRESHOLD_DEFAULT = -50;
+export function clampGateThreshold(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    return GATE_THRESHOLD_DEFAULT;
+  return Math.round(
+    Math.min(GATE_THRESHOLD_MAX, Math.max(GATE_THRESHOLD_MIN, value)),
+  );
+}
 
 export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   audioInputId: "",
@@ -217,6 +233,8 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   pttKey: "",
   pttKeyLabel: "",
   pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
+  gateAuto: true,
+  gateThresholdDb: GATE_THRESHOLD_DEFAULT,
 };
 
 type MediaSettingsState = MediaSettings & {
@@ -432,6 +450,8 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     pttKey: state.pttKey,
     pttKeyLabel: state.pttKeyLabel,
     pttReleaseDelay: state.pttReleaseDelay,
+    gateAuto: state.gateAuto,
+    gateThresholdDb: state.gateThresholdDb,
   };
 }
 
@@ -536,6 +556,11 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.pttReleaseDelay !== undefined
               ? clampReleaseDelay(partial.pttReleaseDelay)
               : prev.pttReleaseDelay,
+          gateAuto: partial.gateAuto ?? prev.gateAuto,
+          gateThresholdDb:
+            partial.gateThresholdDb !== undefined
+              ? clampGateThreshold(partial.gateThresholdDb)
+              : prev.gateThresholdDb,
         });
         listener?.(prev, snapshot(get()));
       },
@@ -634,6 +659,8 @@ export const useMediaSettings = create<MediaSettingsState>()(
           pttReleaseDelay: clampReleaseDelay(
             stored.pttReleaseDelay ?? PTT_RELEASE_DELAY_DEFAULT,
           ),
+          gateAuto: flag(stored.gateAuto, current.gateAuto),
+          gateThresholdDb: clampGateThreshold(stored.gateThresholdDb),
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
         };
