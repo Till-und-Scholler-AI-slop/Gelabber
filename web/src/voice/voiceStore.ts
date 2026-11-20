@@ -53,12 +53,18 @@ export type VoiceState = {
   sourceAudio: Record<"s", SourceAudioStatus>;
   /** Whose Live plays here. */
   sourceSubscriptions: Record<string, Partial<Record<"s", boolean>>>;
+  /** GEL-32: how this viewer wants someone's Live, by owner; absent follows
+   * the owner's "Text scharf halten". */
+  liveViewModes: Record<string, LiveViewMode>;
   localCamera: MediaStream | null;
   localScreen: MediaStream | null;
   playbackBlocked: boolean;
   remote: Record<string, RemoteVideo>;
   participants: Record<string, VoiceParticipant>;
 };
+
+/** A viewer's choice for a Live: as its owner set it, sharp or smooth. */
+export type LiveViewMode = "sharp" | "smooth";
 
 export const IDLE_VOICE: VoiceState = {
   status: "idle",
@@ -75,6 +81,7 @@ export const IDLE_VOICE: VoiceState = {
   sourceWatchSupported: false,
   sourceAudio: { s: "off" },
   sourceSubscriptions: {},
+  liveViewModes: {},
   localCamera: null,
   localScreen: null,
   playbackBlocked: false,

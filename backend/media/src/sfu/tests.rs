@@ -235,6 +235,7 @@ async fn stopping_fixture() -> (
         grant: Grant::new(),
         gate: Mutex::new(()),
         packet_samples: StdMutex::new(HashMap::new()),
+        sharp: AtomicBool::new(false),
     });
     let data = RoomData {
         peers: HashMap::from([(
@@ -248,6 +249,7 @@ async fn stopping_fixture() -> (
                 pending_consumers: HashSet::new(),
                 failed_consumers: HashMap::new(),
                 watches: HashMap::new(),
+                view_modes: HashMap::new(),
                 retired_producers: VecDeque::new(),
                 retired_transports: VecDeque::new(),
             },
@@ -388,6 +390,7 @@ async fn publish_many(owner: &Arc<Peer>, room: &Room, count: u32) -> Vec<Arc<Pub
             grant: Grant::new(),
             gate: Mutex::new(()),
             packet_samples: StdMutex::new(HashMap::new()),
+            sharp: AtomicBool::new(false),
         }));
     }
     let mut data = room.data.lock().await;
@@ -780,6 +783,7 @@ async fn seat(
             pending_consumers: HashSet::new(),
             failed_consumers: HashMap::new(),
             watches: HashMap::new(),
+            view_modes: HashMap::new(),
             retired_producers: VecDeque::new(),
             retired_transports: VecDeque::new(),
         },
@@ -1107,6 +1111,7 @@ async fn video_consumers_start_on_the_highest_layer() {
         grant: Grant::new(),
         gate: Mutex::new(()),
         packet_samples: StdMutex::new(HashMap::new()),
+        sharp: AtomicBool::new(false),
     });
     room.data
         .lock()
@@ -1142,4 +1147,123 @@ async fn gateway_transports_start_with_a_high_outgoing_estimate() {
     assert_eq!(options.initial_available_outgoing_bitrate, 8_000_000);
     assert!(!options.enable_tcp);
     assert!(options.prefer_udp);
+}
+
+#[tokio::test]
+async fn screen_mode_marks_only_the_senders_own_screen() {
+    let (sfu, peer, mic, _rx) = stopping_fixture().await;
+    let channel = peer.authority.claim.c;
+    let room = sfu.room(channel).await.unwrap();
+    // Straight to the handler: this fixture has no authority keys in Redis.
+    let rpc =
+        |frame: ClientFrame| sfu.dispatch(room.clone(), peer.clone(), peer.id, channel, frame);
+    let screen_mode = |producer_id: String| ClientFrame::ScreenMode {
+        id: 1,
+        producer_id,
+        sharp: true,
+    };
+    // A microphone has no text to keep sharp.
+    assert!(matches!(
+        rpc(screen_mode(mic.id())).await,
+        Err(SfuError::Forbidden)
+    ));
+    assert!(matches!(
+        rpc(screen_mode("unknown".into())).await,
+        Err(SfuError::Forbidden)
+    ));
+    let transport = mic.producer.transport().clone();
+    let mut rtp = mic
+        .producer
+        .resource
+        .with(|producer| producer.rtp_parameters().clone())
+        .unwrap();
+    rtp.encodings[0].ssrc = Some(5678);
+    let producer = room
+        .engine
+        .native(transport.clone(), move |transport| async move {
+            transport
+                .produce(ProducerOptions::new(MediaKind::Audio, rtp))
+                .await
+        })
+        .await
+        .unwrap();
+    let screen = Arc::new(Publication {
+        producer: NativeProducer::new(producer, transport, room.engine.lost.clone()),
+        peer: peer.clone(),
+        kind: SourceKind::Screen,
+        epoch: Uuid::new_v4(),
+        parent: None,
+        grant: Grant::new(),
+        gate: Mutex::new(()),
+        packet_samples: StdMutex::new(HashMap::new()),
+        sharp: AtomicBool::new(false),
+    });
+    room.data
+        .lock()
+        .await
+        .publications
+        .insert(screen.id(), screen.clone());
+    rpc(screen_mode(screen.id())).await.unwrap();
+    assert!(screen.sharp.load(Ordering::Relaxed));
+    rpc(ClientFrame::ScreenMode {
+        id: 2,
+        producer_id: screen.id(),
+        sharp: false,
+    })
+    .await
+    .unwrap();
+    assert!(!screen.sharp.load(Ordering::Relaxed));
+
+    // A viewer's own choice wins over the sender's; the fixture's peer stands
+    // in for a viewer of its own Live here.
+    let sender = peer.authority.claim.u;
+    let wants = |sharp: Option<bool>| {
+        let room = room.clone();
+        let (peer, screen) = (peer.clone(), screen.clone());
+        async move {
+            let mut data = room.data.lock().await;
+            let p = data.peers.get_mut(&peer.id).unwrap();
+            match sharp {
+                Some(sharp) => p.view_modes.insert(sender, sharp),
+                None => p.view_modes.remove(&sender),
+            };
+            super::sharp::wants_sharp(p, &screen)
+        }
+    };
+    assert!(!wants(None).await);
+    assert!(wants(Some(true)).await);
+    screen.sharp.store(true, Ordering::Relaxed);
+    assert!(!wants(Some(false)).await);
+    assert!(wants(None).await);
+}
+
+#[tokio::test]
+async fn view_mode_is_kept_per_sender_and_never_for_oneself() {
+    let (sfu, peer, _mic, _rx) = stopping_fixture().await;
+    let channel = peer.authority.claim.c;
+    let room = sfu.room(channel).await.unwrap();
+    let rpc =
+        |frame: ClientFrame| sfu.dispatch(room.clone(), peer.clone(), peer.id, channel, frame);
+    let view_mode = |u: Uuid, sharp: Option<bool>| ClientFrame::ViewMode { id: 1, u, sharp };
+    let modes = || async { room.data.lock().await.peers[&peer.id].view_modes.clone() };
+    for u in [peer.authority.claim.u, Uuid::nil()] {
+        assert!(matches!(
+            rpc(view_mode(u, Some(true))).await,
+            Err(SfuError::Forbidden)
+        ));
+    }
+    let sender = Uuid::new_v4();
+    rpc(view_mode(sender, Some(true))).await.unwrap();
+    assert_eq!(modes().await.get(&sender), Some(&true));
+    rpc(view_mode(sender, Some(false))).await.unwrap();
+    assert_eq!(modes().await.get(&sender), Some(&false));
+    rpc(view_mode(sender, None)).await.unwrap();
+    assert!(modes().await.is_empty());
+    for _ in 0..WATCH_LIMIT {
+        rpc(view_mode(Uuid::new_v4(), Some(true))).await.unwrap();
+    }
+    assert!(matches!(
+        rpc(view_mode(Uuid::new_v4(), Some(true))).await,
+        Err(SfuError::BadAnnounce)
+    ));
 }

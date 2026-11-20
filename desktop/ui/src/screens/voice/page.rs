@@ -644,6 +644,9 @@ fn stage_room(
             if let Some(on) = out.watch {
                 app.call.watch(pic.id.user, on);
             }
+            if let Some(mode) = out.view_mode {
+                app.call.set_view_mode(pic.id.user, mode);
+            }
         }
         for (i, p) in strip_people.iter().enumerate() {
             let Some(rect) = strip_rects.get(strip.len() + i) else {
@@ -883,6 +886,9 @@ fn watch_strip(
     let end = button_label(ui, texts::tile_exit_fullscreen());
     let stop = (pic.id.kind == Kind::Live && pic.watching)
         .then(|| button_label(ui, texts::tile_stop_watching()));
+    // `LiveViewMenu`: the picture quality of someone else's watched Live.
+    let view = (pic.id.kind == Kind::Live && pic.watching && !pic.own)
+        .then(|| button_label(ui, texts::view_label()));
     let toggles = room.here;
     // `StreamVolume`: someone else's Live has the stream sound beside it.
     let stream_sound = pic.id.kind == Kind::Live && !pic.own;
@@ -897,7 +903,7 @@ fn watch_strip(
     if stream_sound {
         w += 1.0 + 8.0 + COMPACT + 4.0 + 112.0 + 8.0;
     }
-    if let Some(s) = &stop {
+    for s in [&view, &stop].into_iter().flatten() {
         w += 12.0 + 16.0 + 6.0 + s.width() + 12.0 + 8.0;
     }
     w += 12.0 + 16.0 + 6.0 + end.width() + 12.0 + 8.0;
@@ -1062,24 +1068,34 @@ fn watch_strip(
         }
         x += 112.0 + 8.0;
     }
-    let pill_button = |ui: &mut Ui, x: &mut f32, icon: Icon, block: &Block, id: &str| -> bool {
-        let bw = 12.0 + 16.0 + 6.0 + block.width() + 12.0;
-        let r = Rect::from_min_size(pos2(*x, cy - 18.0), vec2(bw, 36.0));
-        *x += bw + 8.0;
-        let resp = common::click(ui, r, Id::unique(("watch-strip-button", id)));
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, id));
-        let a = if resp.hovered() { 0.2 } else { 0.12 };
-        painter.rect_filled(
-            r,
-            corner(theme.radius.sm),
-            Color32::from_white_alpha((a * 255.0) as u8),
-        );
-        icons::paint(&painter, icon, pos2(r.left() + 12.0, cy - 8.0), 16.0, white);
-        common::paint_mid(&painter, block, r.left() + 12.0 + 16.0 + 6.0, cy);
-        resp.clicked()
-    };
+    let pill_button =
+        |ui: &mut Ui, x: &mut f32, icon: Icon, block: &Block, id: &str| -> (bool, Rect) {
+            let bw = 12.0 + 16.0 + 6.0 + block.width() + 12.0;
+            let r = Rect::from_min_size(pos2(*x, cy - 18.0), vec2(bw, 36.0));
+            *x += bw + 8.0;
+            let resp = common::click(ui, r, Id::unique(("watch-strip-button", id)));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, id));
+            let a = if resp.hovered() { 0.2 } else { 0.12 };
+            painter.rect_filled(
+                r,
+                corner(theme.radius.sm),
+                Color32::from_white_alpha((a * 255.0) as u8),
+            );
+            icons::paint(&painter, icon, pos2(r.left() + 12.0, cy - 8.0), 16.0, white);
+            common::paint_mid(&painter, block, r.left() + 12.0 + 16.0 + 6.0, cy);
+            (resp.clicked(), r)
+        };
+    if let Some(s) = &view {
+        let (clicked, r) = pill_button(ui, &mut x, Icon::Gear, s, texts::view_label());
+        if clicked {
+            super::tile::toggle_view(ui.ctx(), pic.id, true);
+        }
+        if let Some(mode) = super::tile::view_menu(ui, pic, r, true) {
+            app.call.set_view_mode(pic.id.user, mode);
+        }
+    }
     if let Some(s) = &stop
-        && pill_button(ui, &mut x, Icon::EyeOff, s, texts::tile_stop_watching())
+        && pill_button(ui, &mut x, Icon::EyeOff, s, texts::tile_stop_watching()).0
     {
         app.call.watch(pic.id.user, false);
     }
@@ -1090,6 +1106,7 @@ fn watch_strip(
         &end,
         texts::tile_exit_fullscreen(),
     )
+    .0
 }
 
 #[cfg(test)]

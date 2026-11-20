@@ -37,6 +37,7 @@ mod attach;
 mod authority;
 mod codecs;
 mod rpc;
+mod sharp;
 mod stats;
 mod stop;
 #[cfg(test)]
@@ -105,6 +106,9 @@ struct PeerData {
     /// Producer ID -> `consumerFailed` reports from this viewer for that producer.
     failed_consumers: HashMap<String, u8>,
     watches: HashMap<(Uuid, WatchKind), Arc<Grant>>,
+    /// Sender user ID -> this viewer's own sharp (true) or smooth (false)
+    /// choice for that sender's Live (GEL-32, `viewMode`).
+    view_modes: HashMap<Uuid, bool>,
     retired_producers: VecDeque<String>,
     retired_transports: VecDeque<String>,
 }
@@ -117,6 +121,8 @@ struct Publication {
     grant: Arc<Grant>,
     gate: Mutex<()>,
     packet_samples: StdMutex<HashMap<u32, u64>>,
+    /// The sender keeps text sharp (GEL-32, `screenMode`); screens only.
+    sharp: AtomicBool,
 }
 impl Publication {
     fn id(&self) -> String {
@@ -409,6 +415,7 @@ impl Sfu {
             draining: AtomicBool::new(false),
         });
         Self::watch_stats(Arc::downgrade(&sfu));
+        Self::keep_sharp(Arc::downgrade(&sfu));
         for engine in engines {
             Self::supervise(Arc::downgrade(&sfu), engine);
         }
@@ -712,6 +719,7 @@ impl Sfu {
                 pending_consumers: HashSet::new(),
                 failed_consumers: HashMap::new(),
                 watches: HashMap::new(),
+                view_modes: HashMap::new(),
                 retired_producers: VecDeque::new(),
                 retired_transports: VecDeque::new(),
             },

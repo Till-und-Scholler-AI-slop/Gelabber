@@ -1431,6 +1431,44 @@ describe("public mediasoup connection lifecycle", () => {
     expect(capture.stop).not.toHaveBeenCalled();
   });
 
+  it("tells the server a sharp Live's mode after its producer exists, and every switch", async () => {
+    const f = fixture();
+    await f.start();
+    void f.connection.setScreenMode(true);
+    const sender = await f.connection.publish(
+      publication("s", new Capture("live", "video")),
+    );
+    const methods = f.requests.map((r) => r.method as string);
+    expect(methods.indexOf("screenMode")).toBeGreaterThan(
+      methods.indexOf("produce"),
+    );
+    expect(f.calls("screenMode")).toEqual([
+      { producerId: sender.producerId, sharp: true },
+    ]);
+    await f.connection.setScreenMode(true);
+    await f.connection.setScreenMode(false);
+    expect(f.calls("screenMode")).toEqual([
+      { producerId: sender.producerId, sharp: true },
+      { producerId: sender.producerId, sharp: false },
+    ]);
+  });
+
+  it("says nothing for a smooth Live and survives a server without screen modes", async () => {
+    const f = fixture();
+    await f.start();
+    await f.connection.setScreenMode(false);
+    await f.connection.publish(publication("s", new Capture("live", "video")));
+    expect(f.calls("screenMode")).toEqual([]);
+    f.intercept((method) =>
+      method === "screenMode"
+        ? Promise.reject(new Error("bad_request"))
+        : undefined,
+    );
+    await expect(f.connection.setScreenMode(true)).resolves.toBeUndefined();
+    expect(f.connection.sender("s")).toBeDefined();
+    expect(f.onError).not.toHaveBeenCalled();
+  });
+
   it("pauses native publication and sends exact source ownership without stopping capture", async () => {
     const f = fixture();
     await f.start();
