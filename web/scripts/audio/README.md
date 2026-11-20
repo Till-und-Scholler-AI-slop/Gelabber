@@ -19,21 +19,21 @@ The full third-party license accompanies the binary.
 
 Run `npm run test:audio-dsp` to process deterministic synthetic noise, measure
 compute time per 10 ms frame, and compare the actual worklet sample-for-sample
-with direct RNNoise across varying browser render quanta. Reblocking adds
-exactly 480 samples (10 ms), and the input sensitivity gate after RNNoise
-(GEL-27) runs two frames behind (960 samples, 20 ms look-ahead, also when it
-is off), 1440 samples in all; this excludes RNNoise's own algorithmic delay,
+with direct RNNoise across varying browser render quanta, with the input
+sensitivity gate off (GEL-27; on, it adds a 20 ms look-ahead, covered by
+`src/voice/inputGate.test.mjs`). Reblocking adds exactly 480 samples
+(10 ms); this excludes RNNoise's own algorithmic delay,
 browser capture/output buffers, codec, transport and receiver playback delay.
 Synthetic attenuation is a functional check, not a speech-quality score.
 
 The same command separately estimates the full input-PCM to worklet-output-PCM
 delay, including RNNoise's model delay, using deterministic voiced harmonics
-and an aperiodic chirp. Normalized cross-correlation searches 0–70 ms in three
+and an aperiodic chirp. Normalized cross-correlation searches 0–50 ms in three
 fixed half-second windows after warmup. A peak must correlate at least 0.95 and
 exceed periodic aliases outside a 1 ms neighborhood by at least 0.02; an
 unidentifiable/suppressed signal fails acceptance. Direct RNNoise and the actual
-worklet must differ by exactly 1440 samples, and each worklet estimate must
-stay within 60 ms. Signal filtering can shift the correlation peak slightly, so
+worklet must differ by exactly 480 samples, and each worklet estimate must stay
+within 30 ms. Signal filtering can shift the correlation peak slightly, so
 these are measured estimates for this PCM, not a universal latency guarantee.
 The report keeps frame compute time separate. The PCM measurement includes no
 browser capture/output buffering, scheduling overruns, codec, network or

@@ -202,6 +202,11 @@ export function resetNoiseModelForTests(): void {
   wasm = null;
   modelFailure = null;
 }
+/** A worklet's added delay: 10 ms reblocking, plus the input gate's 20 ms
+ * look-ahead while the gate is on. */
+function workletBufferMs(gate: GateMode): number {
+  return gate === "off" ? 10 : 30;
+}
 function infoFor(
   raw: MediaStream,
   settings: MediaSettings,
@@ -226,8 +231,10 @@ function infoFor(
         : null,
     noiseSuppression: effective.noiseSuppression ?? null,
     autoGainControl: effective.autoGainControl ?? null,
-    // 10 ms reblocking plus the input gate's 20 ms look-ahead.
-    addedBufferMs: actual === "enhanced" ? 30 : 0,
+    addedBufferMs:
+      actual === "enhanced"
+        ? workletBufferMs(gateConfig(settings, actual).mode)
+        : 0,
     inputGain: 1,
     contextState: null,
     gate: actual === "original" ? "off" : null,
@@ -450,7 +457,7 @@ export async function createProcessor(
       node.onprocessorerror = fault;
       source.connect(node);
       node.connect(gain);
-      info.addedBufferMs = 30;
+      info.addedBufferMs = workletBufferMs(gateConfig(settings, actual).mode);
     } else source.connect(gain);
     if (faulted || ctx.state !== "running")
       throw new Error(translate(diagnostics, "processing.error.pausedAtStart"));
@@ -508,6 +515,7 @@ export async function createProcessor(
         currentNode.port.postMessage({ op: "gateConfig", config });
         if (info.gate !== config.mode) {
           info.gate = config.mode;
+          info.addedBufferMs = workletBufferMs(config.mode);
           onState?.({ ...info });
         }
       },

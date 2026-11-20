@@ -1,8 +1,8 @@
 // The input sensitivity gate (../src/input_gate.h) on generated blocks, the
 // same cases as the web client's web/src/voice/inputGate.test.mjs: off
-// changes nothing but the 20 ms look-ahead, a manual threshold lets a voice
-// through and sends silence below it after the hold time, a short pause
-// keeps it open, a 20 ms burst does not open it while the start of speech
+// changes nothing and adds no look-ahead, on it runs 20 ms behind, a
+// manual threshold lets a voice through and sends silence below it after
+// the hold time, a short pause keeps it open, a 20 ms burst does not open it while the start of speech
 // is sent whole, automatic finds the room's noise by itself, and RNNoise's
 // speech probability keeps loud clicks out. No libwebrtc, no sound card.
 //
@@ -122,12 +122,17 @@ int main()
 		Setup(gate, GateMode::Off);
 		const auto input  = Join({ Noise(-60, 200), Tone(-20, 200) });
 		const auto output = Run(gate, input);
-		const size_t late = static_cast<size_t>(InputGate::kLookaheadBlocks) * kBlock;
-		bool same         = true;
-		for (size_t n = 0; n < output.size(); ++n)
-			same = same && output[n] == (n < late ? 0.0f : input[n - late]);
-		Expect(same, "off: every sample as it was, 20 ms later");
+		Expect(output == input, "off: every sample as it was, without look-ahead");
 		Expect(gate.Report().open, "off: open");
+		// Switched on, the output runs kLookaheadBlocks behind.
+		gate.Configure(GateMode::Manual, -80);
+		const auto later  = Tone(-20, 300, 330);
+		const auto gated  = Run(gate, later);
+		const size_t late = static_cast<size_t>(InputGate::kLookaheadBlocks) * kBlock;
+		bool behind       = true;
+		for (size_t n = 0; n < gated.size(); ++n)
+			behind = behind && gated[n] == (n < late ? 0.0f : later[n - late]);
+		Expect(behind, "on: 20 ms behind, after an empty look-ahead");
 	}
 	{
 		InputGate gate;

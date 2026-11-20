@@ -613,6 +613,8 @@ describe("input sensitivity gate", () => {
       { op: "gain", value: 1.5 },
     ]);
     expect(states.mock.lastCall?.[0].gate).toBe("off");
+    // Off, the gate adds no look-ahead: only the 10 ms reblocking is left.
+    expect(states.mock.lastCall?.[0].addedBufferMs).toBe(10);
     node.port.onmessage?.({
       data: {
         op: "gate",

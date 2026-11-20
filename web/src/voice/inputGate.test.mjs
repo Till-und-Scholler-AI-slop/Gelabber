@@ -100,9 +100,9 @@ const silent = (samples, fromMs, toMs) =>
     .every((value) => value === 0);
 
 describe("input gate", () => {
-  it("passes everything unchanged, 30 ms later, when off", () => {
-    // 10 ms reblocking and the gate's 20 ms look-ahead.
-    const late = 3 * BLOCK;
+  it("passes everything unchanged, 10 ms later, when off", () => {
+    // 10 ms reblocking only: off, the gate adds no look-ahead.
+    const late = BLOCK;
     const input = join(noise(-60, 200), tone(-20, 200));
     const { processor } = gate({ mode: "off" });
     const output = run(processor, input);
@@ -111,6 +111,20 @@ describe("input gate", () => {
     );
     for (let n = late; n < output.length; n++)
       expect(output[n]).toBe(input[n - late]);
+  });
+
+  it("runs 20 ms behind only while it is on", () => {
+    const { processor } = gate({ mode: "off" });
+    run(processor, tone(-20, 200));
+    processor.port.onmessage?.({
+      data: { op: "gateConfig", config: { mode: "manual", thresholdDb: -80 } },
+    });
+    const input = tone(-20, 300, 330);
+    const output = run(processor, input);
+    // The last 10 ms from before, then the empty look-ahead, then the input.
+    expect(silent(output, 10, 30)).toBe(true);
+    for (let n = 3 * BLOCK; n < output.length; n++)
+      expect(output[n]).toBe(input[n - 3 * BLOCK]);
   });
 
   it("keeps a 20 ms burst out and sends the start of speech whole", () => {

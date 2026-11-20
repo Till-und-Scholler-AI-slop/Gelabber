@@ -16,7 +16,8 @@
 //
 // The gate opens only after kOpenBlocks blocks in a row speak (or are above
 // the threshold): a key click lasts one or two. So that the first of those
-// blocks is not lost, the output runs kLookaheadBlocks behind (20 ms).
+// blocks is not lost, the output runs kLookaheadBlocks behind (20 ms); off,
+// it runs without delay.
 #ifndef GELABBER_INPUT_GATE_H
 #define GELABBER_INPUT_GATE_H
 
@@ -121,11 +122,12 @@ namespace gelabber
 			amount  = 1.0f;
 			run     = 0;
 			delay.clear();
-			slot = 0;
+			slot   = 0;
+			bypass = false;
 		}
 
 		// Capture thread: one block in, the one kLookaheadBlocks before it
-		// out, every channel in place. `fullScale` is the samples' full scale
+		// out (off: the same block, unchanged), every channel in place. `fullScale` is the samples' full scale
 		// (32768 for libwebrtc's FloatS16), `speech` RNNoise's probability
 		// for the block or a negative value without it.
 		void Process(float* const* channels, int numChannels, int numFrames, float fullScale, float speech)
@@ -156,25 +158,39 @@ namespace gelabber
 			  : useSpeech             ? std::clamp(floorDb + kSpeechMarginDb, kSpeechMinDb, kSpeechMaxDb)
 			                          : std::clamp(floorDb + kLevelMarginDb, kLevelMinDb, kLevelMaxDb);
 			if (now == GateMode::Off)
-				open = true;
-			else
 			{
-				const bool opens = level >= threshold && (!useSpeech || speech >= kSpeechOpen);
-				// With speech probabilities, only speech keeps it open: a key
-				// click in a pause must not stretch the hold.
-				const bool stays = useSpeech ? opens : level >= threshold - kHysteresisDb;
-				run              = opens ? run + 1 : 0;
-				if (run >= kOpenBlocks || (open && stays))
+				// Off (Original, push-to-talk) costs no look-ahead: the block
+				// leaves as it came. Switched on, the gate starts from an
+				// empty delay.
+				open   = true;
+				run    = 0;
+				amount = 1.0f;
+				if (!bypass)
 				{
-					open   = true;
-					holdMs = kHoldMs;
+					bypass = true;
+					std::fill(delay.begin(), delay.end(), 0.0f);
 				}
-				else if (open)
-				{
-					holdMs -= blockMs;
-					if (holdMs <= 0.0f)
-						open = false;
-				}
+				reportLevel.store(level);
+				reportThreshold.store(threshold);
+				reportOpen.store(true);
+				return;
+			}
+			bypass = false;
+			const bool opens = level >= threshold && (!useSpeech || speech >= kSpeechOpen);
+			// With speech probabilities, only speech keeps it open: a key
+			// click in a pause must not stretch the hold.
+			const bool stays = useSpeech ? opens : level >= threshold - kHysteresisDb;
+			run              = opens ? run + 1 : 0;
+			if (run >= kOpenBlocks || (open && stays))
+			{
+				open   = true;
+				holdMs = kHoldMs;
+			}
+			else if (open)
+			{
+				holdMs -= blockMs;
+				if (holdMs <= 0.0f)
+					open = false;
 			}
 			// The newest block waits; the oldest one leaves, gated. A new
 			// block size or channel count starts the delay over (silence).
@@ -220,6 +236,7 @@ namespace gelabber
 		int run{ 0 };
 		std::vector<float> delay;
 		size_t slot{ 0 };
+		bool bypass{ false };
 
 		std::atomic<float> reportLevel{ kSilenceDb };
 		std::atomic<float> reportThreshold{ kLevelMinDb };

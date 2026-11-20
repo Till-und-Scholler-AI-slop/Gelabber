@@ -61,6 +61,7 @@ class InputGate {
       () => new Float32Array(this.blockFrames),
     );
     this.slot = 0;
+    this.bypass = false; // off: no delay
   }
   configure(config) {
     const mode = config?.mode;
@@ -77,8 +78,9 @@ class InputGate {
   setGain(value) {
     this.gain = Number.isFinite(value) && value > 0 ? value : 0;
   }
-  /** One 10 ms block in, the one `lookaheadBlocks` before it out, in place.
-   * `speech` is RNNoise's probability for it, or null without RNNoise.
+  /** One 10 ms block in, the one `lookaheadBlocks` before it out, in place
+   * (off: the same block, unchanged). `speech` is RNNoise's probability for
+   * it, or null without RNNoise.
    * Returns true when a report is due. */
   block(frame, speech) {
     let sum = 0;
@@ -112,23 +114,33 @@ class InputGate {
               GATE.levelMaxDb,
             );
     if (this.mode === "off") {
+      // Off (Original, push-to-talk) costs no look-ahead: the block leaves
+      // as it came. Switched on, the gate starts from an empty delay.
       this.open = true;
-    } else {
-      const opens =
-        level >= this.thresholdDb && (!useSpeech || speech >= GATE.speechOpen);
-      // With speech probabilities, only speech keeps it open: a key click
-      // in a pause must not stretch the hold.
-      const stays = useSpeech
-        ? opens
-        : level >= this.thresholdDb - GATE.hysteresisDb;
-      this.run = opens ? this.run + 1 : 0;
-      if (this.run >= GATE.openBlocks || (this.open && stays)) {
-        this.open = true;
-        this.holdMs = GATE.holdMs;
-      } else if (this.open) {
-        this.holdMs -= GATE.blockMs;
-        if (this.holdMs <= 0) this.open = false;
+      this.run = 0;
+      this.amount = 1;
+      if (!this.bypass) {
+        this.bypass = true;
+        for (const slot of this.delay) slot.fill(0);
       }
+      this.blocks = (this.blocks + 1) % GATE.reportBlocks;
+      return this.blocks === 0;
+    }
+    this.bypass = false;
+    const opens =
+      level >= this.thresholdDb && (!useSpeech || speech >= GATE.speechOpen);
+    // With speech probabilities, only speech keeps it open: a key click
+    // in a pause must not stretch the hold.
+    const stays = useSpeech
+      ? opens
+      : level >= this.thresholdDb - GATE.hysteresisDb;
+    this.run = opens ? this.run + 1 : 0;
+    if (this.run >= GATE.openBlocks || (this.open && stays)) {
+      this.open = true;
+      this.holdMs = GATE.holdMs;
+    } else if (this.open) {
+      this.holdMs -= GATE.blockMs;
+      if (this.holdMs <= 0) this.open = false;
     }
     // The newest block waits; the oldest one leaves, gated.
     const newest = this.delay[this.slot];
