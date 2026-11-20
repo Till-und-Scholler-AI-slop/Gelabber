@@ -226,6 +226,7 @@ impl Platform {
     fn start(&mut self, ctx: &Context) {
         self.started = true;
         *self.wake.lock() = Some(ctx.clone());
+        crate::screens::layout::set_sidebars(ctx, self.stored.sidebars);
         #[cfg(target_os = "linux")]
         {
             self.badge = tray::unity::Badge::start(None).map(|b| (b, u32::MAX));
@@ -489,6 +490,7 @@ impl Platform {
             account.set_drafts(&chat::drafts(ctx), now);
         }
         self.track_window(ctx);
+        self.stored.sidebars = crate::screens::layout::sidebars(ctx);
         if self.stored != self.saved {
             state::save(&self.stored);
             self.saved = self.stored.clone();

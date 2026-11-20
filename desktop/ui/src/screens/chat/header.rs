@@ -85,7 +85,9 @@ pub fn show(
     let bell_rect = Rect::from_min_size(pos2(right - 32.0, mid - 16.0), Vec2::splat(32.0));
     right -= 32.0 + 10.0;
 
-    let max_title = right - 260.0 - 10.0 - rect.left() - 20.0;
+    // The title starts after the channel list's button (`HEADER_LEAD`).
+    let lead = layout::HEADER_LEAD;
+    let max_title = right - 260.0 - 10.0 - rect.left() - lead - 20.0;
     // NotificationBell's aria-label: "#allgemein" or the person.
     let bell_name = match &title {
         Title::Channel { name, .. } => texts::header_bell_label(&format!("#{name}"), muted),
@@ -97,7 +99,7 @@ pub fn show(
             voice,
             limited,
         } => {
-            let x = rect.left() + 20.0;
+            let x = rect.left() + lead + 20.0;
             icons::paint(
                 ui.painter(),
                 if voice { Icon::Speaker } else { Icon::Hash },
@@ -136,7 +138,7 @@ pub fn show(
             job.wrap.break_anywhere = true;
             let block = Block::new(ui, job, TITLE);
             let button = Rect::from_min_size(
-                pos2(rect.left() + 14.0, mid - 20.0),
+                pos2(rect.left() + lead + 14.0, mid - 20.0),
                 vec2(6.0 + 32.0 + 10.0 + block.width() + 6.0, 40.0),
             );
             let response = ui.interact(

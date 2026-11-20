@@ -459,11 +459,14 @@ mod tests {
         // The channel header's search field, the page's first control
         // (its frame is no Tab stop of its own).
         assert_eq!(focused_label(&harness).as_deref(), Some("Suchen"));
-        // Back: the user panel's last control, the gear, ends the
-        // navigation.
-        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
-        harness.run_steps(2);
-        assert_eq!(focused_label(&harness).as_deref(), Some("Einstellungen"));
+        // Back: the channel list's button at the page's start, its edge,
+        // then the user panel's last control, the gear, which ends the
+        // navigation (GEL-34).
+        for back in ["Kanalliste", "Breite der Kanalliste", "Einstellungen"] {
+            harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+            harness.run_steps(2);
+            assert_eq!(focused_label(&harness).as_deref(), Some(back));
+        }
     }
 
     /// notifyLevel.ts `unreadLabel`: every unread state says "ungelesen".

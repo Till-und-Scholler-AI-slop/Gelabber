@@ -36,7 +36,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
     icons::paint(
         &painter,
         Icon::Chat,
-        pos2(rect.left() + 24.0, rect.top() + 16.5),
+        // `.community-overview__bar`: 52 from the left, after the channel
+        // list's button.
+        pos2(rect.left() + 52.0, rect.top() + 16.5),
         18.0,
         c.muted,
     );
@@ -49,7 +51,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
     paint_mid(
         &painter,
         &title,
-        rect.left() + 24.0 + 18.0 + 10.0,
+        rect.left() + 52.0 + 18.0 + 10.0,
         rect.top() + 25.5,
     );
     hairline_h(

@@ -44,16 +44,22 @@ pub(super) fn switch_account(ctx: &egui::Context) {
 }
 
 /// `rect` is the 56px strip at the bottom of the sidebar column; `context`
-/// the server or DM whose presence counts (`ownPresence`).
+/// the server or DM whose presence counts (`ownPresence`). A rect as narrow
+/// as the rail is the folded channel list's (GEL-34, `.is-nav-collapsed
+/// .user-panel`): the avatar at the rail's foot, the gear above it, the
+/// name only for screen readers; the shell paints the rail behind it.
 pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let painter = ui.painter().clone();
-    // `.user-panel` sits inside `.channel-sidebar`: the column's right
-    // border (the shell's) runs on past it down to the window's edge.
-    let inner = Rect::from_min_max(rect.min, pos2(rect.right() - 1.0, rect.bottom()));
-    painter.rect_filled(inner, 0.0, c.panel);
-    hairline_h(&painter, &theme, inner.left()..=inner.right(), inner.top());
+    let compact = rect.width() <= crate::screens::layout::RAIL_WIDTH;
+    if !compact {
+        // `.user-panel` sits inside `.channel-sidebar`: the column's right
+        // border (the shell's) runs on past it down to the window's edge.
+        let inner = Rect::from_min_max(rect.min, pos2(rect.right() - 1.0, rect.bottom()));
+        painter.rect_filled(inner, 0.0, c.panel);
+        hairline_h(&painter, &theme, inner.left()..=inner.right(), inner.top());
+    }
 
     let (name, avatar_url, status_text, presence, mode) = app.client.with_state(|s| {
         let me = s.me();
@@ -103,11 +109,22 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
     let inner_top = rect.top() + 1.0;
     let center_y = inner_top + (rect.bottom() - inner_top) / 2.0;
     let right = rect.right() - 1.0 - 8.0;
-    let gear = Rect::from_min_size(pos2(right - 30.0, center_y - 18.0), Vec2::new(30.0, 36.0));
-    let profile = Rect::from_min_max(
-        pos2(rect.left() + 8.0, center_y - 21.75),
-        pos2(gear.left() - 4.0, center_y + 21.75),
-    );
+    let (gear, profile) = if compact {
+        // Column, from the bottom: 10, the 40px avatar button, 6, the gear.
+        let mid = rect.left() + (rect.width() - 1.0) / 2.0;
+        let profile =
+            Rect::from_center_size(pos2(mid, rect.bottom() - 10.0 - 20.0), Vec2::splat(40.0));
+        let gear =
+            Rect::from_center_size(pos2(mid, profile.top() - 6.0 - 18.0), Vec2::new(30.0, 36.0));
+        (gear, profile)
+    } else {
+        let gear = Rect::from_min_size(pos2(right - 30.0, center_y - 18.0), Vec2::new(30.0, 36.0));
+        let profile = Rect::from_min_max(
+            pos2(rect.left() + 8.0, center_y - 21.75),
+            pos2(gear.left() - 4.0, center_y + 21.75),
+        );
+        (gear, profile)
+    };
     // Feedback (#542): the entry while the instance takes it, and the dot
     // on the avatar and the entry while a reply is unread.
     let feedback = crate::screens::feedback::enabled(ui.ctx(), app) == Some(true);
@@ -127,11 +144,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
         common::fill(&painter, profile, theme.radius.md, c.hover);
     }
     let avatar = Rect::from_min_size(
-        pos2(profile.left() + 2.0, center_y - 18.0),
+        pos2(profile.left() + 2.0, profile.center().y - 18.0),
         Vec2::splat(36.0),
     );
     let under = if response.hovered() || draft.open {
         c.hover
+    } else if compact {
+        c.rail
     } else {
         c.panel
     };
@@ -153,19 +172,21 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
         painter.circle_filled(center, 6.0, under);
         crate::screens::feedback::dialog::dot(&painter, center, c.accent);
     }
-    let text_left = avatar.right() + 9.0;
-    let text_max = profile.right() - 4.0 - text_left;
-    let top = center_y - 19.75;
-    let strong = line(ui, &name, text::BODY.weight(600.0), c.text, text_max);
-    strong.paint(&painter, pos2(text_left, top));
-    let small = line(
-        ui,
-        &subtitle,
-        text::META.size(11.0).line_height(1.5),
-        c.muted,
-        text_max,
-    );
-    small.paint(&painter, pos2(text_left, top + 21.0 + 2.0));
+    if !compact {
+        let text_left = avatar.right() + 9.0;
+        let text_max = profile.right() - 4.0 - text_left;
+        let top = center_y - 19.75;
+        let strong = line(ui, &name, text::BODY.weight(600.0), c.text, text_max);
+        strong.paint(&painter, pos2(text_left, top));
+        let small = line(
+            ui,
+            &subtitle,
+            text::META.size(11.0).line_height(1.5),
+            c.muted,
+            text_max,
+        );
+        small.paint(&painter, pos2(text_left, top + 21.0 + 2.0));
+    }
     if response.clicked() {
         draft.open = !draft.open;
         draft.text = status_text.clone().unwrap_or_default();
