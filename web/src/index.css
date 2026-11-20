@@ -459,6 +459,143 @@ summary {
   background: var(--lr-backdrop);
 }
 
+/* The channel list's fold button and the sidebars' edges (GEL-34). Wide
+   screens only: phones and narrow windows keep their drawers, and touch
+   screens get the button but no edge to drag. The widths come from
+   SidebarEdge.tsx, fitted to the window. */
+.channel-list-toggle,
+.sidebar-edge {
+  display: none;
+}
+.sidebar-edge {
+  position: relative;
+  z-index: 6;
+  flex: none;
+  width: 0;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+/* 8 px to grab, centred on the column's line. */
+.sidebar-edge::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+}
+.sidebar-edge::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: var(--lr-accent);
+  opacity: 0;
+  transition: opacity var(--lr-dur-fast) var(--lr-ease-standard);
+}
+/* A pointer passing by does not light it; one that rests does. */
+.sidebar-edge:hover::after {
+  opacity: 1;
+  transition-delay: 150ms;
+}
+.sidebar-edge.is-dragging::after,
+.sidebar-edge:focus-visible::after {
+  opacity: 1;
+  transition-delay: 0s;
+}
+.sidebar-edge:focus-visible::after {
+  left: -2px;
+  width: 4px;
+  background: var(--lr-focus);
+}
+:root:has(.sidebar-edge.is-dragging) {
+  cursor: col-resize;
+  user-select: none;
+}
+@media (min-width: 801px) {
+  .channel-list-toggle {
+    display: grid;
+    position: absolute;
+    top: calc((var(--lr-header-height) - 32px) / 2);
+    left: 12px;
+    z-index: 5;
+  }
+  /* The header lines start after the button. */
+  .workspace-main .lr-channel-header,
+  .workspace-main .community-overview__bar {
+    padding-left: 52px;
+  }
+  html[data-kino] .channel-list-toggle {
+    display: none;
+  }
+  .sidebar-edge.is-channels {
+    display: block;
+  }
+  /* Folded: the rail stays, and the user panel shrinks to the avatar and
+     the settings button at the rail's foot. */
+  .workspace.is-nav-collapsed .workspace-navigation {
+    width: var(--lr-rail-width);
+  }
+  .workspace.is-nav-collapsed .workspace-drawer-body {
+    position: relative;
+  }
+  .workspace.is-nav-collapsed .server-rail {
+    padding-bottom: 112px;
+  }
+  .workspace.is-nav-collapsed .channel-sidebar {
+    width: 0;
+    min-width: 0;
+    overflow: visible;
+    border: 0;
+  }
+  .workspace.is-nav-collapsed .channel-sidebar > :not(.user-dock) {
+    display: none;
+  }
+  .workspace.is-nav-collapsed .user-dock {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+  }
+  .workspace.is-nav-collapsed .user-panel {
+    flex-direction: column-reverse;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 0 max(10px, var(--lr-safe-bottom));
+    border-top: 0;
+    border-right: 1px solid var(--lr-border);
+    background: var(--lr-rail);
+  }
+  .workspace.is-nav-collapsed .user-panel-profile {
+    flex: none;
+    padding: 2px;
+  }
+  .workspace.is-nav-collapsed
+    .user-panel-profile
+    > span:not(.user-panel-avatar) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+@media (min-width: 1131px) {
+  .sidebar-edge.is-members {
+    display: block;
+  }
+}
+@media (pointer: coarse) {
+  .sidebar-edge.is-channels,
+  .sidebar-edge.is-members {
+    display: none;
+  }
+}
+
 .server-rail {
   display: flex;
   width: var(--lr-rail-width);

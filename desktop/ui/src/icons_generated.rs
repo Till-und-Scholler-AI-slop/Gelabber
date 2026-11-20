@@ -26,6 +26,7 @@ pub enum Icon {
     Paperclip,
     Expand,
     Collapse,
+    Sidebar,
     Search,
     Send,
     ArrowDown,
@@ -57,10 +58,11 @@ pub enum Icon {
     Lock,
     Stop,
     Compass,
+    Image,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 53] = [
+    pub const ALL: [Icon; 55] = [
         Icon::Hash,
         Icon::Speaker,
         Icon::Plus,
@@ -83,6 +85,7 @@ impl Icon {
         Icon::Paperclip,
         Icon::Expand,
         Icon::Collapse,
+        Icon::Sidebar,
         Icon::Search,
         Icon::Send,
         Icon::ArrowDown,
@@ -114,6 +117,7 @@ impl Icon {
         Icon::Lock,
         Icon::Stop,
         Icon::Compass,
+        Icon::Image,
     ];
 
     /// The SVG source, drawn in white so a tint gives it its colour.
@@ -141,6 +145,7 @@ impl Icon {
             Icon::Paperclip => include_bytes!("../assets/icons/paperclip.svg"),
             Icon::Expand => include_bytes!("../assets/icons/expand.svg"),
             Icon::Collapse => include_bytes!("../assets/icons/collapse.svg"),
+            Icon::Sidebar => include_bytes!("../assets/icons/sidebar.svg"),
             Icon::Search => include_bytes!("../assets/icons/search.svg"),
             Icon::Send => include_bytes!("../assets/icons/send.svg"),
             Icon::ArrowDown => include_bytes!("../assets/icons/arrow-down.svg"),
@@ -172,6 +177,7 @@ impl Icon {
             Icon::Lock => include_bytes!("../assets/icons/lock.svg"),
             Icon::Stop => include_bytes!("../assets/icons/stop.svg"),
             Icon::Compass => include_bytes!("../assets/icons/compass.svg"),
+            Icon::Image => include_bytes!("../assets/icons/image.svg"),
         }
     }
 }

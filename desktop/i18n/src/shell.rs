@@ -10,6 +10,14 @@ crate::strings! {
     sidebar_label = "Navigation" | "Navigation";
     sidebar_loading_label = "Navigation wird geladen" | "Loading navigation";
 
+    channel_list_toggle = "Kanalliste" | "Channel list";
+    channel_list_show = "Kanalliste einblenden" | "Show channel list";
+    channel_list_hide = "Kanalliste ausblenden" | "Hide channel list";
+    edge_channels_label = "Breite der Kanalliste" | "Channel list width";
+    edge_members_label = "Breite der Mitgliederliste" | "Member list width";
+    edge_hint = "Ziehen zum Ändern der Breite, Doppelklick für die Standardbreite"
+        | "Drag to change the width, double-click for the default width";
+
     logout_end_call_title = "Abmelden und Anruf beenden?" | "Sign out and end the call?";
     logout_end_call_message = "Du verlässt dabei den Sprachkanal."
         | "This makes you leave the voice channel.";

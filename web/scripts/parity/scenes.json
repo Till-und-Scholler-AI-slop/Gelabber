@@ -22,6 +22,12 @@
       "user": "lena"
     },
     {
+      "name": "channel-list-collapsed",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [{ "click": "Kanalliste" }]
+    },
+    {
       "name": "channel-spiele",
       "path": "/s/{home}/c/{spiele}",
       "user": "lena"

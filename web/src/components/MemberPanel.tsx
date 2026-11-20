@@ -42,6 +42,9 @@ import {
   neighbourRow,
   ROW_ITEM,
 } from "./rowKeys.ts";
+import { SidebarEdge } from "./SidebarEdge.tsx";
+import { useFittedWidths } from "./sidebarWidths.ts";
+import { memberListShown } from "./sidebarLayout.ts";
 import { VoiceStateIcons } from "./VoiceStateIcons.tsx";
 import { WorkspaceDrawer } from "./WorkspaceNavigation.tsx";
 
@@ -91,6 +94,8 @@ export function MemberPanel({
     })),
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const fitted = useFittedWidths();
+  useEffect(() => (hidden ? undefined : memberListShown()), [hidden]);
   const [profile, setProfile] = useState<{
     serverId: string;
     memberId: string;
@@ -122,6 +127,12 @@ export function MemberPanel({
         <span className="member-drawer-trigger-label">{t("panel.title")}</span>
         <span className="member-drawer-trigger-count">{members.length}</span>
       </button>
+      <SidebarEdge
+        side="members"
+        width={fitted.members}
+        controls={drawerId}
+        hidden={hidden}
+      />
       <WorkspaceDrawer
         id={drawerId}
         title={t("panel.title")}

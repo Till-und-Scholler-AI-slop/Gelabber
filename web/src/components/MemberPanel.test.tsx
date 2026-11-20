@@ -61,7 +61,10 @@ describe("member panel", () => {
   });
 
   it("gives the list one Tab stop and the key hint on its first member", () => {
-    const html = render(Array.from({ length: 30 }, (_, n) => member(n)));
+    // The list's edge (role="separator") is a Tab stop of its own.
+    const html = render(
+      Array.from({ length: 30 }, (_, n) => member(n)),
+    ).replace(/<div role="separator"[^>]*><\/div>/, "");
     expect(html.match(/tabindex="0"/g)?.length).toBe(1);
     const first = /<button[^>]*tabindex="0"[^>]*>/.exec(html)?.[0] ?? "";
     expect(first).toContain('aria-label="Profil von Member 00000"');

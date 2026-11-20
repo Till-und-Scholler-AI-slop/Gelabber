@@ -151,7 +151,8 @@ fn header(
     painter.rect_filled(rect, 0.0, c.bg);
     crate::widgets::rule_h(&painter, c.border, rect.x_range(), rect.bottom() - 1.0);
     let mid = rect.top() + (HEADER - 1.0) / 2.0;
-    let x = rect.left() + 20.0;
+    // After the channel list's button.
+    let x = rect.left() + crate::screens::layout::HEADER_LEAD + 20.0;
     icons::paint(
         ui.painter(),
         Icon::Speaker,
