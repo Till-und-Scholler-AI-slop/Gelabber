@@ -11,7 +11,13 @@ const base = safeTarget(
 const output =
   process.env.GELABBER_CHAT_REPORT ?? "/tmp/gelabber-chat-workflows";
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch();
+// Another Chromium build than Playwright's own, e.g. where its download is
+// blocked (like GELABBER_PWA_BROWSER_EXECUTABLE in smoke-pwa.mjs).
+const browser = await chromium.launch(
+  process.env.GELABBER_CHAT_BROWSER_EXECUTABLE
+    ? { executablePath: process.env.GELABBER_CHAT_BROWSER_EXECUTABLE }
+    : {},
+);
 const contexts = [];
 const suffix = randomBytes(6).toString("hex");
 const password = randomBytes(20).toString("base64url");
@@ -23,7 +29,8 @@ const check = async (name, run) => {
   console.log(`PASS ${name}`);
 };
 async function actor(label, credentials) {
-  const context = await browser.newContext();
+  // The checks find controls by their German names.
+  const context = await browser.newContext({ locale: "de-DE" });
   contexts.push(context);
   const page = await context.newPage();
   page.setDefaultTimeout(12_000);
@@ -245,6 +252,14 @@ try {
         });
         window.dispatchEvent(new Event("focus"));
       });
+      // The focus check finds the session gone and releases the drafts. A
+      // page load before that would start with the old drafts still stored.
+      await member.page.waitForFunction(
+        () =>
+          !Object.keys(window.localStorage).some((key) =>
+            key.startsWith("gelabber:chat-draft:"),
+          ),
+      );
       await member.page.goto(`${base}/login`);
       await member.page.getByLabel("E-Mail-Adresse").fill(member.email);
       await member.page.getByLabel("Passwort", { exact: true }).fill(password);
@@ -342,6 +357,9 @@ try {
   await check("DM drafts and search use the same scoped workflow", async () => {
     const dm = (await api(owner, "/dms", "POST", { user_id: member.id })).body
       .id;
+    // Not friends: the DM is a message request (#563), which the unread
+    // list leaves out until it is accepted.
+    assert.equal((await api(member, `/dms/${dm}/accept`, "POST")).status, 200);
     await send(owner, dm, "dm searchneedle");
     await member.page.goto(`${base}/d/${dm}`);
     await member.page.bringToFront();
@@ -356,6 +374,8 @@ try {
       await member.page.locator("form textarea").last().inputValue(),
       "dm draft",
     );
+    // On a phone the field is an icon until it is tapped (#561).
+    await member.page.locator(".lr-header-search").click();
     await member.page
       .getByRole("searchbox", { name: "In dieser Unterhaltung suchen" })
       .fill("searchneedle");
