@@ -179,7 +179,10 @@ export async function startHarness() {
     cleanup: [],
   };
   async function actor(label) {
+    // The scenarios find controls by their German names, and the
+    // app follows the browser's language (src/i18n/locale.ts), English on CI.
     const context = await browser.newContext({
+      locale: "de-DE",
       permissions:
         engine === "chromium" && !label.includes("Watch")
           ? ["camera", "microphone"]
@@ -234,6 +237,11 @@ export async function startHarness() {
     const invite = await dialog
       .getByRole("textbox", { name: "Einladungslink" })
       .inputValue();
+    // Closing the dialog revokes a link nobody copied or shared
+    // (inviteSession.ts), so take it the way a user would first.
+    await dialog
+      .getByRole("button", { name: "Link kopieren", exact: true })
+      .click();
     await dialog
       .getByRole("button", { name: "Schließen", exact: true })
       .click();
@@ -469,7 +477,7 @@ export async function startHarness() {
       try {
         // A separate login lets logout/revocation scenarios leave the original socket untouched.
         context = await deadlineProbe(
-          () => browser.newContext(),
+          () => browser.newContext({ locale: "de-DE" }),
           Date.now() + 12_000,
         );
         const page = await deadlineProbe(

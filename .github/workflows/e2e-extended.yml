@@ -1,5 +1,6 @@
 # Fault diagnostics on demand: the real app against Postgres, Redis and MinIO
-# in Chromium and Firefox, with API/Redis and SFU faults. Not a PR gate. Runs
+# in Chromium and Firefox, with API/Redis and SFU faults, then the chat
+# workflows acceptance in Chromium (GEL-31). Not a PR gate. Runs
 # when a pull request gets the label e2e-extended (also before this file is
 # on main, which workflow_dispatch needs) or by hand.
 name: Extended E2E
@@ -174,6 +175,45 @@ jobs:
         with:
           name: app-acceptance-core-faults
           path: /tmp/gelabber-e2e/*.json
+          if-no-files-found: warn
+
+      # The chat in a real browser: read state, scoped search, drafts, a
+      # second device, DMs and the composer's file note (GEL-31). Runs even
+      # when a fault run failed, so both results show.
+      - name: Chat workflows acceptance (Chromium)
+        if: ${{ !cancelled() }}
+        env:
+          API_ADDR: 127.0.0.1:8080
+          MINIO_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+          MINIO_BUCKET: gelabber-chat-workflows
+          GELABBER_SMOKE_URL: http://127.0.0.1:5174
+          GELABBER_CHAT_REPORT: /tmp/gelabber-chat-workflows
+        run: |
+          set -euo pipefail
+          backend/target/debug/gelabber-api >/tmp/gelabber-chat-api.log 2>&1 &
+          api=$!
+          (cd web && exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5174 --strictPort) \
+            >/tmp/gelabber-chat-vite.log 2>&1 &
+          vite=$!
+          trap 'kill "$api" "$vite" 2>/dev/null || true' EXIT
+          deadline=$((SECONDS + 120))
+          until curl -fsS http://127.0.0.1:8080/ready >/dev/null \
+            && curl -fsS "$GELABBER_SMOKE_URL/" >/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "API or Vite did not come up within 120s"
+              tail -n 50 /tmp/gelabber-chat-api.log /tmp/gelabber-chat-vite.log
+              exit 1
+            fi
+            sleep 2
+          done
+          npm run --prefix web test:e2e-chat-workflows
+
+      - name: Upload chat workflows screenshots and report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chat-workflows
+          path: /tmp/gelabber-chat-workflows/
           if-no-files-found: warn
 
       - name: Dump test MinIO logs

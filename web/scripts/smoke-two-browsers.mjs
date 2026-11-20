@@ -261,6 +261,9 @@ try {
   const invite = await inviteDialog
     .getByRole("textbox", { name: "Einladungslink" })
     .inputValue();
+  // Closing the dialog revokes a link nobody copied or shared
+  // (inviteSession.ts), so take it the way a user would first.
+  await inviteDialog.getByRole("button", { name: "Link kopieren" }).click();
   await inviteDialog.getByRole("button", { name: "Schließen" }).click();
   await a.page
     .getByRole("link", { name: /allgemein/ })
