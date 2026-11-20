@@ -197,9 +197,13 @@ export async function chatFaultScenarios(h, f) {
       try {
         await send(f.owner, text);
         await present(f.member, text);
-        // Two right answers to a lost reply: the row says the message may
-        // be saved already, or the sender's own live event (with the send's
-        // nonce, #355) arrives and settles the row as saved. Neither may
+        // Two right answers to a lost reply. The sender's own live event
+        // carries the send's nonce (#355, pending.ts confirmEcho) and settles
+        // the row as saved: at once when it comes before the 504, and after
+        // it otherwise, the row showing "may already be saved" in between.
+        // With the live connection up, as here, the row ends settled; the
+        // hint stays only when no live event comes, which this scenario does
+        // not arrange (the metrics say which one was seen). Neither may
         // offer a retry or send twice.
         const uncertain = failedRow(f.owner, text);
         const hint = uncertain.getByText(
