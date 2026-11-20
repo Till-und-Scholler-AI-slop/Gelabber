@@ -69,6 +69,14 @@ export function safeTarget(value) {
 export function revision(value) {
   return /^[a-f0-9]{7,64}$/.test(value ?? "") ? value : "unknown";
 }
+export function failureSite(stack = "") {
+  const sites = [...stack.matchAll(/scripts\/e2e\/([a-z.-]+:\d+:\d+)/g)].map(
+    (match) => match[1],
+  );
+  return (
+    sites.find((site) => !site.startsWith("harness.mjs:")) ?? sites[0] ?? null
+  );
+}
 export function safeError(error) {
   // Playwright errors contain URLs, form values and call logs: never persist them.
   return error instanceof CheckFailure ||
@@ -368,9 +376,8 @@ export async function startHarness() {
               : error instanceof CheckFailure && /fixture/.test(error.message)
                 ? "test-error"
                 : "unconfirmed-failure",
-        site:
-          /scripts\/e2e\/([a-z.]+:\d+:\d+)/.exec(error.stack ?? "")?.[1] ??
-          null,
+        // The scenario's own line, not the harness helper that threw.
+        site: failureSite(error.stack),
         ...(error instanceof CheckFailure ||
         error instanceof NativeInterfaceFailure
           ? { metrics: error.metrics }
@@ -652,15 +659,14 @@ export async function click(actor, name) {
   if (name === "Zuschauen") {
     // A Live is watched in its voice channel: join the call first, then
     // the tile's button, not the hint's or a toast's.
-    const join = actor.page
-      .locator(".voice-room")
-      .getByRole("button", { name: VOICE_JOIN });
+    const room = actor.page.locator(".voice-room");
+    const join = room.getByRole("button", { name: VOICE_JOIN });
+    const watch = room.getByRole("button", { name, exact: true });
+    // Right after a navigation the room is not drawn yet: decide only once
+    // it shows the join control or a Live to watch.
+    await join.or(watch).first().waitFor();
     if (await join.count()) await joinVoiceRoom(actor);
-    await actor.page
-      .locator(".voice-room")
-      .getByRole("button", { name, exact: true })
-      .first()
-      .click();
+    await watch.first().click();
     return;
   }
   if (

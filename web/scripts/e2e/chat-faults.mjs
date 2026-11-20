@@ -92,7 +92,7 @@ export async function chatFaultScenarios(h, f) {
       await route.continue();
     });
     try {
-      await f.owner.page.locator('input[type="file"]').setInputFiles({
+      await f.owner.page.locator('input[type="file"]').first().setInputFiles({
         name: "parallel.png",
         mimeType: "image/png",
         buffer: bytes,
@@ -197,33 +197,51 @@ export async function chatFaultScenarios(h, f) {
       try {
         await send(f.owner, text);
         await present(f.member, text);
+        // Two right answers to a lost reply. The sender's own live event
+        // carries the send's nonce (#355, pending.ts confirmEcho) and settles
+        // the row as saved: at once when it comes before the 504, and after
+        // it otherwise, the row showing "may already be saved" in between.
+        // With the live connection up, as here, the row ends settled; the
+        // hint stays only when no live event comes, which this scenario does
+        // not arrange (the metrics say which one was seen). Neither may
+        // offer a retry or send twice.
         const uncertain = failedRow(f.owner, text);
-        await uncertain
-          .getByText("Die Nachricht kann bereits gespeichert sein.", {
-            exact: false,
-          })
-          .waitFor();
+        const hint = uncertain.getByText(
+          "Die Nachricht kann bereits gespeichert sein.",
+          { exact: false },
+        );
+        const settled = log(f.owner)
+          .locator(".lr-message-row:not(.is-failed):not(.is-sending)")
+          .filter({ hasText: text });
+        await hint.or(settled).first().waitFor();
         await observe(2_000, async () => ({ posts }));
         const persisted = await messages(f.member, c.id);
+        const uncertainVisible = (await hint.count()) === 1;
+        const own = log(f.owner)
+          .locator(".lr-message-row")
+          .filter({ hasText: text });
         check(
           committed &&
             posts === 1 &&
             persisted.filter((m) => m.content === text).length === 1 &&
-            (await uncertain
+            (await own.count()) === 1 &&
+            (await own
               .getByRole("button", { name: "Erneut senden", exact: true })
               .count()) === 0,
           "ambiguous-commit-offered-or-performed-duplicate-retry",
           { controlConfirmed: committed, posts },
         );
-        await uncertain
-          .getByRole("button", { name: "Verwerfen", exact: true })
-          .click();
+        if (uncertainVisible)
+          await uncertain
+            .getByRole("button", { name: "Verwerfen", exact: true })
+            .click();
         return {
           upstreamStatus: 201,
           browserStatus: 504,
           persistedMessages: 1,
           postRequests: posts,
-          uncertainVisible: true,
+          uncertainVisible,
+          settledByLiveEvent: !uncertainVisible,
           noRetryOffered: true,
         };
       } finally {
@@ -296,6 +314,20 @@ export async function chatFaultScenarios(h, f) {
           held.release();
           await replied.promise;
           check(!routeError, "fixture-mutation-fault-response-not-delivered");
+          if (method === "PATCH") {
+            // A turned-down edit rolls the row back and opens the editor
+            // again with what was typed (MessageRow saveEdit). Keep it,
+            // then cancel to see the restored row.
+            const editor = log(f.owner).locator("textarea");
+            await until(
+              () => editor.inputValue({ timeout: 500 }).catch(() => null),
+              (value) => value === "E2E optimistic edit",
+              "edit-rollback-lost-typed-text",
+            );
+            await log(f.owner)
+              .getByRole("button", { name: "Abbrechen", exact: true })
+              .click();
+          }
           await present(f.owner, original);
           check(
             (await log(f.owner).getByText(foreign, { exact: true }).count()) ===
@@ -506,7 +538,7 @@ export async function chatFaultScenarios(h, f) {
         await route.continue();
       });
       try {
-        await f.owner.page.locator('input[type="file"]').setInputFiles({
+        await f.owner.page.locator('input[type="file"]').first().setInputFiles({
           name: "abort.png",
           mimeType: "image/png",
           buffer: bytes,
@@ -516,11 +548,13 @@ export async function chatFaultScenarios(h, f) {
         await failed
           .getByRole("button", { name: "Erneut senden", exact: true })
           .waitFor();
+        // Pictures show as tiles named by their alt text (#574), other
+        // files by their name.
+        const kept = failed
+          .getByText("abort.png", { exact: true })
+          .or(failed.getByAltText("abort.png", { exact: true }));
         check(
-          puts === 1 &&
-            binds === 0 &&
-            (await failed.getByText("abort.png", { exact: true }).count()) ===
-              1,
+          puts === 1 && binds === 0 && (await kept.count()) >= 1,
           "upload-abort-lost-draft-or-bound-before-put",
           { puts, binds },
         );
@@ -577,7 +611,7 @@ export async function chatFaultScenarios(h, f) {
         await route.fulfill({ response }).catch(() => {});
       });
       try {
-        await f.owner.page.locator('input[type="file"]').setInputFiles({
+        await f.owner.page.locator('input[type="file"]').first().setInputFiles({
           name: "scope.png",
           mimeType: "image/png",
           buffer: bytes,

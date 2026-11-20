@@ -46,14 +46,22 @@ function sourceMatches(video, color) {
   );
 }
 /** Render assertions select their source through the real Watch action. A
- * Live (`s`) is watched inside its voice channel. */
+ * Live (`s`) is watched inside its voice channel. With `publisher` (a
+ * display name), only that person's Live, as a room may hold several. */
 export async function watchSource(
   actor,
   kind,
-  { deadlineEpochMs = Date.now() + 5_000 } = {},
+  { deadlineEpochMs = Date.now() + 5_000, publisher } = {},
 ) {
   if (kind !== "live") return;
-  const tiles = liveTiles(actor.page);
+  const all = liveTiles(actor.page);
+  const tiles = publisher
+    ? all.filter({
+        has: actor.page.locator(".voice-live-caption-name", {
+          hasText: new RegExp(`^${publisher}$`),
+        }),
+      })
+    : all;
   const start = tiles.getByRole("button", { name: "Zuschauen", exact: true });
   const stop = tiles.getByRole("button", {
     name: "Nicht mehr zuschauen",
@@ -90,18 +98,25 @@ export async function watchSource(
 }
 export async function progress(
   actor,
-  { kind = "live", color = [220, 30, 30], budget = 5_000, relay = false } = {},
+  {
+    kind = "live",
+    color = [220, 30, 30],
+    budget = 5_000,
+    relay = false,
+    publisher,
+  } = {},
 ) {
   const start = Date.now();
   const deadline = start + budget;
-  await watchSource(actor, kind, { deadlineEpochMs: deadline });
+  await watchSource(actor, kind, { deadlineEpochMs: deadline, publisher });
   const first = await until(
     () => snapshot(actor),
     (s) => {
       const video = s.videos.find((v) => v.kind === kind);
       return (
         decoded(s) > 0 &&
-        [160, 640].includes(video?.width) &&
+        // Any simulcast layer of the 640×360 fixture (mediasoupConnection.ts).
+        [160, 320, 640].includes(video?.width) &&
         video.height === (video.width * 9) / 16 &&
         !video.paused &&
         sourceMatches(video, color)

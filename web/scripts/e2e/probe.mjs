@@ -868,7 +868,8 @@ export async function sample({ deadlineEpochMs } = {}) {
       (entry) => entry.c === state.expectedVoiceChannel,
     ).length,
     liveOccupancy: state.voiceRoster.filter(
-      (entry) => entry.c === state.expectedVoiceChannel && entry.l,
+      // `s`: publishes a screen (gateway VoiceEntry), i.e. is Live.
+      (entry) => entry.c === state.expectedVoiceChannel && entry.s,
     ).length,
     rejectedSdp: state.rejectedSdp,
     rejectedSdpErrors: state.rejectedSdpErrors?.slice() ?? [],

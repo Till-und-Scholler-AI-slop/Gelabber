@@ -184,11 +184,14 @@ try {
   );
   const composer = member.page.locator("form textarea").last();
   await composer.fill("unsent preserved draft");
-  await member.page.locator('input[type="file"]').setInputFiles({
-    name: "context-draft.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("unsent"),
-  });
+  await member.page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: "context-draft.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("unsent"),
+    });
   // Establish real history-reading intent after row and composer measurement.
   // The phone viewport below is 64px taller and clamps this small gap to end;
   // that geometry change must not turn an upward wheel into a read of latest.
