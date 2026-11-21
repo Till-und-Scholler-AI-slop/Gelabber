@@ -173,7 +173,7 @@ jobs:
       # summary says whether it changed, the artifact holds the file to commit.
       - name: Rust toolchain (notices)
         if: steps.build.outcome == 'success'
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
 
       - name: Renew the third-party notices
         id: notices
@@ -381,7 +381,7 @@ jobs:
             xvfb xauth mesa-vulkan-drivers gdb
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
         with:
           components: rustfmt, clippy
 
@@ -596,7 +596,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
 
       - name: Notices are current
         run: python3 desktop/packaging/third-party-notices.py --check
@@ -659,7 +659,7 @@ jobs:
 
       - name: Rust toolchain
         id: toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
         with:
           components: rustfmt, clippy
 

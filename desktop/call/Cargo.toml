@@ -18,7 +18,7 @@ testing = []
 gelabber-client = { path = "../client" }
 gelabber-i18n = { path = "../i18n" }
 gelabber-media-core = { path = "../core", optional = true }
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 serde_json = "1.0.151"
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 tracing = "0.1"
