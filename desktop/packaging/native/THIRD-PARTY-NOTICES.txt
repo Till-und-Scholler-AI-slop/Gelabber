@@ -4340,7 +4340,7 @@ https://crates.io/crates/<name>/<version>.
 Not collected: notices that stand only inside individual source files, for
 example in the Wayland protocol descriptions that some crates turn into code.
 
-364 crates: name version | linked on | licence | texts
+371 crates: name version | linked on | licence | texts
 
 accesskit 0.25.2 | Linux, Windows | MIT OR Apache-2.0 | no licence file
 accesskit_atspi_common 0.21.1 | Linux | MIT OR Apache-2.0 | no licence file
@@ -4352,16 +4352,16 @@ adler2 2.0.1 | Linux, Windows | 0BSD OR MIT OR Apache-2.0 | R001, R002, R003
 ahash 0.8.12 | Linux, Windows | MIT OR Apache-2.0 | R004, R005
 allocator-api2 0.2.21 | Linux, Windows | MIT OR Apache-2.0 | R006, R003
 arboard 3.7.0 | Linux, Windows | MIT OR Apache-2.0 | R006, R007
-arc-swap 1.9.3 | Linux | MIT OR Apache-2.0 | R004, R008
+arc-swap 1.9.5 | Linux | MIT OR Apache-2.0 | R004, R008
 arrayref 0.3.9 | Linux, Windows | BSD-2-Clause | R009
 arrayvec 0.7.8 | Linux, Windows | MIT OR Apache-2.0 | R004, R010
 as-raw-xcb-connection 1.0.1 | Linux | MIT OR Apache-2.0 | R004, R011
 ash 0.38.0+1.3.281 | Linux, Windows | MIT OR Apache-2.0 | R012, R013
 async-broadcast 0.7.2 | Linux | MIT OR Apache-2.0 | R014, R015
 async-channel 2.5.0 | Linux | Apache-2.0 OR MIT | R004, R003
-async-executor 1.14.0 | Linux | Apache-2.0 OR MIT | R004, R003
+async-executor 1.14.1 | Linux | Apache-2.0 OR MIT | R004, R003
 async-io 2.6.0 | Linux | Apache-2.0 OR MIT | R004, R003
-async-lock 3.4.2 | Linux | Apache-2.0 OR MIT | R004, R003
+async-lock 3.5.0 | Linux | Apache-2.0 OR MIT | R004, R003
 async-process 2.5.0 | Linux | Apache-2.0 OR MIT | R004, R003
 async-signal 0.2.14 | Linux | Apache-2.0 OR MIT | R004, R003
 async-task 4.7.1 | Linux | Apache-2.0 OR MIT | R004, R003
@@ -4379,7 +4379,7 @@ block-buffer 0.12.1 | Linux, Windows | MIT OR Apache-2.0 | R004, R025
 blocking 1.7.0 | Linux | Apache-2.0 OR MIT | R004, R003
 bytemuck 1.25.2 | Linux, Windows | Zlib OR Apache-2.0 OR MIT | R004, R026, R027
 byteorder-lite 0.1.0 | Linux, Windows | Unlicense OR MIT | R028, R029
-bytes 1.12.1 | Linux, Windows | MIT | R030
+bytes 1.12.2 | Linux, Windows | MIT | R030
 calloop 0.13.0 | Linux | MIT | R031
 calloop 0.14.5 | Linux | MIT | R031
 calloop-wayland-source 0.3.0 | Linux | MIT | R032
@@ -4396,7 +4396,7 @@ const-oid 0.10.3 | Linux, Windows | Apache-2.0 OR MIT | R004, R038
 cookie 0.18.2 | Linux, Windows | MIT OR Apache-2.0 | R039, R040
 cookie_store 0.22.1 | Linux, Windows | MIT OR Apache-2.0 | R041, R042
 cpufeatures 0.3.1 | Linux, Windows | MIT OR Apache-2.0 | R004, R038
-crc32fast 1.5.2 | Linux, Windows | MIT OR Apache-2.0 | R041, R043
+crc32fast 1.5.5 | Linux, Windows | MIT OR Apache-2.0 | R041, R043
 crossbeam-channel 0.5.17 | Windows | MIT OR Apache-2.0 | R004, R044, R045
 crossbeam-queue 0.3.14 | Linux | MIT OR Apache-2.0 | R004, R044
 crossbeam-utils 0.8.23 | Linux, Windows | MIT OR Apache-2.0 | R004, R044
@@ -4404,7 +4404,7 @@ crypto-common 0.2.2 | Linux, Windows | MIT OR Apache-2.0 | R004, R046
 cursor-icon 1.2.0 | Linux, Windows | MIT OR Apache-2.0 OR Zlib | R047, R032, R048
 data-encoding 2.11.1 | Linux, Windows | MIT | R049
 data-url 0.3.2 | Linux, Windows | MIT OR Apache-2.0 | R004, R050
-deranged 0.5.8 | Linux, Windows | MIT OR Apache-2.0 | R051, R052
+deranged 0.5.9 | Linux, Windows | MIT OR Apache-2.0 | R051, R052
 digest 0.11.3 | Linux, Windows | MIT OR Apache-2.0 | R004, R053
 dlib 0.5.3 | Linux | MIT | R054
 downcast-rs 1.2.1 | Linux | MIT/Apache-2.0 | R004, R055
@@ -4420,8 +4420,8 @@ emath 0.37.0 | Linux, Windows | MIT OR Apache-2.0 | no licence file
 endi 1.1.1 | Linux | MIT | R003
 enumflags2 0.7.12 | Linux | MIT OR Apache-2.0 | R058, R059
 epaint 0.37.0 | Linux, Windows | MIT OR Apache-2.0 | no licence file
-equivalent 1.0.2 | Linux, Windows | Apache-2.0 OR MIT | R004, R060
-errno 0.3.14 | Linux | MIT OR Apache-2.0 | R004, R061
+equivalent 1.0.3 | Linux, Windows | Apache-2.0 OR MIT | R004, R060
+errno 0.3.15 | Linux | MIT OR Apache-2.0 | R004, R061
 error-code 3.4.0 | Windows | BSL-1.0 | R062
 euclid 0.22.14 | Linux, Windows | MIT OR Apache-2.0 | R063, R004, R064
 event-listener 5.4.2 | Linux | Apache-2.0 OR MIT | R004, R003
@@ -4431,15 +4431,15 @@ fallible-streaming-iterator 0.1.9 | Linux | MIT/Apache-2.0 | R041, R066
 fastrand 2.5.0 | Linux | Apache-2.0 OR MIT | R004, R003
 fdeflate 0.3.7 | Linux, Windows | MIT OR Apache-2.0 | R006, R036
 fearless_simd 0.4.1 | Linux, Windows | Apache-2.0 OR MIT | R006, R067
-fixedbitset 0.5.7 | Linux | MIT OR Apache-2.0 | R004, R068
-flate2 1.1.10 | Linux, Windows | MIT OR Apache-2.0 | R004, R069
+fixedbitset 0.5.9 | Linux | MIT OR Apache-2.0 | R004, R068
+flate2 1.1.11 | Linux, Windows | MIT OR Apache-2.0 | R004, R069
 float-cmp 0.9.0 | Linux, Windows | MIT | R070
 foldhash 0.1.5 | Linux | Zlib | R071
 foldhash 0.2.0 | Linux, Windows | Zlib | R071
 font-types 0.12.7 | Linux, Windows | MIT OR Apache-2.0 | R072, R073
 fontique 0.11.1 | Linux, Windows | Apache-2.0 OR MIT | R004, R074
-fontique 0.12.0 | Linux, Windows | Apache-2.0 OR MIT | R004, R074
-form_urlencoded 1.2.2 | Linux, Windows | MIT OR Apache-2.0 | R004, R075
+fontique 0.13.0 | Linux, Windows | Apache-2.0 OR MIT | R004, R074
+form_urlencoded 1.2.3 | Linux, Windows | MIT OR Apache-2.0 | R004, R075
 futures-channel 0.3.34 | Linux, Windows | MIT OR Apache-2.0 | R076, R077
 futures-core 0.3.34 | Linux, Windows | MIT OR Apache-2.0 | R076, R077
 futures-io 0.3.34 | Linux | MIT OR Apache-2.0 | R076, R077
@@ -4471,13 +4471,13 @@ hyper 1.12.0 | Linux, Windows | MIT | R097
 hyper-rustls 0.27.10 | Linux, Windows | Apache-2.0 OR ISC OR MIT | R004, R098, R099
 hyper-util 0.1.21 | Linux, Windows | MIT | R100
 iana-time-zone 0.1.65 | Linux | MIT OR Apache-2.0 | R101, R102
-icu_collections 2.3.0 | Linux, Windows | Unicode-3.0 | R103
-icu_locale_core 2.3.0 | Linux, Windows | Unicode-3.0 | R103
-icu_normalizer 2.3.0 | Linux, Windows | Unicode-3.0 | R103
-icu_normalizer_data 2.3.0 | Linux, Windows | Unicode-3.0 | R103
-icu_properties 2.3.0 | Linux, Windows | Unicode-3.0 | R103
-icu_properties_data 2.3.0 | Linux, Windows | Unicode-3.0 | R103
-icu_provider 2.3.1 | Linux, Windows | Unicode-3.0 | R103
+icu_collections 2.4.0 | Linux, Windows | Unicode-3.0 | R103
+icu_locale_core 2.4.0 | Linux, Windows | Unicode-3.0 | R103
+icu_normalizer 2.4.0 | Linux, Windows | Unicode-3.0 | R103
+icu_normalizer_data 2.4.0 | Linux, Windows | Unicode-3.0 | R103
+icu_properties 2.4.0 | Linux, Windows | Unicode-3.0 | R103
+icu_properties_data 2.4.0 | Linux, Windows | Unicode-3.0 | R103
+icu_provider 2.4.0 | Linux, Windows | Unicode-3.0 | R103
 idna 1.1.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R050
 idna_adapter 1.2.2 | Linux, Windows | Apache-2.0 OR MIT | R004, R104
 image 0.25.10 | Linux, Windows | MIT OR Apache-2.0 | R006, R036
@@ -4486,47 +4486,50 @@ imagesize 0.15.0 | Linux, Windows | MIT | R105
 indexmap 2.14.2 | Linux, Windows | Apache-2.0 OR MIT | R004, R106
 ipnet 2.12.2 | Linux, Windows | MIT OR Apache-2.0 | R107, R108
 itertools 0.15.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R057
-itoa 1.0.18 | Linux, Windows | MIT OR Apache-2.0 | R006, R003
+itoa 1.0.19 | Linux, Windows | MIT OR Apache-2.0 | R006, R003
 keyboard-types 0.8.3 | Windows | MIT OR Apache-2.0 | R004, R109
 khronos-egl 6.0.0 | Linux, Windows | MIT/Apache-2.0 | R004, R003
 ksni 0.3.7 | Linux | Unlicense | R029
 kurbo 0.13.1 | Linux, Windows | Apache-2.0 OR MIT | R004, R067
 lazy_static 1.5.1 | Linux, Windows | MIT OR Apache-2.0 | R004, R003
-libc 0.2.190 | Linux, Windows | MIT OR Apache-2.0 | R006, R110
+libc 0.2.191 | Linux, Windows | MIT OR Apache-2.0 | R006, R110
 libloading 0.8.9 | Linux, Windows | ISC | R111
 libm 0.2.16 | Linux, Windows | MIT | R112
-libsqlite3-sys 0.39.1 | Linux | MIT | R113
+libsqlite3-sys 0.40.0 | Linux | MIT | R113
 linebender_resource_handle 0.1.1 | Linux, Windows | Apache-2.0 OR MIT | R006, R036
 linux-raw-sys 0.12.1 | Linux | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | R114, R004, R115, R003
 linux-raw-sys 0.4.15 | Linux | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | R114, R004, R115, R003
 litemap 0.8.3 | Linux, Windows | Unicode-3.0 | R103
 lock_api 0.4.14 | Linux, Windows | MIT OR Apache-2.0 | R004, R116
-log 0.4.34 | Linux, Windows | MIT OR Apache-2.0 | R004, R024
+lock_api 0.5.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R116
+log 0.4.35 | Linux, Windows | MIT OR Apache-2.0 | R004, R024
 matchers 0.2.0 | Linux, Windows | MIT | R117
 memchr 2.8.3 | Linux, Windows | Unlicense OR MIT | R118, R028, R029
-memmap2 0.9.11 | Linux, Windows | MIT OR Apache-2.0 | R119, R120
-mime 0.3.17 | Linux, Windows | MIT OR Apache-2.0 | R004, R121
+memmap2 0.9.12 | Linux, Windows | MIT OR Apache-2.0 | R119, R120
+mime 0.3.18 | Linux, Windows | MIT OR Apache-2.0 | R004, R121
 mime_guess 2.0.5 | Linux, Windows | MIT | R122
 minisign-verify 0.3.0 | Linux, Windows | MIT | R123
 miniz_oxide 0.8.9 | Linux, Windows | MIT OR Zlib OR Apache-2.0 | R124, R006, R125
 miniz_oxide 0.9.1 | Linux, Windows | MIT OR Zlib OR Apache-2.0 | R124, R006, R125
-mio 1.2.4 | Linux, Windows | MIT | R126
+mio 1.2.5 | Linux, Windows | MIT | R126
 moxcms 0.8.1 | Linux, Windows | BSD-3-Clause OR Apache-2.0 | R127, R128
-muda 0.20.0 | Windows | Apache-2.0 OR MIT | R004, R129, R130
-naga 30.0.1 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
-naga-types 30.0.1 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
+muda 0.21.2 | Windows | Apache-2.0 OR MIT | R004, R129, R130
+naga 30.0.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
+naga-types 30.0.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
 nohash-hasher 0.2.0 | Linux, Windows | Apache-2.0 OR MIT | R004, R132
 nom 8.0.0 | Linux | MIT | R133
 nu-ansi-term 0.50.3 | Linux, Windows | MIT | R134
 num-conv 0.2.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R135
 num-traits 0.2.19 | Linux, Windows | MIT OR Apache-2.0 | R004, R024
 once_cell 1.21.4 | Linux, Windows | MIT OR Apache-2.0 | R004, R003
-openssl-probe 0.2.1 | Linux | MIT OR Apache-2.0 | R004, R033
-ordered-float 5.5.0 | Linux, Windows | MIT | R136
+openssl-probe 0.2.2 | Linux | MIT OR Apache-2.0 | R004, R033
+ordered-float 5.5.1 | Linux, Windows | MIT | R136
 ordered-stream 0.2.0 | Linux | MIT OR Apache-2.0 | R004, R003
 os_pipe 1.2.3 | Linux | MIT | R137
 parking 2.2.1 | Linux | Apache-2.0 OR MIT | R004, R003, R138
 parking_lot 0.12.5 | Linux, Windows | MIT OR Apache-2.0 | R004, R116
+parking_lot 0.13.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R116
+parking_lot_core 0.10.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R116
 parking_lot_core 0.9.12 | Linux, Windows | MIT OR Apache-2.0 | R004, R116
 parlance 0.1.1 | Linux, Windows | Apache-2.0 OR MIT | R004, R139
 peniko 0.6.1 | Linux, Windows | Apache-2.0 OR MIT | R004, R067
@@ -4535,12 +4538,12 @@ petgraph 0.8.3 | Linux | MIT OR Apache-2.0 | R004, R057, R140
 phf 0.14.0 | Linux | MIT | R141
 phf_shared 0.14.0 | Linux | MIT | R141
 pico-args 0.5.0 | Linux, Windows | MIT | R142
-pin-project-lite 0.2.17 | Linux, Windows | Apache-2.0 OR MIT | R006, R003
+pin-project-lite 0.2.18 | Linux, Windows | Apache-2.0 OR MIT | R006, R003
 piper 0.2.5 | Linux | MIT OR Apache-2.0 | R004, R003
 png 0.18.1 | Linux, Windows | MIT OR Apache-2.0 | R004, R143
 poll-promise 0.3.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R144
 polling 3.11.0 | Linux | Apache-2.0 OR MIT | R004, R003
-pollster 1.0.1 | Linux, Windows | Apache-2.0/MIT | R004, R145
+pollster 1.0.3 | Linux, Windows | MIT OR Apache-2.0 | R004, R145
 polycool 0.4.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R067
 potential_utf 0.1.6 | Linux, Windows | Unicode-3.0 | R103
 powerfmt 0.2.1 | Linux, Windows | MIT OR Apache-2.0 | R146, R147
@@ -4552,28 +4555,29 @@ publicsuffix 2.3.0 | Linux, Windows | MIT/Apache-2.0 | R149, R004
 pxfm 0.1.30 | Linux, Windows | BSD-3-Clause OR Apache-2.0 | R127, R128
 quick-error 2.0.1 | Linux, Windows | MIT/Apache-2.0 | R041, R150
 quote 1.0.47 | Linux | MIT OR Apache-2.0 | R006, R003
-rand 0.10.3 | Linux, Windows | MIT OR Apache-2.0 | R151, R152, R153
+rand 0.10.4 | Linux, Windows | MIT OR Apache-2.0 | R151, R152, R153
 rand_core 0.10.1 | Linux, Windows | MIT OR Apache-2.0 | R154, R155, R156
 range-alloc 0.1.5 | Windows | MIT OR Apache-2.0 | R006, R157
 raw-window-handle 0.6.2 | Linux, Windows | MIT OR Apache-2.0 OR Zlib | R006, R158, R159
 read-fonts 0.41.0 | Linux, Windows | MIT OR Apache-2.0 | R072, R073
-regex-automata 0.4.18 | Linux, Windows | MIT OR Apache-2.0 | R004, R024
-regex-syntax 0.8.11 | Linux, Windows | MIT OR Apache-2.0 | R004, R024, R160
+read-fonts 0.46.0 | Linux, Windows | MIT OR Apache-2.0 | R072, R073
+regex-automata 0.4.19 | Linux, Windows | MIT OR Apache-2.0 | R004, R024
+regex-syntax 0.8.12 | Linux, Windows | MIT OR Apache-2.0 | R004, R024, R160
 renderdoc-sys 1.1.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R161
 reqwest 0.13.5 | Linux, Windows | MIT OR Apache-2.0 | R162, R163
-resvg 0.49.0 | Linux, Windows | Apache-2.0 OR MIT | R006, R164
+resvg 0.50.0 | Linux, Windows | Apache-2.0 OR MIT | R006, R164
 rgb 0.8.53 | Linux, Windows | MIT | R165
 roxmltree 0.21.2 | Linux, Windows | MIT OR Apache-2.0 | R004, R166
-rusqlite 0.41.1 | Linux | MIT | R113
+rusqlite 0.43.0 | Linux | MIT | R113
 rustc-hash 1.1.0 | Linux, Windows | Apache-2.0/MIT | R004, R003
 rustc-hash 2.1.3 | Linux, Windows | Apache-2.0 OR MIT | R006, R003
 rustix 0.38.44 | Linux | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | R167, R004, R115, R003
-rustix 1.1.5 | Linux | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | R167, R004, R115, R003
+rustix 1.1.6 | Linux | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | R167, R004, R115, R003
 rustls 0.23.46 | Linux, Windows | Apache-2.0 OR ISC OR MIT | R004, R098, R099
 rustls-native-certs 0.8.5 | Linux | Apache-2.0 OR ISC OR MIT | R168, R004, R098, R099
-rustls-pki-types 1.15.1 | Linux, Windows | MIT OR Apache-2.0 | R169, R170
+rustls-pki-types 1.16.0 | Linux, Windows | MIT OR Apache-2.0 | R169, R170
 rustls-platform-verifier 0.7.1 | Linux, Windows | MIT OR Apache-2.0 | R004, R171
-rustls-webpki 0.103.16 | Linux, Windows | ISC | R172
+rustls-webpki 0.103.17 | Linux, Windows | ISC | R172
 scoped-tls 1.0.1 | Linux | MIT/Apache-2.0 | R004, R033
 scopeguard 1.2.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R173
 self_cell 1.3.0 | Linux, Windows | Apache-2.0 OR GPL-2.0-only | R004, R174
@@ -4589,7 +4593,7 @@ simplecss 0.2.2 | Linux, Windows | Apache-2.0 OR MIT | R004, R178
 siphasher 1.0.4 | Linux, Windows | MIT OR Apache-2.0 | R179, R004, R003
 skrifa 0.44.0 | Linux, Windows | MIT OR Apache-2.0 | R072, R073
 slab 0.4.12 | Linux, Windows | MIT | R180
-smallvec 1.16.2 | Linux, Windows | MIT OR Apache-2.0 | R004, R181
+smallvec 1.16.6 | Linux, Windows | MIT OR Apache-2.0 | R004, R181
 smithay-client-toolkit 0.19.2 | Linux | MIT | R031
 smithay-client-toolkit 0.20.0 | Linux | MIT | R031
 smithay-clipboard 0.7.3 | Linux | MIT | R182
@@ -4601,7 +4605,7 @@ static_assertions 1.1.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R184
 strict-num 0.1.1 | Linux, Windows | MIT | R185
 subtle 2.6.1 | Linux, Windows | BSD-3-Clause | R186
 svgtypes 0.16.2 | Linux, Windows | Apache-2.0 OR MIT | R004, R187
-syn 3.0.6 | Linux | MIT OR Apache-2.0 | R006, R003
+syn 3.0.10 | Linux | MIT OR Apache-2.0 | R006, R003
 sync_wrapper 1.0.2 | Linux, Windows | Apache-2.0 | R006
 sys-locale 0.3.2 | Linux, Windows | MIT OR Apache-2.0 | R004, R188
 task-local 0.1.1 | Linux | MIT OR Apache-2.0 | R189, R190, R191
@@ -4612,11 +4616,11 @@ time 0.3.55 | Linux, Windows | MIT OR Apache-2.0 | R006, R192
 time-core 0.1.9 | Linux, Windows | MIT OR Apache-2.0 | R006, R192
 tiny-skia 0.12.0 | Linux, Windows | BSD-3-Clause | R193
 tiny-skia-path 0.12.0 | Linux, Windows | BSD-3-Clause | R193
-tinystr 0.8.4 | Linux, Windows | Unicode-3.0 | R103
+tinystr 0.8.5 | Linux, Windows | Unicode-3.0 | R103
 tokio 1.54.1 | Linux, Windows | MIT | R194
 tokio-rustls 0.26.6 | Linux, Windows | MIT OR Apache-2.0 | R195, R196
 tokio-tungstenite 0.30.0 | Linux, Windows | MIT | R197
-tokio-util 0.7.19 | Linux, Windows | MIT | R194
+tokio-util 0.7.20 | Linux, Windows | MIT | R194
 tower 0.5.3 | Linux, Windows | MIT | R198
 tower-http 0.6.11 | Linux, Windows | MIT | R199
 tower-layer 0.3.3 | Linux, Windows | MIT | R198
@@ -4625,7 +4629,7 @@ tracing 0.1.44 | Linux, Windows | MIT | R200
 tracing-core 0.1.36 | Linux, Windows | MIT | R200, R201
 tracing-log 0.2.0 | Linux, Windows | MIT | R200
 tracing-subscriber 0.3.23 | Linux, Windows | MIT | R200
-tray-icon 0.25.1 | Windows | MIT OR Apache-2.0 | R004, R129, R202
+tray-icon 0.26.1 | Windows | MIT OR Apache-2.0 | R004, R129, R202
 tree_magic_mini 3.2.2 | Linux | MIT | R203
 try-lock 0.2.5 | Linux, Windows | MIT | R204
 tungstenite 0.30.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R205
@@ -4633,78 +4637,81 @@ type-map 0.5.1 | Linux, Windows | MIT/Apache-2.0 | R206, R207
 typenum 1.20.1 | Linux, Windows | MIT OR Apache-2.0 | R208, R209, R210
 unicase 2.10.0 | Linux, Windows | MIT OR Apache-2.0 | R004, R097
 unicode-general-category 1.1.0 | Linux, Windows | Apache-2.0 | R041
-unicode-ident 1.0.26 | Linux, Windows | (MIT OR Apache-2.0) AND Unicode-3.0 | R006, R003, R211
+unicode-ident 1.0.27 | Linux, Windows | (MIT OR Apache-2.0) AND Unicode-3.0 | R006, R003, R211
 unicode-properties 0.1.5 | Linux, Windows | (MIT OR Apache-2.0) AND Unicode-3.0 | R063, R004, R212, R213
 unicode-script 0.5.9 | Linux, Windows | MIT OR Apache-2.0 | R214, R215
 unicode-segmentation 1.13.3 | Linux, Windows | MIT OR Apache-2.0 | R063, R004, R212
-unicode-width 0.1.14 | Linux, Windows | MIT OR Apache-2.0 | R063, R004, R212
+unicode-width 0.2.3 | Linux, Windows | MIT OR Apache-2.0 | R063, R004, R212
 untrusted 0.9.0 | Linux, Windows | ISC | R216
-url 2.5.8 | Linux, Windows | MIT OR Apache-2.0 | R004, R050
-usvg 0.49.0 | Linux, Windows | Apache-2.0 OR MIT | R006, R164
-utf8_iter 1.0.4 | Linux, Windows | Apache-2.0 OR MIT | R217, R004, R218
-uuid 1.29.0 | Linux, Windows | Apache-2.0 OR MIT | R004, R219
-vello_common 0.2.0 | Linux, Windows | Apache-2.0 OR MIT | R006, R220
-vello_cpu 0.2.0 | Linux, Windows | Apache-2.0 OR MIT | R006, R220
-want 0.3.2 | Linux, Windows | MIT | R221
-wayland-backend 0.3.17 | Linux | MIT | R222
-wayland-client 0.31.15 | Linux | MIT | R222
+url 2.5.9 | Linux, Windows | MIT OR Apache-2.0 | R004, R050
+usvg 0.50.0 | Linux, Windows | Apache-2.0 OR MIT | R006, R164
+utf8_iter 1.1.0 | Linux, Windows | Apache-2.0 OR MIT | R217, R004, R218
+utf_types 1.0.0 | Linux, Windows | Apache-2.0 OR MIT | R219, R004, R218
+uuid 1.29.3 | Linux, Windows | Apache-2.0 OR MIT | R004, R220
+vello_common 0.2.0 | Linux, Windows | Apache-2.0 OR MIT | R006, R221
+vello_cpu 0.2.0 | Linux, Windows | Apache-2.0 OR MIT | R006, R221
+want 0.3.2 | Linux, Windows | MIT | R222
+wayland-backend 0.3.17 | Linux | MIT | R223
+wayland-client 0.31.15 | Linux | MIT | R223
 wayland-csd-frame 0.3.0 | Linux | MIT | R032
-wayland-cursor 0.31.14 | Linux | MIT | R222
-wayland-protocols 0.32.13 | Linux | MIT | R222, R223
-wayland-protocols-experimental 20250721.0.1 | Linux | MIT | R222
-wayland-protocols-misc 0.3.12 | Linux | MIT | R222
-wayland-protocols-plasma 0.3.12 | Linux | MIT | R222, R224, R225, R226, R227, R228, R229
-wayland-protocols-wlr 0.3.12 | Linux | MIT | R222
-wayland-sys 0.31.11 | Linux | MIT | R222
-web-time 1.1.0 | Linux, Windows | MIT OR Apache-2.0 | R230, R231
-webpki-roots 0.26.11 | Linux, Windows | CDLA-Permissive-2.0 | R232
-webpki-roots 1.0.11 | Linux, Windows | CDLA-Permissive-2.0 | R232
-weezl 0.1.12 | Linux, Windows | MIT OR Apache-2.0 | R004, R233
-wgpu 30.0.1 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
-wgpu-core 30.0.1 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
-wgpu-core-deps-windows-linux-android 30.0.1 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
-wgpu-hal 30.0.1 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
-wgpu-naga-bridge 30.0.1 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
-wgpu-types 30.0.1 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
-windows 0.62.2 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-collections 0.3.2 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-core 0.62.2 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-future 0.3.2 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-link 0.2.1 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-numerics 0.3.1 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-result 0.4.1 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-strings 0.5.1 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-sys 0.52.0 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-sys 0.61.2 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-targets 0.52.6 | Windows | MIT OR Apache-2.0 | R234, R235
-windows-threading 0.2.1 | Windows | MIT OR Apache-2.0 | R234, R235
-windows_x86_64_msvc 0.52.6 | Windows | MIT OR Apache-2.0 | R234, R235
+wayland-cursor 0.31.14 | Linux | MIT | R223
+wayland-protocols 0.32.13 | Linux | MIT | R223, R224
+wayland-protocols-experimental 20250721.0.1 | Linux | MIT | R223
+wayland-protocols-misc 0.3.12 | Linux | MIT | R223
+wayland-protocols-plasma 0.3.12 | Linux | MIT | R223, R225, R226, R227, R228, R229, R230
+wayland-protocols-wlr 0.3.12 | Linux | MIT | R223
+wayland-sys 0.31.11 | Linux | MIT | R223
+web-time 1.1.0 | Linux, Windows | MIT OR Apache-2.0 | R231, R232
+webpki-roots 0.26.11 | Linux, Windows | CDLA-Permissive-2.0 | R233
+webpki-roots 1.0.12 | Linux, Windows | CDLA-Permissive-2.0 | R233
+weezl 0.1.12 | Linux, Windows | MIT OR Apache-2.0 | R004, R234
+wgpu 30.0.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
+wgpu-core 30.0.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
+wgpu-core-deps-windows-linux-android 30.0.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
+wgpu-hal 30.0.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
+wgpu-naga-bridge 30.0.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
+wgpu-types 30.0.2 | Linux, Windows | MIT OR Apache-2.0 | R006, R131
+windows 0.62.2 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-collections 0.3.2 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-core 0.62.2 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-future 0.3.2 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-link 0.2.1 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-numerics 0.3.1 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-result 0.4.1 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-strings 0.5.1 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-sys 0.52.0 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-sys 0.61.2 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-targets 0.52.6 | Windows | MIT OR Apache-2.0 | R235, R236
+windows-threading 0.2.1 | Windows | MIT OR Apache-2.0 | R235, R236
+windows_x86_64_msvc 0.52.6 | Windows | MIT OR Apache-2.0 | R235, R236
 winit 0.30.13 | Linux, Windows | Apache-2.0 | R041
-winnow 1.0.4 | Linux | MIT | R003
-wl-clipboard-rs 0.9.5 | Linux | MIT OR Apache-2.0 | R004, R236
+winnow 1.0.5 | Linux | MIT | R003
+wl-clipboard-rs 0.9.5 | Linux | MIT OR Apache-2.0 | R004, R237
 writeable 0.6.4 | Linux, Windows | Unicode-3.0 | R103
 x11-dl 2.21.0 | Linux | MIT | R003
-x11rb 0.13.2 | Linux | MIT OR Apache-2.0 | R004, R237
-x11rb-protocol 0.13.2 | Linux | MIT OR Apache-2.0 | R004, R237
-xcursor 0.3.11 | Linux | MIT | R238
-xkbcommon-dl 0.4.2 | Linux | MIT | R239
-xkeysym 0.2.1 | Linux | MIT OR Apache-2.0 OR Zlib | R240, R241, R242
-yeslogic-fontconfig-sys 6.0.1 | Linux | MIT | R243
-yoke 0.8.3 | Linux, Windows | Unicode-3.0 | R103
-zbus 5.19.0 | Linux | MIT | R244
+x11rb 0.13.2 | Linux | MIT OR Apache-2.0 | R004, R238
+x11rb 0.14.0 | Linux | MIT OR Apache-2.0 | R004, R238
+x11rb-protocol 0.13.2 | Linux | MIT OR Apache-2.0 | R004, R238
+x11rb-protocol 0.14.0 | Linux | MIT OR Apache-2.0 | R004, R238
+xcursor 0.3.11 | Linux | MIT | R239
+xkbcommon-dl 0.4.2 | Linux | MIT | R240
+xkeysym 0.2.1 | Linux | MIT OR Apache-2.0 OR Zlib | R241, R242, R243
+yeslogic-fontconfig-sys 6.0.1 | Linux | MIT | R244
+yoke 0.8.4 | Linux, Windows | Unicode-3.0 | R103
+zbus 5.19.0 | Linux | MIT | R245
 zbus-lockstep 0.5.2 | Linux | MIT | R003
-zbus_names 4.3.5 | Linux | MIT | R244
-zbus_xml 5.2.1 | Linux | MIT | R244
-zcheapstr 1.1.0 | Linux | MIT | R245
-zerocopy 0.8.61 | Linux, Windows | BSD-2-Clause OR Apache-2.0 OR MIT | R246, R247, R248
+zbus_names 4.3.5 | Linux | MIT | R245
+zbus_xml 5.2.1 | Linux | MIT | R245
+zcheapstr 1.4.0 | Linux | MIT | R246
+zerocopy 0.8.64 | Linux, Windows | BSD-2-Clause OR Apache-2.0 OR MIT | R247, R248, R249
 zerofrom 0.1.8 | Linux, Windows | Unicode-3.0 | R103
-zeroize 1.9.1 | Linux, Windows | Apache-2.0 OR MIT | R004, R249
+zeroize 1.9.2 | Linux, Windows | Apache-2.0 OR MIT | R004, R250
 zerotrie 0.2.5 | Linux, Windows | Unicode-3.0 | R103
-zerovec 0.11.8 | Linux, Windows | Unicode-3.0 | R103
+zerovec 0.11.9 | Linux, Windows | Unicode-3.0 | R103
 zmij 1.0.23 | Linux, Windows | MIT | R003
-zune-core 0.5.3 | Linux, Windows | MIT OR Apache-2.0 OR Zlib | R004, R250, R251
-zune-jpeg 0.5.15 | Linux, Windows | MIT OR Apache-2.0 OR Zlib | R004, R250, R251
-zvariant 5.15.1 | Linux | MIT | R244
+zune-core 0.5.3 | Linux, Windows | MIT OR Apache-2.0 OR Zlib | R004, R251, R252
+zune-jpeg 0.5.15 | Linux, Windows | MIT OR Apache-2.0 OR Zlib | R004, R251, R252
+zvariant 5.15.1 | Linux | MIT | R245
 zvariant_utils 4.2.0 | Linux | MIT | R003
 
 Crates without a licence text
@@ -4796,7 +4803,7 @@ Below the root
     machine has no NASM assembler.
   - petgraph 0.8.3: assets/images/LICENSE.md. Not looked at yet; reproduced in
     part 6.
-  - regex-syntax 0.8.11: src/unicode_tables/LICENSE-UNICODE. Unicode character
+  - regex-syntax 0.8.12: src/unicode_tables/LICENSE-UNICODE. Unicode character
     tables that are compiled into the crate.
   - tracing-core 0.1.36: src/spin/LICENSE. A copy of the spin crate's lock
     that is compiled into the crate.
@@ -4828,20 +4835,20 @@ Build time only
   async-trait 0.1.92 | MIT OR Apache-2.0
   autocfg 1.5.1 | Apache-2.0 OR MIT
   bytemuck_derive 1.12.1 | Zlib OR Apache-2.0 OR MIT
-  cc 1.6.0 | MIT OR Apache-2.0
+  cc 1.11.3 | MIT OR Apache-2.0
   cfg_aliases 0.2.2 | MIT
   cmake 0.1.58 | MIT OR Apache-2.0
   displaydoc 0.2.7 | MIT OR Apache-2.0
   document-features 0.2.12 | MIT OR Apache-2.0
   dunce 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0
   enumflags2_derive 0.7.12 | MIT OR Apache-2.0
-  find-msvc-tools 0.1.14 | MIT OR Apache-2.0
+  find-msvc-tools 0.1.15 | MIT OR Apache-2.0
   fs_extra 1.3.0 | MIT
   futures-macro 0.3.34 | MIT OR Apache-2.0
   gl_generator 0.14.0 | Apache-2.0
   jobserver 0.1.35 | MIT OR Apache-2.0
   khronos_api 3.1.0 | Apache-2.0
-  litrs 1.0.0 | MIT OR Apache-2.0
+  litrs 1.0.1 | MIT OR Apache-2.0
   pastey 0.2.3 | MIT OR Apache-2.0
   phf_generator 0.14.0 | MIT
   phf_macros 0.14.0 | MIT
@@ -4858,9 +4865,9 @@ Build time only
   thiserror-impl 2.0.21 | MIT OR Apache-2.0
   time-macros 0.2.32 | MIT OR Apache-2.0
   tokio-macros 2.7.2 | MIT
-  toml_datetime 1.1.1+spec-1.1.0 | MIT OR Apache-2.0
-  toml_edit 0.25.15+spec-1.1.0 | MIT OR Apache-2.0
-  toml_parser 1.1.3+spec-1.1.0 | MIT OR Apache-2.0
+  toml_datetime 1.1.3+spec-1.1.0 | MIT OR Apache-2.0
+  toml_edit 0.25.20+spec-1.1.0 | MIT OR Apache-2.0
+  toml_parser 1.1.6+spec-1.1.0 | MIT OR Apache-2.0
   tracing-attributes 0.1.31 | MIT
   vcpkg 0.2.15 | MIT/Apache-2.0
   version_check 0.9.5 | MIT/Apache-2.0
@@ -4871,9 +4878,9 @@ Build time only
   yoke-derive 0.8.4 | Unicode-3.0
   zbus-lockstep-macros 0.5.2 | MIT
   zbus_macros 5.19.0 | MIT
-  zerocopy-derive 0.8.61 | BSD-2-Clause OR Apache-2.0 OR MIT
+  zerocopy-derive 0.8.64 | BSD-2-Clause OR Apache-2.0 OR MIT
   zerofrom-derive 0.1.8 | Unicode-3.0
-  zerovec-derive 0.11.6 | Unicode-3.0
+  zerovec-derive 0.11.7 | Unicode-3.0
   zvariant_derive 5.15.1 | MIT
 
   The Windows package is built on Windows. For that machine the manifests of
@@ -5119,19 +5126,19 @@ limitations under the License.
 ------------------------------------------------------------------------------
 R003  LICENSE, LICENSE-MIT
       adler2 2.0.1, allocator-api2 0.2.21, async-channel 2.5.0,
-      async-executor 1.14.0, async-io 2.6.0, async-lock 3.4.2,
+      async-executor 1.14.1, async-io 2.6.0, async-lock 3.5.0,
       async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1,
       atomic-waker 1.1.2, blocking 1.7.0, concurrent-queue 2.5.0, endi 1.1.1,
       event-listener 5.4.2, event-listener-strategy 0.5.4, fastrand 2.5.0,
-      futures-lite 2.6.1, glow 0.17.0, itoa 1.0.18, khronos-egl 6.0.0,
+      futures-lite 2.6.1, glow 0.17.0, itoa 1.0.19, khronos-egl 6.0.0,
       lazy_static 1.5.1, linux-raw-sys 0.12.1, linux-raw-sys 0.4.15,
       once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1,
-      pin-project-lite 0.2.17, piper 0.2.5, polling 3.11.0,
+      pin-project-lite 0.2.18, piper 0.2.5, polling 3.11.0,
       proc-macro2 1.0.107, quote 1.0.47, rustc-hash 1.1.0, rustc-hash 2.1.3,
-      rustix 0.38.44, rustix 1.1.5, semver 1.0.28, serde 1.0.229,
+      rustix 0.38.44, rustix 1.1.6, semver 1.0.28, serde 1.0.229,
       serde_core 1.0.229, serde_json 1.0.154, siphasher 1.0.4, smol_str 0.2.2,
-      syn 3.0.6, thiserror 1.0.69, thiserror 2.0.21, unicode-ident 1.0.26,
-      winnow 1.0.4, x11-dl 2.21.0, zbus-lockstep 0.5.2, zmij 1.0.23,
+      syn 3.0.10, thiserror 1.0.69, thiserror 2.0.21, unicode-ident 1.0.27,
+      winnow 1.0.5, x11-dl 2.21.0, zbus-lockstep 0.5.2, zmij 1.0.23,
       zvariant_utils 4.2.0
 ------------------------------------------------------------------------------
 Permission is hereby granted, free of charge, to any
@@ -5161,9 +5168,9 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R004  LICENSE, LICENSE-APACHE, LICENSE-APACHE2.txt
-      ahash 0.8.12, arc-swap 1.9.3, arrayvec 0.7.8,
-      as-raw-xcb-connection 1.0.1, async-channel 2.5.0, async-executor 1.14.0,
-      async-io 2.6.0, async-lock 3.4.2, async-process 2.5.0,
+      ahash 0.8.12, arc-swap 1.9.5, arrayvec 0.7.8,
+      as-raw-xcb-connection 1.0.1, async-channel 2.5.0, async-executor 1.14.1,
+      async-io 2.6.0, async-lock 3.5.0, async-process 2.5.0,
       async-signal 0.2.14, async-task 4.7.1, atomic-waker 1.1.2, atspi 0.29.0,
       atspi-common 0.13.0, atspi-proxies 0.13.0, base64 0.23.1,
       bit-set 0.10.0, bit-vec 0.9.1, bitflags 2.13.2, block-buffer 0.12.1,
@@ -5171,36 +5178,38 @@ R004  LICENSE, LICENSE-APACHE, LICENSE-APACHE2.txt
       codespan-reporting 0.13.1, concurrent-queue 2.5.0, const-oid 0.10.3,
       cpufeatures 0.3.1, crossbeam-channel 0.5.17, crossbeam-queue 0.3.14,
       crossbeam-utils 0.8.23, crypto-common 0.2.2, data-url 0.3.2,
-      digest 0.11.3, downcast-rs 1.2.1, either 1.19.0, equivalent 1.0.2,
-      errno 0.3.14, euclid 0.22.14, event-listener 5.4.2,
-      event-listener-strategy 0.5.4, fastrand 2.5.0, fixedbitset 0.5.7,
-      flate2 1.1.10, fontique 0.11.1, fontique 0.12.0, form_urlencoded 1.2.2,
+      digest 0.11.3, downcast-rs 1.2.1, either 1.19.0, equivalent 1.0.3,
+      errno 0.3.15, euclid 0.22.14, event-listener 5.4.2,
+      event-listener-strategy 0.5.4, fastrand 2.5.0, fixedbitset 0.5.9,
+      flate2 1.1.11, fontique 0.11.1, fontique 0.13.0, form_urlencoded 1.2.3,
       futures-lite 2.6.1, gethostname 1.1.0, gif 0.14.2, glow 0.17.0,
       hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1, httparse 1.10.1,
       hybrid-array 0.4.15, hyper-rustls 0.27.10, idna 1.1.0,
       idna_adapter 1.2.2, indexmap 2.14.2, itertools 0.15.0,
       keyboard-types 0.8.3, khronos-egl 6.0.0, kurbo 0.13.1,
       lazy_static 1.5.1, linux-raw-sys 0.12.1, linux-raw-sys 0.4.15,
-      lock_api 0.4.14, log 0.4.34, mime 0.3.17, muda 0.20.0,
+      lock_api 0.4.14, lock_api 0.5.0, log 0.4.35, mime 0.3.18, muda 0.21.2,
       nohash-hasher 0.2.0, num-traits 0.2.19, once_cell 1.21.4,
-      openssl-probe 0.2.1, ordered-stream 0.2.0, parking 2.2.1,
-      parking_lot 0.12.5, parking_lot_core 0.9.12, parlance 0.1.1,
-      peniko 0.6.1, percent-encoding 2.3.2, petgraph 0.8.3, piper 0.2.5,
-      png 0.18.1, poll-promise 0.3.0, polling 3.11.0, pollster 1.0.1,
-      polycool 0.4.0, presser 0.3.1, psl-types 2.0.11, publicsuffix 2.3.0,
-      regex-automata 0.4.18, regex-syntax 0.8.11, renderdoc-sys 1.1.0,
-      roxmltree 0.21.2, rustc-hash 1.1.0, rustix 0.38.44, rustix 1.1.5,
+      openssl-probe 0.2.2, ordered-stream 0.2.0, parking 2.2.1,
+      parking_lot 0.12.5, parking_lot 0.13.0, parking_lot_core 0.10.0,
+      parking_lot_core 0.9.12, parlance 0.1.1, peniko 0.6.1,
+      percent-encoding 2.3.2, petgraph 0.8.3, piper 0.2.5, png 0.18.1,
+      poll-promise 0.3.0, polling 3.11.0, pollster 1.0.3, polycool 0.4.0,
+      presser 0.3.1, psl-types 2.0.11, publicsuffix 2.3.0,
+      regex-automata 0.4.19, regex-syntax 0.8.12, renderdoc-sys 1.1.0,
+      roxmltree 0.21.2, rustc-hash 1.1.0, rustix 0.38.44, rustix 1.1.6,
       rustls 0.23.46, rustls-native-certs 0.8.5,
       rustls-platform-verifier 0.7.1, scoped-tls 1.0.1, scopeguard 1.2.0,
       self_cell 1.3.0, sha1 0.11.0, signal-hook-registry 1.4.8,
-      simplecss 0.2.2, siphasher 1.0.4, smallvec 1.16.2, smol_str 0.2.2,
+      simplecss 0.2.2, siphasher 1.0.4, smallvec 1.16.6, smol_str 0.2.2,
       socket2 0.6.5, stable_deref_trait 1.2.1, static_assertions 1.1.0,
       svgtypes 0.16.2, sys-locale 0.3.2, thread_local 1.1.10,
-      tray-icon 0.25.1, tungstenite 0.30.0, unicase 2.10.0,
+      tray-icon 0.26.1, tungstenite 0.30.0, unicase 2.10.0,
       unicode-properties 0.1.5, unicode-segmentation 1.13.3,
-      unicode-width 0.1.14, url 2.5.8, utf8_iter 1.0.4, uuid 1.29.0,
-      weezl 0.1.12, wl-clipboard-rs 0.9.5, x11rb 0.13.2,
-      x11rb-protocol 0.13.2, zeroize 1.9.1, zune-core 0.5.3, zune-jpeg 0.5.15
+      unicode-width 0.2.3, url 2.5.9, utf8_iter 1.1.0, utf_types 1.0.0,
+      uuid 1.29.3, weezl 0.1.12, wl-clipboard-rs 0.9.5, x11rb 0.13.2,
+      x11rb 0.14.0, x11rb-protocol 0.13.2, x11rb-protocol 0.14.0,
+      zeroize 1.9.2, zune-core 0.5.3, zune-jpeg 0.5.15
 ------------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -5441,17 +5450,17 @@ R006  LICENSE, LICENSE-APACHE, LICENSE-APACHE.md, LICENSE-APACHE.txt,
       LICENSE-Apache, LICENSE.APACHE
       allocator-api2 0.2.21, arboard 3.7.0, color 0.3.3, fdeflate 0.3.7,
       fearless_simd 0.4.1, glifo 0.3.0, half 2.7.1, image 0.25.10,
-      image-webp 0.2.4, itoa 1.0.18, libc 0.2.190,
+      image-webp 0.2.4, itoa 1.0.19, libc 0.2.191,
       linebender_resource_handle 0.1.1, miniz_oxide 0.8.9, miniz_oxide 0.9.1,
-      naga 30.0.1, naga-types 30.0.1, num-conv 0.2.2, pin-project-lite 0.2.17,
+      naga 30.0.2, naga-types 30.0.2, num-conv 0.2.2, pin-project-lite 0.2.18,
       proc-macro2 1.0.107, quote 1.0.47, range-alloc 0.1.5,
-      raw-window-handle 0.6.2, resvg 0.49.0, rustc-hash 2.1.3, semver 1.0.28,
-      serde 1.0.229, serde_core 1.0.229, serde_json 1.0.154, syn 3.0.6,
+      raw-window-handle 0.6.2, resvg 0.50.0, rustc-hash 2.1.3, semver 1.0.28,
+      serde 1.0.229, serde_core 1.0.229, serde_json 1.0.154, syn 3.0.10,
       sync_wrapper 1.0.2, thiserror 1.0.69, thiserror 2.0.21, time 0.3.55,
-      time-core 0.1.9, unicode-ident 1.0.26, usvg 0.49.0, vello_common 0.2.0,
-      vello_cpu 0.2.0, wgpu 30.0.1, wgpu-core 30.0.1,
-      wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1,
-      wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1
+      time-core 0.1.9, unicode-ident 1.0.27, usvg 0.50.0, vello_common 0.2.0,
+      vello_cpu 0.2.0, wgpu 30.0.2, wgpu-core 30.0.2,
+      wgpu-core-deps-windows-linux-android 30.0.2, wgpu-hal 30.0.2,
+      wgpu-naga-bridge 30.0.2, wgpu-types 30.0.2
 ------------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -5660,7 +5669,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R008  LICENSE-MIT
-      arc-swap 1.9.3
+      arc-swap 1.9.5
 ------------------------------------------------------------------------------
 Copyright (c) 2017 arc-swap developers
 
@@ -6835,8 +6844,8 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R024  LICENSE-MIT
-      bitflags 2.13.2, log 0.4.34, num-traits 0.2.19, regex-automata 0.4.18,
-      regex-syntax 0.8.11
+      bitflags 2.13.2, log 0.4.35, num-traits 0.2.19, regex-automata 0.4.19,
+      regex-syntax 0.8.12
 ------------------------------------------------------------------------------
 Copyright (c) 2014 The Rust Project Developers
 
@@ -6987,7 +6996,7 @@ For more information, please refer to <http://unlicense.org/>
 
 ------------------------------------------------------------------------------
 R030  LICENSE
-      bytes 1.12.1
+      bytes 1.12.2
 ------------------------------------------------------------------------------
 Copyright (c) 2018 Carl Lerche
 
@@ -7070,7 +7079,7 @@ THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R033  LICENSE-MIT
-      cfg-if 1.0.5, openssl-probe 0.2.1, scoped-tls 1.0.1, socket2 0.6.5
+      cfg-if 1.0.5, openssl-probe 0.2.2, scoped-tls 1.0.1, socket2 0.6.5
 ------------------------------------------------------------------------------
 Copyright (c) 2014 Alex Crichton
 
@@ -7701,7 +7710,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R041  LICENSE, LICENSE-APACHE
-      cookie_store 0.22.1, crc32fast 1.5.2, dpi 0.1.2,
+      cookie_store 0.22.1, crc32fast 1.5.5, dpi 0.1.2,
       fallible-iterator 0.3.0, fallible-streaming-iterator 0.1.9, hex 0.4.3,
       quick-error 2.0.1, unicode-general-category 1.1.0, winit 0.30.13
 ------------------------------------------------------------------------------
@@ -7937,7 +7946,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R043  LICENSE-MIT
-      crc32fast 1.5.2
+      crc32fast 1.5.5
 ------------------------------------------------------------------------------
 MIT License
 
@@ -8879,7 +8888,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R050  LICENSE-MIT
-      data-url 0.3.2, idna 1.1.0, percent-encoding 2.3.2, url 2.5.8
+      data-url 0.3.2, idna 1.1.0, percent-encoding 2.3.2, url 2.5.9
 ------------------------------------------------------------------------------
 Copyright (c) 2013-2025 The rust-url developers
 
@@ -8910,7 +8919,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R051  LICENSE-Apache
-      deranged 0.5.8
+      deranged 0.5.9
 ------------------------------------------------------------------------------
                                  Apache License
                            Version 2.0, January 2004
@@ -9117,7 +9126,7 @@ R051  LICENSE-Apache
 
 ------------------------------------------------------------------------------
 R052  LICENSE-MIT
-      deranged 0.5.8
+      deranged 0.5.9
 ------------------------------------------------------------------------------
 Copyright (c) 2024 Jacob Pratt et al.
 
@@ -9423,7 +9432,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R060  LICENSE-MIT
-      equivalent 1.0.2
+      equivalent 1.0.3
 ------------------------------------------------------------------------------
 Copyright (c) 2016--2023
 
@@ -9454,7 +9463,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R061  LICENSE-MIT
-      errno 0.3.14
+      errno 0.3.15
 ------------------------------------------------------------------------------
 Copyright (c) 2014 Chris Wong
 
@@ -9515,7 +9524,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------------
 R063  COPYRIGHT
       euclid 0.22.14, unicode-properties 0.1.5, unicode-segmentation 1.13.3,
-      unicode-width 0.1.14
+      unicode-width 0.2.3
 ------------------------------------------------------------------------------
 Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -9638,7 +9647,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R068  LICENSE-MIT
-      fixedbitset 0.5.7
+      fixedbitset 0.5.9
 ------------------------------------------------------------------------------
 Copyright (c) 2015-2017
 
@@ -9669,7 +9678,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R069  LICENSE-MIT
-      flate2 1.1.10
+      flate2 1.1.11
 ------------------------------------------------------------------------------
 Copyright (c) 2014-2026 Alex Crichton
 
@@ -9750,7 +9759,7 @@ the following restrictions:
 
 ------------------------------------------------------------------------------
 R072  LICENSE-APACHE
-      font-types 0.12.7, read-fonts 0.41.0, skrifa 0.44.0
+      font-types 0.12.7, read-fonts 0.41.0, read-fonts 0.46.0, skrifa 0.44.0
 ------------------------------------------------------------------------------
 Apache License
 
@@ -9823,7 +9832,7 @@ limitations under the License.
 
 ------------------------------------------------------------------------------
 R073  LICENSE-MIT
-      font-types 0.12.7, read-fonts 0.41.0, skrifa 0.44.0
+      font-types 0.12.7, read-fonts 0.41.0, read-fonts 0.46.0, skrifa 0.44.0
 ------------------------------------------------------------------------------
 Copyright (c) 2019 Fontations Developers
 
@@ -9854,7 +9863,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R074  LICENSE-MIT
-      fontique 0.11.1, fontique 0.12.0
+      fontique 0.11.1, fontique 0.13.0
 ------------------------------------------------------------------------------
 Copyright 2024 the Parley Authors
 
@@ -9885,7 +9894,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R075  LICENSE-MIT
-      form_urlencoded 1.2.2
+      form_urlencoded 1.2.3
 ------------------------------------------------------------------------------
 Copyright (c) 2013-2016 The rust-url developers
 
@@ -11730,11 +11739,11 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R103  LICENSE
-      icu_collections 2.3.0, icu_locale_core 2.3.0, icu_normalizer 2.3.0,
-      icu_normalizer_data 2.3.0, icu_properties 2.3.0,
-      icu_properties_data 2.3.0, icu_provider 2.3.1, litemap 0.8.3,
-      potential_utf 0.1.6, tinystr 0.8.4, writeable 0.6.4, yoke 0.8.3,
-      zerofrom 0.1.8, zerotrie 0.2.5, zerovec 0.11.8
+      icu_collections 2.4.0, icu_locale_core 2.4.0, icu_normalizer 2.4.0,
+      icu_normalizer_data 2.4.0, icu_properties 2.4.0,
+      icu_properties_data 2.4.0, icu_provider 2.4.0, litemap 0.8.3,
+      potential_utf 0.1.6, tinystr 0.8.5, writeable 0.6.4, yoke 0.8.4,
+      zerofrom 0.1.8, zerotrie 0.2.5, zerovec 0.11.9
 ------------------------------------------------------------------------------
 UNICODE LICENSE V3
 
@@ -12120,7 +12129,7 @@ THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R110  LICENSE-MIT
-      libc 0.2.190
+      libc 0.2.191
 ------------------------------------------------------------------------------
 Copyright (c) The Rust Project Developers
 
@@ -12433,7 +12442,7 @@ Copyright notices are retained in src/* files where relevant.
 
 ------------------------------------------------------------------------------
 R113  LICENSE
-      libsqlite3-sys 0.39.1, rusqlite 0.41.1
+      libsqlite3-sys 0.40.0, rusqlite 0.43.0
 ------------------------------------------------------------------------------
 Copyright (c) 2014 The rusqlite developers
 
@@ -12493,7 +12502,7 @@ at your option.
 
 ------------------------------------------------------------------------------
 R115  LICENSE-Apache-2.0_WITH_LLVM-exception
-      linux-raw-sys 0.12.1, linux-raw-sys 0.4.15, rustix 0.38.44, rustix 1.1.5
+      linux-raw-sys 0.12.1, linux-raw-sys 0.4.15, rustix 0.38.44, rustix 1.1.6
 ------------------------------------------------------------------------------
                                  Apache License
                            Version 2.0, January 2004
@@ -12717,8 +12726,8 @@ Software.
 
 ------------------------------------------------------------------------------
 R116  LICENSE-MIT
-      lock_api 0.4.14, parking_lot 0.12.5, parking_lot_core 0.9.12,
-      thread_local 1.1.10
+      lock_api 0.4.14, lock_api 0.5.0, parking_lot 0.12.5, parking_lot 0.13.0,
+      parking_lot_core 0.10.0, parking_lot_core 0.9.12, thread_local 1.1.10
 ------------------------------------------------------------------------------
 Copyright (c) 2016 The Rust Project Developers
 
@@ -12783,7 +12792,7 @@ You may use this code under the terms of either license.
 
 ------------------------------------------------------------------------------
 R119  LICENSE-APACHE
-      memmap2 0.9.11
+      memmap2 0.9.12
 ------------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -12990,7 +12999,7 @@ limitations under the License.
 
 ------------------------------------------------------------------------------
 R120  LICENSE-MIT
-      memmap2 0.9.11
+      memmap2 0.9.12
 ------------------------------------------------------------------------------
 Copyright (c) 2020 Yevhenii Reizner
 Copyright (c) 2015 Dan Burkert
@@ -13022,7 +13031,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R121  LICENSE-MIT
-      mime 0.3.17
+      mime 0.3.18
 ------------------------------------------------------------------------------
 Copyright (c) 2014 Sean McArthur
 
@@ -13190,7 +13199,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 ------------------------------------------------------------------------------
 R126  LICENSE
-      mio 1.2.4
+      mio 1.2.5
 ------------------------------------------------------------------------------
 Copyright (c) 2014 Carl Lerche and other MIO contributors
 
@@ -13454,7 +13463,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
 R129  LICENSE-MIT
-      muda 0.20.0, tray-icon 0.25.1
+      muda 0.21.2, tray-icon 0.26.1
 ------------------------------------------------------------------------------
 MIT License
 
@@ -13481,7 +13490,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R130  LICENSE.spdx
-      muda 0.20.0
+      muda 0.21.2
 ------------------------------------------------------------------------------
 SPDXVersion: SPDX-2.1
 DataLicense: CC0-1.0
@@ -13506,9 +13515,9 @@ Creator: Person: Daniel Thompson-Yvetot
 
 ------------------------------------------------------------------------------
 R131  LICENSE.MIT
-      naga 30.0.1, naga-types 30.0.1, wgpu 30.0.1, wgpu-core 30.0.1,
-      wgpu-core-deps-windows-linux-android 30.0.1, wgpu-hal 30.0.1,
-      wgpu-naga-bridge 30.0.1, wgpu-types 30.0.1
+      naga 30.0.2, naga-types 30.0.2, wgpu 30.0.2, wgpu-core 30.0.2,
+      wgpu-core-deps-windows-linux-android 30.0.2, wgpu-hal 30.0.2,
+      wgpu-naga-bridge 30.0.2, wgpu-types 30.0.2
 ------------------------------------------------------------------------------
 MIT License
 
@@ -13638,7 +13647,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R136  LICENSE-MIT
-      ordered-float 5.5.0
+      ordered-float 5.5.1
 ------------------------------------------------------------------------------
 Copyright (c) 2015 Jonathan Reem
 
@@ -13866,7 +13875,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R145  LICENSE-MIT
-      pollster 1.0.1
+      pollster 1.0.3
 ------------------------------------------------------------------------------
 Copyright (c) 2020-2021 Joshua Barretto
 
@@ -14208,7 +14217,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R151  COPYRIGHT
-      rand 0.10.3
+      rand 0.10.4
 ------------------------------------------------------------------------------
 Copyrights in the Rand project are retained by their contributors. No
 copyright assignment is required to contribute to the Rand project.
@@ -14226,7 +14235,7 @@ published under these same licenses.
 
 ------------------------------------------------------------------------------
 R152  LICENSE-APACHE
-      rand 0.10.3
+      rand 0.10.4
 ------------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -14408,7 +14417,7 @@ END OF TERMS AND CONDITIONS
 
 ------------------------------------------------------------------------------
 R153  LICENSE-MIT
-      rand 0.10.3
+      rand 0.10.4
 ------------------------------------------------------------------------------
 Copyright 2018 Developers of the Rand project
 Copyright (c) 2014 The Rust Project Developers
@@ -14750,7 +14759,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 ------------------------------------------------------------------------------
 R160  LICENSE-UNICODE
-      regex-syntax 0.8.11
+      regex-syntax 0.8.12
 ------------------------------------------------------------------------------
 UNICODE, INC. LICENSE AGREEMENT - DATA FILES AND SOFTWARE
 
@@ -15076,7 +15085,7 @@ THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R164  LICENSE-MIT
-      resvg 0.49.0, usvg 0.49.0
+      resvg 0.50.0, usvg 0.50.0
 ------------------------------------------------------------------------------
 Copyright 2017 the Resvg Authors
 
@@ -15161,7 +15170,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R167  COPYRIGHT
-      rustix 0.38.44, rustix 1.1.5
+      rustix 0.38.44, rustix 1.1.6
 ------------------------------------------------------------------------------
 Short version for non-lawyers:
 
@@ -15211,7 +15220,7 @@ of these licenses, at your option.
 
 ------------------------------------------------------------------------------
 R169  LICENSE-APACHE
-      rustls-pki-types 1.15.1
+      rustls-pki-types 1.16.0
 ------------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -15418,7 +15427,7 @@ limitations under the License.
 
 ------------------------------------------------------------------------------
 R170  LICENSE-MIT
-      rustls-pki-types 1.15.1
+      rustls-pki-types 1.16.0
 ------------------------------------------------------------------------------
 Copyright (c) 2023 Dirkjan Ochtman <dirkjan@ochtman.nl>
 
@@ -15476,7 +15485,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R172  LICENSE
-      rustls-webpki 0.103.16
+      rustls-webpki 0.103.17
 ------------------------------------------------------------------------------
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:
@@ -16040,7 +16049,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 R181  LICENSE-MIT
-      smallvec 1.16.2
+      smallvec 1.16.6
 ------------------------------------------------------------------------------
 Copyright (c) 2018 The Servo Project Developers
 
@@ -16389,7 +16398,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
 R194  LICENSE
-      tokio 1.54.1, tokio-util 0.7.19
+      tokio 1.54.1, tokio-util 0.7.20
 ------------------------------------------------------------------------------
 MIT License
 
@@ -16801,7 +16810,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R202  LICENSE.spdx
-      tray-icon 0.25.1
+      tray-icon 0.26.1
 ------------------------------------------------------------------------------
 SPDXVersion: SPDX-2.1
 DataLicense: CC0-1.0
@@ -17642,7 +17651,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 R211  LICENSE-UNICODE
-      unicode-ident 1.0.26
+      unicode-ident 1.0.27
 ------------------------------------------------------------------------------
 UNICODE LICENSE V3
 
@@ -17688,7 +17697,7 @@ authorization of the copyright holder.
 ------------------------------------------------------------------------------
 R212  LICENSE-MIT
       unicode-properties 0.1.5, unicode-segmentation 1.13.3,
-      unicode-width 0.1.14
+      unicode-width 0.2.3
 ------------------------------------------------------------------------------
 Copyright (c) 2015 The Rust Project Developers
 
@@ -18023,7 +18032,7 @@ R216  LICENSE.txt
 
 ------------------------------------------------------------------------------
 R217  COPYRIGHT
-      utf8_iter 1.0.4
+      utf8_iter 1.1.0
 ------------------------------------------------------------------------------
 Copyright Mozilla Foundation
 
@@ -18071,7 +18080,7 @@ licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
 
 ------------------------------------------------------------------------------
 R218  LICENSE-MIT
-      utf8_iter 1.0.4
+      utf8_iter 1.1.0, utf_types 1.0.0
 ------------------------------------------------------------------------------
 Copyright Mozilla Foundation
 
@@ -18101,8 +18110,34 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R219  LICENSE-MIT
-      uuid 1.29.0
+R219  COPYRIGHT
+      utf_types 1.0.0
+------------------------------------------------------------------------------
+Copyright Mozilla Foundation
+
+Licensed under the Apache License (Version 2.0), or the MIT license,
+(the "Licenses") at your option. You may not use this file except in
+compliance with one of the Licenses. You may obtain copies of the
+Licenses at:
+
+   https://www.apache.org/licenses/LICENSE-2.0
+   https://opensource.org/licenses/MIT
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the Licenses is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the Licenses for the specific language governing permissions and
+limitations under the Licenses.
+
+--
+
+Test code is dedicated to the Public Domain when so designated (see
+the individual files for PD/CC0-dedicated sections).
+
+
+------------------------------------------------------------------------------
+R220  LICENSE-MIT
+      uuid 1.29.3
 ------------------------------------------------------------------------------
 Copyright (c) 2014 The Rust Project Developers
 Copyright (c) 2018 Ashley Mannix, Christopher Armstrong, Dylan DPC, Hunar Roop Kahlon
@@ -18133,7 +18168,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R220  LICENSE-MIT
+R221  LICENSE-MIT
       vello_common 0.2.0, vello_cpu 0.2.0
 ------------------------------------------------------------------------------
 Copyright 2020 the Vello Authors
@@ -18164,7 +18199,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R221  LICENSE
+R222  LICENSE
       want 0.3.2
 ------------------------------------------------------------------------------
 Copyright (c) 2018-2019 Sean McArthur
@@ -18189,7 +18224,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R222  LICENSE.txt
+R223  LICENSE.txt
       wayland-backend 0.3.17, wayland-client 0.31.15, wayland-cursor 0.31.14,
       wayland-protocols 0.32.13, wayland-protocols-experimental 20250721.0.1,
       wayland-protocols-misc 0.3.12, wayland-protocols-plasma 0.3.12,
@@ -18217,7 +18252,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R223  COPYING
+R224  COPYING
       wayland-protocols 0.32.13
 ------------------------------------------------------------------------------
 Copyright © 2008-2013 Kristian Høgsberg
@@ -18256,7 +18291,7 @@ The above is the version of the MIT "Expat" License used by X.org:
 
 
 ------------------------------------------------------------------------------
-R224  COPYING.LIB
+R225  COPYING.LIB
       wayland-protocols-plasma 0.3.12
 ------------------------------------------------------------------------------
                   GNU LESSER GENERAL PUBLIC LICENSE
@@ -18769,7 +18804,7 @@ That's all there is to it!
 
 
 ------------------------------------------------------------------------------
-R225  BSD-3-Clause.txt
+R226  BSD-3-Clause.txt
       wayland-protocols-plasma 0.3.12
 ------------------------------------------------------------------------------
 Copyright (c) <year> <owner>. All rights reserved.
@@ -18801,7 +18836,7 @@ USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-R226  CC0-1.0.txt
+R227  CC0-1.0.txt
       wayland-protocols-plasma 0.3.12
 ------------------------------------------------------------------------------
 Creative Commons Legal Code
@@ -18928,7 +18963,7 @@ express Statement of Purpose.
 
 
 ------------------------------------------------------------------------------
-R227  LGPL-2.1-or-later.txt
+R228  LGPL-2.1-or-later.txt
       wayland-protocols-plasma 0.3.12
 ------------------------------------------------------------------------------
 GNU LESSER GENERAL PUBLIC LICENSE
@@ -19402,7 +19437,7 @@ That's all there is to it!
 
 
 ------------------------------------------------------------------------------
-R228  MIT-CMU.txt
+R229  MIT-CMU.txt
       wayland-protocols-plasma 0.3.12
 ------------------------------------------------------------------------------
 <copyright notice> By obtaining, using, and/or copying this software and/or
@@ -19425,7 +19460,7 @@ ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R229  MIT.txt
+R230  MIT.txt
       wayland-protocols-plasma 0.3.12
 ------------------------------------------------------------------------------
 MIT License Copyright (c) <year> <copyright holders>
@@ -19450,7 +19485,7 @@ OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R230  LICENSE-APACHE
+R231  LICENSE-APACHE
       web-time 1.1.0
 ------------------------------------------------------------------------------
                                  Apache License
@@ -19657,7 +19692,7 @@ R230  LICENSE-APACHE
 
 
 ------------------------------------------------------------------------------
-R231  LICENSE-MIT
+R232  LICENSE-MIT
       web-time 1.1.0
 ------------------------------------------------------------------------------
 MIT License
@@ -19684,8 +19719,8 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R232  LICENSE
-      webpki-roots 0.26.11, webpki-roots 1.0.11
+R233  LICENSE
+      webpki-roots 0.26.11, webpki-roots 1.0.12
 ------------------------------------------------------------------------------
 # Community Data License Agreement - Permissive - Version 2.0
 
@@ -19751,7 +19786,7 @@ insights.
 
 
 ------------------------------------------------------------------------------
-R233  LICENSE-MIT
+R234  LICENSE-MIT
       weezl 0.1.12
 ------------------------------------------------------------------------------
 The MIT License (MIT)
@@ -19778,7 +19813,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R234  license-apache-2.0
+R235  license-apache-2.0
       windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2,
       windows-future 0.3.2, windows-link 0.2.1, windows-numerics 0.3.1,
       windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.52.0,
@@ -19989,7 +20024,7 @@ R234  license-apache-2.0
 
 
 ------------------------------------------------------------------------------
-R235  license-mit
+R236  license-mit
       windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2,
       windows-future 0.3.2, windows-link 0.2.1, windows-numerics 0.3.1,
       windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.52.0,
@@ -20020,7 +20055,7 @@ R235  license-mit
 
 
 ------------------------------------------------------------------------------
-R236  LICENSE-MIT
+R237  LICENSE-MIT
       wl-clipboard-rs 0.9.5
 ------------------------------------------------------------------------------
 Copyright (c) 2019 Ivan Molodetskikh
@@ -20051,8 +20086,8 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R237  LICENSE-MIT
-      x11rb 0.13.2, x11rb-protocol 0.13.2
+R238  LICENSE-MIT
+      x11rb 0.13.2, x11rb 0.14.0, x11rb-protocol 0.13.2, x11rb-protocol 0.14.0
 ------------------------------------------------------------------------------
 Copyright 2019 x11rb Contributers
 
@@ -20082,7 +20117,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R238  LICENSE
+R239  LICENSE
       xcursor 0.3.11
 ------------------------------------------------------------------------------
 MIT License
@@ -20109,7 +20144,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R239  LICENSE
+R240  LICENSE
       xkbcommon-dl 0.4.2
 ------------------------------------------------------------------------------
 The MIT License (MIT)
@@ -20136,7 +20171,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R240  LICENSE-APACHE
+R241  LICENSE-APACHE
       xkeysym 0.2.1
 ------------------------------------------------------------------------------
                                  Apache License
@@ -20343,7 +20378,7 @@ R240  LICENSE-APACHE
 
 
 ------------------------------------------------------------------------------
-R241  LICENSE-MIT
+R242  LICENSE-MIT
       xkeysym 0.2.1
 ------------------------------------------------------------------------------
 Copyright (c) 2022-2023 John Nunley
@@ -20368,7 +20403,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R242  LICENSE-ZLIB
+R243  LICENSE-ZLIB
       xkeysym 0.2.1
 ------------------------------------------------------------------------------
 Copyright (c) 2022-2023 John Nunley
@@ -20385,7 +20420,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 
 ------------------------------------------------------------------------------
-R243  LICENSE
+R244  LICENSE
       yeslogic-fontconfig-sys 6.0.1
 ------------------------------------------------------------------------------
 The MIT License (MIT)
@@ -20415,7 +20450,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R244  LICENSE
+R245  LICENSE
       zbus 5.19.0, zbus_names 4.3.5, zbus_xml 5.2.1, zvariant 5.15.1
 ------------------------------------------------------------------------------
 Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors
@@ -20446,8 +20481,8 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R245  LICENSE
-      zcheapstr 1.1.0
+R246  LICENSE
+      zcheapstr 1.4.0
 ------------------------------------------------------------------------------
 Copyright (c) 2026 Zeeshan Ali Khan & zcheapstr contributors
 
@@ -20477,8 +20512,8 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R246  LICENSE-APACHE
-      zerocopy 0.8.61
+R247  LICENSE-APACHE
+      zerocopy 0.8.64
 ------------------------------------------------------------------------------
                                  Apache License
                            Version 2.0, January 2004
@@ -20684,8 +20719,8 @@ R246  LICENSE-APACHE
 
 
 ------------------------------------------------------------------------------
-R247  LICENSE-BSD
-      zerocopy 0.8.61
+R248  LICENSE-BSD
+      zerocopy 0.8.64
 ------------------------------------------------------------------------------
 Copyright 2019 The Fuchsia Authors.
 
@@ -20714,8 +20749,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-R248  LICENSE-MIT
-      zerocopy 0.8.61
+R249  LICENSE-MIT
+      zerocopy 0.8.64
 ------------------------------------------------------------------------------
 Copyright 2023 The Fuchsia Authors
 
@@ -20745,8 +20780,8 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R249  LICENSE-MIT
-      zeroize 1.9.1
+R250  LICENSE-MIT
+      zeroize 1.9.2
 ------------------------------------------------------------------------------
 Copyright (c) 2018-2026 The RustCrypto Project Developers
 
@@ -20776,7 +20811,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R250  LICENSE-MIT
+R251  LICENSE-MIT
       zune-core 0.5.3, zune-jpeg 0.5.15
 ------------------------------------------------------------------------------
 MIT License
@@ -20803,7 +20838,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-R251  LICENSE-ZLIB
+R252  LICENSE-ZLIB
       zune-core 0.5.3, zune-jpeg 0.5.15
 ------------------------------------------------------------------------------
 zlib License
