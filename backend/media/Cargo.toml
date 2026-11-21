@@ -22,4 +22,5 @@ gelabber-shared.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
+# Same version as axum's `ws` (0.8 uses 0.29), so one copy is compiled.
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "handshake"] }
