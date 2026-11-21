@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS toolchain
+FROM rust:1.100.0-slim-trixie@sha256:6f14b2b4b278ec0d50aa1d69541c304ce0f95e0f6268487aa9924af1c2e9aebe AS toolchain
 
 FROM toolchain AS base
 COPY backend/build/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources

@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
         with:
           components: rustfmt, clippy
 
@@ -160,7 +160,7 @@ jobs:
           done
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
