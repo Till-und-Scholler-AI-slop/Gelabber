@@ -45,7 +45,7 @@ export async function storageFaultScenarios(h, f, runtime) {
     };
     f.owner.page.on("response", onResponse);
     try {
-      await f.owner.page.locator('input[type="file"]').setInputFiles({
+      await f.owner.page.locator('input[type="file"]').first().setInputFiles({
         name: "durable.png",
         mimeType: "image/png",
         buffer: bytes,

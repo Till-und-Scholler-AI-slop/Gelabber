@@ -756,6 +756,7 @@ mod tests {
             level: None,
             muted: true,
             muted_until: None,
+            voice: false,
         }];
         let tap = notifier.tap(Arc::new(|| {}));
         tap(&created(server, channel, anna, "leise", &[]));

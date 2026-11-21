@@ -4,8 +4,10 @@
 //! A setting is stored as given: `level` NULL inherits (a channel its
 //! server's, a server or DM `all`). A mute is `muted` with an optional end
 //! the server computes from `mute_minutes`, so a client clock cannot shorten
-//! or stretch it. A row that inherits and is not muted is deleted. Every
-//! change goes to the account's other sockets (`ns`), which fetch again.
+//! or stretch it. A server's setting also holds `voice` (#616): a push when
+//! someone starts a call there, off unless asked for. A row that inherits,
+//! is not muted and asks for no voice push is deleted. Every change goes to
+//! the account's other sockets (`ns`), which fetch again.
 
 use axum::{
     Router,
@@ -56,6 +58,8 @@ pub struct Setting {
     pub level: Option<Level>,
     pub muted: bool,
     pub muted_until: Option<DateTime<Utc>>,
+    /// A server's only: push when someone starts a call there.
+    pub voice: bool,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +71,10 @@ pub struct SettingBody {
     /// With `muted`: minutes from now; absent mutes until turned back on.
     #[serde(default)]
     mute_minutes: Option<i64>,
+    /// A server's only. Absent leaves it as it is, so a client from before
+    /// it existed does not turn it off with its next change.
+    #[serde(default)]
+    voice: Option<bool>,
 }
 
 async fn list(
@@ -75,7 +83,7 @@ async fn list(
 ) -> Result<Json<Vec<Setting>>, ApiError> {
     Ok(Json(
         sqlx::query_as(
-            "SELECT scope_kind AS scope, scope_id AS id, level, muted, muted_until \
+            "SELECT scope_kind AS scope, scope_id AS id, level, muted, muted_until, voice \
              FROM notification_settings WHERE user_id=$1 ORDER BY scope_kind, scope_id",
         )
         .bind(user.id)
@@ -121,41 +129,43 @@ async fn store(
             "invalid",
         )])));
     }
-    let setting = if body.level.is_none() && !body.muted {
+    if body.voice == Some(true) && scope != "server" {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "voice", "invalid",
+        )])));
+    }
+    let mut tx = state.db.begin().await?;
+    let setting: Setting = sqlx::query_as(
+        "INSERT INTO notification_settings
+             (user_id,scope_kind,scope_id,level,muted,muted_until,voice)
+         VALUES ($1,$2,$3,$4,$5, CASE WHEN $5 AND $6::bigint IS NOT NULL
+             THEN now() + make_interval(mins => $6::int) END, COALESCE($7, false))
+         ON CONFLICT (user_id,scope_kind,scope_id) DO UPDATE
+         SET level=EXCLUDED.level, muted=EXCLUDED.muted, muted_until=EXCLUDED.muted_until,
+             voice=COALESCE($7, notification_settings.voice), updated_at=now()
+         RETURNING scope_kind AS scope, scope_id AS id, level, muted, muted_until, voice",
+    )
+    .bind(user)
+    .bind(scope)
+    .bind(id)
+    .bind(body.level)
+    .bind(body.muted)
+    .bind(body.mute_minutes)
+    .bind(body.voice)
+    .fetch_one(&mut *tx)
+    .await?;
+    // Nothing of its own left: the row goes, and the setting inherits.
+    if setting.level.is_none() && !setting.muted && !setting.voice {
         sqlx::query(
             "DELETE FROM notification_settings WHERE user_id=$1 AND scope_kind=$2 AND scope_id=$3",
         )
         .bind(user)
         .bind(scope)
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
-        Setting {
-            scope: scope.to_owned(),
-            id,
-            level: None,
-            muted: false,
-            muted_until: None,
-        }
-    } else {
-        sqlx::query_as(
-            "INSERT INTO notification_settings (user_id,scope_kind,scope_id,level,muted,muted_until)
-             VALUES ($1,$2,$3,$4,$5, CASE WHEN $5 AND $6::bigint IS NOT NULL
-                 THEN now() + make_interval(mins => $6::int) END)
-             ON CONFLICT (user_id,scope_kind,scope_id) DO UPDATE
-             SET level=EXCLUDED.level, muted=EXCLUDED.muted, muted_until=EXCLUDED.muted_until,
-                 updated_at=now()
-             RETURNING scope_kind AS scope, scope_id AS id, level, muted, muted_until",
-        )
-        .bind(user)
-        .bind(scope)
-        .bind(id)
-        .bind(body.level)
-        .bind(body.muted)
-        .bind(body.mute_minutes)
-        .fetch_one(&state.db)
-        .await?
-    };
+    }
+    tx.commit().await?;
     if let Err(error) = state
         .gateway
         .publish_user(user, &UserFrame::NotificationSettings)

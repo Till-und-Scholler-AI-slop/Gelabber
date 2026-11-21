@@ -890,7 +890,7 @@ export async function accessScenarios(h, f) {
     ["03a"],
     async () => {
       const context = await deadlineProbe(
-        () => h.browser.newContext(),
+        () => h.browser.newContext({ locale: "de-DE" }),
         Date.now() + 12_000,
       );
       let page;

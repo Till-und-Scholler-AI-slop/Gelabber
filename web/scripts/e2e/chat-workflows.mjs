@@ -11,7 +11,13 @@ const base = safeTarget(
 const output =
   process.env.GELABBER_CHAT_REPORT ?? "/tmp/gelabber-chat-workflows";
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch();
+// Another Chromium build than Playwright's own, e.g. where its download is
+// blocked (like GELABBER_PWA_BROWSER_EXECUTABLE in smoke-pwa.mjs).
+const browser = await chromium.launch(
+  process.env.GELABBER_CHAT_BROWSER_EXECUTABLE
+    ? { executablePath: process.env.GELABBER_CHAT_BROWSER_EXECUTABLE }
+    : {},
+);
 const contexts = [];
 const suffix = randomBytes(6).toString("hex");
 const password = randomBytes(20).toString("base64url");
@@ -23,7 +29,8 @@ const check = async (name, run) => {
   console.log(`PASS ${name}`);
 };
 async function actor(label, credentials) {
-  const context = await browser.newContext();
+  // The checks find controls by their German names.
+  const context = await browser.newContext({ locale: "de-DE" });
   contexts.push(context);
   const page = await context.newPage();
   page.setDefaultTimeout(12_000);
@@ -204,11 +211,15 @@ try {
         .click();
       const composer = member.page.locator("form textarea").last();
       await composer.fill("draft across navigation and reload");
-      await member.page.locator('input[type="file"]').setInputFiles({
-        name: "draft.txt",
-        mimeType: "text/plain",
-        buffer: Buffer.from("unsent file"),
-      });
+      // The first of the paperclip's inputs takes every type (#574).
+      await member.page
+        .locator('input[type="file"]')
+        .first()
+        .setInputFiles({
+          name: "draft.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("unsent file"),
+        });
       await member.page
         .locator(`.channel-sidebar a[href="${path}"]`)
         .first()
@@ -241,6 +252,14 @@ try {
         });
         window.dispatchEvent(new Event("focus"));
       });
+      // The focus check finds the session gone and releases the drafts. A
+      // page load before that would start with the old drafts still stored.
+      await member.page.waitForFunction(
+        () =>
+          !Object.keys(window.localStorage).some((key) =>
+            key.startsWith("gelabber:chat-draft:"),
+          ),
+      );
       await member.page.goto(`${base}/login`);
       await member.page.getByLabel("E-Mail-Adresse").fill(member.email);
       await member.page.getByLabel("Passwort", { exact: true }).fill(password);
@@ -281,9 +300,66 @@ try {
       15_000,
     );
   });
+  await check(
+    "file note closes with ×, Escape, typing and its time (GEL-8)",
+    async () => {
+      const page = member.page;
+      await page.goto(`${base}${path}`);
+      const composer = page.locator("form textarea").last();
+      const note = page.locator(".lr-composer-file-error");
+      const refuse = () =>
+        page
+          .locator('input[type="file"]')
+          .first()
+          .setInputFiles({
+            name: "setup.exe",
+            mimeType: "application/x-msdownload",
+            buffer: Buffer.from("MZ"),
+          });
+      const text = "setup.exe: Dieser Dateityp ist nicht erlaubt.";
+      await refuse();
+      await note.getByText(text, { exact: true }).waitFor();
+      await page.screenshot({ path: `${output}/file-note.png` });
+      await page.getByRole("button", { name: "Hinweis schließen" }).click();
+      await note.waitFor({ state: "detached" });
+      await refuse();
+      await note.waitFor();
+      await composer.focus();
+      await page.keyboard.press("Escape");
+      await note.waitFor({ state: "detached" });
+      await refuse();
+      await note.waitFor();
+      await composer.pressSequentially("H");
+      await note.waitFor({ state: "detached" });
+      await composer.fill("");
+      // A file that is fine after one left out: no note stays.
+      await refuse();
+      await note.waitFor();
+      await page
+        .locator('input[type="file"]')
+        .first()
+        .setInputFiles({
+          name: "liste.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("Milch"),
+        });
+      await note.waitFor({ state: "detached" });
+      await page.getByRole("button", { name: "liste.txt entfernen" }).click();
+      // Held while the pointer is on it, gone 8 s after it leaves.
+      await refuse();
+      await note.hover();
+      await page.waitForTimeout(9_000);
+      assert.equal(await note.count(), 1);
+      await page.mouse.move(0, 0);
+      await note.waitFor({ state: "detached", timeout: 9_500 });
+    },
+  );
   await check("DM drafts and search use the same scoped workflow", async () => {
     const dm = (await api(owner, "/dms", "POST", { user_id: member.id })).body
       .id;
+    // Not friends: the DM is a message request (#563), which the unread
+    // list leaves out until it is accepted.
+    assert.equal((await api(member, `/dms/${dm}/accept`, "POST")).status, 200);
     await send(owner, dm, "dm searchneedle");
     await member.page.goto(`${base}/d/${dm}`);
     await member.page.bringToFront();
@@ -298,6 +374,8 @@ try {
       await member.page.locator("form textarea").last().inputValue(),
       "dm draft",
     );
+    // On a phone the field is an icon until it is tapped (#561).
+    await member.page.locator(".lr-header-search").click();
     await member.page
       .getByRole("searchbox", { name: "In dieser Unterhaltung suchen" })
       .fill("searchneedle");

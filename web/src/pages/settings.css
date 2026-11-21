@@ -648,6 +648,10 @@
 }
 .settings-area .media-settings-form button {
   min-height: 36px;
+}
+/* Not the primary button: the microphone test opens inside the form, and
+   accent text on its accent "Test starten" hid the label (GEL-18). */
+.settings-area .media-settings-form button:not(.ui-button--primary) {
   color: var(--lr-accent-text);
 }
 .settings-area .media-settings-form label:has(input[type="checkbox"]) {

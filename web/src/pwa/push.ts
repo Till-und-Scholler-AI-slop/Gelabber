@@ -1,7 +1,8 @@
 // Web Push (#243): with notifications allowed, the browser subscribes with
-// its vendor's push service and the server sends direct messages and
-// mentions there while no page of the app is in front. public/sw.js shows
-// them. Where no service worker runs (vite dev, the Tauri app, plain HTTP)
+// its vendor's push service and the server sends there what the
+// notification levels ask for (direct messages, mentions, and every message
+// of a channel at "all") while no page of the app is in front. public/sw.js
+// shows them. Where no service worker runs (vite dev, the Tauri app, plain HTTP)
 // or the server has no key, nothing changes.
 import { useEffect } from "react";
 

@@ -88,11 +88,18 @@ async fn mutate(
         .ok_or_else(|| ApiError::Validation(FieldErrors::from([("emoji", "invalid")])))?;
     let mut tx = state.db.begin().await?;
     let access = lock_access(&mut tx, initial.channel_id, user).await?;
+    // The one blocked reacts on as before (#619): on the peer's messages the
+    // reaction is stored for them alone, like a sender-only message. The
+    // blocker gets `blocked` from the precheck.
+    let mut hidden = false;
     if add {
         access.require_send()?;
         // A reaction answers too: not before a message request is accepted,
-        // and not where a block closed the DM (#565).
+        // and not by someone who blocks the peer (#565).
         if let super::MessagingChannel::Dm { .. } = &access {
+            hidden = crate::blocks::in_dm(&mut *tx, initial.channel_id, user).await?
+                == crate::blocks::Block::Theirs
+                && !initial.sender_only;
             let draft = crate::dms::request::Draft {
                 content: "",
                 files: false,
@@ -103,6 +110,7 @@ async fn mutate(
     }
     let row = sqlx::query_as::<_, MessageRow>(super::MESSAGE_BY_ID_SQL)
         .bind(id)
+        .bind(user)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -112,23 +120,51 @@ async fn mutate(
     if add {
         // The channel lock serializes the limit check with every reaction write.
         // Existing emoji and idempotent retries remain valid at the limit.
-        let emojis: Vec<String> =
-            sqlx::query_scalar("SELECT DISTINCT emoji FROM message_reactions WHERE message_id=$1")
-                .bind(id)
-                .fetch_all(&mut *tx)
-                .await?;
+        // Only what the caller sees counts: hidden reactions of someone the
+        // caller blocks must not use up the caller's slots (#619).
+        let emojis: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT emoji FROM message_reactions \
+             WHERE message_id=$1 AND (NOT sender_only OR user_id=$2)",
+        )
+        .bind(id)
+        .bind(user)
+        .fetch_all(&mut *tx)
+        .await?;
         if emojis.len() >= 20 && !emojis.iter().any(|existing| existing == emoji) {
             return Err(ApiError::Validation(FieldErrors::from([(
                 "emoji", "limit",
             )])));
         }
     }
-    let changed = if add {
-        sqlx::query("INSERT INTO message_reactions(message_id,user_id,emoji) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
+    // A reaction given hidden and later given openly becomes open.
+    let written: Option<bool> = if add {
+        sqlx::query_scalar(
+            "INSERT INTO message_reactions(message_id,user_id,emoji,sender_only) VALUES($1,$2,$3,$4) \
+             ON CONFLICT (message_id,user_id,emoji) DO UPDATE SET sender_only=false \
+             WHERE message_reactions.sender_only AND NOT EXCLUDED.sender_only \
+             RETURNING sender_only",
+        )
+        .bind(id)
+        .bind(user)
+        .bind(emoji)
+        .bind(hidden)
+        .fetch_optional(&mut *tx)
+        .await?
     } else {
-        sqlx::query("DELETE FROM message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3")
-    }.bind(id).bind(user).bind(emoji).execute(&mut *tx).await?.rows_affected() > 0;
-    if changed {
+        sqlx::query_scalar(
+            "DELETE FROM message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3 \
+             RETURNING sender_only",
+        )
+        .bind(id)
+        .bind(user)
+        .bind(emoji)
+        .fetch_optional(&mut *tx)
+        .await?
+    };
+    let changed = written.is_some();
+    // Only the open change of an open reaction goes out.
+    let announce = written == Some(false);
+    if announce {
         persist_event(
             &mut tx,
             access.event_server_id(),
@@ -136,21 +172,36 @@ async fn mutate(
             &mut current,
         )
         .await?;
-    } else {
+    }
+    if changed {
+        // The answer shows the caller's own hidden reactions too.
+        populate_for(&mut tx, &mut current, Some(user)).await?;
+    }
+    if !announce {
         // Unchanged, the reply is still the full message: a client applying
         // it must not lose the link previews.
         crate::previews::for_messages(&mut *tx, std::slice::from_mut(&mut current)).await?;
     }
     tx.commit().await?;
-    if changed {
+    if announce {
         delivery::wake(state);
     }
     Ok(current)
 }
 
+/// The reactions everyone sees, for an event: without hidden ones (#619).
 pub(super) async fn populate(db: &mut PgConnection, message: &mut Message) -> Result<(), ApiError> {
-    let rows: Vec<(String, Vec<Uuid>)> = sqlx::query_as("SELECT emoji,array_agg(user_id ORDER BY user_id) FROM message_reactions WHERE message_id=$1 GROUP BY emoji ORDER BY emoji")
-        .bind(message.id).fetch_all(db).await?;
+    populate_for(db, message, None).await
+}
+
+/// The reactions `viewer` sees: the open ones and their own hidden ones.
+pub(super) async fn populate_for(
+    db: &mut PgConnection,
+    message: &mut Message,
+    viewer: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let rows: Vec<(String, Vec<Uuid>)> = sqlx::query_as("SELECT emoji,array_agg(user_id ORDER BY user_id) FROM message_reactions WHERE message_id=$1 AND (NOT sender_only OR user_id=$2) GROUP BY emoji ORDER BY emoji")
+        .bind(message.id).bind(viewer).fetch_all(db).await?;
     message.reactions = rows
         .into_iter()
         .map(|(emoji, user_ids)| Reaction { emoji, user_ids })

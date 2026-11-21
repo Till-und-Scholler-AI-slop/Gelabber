@@ -1161,7 +1161,8 @@ html[data-compact-rooms="true"] .voice-room-seat {
      rows centred in it. Auto margins, unlike centring, give way when a
      short window makes the bar scroll. */
   .app-shell-workspace .voice-session-dock {
-    left: var(--lr-navigation-width);
+    /* Where the channel list ends, or the rail while it is folded. */
+    left: var(--lr-nav-edge, var(--lr-navigation-width));
     min-height: calc(var(--lr-dock-height) + var(--lr-safe-bottom));
     padding: 8px calc(16px + var(--lr-safe-right))
       calc(8px + var(--lr-safe-bottom)) 16px;
@@ -1674,6 +1675,12 @@ a.voice-session-link:hover > span {
 }
 .voice-menu-item > span {
   min-width: 0;
+}
+/* Where an unchosen entry's check would be. */
+.voice-menu-check {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
 }
 .voice-menu-item strong {
   display: block;

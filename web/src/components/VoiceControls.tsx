@@ -297,8 +297,8 @@ function LiveControl({
     members: server?.members,
   });
   const count = list.watching.length;
-  // Where a Live can carry sound the button opens a menu; otherwise it
-  // toggles, and says what everyone sees.
+  // The button opens a menu: going live, keeping text sharp and, where a
+  // Live can carry sound, that switch.
   const tip = useTooltip(
     live
       ? {
@@ -307,16 +307,12 @@ function LiveControl({
           }),
           disabled: open,
         }
-      : capable.appAudio
-        ? { label: t("live.goLive"), disabled: open }
-        : { label: t("live.goLive"), detail: t("live.hint") },
+      : { label: t("live.goLive"), disabled: open },
   );
   // A phone browser cannot capture a screen: nothing to offer, nothing to
   // explain.
   if (!live && !capable.screen) return null;
   const reason = live ? null : liveUnavailable(canLive);
-  // Not live and no sound to choose: the button only toggles.
-  const toggles = !live && !capable.appAudio;
   return (
     <>
       <button
@@ -325,10 +321,10 @@ function LiveControl({
         type="button"
         aria-pressed={live}
         aria-label={t("live.goLive")}
-        aria-haspopup={toggles ? undefined : live ? "dialog" : "menu"}
-        aria-expanded={toggles ? undefined : open}
-        onClick={() => (toggles ? toggleShare() : setOpen((value) => !value))}
-        className={`${BUTTON}${live ? " voice-control-live" : ""}${!toggles && reason ? " opacity-50" : ""}`}
+        aria-haspopup={live ? "dialog" : "menu"}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className={`${BUTTON}${live ? " voice-control-live" : ""}${reason ? " opacity-50" : ""}`}
       >
         <LiveIcon size={17} />
         <span className="voice-control-text">{t("live.badge")}</span>
@@ -338,9 +334,7 @@ function LiveControl({
             {formatNumber(count)}
           </span>
         ) : null}
-        {toggles ? null : (
-          <ChevronIcon size={12} className="voice-control-caret" />
-        )}
+        <ChevronIcon size={12} className="voice-control-caret" />
       </button>
       {tip.tooltip}
       {live ? (
@@ -353,9 +347,14 @@ function LiveControl({
           ownerName=""
           channelName={channelName}
           list={list}
-          extra={capable.appAudio ? <ShareSoundSwitch role="switch" /> : null}
+          extra={
+            <>
+              <KeepSharpSwitch role="switch" />
+              {capable.appAudio ? <ShareSoundSwitch role="switch" /> : null}
+            </>
+          }
         />
-      ) : capable.appAudio ? (
+      ) : (
         <Popover
           open={open}
           onClose={() => setOpen(false)}
@@ -367,7 +366,7 @@ function LiveControl({
         >
           <LiveMenuItems canLive={canLive} onDone={() => setOpen(false)} />
         </Popover>
-      ) : null}
+      )}
     </>
   );
 }
@@ -461,13 +460,44 @@ export function LiveMenuItems({
           onSelect={done(toggleShare)}
         />
       )}
-      {capable.appAudio ? (
-        <>
-          <div role="separator" className="voice-menu-separator" />
-          <ShareSoundSwitch role="menuitemcheckbox" />
-        </>
-      ) : null}
+      <div role="separator" className="voice-menu-separator" />
+      <KeepSharpSwitch role="menuitemcheckbox" />
+      {capable.appAudio ? <ShareSoundSwitch role="menuitemcheckbox" /> : null}
     </div>
+  );
+}
+
+/** "Text scharf halten" (GEL-26): whether a Live keeps its resolution and
+ * lowers the frame rate on a tight connection, or the other way round. It
+ * applies at once, also to a running Live. */
+export function KeepSharpSwitch({
+  role,
+}: {
+  role: "menuitemcheckbox" | "switch";
+}) {
+  const t = useT(voice);
+  const screenMode = useMediaSettings((s) => s.screenMode);
+  const patch = useMediaSettings((s) => s.patch);
+  const hintId = useId();
+  const sharp = screenMode === "sharp";
+  return (
+    <button
+      type="button"
+      role={role}
+      aria-label={t("live.keepSharp")}
+      aria-checked={sharp}
+      aria-describedby={hintId}
+      onClick={() => patch({ screenMode: sharp ? "smooth" : "sharp" })}
+      className="voice-menu-item voice-menu-switch"
+    >
+      <span>
+        <strong>{t("live.keepSharp")}</strong>
+        <small id={hintId}>
+          {sharp ? t("live.keepSharpOn") : t("live.keepSharpOff")}
+        </small>
+      </span>
+      <span className="voice-menu-switch-track" aria-hidden="true" />
+    </button>
   );
 }
 

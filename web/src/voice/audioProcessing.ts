@@ -7,6 +7,65 @@ import {
   type MediaSettings,
 } from "./settings.ts";
 
+/** The input sensitivity gate (GEL-27) in public/audio/rnnoise-worklet.js:
+ * off, automatic, or below a threshold in dB. */
+export type GateMode = "off" | "auto" | "manual";
+export type GateConfig = { mode: GateMode; thresholdDb: number };
+/** What the gate measured last, about every 80 ms. */
+export type GateReport = {
+  mode: GateMode;
+  levelDb: number;
+  thresholdDb: number;
+  open: boolean;
+};
+
+/** Original / music stays unprocessed, and push-to-talk sends what the key
+ * opens. Otherwise the gate follows the settings. */
+export function gateConfig(
+  settings: Pick<
+    MediaSettings,
+    "gateAuto" | "gateThresholdDb" | "voiceInput" | "processingMode"
+  >,
+  actual: AudioProcessingMode = settings.processingMode,
+): GateConfig {
+  return {
+    mode:
+      actual === "original" || settings.voiceInput === "ptt"
+        ? "off"
+        : settings.gateAuto
+          ? "auto"
+          : "manual",
+    thresholdDb: settings.gateThresholdDb,
+  };
+}
+
+/** The latest report of a running gate: the call's microphone, the
+ * microphone test or the settings' level meter. */
+export const useInputGate = create<{ report: GateReport | null; at: number }>(
+  () => ({ report: null, at: 0 }),
+);
+function noteGate(data: unknown): void {
+  const report = data as Partial<GateReport> & { op?: unknown };
+  if (
+    report?.op !== "gate" ||
+    typeof report.levelDb !== "number" ||
+    typeof report.thresholdDb !== "number"
+  )
+    return;
+  useInputGate.setState({
+    report: {
+      mode:
+        report.mode === "auto" || report.mode === "manual"
+          ? report.mode
+          : "off",
+      levelDb: report.levelDb,
+      thresholdDb: report.thresholdDb,
+      open: report.open === true,
+    },
+    at: Date.now(),
+  });
+}
+
 export type ProcessingInfo = {
   requested: AudioProcessingMode;
   actual: AudioProcessingMode | null;
@@ -19,6 +78,8 @@ export type ProcessingInfo = {
   addedBufferMs: number | null;
   inputGain: number;
   contextState: string | null;
+  /** The gate as configured, or null where this capture has none. */
+  gate: GateMode | null;
 };
 /** Its words in the language of the moment it is noted. */
 const inactive = (): ProcessingInfo => ({
@@ -33,6 +94,7 @@ const inactive = (): ProcessingInfo => ({
   addedBufferMs: null,
   inputGain: 1,
   contextState: null,
+  gate: null,
 });
 export const useAudioProcessing = create<ProcessingInfo>(() => inactive());
 export function noteAudioProcessing(info: ProcessingInfo | null): void {
@@ -47,6 +109,8 @@ export type MicProcessor = {
   /** Persistent faults remain visible even before the session installs callbacks. */
   usable: () => boolean;
   setGain: (gain: number) => void;
+  /** Follows changed gate settings (or push-to-talk) without a recapture. */
+  setGate: (settings: Parameters<typeof gateConfig>[0]) => void;
   dispose: () => void;
 };
 const ASSET_HASH =
@@ -138,6 +202,11 @@ export function resetNoiseModelForTests(): void {
   wasm = null;
   modelFailure = null;
 }
+/** A worklet's added delay: 10 ms reblocking, plus the input gate's 20 ms
+ * look-ahead while the gate is on. */
+function workletBufferMs(gate: GateMode): number {
+  return gate === "off" ? 10 : 30;
+}
 function infoFor(
   raw: MediaStream,
   settings: MediaSettings,
@@ -162,19 +231,25 @@ function infoFor(
         : null,
     noiseSuppression: effective.noiseSuppression ?? null,
     autoGainControl: effective.autoGainControl ?? null,
-    addedBufferMs: actual === "enhanced" ? 10 : 0,
+    addedBufferMs:
+      actual === "enhanced"
+        ? workletBufferMs(gateConfig(settings, actual).mode)
+        : 0,
     inputGain: 1,
     contextState: null,
+    gate: actual === "original" ? "off" : null,
   };
 }
 
-/** Graph owns only its output/context. The session owns and stops raw capture. */
+/** Graph owns only its output/context. The session owns and stops raw capture.
+ * `plain` asks for no worklet: the capture after a failed processor. */
 export async function createProcessor(
   raw: MediaStream,
   settings: MediaSettings,
   actual: AudioProcessingMode,
   onFailure?: () => void,
   onState?: (info: ProcessingInfo) => void,
+  plain = false,
 ): Promise<MicProcessor> {
   const info = infoFor(
     raw,
@@ -189,7 +264,10 @@ export async function createProcessor(
           : "processing.original",
     ),
   );
-  if (actual !== "enhanced" && settings.inputGain === 1) {
+  // "Browser filters" runs the gate in a worklet of its own.
+  const gated =
+    actual === "browser" && !plain && typeof AudioWorkletNode !== "undefined";
+  if (actual !== "enhanced" && !gated && settings.inputGain === 1) {
     let disposed = false;
     const ended = () => {
       if (!disposed) onFailure?.();
@@ -206,6 +284,7 @@ export async function createProcessor(
         !disposed &&
         raw.getAudioTracks().some((track) => track.readyState !== "ended"),
       setGain() {},
+      setGate() {},
       dispose() {
         disposed = true;
         raw
@@ -234,6 +313,32 @@ export async function createProcessor(
       onFailure?.();
     }
   };
+  /** Waits for the worklet's hello; then its port carries gate reports. */
+  const workletReady = (worklet: AudioWorkletNode) =>
+    new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () =>
+          reject(
+            new Error(
+              translate(diagnostics, "processing.error.workletTimeout"),
+            ),
+          ),
+        2_000,
+      );
+      worklet.onprocessorerror = () => {
+        fault();
+        clearTimeout(timeout);
+        reject(
+          new Error(translate(diagnostics, "processing.error.workletFailed")),
+        );
+      };
+      worklet.port.onmessage = (event: MessageEvent) => {
+        if (event.data?.ready) {
+          clearTimeout(timeout);
+          resolve();
+        } else if (!disposed) noteGate(event.data);
+      };
+    });
   const resume = () => {
     if (
       disposed ||
@@ -323,38 +428,36 @@ export async function createProcessor(
         numberOfInputs: 1,
         numberOfOutputs: 1,
         outputChannelCount: [1],
-        processorOptions: { model },
+        processorOptions: {
+          model,
+          gate: gateConfig(settings, actual),
+          gain: settings.inputGain,
+        },
       });
-      const worklet = node;
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(
-          () =>
-            reject(
-              new Error(
-                translate(diagnostics, "processing.error.workletTimeout"),
-              ),
-            ),
-          2_000,
-        );
-        worklet.onprocessorerror = () => {
-          fault();
-          clearTimeout(timeout);
-          reject(
-            new Error(translate(diagnostics, "processing.error.workletFailed")),
-          );
-        };
-        worklet.port.onmessage = (event: MessageEvent) => {
-          if (event.data?.ready) {
-            clearTimeout(timeout);
-            resolve();
-          }
-        };
-      });
+      await workletReady(node);
       node.onprocessorerror = fault;
       source.connect(node);
       node.connect(gain);
       info.sampleRate = ctx.sampleRate;
       info.channels = 1;
+    } else if (gated && ctx.audioWorklet) {
+      await ctx.audioWorklet.addModule(
+        `/audio/rnnoise-worklet.js?v=${ASSET_HASH}`,
+      );
+      node = new AudioWorkletNode(ctx, "gelabber-gate", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: {
+          gate: gateConfig(settings, actual),
+          gain: settings.inputGain,
+        },
+      });
+      await workletReady(node);
+      node.onprocessorerror = fault;
+      source.connect(node);
+      node.connect(gain);
+      info.addedBufferMs = workletBufferMs(gateConfig(settings, actual).mode);
     } else source.connect(gain);
     if (faulted || ctx.state !== "running")
       throw new Error(translate(diagnostics, "processing.error.pausedAtStart"));
@@ -363,6 +466,7 @@ export async function createProcessor(
     info.channels = destination.channelCount;
     info.inputGain = settings.inputGain;
     info.contextState = ctx.state;
+    if (node) info.gate = gateConfig(settings, actual).mode;
     raw
       .getAudioTracks()
       .forEach((track) => track.addEventListener?.("ended", fault));
@@ -385,6 +489,7 @@ export async function createProcessor(
     if (typeof document !== "undefined")
       document.addEventListener("visibilitychange", resume);
     const currentGain = gain;
+    const currentNode = node;
     return {
       stream: destination.stream,
       info,
@@ -398,9 +503,20 @@ export async function createProcessor(
       setGain(next) {
         if (!disposed) {
           currentGain.gain.value = next;
+          currentNode?.port.postMessage({ op: "gain", value: next });
           info.inputGain = next;
           onState?.({ ...info });
           resume();
+        }
+      },
+      setGate(next) {
+        if (disposed || !currentNode) return;
+        const config = gateConfig(next, actual);
+        currentNode.port.postMessage({ op: "gateConfig", config });
+        if (info.gate !== config.mode) {
+          info.gate = config.mode;
+          info.addedBufferMs = workletBufferMs(config.mode);
+          onState?.({ ...info });
         }
       },
       dispose,
@@ -446,6 +562,7 @@ export async function captureMicrophone(
       actual,
       onFailure,
       onState,
+      forceBrowser || unavailable,
     );
     if (!ownership.current() || !processor.usable()) {
       processor.dispose();
@@ -485,6 +602,7 @@ export async function captureMicrophone(
         fallbackMode,
         onFailure,
         onState,
+        true,
       );
       if (!ownership.current() || !processor.usable()) {
         processor.dispose();

@@ -37,6 +37,7 @@ import type {
   CreateInviteInput,
   CreateRoleInput,
   Invite,
+  Member,
   Permission,
   Server,
   ServerDetail,
@@ -846,6 +847,29 @@ export function applyMemberRemoved(
   }
   dropMember(client, ownerId, generation, serverId, removedUserId);
   return "other";
+}
+
+/**
+ * Someone joined (#621): they enter the cached member list at its end, in
+ * join order like the server lists them. A repeat of the event (a replay
+ * after a gap) updates their row instead of adding it twice.
+ */
+export function applyMemberJoined(
+  client: QueryClient,
+  ownerId: string,
+  generation: number,
+  serverId: string,
+  member: Member,
+): void {
+  patchDetail(client, ownerId, generation, serverId, (detail) => {
+    const at = detail.members.findIndex(
+      (listed) => listed.user_id === member.user_id,
+    );
+    if (at < 0) return { ...detail, members: [...detail.members, member] };
+    const members = [...detail.members];
+    members[at] = { ...members[at], ...member };
+    return { ...detail, members };
+  });
 }
 
 export function useKickMember(serverId: string) {

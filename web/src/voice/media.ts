@@ -37,9 +37,13 @@ export type MediaRequests = {
   pauseProducer: { producerId: string };
   resumeProducer: { producerId: string };
   closeProducer: { producerId: string };
+  screenMode: { producerId: string; sharp: boolean };
   consumerReady: { consumerId: string; generation: string };
   consumerFailed: { consumerId: string; generation: string };
   w: { u: string; k: "s"; on: boolean };
+  /** GEL-32: this viewer's sharp or smooth choice for `u`'s Live; null
+   * follows the sender. */
+  viewMode: { u: string; sharp: boolean | null };
   l: Record<string, never>;
 };
 export type MediaResults = {
@@ -58,11 +62,13 @@ export type MediaResults = {
   closeTransport: Record<string, never>;
   produce: { producerId: string };
   pauseProducer: Record<string, never>;
+  screenMode: Record<string, never>;
   resumeProducer: Record<string, never>;
   closeProducer: Record<string, never>;
   consumerReady: Record<string, never>;
   consumerFailed: Record<string, never>;
   w: Record<string, never>;
+  viewMode: Record<string, never>;
   l: Record<string, never>;
 };
 export type MediaMethod = keyof MediaRequests;

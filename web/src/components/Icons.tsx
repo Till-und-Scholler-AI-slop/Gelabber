@@ -211,6 +211,16 @@ export function CollapseIcon(props: IconProps) {
   );
 }
 
+/** A window with its left column: the channel list's fold button. */
+export function SidebarIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <path d="M9.5 4v16" />
+    </svg>
+  );
+}
+
 export function SearchIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

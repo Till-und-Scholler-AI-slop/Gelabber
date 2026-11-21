@@ -62,8 +62,8 @@ self.addEventListener("fetch", (event) => {
 
 // Message notifications are shown through this worker's registration
 // (src/pwa/notifications.ts), because phones do not let a page create one
-// itself. While the app is closed, direct messages and mentions arrive here
-// as Web Push (src/pwa/push.ts, backend/api/src/push).
+// itself. While the app is closed, messages arrive here as Web Push
+// (src/pwa/push.ts, backend/api/src/push).
 function notificationTarget(data) {
   try {
     const url = new URL(data.path, self.location.origin);
@@ -213,13 +213,35 @@ async function showRecalled(data) {
   });
 }
 
-self.addEventListener("push", (event) => {
-  let data = null;
+// What a push is about, in the fields the page puts on its own
+// notifications. The server sends a declarative push message
+// (backend/api/src/push, `Payload::encode`):
+// - A browser that knows them (Safari from iOS 18.4) hands over the
+//   notification it would show, with these fields as its data.
+// - Every other browser hands over the JSON, with them under
+//   `notification`.
+// - A push queued by a server from before v0.12 has them at the top level.
+function pushed(event) {
+  const proposed = event.notification;
+  if (proposed && proposed.data && typeof proposed.data === "object") {
+    return { ...proposed.data, title: proposed.title, body: proposed.body };
+  }
+  let json = null;
   try {
-    data = event.data ? event.data.json() : null;
+    json = event.data ? event.data.json() : null;
   } catch {
     // Not from Gelabber's server.
   }
+  if (!json || typeof json !== "object") return null;
+  const declared = json.web_push === 8030 ? json.notification : null;
+  if (declared && declared.data && typeof declared.data === "object") {
+    return { ...declared.data, title: declared.title, body: declared.body };
+  }
+  return json;
+}
+
+self.addEventListener("push", (event) => {
+  const data = pushed(event);
   if (
     !data ||
     typeof data.title !== "string" ||
@@ -231,4 +253,43 @@ self.addEventListener("push", (event) => {
   )
     return;
   event.waitUntil(data.recall === true ? showRecalled(data) : showPushed(data));
+});
+
+// The browser replaced this device's push subscription, or let it run out
+// (Firefox does so; Chromium and Safari rarely or never tell). Without this
+// the server would keep pushing to the old one until the app is opened
+// again (`syncPush` in src/pwa/push.ts). A session that has ended in the
+// meantime answers 401 and nothing changes.
+async function renewSubscription(event) {
+  let fresh = event.newSubscription ?? null;
+  if (!fresh) {
+    const key = event.oldSubscription?.options?.applicationServerKey;
+    if (!key) return;
+    fresh = await self.registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: key,
+    });
+  }
+  const session = await fetch("/api/auth/session", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  if (!session.ok) return;
+  const { csrf_token: token } = await session.json();
+  if (typeof token !== "string") return;
+  const { endpoint, keys } = fresh.toJSON();
+  await fetch("/api/push/subscriptions", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+    body: JSON.stringify({ endpoint, keys }),
+  });
+}
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    renewSubscription(event).catch(() => {
+      // The app subscribes again on its next start.
+    }),
+  );
 });

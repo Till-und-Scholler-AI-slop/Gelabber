@@ -1,7 +1,8 @@
 //! What the web keeps in localStorage per account and this app keeps in
 //! `native-state.json`: the last place, channel and DM (servers/lastPlace.ts,
 //! lastChannel.ts, dms/lastDm.ts), unsent texts for a week
-//! (messages/drafts.ts), and the window's size and position. Per-person
+//! (messages/drafts.ts), the window's size and position, and the sidebars'
+//! widths and the folded channel list (components/sidebarLayout.ts). Per-person
 //! volumes are screens/voice/volume.rs's (`user-volumes.json`).
 
 use std::collections::HashMap;
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
+use crate::screens::layout::Sidebars;
 use crate::screens::shell::{Memory, Place};
 
 const FILE: &str = "native-state.json";
@@ -22,6 +24,13 @@ pub struct Stored {
     pub accounts: HashMap<Uuid, Account>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<Window>,
+    /// For the device, not the account, as the web keeps it per browser.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub sidebars: Sidebars,
+}
+
+fn is_default(sidebars: &Sidebars) -> bool {
+    *sidebars == Sidebars::default()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

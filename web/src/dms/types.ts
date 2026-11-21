@@ -14,10 +14,9 @@ export type DirectMessage = {
   peer: DmPeer;
   /** Set while the DM is a message request (#563); absent once accepted. */
   request?: DmRequest;
-  /** The signed-in user blocks the peer (#565): unblock to write. */
+  /** The signed-in user blocks the peer (#565): unblock to write. A peer
+   *  who blocks the signed-in user is not told (#619): nothing marks it. */
   blocked?: boolean;
-  /** The signed-in user cannot write here and is not told why (#565). */
-  closed?: boolean;
 };
 
 /**

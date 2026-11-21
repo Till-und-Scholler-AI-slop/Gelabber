@@ -88,6 +88,11 @@ async fn join(call: &mut Call<'_>) -> Result<(), ApiError> {
         .gateway
         .join_voice(call.conn, call.user.id, call.server_id, call.channel_id)
         .await?;
+    // Nobody else there: a call begins, and those who asked hear of it by
+    // push (#616).
+    if snapshot.is_empty() {
+        crate::push::voice::started(call.state, call.user, call.server_id, call.channel_id);
+    }
     for event in snapshot {
         send_sig(call.sink, event).await?;
     }
@@ -160,6 +165,10 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
         .await?;
     if !ok {
         return bad(call).await;
+    }
+    // A Live began: the closed apps hear of it by push (#616).
+    if track == TrackKind::S && call.kind == SigKind::P {
+        crate::push::voice::live(call.state, call.user, call.server_id, call.channel_id);
     }
     Ok(())
 }

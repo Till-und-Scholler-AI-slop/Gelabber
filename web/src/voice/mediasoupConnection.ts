@@ -44,6 +44,8 @@ export type RtpSenderParameters = {
     scalabilityMode?: string;
     networkPriority?: MediaPriority;
   }>;
+  /** What the encoder gives up first; a Live sets it by its mode. */
+  degradationPreference?: RTCDegradationPreference;
   transactionId?: string;
 };
 export type MediaSender = {
@@ -104,6 +106,10 @@ export interface MediaConnection {
   publish(publication: MediaPublication): Promise<MediaSender>;
   closeSource(kind: TrackKind, expectedProducerId?: string): Promise<void>;
   setSourcePaused(kind: TrackKind, paused: boolean): Promise<void>;
+  /** Whether the Live keeps text sharp (GEL-32): the server then holds its
+   * viewers at full size on a weak download. Applies to later screen
+   * producers too. Best-effort: an older server refuses the frame. */
+  setScreenMode(sharp: boolean): Promise<void>;
   sender(kind: TrackKind): MediaSender | undefined;
   senders(): MediaSender[];
   consumers(): ReceivedSource[];
@@ -166,6 +172,8 @@ type Publication = {
   /** The mime type it is sent in. */
   mime: string;
   paused: boolean;
+  /** The mode the server last heard for this screen producer. */
+  sharp: boolean;
 };
 const VIDEO_KINDS: readonly TrackKind[] = ["v", "s"];
 /** The sound sent with a video source; the server ends it with its parent. */
@@ -195,6 +203,7 @@ export class MediasoupConnection implements MediaConnection {
   private sendCreating: Promise<Transport> | null = null;
   private closed = false;
   private publications = new Map<TrackKind, Publication>();
+  private screenSharp = false;
   private received = new Map<string, ReceivedSource>();
   private removed = new Set<string>();
   private queued: MediaEvent[] = [];
@@ -733,6 +742,7 @@ export class MediasoupConnection implements MediaConnection {
       codec: signature,
       mime,
       paused: input.paused ?? false,
+      sharp: false,
     };
     this.publications.set(input.kind, held);
     emitMediaHook("gelabber:media-producer", {
@@ -746,6 +756,7 @@ export class MediasoupConnection implements MediaConnection {
     // The server transaction already replaced the old producer. The app owns tracks.
     previous?.producer.close();
     await this.pauseNow(input.kind, input.paused ?? false);
+    if (input.kind === "s") await this.sendScreenMode();
     return sender;
   }
 
@@ -902,6 +913,26 @@ export class MediasoupConnection implements MediaConnection {
   }
   setSourcePaused(kind: TrackKind, paused: boolean): Promise<void> {
     return this.serialize(kind, () => this.pauseNow(kind, paused));
+  }
+  setScreenMode(sharp: boolean): Promise<void> {
+    // Set at once, so a screen published right after picks it up.
+    this.screenSharp = sharp;
+    return this.serialize("s", () => this.sendScreenMode());
+  }
+  private async sendScreenMode(): Promise<void> {
+    this.live();
+    const held = this.publications.get("s");
+    const sharp = this.screenSharp;
+    if (!held || held.sharp === sharp) return;
+    await this.options
+      .request(
+        "screenMode",
+        { producerId: held.producer.id, sharp },
+        this.sendDeadlineEpochMs,
+      )
+      // A server without GEL-32 refuses it; the Live works as before.
+      .catch(() => {});
+    if (this.publications.get("s") === held) held.sharp = sharp;
   }
   closeSource(kind: TrackKind, expectedProducerId?: string): Promise<void> {
     return this.serialize(kind, async () => {

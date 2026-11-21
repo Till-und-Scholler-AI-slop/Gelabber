@@ -356,6 +356,32 @@ pub(crate) fn watch(inner: &Arc<Inner>, user: Uuid, on: bool) {
     session.publish_participants();
 }
 
+/// Watches `user`'s Live sharp, smooth or as its owner set it (`None`), for
+/// this call (GEL-32).
+pub(crate) fn view_mode(inner: &Arc<Inner>, user: Uuid, sharp: Option<bool>) {
+    let Some(session) = inner.media.current() else {
+        return;
+    };
+    if user == session.me {
+        return;
+    }
+    {
+        let mut st = session.st.lock();
+        let old = match sharp {
+            Some(sharp) => st.view_modes.insert(user, sharp),
+            None => st.view_modes.remove(&user),
+        };
+        if old == sharp {
+            return;
+        }
+        // In order with the watches; without a seat the next one sends it.
+        if let Some(seat) = &st.seat {
+            seat.queue("viewMode", json!({ "u": user, "sharp": sharp }));
+        }
+    }
+    session.publish_participants();
+}
+
 pub(crate) fn refresh_devices(inner: &Arc<Inner>) {
     let call = Arc::downgrade(inner);
     spawn(inner, async move {
@@ -454,6 +480,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
         let options = json!({
             "processingMode": settings.processing_mode.as_str(),
             "inputGain": settings.input_gain.clamp(0.0, 2.0),
+            "gate": settings.gate_options(),
         });
         let call2 = call.clone();
         let chosen = settings.input.clone();
@@ -514,6 +541,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
                     t.input = levels["input"].as_f64().unwrap_or(0.0);
                     t.processed = levels["processed"].as_f64().unwrap_or(0.0);
                     t.clipping = levels["clipping"].as_bool().unwrap_or(false);
+                    t.input_gate = logic::gate_levels(&levels);
                 });
             } else if now.duration_since(moved) >= MIC_TEST_STALL {
                 fail(&inner, logic::mic_test_stalled());
@@ -560,12 +588,16 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
     let (previous, next) = (previous.clone(), next.clone());
     spawn(inner, async move {
         let Some(inner) = call.upgrade() else { return };
-        // Devices and gain are engine-wide, also outside a call.
+        // Devices, gain and the gate are engine-wide, also outside a call.
         if previous.input != next.input
             || previous.output != next.output
             || previous.input_gain != next.input_gain
+            || previous.gate_options() != next.gate_options()
         {
-            let mut options = json!({ "inputGain": next.input_gain.clamp(0.0, 2.0) });
+            let mut options = json!({
+                "inputGain": next.input_gain.clamp(0.0, 2.0),
+                "gate": next.gate_options(),
+            });
             if previous.output != next.output {
                 options["output"] = next.output.clone().into();
             }
@@ -624,7 +656,8 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
         let limits_changed = previous.video_upload_limit != next.video_upload_limit
             || previous.economy_mode != next.economy_mode
             || previous.camera_profile != next.camera_profile
-            || previous.screen_profile != next.screen_profile;
+            || previous.screen_profile != next.screen_profile
+            || previous.keep_text_sharp != next.keep_text_sharp;
         if limits_changed && let Some(seat) = session.seat() {
             seat.apply_parameters().await;
         }
@@ -700,6 +733,9 @@ struct St {
     attempts: u32,
     rebuilding: bool,
     watching: HashSet<Uuid>,
+    /// This client's sharp (true) or smooth (false) choice per Live owner
+    /// (GEL-32, `viewMode`); absent follows the owner's own setting.
+    view_modes: HashMap<Uuid, bool>,
     /// Kinds announced on the gateway by this connection.
     announced: HashSet<Kind>,
     /// Per direction, the recovery under way (its token).
@@ -1018,6 +1054,20 @@ impl Session {
                 .request("w", json!({ "u": user, "k": "s", "on": true }))
                 .await;
         }
+        // A gateway from before GEL-32 refuses the choice: the Lives then
+        // play as their owners set them.
+        let view_modes: Vec<(Uuid, bool)> = self
+            .st
+            .lock()
+            .view_modes
+            .iter()
+            .map(|(u, s)| (*u, *s))
+            .collect();
+        for (user, sharp) in view_modes {
+            let _ = sock
+                .request("viewMode", json!({ "u": user, "sharp": sharp }))
+                .await;
+        }
         tokio::spawn(self.clone().ticker(generation));
         self.publish_all(&seat).await;
     }
@@ -1198,6 +1248,7 @@ impl Session {
             settings.noise_suppression,
             settings.auto_gain_control,
             settings.input_gain,
+            settings.gate_options(),
         )
     }
 
@@ -1491,6 +1542,7 @@ impl Session {
         let Some(engine) = self.engine() else { return };
         let settings = inner.settings();
         let size = logic::capture_size(true, &settings.screen_profile);
+        let hint = logic::ScreenMode::from_sharp(settings.keep_text_sharp).content_hint();
         let turn = {
             let mut st = self.st.lock();
             st.screen_turn += 1;
@@ -1505,7 +1557,7 @@ impl Session {
                     return core::Source::test_pattern(&engine, size.width, size.height, size.fps);
                 }
                 let options = json!({
-                    "type": "any", "fps": size.fps, "cursor": true, "contentHint": "detail",
+                    "type": "any", "fps": size.fps, "cursor": true, "contentHint": hint,
                 });
                 core::Source::screen(&engine, &options)
             })
@@ -2278,6 +2330,7 @@ impl Session {
             live_audio: own_live_audio
                 && own_pubs.is_some_and(|p| p.contains(&Kind::Sa) || p.contains(&Kind::S)),
             watching: false,
+            view_mode: None,
             volume: 1.0,
             locally_muted: false,
         });
@@ -2296,6 +2349,7 @@ impl Session {
                 live: has(Kind::S).then(|| VideoKey::live(user)),
                 live_audio: has(Kind::Sa),
                 watching: st.watching.contains(&user),
+                view_mode: st.view_modes.get(&user).copied(),
                 volume: volume.volume as f32,
                 locally_muted: volume.muted,
             });
@@ -2527,6 +2581,9 @@ impl Session {
         let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
         let mut levels: Vec<(Uuid, f64)> = Vec::new();
         let sending = !muted && !deafened && inner.gate_open();
+        if !sending {
+            inner.write(|s| s.input_gate = None);
+        }
         if self.fake {
             // Dummy audio captures silence; the fake microphone beeps
             // instead, as Chromium's fake device does for the web.
@@ -2536,6 +2593,8 @@ impl Session {
                 levels.push((self.me, logic::fake_beep_level(origin, now)));
             }
         } else if sending && let Ok(meters) = engine.audio_levels() {
+            let gate = logic::gate_levels(&meters);
+            inner.write(|s| s.input_gate = gate);
             let blocks = meters["blocks"].as_u64().unwrap_or(0);
             let moved = self.st.lock().mic_blocks.replace(blocks) != Some(blocks);
             levels.push((
@@ -2823,6 +2882,8 @@ struct Held {
     epoch: Uuid,
     mime: String,
     paused: bool,
+    /// The Live mode the server last heard for this screen producer.
+    sharp: bool,
 }
 
 struct Received {
@@ -2898,9 +2959,9 @@ pub(crate) struct Seat {
     /// Keeps the microphone's pause in order: each turn sends the state
     /// wanted when it runs, so the last one wins.
     pause_lock: tokio::sync::Mutex<()>,
-    /// `w` requests in the order they were given; one turn of
-    /// `watch_lock` sends the oldest.
-    watch_queue: Mutex<std::collections::VecDeque<(Uuid, bool)>>,
+    /// `w` and `viewMode` requests in the order they were given; one turn
+    /// of `watch_lock` sends the oldest.
+    watch_queue: Mutex<std::collections::VecDeque<(&'static str, Value)>>,
     watch_lock: tokio::sync::Mutex<()>,
     producers: Mutex<HashMap<Kind, Held>>,
     consumers: Mutex<HashMap<String, Received>>,
@@ -3286,6 +3347,7 @@ impl Seat {
                 epoch: local.epoch,
                 mime,
                 paused,
+                sharp: false,
             },
         );
         // The server already replaced the old producer.
@@ -3301,7 +3363,31 @@ impl Seat {
             // Mute may have changed while the producer was made.
             self.sync_mic().await;
         }
+        if kind == Kind::S {
+            self.sync_screen_mode(settings.keep_text_sharp).await;
+        }
         Ok(())
+    }
+
+    /// Tells the server whether the Live keeps text sharp (GEL-32), so it
+    /// holds viewers on a weak download at full size. A server without it
+    /// refuses the frame; the Live works as before.
+    async fn sync_screen_mode(&self, sharp: bool) {
+        let id = {
+            let mut producers = self.producers.lock();
+            let Some(held) = producers.get_mut(&Kind::S) else {
+                return;
+            };
+            if held.sharp == sharp {
+                return;
+            }
+            held.sharp = sharp;
+            held.id.clone()
+        };
+        let frame = json!({ "producerId": id, "sharp": sharp });
+        if let Err(e) = self.sock.request("screenMode", frame).await {
+            tracing::debug!("screenMode: {e}");
+        }
     }
 
     /// Why a produce failed: a closed seat, else the server's answer, else
@@ -3346,6 +3432,7 @@ impl Seat {
                 self.apply_parameters_of(kind, &producer, &local, &settings);
             }
         }
+        self.sync_screen_mode(settings.keep_text_sharp).await;
     }
 
     fn apply_parameters_of(
@@ -3379,7 +3466,9 @@ impl Seat {
             let state = local.source.state().unwrap_or(Value::Null);
             let width = state["width"].as_u64().unwrap_or(0) as u32;
             let height = state["height"].as_u64().unwrap_or(0) as u32;
-            logic::video_parameters(&current, profile, width, height, share)
+            let mode =
+                (kind == Kind::S).then(|| logic::ScreenMode::from_sharp(settings.keep_text_sharp));
+            logic::video_parameters(&current, profile, width, height, share, mode)
         } else {
             let bitrate = match (settings.economy_mode, kind) {
                 (true, Kind::Sa) => Some(128_000),
@@ -3424,16 +3513,20 @@ impl Seat {
     /// Queues a `w` behind the ones given before it. Each step counts: an
     /// off already dropped the stream here, so the server must see it too.
     fn queue_watch(self: &Arc<Self>, user: Uuid, on: bool) {
-        self.watch_queue.lock().push_back((user, on));
+        self.queue("w", json!({ "u": user, "k": "s", "on": on }));
+    }
+
+    /// Queues a request about watching behind the ones given before it.
+    fn queue(self: &Arc<Self>, method: &'static str, data: Value) {
+        self.watch_queue.lock().push_back((method, data));
         let seat = self.clone();
         self.runtime.spawn(async move {
             let _turn = seat.watch_lock.lock().await;
-            let Some((user, on)) = seat.watch_queue.lock().pop_front() else {
+            let Some((method, data)) = seat.watch_queue.lock().pop_front() else {
                 return;
             };
-            let data = json!({ "u": user, "k": "s", "on": on });
-            if let Err(e) = seat.sock.request("w", data).await {
-                tracing::debug!("watch {user}: {e}");
+            if let Err(e) = seat.sock.request(method, data).await {
+                tracing::debug!("{method}: {e}");
             }
         });
     }
@@ -4087,6 +4180,33 @@ mod tests {
         }
         std::thread::sleep(Duration::from_millis(50));
         frames()
+    }
+
+    /// GEL-32: the picture quality chosen per Live owner, never for
+    /// oneself; `None` goes back to the owner's own setting.
+    #[test]
+    fn a_view_mode_is_kept_per_owner() {
+        let call = offline();
+        let session = session(&call);
+        let (ada, bea) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        call.set_view_mode(ada, Some(true));
+        call.set_view_mode(bea, Some(false));
+        call.set_view_mode(session.me, Some(true));
+        let modes = || {
+            let mut modes: Vec<(Uuid, bool)> = session
+                .st
+                .lock()
+                .view_modes
+                .iter()
+                .map(|(u, s)| (*u, *s))
+                .collect();
+            modes.sort();
+            modes
+        };
+        assert_eq!(modes(), vec![(ada, true), (bea, false)]);
+        call.set_view_mode(ada, None);
+        assert_eq!(modes(), vec![(bea, false)]);
+        session.stop();
     }
 
     #[test]

@@ -156,6 +156,9 @@ await say(jonas, music.id, "Hört ihr gerade was Gutes?");
 // A DM from Jonas to Lena.
 const dm = await jonas.call("POST", "/dms", { user_id: lena.user.id });
 await say(jonas, dm.id, "Hey Lena, hast du die Fotos vom Wochenende noch?");
+// Jonas and Lena are no friends, so his DM is a message request (#563);
+// Lena accepts it, and it is the ordinary DM the scenes show.
+await lena.call("POST", `/dms/${dm.id}/accept`);
 await say(lena, dm.id, "Ja, ich schicke sie dir heute Abend.");
 
 // Lena read everything in allgemein except nothing in spiele and musik, so

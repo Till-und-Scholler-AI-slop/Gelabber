@@ -101,10 +101,11 @@ GM_API void gm_engine_free(gm_engine* engine);
  * looked up when capture or playout starts. */
 GM_API char* gm_audio_devices(gm_engine* engine);
 /* Live audio settings; every key is optional:
- * {"input"?: "<id>", "output"?: "<id>", "inputGain"?: 0..2}.
+ * {"input"?: "<id>", "output"?: "<id>", "inputGain"?: 0..2,
+ *  "gate"?: {"mode": "off|auto|manual", "thresholdDb": -80..0}}.
  * Switching a device restarts capture/playout if it runs. */
 GM_API int gm_audio_configure(gm_engine* engine, const char* options_json);
-/* Microphone test: with options ({"processingMode","inputGain"} as for
+/* Microphone test: with options ({"processingMode","inputGain","gate"} as for
  * gm_source_new_microphone) capture runs and the meters below move without
  * a call; NULL ends the test. Capture a call needs keeps running either way.
  * The mode and gain apply engine-wide, also to a microphone sending. */
@@ -116,7 +117,10 @@ GM_API int gm_audio_monitor(gm_engine* engine, const char* options_json);
  *  "playout": {"gain": master gain of volumes above 1 (1..4), "peak": loudest
  *  sample played in the last 100 ms (fraction of full scale), "reduction":
  *  the limiter's smallest gain in it (1 = untouched), "windows": 100 ms
- *  windows played so far}}. */
+ *  windows played so far},
+ *  "gate": {"mode": "off|auto|manual", "levelDb": the last block's level
+ *  after the gain, "thresholdDb": the threshold it was held against,
+ *  "open": bool}}. */
 GM_API char* gm_audio_levels(gm_engine* engine);
 
 /* Device: loads router RTP capabilities (server `capabilities` frame). */
@@ -147,7 +151,9 @@ GM_API char* gm_transport_stats(gm_transport* transport);
  * matching the web client's modes. options_json (all optional):
  * {"processingMode": "enhanced|browser|original" (default enhanced),
  *  "echoCancellation": true, "noiseSuppression": true, "autoGainControl": true,
- *  "inputGain": 1.0}
+ *  "inputGain": 1.0, "gate": {"mode": "off|auto|manual", "thresholdDb": -50}}
+ * gate: input sensitivity after RNNoise and the gain (input_gate.h), off
+ * without the key and always off in original;
  * enhanced: RNNoise instead of WebRTC noise suppression, AGC as configured;
  * browser: WebRTC noise suppression and AGC as configured; original: neither,
  * stereo when echo cancellation is off. Echo cancellation is as configured in

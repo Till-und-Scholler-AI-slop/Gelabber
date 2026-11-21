@@ -75,6 +75,10 @@ pub struct Participant {
     pub live_audio: bool,
     /// This client watches the person's Live.
     pub watching: bool,
+    /// This client's choice for the person's Live (GEL-32): `Some(true)`
+    /// keeps text sharp, `Some(false)` keeps it smooth, `None` follows the
+    /// person's own "Text scharf halten".
+    pub view_mode: Option<bool>,
     /// Playback volume, 1.0 = 100 %, up to [`MAX_PLAYBACK_VOLUME`].
     pub volume: f32,
     /// Muted for this client only ("Lokal stummschalten").
@@ -165,6 +169,19 @@ pub struct MicTest {
     pub input: f64,
     pub processed: f64,
     pub clipping: bool,
+    /// The input sensitivity gate, as the test hears it.
+    pub input_gate: Option<GateLevels>,
+}
+
+/// The input sensitivity gate's last 10 ms block (GEL-27), in dB of full
+/// scale after the input gain.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GateLevels {
+    pub mode: logic::GateMode,
+    pub level_db: f64,
+    pub threshold_db: f64,
+    /// The microphone sends; closed, it sends silence.
+    pub open: bool,
 }
 
 /// Everything the interface draws about the call.
@@ -195,6 +212,8 @@ pub struct CallState {
     /// Push-to-talk is on and its key (or the delay after it) lets the
     /// microphone send.
     pub push_to_talk_open: bool,
+    /// The input sensitivity gate of the call's microphone, while it sends.
+    pub input_gate: Option<GateLevels>,
     /// The call whose connection was lost, to offer joining it again.
     pub lost_call: Option<(Uuid, Uuid)>,
 }
@@ -260,6 +279,9 @@ pub struct CallSettings {
     /// `balanced`, `economy`, `detail` or `<height>p<fps>`.
     pub camera_profile: String,
     pub screen_profile: String,
+    /// "Text scharf halten" (GEL-26, off by default): a Live lowers its
+    /// frame rate before its resolution on a tight connection.
+    pub keep_text_sharp: bool,
     pub economy_mode: bool,
     /// All videos together, bit/s; 0 = no limit.
     pub video_upload_limit: f64,
@@ -273,6 +295,10 @@ pub struct CallSettings {
     pub message_sound: bool,
     pub push_to_talk: bool,
     pub ptt_release_delay_ms: u64,
+    /// Input sensitivity: the gate finds its threshold itself.
+    pub gate_auto: bool,
+    /// The threshold without `gate_auto`, in dB (-80..0).
+    pub gate_threshold_db: f64,
 }
 
 impl Default for CallSettings {
@@ -291,6 +317,7 @@ impl Default for CallSettings {
             stream_muted: false,
             camera_profile: "balanced".into(),
             screen_profile: "balanced".into(),
+            keep_text_sharp: false,
             economy_mode: false,
             video_upload_limit: 0.0,
             source_audio_app: String::new(),
@@ -301,11 +328,21 @@ impl Default for CallSettings {
             message_sound: true,
             push_to_talk: false,
             ptt_release_delay_ms: ptt::RELEASE_DELAY_DEFAULT_MS,
+            gate_auto: true,
+            gate_threshold_db: logic::GATE_THRESHOLD_DEFAULT,
         }
     }
 }
 
 impl CallSettings {
+    /// The core's `gate` option for these settings.
+    pub fn gate_options(&self) -> serde_json::Value {
+        logic::gate_options(
+            logic::GateMode::for_settings(self.processing_mode, self.push_to_talk, self.gate_auto),
+            self.gate_threshold_db,
+        )
+    }
+
     fn sounds(&self) -> sounds::SoundSettings {
         sounds::SoundSettings {
             enabled: self.call_sounds,
@@ -845,6 +882,15 @@ impl Call {
         media::watch(&self.inner, user, on);
         #[cfg(not(feature = "media"))]
         let _ = (user, on);
+    }
+
+    /// How this client wants someone's Live (`viewMode`, GEL-32): sharp,
+    /// smooth, or as its owner set it (`None`). Holds for this call.
+    pub fn set_view_mode(&self, user: Uuid, sharp: Option<bool>) {
+        #[cfg(feature = "media")]
+        media::view_mode(&self.inner, user, sharp);
+        #[cfg(not(feature = "media"))]
+        let _ = (user, sharp);
     }
 
     /// A person's playback volume here, 1.0 = 100 %, up to 4.0.

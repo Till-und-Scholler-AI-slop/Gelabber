@@ -1,4 +1,5 @@
 import { useAudioProcessing } from "./audioProcessing.ts";
+import { InputSensitivity } from "./InputSensitivity.tsx";
 import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { PushToTalkSettings } from "./PushToTalkSettings.tsx";
@@ -139,6 +140,7 @@ export function MediaSettingsForm({
             />
           </SettingRow>
           <PushToTalkSettings />
+          <InputSensitivity />
           <SettingRow label={t("input.filter")}>
             <div className="media-cards">
               {(Object.keys(processingModes) as AudioProcessingMode[]).map(
@@ -373,6 +375,20 @@ export function MediaSettingsForm({
               onChange={(screenProfile) => settings.patch({ screenProfile })}
             />
             <p className="media-hint">{t("live.qualityHint")}</p>
+          </SettingRow>
+          {/* The same switch sits in the Live menu of the call controls. */}
+          <SettingRow label={t("live.keepSharp")} htmlFor="screen-keep-sharp">
+            <SwitchLine
+              id="screen-keep-sharp"
+              checked={settings.screenMode === "sharp"}
+              onChange={(on) =>
+                settings.patch({ screenMode: on ? "sharp" : "smooth" })
+              }
+            >
+              {settings.screenMode === "sharp"
+                ? t("live.keepSharpOn")
+                : t("live.keepSharpOff")}
+            </SwitchLine>
           </SettingRow>
           {/* Only where a Live can carry sound; the same switch sits in
               the Live menu of the call controls. */}

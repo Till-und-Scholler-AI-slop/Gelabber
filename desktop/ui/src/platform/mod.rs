@@ -18,6 +18,8 @@ pub mod scheme;
 pub mod session;
 pub mod settings;
 pub mod state;
+#[cfg(target_os = "linux")]
+pub mod system_colors;
 pub mod tray;
 pub mod update;
 pub mod webview;
@@ -224,13 +226,25 @@ impl Platform {
     fn start(&mut self, ctx: &Context) {
         self.started = true;
         *self.wake.lock() = Some(ctx.clone());
+        crate::screens::layout::set_sidebars(ctx, self.stored.sidebars);
         #[cfg(target_os = "linux")]
         {
             self.badge = tray::unity::Badge::start(None).map(|b| (b, u32::MAX));
             // winit reports no light or dark on Linux; "System" and the
-            // setup screen follow the portal's preference.
+            // setup screen follow the portal's preference, "System" its
+            // accent colour too.
             let scheme = ctx.clone();
-            scheme::watch(None, move |dark| crate::theme::set_os_dark(&scheme, dark));
+            scheme::watch(None, move |change| match change {
+                scheme::Change::Dark(dark) => crate::theme::set_os_dark(&scheme, dark),
+                scheme::Change::Accent(accent) => crate::theme::set_os_accent(&scheme, accent),
+            });
+            // ... and the desktop theme's colours (Omarchy, KDE).
+            if let Some(places) = system_colors::Places::from_env() {
+                let palette = ctx.clone();
+                system_colors::watch(places, move |p| {
+                    crate::theme::set_desktop_palette(&palette, p);
+                });
+            }
         }
         if let Some(instance) = &self.instance {
             instance.set_wake(waker(&self.wake));
@@ -476,6 +490,7 @@ impl Platform {
             account.set_drafts(&chat::drafts(ctx), now);
         }
         self.track_window(ctx);
+        self.stored.sidebars = crate::screens::layout::sidebars(ctx);
         if self.stored != self.saved {
             state::save(&self.stored);
             self.saved = self.stored.clone();

@@ -130,6 +130,10 @@ export const STREAM_PROFILES = {
 } as const;
 export type StreamProfileId = keyof typeof STREAM_PROFILES;
 export type StreamKind = "camera" | "screen";
+/** What a Live gives up first on a tight connection (GEL-26): "sharp"
+ * keeps the resolution and lowers the frame rate, so text stays readable;
+ * "smooth" keeps the frame rate and lowers the resolution. */
+export type ScreenMode = "sharp" | "smooth";
 /** Whether a profile change reached the live track or waits for the next one. */
 export type StreamApply = "idle" | "live" | "next";
 
@@ -160,6 +164,9 @@ export type MediaSettings = {
   cameraProfile: StreamProfileId;
   /** Live (a display capture). */
   screenProfile: StreamProfileId;
+  /** Whether a Live keeps text sharp on a tight connection ("sharp") or
+   * behaves as before GEL-26 ("smooth", the default). */
+  screenMode: ScreenMode;
   /** 0 = no custom limit; otherwise explicit shared video payload cap in bit/s. */
   videoUploadLimit: number;
   callSounds: boolean;
@@ -178,7 +185,23 @@ export type MediaSettings = {
   pttKeyLabel: string;
   /** Milliseconds the microphone stays open after the key comes up. */
   pttReleaseDelay: number;
+  /** Input sensitivity (GEL-27): the gate finds its threshold itself. */
+  gateAuto: boolean;
+  /** The threshold without `gateAuto`, in dB (`GATE_THRESHOLD_MIN`..0). */
+  gateThresholdDb: number;
 };
+
+/** The input sensitivity slider's range and start, in dB. */
+export const GATE_THRESHOLD_MIN = -80;
+export const GATE_THRESHOLD_MAX = 0;
+export const GATE_THRESHOLD_DEFAULT = -50;
+export function clampGateThreshold(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    return GATE_THRESHOLD_DEFAULT;
+  return Math.round(
+    Math.min(GATE_THRESHOLD_MAX, Math.max(GATE_THRESHOLD_MIN, value)),
+  );
+}
 
 export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   audioInputId: "",
@@ -198,6 +221,7 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   economyMode: false,
   cameraProfile: "balanced",
   screenProfile: "balanced",
+  screenMode: "smooth",
   videoUploadLimit: 0,
   callSounds: true,
   callSoundVolume: 0.35,
@@ -209,6 +233,8 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   pttKey: "",
   pttKeyLabel: "",
   pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
+  gateAuto: true,
+  gateThresholdDb: GATE_THRESHOLD_DEFAULT,
 };
 
 type MediaSettingsState = MediaSettings & {
@@ -375,6 +401,10 @@ export function asStreamProfile(value: unknown): StreamProfileId {
     : "balanced";
 }
 
+export function asScreenMode(value: unknown): ScreenMode {
+  return value === "sharp" ? "sharp" : "smooth";
+}
+
 export function clampVideoUploadLimit(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
     return 0;
@@ -408,6 +438,7 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     economyMode: state.economyMode,
     cameraProfile: state.cameraProfile,
     screenProfile: state.screenProfile,
+    screenMode: state.screenMode,
     videoUploadLimit: state.videoUploadLimit,
     callSounds: state.callSounds,
     callSoundVolume: state.callSoundVolume,
@@ -419,6 +450,8 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     pttKey: state.pttKey,
     pttKeyLabel: state.pttKeyLabel,
     pttReleaseDelay: state.pttReleaseDelay,
+    gateAuto: state.gateAuto,
+    gateThresholdDb: state.gateThresholdDb,
   };
 }
 
@@ -490,6 +523,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.screenProfile !== undefined
               ? asStreamProfile(partial.screenProfile)
               : prev.screenProfile,
+          screenMode:
+            partial.screenMode !== undefined
+              ? asScreenMode(partial.screenMode)
+              : prev.screenMode,
           videoUploadLimit:
             partial.videoUploadLimit !== undefined
               ? clampVideoUploadLimit(partial.videoUploadLimit)
@@ -519,6 +556,11 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.pttReleaseDelay !== undefined
               ? clampReleaseDelay(partial.pttReleaseDelay)
               : prev.pttReleaseDelay,
+          gateAuto: partial.gateAuto ?? prev.gateAuto,
+          gateThresholdDb:
+            partial.gateThresholdDb !== undefined
+              ? clampGateThreshold(partial.gateThresholdDb)
+              : prev.gateThresholdDb,
         });
         listener?.(prev, snapshot(get()));
       },
@@ -598,6 +640,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
               ? stored.screenProfile
               : current.screenProfile,
           ),
+          screenMode: asScreenMode(stored.screenMode),
           videoUploadLimit: clampVideoUploadLimit(stored.videoUploadLimit),
           sourceAudioShare:
             "sourceAudioShare" in stored
@@ -616,6 +659,8 @@ export const useMediaSettings = create<MediaSettingsState>()(
           pttReleaseDelay: clampReleaseDelay(
             stored.pttReleaseDelay ?? PTT_RELEASE_DELAY_DEFAULT,
           ),
+          gateAuto: flag(stored.gateAuto, current.gateAuto),
+          gateThresholdDb: clampGateThreshold(stored.gateThresholdDb),
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
         };

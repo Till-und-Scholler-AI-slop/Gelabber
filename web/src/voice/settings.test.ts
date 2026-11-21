@@ -307,6 +307,23 @@ describe("capture and explicit bandwidth preferences", () => {
     expect(useMediaSettings.getState().cameraProfile).toBe("balanced");
     expect(useMediaSettings.getState().screenProfile).toBe("detail");
   });
+  it("starts as before and remembers keeping text sharp (GEL-26)", async () => {
+    expect(useMediaSettings.getState().screenMode).toBe("smooth");
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: { screenMode: "sharp" } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState().screenMode).toBe("sharp");
+    // Settings from before the switch, or a broken value: as before.
+    for (const state of [{}, { screenMode: "blurry" }]) {
+      await storage.setItem("gelabber.media", { state: state as never });
+      await useMediaSettings.persist.rehydrate();
+      expect(useMediaSettings.getState().screenMode).toBe("smooth");
+    }
+    useMediaSettings.getState().patch({ screenMode: "fast" as never });
+    expect(useMediaSettings.getState().screenMode).toBe("smooth");
+  });
   it("keeps source audio and conversation playback independent across reloads", async () => {
     useMediaSettings.getState().patch({
       sourceAudioShare: "on",

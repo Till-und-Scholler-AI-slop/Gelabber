@@ -39,6 +39,34 @@ pub fn message_deleted(locale: Locale) -> &'static str {
     }
 }
 
+/// Title of the notice that this device's pushes are about to end with its
+/// session (#616).
+pub fn last_call_title(locale: Locale) -> &'static str {
+    match locale {
+        Locale::De => "Benachrichtigungen enden bald",
+        Locale::En => "Notifications are about to stop",
+    }
+}
+
+/// What to do about it. `last`: the session reached the end of its life, so
+/// only a new sign-in helps; otherwise opening the app does.
+pub fn last_call_body(locale: Locale, last: bool) -> &'static str {
+    match (locale, last) {
+        (Locale::De, false) => {
+            "Du warst länger nicht hier. Öffne Gelabber, damit Benachrichtigungen auf diesem Gerät weiter ankommen."
+        }
+        (Locale::De, true) => {
+            "Die Anmeldung auf diesem Gerät läuft bald ab. Melde dich neu an, damit Benachrichtigungen weiter ankommen."
+        }
+        (Locale::En, false) => {
+            "You have not been here for a while. Open Gelabber to keep notifications coming on this device."
+        }
+        (Locale::En, true) => {
+            "The sign-in on this device ends soon. Sign in again to keep notifications coming."
+        }
+    }
+}
+
 /// A channel whose name could not be read any more.
 pub fn unnamed_channel(locale: Locale) -> &'static str {
     match locale {
@@ -71,17 +99,45 @@ pub fn file(locale: Locale) -> &'static str {
     }
 }
 
+/// "Ada ist live in Lounge.", as the pages say it (`liveText` in
+/// web/src/voice/liveNotices.ts).
+pub fn live_in(locale: Locale, author: &str, voice: &str) -> String {
+    match locale {
+        Locale::De => format!("{author} ist live in {voice}."),
+        Locale::En => format!("{author} is live in {voice}."),
+    }
+}
+
+/// The same with the content of notifications hidden (#268): who, not where.
+pub fn is_live(locale: Locale, author: &str) -> String {
+    match locale {
+        Locale::De => format!("{author} ist live"),
+        Locale::En => format!("{author} is live"),
+    }
+}
+
+/// Someone sits in a voice channel that was empty (#616).
+pub fn in_voice(locale: Locale, who: &str, voice: &str) -> String {
+    match locale {
+        Locale::De => format!("{who} ist im Sprachkanal {voice}."),
+        Locale::En => format!("{who} is in the voice channel {voice}."),
+    }
+}
+
+/// The same with the content of notifications hidden (#268): who, not where.
+pub fn in_a_voice_channel(locale: Locale, who: &str) -> String {
+    match locale {
+        Locale::De => format!("{who} ist in einem Sprachkanal"),
+        Locale::En => format!("{who} is in a voice channel"),
+    }
+}
+
 /// A system message as a sentence; `author` is the person it is about.
 /// The same wording as `systemText` in web/src/messages/system.ts.
 pub fn system_text(locale: Locale, message: &SystemMessage, author: &str) -> String {
     match (locale, message.kind.as_str()) {
-        (Locale::De, system::LIVE_STARTED) => {
-            format!("{author} ist live in {}.", message.param("voice_name"))
-        }
+        (_, system::LIVE_STARTED) => live_in(locale, author, message.param("voice_name")),
         (Locale::De, _) => format!("Systemnachricht von {author}"),
-        (Locale::En, system::LIVE_STARTED) => {
-            format!("{author} is live in {}.", message.param("voice_name"))
-        }
         (Locale::En, _) => format!("System message from {author}"),
     }
 }

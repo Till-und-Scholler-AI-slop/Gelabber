@@ -275,7 +275,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
             s.videos.some(
               (v) =>
                 v.kind === "camera" &&
-                [160, 640].includes(v.width) &&
+                [160, 320, 640].includes(v.width) &&
                 v.height === (v.width * 9) / 16,
             ),
           "fixture-sdp-camera-warmup-deadline",

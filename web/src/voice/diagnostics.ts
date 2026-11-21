@@ -199,6 +199,7 @@ export type RelevantSettings = {
   audioMaxBitrate: number | null;
   cameraProfile: string;
   screenProfile: string;
+  screenMode: string;
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
@@ -1101,6 +1102,7 @@ export function relevantSettings(
     audioMaxBitrate: audioBitrate(settings),
     cameraProfile: settings.cameraProfile,
     screenProfile: settings.screenProfile,
+    screenMode: settings.screenMode,
     echoCancellation: settings.echoCancellation,
     noiseSuppression: settings.noiseSuppression,
     autoGainControl: settings.autoGainControl,

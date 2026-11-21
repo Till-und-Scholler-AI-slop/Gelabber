@@ -48,7 +48,7 @@ impl Sfu {
             result => result,
         }
     }
-    async fn dispatch(
+    pub(super) async fn dispatch(
         self: &Arc<Self>,
         room: Arc<Room>,
         peer: Arc<Peer>,
@@ -297,6 +297,35 @@ impl Sfu {
             }
             // Older clients still send tile sizes; consumers start on the top
             // layer and mediasoup's estimate steps down, so they are ignored.
+            ClientFrame::ScreenMode {
+                producer_id, sharp, ..
+            } => {
+                let p = self.own_publication(&room, id, &producer_id).await?;
+                if p.kind != SourceKind::Screen {
+                    return Err(SfuError::Forbidden);
+                }
+                p.sharp.store(sharp, Ordering::Relaxed);
+                Ok(json!({}))
+            }
+            ClientFrame::ViewMode { u, sharp, .. } => {
+                if u.is_nil() || u == peer.authority.claim.u {
+                    return Err(SfuError::Forbidden);
+                }
+                let mut data = room.data.lock().await;
+                let p = data.peers.get_mut(&peer.id).ok_or(SfuError::Revoked)?;
+                match sharp {
+                    Some(sharp) => {
+                        if p.view_modes.len() >= WATCH_LIMIT && !p.view_modes.contains_key(&u) {
+                            return Err(SfuError::BadAnnounce);
+                        }
+                        p.view_modes.insert(u, sharp);
+                    }
+                    None => {
+                        p.view_modes.remove(&u);
+                    }
+                }
+                Ok(json!({}))
+            }
             ClientFrame::ViewerLayer { .. } => Ok(json!({})),
             ClientFrame::Leave { .. } => {
                 self.leave(id, channel).await;
@@ -396,6 +425,7 @@ impl Sfu {
                 grant: Grant::new(),
                 gate: Mutex::new(()),
                 packet_samples: StdMutex::new(HashMap::new()),
+                sharp: AtomicBool::new(false),
             });
             let verdict = match self.authorize(&peer.authority).await {
                 Ok(()) if !pubn.valid() => Err(SfuError::Revoked),

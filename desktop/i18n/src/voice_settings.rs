@@ -110,6 +110,12 @@ crate::strings! {
         | "Live";
     live_quality_hint = "Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab."
         | "Higher values need more processing power and upload. The quality you get depends on source, device and connection.";
+    live_keep_sharp = "Text scharf halten"
+        | "Keep text sharp";
+    live_keep_sharp_on = "Bei schwacher Verbindung sinkt zuerst die Bildrate, die Auflösung bleibt. Gut für Office und Terminal. Gilt sofort, auch im laufenden Live."
+        | "On a weak connection the frame rate drops first and the resolution stays. Good for office work and terminals. Applies at once, also during a Live.";
+    live_keep_sharp_off = "Bei schwacher Verbindung sinkt zuerst die Auflösung, das Bild bleibt flüssig. Gut für Spiele und Videos. Gilt sofort, auch im laufenden Live."
+        | "On a weak connection the resolution drops first and motion stays smooth. Good for games and videos. Applies at once, also during a Live.";
     live_sound_label = "Ton im Live"
         | "Sound in a Live";
     live_share_sound = "Ton mitsenden"

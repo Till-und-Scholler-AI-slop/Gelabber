@@ -13,13 +13,15 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "s
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "macros", "derive", "uuid", "chrono"] }
 redis = { version = "1.7.0", default-features = false, features = ["tokio-comp", "script"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = "1.0.151"
 tower-http = { version = "0.7.1", features = ["trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 # Password hashing (issue #3): Argon2id via RustCrypto, PHC string format.
-argon2 = "0.6.0"
+argon2 = { version = "0.6.0", features = ["zeroize"] }
+# Wipes Argon2's reused working memory after each run (#614).
+zeroize = "1.9.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 uuid = { version = "1.26.1", features = ["serde", "v4"] }
 rand = "0.10.2"

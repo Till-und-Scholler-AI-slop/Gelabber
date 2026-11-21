@@ -21,6 +21,7 @@ import { ApiError } from "../api/client.ts";
 import { altTextOf } from "./altText.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { refreshReplyTarget } from "./replyTarget.ts";
+import { refreshBlocks } from "../blocks/queries.ts";
 import { scopeGeneration, stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { notifyError } from "../components/toasts.ts";
@@ -49,6 +50,7 @@ import {
   confirmPending,
   markUpload,
   forgetAttempt,
+  removePending,
   saveAttempt,
   takeEcho,
   type SendAttempt,
@@ -592,6 +594,13 @@ export async function sendMessageAttempt(
       return echo;
     }
     takeEcho(attempt.id);
+    if (stampHolds(attempt.stamp) && blockedPeer(error)) {
+      // The user blocked the peer elsewhere meanwhile (#619): no failed
+      // row; the DM reloads to its "blocked" bar (`useSendMessage`).
+      removePending(channelId, attempt.id);
+      forgetAttempt(attempt.id);
+      throw error;
+    }
     if (stampHolds(attempt.stamp)) {
       // No idempotency key exists yet. A missing bind response cannot safely
       // authorize another POST; retain the draft and require history inspection.
@@ -681,13 +690,19 @@ export function rejectedUploads(
   });
 }
 
+/** The send was refused because the user blocks the peer (#565). */
+function blockedPeer(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "blocked";
+}
+
 export function useSendMessage(channelId: string, author: MessageAuthor) {
   const client = useQueryClient();
   return useMutation({
     onMutate: () => takeStamp(),
-    onSettled: (_result, _error, _input, stamp) => {
-      if (stampHolds(stamp))
-        void refreshChatWorkflows(client, stamp, channelId);
+    onSettled: (_result, error, _input, stamp) => {
+      if (!stampHolds(stamp)) return;
+      void refreshChatWorkflows(client, stamp, channelId);
+      if (blockedPeer(error)) void refreshBlocks(client, stamp.userId);
     },
     mutationFn: (input: SendInput & { attemptId?: string }) =>
       sendMessageAttempt(channelId, author, input),

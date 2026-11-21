@@ -744,12 +744,10 @@ pub struct DirectMessage {
     /// and from servers before v0.11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<DmRequest>,
-    /// The user blocks the peer (#565): the composer says so.
+    /// The user blocks the peer (#565): the composer says so. A peer who
+    /// blocks the user is not told (#619): nothing marks it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub blocked: bool,
-    /// The peer blocks the user: nothing can be sent, without saying why.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub closed: bool,
 }
 
 /// A pending message request. `incoming`: the peer started it and waits
@@ -1221,6 +1219,10 @@ pub struct NotificationSetting {
     pub level: Option<NotificationLevel>,
     pub muted: bool,
     pub muted_until: Option<Timestamp>,
+    /// A server's only (#616): push when someone starts a call there.
+    /// Missing from a server older than v0.12.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub voice: bool,
 }
 
 /// `PUT …/notification-settings`; `level: None` + not muted = inherit.
@@ -1231,6 +1233,9 @@ pub struct NotificationSettingBody {
     /// 1..=527040, only with `muted`; absent mutes until turned back on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mute_minutes: Option<i64>,
+    /// A server's only; absent leaves it as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2108,6 +2113,17 @@ impl EventFrame {
     /// ban, `x` account deleted) or what changed (`a` access, `o` owner).
     pub fn kind(&self) -> Option<&str> {
         self.d.as_ref()?.get("k")?.as_str()
+    }
+
+    /// The member a join event (`t: "c"`, `k: "j"`, #621) carries, when it
+    /// is the event's entity and reads as a member row.
+    pub fn joined_member(&self) -> Option<Member> {
+        if self.c.is_some() || self.kind() != Some("j") {
+            return None;
+        }
+        let row = self.d.as_ref()?.get("member")?.clone();
+        let member: Member = serde_json::from_value(row).ok()?;
+        (Some(member.user_id) == self.i).then_some(member)
     }
 }
 

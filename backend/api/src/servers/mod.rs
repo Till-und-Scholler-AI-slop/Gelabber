@@ -307,8 +307,9 @@ fn visible_to(
     (categories, channels)
 }
 
-async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, ApiError> {
-    Ok(sqlx::query_as::<_, MemberRow>(
+/// The member list's columns, for every member of server `$1`.
+macro_rules! member_rows {
+    () => {
         "SELECT m.user_id, u.name, u.avatar_url, m.joined_at, u.status_text, u.accent_color, \
              u.avatar_decoration, \
              ARRAY(SELECT mr.role_id FROM server_member_roles mr \
@@ -316,12 +317,55 @@ async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, Ap
                     WHERE mr.server_id = m.server_id AND mr.user_id = m.user_id \
                     ORDER BY r.position, r.id) AS role_ids \
          FROM server_members m JOIN users u ON u.id = m.user_id \
-         WHERE m.server_id = $1 \
-         ORDER BY m.joined_at, m.user_id",
+         WHERE m.server_id = $1"
+    };
+}
+
+async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, ApiError> {
+    Ok(
+        sqlx::query_as::<_, MemberRow>(concat!(member_rows!(), " ORDER BY m.joined_at, m.user_id"))
+            .bind(server_id)
+            .fetch_all(db)
+            .await?,
     )
-    .bind(server_id)
-    .fetch_all(db)
-    .await?)
+}
+
+/// After the commit of a join (invite, open listing, accepted request):
+/// the server's members see the new member in their lists at once (#621).
+/// A server event `{"t": "c", "i": <user>, "d": {"k": "j", "member": …}}`
+/// carrying the row `GET /api/servers/{id}` lists. Best effort, like the
+/// other server events: a client that misses it has the member on its next
+/// detail read. Nothing when they already left again.
+pub(crate) async fn publish_joined(state: &AppState, server_id: Uuid, user_id: Uuid) {
+    let row = sqlx::query_as::<_, MemberRow>(concat!(member_rows!(), " AND m.user_id = $2"))
+        .bind(server_id)
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+    let row = match row {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(err) => {
+            warn!(error = %err, %server_id, "joined member not loaded for the event");
+            return;
+        }
+    };
+    // Joining never makes the owner: the owner created the server.
+    let member = Member {
+        user: row,
+        role: Role::Member,
+    };
+    if let Err(err) = publish_server(
+        state,
+        server_id,
+        EventKind::C,
+        Some(user_id),
+        Some(serde_json::json!({ "k": "j", "member": member })),
+    )
+    .await
+    {
+        warn!(error = err.code(), %server_id, "member joined event not published");
+    }
 }
 
 async fn update_server(
@@ -438,7 +482,31 @@ async fn leave_server(
     tx.commit().await?;
     state.gateway.announce_recheck(Recheck::User(user.id)).await;
     info!(server_id = %server_id, user_id = %user.id, "member left");
+    publish_left(&state, server_id, user.id).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// After the commit of a member leaving on their own: the server's other
+/// members drop them from their lists at once (GEL-22). A server event
+/// `{"t": "c", "i": <user>, "d": {"k": "l"}}`, next to the join's `"j"`.
+/// Not the removal event `t: "d"`: released clients read a server `t: "d"`
+/// for their own id as "you were removed", and the leaver's sockets on
+/// other API processes can still be on the topic until their recheck lands.
+/// Older clients ignore a server `t: "c"` event that is not `"j"`.
+/// Best effort, like the other server events: a client that misses it
+/// loses the member on its next detail read.
+async fn publish_left(state: &AppState, server_id: Uuid, user_id: Uuid) {
+    if let Err(err) = publish_server(
+        state,
+        server_id,
+        EventKind::C,
+        Some(user_id),
+        Some(serde_json::json!({ "k": "l" })),
+    )
+    .await
+    {
+        warn!(error = err.code(), %server_id, "member left event not published");
+    }
 }
 
 /// Owner only: another member becomes the owner (#519 §4.1). The previous

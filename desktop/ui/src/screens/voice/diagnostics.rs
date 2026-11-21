@@ -693,6 +693,11 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
             },
             false,
         ),
+        (
+            texts::mic_gate(),
+            gate_text(in_call, &p, state.input_gate),
+            false,
+        ),
     ];
     facts(ui, &rows, width, text::BODY, 9.0);
     ui.add_space(28.0);
@@ -1216,6 +1221,40 @@ fn debug_body(ui: &mut Ui, state: &CallState, data: &Diagnostics, width: f32) {
             })
             .collect();
         lines(ui, &items, width);
+    }
+}
+
+/// Input sensitivity as set, and whether it lets the microphone through
+/// (web `gateText`).
+fn gate_text(
+    in_call: bool,
+    p: &crate::screens::settings::prefs::Prefs,
+    report: Option<gelabber_call::GateLevels>,
+) -> String {
+    use gelabber_call::logic::GateMode;
+    if !in_call {
+        return "–".into();
+    }
+    let mode = GateMode::for_settings(
+        gelabber_call::ProcessingMode::parse(&p.processing_mode),
+        p.voice_input == "ptt",
+        p.gate_auto,
+    );
+    let setting = match mode {
+        GateMode::Off => return texts::mic_gate_off().into(),
+        GateMode::Auto => texts::mic_gate_auto().to_owned(),
+        GateMode::Manual => texts::mic_gate_manual(p.gate_threshold_db.round() as i64),
+    };
+    match report {
+        Some(r) => format!(
+            "{setting}, {}",
+            if r.open {
+                texts::mic_gate_open()
+            } else {
+                texts::mic_gate_closed()
+            }
+        ),
+        None => setting,
     }
 }
 

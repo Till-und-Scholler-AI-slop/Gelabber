@@ -64,9 +64,11 @@ export async function leaseFaultScenarios(h, options) {
         await click(f.owner, "Live gehen");
         await click(f.watcher, "Zuschauen");
         const initial = await progress(f.watcher, options);
+        // "Zuschauen" from outside the call joins it (watchLive.ts), so
+        // the room holds the publisher and the watcher.
         const before = await until(
           () => snapshot(f.member),
-          (s) => s.liveOccupancy === 1 && s.voiceOccupancy === 1,
+          (s) => s.liveOccupancy === 1 && s.voiceOccupancy === 2,
           "fixture-positive-passive-roster-missing",
         );
         await holdActiveMedia(f.watcher);
@@ -107,13 +109,16 @@ export async function leaseFaultScenarios(h, options) {
         await releaseHeld(f.watcher);
         // Explicit fresh voice join / Live start by B proves the expired slot can
         // be occupied by a different owner; A's old claim cannot block or renew it.
+        // A's own client may rejoin and go Live again after the outage (a new
+        // claim; a room holds several Lives), so watch B's Live by name.
         await click(f.member, "Beitreten");
         await click(f.member, "Live gehen");
         await navigate(f.watcher, f.voicePath, f.base);
-        await click(f.watcher, "Zuschauen");
+        await click(f.watcher, "Beitreten");
         const resumed = await progress(f.watcher, {
           ...options,
           budget: 20_000,
+          publisher: `E2E ${f.member.label}`,
         });
         await nativeEvaluate(
           f.watcher,

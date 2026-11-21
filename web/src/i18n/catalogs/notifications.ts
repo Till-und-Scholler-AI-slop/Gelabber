@@ -15,9 +15,9 @@ export const notifications = defineCatalog(
       "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung.",
 
     "permission.pushOn":
-      "Direktnachrichten und @Erwähnungen kommen auch an, wenn Gelabber geschlossen ist.",
+      "Benachrichtigungen kommen auch an, wenn Gelabber geschlossen ist.",
     "permission.pushAfterAllow":
-      "Danach kommen Direktnachrichten und @Erwähnungen auch bei geschlossener App an, sofern der Server das unterstützt.",
+      "Danach kommen Benachrichtigungen auch bei geschlossener App an, sofern der Server das unterstützt.",
     "permission.whileRunning":
       "Auf diesem Gerät kommen Benachrichtigungen nur an, solange Gelabber im Hintergrund läuft.",
     "permission.allow": "Benachrichtigungen erlauben",
@@ -43,6 +43,10 @@ export const notifications = defineCatalog(
       "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter.",
     "dialog.serverMuted": "Der ganze Server ist gerade stumm.",
     "dialog.levelLegend": "Benachrichtigen bei",
+    "dialog.voiceLegend": "Sprachkanäle",
+    "voice.call": "Push, wenn ein Anruf beginnt",
+    "voice.call.hint":
+      "Wenn jemand einen leeren Sprachkanal betritt. Kommt auf Geräten an, auf denen Gelabber geschlossen ist.",
     "dialog.markRead": "Als gelesen markieren",
 
     "bell.label": "Benachrichtigungen für {name}",
@@ -83,10 +87,9 @@ export const notifications = defineCatalog(
     "alerts.soundHint":
       "One sound for several messages in a row, none while you are deafened. On a phone, the device setting applies.",
 
-    "permission.pushOn":
-      "Direct messages and @mentions arrive even when Gelabber is closed.",
+    "permission.pushOn": "Notifications arrive even when Gelabber is closed.",
     "permission.pushAfterAllow":
-      "Then direct messages and @mentions arrive even when the app is closed, if the server supports it.",
+      "Then notifications arrive even when the app is closed, if the server supports it.",
     "permission.whileRunning":
       "On this device, notifications only arrive while Gelabber runs in the background.",
     "permission.allow": "Allow notifications",
@@ -109,6 +112,10 @@ export const notifications = defineCatalog(
       "Muted: no dot, no notification and no sound. @mentions still count.",
     "dialog.serverMuted": "The whole server is muted right now.",
     "dialog.levelLegend": "Notify me about",
+    "dialog.voiceLegend": "Voice channels",
+    "voice.call": "Push when a call begins",
+    "voice.call.hint":
+      "When someone joins an empty voice channel. Arrives on devices where Gelabber is closed.",
     "dialog.markRead": "Mark as read",
 
     "bell.label": "Notifications for {name}",

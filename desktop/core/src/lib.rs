@@ -766,6 +766,10 @@ impl Producer {
     }
 
     /// Updates encodings by index; `null` clears `maxBitrate`/`maxFramerate`.
+    /// Optional top-level `"degradationPreference"`
+    /// (`maintain-resolution|maintain-framerate|balanced`, or `default` to
+    /// unset it) and, for a video track, `"contentHint"`
+    /// (`detail|text|motion`) change while it sends.
     pub fn set_parameters(&self, parameters: &Value) -> Result<()> {
         let parameters = json_arg(parameters)?;
         // SAFETY: live producer, NUL-terminated JSON.

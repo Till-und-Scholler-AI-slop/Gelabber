@@ -947,6 +947,16 @@ impl Client {
                     self.load_dm(channel);
                 }
             }
+            // The user blocked the peer elsewhere meanwhile (#619): no
+            // failed row; the DM reloads to its "blocked" bar.
+            Err((_, error)) if error.code() == "blocked" => {
+                let dropped = self.write_in(epoch, |s| {
+                    s.channel_mut(channel).pending.retain(|p| p.nonce != nonce);
+                });
+                if dropped.is_some() {
+                    self.blocks_changed();
+                }
+            }
             Err((stage, error)) => self.update_pending(epoch, channel, nonce, |row| {
                 row.stage = stage;
                 row.uncertain = crate::store::send_uncertain(stage, &error);
@@ -2339,7 +2349,9 @@ impl Client {
                 let (removed, created) = self.write(|s| {
                     let removed = s.apply_event(&event);
                     let me = s.me().map(|u| u.id);
-                    let created = (event.t == EventKind::C)
+                    // Server-topic `c` events are member joins and leaves,
+                    // not messages.
+                    let created = (event.t == EventKind::C && event.c.is_some())
                         .then(|| event.message())
                         .flatten()
                         .filter(|m| Some(m.author.id) != me)
@@ -2820,6 +2832,7 @@ mod tests {
                 level: Some(NotificationLevel::Unknown),
                 muted: true,
                 mute_minutes: None,
+                voice: None,
             },
         );
         let start = std::time::Instant::now();
@@ -2949,6 +2962,61 @@ mod tests {
             }
         });
         format!("http://{addr}")
+    }
+
+    /// A send the user's own block refuses (#619): the row goes without a
+    /// word and the DMs are read again, so the "blocked" bar shows.
+    #[test]
+    fn a_send_refused_by_the_users_block_leaves_no_failed_row() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    let line = head.lines().next().unwrap_or("").to_owned();
+                    log.lock().push(line.clone());
+                    let json = |status: &str, body: &str| {
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    };
+                    let answer = if line.starts_with("GET /api/auth/session ") {
+                        json("200 OK", r#"{"user":null,"csrf_token":"t"}"#)
+                    } else if line.starts_with("POST /api/channels/") {
+                        json(
+                            "403 Forbidden",
+                            r#"{"error":"blocked","message":"blocked"}"#,
+                        )
+                    } else {
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                    };
+                    let _ = stream.write_all(answer.as_bytes());
+                });
+            }
+        });
+        let client = Client::new(&format!("http://{addr}")).unwrap();
+        let dm = Uuid::from_u128(5);
+        signed_in(&client, dm);
+        client.send_message(dm, "Hallo", None);
+        let start = std::time::Instant::now();
+        while !seen.lock().iter().any(|l| l.starts_with("GET /api/dms ")) {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "{:?}",
+                seen.lock()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(client.with_state(|s| s.channels[&dm].pending.is_empty()));
     }
 
     fn listed(id: Uuid, name: &str) -> serde_json::Value {

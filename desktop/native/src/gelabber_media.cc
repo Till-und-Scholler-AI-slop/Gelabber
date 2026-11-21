@@ -86,6 +86,9 @@ using gelabber::Bridge;
 using gelabber::CapturePostProcessor;
 using gelabber::CaptureTransport;
 using gelabber::FindAudioDevice;
+using gelabber::GateMode;
+using gelabber::GateModeName;
+using gelabber::ParseGateMode;
 using gelabber::MicrophoneHub;
 using gelabber::MicrophoneSource;
 using gelabber::MonitoringAudioDevice;
@@ -101,6 +104,18 @@ using gelabber::SendListener;
 namespace
 {
 	thread_local std::string lastError;
+
+	/// A video track's content hint by its web name (`contentHint`).
+	webrtc::VideoTrackInterface::ContentHint ContentHintOf(const std::string& hint)
+	{
+		if (hint == "detail")
+			return webrtc::VideoTrackInterface::ContentHint::kDetailed;
+		if (hint == "text")
+			return webrtc::VideoTrackInterface::ContentHint::kText;
+		if (hint == "motion")
+			return webrtc::VideoTrackInterface::ContentHint::kFluid;
+		throw std::invalid_argument("contentHint must be detail, text or motion");
+	}
 
 	void setError(const std::string& message)
 	{
@@ -574,10 +589,21 @@ namespace
 
 	// The engine-wide part of a microphone's processing: one capture
 	// pipeline serves every microphone source and the microphone test.
+	// {"mode": "off|auto|manual", "thresholdDb": -80..0}; missing is off.
+	void ApplyGate(gm_engine& engine, const json& options, bool original)
+	{
+		const auto gate = options.value("gate", json::object());
+		if (!gate.is_object())
+			throw std::invalid_argument("gate must be an object");
+		engine.dsp->SetGate(original ? GateMode::Off : ParseGateMode(gate.value("mode", std::string("off"))),
+		                    gate.value("thresholdDb", -50.0f));
+	}
+
 	void ApplyCaptureMode(gm_engine& engine, const std::string& mode, const json& options)
 	{
 		engine.dsp->SetDenoise(mode == "enhanced");
 		engine.dsp->SetGain(static_cast<float>(options.value("inputGain", 1.0)));
+		ApplyGate(engine, options, mode == "original");
 	}
 } // namespace
 
@@ -733,6 +759,9 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 		const auto options = parseJson(optionsJson, "audio options");
 		if (options.contains("inputGain"))
 			engine->dsp->SetGain(options["inputGain"].get<float>());
+		// The caller sends "off" for original sound and push-to-talk.
+		if (options.contains("gate"))
+			ApplyGate(*engine, options, false);
 		const bool input  = options.contains("input");
 		const bool output = options.contains("output");
 		if (!input && !output)
@@ -881,6 +910,11 @@ char* gm_audio_levels(gm_engine* engine)
 		                       { "denoised", levels.denoised },
 		                       { "blocks", levels.blocks },
 		                       { "channels", levels.channels },
+		                       { "gate",
+		                         { { "mode", GateModeName(levels.gate.mode) },
+		                           { "levelDb", levels.gate.levelDb },
+		                           { "thresholdDb", levels.gate.thresholdDb },
+		                           { "open", levels.gate.open } } },
 		                       { "playout",
 		                         { { "gain", playout.gain },
 		                           { "peak", playout.peak },
@@ -1091,16 +1125,7 @@ gm_source* gm_source_new_screen(gm_engine* engine, const char* optionsJson)
 		screen.cursor = options.value("cursor", true);
 		if (screen.fps < 1 || screen.fps > 120)
 			throw std::invalid_argument("fps out of range");
-		const auto hint = options.value("contentHint", std::string("detail"));
-		webrtc::VideoTrackInterface::ContentHint contentHint;
-		if (hint == "detail")
-			contentHint = webrtc::VideoTrackInterface::ContentHint::kDetailed;
-		else if (hint == "text")
-			contentHint = webrtc::VideoTrackInterface::ContentHint::kText;
-		else if (hint == "motion")
-			contentHint = webrtc::VideoTrackInterface::ContentHint::kFluid;
-		else
-			throw std::invalid_argument("contentHint must be detail, text or motion");
+		const auto contentHint = ContentHintOf(options.value("contentHint", std::string("detail")));
 
 		auto source = gelabber::CreateScreenSource(screen);
 		auto track  = engine->factory->CreateVideoTrack(source, engine->TrackId("screen"));
@@ -1434,6 +1459,29 @@ int gm_producer_set_parameters(gm_producer* producer, const char* parametersJson
 		const auto update = json::parse(parametersJson ? parametersJson : "{}");
 		auto* sender      = SenderOf(producer);
 		auto params       = sender->GetParameters();
+		// A Live's mode (GEL-26): what the encoder gives up first, and the
+		// track's content hint, both changeable while it is sent.
+		if (update.contains("degradationPreference"))
+		{
+			const auto name = update["degradationPreference"].get<std::string>();
+			if (name == "maintain-resolution")
+				params.degradation_preference = webrtc::DegradationPreference::MAINTAIN_RESOLUTION;
+			else if (name == "maintain-framerate")
+				params.degradation_preference = webrtc::DegradationPreference::MAINTAIN_FRAMERATE;
+			else if (name == "balanced")
+				params.degradation_preference = webrtc::DegradationPreference::BALANCED;
+			else if (name == "default")
+				params.degradation_preference = std::nullopt;
+			else
+				throw std::invalid_argument("unknown degradation preference " + name);
+		}
+		if (update.contains("contentHint"))
+		{
+			const auto hint = ContentHintOf(update["contentHint"].get<std::string>());
+			auto track      = sender->track();
+			if (track && track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind)
+				static_cast<webrtc::VideoTrackInterface*>(track.get())->set_content_hint(hint);
+		}
 		const auto& items = update.value("encodings", json::array());
 		if (items.size() > params.encodings.size())
 			throw std::invalid_argument("more encodings than the sender has");

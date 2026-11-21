@@ -23,6 +23,7 @@ pub fn settings(p: &Prefs) -> CallSettings {
         stream_muted: p.source_audio_muted,
         camera_profile: p.camera_profile.clone(),
         screen_profile: p.screen_profile.clone(),
+        keep_text_sharp: p.screen_mode == "sharp",
         economy_mode: p.economy_mode,
         video_upload_limit: p.video_upload_limit,
         source_audio_app: p.source_audio_app.clone(),
@@ -34,6 +35,8 @@ pub fn settings(p: &Prefs) -> CallSettings {
         // Without a key push-to-talk keeps the microphone closed, as on the web.
         push_to_talk: p.voice_input == "ptt",
         ptt_release_delay_ms: p.ptt_release_delay.max(0.0).round() as u64,
+        gate_auto: p.gate_auto,
+        gate_threshold_db: p.gate_threshold_db,
     }
 }
 

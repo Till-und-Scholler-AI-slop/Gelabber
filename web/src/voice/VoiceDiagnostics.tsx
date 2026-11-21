@@ -7,7 +7,12 @@
 import { Button } from "../components/ui/Button.tsx";
 import { useT, type TFunction } from "../i18n/catalog.ts";
 import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
-import { useAudioProcessing } from "./audioProcessing.ts";
+import {
+  useAudioProcessing,
+  useInputGate,
+  type GateMode,
+  type GateReport,
+} from "./audioProcessing.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { flowGroups, lossTone, type FlowGroup } from "./connectionSummary.ts";
 import {
@@ -180,7 +185,10 @@ function Flows() {
               count: limits.length,
               limits: limits.join(", "),
             })}{" "}
-        {t("flows.maxFps", { fps: VIDEO_MAX_FPS })}
+        {t("flows.maxFps", { fps: VIDEO_MAX_FPS })}{" "}
+        {mediaSettings.screenMode === "sharp"
+          ? t("flows.liveSharp")
+          : t("flows.liveSmooth")}
       </p>
     </section>
   );
@@ -241,9 +249,27 @@ function FlowRow({ group }: { group: FlowGroup }) {
   );
 }
 
+/** The gate as set, and whether it lets the microphone through now. */
+function gateText(t: T, mode: GateMode | null, report: GateReport | null) {
+  if (mode === null) return t("mic.gateNone");
+  if (mode === "off") return t("mic.gateOff");
+  const setting =
+    mode === "auto"
+      ? t("mic.gateAuto")
+      : t("mic.gateManual", {
+          db: Math.round(
+            report?.thresholdDb ?? useMediaSettings.getState().gateThresholdDb,
+          ),
+        });
+  return report
+    ? `${setting}, ${t(report.open ? "mic.gateOpen" : "mic.gateClosed")}`
+    : setting;
+}
+
 function Microphone() {
   const t = useT(diagnostics);
   const processing = useAudioProcessing();
+  const gate = useInputGate((state) => state.report);
   const format = [
     processing.sampleRate === null
       ? null
@@ -294,6 +320,14 @@ function Microphone() {
             {processing.addedBufferMs === null
               ? "–"
               : `${processing.addedBufferMs} ms`}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("mic.gate")}</dt>
+          <dd>
+            {processing.actual === null
+              ? "–"
+              : gateText(t, processing.gate, gate)}
           </dd>
         </div>
       </dl>

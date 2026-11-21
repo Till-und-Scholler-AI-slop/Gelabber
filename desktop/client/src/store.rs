@@ -848,6 +848,43 @@ impl State {
                     self.drop_author_messages(event.s, user);
                 }
             }
+            // Someone joined (#621): they enter the member list at its end,
+            // in join order as the server lists them. A replay after a gap
+            // updates the row instead of adding it twice; the own join came
+            // with its answer and a refetch.
+            (None, EventKind::C) if event.kind() == Some("j") => {
+                let mut member = event.joined_member()?;
+                if Some(member.user_id) == self.me().map(|u| u.id) {
+                    return None;
+                }
+                // Joining never makes the owner.
+                member.role = Role::Member;
+                if let Some(detail) = self.server_details.get_mut(&event.s) {
+                    match detail
+                        .members
+                        .iter_mut()
+                        .find(|m| m.user_id == member.user_id)
+                    {
+                        Some(listed) => *listed = member,
+                        None => detail.members.push(member),
+                    }
+                }
+            }
+            // Someone left on their own (GEL-22): they leave the member
+            // list and the server's presence, like a kick. The own leave
+            // was handled where it was asked for and is no removal.
+            (None, EventKind::C) if event.kind() == Some("l") => {
+                let user = event.i?;
+                if Some(user) == self.me().map(|u| u.id) {
+                    return None;
+                }
+                if let Some(detail) = self.server_details.get_mut(&event.s) {
+                    detail.members.retain(|m| m.user_id != user);
+                }
+                if let Some(map) = self.presence.get_mut(&event.s) {
+                    map.remove(&user);
+                }
+            }
             // Ownership moved: the list entry and the detail name the new
             // owner at once; the caller's role follows with the refetch
             // (`Client::on_gateway`).
@@ -2485,5 +2522,84 @@ mod tests {
             serde_json::json!({"k": "o"}),
         ));
         assert_eq!(s.servers[0].owner_id, id(5));
+    }
+
+    /// `t: "c"`, `k: "j"` (#621): a new member enters the list once, not
+    /// the own account, and not from a row that is not the event's.
+    #[test]
+    fn a_join_adds_the_member_once() {
+        let mut s = workspace();
+        let row = |n: u128, name: &str| {
+            serde_json::json!({"k": "j", "member": {"user_id": id(n), "name": name,
+                "avatar_url": null, "joined_at": "2026-11-17T10:00:00Z",
+                "status_text": "neu hier", "accent_color": null,
+                "avatar_decoration": null, "role": "member", "role_ids": []}})
+        };
+        let names = |s: &State| -> Vec<String> {
+            s.server_details[&id(1)]
+                .members
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()
+        };
+        assert_eq!(
+            s.apply_event(&server_event(EventKind::C, Some(id(7)), row(7, "Tom"))),
+            None
+        );
+        assert_eq!(names(&s), ["Jonas", "Kai", "Lena", "Tom"]);
+        assert_eq!(
+            s.server_details[&id(1)].members[3].status_text.as_deref(),
+            Some("neu hier")
+        );
+        // A replay updates the row.
+        s.apply_event(&server_event(EventKind::C, Some(id(7)), row(7, "Thomas")));
+        assert_eq!(names(&s), ["Jonas", "Kai", "Lena", "Thomas"]);
+        // The own account, a row that is not the event's, a broken row.
+        s.apply_event(&server_event(EventKind::C, Some(id(5)), row(5, "Lena 2")));
+        s.apply_event(&server_event(EventKind::C, Some(id(8)), row(9, "Eve")));
+        s.apply_event(&server_event(
+            EventKind::C,
+            Some(id(8)),
+            serde_json::json!({"k": "j", "member": {"user_id": id(8)}}),
+        ));
+        assert_eq!(names(&s), ["Jonas", "Kai", "Lena", "Thomas"]);
+    }
+
+    /// `t: "c"`, `k: "l"` (GEL-22): someone who left drops out of the list
+    /// and the presence map; the own leave is no removal and changes
+    /// nothing.
+    #[test]
+    fn a_leave_drops_the_member_and_is_no_removal() {
+        let mut s = workspace();
+        let left = || serde_json::json!({"k": "l"});
+        let names = |s: &State| -> Vec<String> {
+            s.server_details[&id(1)]
+                .members
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()
+        };
+        let kai = id(3);
+        s.presence
+            .entry(id(1))
+            .or_default()
+            .insert(kai, PresenceStatus::Idle);
+        assert_eq!(
+            s.apply_event(&server_event(EventKind::C, Some(kai), left())),
+            None
+        );
+        assert_eq!(names(&s), ["Jonas", "Lena"]);
+        assert!(!s.presence[&id(1)].contains_key(&kai));
+        // A replay changes nothing.
+        s.apply_event(&server_event(EventKind::C, Some(kai), left()));
+        assert_eq!(names(&s), ["Jonas", "Lena"]);
+        // The own account: no removal, the server stays.
+        let me = s.me().unwrap().id;
+        assert_eq!(
+            s.apply_event(&server_event(EventKind::C, Some(me), left())),
+            None
+        );
+        assert_eq!(names(&s), ["Jonas", "Lena"]);
+        assert!(s.server_details.contains_key(&id(1)));
     }
 }

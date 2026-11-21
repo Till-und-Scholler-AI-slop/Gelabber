@@ -23,13 +23,13 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.11.0}
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.12.0}
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.11.0
+        - gelabber/web:v0.12.0
     environment:
       # The same values as the API's: the app shell's Content-Security-Policy
       # allows uploads and attachments on this origin only (#288), or on the
@@ -62,13 +62,13 @@ services:
     restart: unless-stopped
 
   api:
-    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.11.0}
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.12.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: backend/api/Dockerfile
       tags:
-        - gelabber/api:v0.11.0
+        - gelabber/api:v0.12.0
     environment:
       API_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see deploy/README.md)}@postgres:5432/${POSTGRES_DB:-gelabber}
@@ -86,8 +86,10 @@ services:
       # Empty keeps the API defaults: 30 days absolute, 14 days idle.
       API_SESSION_TTL_HOURS: ${API_SESSION_TTL_HOURS:-}
       API_SESSION_IDLE_HOURS: ${API_SESSION_IDLE_HOURS:-}
-      # One API process; keep it well below Postgres max_connections (100).
+      # One API process; keep both together well below Postgres
+      # max_connections (100).
       API_DB_MAX_CONNECTIONS: ${API_DB_MAX_CONNECTIONS:-20}
+      API_DB_GATEWAY_CONNECTIONS: ${API_DB_GATEWAY_CONNECTIONS:-10}
       TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=udp,turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=tcp}
       TURN_USERNAME: ${TURN_USERNAME:-gelabber}
       TURN_PASSWORD: ${TURN_PASSWORD:?set TURN_PASSWORD in .env (see deploy/README.md)}
@@ -160,13 +162,13 @@ services:
     restart: unless-stopped
 
   media:
-    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.11.0}
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.12.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: backend/media/Dockerfile
       tags:
-        - gelabber/media:v0.11.0
+        - gelabber/media:v0.12.0
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379

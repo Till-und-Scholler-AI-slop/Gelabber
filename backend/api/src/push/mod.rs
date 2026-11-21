@@ -3,9 +3,21 @@
 //! its vendor runs; on a new message the server encrypts a short preview for
 //! each subscription of the recipients and posts it there.
 //!
-//! Nothing is pushed to a user with a page of the app in front on any
-//! device (`ClientFrame::Focus`), nor for a conversation they muted or set
-//! to "nothing" (#242). In a server channel only a mention pushes.
+//! Nothing is pushed for a conversation someone muted or set to "nothing"
+//! (#242), nor to a page of the app that is in front and follows the
+//! conversation (`ClientFrame::Focus`).
+//!
+//! A server channel pushes by the level each member has for it (#616), as
+//! the pages announce it (`wantsNotification` in
+//! web/src/messages/notifyLevel.ts). A mention reaches everyone it names
+//! but those at "nothing", at once. A message that names nobody reaches the
+//! members at "all": not while they use the app on any device, at most once
+//! per channel in [`ORDINARY_WINDOW`], and in a server with more than
+//! [`SMALL_SERVER`] members only those who chose "all" themselves.
+//!
+//! Someone going live in a voice channel pushes like a message that names
+//! nobody (`voice`): a voice channel has no setting, so its server's level
+//! decides.
 //!
 //! An account in Do not disturb (#590) gets no push at all while it lasts.
 //!
@@ -20,6 +32,8 @@
 //! The words of a push come from `crate::i18n`, in each recipient's locale
 //! (#314).
 
+pub mod last_call;
+pub mod voice;
 pub mod webpush;
 
 use std::time::Duration;
@@ -60,12 +74,23 @@ const MAX_RECIPIENTS: usize = 500;
 /// them; beyond that only the members named in the message are pushed to.
 const EVERYONE_PER_WINDOW: u32 = 5;
 const EVERYONE_WINDOW: Duration = Duration::from_secs(10 * 60);
-/// Messages being pushed at once across the process, direct messages and
-/// server mentions each on their own: a few large `@everyone` fan-outs must
-/// not crowd out DMs. A burst beyond that is dropped (and counted as
+/// Messages being pushed at once across the process; direct messages,
+/// server mentions and ordinary server messages each on their own: a few
+/// large `@everyone` fan-outs must not crowd out DMs, nor a lively channel
+/// the mentions. A burst beyond that is dropped (and counted as
 /// `push_dropped`): pushes are best effort, and the pages show everything on
 /// their own.
 const MAX_DELIVERIES: usize = 16;
+/// A server with at most this many members counts as a group that wants to
+/// hear every message: "all" is what a member without a setting has there.
+/// In a larger one an ordinary message (one that names nobody) pushes only
+/// to the members who set the channel or the server to "all" themselves;
+/// the default would page a crowd by phone for every line.
+const SMALL_SERVER: i64 = 50;
+/// The ordinary messages of one channel push at most once in this time: a
+/// lively conversation is one buzz on a phone, not one per line. Mentions
+/// are not held back by it.
+const ORDINARY_WINDOW: Duration = Duration::from_secs(30);
 
 const PREVIEW_CHARS: usize = 180;
 
@@ -79,8 +104,12 @@ pub struct Push {
     http: reqwest::Client,
     dm_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
     server_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
+    /// Server messages that name nobody.
+    channel_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
     /// When this process last dropped expired receipts (Unix seconds).
     pruned_at: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    /// The [`last_call`] worker runs once per process.
+    last_call_started: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Push {
@@ -97,7 +126,9 @@ impl Push {
             http,
             dm_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
             server_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
+            channel_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
             pruned_at: Default::default(),
+            last_call_started: Default::default(),
         })
     }
 
@@ -206,7 +237,9 @@ async fn subscribe(
         "INSERT INTO push_subscriptions (endpoint,user_id,session_hash,p256dh,auth)
          VALUES ($1,$2,$3,$4,$5) ON CONFLICT (endpoint) DO UPDATE
          SET user_id=EXCLUDED.user_id, session_hash=EXCLUDED.session_hash,
-             p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, created_at=now()
+             p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, created_at=now(),
+             warned_at=CASE WHEN push_subscriptions.session_hash=EXCLUDED.session_hash
+                            THEN push_subscriptions.warned_at END
          WHERE push_subscriptions.user_id=EXCLUDED.user_id
             OR (push_subscriptions.p256dh=EXCLUDED.p256dh
                 AND push_subscriptions.auth=EXCLUDED.auth)",
@@ -249,8 +282,8 @@ async fn unsubscribe(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// What the service worker shows (`web/public/sw.js`): the same fields the
-/// page puts on its own notifications, so taps and dedupe work alike.
+/// What a push is about: the fields the page puts on its own notifications,
+/// so taps and dedupe work alike (`web/public/sw.js`).
 #[derive(Serialize)]
 struct Payload<'a> {
     title: &'a str,
@@ -265,6 +298,88 @@ struct Payload<'a> {
     recall: bool,
 }
 
+impl Payload<'_> {
+    /// The push message, as a declarative one (Push API, `"web_push": 8030`;
+    /// #616). A browser that knows them (Safari from iOS 18.4) builds the
+    /// notification itself and, the message being `mutable`, hands it to the
+    /// worker first; whatever the worker does not manage (it was removed, it
+    /// failed, it showed nothing) the browser shows as declared, and no
+    /// subscription is lost over a push that showed nothing. Every other
+    /// browser hands the worker the JSON as before.
+    ///
+    /// `navigate` is where a tap leads when no worker answers it. The fields
+    /// of the payload stand at the top level too: a worker installed before
+    /// v0.12 reads them there, and stays in charge until its app is opened
+    /// again.
+    fn encode(&self, navigate: &str, locale: Locale) -> serde_json::Result<Vec<u8>> {
+        #[derive(Serialize)]
+        struct Message<'a> {
+            web_push: u16,
+            notification: Declared<'a>,
+            mutable: bool,
+            #[serde(flatten)]
+            payload: &'a Payload<'a>,
+        }
+        #[derive(Serialize)]
+        struct Declared<'a> {
+            title: &'a str,
+            body: &'a str,
+            navigate: &'a str,
+            /// The tag of the worker and the pages: one notification per
+            /// conversation and account.
+            tag: String,
+            lang: &'static str,
+            renotify: bool,
+            silent: bool,
+            data: Data<'a>,
+        }
+        #[derive(Serialize)]
+        struct Data<'a> {
+            path: &'a str,
+            user: Uuid,
+            channel: Uuid,
+            message: Uuid,
+            at: chrono::DateTime<chrono::Utc>,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            recall: bool,
+        }
+        serde_json::to_vec(&Message {
+            web_push: 8030,
+            notification: Declared {
+                title: self.title,
+                body: self.body,
+                navigate,
+                tag: format!("gelabber:{}:{}", self.user, self.channel),
+                lang: locale.as_str(),
+                // A recall replaces what is on screen without a sound.
+                renotify: !self.recall,
+                silent: self.recall,
+                data: Data {
+                    path: self.path,
+                    user: self.user,
+                    channel: self.channel,
+                    message: self.message,
+                    at: self.at,
+                    recall: self.recall,
+                },
+            },
+            mutable: true,
+            payload: self,
+        })
+    }
+}
+
+/// Where a tap on a declared notification leads: the page of `path` under
+/// `APP_PUBLIC_URL`. Without that setting the path alone, which a browser
+/// resolves against the app's own address, or else treats the message as an
+/// ordinary one for the worker.
+fn navigate(state: &AppState, path: &str) -> String {
+    match &state.public_url {
+        Some(base) => format!("{}{path}", base.as_str().trim_end_matches('/')),
+        None => path.to_owned(),
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct Target {
     endpoint: String,
@@ -273,6 +388,10 @@ struct Target {
     auth: String,
     hide_content: bool,
     locale: Locale,
+    /// The message is a direct message to them or names them; false for
+    /// someone who only listens to every message of the channel.
+    #[sqlx(default)]
+    addressed: bool,
 }
 
 /// After a message is stored: push it in the background, unless
@@ -281,10 +400,15 @@ pub fn announce(state: &AppState, message: &Message, server: Option<Uuid>) {
     let Some(push) = state.push.clone() else {
         return;
     };
-    let deliveries = if server.is_none() {
-        &push.dm_deliveries
-    } else {
-        &push.server_deliveries
+    let names_someone = message.mention_everyone || !message.mentions.is_empty();
+    // Whether this message may go to the members who listen to every
+    // message of its channel; a mention goes out either way.
+    let ordinary = server.is_some() && ordinary_may_push(state, message.channel_id);
+    let deliveries = match server {
+        None => &push.dm_deliveries,
+        Some(_) if names_someone => &push.server_deliveries,
+        Some(_) if ordinary => &push.channel_deliveries,
+        Some(_) => return,
     };
     let Ok(slot) = deliveries.clone().try_acquire_owned() else {
         state.metrics.rate_limited("push_dropped");
@@ -294,7 +418,7 @@ pub fn announce(state: &AppState, message: &Message, server: Option<Uuid>) {
     let state = state.clone();
     let message = message.clone();
     tokio::spawn(async move {
-        if let Err(err) = deliver(&state, &push, &message, server).await {
+        if let Err(err) = deliver(&state, &push, &message, server, ordinary).await {
             debug!(error = err.code(), "push not sent");
         }
         drop(slot);
@@ -306,9 +430,12 @@ async fn deliver(
     push: &Push,
     message: &Message,
     server: Option<Uuid>,
+    ordinary: bool,
 ) -> Result<(), ApiError> {
     let author = message.author.id;
-    let recipients: Vec<Uuid> = match server {
+    // Whom the message is for by name: the other side of a direct message,
+    // the people a server message mentions.
+    let addressed: Vec<Uuid> = match server {
         None => {
             sqlx::query_scalar(
                 "SELECT user_id FROM channel_members WHERE channel_id=$1 AND user_id<>$2",
@@ -339,16 +466,30 @@ async fn deliver(
         }
         Some(server) => named(state, message, server).await?,
     };
+    // Who else may hear it, and the level of a member without a setting.
+    let (listening, default_level) = match server {
+        Some(server) if ordinary => listening(state, message, server).await?,
+        _ => (Vec::new(), "all"),
+    };
+    let recipients: Vec<Uuid> = {
+        let mut all = addressed.clone();
+        all.extend(&listening);
+        all.sort_unstable();
+        all.dedup();
+        all
+    };
     if recipients.is_empty() {
         return Ok(());
     }
     // Live sessions only, not from someone the recipient blocks (#565), and
-    // not where the conversation is muted or set to "nothing"; the
-    // channel's own level wins over its server's.
+    // not where the conversation is muted; the channel's own level wins
+    // over its server's. Someone addressed is left out only at "nothing",
+    // someone listening is in only at "all".
     // Do not disturb (#590): no push of any kind while it lasts.
     let targets: Vec<Target> = sqlx::query_as(concat!(
         "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
-                u.notifications_hide_content AS hide_content, u.locale
+                u.notifications_hide_content AS hide_content, u.locale,
+                p.user_id=ANY($5) AS addressed
          FROM push_subscriptions p
          JOIN sessions s ON s.token_hash=p.session_hash AND s.expires_at>now()
          JOIN users u ON u.id=p.user_id
@@ -357,7 +498,8 @@ async fn deliver(
          LEFT JOIN notification_settings ss ON ss.user_id=p.user_id
            AND ss.scope_kind='server' AND ss.scope_id=$3
          WHERE p.user_id=ANY($1)
-           AND COALESCE(cs.level, ss.level, 'all')<>'none'
+           AND ((p.user_id=ANY($5) AND COALESCE(cs.level, ss.level, 'all')<>'none')
+                OR COALESCE(cs.level, ss.level, $6)='all')
            AND NOT (cs.muted IS TRUE AND (cs.muted_until IS NULL OR cs.muted_until>now()))
            AND NOT (ss.muted IS TRUE AND (ss.muted_until IS NULL OR ss.muted_until>now()))
            AND NOT EXISTS (SELECT 1 FROM user_blocks b
@@ -369,30 +511,47 @@ async fn deliver(
     .bind(message.channel_id)
     .bind(server)
     .bind(message.author.id)
+    .bind(&addressed)
+    .bind(default_level)
     .fetch_all(&state.db)
     .await?;
     if targets.is_empty() {
         return Ok(());
     }
     let (place, path) = heading(state, message, server).await?;
+    let link = navigate(state, &path);
+    let link = link.as_str();
     let named = if targets.iter().all(|t| t.hide_content) {
         String::new()
     } else {
         with_names(state, message).await?
     };
-    let users: Vec<Uuid> = {
-        let mut users: Vec<Uuid> = targets.iter().map(|t| t.user_id).collect();
+    let users = |addressed: bool| {
+        let mut users: Vec<Uuid> = targets
+            .iter()
+            .filter(|t| t.addressed == addressed)
+            .map(|t| t.user_id)
+            .collect();
         users.sort_unstable();
         users.dedup();
         users
     };
+    // Someone addressed is spared the push only by a page in front that
+    // follows the conversation; someone listening by any page in front: who
+    // uses the app sees the channel turn unread there.
     // Without Redis nobody counts as in front: push anyway.
-    let in_front = state
+    let mut in_front = state
         .gateway
-        .in_front_in(&users, message.channel_id)
+        .in_front_in(&users(true), message.channel_id)
         .await
         .unwrap_or_default();
-    let urgency = if server.is_none() { "high" } else { "normal" };
+    in_front.extend(
+        state
+            .gateway
+            .in_front(&users(false))
+            .await
+            .unwrap_or_default(),
+    );
     let results = futures_util::stream::iter(
         targets
             .into_iter()
@@ -420,7 +579,7 @@ async fn deliver(
                     at: message.created_at,
                     recall: false,
                 };
-                match serde_json::to_vec(&payload) {
+                match payload.encode(link, locale) {
                     Ok(raw) => Some((target, raw)),
                     Err(err) => {
                         warn!(error = %err, "push payload not encoded");
@@ -429,8 +588,11 @@ async fn deliver(
                 }
             })
             .map(|(target, raw)| async move {
+                // A phone asleep is woken for what is meant for its owner;
+                // the rest may wait for its next look at the network.
+                let urgency = if target.addressed { "high" } else { "normal" };
                 (
-                    send(push, &target, &raw, urgency, message.id).await,
+                    send(push, &target, &raw, urgency, message.id, TTL_SECS).await,
                     target.endpoint,
                 )
             }),
@@ -615,6 +777,8 @@ async fn deliver_invite(
         Invite::Message { channel, message } => ("/d/requests", channel, message),
     };
     let at = chrono::Utc::now();
+    let link = navigate(state, path);
+    let link = link.as_str();
     let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
         let title = match kind {
             Invite::Friend => i18n::friend_request_from(target.locale, from),
@@ -630,11 +794,14 @@ async fn deliver_invite(
             at,
             recall: false,
         };
-        serde_json::to_vec(&payload).ok().map(|raw| (target, raw))
+        payload
+            .encode(link, target.locale)
+            .ok()
+            .map(|raw| (target, raw))
     }))
     .map(|(target, raw)| async move {
         (
-            send(push, &target, &raw, "normal", message).await,
+            send(push, &target, &raw, "normal", message, TTL_SECS).await,
             target.endpoint,
         )
     })
@@ -711,6 +878,8 @@ async fn send_recall(
         return Ok(());
     }
     let (place, path) = heading(state, message, server).await?;
+    let link = navigate(state, &path);
+    let link = link.as_str();
     let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
         let locale = target.locale;
         let title = if target.hide_content {
@@ -728,7 +897,7 @@ async fn send_recall(
             at: message.created_at,
             recall: true,
         };
-        match serde_json::to_vec(&payload) {
+        match payload.encode(link, locale) {
             Ok(raw) => Some((target, raw)),
             Err(err) => {
                 warn!(error = %err, "push payload not encoded");
@@ -738,7 +907,7 @@ async fn send_recall(
     }))
     .map(|(target, raw)| async move {
         (
-            send(push, &target, &raw, "normal", message.id).await,
+            send(push, &target, &raw, "normal", message.id, TTL_SECS).await,
             target.endpoint,
         )
     })
@@ -769,6 +938,72 @@ async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<
     .bind(message.channel_id)
     .fetch_all(&state.db)
     .await?)
+}
+
+/// Whether an ordinary message of this channel may push now: the first in
+/// [`ORDINARY_WINDOW`] does.
+fn ordinary_may_push(state: &AppState, channel: Uuid) -> bool {
+    state
+        .limiter
+        .hit("push-channel", &channel.to_string(), 1, ORDINARY_WINDOW)
+        .is_ok()
+}
+
+/// The members who may hear an ordinary message of this channel, and the
+/// level a member without a setting has for it: everyone who sees the
+/// channel and "all" in a small server, else those with an "all" of their
+/// own on the channel or the server and "mentions". The levels themselves
+/// are read with the subscriptions.
+async fn listening(
+    state: &AppState,
+    message: &Message,
+    server: Uuid,
+) -> Result<(Vec<Uuid>, &'static str), ApiError> {
+    if default_level(state, server).await? == "all" {
+        let everyone = sqlx::query_scalar(
+            "SELECT m.user_id FROM server_members m
+             JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
+             WHERE m.server_id=$1 AND m.user_id<>$2 AND channel_visible_to($3, m.user_id)",
+        )
+        .bind(server)
+        .bind(message.author.id)
+        .bind(message.channel_id)
+        .fetch_all(&state.db)
+        .await?;
+        return Ok((everyone, "all"));
+    }
+    let chose = sqlx::query_scalar(
+        "SELECT DISTINCT n.user_id FROM notification_settings n
+         JOIN server_members m ON m.server_id=$1 AND m.user_id=n.user_id
+         JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
+         WHERE n.level='all' AND n.user_id<>$2
+           AND ((n.scope_kind='channel' AND n.scope_id=$3)
+                OR (n.scope_kind='server' AND n.scope_id=$1))
+           AND channel_visible_to($3, n.user_id)",
+    )
+    .bind(server)
+    .bind(message.author.id)
+    .bind(message.channel_id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok((chose, "mentions"))
+}
+
+/// The level a member without a setting of their own has for push in this
+/// server: "all" up to [`SMALL_SERVER`] members, "mentions" above.
+async fn default_level(state: &AppState, server: Uuid) -> Result<&'static str, ApiError> {
+    let members: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT 1 FROM server_members WHERE server_id=$1 LIMIT $2) m",
+    )
+    .bind(server)
+    .bind(SMALL_SERVER + 1)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(if members <= SMALL_SERVER {
+        "all"
+    } else {
+        "mentions"
+    })
 }
 
 /// Whether this server's `@everyone` may still page its members by push.
@@ -805,8 +1040,16 @@ enum Outcome {
 }
 
 /// `topic` names what the push is about: a later push with the same topic
-/// replaces it at the push service while it is not delivered yet.
-async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str, topic: Uuid) -> Outcome {
+/// replaces it at the push service while it is not delivered yet. `ttl` is
+/// how many seconds the service keeps it for a device it cannot reach.
+async fn send(
+    push: &Push,
+    target: &Target,
+    payload: &[u8],
+    urgency: &str,
+    topic: Uuid,
+    ttl: u64,
+) -> Outcome {
     let Some(audience) = push.audience(&target.endpoint) else {
         return Outcome::Gone;
     };
@@ -824,7 +1067,7 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str, topic
             "Authorization",
             push.vapid.authorization(&audience, expires),
         )
-        .header("TTL", TTL_SECS.to_string())
+        .header("TTL", ttl.to_string())
         .header("Urgency", urgency)
         // 32 hex digits: within the 32 URL-safe base64 characters RFC 8030
         // allows a topic.

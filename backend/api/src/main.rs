@@ -18,6 +18,12 @@ async fn main() -> ExitCode {
         error!(error = %err, "gelabber-api failed to start");
         return ExitCode::FAILURE;
     }
+    // Give memory freed after a load peak back to the OS (#614).
+    if let Err(err) =
+        gelabber_shared::memory::release_after_peaks(gelabber_shared::memory::TRIM_INTERVAL)
+    {
+        tracing::warn!(error = %err, "could not start returning freed memory");
+    }
 
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
@@ -81,6 +87,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     gelabber_api::password::warm_up()
         .await
         .map_err(|err| format!("password hasher warm-up failed: {}", err.code()))?;
+    gelabber_api::password::spawn_idle_release();
 
     let listener = TcpListener::bind(config.api_addr)
         .await
@@ -91,6 +98,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         addr = %local_addr,
         ready_timeout_ms = config.ready_timeout.as_millis() as u64,
         db_max_connections = config.db_max_connections,
+        db_gateway_connections = config.db_gateway_connections,
         "gelabber-api listening"
     );
 

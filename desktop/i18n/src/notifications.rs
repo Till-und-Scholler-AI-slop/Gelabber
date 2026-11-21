@@ -22,10 +22,10 @@ crate::strings! {
     alerts_sound_hint = "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung."
         | "One sound for several messages in a row, none while you are deafened. On a phone, the device setting applies.";
 
-    permission_push_on = "Direktnachrichten und @Erwähnungen kommen auch an, wenn Gelabber geschlossen ist."
-        | "Direct messages and @mentions arrive even when Gelabber is closed.";
-    permission_push_after_allow = "Danach kommen Direktnachrichten und @Erwähnungen auch bei geschlossener App an, sofern der Server das unterstützt."
-        | "Then direct messages and @mentions arrive even when the app is closed, if the server supports it.";
+    permission_push_on = "Benachrichtigungen kommen auch an, wenn Gelabber geschlossen ist."
+        | "Notifications arrive even when Gelabber is closed.";
+    permission_push_after_allow = "Danach kommen Benachrichtigungen auch bei geschlossener App an, sofern der Server das unterstützt."
+        | "Then notifications arrive even when the app is closed, if the server supports it.";
     permission_while_running = "Auf diesem Gerät kommen Benachrichtigungen nur an, solange Gelabber im Hintergrund läuft."
         | "On this device, notifications only arrive while Gelabber runs in the background.";
     permission_allow = "Benachrichtigungen erlauben" | "Allow notifications";
@@ -50,6 +50,10 @@ crate::strings! {
         | "Muted: no dot, no notification and no sound. @mentions still count.";
     dialog_server_muted = "Der ganze Server ist gerade stumm." | "The whole server is muted right now.";
     dialog_level_legend = "Benachrichtigen bei" | "Notify me about";
+    dialog_voice_legend = "Sprachkanäle" | "Voice channels";
+    voice_call = "Push, wenn ein Anruf beginnt" | "Push when a call begins";
+    voice_call_hint = "Wenn jemand einen leeren Sprachkanal betritt. Kommt auf Geräten an, auf denen Gelabber geschlossen ist."
+        | "When someone joins an empty voice channel. Arrives on devices where Gelabber is closed.";
     dialog_mark_read = "Als gelesen markieren" | "Mark as read";
 
     bell_title = "Benachrichtigungen" | "Notifications";

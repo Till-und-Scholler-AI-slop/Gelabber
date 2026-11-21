@@ -75,6 +75,11 @@ export const voiceSettings = defineCatalog(
     "live.title": "Live",
     "live.qualityHint":
       "Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab.",
+    "live.keepSharp": "Text scharf halten",
+    "live.keepSharpOn":
+      "Bei schwacher Verbindung sinkt zuerst die Bildrate, die Auflösung bleibt. Gut für Office und Terminal. Gilt sofort, auch im laufenden Live.",
+    "live.keepSharpOff":
+      "Bei schwacher Verbindung sinkt zuerst die Auflösung, das Bild bleibt flüssig. Gut für Spiele und Videos. Gilt sofort, auch im laufenden Live.",
     "live.soundLabel": "Ton im Live",
     "live.shareSound": "Ton mitsenden",
     "live.shareSoundHint":
@@ -117,6 +122,26 @@ export const voiceSettings = defineCatalog(
     "ptt.releaseDelay": "Nachlaufzeit",
     "ptt.releaseDelayHint":
       "So lange sendet das Mikrofon nach dem Loslassen weiter.",
+    "gate.title": "Eingabeempfindlichkeit",
+    "gate.autoHint":
+      "Automatisch: Gelabber misst das Rauschen in deinem Raum und sendet nur, wenn du sprichst.",
+    "gate.threshold": "Schwelle",
+    "gate.thresholdHint":
+      "Unter dieser Schwelle sendet dein Mikrofon Stille. Sprich und tippe: Beim Sprechen sollte der Balken über die Linie gehen, beim Tippen nicht.",
+    "gate.meter": "Pegel deines Mikrofons",
+    "gate.db": "{db} dB",
+    "gate.autoAt": "automatisch {db} dB",
+    "gate.open": "Über der Schwelle: wird gesendet",
+    "gate.closed": "Unter der Schwelle: Stille",
+    "gate.idle":
+      "Den Pegel siehst du im Gespräch oder hier mit „Pegel prüfen“.",
+    "gate.check": "Pegel prüfen",
+    "gate.stopCheck": "Prüfen beenden",
+    "gate.checkFailed": "Das Mikrofon lässt sich gerade nicht prüfen.",
+    "gate.pttOff":
+      "Bei Push-to-Talk entscheidet die Taste. Die Schwelle ist dann aus.",
+    "gate.originalOff":
+      "Bei „Original / Musik“ bleibt das Mikrofon unverarbeitet. Die Schwelle ist dann aus.",
     "micTest.title": "Mikrofon testen",
     "micTest.intro": "Prüfe dein Mikrofon und vergleiche die Verarbeitung.",
     "micTest.stopped":
@@ -251,6 +276,11 @@ export const voiceSettings = defineCatalog(
     "live.title": "Live",
     "live.qualityHint":
       "Higher values need more processing power and upload. The quality you get depends on source, device and connection.",
+    "live.keepSharp": "Keep text sharp",
+    "live.keepSharpOn":
+      "On a weak connection the frame rate drops first and the resolution stays. Good for office work and terminals. Applies at once, also during a Live.",
+    "live.keepSharpOff":
+      "On a weak connection the resolution drops first and motion stays smooth. Good for games and videos. Applies at once, also during a Live.",
     "live.soundLabel": "Sound in a Live",
     "live.shareSound": "Share sound",
     "live.shareSoundHint":
@@ -293,6 +323,25 @@ export const voiceSettings = defineCatalog(
     "ptt.releaseDelay": "Release delay",
     "ptt.releaseDelayHint":
       "How long your microphone keeps sending after you let go.",
+    "gate.title": "Input sensitivity",
+    "gate.autoHint":
+      "Automatic: Gelabber measures the noise in your room and only sends while you speak.",
+    "gate.threshold": "Threshold",
+    "gate.thresholdHint":
+      "Below this threshold your microphone sends silence. Speak and type: the bar should cross the line when you speak, not when you type.",
+    "gate.meter": "Your microphone’s level",
+    "gate.db": "{db} dB",
+    "gate.autoAt": "automatic {db} dB",
+    "gate.open": "Above the threshold: sending",
+    "gate.closed": "Below the threshold: silence",
+    "gate.idle": "You see the level in a call, or here with “Check level”.",
+    "gate.check": "Check level",
+    "gate.stopCheck": "Stop checking",
+    "gate.checkFailed": "The microphone cannot be checked right now.",
+    "gate.pttOff":
+      "With push to talk, the key decides. The threshold is off then.",
+    "gate.originalOff":
+      "With “Original / music” the microphone stays unprocessed. The threshold is off then.",
     "micTest.title": "Test microphone",
     "micTest.intro": "Check your microphone and compare the processing.",
     "micTest.stopped":

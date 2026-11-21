@@ -162,7 +162,7 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `friend_request_declined` | 409 | You can send a new friend request later. (also `retry_after`: seconds until the cooldown ends, body only) | v0.11: `auth` `error.friendRequestDeclined` |
 | `friend_requests_full` | 409 | Too many open friend requests. Wait for some answers first. | v0.11: `auth` `error.friendRequestsFull` |
 | `blocked` | 403 | You blocked this person. Unblock them to write. | v0.11 (#565, §5.4): `auth` `error.blocked` |
-| `dm_closed` | 403 | You can't send messages in this conversation. | v0.11: `auth` `error.dmClosed` |
+| `dm_closed` | 403 | You can't send messages in this conversation. | v0.11: `auth` `error.dmClosed`; since v0.12 (#619) only for an edit of a message the blocker has seen |
 | `blocks_full` | 409 | You already block as many people as you can. | v0.11: `auth` `error.blocksFull` |
 | client-only `network` | 0 | Network error. | Keine Verbindung zum Server. |
 | client-only `timeout` | 0 | Request timed out. | Der Server antwortet nicht. Bitte noch einmal versuchen. |
@@ -424,7 +424,7 @@ account.json                                { id, email, name, created_at, email
                                               status_text, accent_color, banner_color, avatar_decoration,
                                               notifications_hide_content, locale,
                                               themes: <account theme document | null>,
-                                              notification_settings: [ {scope_kind, scope_id, level, muted, muted_until, updated_at} ],
+                                              notification_settings: [ {scope_kind, scope_id, level, muted, muted_until, voice, updated_at} ],
                                               sessions: [ {client, os, created_at, last_used_at} ],   live sessions only
                                               servers: [ {id, name, owner: bool, joined_at} ],
                                               invites: [ {code, server_id, created_at, expires_at, max_uses, uses} ],
@@ -685,7 +685,7 @@ Shapes:
 
 ## 5. Direct messages, message requests and friends (`backend/api/src/dms/`, `backend/api/src/friends/`; web `web/src/dms/`, `web/src/friends/`)
 
-`DirectMessage`: `{id: uuid (the DM channel id), kind: "dm", created_at: ts, peer: {id, name, avatar_url: nullable}, request?: {incoming: bool, remaining: int}, blocked?: true, closed?: true}`. `blocked` (the caller blocks the peer) and `closed` (the peer blocks the caller) are present only while true (v0.11, #565, §5.4). `request` is present only while the DM is a message request (v0.11, #563): `incoming: true` means the peer started it and the caller accepts or declines; otherwise the caller started it and may still send `remaining` messages (0 to 3).
+`DirectMessage`: `{id: uuid (the DM channel id), kind: "dm", created_at: ts, peer: {id, name, avatar_url: nullable}, request?: {incoming: bool, remaining: int}, blocked?: true}`. `blocked` (the caller blocks the peer) is present only while true (v0.11, #565, §5.4). v0.11 also sent `closed` (the peer blocks the caller); since v0.12 (#619) nothing tells the caller. `request` is present only while the DM is a message request (v0.11, #563): `incoming: true` means the peer started it and the caller accepts or declines; otherwise the caller started it and may still send `remaining` messages (0 to 3).
 
 ### 5.1 Who may open a DM (v0.11)
 
@@ -737,9 +737,11 @@ Every change goes to both accounts' sockets as `{"op":"fr"}` (protocol-gateway �
 | `PUT /api/users/me/blocks/{user}` | none (CSRF) | `204`, idempotent | `422 user_id: self`; `404` unknown or deleted; `409 blocks_full` (1000) |
 | `DELETE /api/users/me/blocks/{user}` | none (CSRF) | `204`, idempotent | 401 |
 
-While A blocks B, every private path between them is closed both ways: opening a new DM, writing into or editing in an existing one, reacting there, message requests and friend requests. A gets `403 blocked`. B gets what an unreachable person gives, never "blocked": `403 dm_not_allowed` for a new DM, `404` for a friend request, `403 dm_closed` in an existing DM. The history of an existing DM stays readable for both. An existing DM necessarily tells B: `dm_closed` and `closed` have no other cause, since a deleted account's DMs are removed within seconds (`account/deletion.rs`).
+While A blocks B, every new private path between them is closed both ways: opening a new DM, message requests and friend requests. A gets `403 blocked`, also for writing, editing or reacting in an existing DM. B gets what an unreachable person gives, never "blocked": `403 dm_not_allowed` for a new DM, `404` for a friend request. The history of an existing DM stays readable for both.
 
-Blocking ends their friendship, deletes friend requests both ways and declines a pending message request from B (its messages stay), in one transaction. A request A sent stays open: while the block stands it is in neither side's `GET /api/dms/requests` and `POST /api/dms/{id}/accept` answers `404`; after an unblock it is live again. B's pushes and mention counts (`mention_count`, §7) do not reach A, in DMs and on shared servers, and the clients raise no toast or notification for B's messages. The clients fold B's messages in server channels ("N blockierte Nachrichten · Anzeigen") and hide B's typing; in a closed DM the server drops typing (`op: "y"`) both ways. Unblocking leaves an accepted DM usable and restores no friendship.
+In an existing DM nothing tells B (v0.12, #619): B's composer stays and B writes on. B's messages are stored as sender-only (`messages.sender_only`): `201` with the message as usual, the same request rules and limits, but only B reads them. A's history, search, jump-to-message (`context`), unread and mention counts and DM order leave them out, and no live event (`c`/`e`/`d`) or push goes out for them, not even to B's other devices (they see them on the next history load). B may edit, delete and react on them. B's reactions on A's messages are stored sender-only too (`message_reactions.sender_only`): B's answers and history show them, A's and every event do not; given again after an unblock, a reaction becomes open. An edit of a message A has seen still answers `403 dm_closed` (#626). An answer that A can read loses its `reply_to` when it points at a sender-only message. Unblocking leaves sender-only messages hidden from A.
+
+Blocking ends their friendship, deletes friend requests both ways and declines a pending message request from B (its messages stay), in one transaction. A request A sent stays open: while the block stands it is in neither side's `GET /api/dms/requests` and `POST /api/dms/{id}/accept` answers `404`; after an unblock it is live again. B's pushes and mention counts (`mention_count`, §7) do not reach A, in DMs and on shared servers, and the clients raise no toast or notification for B's messages. The clients fold B's messages in server channels ("N blockierte Nachrichten · Anzeigen") and hide B's typing; in a DM under a block the server drops typing (`op: "y"`) both ways. Unblocking leaves an accepted DM usable and restores no friendship.
 
 A's sockets get `{"op":"bl"}` (protocol-gateway §3) and read the list and `GET /api/dms` again, plus `mr` when B's request to A was declined; B is not told, and only hears `fr` when a friendship or a friend request went.
 
@@ -854,15 +856,15 @@ Moves are pushed to the account's other sockets as a `read` user frame (gateway 
 
 ### 8.1 Settings (`notifications/settings.rs`; web `messages/notificationSettings.ts:25-56`)
 
-`Setting`: `{scope: "server" | "channel", id: uuid, level: "all"|"mentions"|"none"|null, muted: bool, muted_until: nullable ts}`. Only explicit settings are listed (ordered by scope, id); an absent row means inherit (`level: null`, not muted).
+`Setting`: `{scope: "server" | "channel", id: uuid, level: "all"|"mentions"|"none"|null, muted: bool, muted_until: nullable ts, voice: bool}`. Only explicit settings are listed (ordered by scope, id); an absent row means inherit (`level: null`, not muted, `voice: false`). `voice` (v0.12, #616, migration 0044) is a server's only: a Web Push when someone joins a voice channel nobody was in. It is missing from servers older than v0.12; read it as `false`.
 
 | Method & path | Request | Success | Errors |
 |---|---|---|---|
 | `GET /api/notification-settings` | — | `200 Setting[]` | 401 |
-| `PUT /api/servers/{id}/notification-settings` | `{level: Level\|null, muted: bool, mute_minutes?: 1..=527040}` | `200 Setting` | `404` non-member; `422 mute_minutes: invalid` (given while `muted` false, or out of range) |
-| `PUT /api/channels/{id}/notification-settings` | same; `{id}` = text channel or DM | `200 Setting` | `404` voice/foreign |
+| `PUT /api/servers/{id}/notification-settings` | `{level: Level\|null, muted: bool, mute_minutes?: 1..=527040, voice?: bool}` | `200 Setting` | `404` non-member; `422 mute_minutes: invalid` (given while `muted` false, or out of range) |
+| `PUT /api/channels/{id}/notification-settings` | same without `voice`; `{id}` = text channel or DM | `200 Setting` | `404` voice/foreign; `422 voice: invalid` for `voice: true` |
 
-`level: null` + `muted: false` deletes the row (inherit). `muted_until` = server `now() + mute_minutes`; absent `mute_minutes` with `muted: true` = until turned back on. Other sockets receive an `ns` frame and refetch.
+`level: null` + `muted: false` deletes the row (inherit), unless `voice` is on. An absent `voice` leaves the stored value as it is, so a client that does not know it never turns it off. `muted_until` = server `now() + mute_minutes`; absent `mute_minutes` with `muted: true` = until turned back on. Other sockets receive an `ns` frame and refetch.
 
 ### 8.2 Privacy (`notifications/privacy.rs`; web `messages/notificationPrivacy.ts:21-33`)
 
@@ -959,7 +961,7 @@ GIF box in messages: at most 320×240, never upscaled (`gifBox`, `gifs/api.ts:40
 | `POST /api/push/subscriptions` | `{endpoint: string ≤ 1024 on an allowed push host, keys: {p256dh, auth}}` | `204` (max 20 per user, bound to the session) — `404` push disabled, `422 endpoint|keys: invalid` |
 | `DELETE /api/push/subscriptions` | `{endpoint}` | `204` |
 
-A native desktop client has no browser push endpoint; it relies on `/ws` while running. Not needed for parity.
+A native desktop client has no browser push endpoint; it relies on `/ws` while running. Not needed for parity. What is pushed, and to whom, is in `deploy/README.md` ("Push notifications") and `backend/api/src/push/`: direct messages, server messages by notification level, Lives, a call that begins for members with `voice` on the server's setting (§8.1, the one push setting a native client shows), and a notice before the session behind a subscription ends.
 
 ---
 

@@ -48,6 +48,7 @@ function worker({ windows = [], notifications = [], endpoint } = {}) {
     shown.filter((n) => tag === undefined || n.tag === tag),
   );
   const entries = new Map();
+  const subscribe = vi.fn();
   const fetch = vi.fn().mockResolvedValue(new Response("public offline page"));
   const add = vi.fn(async (request) => {
     entries.set(new URL(request.url).pathname, await fetch(request));
@@ -71,6 +72,7 @@ function worker({ windows = [], notifications = [], endpoint } = {}) {
         getNotifications,
         pushManager: {
           getSubscription: async () => (endpoint ? { endpoint } : null),
+          subscribe,
         },
       },
       addEventListener: (name, handler) => handlers.set(name, handler),
@@ -123,12 +125,27 @@ function worker({ windows = [], notifications = [], endpoint } = {}) {
     await pending;
     return close;
   }
-  async function push(data) {
+  // `proposed`: the notification a browser built from a declarative push
+  // message; it then hands the worker no data.
+  async function push(data, proposed) {
     let pending;
     handlers.get("push")({
-      data: {
-        json: () => (typeof data === "string" ? JSON.parse(data) : data),
+      notification: proposed ?? null,
+      data: proposed
+        ? null
+        : {
+            json: () => (typeof data === "string" ? JSON.parse(data) : data),
+          },
+      waitUntil: (value) => {
+        pending = value;
       },
+    });
+    await pending;
+  }
+  async function subscriptionChange(event) {
+    let pending;
+    handlers.get("pushsubscriptionchange")({
+      ...event,
       waitUntil: (value) => {
         pending = value;
       },
@@ -140,6 +157,8 @@ function worker({ windows = [], notifications = [], endpoint } = {}) {
     navigate,
     tap,
     push,
+    subscriptionChange,
+    subscribe,
     showNotification,
     fetch,
     add,
@@ -503,6 +522,161 @@ describe("PWA push", () => {
     const w = worker();
     await w.push({ title: "x" });
     await w.push("not json");
+    await w.push({ web_push: 8030, notification: { title: "x" } });
+    await w.push(null, { title: "x", body: "", data: null });
     expect(w.showNotification).not.toHaveBeenCalled();
+  });
+
+  // What the server sends (backend/api/src/push, `Payload::encode`).
+  const declared = {
+    title: message.title,
+    body: message.body,
+    navigate: "https://chat.example.org/s/s1/c/c1",
+    tag: "gelabber:u1:c1",
+    lang: "de",
+    renotify: true,
+    silent: false,
+    data: {
+      path: message.path,
+      user: message.user,
+      channel: message.channel,
+      message: message.message,
+      at: message.at,
+    },
+  };
+  const shownAsBefore = [
+    "Ada · #allgemein",
+    {
+      body: "@Bob schau mal",
+      tag: "gelabber:u1:c1",
+      renotify: true,
+      icon: "/icons/icon-192.png",
+      data: {
+        path: "/s/s1/c/c1",
+        user: "u1",
+        message: "m2",
+        at: "2026-10-17T10:00:00.000002Z",
+      },
+    },
+  ];
+
+  it("reads a declarative push message where the browser hands over its JSON", async () => {
+    const w = worker();
+    // The top-level fields are for older workers; this one must not need
+    // them.
+    await w.push({ web_push: 8030, notification: declared, mutable: true });
+    expect(w.showNotification).toHaveBeenCalledWith(...shownAsBefore);
+  });
+
+  it("reads the notification a browser built from a declarative push message", async () => {
+    const w = worker();
+    await w.push(null, {
+      title: declared.title,
+      body: declared.body,
+      tag: declared.tag,
+      data: declared.data,
+    });
+    expect(w.showNotification).toHaveBeenCalledWith(...shownAsBefore);
+  });
+
+  it("recalls through a declarative push message too", async () => {
+    const shown = {
+      title: message.title,
+      body: message.body,
+      tag: "gelabber:u1:c1",
+      data: { path: message.path, user: "u1", message: "m2", at: message.at },
+    };
+    const w = worker({ notifications: [shown] });
+    await w.push({
+      web_push: 8030,
+      notification: {
+        ...declared,
+        body: "Nachricht gelöscht",
+        renotify: false,
+        silent: true,
+        data: { ...declared.data, recall: true },
+      },
+      mutable: true,
+    });
+    expect(w.showNotification).toHaveBeenCalledWith(
+      "Ada · #allgemein",
+      expect.objectContaining({ body: "Nachricht gelöscht", silent: true }),
+    );
+  });
+});
+
+describe("PWA push subscription renewal", () => {
+  const fresh = {
+    toJSON: () => ({
+      endpoint: "https://updates.push.services.mozilla.com/wpush/v2/new",
+      keys: { p256dh: "p", auth: "a" },
+    }),
+  };
+  function api(w, session = { csrf_token: "token-1" }) {
+    w.fetch.mockImplementation(async (path) =>
+      path === "/api/auth/session"
+        ? new Response(JSON.stringify(session), {
+            status: session ? 200 : 401,
+          })
+        : new Response(null, { status: 204 }),
+    );
+  }
+
+  it("tells the server the subscription the browser put in place", async () => {
+    const w = worker();
+    api(w);
+    await w.subscriptionChange({ newSubscription: fresh });
+    expect(w.subscribe).not.toHaveBeenCalled();
+    expect(w.fetch).toHaveBeenLastCalledWith("/api/push/subscriptions", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": "token-1",
+      },
+      body: JSON.stringify(fresh.toJSON()),
+    });
+  });
+
+  it("subscribes again with the old key where the browser only dropped it", async () => {
+    const w = worker();
+    api(w);
+    const key = new Uint8Array([1, 2, 3]).buffer;
+    w.subscribe.mockResolvedValue(fresh);
+    await w.subscriptionChange({
+      newSubscription: null,
+      oldSubscription: { options: { applicationServerKey: key } },
+    });
+    expect(w.subscribe).toHaveBeenCalledWith({
+      userVisibleOnly: true,
+      applicationServerKey: key,
+    });
+    expect(w.fetch).toHaveBeenLastCalledWith(
+      "/api/push/subscriptions",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("leaves it to the next start without a session or a key", async () => {
+    const signedOut = worker();
+    api(signedOut, null);
+    await signedOut.subscriptionChange({ newSubscription: fresh });
+    expect(signedOut.fetch).toHaveBeenCalledTimes(1);
+
+    const keyless = worker();
+    api(keyless);
+    await keyless.subscriptionChange({ newSubscription: null });
+    expect(keyless.subscribe).not.toHaveBeenCalled();
+    expect(keyless.fetch).not.toHaveBeenCalled();
+
+    const refused = worker();
+    api(refused);
+    refused.subscribe.mockRejectedValue(new Error("denied"));
+    await refused.subscriptionChange({
+      oldSubscription: {
+        options: { applicationServerKey: new ArrayBuffer(1) },
+      },
+    });
+    expect(refused.fetch).not.toHaveBeenCalled();
   });
 });

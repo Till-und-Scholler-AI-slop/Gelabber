@@ -16,6 +16,9 @@ pub const DATABASE_URL: &str = "DATABASE_URL";
 pub const REDIS_URL: &str = "REDIS_URL";
 pub const API_READY_TIMEOUT_MS: &str = "API_READY_TIMEOUT_MS";
 pub const API_DB_MAX_CONNECTIONS: &str = "API_DB_MAX_CONNECTIONS";
+/// Pool for the gateway's per-socket checks (#611, #612). `0` shares the
+/// main pool.
+pub const API_DB_GATEWAY_CONNECTIONS: &str = "API_DB_GATEWAY_CONNECTIONS";
 pub const API_COOKIE_SECURE: &str = "API_COOKIE_SECURE";
 pub const API_ALLOW_PLAIN_HTTP: &str = "API_ALLOW_PLAIN_HTTP";
 /// Explicit opt-in for an in-memory object store when MinIO is not set.
@@ -97,6 +100,7 @@ pub const API_EXPORT_MAX_BYTES: &str = "API_EXPORT_MAX_BYTES";
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 20;
+const DEFAULT_DB_GATEWAY_CONNECTIONS: u32 = 10;
 const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
 const DEFAULT_SESSION_IDLE_HOURS: u64 = 24 * 14;
 /// Ten years. Far past any sensible lifetime, and small enough that the
@@ -124,6 +128,8 @@ pub struct Config {
     /// Upper bound for each individual `/ready` dependency check.
     pub ready_timeout: Duration,
     pub db_max_connections: u32,
+    /// Size of the gateway's own pool; `0` shares [`Self::db_max_connections`].
+    pub db_gateway_connections: u32,
     /// Adds `Secure` to the session and CSRF cookies. Off by default because
     /// the Compose dev entry is plain HTTP on Caddy; set to `true` behind TLS.
     /// The gateway takes it as "the app's pages are `https://`" and refuses
@@ -530,6 +536,14 @@ impl Config {
             None => DEFAULT_DB_MAX_CONNECTIONS,
         };
 
+        let db_gateway_connections = match get(API_DB_GATEWAY_CONNECTIONS) {
+            Some(raw) => raw
+                .trim()
+                .parse::<u32>()
+                .map_err(|err| invalid(API_DB_GATEWAY_CONNECTIONS, &raw, err))?,
+            None => DEFAULT_DB_GATEWAY_CONNECTIONS,
+        };
+
         let cookie_secure = match get(API_COOKIE_SECURE) {
             Some(raw) => parse_bool(API_COOKIE_SECURE, &raw)?,
             None => false,
@@ -688,6 +702,7 @@ impl Config {
             redis_url,
             ready_timeout: Duration::from_millis(ready_timeout_ms),
             db_max_connections,
+            db_gateway_connections,
             cookie_secure,
             allow_plain_http,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
@@ -1272,6 +1287,7 @@ mod tests {
         assert_eq!(config.api_addr, "0.0.0.0:8080".parse().unwrap());
         assert_eq!(config.ready_timeout, Duration::from_millis(2000));
         assert_eq!(config.db_max_connections, 20);
+        assert_eq!(config.db_gateway_connections, 10);
         assert!(!config.cookie_secure);
         assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
         assert_eq!(config.session_idle, Duration::from_secs(14 * 24 * 3600));
@@ -1764,6 +1780,29 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { key: API_ADDR, .. }));
+    }
+
+    #[test]
+    fn gateway_pool_size_accepts_zero_and_rejects_garbage() {
+        let with = |value: &str| {
+            Config::from_source(source(&[
+                (DATABASE_URL, "postgres://u:p@localhost/db"),
+                (REDIS_URL, "redis://localhost"),
+                (API_DB_GATEWAY_CONNECTIONS, value),
+            ]))
+        };
+        assert_eq!(with("0").unwrap().db_gateway_connections, 0);
+        assert_eq!(with(" 32 ").unwrap().db_gateway_connections, 32);
+        assert_eq!(with("").unwrap().db_gateway_connections, 10);
+        for bad in ["-1", "many"] {
+            assert!(matches!(
+                with(bad).unwrap_err(),
+                ConfigError::Invalid {
+                    key: API_DB_GATEWAY_CONNECTIONS,
+                    ..
+                }
+            ));
+        }
     }
 
     fn secure_source(extra: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {

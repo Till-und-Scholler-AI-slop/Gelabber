@@ -31,6 +31,9 @@ pub struct ComposerState {
     pub files: Vec<OutgoingFile>,
     /// The files left out last, and why (`fileError`).
     pub file_error: Option<String>,
+    /// When the note's time (`FILE_NOTE_SECS`) last started; `None` starts
+    /// it with the next frame (`useFileNote`).
+    file_error_since: Option<f64>,
     pub emoji_open: bool,
     pub gif_open: bool,
     active: usize,
@@ -52,6 +55,13 @@ pub struct ComposerState {
 }
 
 impl ComposerState {
+    /// Shows the note naming the files left out, or closes it for `None`
+    /// (GEL-8). A new note gets its full time.
+    pub fn set_file_error(&mut self, error: Option<String>) {
+        self.file_error = error;
+        self.file_error_since = None;
+    }
+
     /// Inserts `text` at the caret (emoji picker).
     pub fn insert(&mut self, text: &str) {
         let at = self
@@ -64,6 +74,7 @@ impl ComposerState {
             .nth(at)
             .map_or(self.draft.len(), |(b, _)| b);
         self.draft.insert_str(byte, text);
+        self.set_file_error(None);
         self.caret = Some(at + text.chars().count());
         self.focus = true;
     }
@@ -126,8 +137,20 @@ pub fn dropping(ctx: &egui::Context, input: &ComposerInput) -> bool {
 }
 
 const NOTE: TextStyle = TextStyle::new(12.0, 400.0, 1.5);
+/// The note's × (`.lr-composer-file-error button`).
+const NOTE_CLOSE: f32 = 28.0;
+/// The note goes by itself after this long (`FILE_NOTE_MS`), unless the
+/// pointer is on it or its × has focus.
+pub const FILE_NOTE_SECS: f64 = 8.0;
 
-/// The file note's lines (`.lr-composer-file-error`), at `width`.
+/// How wide the note's text wraps in a pane `width` wide: the composer's
+/// width less the 6px in front and the × after a 4px gap.
+fn file_error_wrap(width: f32) -> f32 {
+    width - 32.0 - 6.0 - 4.0 - NOTE_CLOSE
+}
+
+/// The file note's height (`.lr-composer-file-error`), at `width`: its
+/// lines below 4px, or the × where that is taller.
 fn file_error_height(ctx: &egui::Context, state: &ComposerState, width: f32) -> f32 {
     let Some(error) = &state.file_error else {
         return 0.0;
@@ -137,10 +160,10 @@ fn file_error_height(ctx: &egui::Context, state: &ComposerState, width: f32) -> 
             error,
             NOTE,
             Color32::WHITE,
-            Some(width - 32.0 - 12.0),
+            Some(file_error_wrap(width)),
         ))
     });
-    4.0 + galley.rows.len() as f32 * NOTE.line_px()
+    4.0 + (4.0 + galley.rows.len() as f32 * NOTE.line_px()).max(NOTE_CLOSE)
 }
 
 /// The composer's height in a pane `width` wide (the list area gives way
@@ -523,7 +546,7 @@ pub fn show(
         }
         if let Some(i) = remove {
             state.files.remove(i);
-            state.file_error = None;
+            state.set_file_error(None);
         }
         if let Some(i) = describe {
             let file = &state.files[i];
@@ -673,6 +696,14 @@ pub fn show(
             actions.push(ComposerAction::EditLast);
         }
     }
+    // The note first, the reply with the next Esc (GEL-8).
+    if had_focus
+        && state.file_error.is_some()
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        state.set_file_error(None);
+        state.focus = true;
+    }
     if had_focus
         && state.reply.is_some()
         && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
@@ -743,6 +774,8 @@ pub fn show(
         ui.memory_mut(|m| m.request_focus(edit_id));
     }
     if state.draft != before {
+        // The note was read; writing on moves past it.
+        state.set_file_error(None);
         actions.push(ComposerAction::Typing(state.draft.clone()));
     }
     if output.response.lost_focus() {
@@ -838,7 +871,7 @@ pub fn show(
             files: std::mem::take(&mut state.files),
         });
         state.draft.clear();
-        state.file_error = None;
+        state.set_file_error(None);
         state.picked.clear();
         state.focus = true;
         actions.push(ComposerAction::StopTyping);
@@ -863,17 +896,63 @@ pub fn show(
             pos2(right - 6.0 - block.width(), field.bottom() + 4.0),
         );
     }
-    // The files left out, under the status line (`role="alert"`).
-    if let Some(error) = &state.file_error {
-        let block = Block::wrapped(ui, error, NOTE, c.danger, right - left - 12.0);
-        let at = pos2(left + 6.0, field.bottom() + status_h + 4.0);
+    // The files left out, under the status line (`role="alert"`), with a
+    // × like the reply bar's. It goes by itself after `FILE_NOTE_SECS`.
+    if let Some(error) = state.file_error.clone() {
+        let top = field.bottom() + status_h + 4.0;
+        let block = Block::wrapped(ui, &error, NOTE, c.danger, file_error_wrap(pane.width()));
+        let at = pos2(left + 6.0, top + 4.0);
         block.paint(ui.painter(), at);
         ui.interact(
             Rect::from_min_size(at, block.size()),
             edit_id.with("file-error"),
             Sense::hover(),
         )
-        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, error));
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &error));
+        let close = Rect::from_min_size(pos2(right - NOTE_CLOSE, top), Vec2::splat(NOTE_CLOSE));
+        let resp = ui.interact(close, edit_id.with("file-error-close"), Sense::click());
+        resp.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::Role::Button,
+                true,
+                texts::composer_dismiss_file_error(),
+            )
+        });
+        if resp.hovered() {
+            ui.painter().rect_filled(close, corner(5.0), c.hover);
+        }
+        icons::paint_centered(
+            ui.painter(),
+            Icon::Close,
+            close,
+            14.0,
+            if resp.hovered() { c.text } else { c.muted },
+        );
+        if resp.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+            crate::widgets::focus_ring_edge(ui.painter(), close, 5.0, &theme);
+        }
+        Tooltip::new(texts::composer_dismiss_file_error()).on_hover(&resp, Side::Above);
+        let note = Rect::from_min_max(
+            pos2(left, top),
+            pos2(right, close.bottom().max(at.y + block.size().y)),
+        );
+        let now = ui.input(|i| i.time);
+        if resp.clicked() {
+            state.set_file_error(None);
+            state.focus = true;
+        } else if ui.rect_contains_pointer(note) || resp.has_focus() {
+            // Held: the time starts over once the pointer and focus go.
+            state.file_error_since = Some(now);
+        } else {
+            let since = *state.file_error_since.get_or_insert(now);
+            let left_secs = FILE_NOTE_SECS - (now - since);
+            if left_secs <= 0.0 {
+                state.set_file_error(None);
+            } else {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs_f64(left_secs));
+            }
+        }
     }
     let mut sources = Vec::new();
     // Files picked with the paperclip.
@@ -919,7 +998,9 @@ pub fn show(
         if let Some(note) = files::add_files(&mut state.files, next) {
             notes.push(note);
         }
-        state.file_error = (!notes.is_empty()).then(|| notes.join(" "));
+        state.set_file_error((!notes.is_empty()).then(|| notes.join(" ")));
+        // Its time starts with the next frame.
+        ui.ctx().request_repaint();
     }
     actions
 }
@@ -1147,5 +1228,129 @@ mod tests {
             "{buttons:?}"
         );
         assert!(state.borrow().chip_rows > 1);
+    }
+
+    const NOTE_TEXT: &str = "setup.exe: Dieser Dateityp ist nicht erlaubt.";
+
+    fn with_note(state: &std::cell::RefCell<ComposerState>) {
+        state.borrow_mut().set_file_error(Some(NOTE_TEXT.into()));
+    }
+
+    fn key(harness: &mut egui_kittest::Harness<'_>, key: egui::Key) {
+        harness.input_mut().events.push(egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(2);
+    }
+
+    /// GEL-8: the note on files left out has a × that closes it.
+    #[test]
+    fn file_note_closes_with_its_button() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState::default());
+        with_note(&state);
+        let mut harness = composer(&state, &members);
+        harness.run_steps(2);
+        harness.get_by_label(NOTE_TEXT);
+        harness.get_by_label("Hinweis schließen").click();
+        harness.run_steps(2);
+        assert!(harness.query_by_label(NOTE_TEXT).is_none());
+        assert!(harness.query_by_label("Hinweis schließen").is_none());
+    }
+
+    /// GEL-8: writing on in the draft moves past the note.
+    #[test]
+    fn file_note_closes_when_typing() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState::default());
+        with_note(&state);
+        state.borrow_mut().focus = true;
+        let mut harness = composer(&state, &members);
+        harness.run_steps(3);
+        harness.get_by_label(NOTE_TEXT);
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("H".into()));
+        harness.run_steps(2);
+        assert_eq!(state.borrow().draft, "H");
+        assert!(state.borrow().file_error.is_none());
+        assert!(harness.query_by_label(NOTE_TEXT).is_none());
+    }
+
+    /// GEL-8: Esc closes the note first, the reply with the next one.
+    #[test]
+    fn escape_closes_the_file_note_before_the_reply() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState {
+            reply: Some((Uuid::nil(), "Jonas".into())),
+            focus: true,
+            ..ComposerState::default()
+        });
+        with_note(&state);
+        let mut harness = composer(&state, &members);
+        harness.run_steps(3);
+        key(&mut harness, egui::Key::Escape);
+        assert!(state.borrow().file_error.is_none());
+        assert!(state.borrow().reply.is_some());
+        key(&mut harness, egui::Key::Escape);
+        assert!(state.borrow().reply.is_none());
+    }
+
+    /// GEL-8: the note goes by itself once its time is up, but not while
+    /// the pointer is on it; its time then starts over.
+    #[test]
+    fn file_note_goes_after_its_time_unless_held() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState::default());
+        with_note(&state);
+        let mut harness = composer(&state, &members);
+        harness.run_steps(2);
+        harness.get_by_label(NOTE_TEXT).hover();
+        harness.run_steps(2);
+        state.borrow_mut().file_error_since = Some(-FILE_NOTE_SECS * 2.0);
+        harness.run_steps(2);
+        harness.get_by_label(NOTE_TEXT);
+        let held = state.borrow().file_error_since.expect("timer");
+        assert!(held >= 0.0, "hover restarts the time: {held}");
+        // The pointer goes: the time runs out.
+        harness.input_mut().events.push(egui::Event::PointerGone);
+        harness.run_steps(2);
+        state.borrow_mut().file_error_since = Some(-FILE_NOTE_SECS * 2.0);
+        harness.run_steps(2);
+        assert!(state.borrow().file_error.is_none());
+        assert!(harness.query_by_label(NOTE_TEXT).is_none());
+    }
+
+    /// GEL-8: a file that is fine, added after one left out, leaves no
+    /// note behind; leaving the page drops it as well.
+    #[test]
+    fn valid_file_after_a_refused_one_shows_no_note() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState::default());
+        let mut harness = composer(&state, &members);
+        harness.run_steps(2);
+        let dir = temp_dir("note");
+        std::fs::write(dir.join("setup.exe"), b"MZ").expect("write");
+        std::fs::write(dir.join("liste.txt"), b"Milch").expect("write");
+        for name in ["setup.exe", "liste.txt"] {
+            harness
+                .input_mut()
+                .dropped_files
+                .push(std::sync::Arc::new(Dropped(dir.join(name))));
+            harness.step();
+            loaded(&mut harness, &state);
+            if name == "setup.exe" {
+                harness.get_by_label(NOTE_TEXT);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(state.borrow().file_error.is_none());
+        assert!(harness.query_by_label(NOTE_TEXT).is_none());
+        assert_eq!(state.borrow().files.len(), 1);
     }
 }

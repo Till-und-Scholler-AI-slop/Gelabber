@@ -70,12 +70,14 @@ import { configurePushToTalk, onPushToTalkGate } from "./pushToTalk.ts";
 import {
   IDLE_VOICE,
   useVoice,
+  type LiveViewMode,
   type VoiceConnection,
   type VoiceParticipant,
   type VoiceState,
 } from "./voiceStore.ts";
 import { applySourceAudioChoice } from "./localSourceAudio.ts";
 import {
+  applyScreenMode,
   applyStreamProfile,
   bumpVideoEpoch,
   captureOpen,
@@ -130,6 +132,7 @@ export { retryMicrophone } from "./callMicrophone.ts";
 export type { RtpSender, VoiceDeps, VoiceGateway } from "./sessionState.ts";
 export {
   useVoice,
+  type LiveViewMode,
   type LostCall,
   type RemoteVideo,
   type SourceAudioStatus,
@@ -992,9 +995,17 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
   const screenProfileChanged = prev.screenProfile !== next.screenProfile;
   if (joined && recaptureMic) void refreshMic();
   else if (joined && prev.inputGain !== next.inputGain) queueInputGain();
+  if (
+    !recaptureMic &&
+    (prev.gateAuto !== next.gateAuto ||
+      prev.gateThresholdDb !== next.gateThresholdDb ||
+      prev.voiceInput !== next.voiceInput)
+  )
+    voice.activeMicGain?.setGate(next);
   if (joined && camChanged && useVoice.getState().camera) void refreshCamera();
   if (cameraProfileChanged) void applyStreamProfile("camera");
   if (screenProfileChanged) void applyStreamProfile("screen");
+  if (prev.screenMode !== next.screenMode) void applyScreenMode();
   if (
     joined &&
     (prev.videoUploadLimit !== next.videoUploadLimit ||
@@ -1293,6 +1304,7 @@ export function joinVoice(input: {
         .map((id) => [id, { s: true }]),
     ),
     sourceWatchSupported: false,
+    liveViewModes: {},
     remote: {},
     participants: { [self]: { pubs: [] } },
   });
@@ -1487,6 +1499,29 @@ export function toggleSourceWatch(userId: string, kind: "s"): void {
   }
 }
 
+/** GEL-32: watch `userId`'s Live sharp or smooth, or as its owner set it
+ * (`null`). Holds for this call. */
+export function setLiveViewMode(
+  userId: string,
+  mode: LiveViewMode | null,
+): void {
+  const state = useVoice.getState();
+  if (state.status !== "joined" || userId === currentUserId()) return;
+  const liveViewModes = { ...state.liveViewModes };
+  if (mode) liveViewModes[userId] = mode;
+  else delete liveViewModes[userId];
+  useVoice.setState({ liveViewModes });
+  if (state.sourceWatchSupported) sendViewMode(userId, mode);
+}
+
+/** A gateway from before GEL-32 does not know the choice: the Live then
+ * plays as its owner set it. */
+function sendViewMode(userId: string, mode: LiveViewMode | null): void {
+  void voice.seat
+    .request("viewMode", { u: userId, sharp: mode ? mode === "sharp" : null })
+    .catch(() => {});
+}
+
 function parseIncomingVideo(
   track: MediaStreamTrack,
 ): { userId: string; k: "v" | "s" } | null {
@@ -1654,6 +1689,10 @@ async function startPeer(
     ))
       if (subscriptions.s)
         await voice.seat.request("w", { u: userId, k: "s", on: true });
+    for (const [userId, mode] of Object.entries(
+      useVoice.getState().liveViewModes,
+    ))
+      sendViewMode(userId, mode);
     attachSeatDiagnostics(mine);
   } catch (error) {
     if (voice.seat.generation !== mine) return;

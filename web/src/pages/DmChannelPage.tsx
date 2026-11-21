@@ -121,15 +121,11 @@ function DmChat({ dm }: { dm: DirectMessage }) {
               }
               channelId={dm.id}
               channelName={dm.peer.name}
-              canSend={!dm.request?.incoming && !dm.blocked && !dm.closed}
+              canSend={!dm.request?.incoming && !dm.blocked}
               canSendFiles={!dm.request}
               composer={
-                dm.blocked || dm.closed ? (
-                  <ClosedBar
-                    peerId={dm.peer.id}
-                    peerName={dm.peer.name}
-                    blocked={Boolean(dm.blocked)}
-                  />
+                dm.blocked ? (
+                  <ClosedBar peerId={dm.peer.id} peerName={dm.peer.name} />
                 ) : dm.request?.incoming ? (
                   <RequestBar
                     channelId={dm.id}

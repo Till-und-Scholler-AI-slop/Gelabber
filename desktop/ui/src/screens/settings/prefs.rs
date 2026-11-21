@@ -80,6 +80,8 @@ pub struct Prefs {
     /// `balanced` or `<height>p<fps>`.
     pub camera_profile: String,
     pub screen_profile: String,
+    /// `sharp` ("Text scharf halten") or `smooth` (GEL-26).
+    pub screen_mode: String,
     /// Bits per second; 0 = no limit.
     pub video_upload_limit: f64,
     pub call_sounds: bool,
@@ -93,6 +95,9 @@ pub struct Prefs {
     pub ptt_key: String,
     pub ptt_key_label: String,
     pub ptt_release_delay: f64,
+    /// Input sensitivity (GEL-27): automatic, or below `gate_threshold_db`.
+    pub gate_auto: bool,
+    pub gate_threshold_db: f64,
     /// The account's last theme, painted at start before /me/themes answers.
     pub theme: Option<gelabber_client::Theme>,
     /// The language the app showed last, for the next start and while
@@ -122,6 +127,7 @@ impl Default for Prefs {
             economy_mode: false,
             camera_profile: "balanced".into(),
             screen_profile: "balanced".into(),
+            screen_mode: "smooth".into(),
             video_upload_limit: 0.0,
             call_sounds: true,
             call_sound_volume: 0.35,
@@ -135,6 +141,8 @@ impl Default for Prefs {
             ptt_key: String::new(),
             ptt_key_label: String::new(),
             ptt_release_delay: 200.0,
+            gate_auto: true,
+            gate_threshold_db: gelabber_call::logic::GATE_THRESHOLD_DEFAULT,
             theme: None,
             locale: None,
         }
@@ -180,6 +188,11 @@ impl Prefs {
             economy_mode: b("economyMode", d.economy_mode),
             camera_profile: s("cameraProfile", "balanced"),
             screen_profile: s("screenProfile", "balanced"),
+            screen_mode: if s("screenMode", "smooth") == "sharp" {
+                "sharp".into()
+            } else {
+                "smooth".into()
+            },
             video_upload_limit: n("videoUploadLimit", 0.0).max(0.0),
             call_sounds: b("callSounds", d.call_sounds),
             call_sound_volume: n("callSoundVolume", d.call_sound_volume).clamp(0.0, 1.0),
@@ -195,6 +208,13 @@ impl Prefs {
             ptt_key: s("pttKey", ""),
             ptt_key_label: s("pttKeyLabel", ""),
             ptt_release_delay: n("pttReleaseDelay", d.ptt_release_delay).clamp(0.0, 1000.0),
+            gate_auto: b("gateAuto", d.gate_auto),
+            gate_threshold_db: n("gateThresholdDb", d.gate_threshold_db)
+                .clamp(
+                    gelabber_call::logic::GATE_THRESHOLD_MIN,
+                    gelabber_call::logic::GATE_THRESHOLD_MAX,
+                )
+                .round(),
             theme: v
                 .get("theme")
                 .and_then(|t| serde_json::from_value(t.clone()).ok()),
@@ -229,6 +249,7 @@ impl Prefs {
         put("economyMode", json!(self.economy_mode));
         put("cameraProfile", json!(self.camera_profile));
         put("screenProfile", json!(self.screen_profile));
+        put("screenMode", json!(self.screen_mode));
         put("videoUploadLimit", json!(self.video_upload_limit));
         put("callSounds", json!(self.call_sounds));
         put("callSoundVolume", json!(self.call_sound_volume));
@@ -240,6 +261,8 @@ impl Prefs {
         put("pttKey", json!(self.ptt_key));
         put("pttKeyLabel", json!(self.ptt_key_label));
         put("pttReleaseDelay", json!(self.ptt_release_delay));
+        put("gateAuto", json!(self.gate_auto));
+        put("gateThresholdDb", json!(self.gate_threshold_db));
         if let Some(theme) = &self.theme {
             put("theme", serde_json::to_value(theme).unwrap_or(Value::Null));
         }

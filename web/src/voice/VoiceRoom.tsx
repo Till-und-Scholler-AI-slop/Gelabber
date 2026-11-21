@@ -263,6 +263,7 @@ export function VoiceRoom({
         sourceWatch: {
           watching: voice.sourceSubscriptions[tile.userId]?.[kind] === true,
           toggle: () => toggleSourceWatch(tile.userId, kind),
+          owner: tile.userId,
         },
       };
     return {};

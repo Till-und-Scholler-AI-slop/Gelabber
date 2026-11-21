@@ -30,6 +30,9 @@ export type NotificationSetting = {
   level: NotifyLevel | null;
   muted: boolean;
   muted_until: string | null;
+  /** A server's only (#616): push when someone starts a call there.
+   * Missing from a server older than v0.12. */
+  voice?: boolean;
 };
 
 export type SettingChange = {
@@ -37,6 +40,8 @@ export type SettingChange = {
   muted: boolean;
   /** With `muted`: for this long; absent until turned back on. */
   mute_minutes?: number;
+  /** A server's only; absent leaves it as it is. */
+  voice?: boolean;
 };
 
 export const settingsKey = (stamp: ScopeStamp) =>
@@ -138,7 +143,7 @@ export function useChangeNotificationSetting() {
     if (!stampHolds(stamp)) return saved;
     client.setQueryData<NotificationSetting[]>(settingsKey(stamp), (rows) => [
       ...(rows ?? []).filter((row) => row.scope !== scope || row.id !== id),
-      ...(saved.level || saved.muted ? [saved] : []),
+      ...(saved.level || saved.muted || saved.voice ? [saved] : []),
     ]);
     await refreshReadState(client, stamp);
     return saved;

@@ -15,8 +15,6 @@ crate::strings! {
         | "People you block can’t message you or send friend requests. They are not told.";
     area_empty = "Du blockierst niemanden." | "You don’t block anyone.";
     area_load_failed = "Die Liste konnte nicht geladen werden." | "Couldn’t load the list.";
-    composer_closed = "Du kannst in dieser Unterhaltung keine Nachrichten senden."
-        | "You can’t send messages in this conversation.";
     folded_show = "Anzeigen" | "Show";
 }
 

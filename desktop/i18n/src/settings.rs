@@ -189,6 +189,11 @@ crate::strings! {
     media_live_title = "Live" | "Live";
     media_live_quality_hint = "Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab."
         | "Higher values need more processing power and upload. The quality you get depends on source, device and connection.";
+    media_live_keep_sharp = "Text scharf halten" | "Keep text sharp";
+    media_live_keep_sharp_on = "Bei schwacher Verbindung sinkt zuerst die Bildrate, die Auflösung bleibt. Gut für Office und Terminal. Gilt sofort, auch im laufenden Live."
+        | "On a weak connection the frame rate drops first and the resolution stays. Good for office work and terminals. Applies at once, also during a Live.";
+    media_live_keep_sharp_off = "Bei schwacher Verbindung sinkt zuerst die Auflösung, das Bild bleibt flüssig. Gut für Spiele und Videos. Gilt sofort, auch im laufenden Live."
+        | "On a weak connection the resolution drops first and motion stays smooth. Good for games and videos. Applies at once, also during a Live.";
     media_live_share_sound = "Ton mitsenden" | "Share sound";
     media_live_share_sound_hint = "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Live-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter."
         | "Applies while you are live too. It shares the sound of other applications, never your microphone or the call’s sound. Live audio is sent as stereo music, without microphone filters.";
@@ -229,6 +234,25 @@ crate::strings! {
     media_ptt_release_delay = "Nachlaufzeit" | "Release delay";
     media_ptt_release_delay_hint = "So lange sendet das Mikrofon nach dem Loslassen weiter."
         | "How long your microphone keeps sending after you let go.";
+    // Input sensitivity (GEL-27; web voiceSettings `gate.*`).
+    media_gate_title = "Eingabeempfindlichkeit" | "Input sensitivity";
+    media_gate_auto_hint = "Automatisch: Gelabber misst das Rauschen in deinem Raum und sendet nur, wenn du sprichst."
+        | "Automatic: Gelabber measures the noise in your room and only sends while you speak.";
+    media_gate_threshold = "Schwelle" | "Threshold";
+    media_gate_threshold_hint = "Unter dieser Schwelle sendet dein Mikrofon Stille. Sprich und tippe: Beim Sprechen sollte der Balken über die Linie gehen, beim Tippen nicht."
+        | "Below this threshold your microphone sends silence. Speak and type: the bar should cross the line when you speak, not when you type.";
+    media_gate_open = "Über der Schwelle: wird gesendet" | "Above the threshold: sending";
+    media_gate_closed = "Unter der Schwelle: Stille" | "Below the threshold: silence";
+    media_gate_idle = "Den Pegel siehst du im Gespräch oder hier mit „Pegel prüfen“."
+        | "You see the level in a call, or here with “Check level”.";
+    media_gate_check = "Pegel prüfen" | "Check level";
+    media_gate_stop_check = "Prüfen beenden" | "Stop checking";
+    media_gate_check_failed = "Das Mikrofon lässt sich gerade nicht prüfen."
+        | "The microphone cannot be checked right now.";
+    media_gate_ptt_off = "Bei Push-to-Talk entscheidet die Taste. Die Schwelle ist dann aus."
+        | "With push to talk, the key decides. The threshold is off then.";
+    media_gate_original_off = "Bei „Original / Musik“ bleibt das Mikrofon unverarbeitet. Die Schwelle ist dann aus."
+        | "With “Original / music” the microphone stays unprocessed. The threshold is off then.";
     /// The key's place in the Hyprland bind line: `bind = , <Taste>, …`.
     media_ptt_hyprland_key = "Taste" | "key";
     media_ptt_global_in_call = "Im Gespräch hört die App die Taste auch, wenn ein anderes Fenster vorne ist."
@@ -357,6 +381,19 @@ pub fn security_sign_in_disconnect_confirm_message(provider: &str) -> String {
         Locale::En => format!(
             "You will no longer sign in with {provider}. You can connect it again at any time."
         ),
+    }
+}
+
+/// A level or threshold of the input sensitivity: "{db} dB".
+pub fn media_gate_db(db: i64) -> String {
+    format!("{db} dB")
+}
+
+/// The automatic threshold as it stands: "automatisch {db} dB".
+pub fn media_gate_auto_at(db: i64) -> String {
+    match get() {
+        Locale::De => format!("automatisch {db} dB"),
+        Locale::En => format!("automatic {db} dB"),
     }
 }
 

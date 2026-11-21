@@ -233,6 +233,17 @@ describe("durable send attempts with controlled HTTP responses", () => {
     expect(failed.error).toBe("Dieses GIF ist nicht mehr verfügbar.");
   });
 
+  it("leaves no failed row when the user blocks the peer (#619)", async () => {
+    routes(() => json(403, { error: "blocked" }));
+    await login(user.email, "password");
+    await expect(
+      sendMessageAttempt("c", author, { content: "Hallo" }),
+    ).rejects.toThrow();
+    expect(attempts()).toEqual([]);
+    expect(usePendingMessages.getState().byChannel.c ?? []).toEqual([]);
+    expect(useToasts.getState().toasts).toEqual([]);
+  });
+
   it("uploads only the turned-down file again, naming it", async () => {
     let presigns = 0;
     let writes = 0;

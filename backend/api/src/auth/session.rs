@@ -290,9 +290,30 @@ impl CurrentSession {
         db: &'a PgPool,
     ) -> Result<Option<sqlx::Transaction<'a, sqlx::Postgres>>, ApiError> {
         let mut tx = db.begin().await?;
-        let exists: Option<Vec<u8>> = sqlx::query_scalar("SELECT token_hash FROM sessions WHERE token_hash = $1 AND user_id = $2 AND expires_at > now() FOR SHARE")
-            .bind(&self.hash).bind(self.user.id).fetch_optional(&mut *tx).await?;
+        let exists = self.lock_row(&mut tx).await?;
         Ok(exists.map(|_| tx))
+    }
+
+    /// [`Self::lock_live`] for a socket's checks. Only the wait for the row
+    /// lock is bounded by `lock_wait` (a logout or deletion holding the row);
+    /// the wait for a pool connection is bounded by the pool's own acquire
+    /// timeout. A busy pool then delays the socket's next batch, which keeps
+    /// queueing, instead of ending the socket (#612).
+    pub async fn lock_live_within<'a>(
+        &self,
+        db: &'a PgPool,
+        lock_wait: Duration,
+    ) -> Result<Option<sqlx::Transaction<'a, sqlx::Postgres>>, ApiError> {
+        let mut tx = db.begin().await?;
+        let exists = tokio::time::timeout(lock_wait, self.lock_row(&mut tx))
+            .await
+            .map_err(|_| ApiError::Internal("session lock timed out".into()))??;
+        Ok(exists.map(|_| tx))
+    }
+
+    async fn lock_row(&self, db: &mut sqlx::PgConnection) -> Result<Option<Vec<u8>>, ApiError> {
+        Ok(sqlx::query_scalar("SELECT token_hash FROM sessions WHERE token_hash = $1 AND user_id = $2 AND expires_at > now() FOR SHARE")
+            .bind(&self.hash).bind(self.user.id).fetch_optional(db).await?)
     }
 }
 

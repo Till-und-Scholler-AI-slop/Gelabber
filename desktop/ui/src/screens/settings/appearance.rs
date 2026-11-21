@@ -107,8 +107,20 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let top = ui.cursor().min;
     let card_h = 126.3;
     let mut arrowed = None;
+    // "System" with the desktop theme's own palette shows that palette and
+    // where it comes from.
+    let (system, source) = themes::system_theme(ui.ctx());
+    let desktop = matches!(
+        source,
+        themes::SystemSource::Omarchy(_) | themes::SystemSource::Kde
+    );
     for (i, (id, label, hint)) in MODES.iter().enumerate() {
-        let (label, hint) = (label(), hint());
+        let label = label();
+        let hint = match source {
+            themes::SystemSource::Scheme => hint().to_owned(),
+            _ if *id == "system" => source.hint(),
+            _ => hint().to_owned(),
+        };
         let rect = Rect::from_min_size(
             pos2(top.x + i as f32 * (card_w + gap), top.y),
             vec2(card_w, card_h),
@@ -169,7 +181,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             vec2(card_w - 26.0, 56.0),
         );
         let r = theme.radius.sm.round() as u8;
-        if *id == "system" {
+        if *id == "system" && desktop {
+            swatch(ui, sw, &system.colors, corner(theme.radius.sm), [true; 4]);
+        } else if *id == "system" {
             let (l, d) = (preset("light").colors, preset("dark").colors);
             let half = sw.width() / 2.0;
             let left = Rect::from_min_size(sw.min, vec2(half, sw.height()));
@@ -211,7 +225,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         controls::radio_mark(ui, pos2(rect.left() + 13.0, rect.top() + 78.0), checked);
         let x = rect.left() + 43.0;
         Block::single(ui, label, text::UI, c.text).paint(ui.painter(), pos2(x, rect.top() + 77.0));
-        Block::single(ui, hint, text::META, c.muted).paint(
+        Block::single(ui, &hint, text::META, c.muted).paint(
             ui.painter(),
             pos2(x, rect.top() + 77.0 + text::UI.line_px() + 2.0),
         );

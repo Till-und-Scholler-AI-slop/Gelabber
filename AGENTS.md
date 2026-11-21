@@ -15,13 +15,14 @@ The **shipped line** is the latest release tag on `main`.
 
 - **Branch names** say what kind of work the branch holds, not who or what
   wrote it: `<type>/<issue>-<short-description>`, lowercase with hyphens,
-  e.g. `fix/123-reconnect-after-sleep` or `feature/124-message-search`. The
-  type follows the issue: `feature/` (Feature), `fix/` (Bug), and for a Task
-  the closest of `docs/`, `ci/`, `refactor/` or `chore/` (dependencies,
-  cleanup). Without an issue, open one first (see Planning). Release work
-  uses `release/vX.Y.Z`, `hotfix/vX.Y.Z-<short-description>` and
-  `sync/main-into-vX.Y`. Only version branches start with `v`. Dependabot
-  keeps its own names.
+  where `<issue>` is the Linear ID, e.g. `fix/gel-21-edit-under-block` or
+  `feature/gel-30-message-search`. The ID in the name links the branch and
+  its pull request to the Linear issue. The type follows the issue's label:
+  `feature/` (Feature), `fix/` (Bug), and otherwise the closest of `docs/`,
+  `ci/`, `refactor/` or `chore/` (dependencies, cleanup). Without an issue,
+  open one first (see Planning). Release work uses `release/vX.Y.Z`,
+  `hotfix/vX.Y.Z-<short-description>` and `sync/main-into-vX.Y`. Only
+  version branches start with `v`. Dependabot keeps its own names.
 - **Features:** branch off the development line; the PR targets it. Older
   version branches are complete.
 - **Releases:** a release branch from the development line with `origin/main`
@@ -45,30 +46,42 @@ The **shipped line** is the latest release tag on `main`.
 
 ## Planning
 
-Work is tracked in the organization project
-[Gelabber](https://github.com/orgs/Till-und-Scholler-AI-slop/projects/2).
+Work is planned in the Linear project
+[Gelabber](https://linear.app/gelabber/project/gelabber-e58336264dfd)
+(team `GEL`). Linear is the one place for status, assignee and milestone.
+Each Linear issue is synced both ways with a GitHub issue in this repository
+(title, description, comments, open or closed), so people without Linear can
+still read and report on GitHub. Plan in Linear, not on GitHub: GitHub
+milestones and the old GitHub project board are not kept up to date.
 
-- **Issue first:** all work has an issue. If there is none, open one (type
-  Bug, Feature or Task) before the branch.
+- **Issue first:** all work has a Linear issue in the project Gelabber, with
+  the label Bug, Feature or Improvement. If there is none, create it in
+  Linear before the branch. An issue opened on GitHub appears in Linear by
+  itself; add it to the project there. Without Linear access (most agent
+  sessions), open the GitHub issue and ask someone with Linear access for
+  the `GEL-<n>` it gets there and to set its project, milestone and
+  assignee.
 - **Assignee** means "working on it now". When you start, assign the issue to
   the person who asked for the work, not to the author of the PR. When you
   stop without finishing, remove the assignee and say on the issue why.
-- **Milestone** is the release the work ships in. Use an open milestone; if it
-  is unclear which one, ask. Create, rename or close milestones only when
-  asked or as part of a release (below).
-- **Pull requests** say `Closes #<n>` for their issue, so merging the PR
-  closes it, into a version branch too.
-- **Status** on the project follows the work, and keeping it current is part
-  of the work: **In progress** while someone works on the issue, **In review**
-  once its PR is ready for review, **Done** when the PR is merged.
-  `.github/workflows/project-status.yml` moves the card from the assignee and
-  from the PR's `Closes #<n>`. After assigning and after marking the PR ready,
-  check the issue's Status; if it did not move, run that workflow by hand
-  (`workflow_dispatch` with the issue number and the Status), and if that
-  fails too, say so on the issue.
+- **Milestone** is the release the work ships in, as a milestone of the
+  Linear project. Use an open one; if it is unclear which one, ask. Create,
+  rename or complete milestones only when asked or as part of a release
+  (below).
+- **Pull requests** link their issue: the Linear ID in the branch name, and
+  `Fixes GEL-<n>` in the description. Linear then moves the issue with the
+  pull request and closes it on merge, into a version branch too; the GitHub
+  issue closes through the sync. A pull request that should not close its
+  issue says `Part of GEL-<n>` instead.
+- **Status** follows the work, and keeping it current is part of the work:
+  **In Progress** while someone works on the issue, **In Review** once its
+  PR is ready for review, **Done** when the PR is merged. Linear's team
+  automation moves it from the linked pull request. After opening the PR and
+  after marking it ready, check the issue's status in Linear and set it by
+  hand if it did not move.
 - **Each milestone** states the release goal in its description, in one to
-  three sentences. After a release: close its milestone, move open issues to
-  the next one, write that one's goal.
+  three sentences. After a release: complete its milestone, move open issues
+  to the next one, write that one's goal.
 
 ## Procedures
 

@@ -52,7 +52,8 @@ const AREA_TITLE: TextStyle = text::TITLE.tracking(-0.01);
 
 // ----------------------------------------------------------------- frame
 
-/// `.lr-channel-header`: 52px incl. its bottom border, h1 at x+20, and an
+/// `.lr-channel-header`: 52px incl. its bottom border, h1 at x+52 (after
+/// the channel list's button, `HEADER_LEAD`), and an
 /// optional muted context after it (" · Wohnzimmer").
 pub fn header(ui: &Ui, page: Rect, title: &str, context: Option<&str>) {
     let theme = Theme::of(ui.ctx());
@@ -62,10 +63,19 @@ pub fn header(ui: &Ui, page: Rect, title: &str, context: Option<&str>) {
     painter.rect_filled(bar, 0.0, c.bg);
     crate::widgets::rule_h(painter, c.border, page.x_range(), page.top() + 51.0);
     let top = page.top() + 14.25;
-    let block = paint(ui, pos2(page.left() + 20.0, top), title, HEADER, c.text);
+    let block = paint(
+        ui,
+        pos2(
+            page.left() + crate::screens::layout::HEADER_LEAD + 20.0,
+            top,
+        ),
+        title,
+        HEADER,
+        c.text,
+    );
     if let Some(context) = context {
         let style = HEADER.weight(500.0).tracking(0.0);
-        let x = page.left() + 20.0 + block.width();
+        let x = page.left() + crate::screens::layout::HEADER_LEAD + 20.0 + block.width();
         paint(ui, pos2(x, top), &format!(" · {context}"), style, c.muted);
     }
 }

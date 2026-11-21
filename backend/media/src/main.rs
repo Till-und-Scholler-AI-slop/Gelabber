@@ -11,6 +11,12 @@ async fn main() -> ExitCode {
         error!(error = %err, "gelabber-media failed to start");
         return ExitCode::FAILURE;
     }
+    // Give memory freed after a load peak back to the OS (#614).
+    if let Err(err) =
+        gelabber_shared::memory::release_after_peaks(gelabber_shared::memory::TRIM_INTERVAL)
+    {
+        tracing::warn!(error = %err, "could not start returning freed memory");
+    }
 
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
