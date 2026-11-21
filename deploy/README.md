@@ -643,6 +643,45 @@ It uses only its own throwaway containers and runs a real rollback to an old
 API binary; the older `deploy/tools/check-chat-migration-restore.py` stays available
 as a quick schema/data drill without object store or binary acceptance.
 
+## PostgreSQL major upgrade
+
+A release that moves the bundled PostgreSQL to a new major version (v0.12.1:
+18 → 19) needs one extra step. The image keeps each major version's data in a
+folder of its own on the volume (`/var/lib/postgresql/18/docker`,
+`…/19/docker`). The new image finds no data of its own version and refuses to
+start: `docker compose up` shows "there appears to be PostgreSQL data in
+/var/lib/postgresql/18/docker".
+
+Move the data with dump and restore, in a maintenance window, after updating
+the checkout to the release and before `up`:
+
+```bash
+cd deploy/compose
+sh ../backup.sh              # as in "Backup": the usual snapshot pair first
+sh ../postgres-upgrade.sh
+# then the rollout as in "Rollout and rollback with exact digests"
+```
+
+`postgres-upgrade.sh` stops api, web, media and postgres, starts the old
+version (`postgres:18.6-alpine3.24`, or `GELABBER_POSTGRES_OLD_IMAGE`) on its
+data without a network, creates the new cluster with the user, password and
+database from `.env`, copies the database with `pg_dump`/`pg_restore`, and
+checks that every table has the same number of rows on both sides. The dump
+and both row counts stay in `backups/<time>-postgres-18-to-19/`. On success
+the new postgres runs and the rest of the stack is still stopped; on an error
+nothing on the old cluster has changed. Running it again after a successful
+run does nothing.
+
+The old cluster stays on the volume. Going back means the previous release's
+`compose.yaml` again: it starts PostgreSQL 18 on the old data, as it was
+before the upgrade, so everything written since is lost. Once the new version
+runs well, free the space:
+
+```bash
+docker run --rm -v "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql"}}{{.Name}}{{end}}{{end}}' "$(docker compose ps -q postgres)"):/var/lib/postgresql" \
+  postgres:19.0-alpine3.24 rm -rf /var/lib/postgresql/18
+```
+
 ## Metrics
 
 No debug UI in `web`. Grafana does not start with `docker compose up`:
