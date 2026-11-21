@@ -44,7 +44,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       redis:
-        image: redis:8.10.1-alpine
+        image: redis:8.10.3-alpine
         ports:
           - 6379:6379
         options: >-
@@ -129,7 +129,7 @@ jobs:
       - name: Node for owned core fault acceptance
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.8.2
+          node-version: 26.13.1
           cache: npm
           cache-dependency-path: web/package-lock.json
 

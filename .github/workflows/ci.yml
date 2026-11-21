@@ -113,7 +113,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       redis:
-        image: redis:8.10.1-alpine
+        image: redis:8.10.3-alpine
         ports:
           - 6379:6379
         options: >-
@@ -263,11 +263,11 @@ jobs:
           set -euo pipefail
           caddy_archive="$(mktemp)"
           trap 'rm -f "$caddy_archive"' EXIT
-          curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.8/caddy_2.11.8_linux_amd64.tar.gz" -o "$caddy_archive"
+          curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_linux_amd64.tar.gz" -o "$caddy_archive"
           tar -xzf "$caddy_archive" -C /usr/local/bin caddy
           chmod +x /usr/local/bin/caddy
           caddy version
-          test "$(caddy version | cut -d ' ' -f 1)" = "v2.11.8"
+          test "$(caddy version | cut -d ' ' -f 1)" = "v2.11.9"
 
       # Also checks that every workflow action is pinned to a commit SHA.
       - name: Test deployment config
@@ -293,7 +293,7 @@ jobs:
       - name: Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.8.2
+          node-version: 26.13.1
           cache: npm
           cache-dependency-path: web/package-lock.json
 
