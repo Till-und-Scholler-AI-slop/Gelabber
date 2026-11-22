@@ -20,12 +20,24 @@ is the order of the work; check each step's result before the next one.
    in `deploy/compose/compose.yaml`, `deploy/README.md`). Then
    `python3 -m unittest discover -s deploy/compose/tests` (it checks that the
    versions agree).
-4. **Notes.** `.github/release-notes/vX.Y.Z.md`, in the shape of the previous
-   notes: what changed for people using it, what operators must do on
-   upgrade, and anything that breaks older clients. Source:
-   `git log --merges --format='%s%n%b' <last tag>..HEAD`. Check the upgrade
-   traps that came up before: image pins that must move together, new
-   required `.env` variables, and migrations that cannot be undone.
+4. **Notes.** `.github/release-notes/vX.Y.Z.md`, short, in the shape of
+   `v0.12.0.md` (notes before it are longer and follow an older shape):
+   - `# Gelabber vX.Y.Z`, then two or three sentences on what the release
+     is about, with the upgrade risk in bold (migrations, backup).
+   - `## Changes`: one line per change, grouped under a few bold topics,
+     saying what changed for people using it and ending with its PRs and
+     Linear IDs, e.g. `#651 (GEL-27)`. A change without a PR names its
+     commit. The detail stays in the PR.
+   - `## Upgrade notes`: backup, migrations by number, new or changed
+     `.env` variables, image pins, rollback, order (server, then clients)
+     and what breaks older clients.
+   - A last line linking the compare view `vPREV...vX.Y.Z`.
+
+   The notes describe what ships. Pending tests and follow-ups go into
+   Linear issues; the notes have no "Open" section. Source:
+   `git log --first-parent --format='%h %s' <last tag>..HEAD`. Check the
+   upgrade traps that came up before: image pins that must move together,
+   new required `.env` variables, and migrations that cannot be undone.
 5. **Pull request** `release: vX.Y.Z` to `main`, reviewed by a maintainer
    other than the person who asked for the release. **Merging it deploys
    production:** `release.yml` moves `latest` and the server's Watchtower
