@@ -1,4 +1,4 @@
-//! Shared by the integration tests: a mediasoup 0.29 router configured like
+//! Shared by the integration tests: a mediasoup 0.33 router configured like
 //! the media gateway (backend/media/src/sfu/) and the event loop that answers native
 //! transport events the way the gateway does.
 #![allow(dead_code)]

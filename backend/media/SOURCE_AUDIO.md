@@ -1,7 +1,7 @@
 # Media protocol v4: source audio and explicit Watch
 
 Gelabber owns tickets, room authority and its WebSocket signaling. The sole media
-engine is the official Rust mediasoup 0.29.0 binding; web uses the public
+engine is the official Rust mediasoup 0.33 binding; web uses the public
 mediasoup-client 3.26.0 SDK. See the [migration document](../docs/v0.4-mediasoup-migration.md)
 for the native build and coherent previous-application rollback boundary.
 
