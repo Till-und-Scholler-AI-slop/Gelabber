@@ -1,0 +1,109 @@
+# Stores a libwebrtc package that desktop-native.yml built or took from the
+# cache in the libwebrtc-packages release. A job of its own, so the write
+# token never shares a runner with libwebrtc's gclient hooks (GEL-49).
+# ci.yml calls it after pushes, desktop-release.yml after a release build.
+name: Store libwebrtc packages
+
+on:
+  workflow_call:
+    inputs:
+      linux-key:
+        description: Cache key of the Linux package to store; empty for none
+        type: string
+        required: false
+        default: ""
+      windows-key:
+        description: Cache key of the Windows package to store; empty for none
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Store libwebrtc (Linux x64)
+    if: inputs.linux-key != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare the package directory
+        run: |
+          sudo mkdir -p /mnt/libwebrtc-package /mnt/libwebrtc-store
+          sudo chown -R "$USER" /mnt/libwebrtc-package /mnt/libwebrtc-store
+
+      - name: Restore the package
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ inputs.linux-key }}
+          fail-on-cache-miss: true
+
+      - name: Store the package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ inputs.linux-key }}
+        run: |
+          set -euo pipefail
+          tar -I 'zstd -T0' -cf "/mnt/libwebrtc-store/$KEY.tar.zst" -C /mnt/libwebrtc-package .
+          line=$(cd /mnt/libwebrtc-store && sha256sum "$KEY.tar.zst")
+          echo "$line"
+          if ! grep -qxF "$line" desktop/native/libwebrtc-packages.sha256; then
+            echo "::warning::Add this line to desktop/native/libwebrtc-packages.sha256, or the stored package is never fetched: $line"
+          fi
+          # A run beside this one may have stored it first.
+          gh release upload libwebrtc-packages "/mnt/libwebrtc-store/$KEY.tar.zst" --repo "$GITHUB_REPOSITORY" \
+            || gh release view libwebrtc-packages --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qxF "$KEY.tar.zst"
+
+  # Windows' own tar takes C:\ paths, which Git's does not.
+  windows:
+    name: Store libwebrtc (Windows x64)
+    if: inputs.windows-key != ''
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore the package
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: C:\libwebrtc-package
+          key: ${{ inputs.windows-key }}
+          fail-on-cache-miss: true
+
+      - name: Store the package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ inputs.windows-key }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "$($env:KEY).tar.gz"
+          & "$env:SystemRoot\System32\tar.exe" -czf $archive -C C:\libwebrtc-package .
+          if ($LASTEXITCODE -ne 0) { throw "the package does not pack" }
+          $line = "$((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower())  $($env:KEY).tar.gz"
+          $line
+          if (-not (Select-String -Path desktop\native\libwebrtc-packages.sha256 -SimpleMatch $line -Quiet)) {
+            "::warning::Add this line to desktop/native/libwebrtc-packages.sha256, or the stored package is never fetched: $line"
+          }
+          gh release upload libwebrtc-packages $archive --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) {
+            # A run beside this one may have stored it first.
+            $names = gh release view libwebrtc-packages --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
+            if ($names -notcontains "$($env:KEY).tar.gz") { throw "the package was not stored" }
+          }
+          $global:LASTEXITCODE = 0

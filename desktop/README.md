@@ -153,7 +153,9 @@ toolchain. On Windows the same holds with the MSVC STL and a DLL.
 The libwebrtc build needs network access to `*.googlesource.com`, ~30 GB
 disk and takes hours on 4 cores; CI caches the result (`.github/workflows/desktop-native.yml`)
 and keeps each package as an asset of the `libwebrtc-packages` release, named by the cache
-key, so an evicted cache costs a download and not a build.
+key, so an evicted cache costs a download and not a build. A job of its own
+(`.github/workflows/libwebrtc-store.yml`) stores it after a push or release, so the
+build, which runs fetched code, never holds a write token.
 
 ```sh
 desktop/native/scripts/build-libwebrtc-linux.sh /mnt/webrtc /mnt/libwebrtc-package
