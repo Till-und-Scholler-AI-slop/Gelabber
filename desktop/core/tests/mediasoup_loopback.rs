@@ -1,4 +1,4 @@
-//! Native core against the server's media engine (mediasoup 0.29) on loopback:
+//! Native core against the server's media engine (mediasoup 0.33) on loopback:
 //! ICE-lite, DTLS, SRTP, encoders and decoders, with the router codecs and
 //! transport options of backend/media/src/sfu/rpc.rs.
 //!

@@ -1,6 +1,6 @@
 //! Voice through the platform audio device module: a PulseAudio
 //! (pipewire-pulse) monitor source as the microphone, the web client's three
-//! processing modes, Opus through mediasoup 0.29, and playout of the consumer
+//! processing modes, Opus through mediasoup 0.33, and playout of the consumer
 //! on a null sink.
 //!
 //! Needs the session from desktop/native/scripts/fake-desktop-session.sh,

@@ -44,7 +44,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       redis:
-        image: redis:8.10.1-alpine
+        image: redis:8.10.3-alpine
         ports:
           - 6379:6379
         options: >-
@@ -91,7 +91,7 @@ jobs:
           done
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
         with:
           components: rustfmt
 
@@ -129,7 +129,7 @@ jobs:
       - name: Node for owned core fault acceptance
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.8.2
+          node-version: 26.13.1
           cache: npm
           cache-dependency-path: web/package-lock.json
 
