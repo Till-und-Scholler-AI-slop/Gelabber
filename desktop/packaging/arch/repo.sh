@@ -203,7 +203,8 @@ native_takes_over() {
 }
 
 # A user's first install with the site's install.sh, piped into sh as from
-# curl, on a pacman without the repository; a second run adds nothing.
+# curl, on a pacman without the repository; a second run adds nothing and
+# repairs a section whose Server points elsewhere (GEL-38).
 install_script() {
   local site="$1" script
   sed -i '/^\[gelabber\]$/,$d' /etc/pacman.conf
@@ -213,10 +214,14 @@ install_script() {
   script="$(sed -e "s|^repo_url=.*|repo_url=file://$site|" -e "s|^fingerprint=.*|fingerprint=$fpr|" \
     "$site/install.sh")"
   printf '%s\n' "$script" | grep -qx "repo_url=file://$site"
-  for _ in 1 2; do
+  for run in 1 2; do
+    # Before the second run: the address without /$arch, as an older or
+    # hand-written section may have it.
+    [ "$run" = 2 ] && sed -i "/^\[gelabber\]\$/,/^\[/ s|^Server = .*|Server = file://$site|" /etc/pacman.conf
     printf '%s\n' "$script" | sh -s -- --noconfirm
     pacman -Q "$package"
     test "$(grep -c '^\[gelabber\]$' /etc/pacman.conf)" = 1
+    test "$(grep -c '^Server = file://'"$site"'/\$arch$' /etc/pacman.conf)" = 1
     test -x /usr/bin/gelabber
   done
   pacman-key --list-keys "$fpr" >/dev/null
