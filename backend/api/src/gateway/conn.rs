@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use super::budget::{self, Admit, Class, FrameBudget};
 use super::hub::ConnId;
 use super::protocol::{
     CatchUp, ClientFrame, PresenceMode, PresenceStatus, ServerFrame, SigKind, Topic, VoiceEntry,
@@ -58,6 +59,84 @@ enum SubscribeError {
 impl From<ApiError> for SubscribeError {
     fn from(err: ApiError) -> Self {
         Self::Read(err)
+    }
+}
+
+/// A message read off the socket. Text is parsed as it is read, so the
+/// budget can tell typing and signal frames apart.
+enum Inbound {
+    /// A client frame, or `None` for text that is none.
+    Text(Option<ClientFrame>),
+    /// Ping, pong or binary.
+    Other(Message),
+}
+
+/// A frame read but not yet let through by the budget, kept across the
+/// select loop's other branches. `counted`: already in the metric.
+struct Held {
+    inbound: Inbound,
+    counted: bool,
+}
+
+impl Held {
+    fn class(&self) -> Class {
+        match &self.inbound {
+            Inbound::Text(Some(ClientFrame::Typing { .. })) => Class::Typing,
+            Inbound::Text(Some(ClientFrame::Sig { .. })) => Class::Signal,
+            _ => Class::Frame,
+        }
+    }
+}
+
+enum Read {
+    Frame(Inbound),
+    /// A typing frame over its budget: liveness only.
+    Dropped,
+    /// Close, a read error or the end of the stream.
+    End,
+}
+
+/// The next frame the socket's budget lets through. While a frame waits for
+/// it, nothing more is read, so the client's sends back up in TCP. Cancel
+/// safe: a waiting frame stays in `held` for the next call.
+async fn next_inbound(
+    stream: &mut futures_util::stream::SplitStream<WebSocket>,
+    held: &mut Option<Held>,
+    budget: &mut FrameBudget,
+    metrics: &crate::metrics::HttpMetrics,
+) -> Read {
+    loop {
+        let mut frame = match held.take() {
+            Some(frame) => frame,
+            None => {
+                let inbound = match stream.next().await {
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => return Read::End,
+                    Some(Ok(Message::Text(text))) => {
+                        Inbound::Text(serde_json::from_str(&text).ok())
+                    }
+                    Some(Ok(other)) => Inbound::Other(other),
+                };
+                Held {
+                    inbound,
+                    counted: false,
+                }
+            }
+        };
+        match budget.admit(frame.class(), Instant::now()) {
+            Admit::Handle => return Read::Frame(frame.inbound),
+            Admit::Drop => {
+                metrics.rate_limited(budget::TYPING_BUCKET);
+                return Read::Dropped;
+            }
+            Admit::Wait { wait, bucket } => {
+                if !frame.counted {
+                    metrics.rate_limited(bucket);
+                    frame.counted = true;
+                }
+                *held = Some(frame);
+                tokio::time::sleep(wait).await;
+            }
+        }
     }
 }
 
@@ -113,6 +192,8 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
     let (mut sink, mut stream) = socket.split();
     let mut shutdown = state.gateway.shutdown_signal();
     let mut close = None;
+    let mut budget = FrameBudget::new(&state.limits, Instant::now());
+    let mut held = None;
 
     loop {
         tokio::select! {
@@ -138,15 +219,25 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
             _ = security.tick() => {
                 if !security_tick(&state, &session, conn, &mut checked, false).await { break; }
             }
-            incoming = stream.next() => {
+            // The budget comes before the session lock: a frame over it
+            // costs no database or Redis work.
+            read = next_inbound(&mut stream, &mut held, &mut budget, &state.metrics) => {
+                let incoming = match read {
+                    Read::Frame(incoming) => incoming,
+                    Read::Dropped => {
+                        last_client = Instant::now();
+                        continue;
+                    }
+                    Read::End => break,
+                };
                 let mut active = false;
                 let Ok(Some(mut session_guard)) = session.lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
                 checked = Instant::now();
                 match incoming {
-                    Some(Ok(Message::Text(text))) => {
+                    Inbound::Text(frame) => {
                         last_client = Instant::now();
-                        match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink, &mut rosters).await {
+                        match handle_text(&state, &mut session_guard, user, conn, frame, &mut sink, &mut rosters).await {
                             Ok(FrameEffect::Close) => break,
                             Ok(FrameEffect::Liveness) => {
                                 let _ = state.gateway.touch_presence(conn).await;
@@ -179,17 +270,16 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
                             }
                         }
                     }
-                    Some(Ok(Message::Ping(payload))) => {
+                    Inbound::Other(Message::Ping(payload)) => {
                         last_client = Instant::now();
                         if !matches!(tokio::time::timeout(std::time::Duration::from_secs(1), sink.send(Message::Pong(payload))).await, Ok(Ok(()))) {
                             break;
                         }
                     }
-                    Some(Ok(Message::Pong(_))) | Some(Ok(Message::Binary(_))) => {
+                    // Pong or binary.
+                    Inbound::Other(_) => {
                         last_client = Instant::now();
                     }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Err(_)) => break,
                 }
                 // Return the only pool connection before the renewal below
                 // acquires one.
@@ -206,7 +296,8 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
                 // Nothing below needs the transaction: return the connection
                 // before the Redis writes and the socket write.
                 if session_guard.rollback().await.is_err() { break; }
-                if last_client.elapsed() >= state.ws_dead {
+                // A frame waiting for the budget shows the client is there.
+                if last_client.elapsed() >= state.ws_dead && held.is_none() {
                     debug!(user_id = %user.id, "ws silent death");
                     break;
                 }
@@ -371,13 +462,13 @@ async fn handle_text(
     db: &mut sqlx::PgConnection,
     user: &User,
     conn: ConnId,
-    text: &str,
+    frame: Option<ClientFrame>,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     rosters: &mut Rosters,
 ) -> Result<FrameEffect, ApiError> {
-    let frame: ClientFrame = match serde_json::from_str(text) {
-        Ok(frame) => frame,
-        Err(_) => {
+    let frame = match frame {
+        Some(frame) => frame,
+        None => {
             send(sink, ServerFrame::error("bad_request", None, None)).await?;
             return Ok(FrameEffect::Liveness);
         }

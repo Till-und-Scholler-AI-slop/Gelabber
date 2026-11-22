@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::limits::Limits;
+use crate::limits::{FrameRate, Limits};
 use gelabber_shared::ice::{IceServer, parse_ice_servers};
 
 pub const API_ADDR: &str = "API_ADDR";
@@ -71,6 +71,12 @@ pub const KLIPY_CACHE_SECS: &str = "KLIPY_CACHE_SECS";
 pub const API_LINK_PREVIEWS: &str = "API_LINK_PREVIEWS";
 pub const API_LINK_PREVIEW_DENY_HOSTS: &str = "API_LINK_PREVIEW_DENY_HOSTS";
 pub const API_RATE_PREVIEW_PER_MIN: &str = "API_RATE_PREVIEW_PER_MIN";
+pub const API_RATE_WS_FRAMES_PER_MIN: &str = "API_RATE_WS_FRAMES_PER_MIN";
+pub const API_RATE_WS_FRAMES_BURST: &str = "API_RATE_WS_FRAMES_BURST";
+pub const API_RATE_WS_TYPING_PER_MIN: &str = "API_RATE_WS_TYPING_PER_MIN";
+pub const API_RATE_WS_TYPING_BURST: &str = "API_RATE_WS_TYPING_BURST";
+pub const API_RATE_WS_SIG_PER_MIN: &str = "API_RATE_WS_SIG_PER_MIN";
+pub const API_RATE_WS_SIG_BURST: &str = "API_RATE_WS_SIG_BURST";
 pub const SMTP_HOST: &str = "SMTP_HOST";
 pub const SMTP_PORT: &str = "SMTP_PORT";
 pub const SMTP_SECURITY: &str = "SMTP_SECURITY";
@@ -1076,6 +1082,21 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         Some(raw) => parse_u32_allow_zero(API_RATE_PREVIEW_PER_MIN, &raw)?,
         None => defaults.preview_per_min,
     };
+    let ws_frames = parse_frame_rate(
+        get,
+        (API_RATE_WS_FRAMES_PER_MIN, API_RATE_WS_FRAMES_BURST),
+        defaults.ws_frames,
+    )?;
+    let ws_typing = parse_frame_rate(
+        get,
+        (API_RATE_WS_TYPING_PER_MIN, API_RATE_WS_TYPING_BURST),
+        defaults.ws_typing,
+    )?;
+    let ws_sig = parse_frame_rate(
+        get,
+        (API_RATE_WS_SIG_PER_MIN, API_RATE_WS_SIG_BURST),
+        defaults.ws_sig,
+    )?;
     Ok(Limits {
         auth_per_min,
         api_per_min,
@@ -1086,7 +1107,28 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         gif_per_min,
         gif_media_per_min,
         preview_per_min,
+        ws_frames,
+        ws_typing,
+        ws_sig,
     })
+}
+
+/// A per-socket budget: refill per minute (`0` turns it off) and a burst of
+/// at least one frame.
+fn parse_frame_rate(
+    get: &impl Fn(&str) -> Option<String>,
+    (per_min_key, burst_key): (&'static str, &'static str),
+    defaults: FrameRate,
+) -> Result<FrameRate, ConfigError> {
+    let per_min = match get(per_min_key) {
+        Some(raw) => parse_u32_allow_zero(per_min_key, &raw)?,
+        None => defaults.per_min,
+    };
+    let burst = match get(burst_key) {
+        Some(raw) => parse_positive::<u32>(burst_key, &raw)?,
+        None => defaults.burst,
+    };
+    Ok(FrameRate { per_min, burst })
 }
 
 fn parse_u32_allow_zero(key: &'static str, raw: &str) -> Result<u32, ConfigError> {
@@ -1404,6 +1446,39 @@ mod tests {
         assert_eq!(config.limits.gif_media_per_min, 500);
         assert_eq!(config.limits.gif_per_min, Limits::default().gif_per_min);
         assert_eq!(config.limits.api_per_min, Limits::default().api_per_min);
+    }
+
+    #[test]
+    fn parses_frame_budgets_and_refuses_an_empty_burst() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_RATE_WS_FRAMES_PER_MIN, "0"),
+            (API_RATE_WS_TYPING_PER_MIN, "12"),
+            (API_RATE_WS_TYPING_BURST, "2"),
+        ]))
+        .expect("valid config");
+        assert_eq!(config.limits.ws_frames.per_min, 0);
+        assert_eq!(
+            config.limits.ws_frames.burst,
+            Limits::default().ws_frames.burst
+        );
+        assert_eq!(
+            config.limits.ws_typing,
+            FrameRate {
+                per_min: 12,
+                burst: 2
+            }
+        );
+        assert_eq!(config.limits.ws_sig, Limits::default().ws_sig);
+
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_RATE_WS_SIG_BURST, "0"),
+        ]))
+        .expect_err("a burst of zero would refuse every frame");
+        assert!(err.to_string().contains(API_RATE_WS_SIG_BURST), "{err}");
     }
 
     #[test]
