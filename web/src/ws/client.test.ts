@@ -454,6 +454,121 @@ describe("gateway client", () => {
     random.mockRestore();
   });
 
+  it("backs off when the server closes every socket right after it opens", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 100,
+      maxRetryMs: 400,
+      heartbeatMs: 60_000,
+      deadMs: 120_000,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    // As a failed subscribe write does: open, then close at once.
+    sockets[0]?.emit("open");
+    sockets[0]?.emit("close");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    for (const delay of [50, 100, 200, 200]) {
+      const count = sockets.length;
+      sockets[count - 1]?.emit("open");
+      sockets[count - 1]?.emit("close");
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(sockets, `delay ${delay}`).toHaveLength(count);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sockets, `delay ${delay}`).toHaveLength(count + 1);
+    }
+
+    gateway.stop();
+    random.mockRestore();
+  });
+
+  it("reconnects at once after a socket that stayed up drops", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    let now = 0;
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 100,
+      maxRetryMs: 400,
+      heartbeatMs: 60_000,
+      deadMs: 120_000,
+      now: () => now,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    // A streak of failed sockets builds up the backoff…
+    sockets[0]?.emit("close");
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[1]?.emit("close");
+    await vi.advanceTimersByTimeAsync(50);
+    sockets[2]?.emit("close");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sockets).toHaveLength(4);
+    // …and a socket that lived through a heartbeat interval clears it.
+    sockets[3]?.emit("open");
+    now += 60_000;
+    sockets[3]?.emit("close");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(5);
+    sockets[4]?.emit("close");
+    await vi.advanceTimersByTimeAsync(49);
+    expect(sockets).toHaveLength(5);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets).toHaveLength(6);
+
+    gateway.stop();
+    random.mockRestore();
+  });
+
+  it("starts a new session without the old backoff", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 1_000,
+      maxRetryMs: 1_000,
+      heartbeatMs: 60_000,
+      deadMs: 120_000,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const seen: string[] = [];
+    gateway.onStatus((status) => seen.push(status));
+
+    gateway.start();
+    sockets[0]?.emit("open");
+    sockets[0]?.emit("close");
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[1]?.emit("open");
+    gateway.stop();
+    seen.length = 0;
+    gateway.start();
+    expect(seen).toEqual(["connecting"]);
+    sockets[2]?.emit("close");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(4);
+
+    gateway.stop();
+  });
+
   it("routes signaling off the chat event stream", () => {
     const sockets: FakeSocket[] = [];
     const gateway = new Gateway({

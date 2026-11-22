@@ -105,8 +105,16 @@ Native client: replicate exactly — own 15 s `h` timer, reply `h` to every serv
 attempt 0 (first drop):    delay = 0 ms (next tick)
 attempt k >= 1:            base  = min(2000, 200 * 2^(k-1))
                            delay = round(base * (0.5 + random[0,1) * 0.5))
-retryAttempt resets to 0 on every successful `open`.
+retryAttempt resets to 0 on `start()`, and when a socket that has been open
+for at least heartbeatMs (15 s) closes or is dropped by the watchdog.
 ```
+
+A socket the server closes soon after `open` (for example a subscribe whose
+write fails while Postgres is degraded) is a failed attempt like a refused
+handshake, even if it already answered a subscribe with `ok`: resetting on
+`open` would reconnect, resubscribe and refetch at round-trip speed. Only a
+connection that stayed up gets the immediate retry. The native client resets
+the same way (`desktop/client/src/gateway.rs` `Task::run`), with a 10 s cap.
 
 | attempt | base ms | delay range ms |
 |---|---|---|
@@ -132,7 +140,7 @@ So `connecting` is only ever seen for the very first connect after sign-in;
 the connection notice (§6.6) reacts to `reconnecting`.
 
 On every (re)open (`client.ts:400-422`), in this order:
-1. `retryAttempt = 0`, `lastServerAt = now`, status `open`, start heartbeat + watchdog.
+1. Note the open time (for the backoff reset above), `lastServerAt = now`, status `open`, start heartbeat + watchdog.
 2. For every desired topic: send subscribe frame **with resume cursor** (`n`, `ep`) if one is known (§2.3).
 3. If the page/app is "in front": send `{"op":"f","on":true}`.
 4. Fire `ready` listeners (realtime recovery §6.4, voice re-join §7.4).

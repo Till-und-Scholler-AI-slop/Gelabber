@@ -1130,10 +1130,11 @@ it("a second reconnect during the spread joins the waiting round", async () => {
   sockets[1]!.emit("open");
   await vi.advanceTimersByTimeAsync(300);
   sockets[1]!.close();
-  await vi.advanceTimersByTimeAsync(0);
+  // That socket was up only briefly: its reconnect backs off (200 ms × 0.75).
+  await vi.advanceTimersByTimeAsync(150);
   sockets[2]!.emit("open");
   // The first wait still ends on time; the second reconnect adds none.
-  await vi.advanceTimersByTimeAsync(READY_SPREAD_MS / 2 - 301);
+  await vi.advanceTimersByTimeAsync(READY_SPREAD_MS / 2 - 451);
   expect(reads).toBe(1);
   await vi.advanceTimersByTimeAsync(1);
   expect(reads).toBe(2);
