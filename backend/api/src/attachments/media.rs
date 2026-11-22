@@ -2,12 +2,13 @@
 //! placeholder made after it.
 //!
 //! [`prepare`] runs in `check_uploads`, before a picture joins its message:
-//! it removes privacy metadata from the original (`metadata::strip`) and
-//! notes the size as shown, so the message JSON carries `width`/`height`
-//! from the start. The worker started by [`start`] then decodes each bound
-//! picture once, newest first, and writes two thumbnails next to the
-//! original (`<key>/t400`, `<key>/t800`, long edge in pixels) plus the
-//! average colour as placeholder. Older attachments start at
+//! it checks the pixel bounds on the whole file, removes privacy metadata
+//! from the original (`metadata::strip`) and notes the size as shown, so
+//! the message JSON carries `width`/`height` from the start. The worker
+//! started by [`start`] then decodes each bound picture once, newest
+//! first, and writes two thumbnails next to the original (`<key>/t400`,
+//! `<key>/t800`, long edge in pixels) plus the average colour as
+//! placeholder. Older attachments start at
 //! `media_version` 0, so the same worker is the backfill; it is idempotent
 //! and resumes after a restart.
 //!
@@ -79,9 +80,25 @@ async fn read_all(store: &ObjectStore, key: &str, size: i64) -> Result<Vec<u8>, 
     Ok(bytes)
 }
 
+/// What [`prepare`] made of a picture.
+#[derive(Debug, PartialEq, Eq)]
+#[must_use]
+pub enum Prepared {
+    /// Stripped and measured: it may join the message.
+    Ready,
+    /// Its whole file declares a canvas past `sniff::IMAGE_BOUNDS`.
+    /// Nothing was written.
+    TooManyPixels,
+}
+
 /// Strip the original's privacy metadata and note its size as shown. Runs
 /// once per pending picture; the row records the stored size, which
 /// becomes `size_bytes` at binding.
+///
+/// The content check reads only a prefix, and comments or extensions can
+/// push a JPEG's frame header or a GIF's first frame past it (GEL-45).
+/// Here the whole file is at hand, so the pixel bounds are checked again
+/// on it: clients show a picture without thumbnails as the original.
 pub async fn prepare(
     db: &PgPool,
     store: &ObjectStore,
@@ -89,7 +106,7 @@ pub async fn prepare(
     object_key: &str,
     content_type: &str,
     size: i64,
-) -> Result<(), ApiError> {
+) -> Result<Prepared, ApiError> {
     let _permit = PREPARING.acquire().await.expect("never closed");
     let bytes = match read_all(store, object_key, size).await {
         Ok(bytes) => bytes,
@@ -100,14 +117,20 @@ pub async fn prepare(
     // What is stored now, which a concurrent send may already have
     // stripped: recorded as is when there is nothing (more) to strip.
     let read_len = bytes.len() as i64;
-    let (shown, animated, stripped) = tokio::task::spawn_blocking(move || {
+    let measured = tokio::task::spawn_blocking(move || {
+        if super::sniff::too_many_pixels(&kind, &bytes) {
+            return None;
+        }
         let shown = metadata::display_size(&kind, &bytes);
         let animated = metadata::animated(&kind, &bytes);
         let stripped = metadata::strip(&kind, &bytes);
-        (shown, animated, stripped)
+        Some((shown, animated, stripped))
     })
     .await
     .map_err(|err| ApiError::Internal(format!("picture metadata: {err}")))?;
+    let Some((shown, animated, stripped)) = measured else {
+        return Ok(Prepared::TooManyPixels);
+    };
     let stored_size = match stripped {
         Some(clean) => {
             let len = clean.len() as i64;
@@ -141,7 +164,7 @@ pub async fn prepare(
     .bind(stored_size)
     .execute(db)
     .await?;
-    Ok(())
+    Ok(Prepared::Ready)
 }
 
 pub fn start(state: AppState) {

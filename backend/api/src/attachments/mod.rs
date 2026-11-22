@@ -662,8 +662,9 @@ pub(super) fn invalid() -> ApiError {
 }
 
 /// The store side of binding, asked before the message transaction takes
-/// the channel lock: each object exists with its declared size and its
-/// first bytes are the declared type, and all of them fit one message.
+/// the channel lock: each object exists with its declared size, its
+/// first bytes are the declared type, a picture stays within the pixel
+/// bounds, and all of them fit one message.
 /// All objects are asked at once; a slow store holds this request only,
 /// never the channel. The database conditions are checked again under the
 /// lock in `bind_to_message`.
@@ -743,16 +744,18 @@ pub async fn check_uploads(
                 AT[index], "mismatch",
             )])));
         }
+        let too_many_pixels = || ApiError::Validation(FieldErrors::from([(AT[index], "too_long")]));
         if sniff::too_many_pixels(&row.content_type, &head) {
-            return Err(ApiError::Validation(FieldErrors::from([(
-                AT[index], "too_long",
-            )])));
+            return Err(too_many_pixels());
         }
         // Not prepared yet, or maybe not to the end (a send cancelled or
         // failed while it ran): the object may still be the original.
-        // Stripping a clean file again changes nothing.
-        if metadata::strips(&row.content_type) && (row.stripped_size.is_none() || original) {
-            media::prepare(
+        // Stripping a clean file again changes nothing. `prepare` checks
+        // the pixel bounds again on the whole file, and writes nothing
+        // when it refuses, so a later send is refused again.
+        if metadata::strips(&row.content_type)
+            && (row.stripped_size.is_none() || original)
+            && media::prepare(
                 db,
                 store,
                 row.id,
@@ -760,7 +763,10 @@ pub async fn check_uploads(
                 &row.content_type,
                 row.size_bytes,
             )
-            .await?;
+            .await?
+                == media::Prepared::TooManyPixels
+        {
+            return Err(too_many_pixels());
         }
         Ok(())
     });
