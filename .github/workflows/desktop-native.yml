@@ -420,7 +420,7 @@ jobs:
 
       # Every test of the workspace. This core is built with H264, so the
       # loopback call must use it.
-      - name: Loopback call against mediasoup 0.29
+      - name: Loopback call against mediasoup 0.33
         if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
@@ -1163,7 +1163,7 @@ jobs:
       # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
       # picker; the test skips where Windows cannot capture. A release build
       # makes the call alone, without the tests that measure frame rates.
-      - name: Loopback call against mediasoup 0.29
+      - name: Loopback call against mediasoup 0.33
         id: tests
         if: ${{ !cancelled() && steps.worker.outcome == 'success' }}
         timeout-minutes: 20
