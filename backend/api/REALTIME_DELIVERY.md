@@ -86,7 +86,12 @@ Production socket output is a bounded 1024-frame channel. Catch-up has an
 aggregate 128-event limit per socket, across topics. Overflow cancels that
 socket rather than dropping arbitrary messages or blocking fan-out to another
 client. Socket sends have a one-second deadline; a subscribe's replay, gap and
-`ok` share one five-second deadline. Reconnection uses the same
+`ok` share one five-second deadline. No database transaction is open during
+these writes: a subscribe registers the topic, reads the replay and snapshots
+under its checks, ends the transaction, then writes the replay and `ok`, then
+releases the topic to live delivery (`finish_catch_up_epoch`), then writes the
+presence and voice snapshots. The catch-up order is unchanged; see
+`ACCESS_REVOCATION.md` for what the lock still covers. Reconnection uses the same
 REST/catch-up contract. Outbox batches are bounded; persistent outage can retain
 more durable database rows, intentionally, until successful acknowledgement.
 
