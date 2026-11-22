@@ -224,7 +224,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
-                let Ok(batch) = take_batch(frame, &mut rx, dnd) else { break };
+                let Ok(batch) = take_batch(frame, &mut rx, dnd, user.id) else { break };
                 match deliver(&state, &session, user.id, conn, &mut sink, batch, &mut rosters).await {
                     Ok(true) => checked = Instant::now(),
                     Ok(false) => {}
@@ -498,7 +498,7 @@ async fn subscribe(
         CatchUp::None => {}
         CatchUp::Replay(events) => {
             for event in events {
-                texts.push(to_json(&ServerFrame::event(event))?);
+                texts.push(to_json(&ServerFrame::event(event).for_user(user.id))?);
             }
         }
         CatchUp::Gap => {
@@ -718,18 +718,20 @@ fn client_frame(frame: ServerFrame, dnd: bool) -> ServerFrame {
     if dnd { frame } else { frame.without_dnd() }
 }
 
+/// Frames queued for the socket of `user`, each as they may read it.
 fn take_batch(
     first: ServerFrame,
     rx: &mut mpsc::Receiver<ServerFrame>,
     dnd: bool,
+    user: Uuid,
 ) -> Result<Vec<(ServerFrame, String)>, ApiError> {
-    let first = client_frame(first, dnd);
+    let first = client_frame(first, dnd).for_user(user);
     let json = to_json(&first)?;
     let mut bytes = json.len();
     let mut batch = vec![(first, json)];
     while batch.len() < BATCH_FRAMES && bytes < BATCH_BYTES {
         let Ok(frame) = rx.try_recv() else { break };
-        let frame = client_frame(frame, dnd);
+        let frame = client_frame(frame, dnd).for_user(user);
         let json = to_json(&frame)?;
         bytes += json.len();
         batch.push((frame, json));

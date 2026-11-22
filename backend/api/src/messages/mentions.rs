@@ -8,13 +8,17 @@
 //!
 //! Only members are kept and never the author: a token for someone outside
 //! the conversation mentions nobody and tells the author nothing.
+//!
+//! `@here` reaches invisible members (#590) too, but nobody else may learn
+//! that it did (GEL-43): they are mentioned as `hidden`, which only they
+//! read. Everything others read treats them as offline, so a member the
+//! text names is reached by the name alone, as an offline one would be.
 
 use uuid::Uuid;
 
 use super::MessagingChannel;
 use crate::{
-    error::ApiError, gateway::PresenceStatus, previews::urls::prose,
-    servers::permissions::Permission, state::AppState,
+    error::ApiError, previews::urls::prose, servers::permissions::Permission, state::AppState,
 };
 
 /// More named users than this are not kept; `@everyone` exists for that.
@@ -45,6 +49,8 @@ pub struct Granted {
     /// reaches them again instead of whoever is online at the edit, so
     /// editing cannot ping more people.
     pub here_users: Option<Vec<Uuid>>,
+    /// Those among `here_users` who were invisible then; they stay hidden.
+    pub hidden: Vec<Uuid>,
 }
 
 impl Granted {
@@ -52,11 +58,13 @@ impl Granted {
     /// whom `@here` reached (`messages.here_users`); a message written
     /// before it was kept (`None`) shows `@here` as mentions beyond the
     /// users the text names, which loses a named user `@here` also reached.
+    /// `hidden` is `messages.hidden_mentions`.
     pub fn of(
         content: &str,
         mentions_everyone: bool,
         mentions: &[Uuid],
         here_users: Option<&[Uuid]>,
+        hidden: &[Uuid],
     ) -> Self {
         let here_users = match here_users {
             Some(users) => Some(users.to_vec()),
@@ -74,10 +82,17 @@ impl Granted {
                 (!beyond.is_empty()).then_some(beyond)
             }
         };
+        let hidden = here_users
+            .iter()
+            .flatten()
+            .filter(|id| hidden.contains(id))
+            .copied()
+            .collect();
         Self {
             everyone: mentions_everyone,
             here: mentions_everyone || here_users.is_some(),
             here_users,
+            hidden,
         }
     }
 }
@@ -89,6 +104,9 @@ pub struct Resolved {
     /// Whom `@here` reached in a server channel, named or not; `None`
     /// without a granted `@here`. Stored so an edit can keep them.
     pub here_users: Option<Vec<Uuid>>,
+    /// Those among `users` only they themselves see as mentioned: invisible
+    /// members `@here` reached (GEL-43).
+    pub hidden: Vec<Uuid>,
 }
 
 /// Escaped with a backslash (`\@everyone`, `\<@id>`): plain text, as the
@@ -164,6 +182,7 @@ pub(crate) async fn resolve(
                 users,
                 everyone: parsed.everyone || parsed.here,
                 here_users: None,
+                hidden: Vec::new(),
             })
         }
         MessagingChannel::Server { member, channel } => {
@@ -191,28 +210,37 @@ pub(crate) async fn resolve(
             let everyone = crowd && parsed.everyone;
             let here = crowd && parsed.here && !parsed.everyone;
             let mut reached = Vec::new();
+            let mut invisible = Vec::new();
             if here && let Some(before) = &granted.here_users {
                 // An edit keeping `@here`: the same people as before.
                 reached.extend(before.iter().copied());
+                invisible = granted.hidden;
             } else if here {
                 // Best effort: without Redis `@here` reaches nobody, the
                 // message itself still goes out. Invisible members (#590)
                 // are there all the same and are reached.
                 match state.gateway.present_members(member.server.id).await {
-                    Ok(online) => reached.extend(
-                        online
+                    Ok(online) => {
+                        for entry in online
                             .into_iter()
-                            .filter(|entry| {
-                                entry.st != PresenceStatus::Offline && entry.u != author
-                            })
-                            .map(|entry| entry.u)
-                            .take(MAX_HERE),
-                    ),
+                            .filter(|entry| entry.u != author)
+                            .take(MAX_HERE)
+                        {
+                            reached.push(entry.u);
+                            if entry.invisible {
+                                invisible.push(entry.u);
+                            }
+                        }
+                    }
                     Err(error) => {
                         tracing::debug!(error = error.code(), "@here without presence")
                     }
                 }
             }
+            // An invisible member the text names counts as offline: the name
+            // reaches them, `@here` does not, so dropping the name later does
+            // not show that `@here` had reached them.
+            reached.retain(|id| !(invisible.contains(id) && parsed.users.contains(id)));
             let mut wanted = parsed.users;
             wanted.extend(reached.iter().copied());
             // Only members who see the channel: a limited one mentions nobody
@@ -238,10 +266,16 @@ pub(crate) async fn resolve(
                     .copied()
                     .collect()
             });
+            let hidden = users
+                .iter()
+                .filter(|id| reached.contains(id) && invisible.contains(id))
+                .copied()
+                .collect();
             Ok(Resolved {
                 users,
                 everyone,
                 here_users,
+                hidden,
             })
         }
     }
@@ -262,23 +296,25 @@ mod tests {
     fn granted_reads_here_from_mentions_beyond_the_named() {
         let named = format!("@here <@{A}>");
         assert_eq!(
-            Granted::of(&named, false, &ids(&[A]), None),
+            Granted::of(&named, false, &ids(&[A]), None, &[]),
             Granted::default()
         );
         assert_eq!(
-            Granted::of(&named, false, &ids(&[A, B]), None),
+            Granted::of(&named, false, &ids(&[A, B]), None, &[]),
             Granted {
                 everyone: false,
                 here: true,
                 here_users: Some(ids(&[B])),
+                hidden: Vec::new(),
             }
         );
         assert_eq!(
-            Granted::of("@everyone", true, &[], None),
+            Granted::of("@everyone", true, &[], None, &[]),
             Granted {
                 everyone: true,
                 here: true,
                 here_users: None,
+                hidden: Vec::new(),
             }
         );
     }
@@ -289,20 +325,47 @@ mod tests {
     fn granted_prefers_the_stored_here_users() {
         let named = format!("@here <@{A}>");
         assert_eq!(
-            Granted::of(&named, false, &ids(&[A, B]), Some(&ids(&[A, B]))),
+            Granted::of(&named, false, &ids(&[A, B]), Some(&ids(&[A, B])), &[]),
             Granted {
                 everyone: false,
                 here: true,
                 here_users: Some(ids(&[A, B])),
+                hidden: Vec::new(),
             }
         );
         assert_eq!(
-            Granted::of("@here", false, &[], Some(&[])),
+            Granted::of("@here", false, &[], Some(&[]), &[]),
             Granted {
                 everyone: false,
                 here: true,
                 here_users: Some(Vec::new()),
+                hidden: Vec::new(),
             }
+        );
+    }
+
+    /// Whom `@here` reached hidden (GEL-43) stays hidden on an edit; a
+    /// hidden mention without the `@here` that made it is none.
+    #[test]
+    fn granted_keeps_the_hidden_among_whom_here_reached() {
+        assert_eq!(
+            Granted::of(
+                "@here",
+                false,
+                &ids(&[A, B]),
+                Some(&ids(&[A, B])),
+                &ids(&[B])
+            ),
+            Granted {
+                everyone: false,
+                here: true,
+                here_users: Some(ids(&[A, B])),
+                hidden: ids(&[B]),
+            }
+        );
+        assert_eq!(
+            Granted::of("hallo", false, &[], None, &ids(&[B])),
+            Granted::default()
         );
     }
 
