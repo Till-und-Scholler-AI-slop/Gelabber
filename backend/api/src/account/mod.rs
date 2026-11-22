@@ -32,7 +32,7 @@ use crate::directory;
 use crate::error::{ApiError, FieldErrors};
 use crate::gateway::Recheck;
 use crate::json::Body;
-use crate::limits;
+use crate::limits::{self, Guesser};
 use crate::password;
 use crate::servers::moderation;
 use crate::state::AppState;
@@ -67,7 +67,7 @@ impl std::fmt::Debug for DeleteAccountBody {
 }
 
 /// Deletes the signed-in account, for good. The password is checked like a
-/// password change: wrong guesses count against the account like failed
+/// password change: wrong guesses count against this session like failed
 /// logins. An account without a password types its address instead, from a
 /// session signed in less than [`auth::REAUTH_WINDOW`] ago
 /// (`403 reauth_required` otherwise). While the account owns a server the
@@ -87,13 +87,13 @@ async fn delete_me(
             return Err(field("password", "required"));
         }
         let key = validate::canonical(&current.user.email);
-        limits::login_attempt(&state, &key)?;
+        let guess = limits::login_attempt(&state, &key, Guesser::Session(current.id))?;
         let ok = body.password.chars().count() <= validate::PASSWORD_MAX
             && password::verify(body.password, stored).await?;
         if !ok {
             return Err(field("password", "wrong"));
         }
-        limits::login_succeeded(&state, &key);
+        limits::login_succeeded(&state, guess);
     } else {
         auth::recently_signed_in(&current)?;
         let typed = body.email.trim();

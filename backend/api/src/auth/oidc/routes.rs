@@ -48,7 +48,7 @@ use crate::cookies::{self, SESSION_COOKIE, SetCookie};
 use crate::error::{ApiError, FieldErrors};
 use crate::i18n::Locale;
 use crate::json::Body;
-use crate::limits::{self, MailBudget};
+use crate::limits::{self, Guesser, MailBudget};
 use crate::operator::admission;
 use crate::password;
 use crate::servers::invite;
@@ -320,7 +320,7 @@ async fn link_allowed(
         )])));
     }
     let key = validate::canonical(&current.user.email);
-    limits::login_attempt(state, &key)?;
+    let guess = limits::login_attempt(state, &key, Guesser::Session(current.id))?;
     let ok = current_password.chars().count() <= validate::PASSWORD_MAX
         && password::verify(current_password, stored).await?;
     if !ok {
@@ -329,7 +329,7 @@ async fn link_allowed(
             "wrong",
         )])));
     }
-    limits::login_succeeded(state, &key);
+    limits::login_succeeded(state, guess);
     Ok(())
 }
 
