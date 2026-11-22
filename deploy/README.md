@@ -653,7 +653,14 @@ start: `docker compose up` shows "there appears to be PostgreSQL data in
 /var/lib/postgresql/18/docker".
 
 Move the data with dump and restore, in a maintenance window, after updating
-the checkout to the release and before `up`:
+the checkout to the release and before `up`. Before you start:
+
+- **Pause Watchtower** (or whatever updates your containers) until the rollout
+  is done, so nothing starts api or media in between.
+- **Free disk space:** about three times the database size. During the
+  upgrade the volume holds both clusters, and `backups/` holds the dump next
+  to the one from `backup.sh`. The size: `docker compose exec postgres sh -c
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT pg_size_pretty(pg_database_size(current_database()))"'`.
 
 ```bash
 cd deploy/compose
@@ -661,6 +668,10 @@ sh ../backup.sh              # as in "Backup": the usual snapshot pair first
 sh ../postgres-upgrade.sh
 # then the rollout as in "Rollout and rollback with exact digests"
 ```
+
+Only the Gelabber database (`POSTGRES_DB`) is moved, owned by
+`POSTGRES_USER`, as the bundled setup has it. Roles, databases or settings
+you added to this PostgreSQL yourself are not copied: recreate them on 19.
 
 `postgres-upgrade.sh` stops api, web, media and postgres, starts the old
 version (`postgres:18.6-alpine3.24`, or `GELABBER_POSTGRES_OLD_IMAGE`) on its
