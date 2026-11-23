@@ -1107,6 +1107,66 @@ async fn a_disabled_member_cannot_take_over_the_server(pool: PgPool) {
     assert_eq!(still, ada);
 }
 
+/// A transfer while an operator is disabling the member waits for the
+/// disable and then refuses, rather than hand the server to an account that
+/// ends up disabled.
+#[sqlx::test]
+async fn a_transfer_waits_for_a_running_disable(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let id = id_of(&server);
+    let ada = owner.user_id().to_owned();
+    let bob = member.user_id().to_owned();
+
+    // The operator's disable, with its locks, not committed yet.
+    let mut disabling = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM users WHERE id = $1::uuid FOR NO KEY UPDATE")
+        .bind(&bob)
+        .execute(&mut *disabling)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1::uuid")
+        .bind(&bob)
+        .execute(&mut *disabling)
+        .await
+        .unwrap();
+    let path = transfer_path(&id);
+    let target = bob.clone();
+    let mut transfer = tokio::spawn(async move {
+        owner
+            .send(Method::POST, &path, Some(json!({ "user_id": target })))
+            .await
+    });
+    let waited = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                 WHERE datname = current_database() AND wait_event_type = 'Lock')",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if waiting || transfer.is_finished() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(waited.is_ok(), "the transfer neither waited nor finished");
+    disabling.commit().await.unwrap();
+
+    let res = (&mut transfer).await.unwrap();
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let still: String =
+        sqlx::query_scalar("SELECT owner_id::text FROM servers WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(still, ada);
+}
+
 type Ws =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 

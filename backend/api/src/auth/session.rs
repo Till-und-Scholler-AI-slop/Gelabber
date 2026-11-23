@@ -313,9 +313,10 @@ impl CurrentSession {
 
     /// The account is checked too, like in [`resolve`]: a disabled one ends
     /// its sockets and voice leases even with session rows left (#694). Only
-    /// the session row is locked; disabling and deletion lock the user row
-    /// first and then delete the sessions, so locking both here could
-    /// deadlock with them.
+    /// the session row is locked: disabling and deletion lock the user row
+    /// first and then delete the sessions. A socket that locks the user row
+    /// later in the same transaction (`presence::restore`) can still meet
+    /// them in a deadlock; disabling tries again then.
     async fn lock_row(&self, db: &mut sqlx::PgConnection) -> Result<Option<Vec<u8>>, ApiError> {
         Ok(sqlx::query_scalar(
             "SELECT s.token_hash FROM sessions s JOIN users u ON u.id = s.user_id \

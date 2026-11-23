@@ -278,9 +278,10 @@ async fn load(
 /// confirmed, and whether it is disabled. `None` for an account under
 /// deletion, which the console no longer shows.
 ///
-/// `NO KEY UPDATE` still orders disable, enable and deletion, but lets rows
-/// that reference the account be written meanwhile: a socket's batch may do
-/// that while it holds its session row, which disabling deletes.
+/// `NO KEY UPDATE` orders disable, enable and deletion, and a server handed
+/// to the account (`servers::account_usable` share-locks the row). It lets
+/// rows that reference the account be written meanwhile: a socket's batch
+/// may do that while it holds its session row, which disabling deletes.
 async fn lock_target(
     conn: &mut PgConnection,
     id: Uuid,
@@ -325,6 +326,42 @@ async fn disable(
         )])));
     }
 
+    let mut attempt = 1;
+    let revoked = loop {
+        match disable_once(&state, &op, id, reason).await? {
+            Some(revoked) => break revoked,
+            None if attempt < DISABLE_ATTEMPTS => {
+                tracing::debug!(attempt, user_id = %id, "disabling met a socket in a deadlock, again");
+                attempt += 1;
+            }
+            None => return Err(ApiError::Internal("disabling kept deadlocking".into())),
+        }
+    };
+
+    // Closes at once what the deleted sessions still hold open; the sockets'
+    // and leases' own session checks end them even if this is lost.
+    session::disconnect(&state, &revoked).await;
+    let mut conn = state.db.acquire().await?;
+    let account = load(&state, &mut conn, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(account))
+}
+
+/// A socket holds its session row while it may lock the user row itself
+/// (`presence::restore`), the reverse of the order here. The two can meet in
+/// a deadlock; Postgres then aborts one side, and a fresh attempt finds the
+/// socket's transaction done.
+const DISABLE_ATTEMPTS: u32 = 3;
+
+/// One attempt of [`disable`]: the hashes of the sessions it ended, or
+/// `None` when it met a deadlock and was rolled back whole.
+async fn disable_once(
+    state: &AppState,
+    op: &Operator,
+    id: Uuid,
+    reason: Option<&str>,
+) -> Result<Option<Vec<Vec<u8>>>, ApiError> {
     let mut tx = state.db.begin().await?;
     let (email, verified, disabled) = lock_target(&mut tx, id).await?.ok_or(ApiError::NotFound)?;
     if id == op.user.id {
@@ -332,7 +369,7 @@ async fn disable(
             "account", "self",
         )])));
     }
-    if access::is_operator_address(&state, &email, verified) {
+    if access::is_operator_address(state, &email, verified) {
         return Err(ApiError::Forbidden(
             "Operators are set in API_OPERATOR_EMAILS.",
         ));
@@ -350,14 +387,20 @@ async fn disable(
         // In the same transaction, like account deletion: the account is
         // never disabled with sessions left that sockets and voice leases
         // still renew on (#694).
-        revoked =
-            sqlx::query_scalar("DELETE FROM sessions WHERE user_id = $1 RETURNING token_hash")
-                .bind(id)
-                .fetch_all(&mut *tx)
-                .await?;
+        revoked = match sqlx::query_scalar(
+            "DELETE FROM sessions WHERE user_id = $1 RETURNING token_hash",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await
+        {
+            Ok(revoked) => revoked,
+            Err(err) if deadlocked(&err) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
         audit::record(
             &mut tx,
-            &op,
+            op,
             Action::AccountsDisable,
             Targets {
                 user: Some(id),
@@ -368,15 +411,12 @@ async fn disable(
         .await?;
     }
     tx.commit().await?;
+    Ok(Some(revoked))
+}
 
-    // Closes at once what the deleted sessions still hold open; the sockets'
-    // and leases' own session checks end them even if this is lost.
-    session::disconnect(&state, &revoked).await;
-    let mut conn = state.db.acquire().await?;
-    let account = load(&state, &mut conn, id)
-        .await?
-        .ok_or(ApiError::NotFound)?;
-    Ok(Json(account))
+fn deadlocked(err: &sqlx::Error) -> bool {
+    // 40P01 deadlock_detected.
+    matches!(err, sqlx::Error::Database(db) if db.code().as_deref() == Some("40P01"))
 }
 
 /// `POST /api/operator/accounts/{id}/enable`. The account can sign in
