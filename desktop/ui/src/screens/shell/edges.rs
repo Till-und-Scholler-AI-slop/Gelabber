@@ -23,6 +23,9 @@ use crate::widgets::eased;
 const GRAB: f32 = 8.0;
 /// A pointer resting this long lights the edge (`transition-delay`).
 const REST: f32 = 0.15;
+/// The lit line's width, centred inside [`GRAB`] (`.sidebar-edge::after`,
+/// GEL-64): the same for hover, drag and keyboard focus.
+const LINE: f32 = 4.0;
 
 fn toggle_id() -> Id {
     Id::unique("gelabber-channel-list-toggle")
@@ -269,8 +272,8 @@ pub fn paint(ui: &Ui) {
     }
     for (side, look) in [(Side::Channels, p.channels), (Side::Members, p.members)] {
         let Some(e) = look else { continue };
-        // The 2px line: lit after a short rest, at once while dragged or
-        // focused from the keyboard (4px in the focus colour then).
+        // The line: lit after a short rest, at once while dragged or
+        // focused from the keyboard (in the focus colour then).
         let rest = ui.input(|i| i.pointer.time_since_last_movement()) >= REST;
         let on = e.dragged || e.focused || (e.near && rest);
         let t = ui.ctx().animate_bool_with_time(
@@ -282,12 +285,8 @@ pub fn paint(ui: &Ui) {
             ui.ctx().request_repaint_after_secs(REST);
         }
         if t > 0.0 {
-            let (w, color) = if e.focused {
-                (4.0, c.focus)
-            } else {
-                (2.0, c.accent)
-            };
-            let line = Rect::from_x_y_ranges((e.x - w / 2.0)..=(e.x + w / 2.0), e.ys);
+            let color = if e.focused { c.focus } else { c.accent };
+            let line = Rect::from_x_y_ranges((e.x - LINE / 2.0)..=(e.x + LINE / 2.0), e.ys);
             ui.painter().rect_filled(line, 0.0, color.gamma_multiply(t));
         }
         if e.near || e.dragged {

@@ -485,13 +485,16 @@ summary {
   left: -4px;
   width: 8px;
 }
+/* The line: 4 px, centred on the column's line inside the grab area, so
+   it reads next to the column borders (GEL-64). Hover, drag and keyboard
+   focus share the width; focus draws it in the focus colour. */
 .sidebar-edge::after {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -1px;
-  width: 2px;
+  left: -2px;
+  width: 4px;
   background: var(--lr-accent);
   opacity: 0;
   transition: opacity var(--lr-dur-fast) var(--lr-ease-standard);
@@ -507,8 +510,6 @@ summary {
   transition-delay: 0s;
 }
 .sidebar-edge:focus-visible::after {
-  left: -2px;
-  width: 4px;
   background: var(--lr-focus);
 }
 :root:has(.sidebar-edge.is-dragging) {
