@@ -403,18 +403,8 @@ pub fn announce(state: &AppState, message: &Message, server: Option<Uuid>) {
         return;
     };
     let names_someone = message.mention_everyone || !message.mentioned().is_empty();
-    // Whether this message may go to the members who listen to every
-    // message of its channel; a mention goes out either way.
-    let ordinary = server.is_some() && ordinary_may_push(state, message.channel_id);
-    let deliveries = match server {
-        None => &push.dm_deliveries,
-        Some(_) if names_someone => &push.server_deliveries,
-        Some(_) if ordinary => &push.channel_deliveries,
-        Some(_) => return,
-    };
-    let Ok(slot) = deliveries.clone().try_acquire_owned() else {
-        state.metrics.rate_limited("push_dropped");
-        debug!(message_id = %message.id, "push dropped, deliveries busy");
+    let Some((slot, ordinary)) = slot(state, &push, message.channel_id, server, names_someone)
+    else {
         return;
     };
     let state = state.clone();
@@ -425,6 +415,36 @@ pub fn announce(state: &AppState, message: &Message, server: Option<Uuid>) {
         }
         drop(slot);
     });
+}
+
+/// A delivery slot for a new message, and whether the message may also go
+/// to the members who listen to every message of its channel; a mention
+/// goes out either way. `None`: nothing to push, or no slot free.
+fn slot(
+    state: &AppState,
+    push: &Push,
+    channel: Uuid,
+    server: Option<Uuid>,
+    names_someone: bool,
+) -> Option<(tokio::sync::OwnedSemaphorePermit, bool)> {
+    let ordinary = server.is_some() && ordinary_may_push(state, channel);
+    let deliveries = match server {
+        None => &push.dm_deliveries,
+        Some(_) if names_someone => &push.server_deliveries,
+        Some(_) if ordinary => &push.channel_deliveries,
+        Some(_) => return None,
+    };
+    let Ok(slot) = deliveries.clone().try_acquire_owned() else {
+        // Nothing went out, so the channel's window is not used up: the
+        // next message may push.
+        if ordinary {
+            state.limiter.refund("push-channel", &channel.to_string());
+        }
+        state.metrics.rate_limited("push_dropped");
+        debug!(channel_id = %channel, "push dropped, deliveries busy");
+        return None;
+    };
+    Some((slot, ordinary))
 }
 
 async fn deliver(
@@ -946,7 +966,7 @@ async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<
 }
 
 /// Whether an ordinary message of this channel may push now: the first in
-/// [`ORDINARY_WINDOW`] does.
+/// [`ORDINARY_WINDOW`] that gets a delivery slot does ([`slot`]).
 fn ordinary_may_push(state: &AppState, channel: Uuid) -> bool {
     state
         .limiter
@@ -1247,6 +1267,60 @@ mod tests {
         assert!(push.server_deliveries.clone().try_acquire_owned().is_err());
         assert!(push.dm_deliveries.clone().try_acquire_owned().is_ok());
         drop(held);
+    }
+
+    /// A state with push and no database or Redis behind it.
+    fn state() -> AppState {
+        let (private, _) = Vapid::generate();
+        let config = crate::Config::from_source(|key| match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+            "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
+            "REDIS_URL" => Some("redis://127.0.0.1:1".to_owned()),
+            "VAPID_PRIVATE_KEY" => Some(private.clone()),
+            "VAPID_SUBJECT" => Some("mailto:a@b.c".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+            .unwrap();
+        AppState::with_pool(&config, pool).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_dropped_ordinary_message_leaves_its_channel_the_window() {
+        let state = state();
+        let push = state.push.clone().unwrap();
+        let (server, channel) = (Some(Uuid::new_v4()), Uuid::new_v4());
+        let held: Vec<_> = (0..MAX_DELIVERIES)
+            .map(|_| push.channel_deliveries.clone().try_acquire_owned().unwrap())
+            .collect();
+        assert!(slot(&state, &push, channel, server, false).is_none());
+        drop(held);
+        // The message after it is the first that pushes.
+        let (_slot, ordinary) = slot(&state, &push, channel, server, false).expect("a slot");
+        assert!(ordinary);
+        assert!(slot(&state, &push, channel, server, false).is_none());
+        // A mention goes out within the window, to whom it names.
+        let (_slot, ordinary) = slot(&state, &push, channel, server, true).expect("a slot");
+        assert!(!ordinary);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_mention_leaves_its_channel_the_window() {
+        let state = state();
+        let push = state.push.clone().unwrap();
+        let (server, channel) = (Some(Uuid::new_v4()), Uuid::new_v4());
+        let held: Vec<_> = (0..MAX_DELIVERIES)
+            .map(|_| push.server_deliveries.clone().try_acquire_owned().unwrap())
+            .collect();
+        assert!(slot(&state, &push, channel, server, true).is_none());
+        drop(held);
+        let (_slot, ordinary) = slot(&state, &push, channel, server, false).expect("a slot");
+        assert!(ordinary);
+        // A direct message knows no window.
+        let (_slot, ordinary) = slot(&state, &push, channel, None, false).expect("a slot");
+        assert!(!ordinary);
     }
 
     #[test]
