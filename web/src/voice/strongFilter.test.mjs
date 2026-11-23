@@ -80,7 +80,7 @@ let dfnModule, rnnoiseModule, built;
 beforeAll(() => {
   dfnModule = new WebAssembly.Module(asset("deepfilternet.wasm"));
   rnnoiseModule = new WebAssembly.Module(asset("rnnoise.wasm"));
-  const model = asset("deepfilternet3.tar.gz");
+  const model = asset("deepfilternet3-model.bin");
   built = buildInWorker(
     dfnModule,
     model.buffer.slice(model.byteOffset, model.byteOffset + model.byteLength),

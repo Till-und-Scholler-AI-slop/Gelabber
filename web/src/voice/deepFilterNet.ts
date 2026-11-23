@@ -89,7 +89,7 @@ export function setStrongBuilderForTests(next?: Builder): void {
 const strongFilter = onceWithRetry(async (): Promise<StrongFilter> => {
   const [wasm, model] = await Promise.all([
     fetchVerified("deepfilternet.wasm", DFN_WASM_HASH),
-    fetchVerified("deepfilternet3.tar.gz", DFN_MODEL_HASH),
+    fetchVerified("deepfilternet3-model.bin", DFN_MODEL_HASH),
   ]);
   const module = await WebAssembly.compile(wasm);
   return { module, ...(await builder(module, model)) };

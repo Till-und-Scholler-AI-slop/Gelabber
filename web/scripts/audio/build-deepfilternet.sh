@@ -48,7 +48,7 @@ cat > "$BUILD/header.txt" <<EOF
 Third-party licences for the "Enhanced voice: Strong" noise filter
 (GEL-28). Provenance: DEEPFILTERNET-PROVENANCE.json.
 
-deepfilternet3.tar.gz is the DeepFilterNet3 model (models/DeepFilterNet3_onnx.tar.gz)
+deepfilternet3-model.bin is the DeepFilterNet3 model (models/DeepFilterNet3_onnx.tar.gz)
 from DeepFilterNet, https://github.com/Rikorose/DeepFilterNet, commit
 $DFN_COMMIT, unchanged. At that commit the model weights are licensed
 like the code: MIT OR Apache-2.0 (both texts below, under deep_filter).
@@ -60,5 +60,7 @@ EOF
 node "$HERE/deepfilternet-licenses.mjs" "$BUILD/metadata.json" "$BUILD/LICENSE.txt" "$BUILD/header.txt"
 
 install -m644 "$WASM" "$ROOT/public/audio/deepfilternet.wasm"
-install -m644 "$MODEL" "$ROOT/public/audio/deepfilternet3.tar.gz"
+# Not .tar.gz: Vite's dev server sends a .gz file with Content-Encoding:
+# gzip, the browser unpacks it, and the hash check fails.
+install -m644 "$MODEL" "$ROOT/public/audio/deepfilternet3-model.bin"
 install -m644 "$BUILD/LICENSE.txt" "$ROOT/public/audio/DEEPFILTERNET-LICENSE.txt"

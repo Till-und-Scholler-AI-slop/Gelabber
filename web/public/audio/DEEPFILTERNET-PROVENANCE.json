@@ -3,7 +3,7 @@
   "sourceCommit": "7b14b895fe7fc42cab72b4a4c1e49c982bd6404b",
   "sourceArchiveUrl": "https://codeload.github.com/Rikorose/DeepFilterNet/tar.gz/7b14b895fe7fc42cab72b4a4c1e49c982bd6404b",
   "sourceArchiveSha256": "60ddfcd8a4b62b78e95c59707a9c9bd6df74f09d72db41abad8987c67f2a680a",
-  "model": "deepfilternet3.tar.gz",
+  "model": "deepfilternet3-model.bin",
   "modelSource": "models/DeepFilterNet3_onnx.tar.gz in the source archive, unchanged",
   "modelSha256": "c94d91f70911001c946e0fabb4aa9adc37045f45a03b56008cb0c8244cb63616",
   "modelLicense": "MIT OR Apache-2.0 (weights relicensed at the source commit)",

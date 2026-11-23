@@ -751,7 +751,7 @@ describe("Enhanced voice: Strong (GEL-28)", () => {
           new Uint8Array(
             url.startsWith("/audio/deepfilternet.wasm")
               ? DFN
-              : url.startsWith("/audio/deepfilternet3.tar.gz")
+              : url.startsWith("/audio/deepfilternet3-model.bin")
                 ? MODEL
                 : RNNOISE,
           ),
@@ -776,7 +776,7 @@ describe("Enhanced voice: Strong (GEL-28)", () => {
     expect(fetchAsset.mock.calls.map(([url]) => url)).toEqual(
       expect.arrayContaining([
         `/audio/deepfilternet.wasm?sha256=${DFN_WASM_HASH}`,
-        `/audio/deepfilternet3.tar.gz?sha256=${DFN_MODEL_HASH}`,
+        `/audio/deepfilternet3-model.bin?sha256=${DFN_MODEL_HASH}`,
       ]),
     );
     const [module, model] = build.mock.calls[0]! as unknown as [

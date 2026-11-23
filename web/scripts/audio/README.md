@@ -25,8 +25,10 @@ output, in the configuration measured in
 100 dB, local-SNR thresholds −15/35/35 dB set explicitly, no post filter.
 Standard (RNNoise) stays the default. Only clients that choose Strong load
 `public/audio/deepfilternet.wasm` (libDF with tract, wasm32 with SIMD128,
-11.9 MB, 3.3 MB as nginx gzips it) and `public/audio/deepfilternet3.tar.gz`
-(the DFN3 model, 8 MB). `DEEPFILTERNET-PROVENANCE.json` records the pins,
+11.9 MB, 3.3 MB as nginx gzips it) and `public/audio/deepfilternet3-model.bin`
+(the DFN3 model archive, 8 MB, named `.bin` because Vite's dev server
+sends a `.gz` file as `Content-Encoding: gzip`, which breaks the hash
+check). `DEEPFILTERNET-PROVENANCE.json` records the pins,
 `DEEPFILTERNET-LICENSE.txt` the licences of DeepFilterNet, the model and
 every crate in the module.
 
@@ -70,8 +72,10 @@ chosen again or the page reloads. While Strong runs, the diagnostics show
 DFN3's mean time per 10 ms block over the last second and the slowest
 block: wall-clock time on the audio thread from `performance.now()` where
 the worklet has it, otherwise from `Date.now()` in whole milliseconds,
-averaged over 100 blocks. A browser has no CPU clock, so this is not the
-thread CPU time of the measurement in `docs/`. DFN3 adds 10 ms of delay
+averaged over 100 blocks. Headless Chromium (Playwright build 1255) gave its
+worklet only `Date.now()` in the audio smoke; the diagnostics then add
+"browser clock in whole milliseconds". A browser has no CPU clock, so this
+is not the thread CPU time of the measurement in `docs/`. DFN3 adds 10 ms of delay
 over RNNoise; the worklet's own buffer (reblocking and gate look-ahead) is
 the same as Standard's.
 
@@ -104,8 +108,9 @@ physical-device latency; those remain release acceptance gates.
 Start `npm run dev -- --host 127.0.0.1 --port 5179`, then run
 `npm run test:audio-smoke`. Chromium and Firefox use browser fake devices, genuine
 AudioWorklet/WASM, real MediaRecorder and HTML audio playback. The local test
-checks Enhanced speech, Original capture, missing-model fallback, A/B recording,
-playback/deletion and a 390 px layout. It does not override autoplay permission.
+checks Enhanced speech, Strong (DFN3 reports its time per block; a missing
+DFN3 module falls back to Standard), Original capture, missing-model
+fallback, A/B recording, playback/deletion and a 390 px layout. It does not override autoplay permission.
 It does not need accounts, a server or production writes.
 
 The microphone comparison is opt-in, local, capped at eight seconds and clears
