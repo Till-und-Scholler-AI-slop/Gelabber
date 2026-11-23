@@ -59,12 +59,54 @@
         "ms": 30,
         "correlation": 0.9994
       }
+    ],
+    "rnnoise-gate": [
+      {
+        "clip": "m1-clean",
+        "samples": 1920,
+        "ms": 40,
+        "correlation": 0.9843
+      },
+      {
+        "clip": "f1-clean",
+        "samples": 1920,
+        "ms": 40,
+        "correlation": 0.9946
+      },
+      {
+        "clip": "m2-clean",
+        "samples": 1920,
+        "ms": 40,
+        "correlation": 0.9905
+      }
+    ],
+    "dfn3-gate": [
+      {
+        "clip": "m1-clean",
+        "samples": 2400,
+        "ms": 50,
+        "correlation": 0.9999
+      },
+      {
+        "clip": "f1-clean",
+        "samples": 2400,
+        "ms": 50,
+        "correlation": 0.9999
+      },
+      {
+        "clip": "m2-clean",
+        "samples": 2400,
+        "ms": 50,
+        "correlation": 0.9999
+      }
     ]
   },
   "compensatedLagSamples": {
     "rnnoise": 960,
     "dfn3": 1440,
-    "dfn3-lib": 1440
+    "dfn3-lib": 1440,
+    "rnnoise-gate": 1920,
+    "dfn3-gate": 2400
   },
   "rnnoiseWasmVsNativeMaxAbsDiff": 0.004443385696504265,
   "dfn3NativeVsWasmMaxAbsDiff": 0.000014007091522216797,
@@ -133,6 +175,36 @@
             "SIG": 4.327,
             "BAK": 4.465,
             "OVRL": 4.056,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.704,
+            "BAK": 4.204,
+            "OVRL": 3.505,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.635,
+            "BAK": 4.714,
+            "OVRL": 4.462,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.704,
+            "BAK": 4.197,
+            "OVRL": 3.499,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.594,
+            "BAK": 4.594,
+            "OVRL": 4.368,
             "windows": 2
           },
           "siSdr": null
@@ -206,6 +278,36 @@
             "windows": 2
           },
           "siSdr": 3.83
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.489,
+            "BAK": 3.953,
+            "OVRL": 3.134,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.148,
+            "BAK": 3.806,
+            "OVRL": 3.587,
+            "windows": 2
+          },
+          "siSdr": 5.43
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.62,
+            "BAK": 4.184,
+            "OVRL": 3.364,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.418,
+            "BAK": 4.374,
+            "OVRL": 4.062,
+            "windows": 2
+          },
+          "siSdr": 10.92
         }
       }
     },
@@ -276,6 +378,36 @@
             "windows": 2
           },
           "siSdr": 4.92
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.611,
+            "BAK": 4.082,
+            "OVRL": 3.344,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.384,
+            "BAK": 4.011,
+            "OVRL": 3.916,
+            "windows": 2
+          },
+          "siSdr": 11.03
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.679,
+            "BAK": 4.208,
+            "OVRL": 3.463,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.321,
+            "BAK": 4.14,
+            "OVRL": 3.918,
+            "windows": 2
+          },
+          "siSdr": 15.02
         }
       }
     },
@@ -346,6 +478,36 @@
             "windows": 2
           },
           "siSdr": 4.33
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.587,
+            "BAK": 4.159,
+            "OVRL": 3.326,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.289,
+            "BAK": 4.286,
+            "OVRL": 3.899,
+            "windows": 2
+          },
+          "siSdr": 9.02
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.593,
+            "BAK": 4.186,
+            "OVRL": 3.339,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.321,
+            "BAK": 4.619,
+            "OVRL": 4.109,
+            "windows": 2
+          },
+          "siSdr": 20.73
         }
       }
     },
@@ -416,6 +578,36 @@
             "windows": 2
           },
           "siSdr": 5.82
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.693,
+            "BAK": 4.205,
+            "OVRL": 3.488,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.541,
+            "BAK": 4.504,
+            "OVRL": 4.265,
+            "windows": 2
+          },
+          "siSdr": 13.48
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.696,
+            "BAK": 4.216,
+            "OVRL": 3.5,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.552,
+            "BAK": 4.658,
+            "OVRL": 4.373,
+            "windows": 2
+          },
+          "siSdr": 23.6
         }
       }
     },
@@ -483,6 +675,36 @@
             "SIG": 3.124,
             "BAK": 3.695,
             "OVRL": 2.729,
+            "windows": 2
+          },
+          "siSdr": 6.45
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.366,
+            "BAK": 4.156,
+            "OVRL": 3.129,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.017,
+            "BAK": 4.511,
+            "OVRL": 3.766,
+            "windows": 2
+          },
+          "siSdr": 4.57
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.444,
+            "BAK": 4.066,
+            "OVRL": 3.161,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.062,
+            "BAK": 4.482,
+            "OVRL": 3.795,
             "windows": 2
           },
           "siSdr": 6.45
@@ -556,6 +778,36 @@
             "windows": 2
           },
           "siSdr": 8.85
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.653,
+            "BAK": 4.188,
+            "OVRL": 3.435,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.589,
+            "BAK": 4.689,
+            "OVRL": 4.39,
+            "windows": 2
+          },
+          "siSdr": 10.46
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.65,
+            "BAK": 4.209,
+            "OVRL": 3.436,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.603,
+            "BAK": 4.728,
+            "OVRL": 4.424,
+            "windows": 2
+          },
+          "siSdr": 13.72
         }
       }
     },
@@ -626,6 +878,36 @@
             "windows": 2
           },
           "siSdr": 4.29
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.421,
+            "BAK": 3.909,
+            "OVRL": 3.101,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.949,
+            "BAK": 2.465,
+            "OVRL": 2.802,
+            "windows": 2
+          },
+          "siSdr": 0.92
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.596,
+            "BAK": 4.157,
+            "OVRL": 3.346,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.031,
+            "BAK": 3.354,
+            "OVRL": 3.277,
+            "windows": 2
+          },
+          "siSdr": 5.91
         }
       }
     },
@@ -696,6 +978,36 @@
             "windows": 2
           },
           "siSdr": 4.69
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.606,
+            "BAK": 4.157,
+            "OVRL": 3.376,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.507,
+            "BAK": 4.602,
+            "OVRL": 4.305,
+            "windows": 2
+          },
+          "siSdr": 9.95
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.679,
+            "BAK": 4.202,
+            "OVRL": 3.468,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.617,
+            "BAK": 4.671,
+            "OVRL": 4.432,
+            "windows": 2
+          },
+          "siSdr": 12.84
         }
       }
     },
@@ -766,6 +1078,36 @@
             "windows": 2
           },
           "siSdr": 1.19
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.359,
+            "BAK": 3.708,
+            "OVRL": 2.946,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.008,
+            "BAK": 1.554,
+            "OVRL": 2.001,
+            "windows": 2
+          },
+          "siSdr": -0.43
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.598,
+            "BAK": 3.562,
+            "OVRL": 3.052,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.969,
+            "BAK": 2.06,
+            "OVRL": 2.52,
+            "windows": 2
+          },
+          "siSdr": 2.35
         }
       }
     },
@@ -836,6 +1178,36 @@
             "windows": 2
           },
           "siSdr": 6.02
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.527,
+            "BAK": 4.162,
+            "OVRL": 3.327,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.865,
+            "BAK": 2.408,
+            "OVRL": 2.694,
+            "windows": 2
+          },
+          "siSdr": 9.51
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.633,
+            "BAK": 4.093,
+            "OVRL": 3.372,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.609,
+            "BAK": 2.663,
+            "OVRL": 3.308,
+            "windows": 2
+          },
+          "siSdr": 12.86
         }
       }
     },
@@ -903,6 +1275,36 @@
             "SIG": 3.792,
             "BAK": 2.589,
             "OVRL": 2.685,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.235,
+            "BAK": 3.387,
+            "OVRL": 2.66,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.851,
+            "BAK": 2.448,
+            "OVRL": 2.647,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.471,
+            "BAK": 4.006,
+            "OVRL": 3.128,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.016,
+            "BAK": 3.858,
+            "OVRL": 3.461,
             "windows": 2
           },
           "siSdr": null
@@ -976,6 +1378,36 @@
             "windows": 1
           },
           "siSdr": null
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.671,
+            "BAK": 4.219,
+            "OVRL": 3.48,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.226,
+            "BAK": 4.528,
+            "OVRL": 4.005,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.632,
+            "BAK": 4.166,
+            "OVRL": 3.423,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.36,
+            "BAK": 4.408,
+            "OVRL": 4.072,
+            "windows": 1
+          },
+          "siSdr": null
         }
       }
     },
@@ -1046,6 +1478,36 @@
             "windows": 1
           },
           "siSdr": 4.94
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.037,
+            "BAK": 3.347,
+            "OVRL": 2.475,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.214,
+            "BAK": 2.639,
+            "OVRL": 2.216,
+            "windows": 1
+          },
+          "siSdr": 8.54
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.266,
+            "BAK": 3.869,
+            "OVRL": 2.893,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.805,
+            "BAK": 3.851,
+            "OVRL": 3.266,
+            "windows": 1
+          },
+          "siSdr": 13.18
         }
       }
     },
@@ -1116,6 +1578,36 @@
             "windows": 1
           },
           "siSdr": 6.68
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.567,
+            "BAK": 4.03,
+            "OVRL": 3.286,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.262,
+            "BAK": 3.255,
+            "OVRL": 3.427,
+            "windows": 1
+          },
+          "siSdr": 13.89
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.605,
+            "BAK": 4.2,
+            "OVRL": 3.393,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.368,
+            "BAK": 4.58,
+            "OVRL": 4.091,
+            "windows": 1
+          },
+          "siSdr": 17.67
         }
       }
     },
@@ -1186,6 +1678,36 @@
             "windows": 1
           },
           "siSdr": 7.06
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.507,
+            "BAK": 3.996,
+            "OVRL": 3.155,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.09,
+            "BAK": 3.581,
+            "OVRL": 3.438,
+            "windows": 1
+          },
+          "siSdr": 9.44
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.436,
+            "BAK": 4.161,
+            "OVRL": 3.168,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.034,
+            "BAK": 4.283,
+            "OVRL": 3.635,
+            "windows": 1
+          },
+          "siSdr": 22.05
         }
       }
     },
@@ -1256,6 +1778,36 @@
             "windows": 1
           },
           "siSdr": 11.33
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.622,
+            "BAK": 4.184,
+            "OVRL": 3.418,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.083,
+            "BAK": 3.796,
+            "OVRL": 3.568,
+            "windows": 1
+          },
+          "siSdr": 16.14
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.596,
+            "BAK": 4.123,
+            "OVRL": 3.363,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.2,
+            "BAK": 4.193,
+            "OVRL": 3.833,
+            "windows": 1
+          },
+          "siSdr": 24.8
         }
       }
     },
@@ -1326,6 +1878,36 @@
             "windows": 1
           },
           "siSdr": 10.96
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.14,
+            "BAK": 3.943,
+            "OVRL": 2.855,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.785,
+            "BAK": 4.39,
+            "OVRL": 3.488,
+            "windows": 1
+          },
+          "siSdr": 8.09
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 2.973,
+            "BAK": 4.02,
+            "OVRL": 2.757,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.202,
+            "BAK": 4.374,
+            "OVRL": 3.058,
+            "windows": 1
+          },
+          "siSdr": 11.51
         }
       }
     },
@@ -1396,6 +1978,36 @@
             "windows": 1
           },
           "siSdr": 6.82
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.361,
+            "BAK": 4.053,
+            "OVRL": 3.115,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.232,
+            "BAK": 4.548,
+            "OVRL": 3.953,
+            "windows": 1
+          },
+          "siSdr": 14.53
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.327,
+            "BAK": 4.064,
+            "OVRL": 3.105,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.869,
+            "BAK": 4.318,
+            "OVRL": 3.56,
+            "windows": 1
+          },
+          "siSdr": 18.71
         }
       }
     },
@@ -1466,6 +2078,36 @@
             "windows": 1
           },
           "siSdr": 2.85
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.237,
+            "BAK": 3.515,
+            "OVRL": 2.76,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.733,
+            "BAK": 1.779,
+            "OVRL": 2.162,
+            "windows": 1
+          },
+          "siSdr": 1.48
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.026,
+            "BAK": 3.366,
+            "OVRL": 2.532,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.765,
+            "BAK": 3.219,
+            "OVRL": 2.323,
+            "windows": 1
+          },
+          "siSdr": 5.36
         }
       }
     },
@@ -1536,6 +2178,36 @@
             "windows": 1
           },
           "siSdr": 5.2
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.467,
+            "BAK": 3.612,
+            "OVRL": 2.994,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.122,
+            "BAK": 4.037,
+            "OVRL": 3.741,
+            "windows": 1
+          },
+          "siSdr": 11.97
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.49,
+            "BAK": 4.115,
+            "OVRL": 3.251,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.796,
+            "BAK": 3.433,
+            "OVRL": 3.179,
+            "windows": 1
+          },
+          "siSdr": 12.91
         }
       }
     },
@@ -1606,6 +2278,36 @@
             "windows": 1
           },
           "siSdr": -4.35
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.378,
+            "BAK": 2.509,
+            "OVRL": 2.285,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.145,
+            "BAK": 1.732,
+            "OVRL": 2.067,
+            "windows": 1
+          },
+          "siSdr": -1.36
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.168,
+            "BAK": 2.652,
+            "OVRL": 2.279,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.292,
+            "BAK": 1.926,
+            "OVRL": 2.003,
+            "windows": 1
+          },
+          "siSdr": -3.12
         }
       }
     },
@@ -1676,6 +2378,36 @@
             "windows": 1
           },
           "siSdr": 6.36
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.348,
+            "BAK": 3.442,
+            "OVRL": 2.79,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.485,
+            "BAK": 1.903,
+            "OVRL": 2.037,
+            "windows": 1
+          },
+          "siSdr": 9.67
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.086,
+            "BAK": 3.559,
+            "OVRL": 2.649,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.001,
+            "BAK": 1.747,
+            "OVRL": 1.726,
+            "windows": 1
+          },
+          "siSdr": 8.95
         }
       }
     },
@@ -1743,6 +2475,36 @@
             "SIG": 3.664,
             "BAK": 3.803,
             "OVRL": 3.228,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 2.223,
+            "BAK": 1.618,
+            "OVRL": 1.475,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.992,
+            "BAK": 3.185,
+            "OVRL": 3.065,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 2.97,
+            "BAK": 3.363,
+            "OVRL": 2.438,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.844,
+            "BAK": 4.043,
+            "OVRL": 3.391,
             "windows": 1
           },
           "siSdr": null
@@ -1816,6 +2578,36 @@
             "windows": 3
           },
           "siSdr": null
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.559,
+            "BAK": 4.158,
+            "OVRL": 3.335,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.374,
+            "BAK": 4.65,
+            "OVRL": 4.173,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.582,
+            "BAK": 4.128,
+            "OVRL": 3.332,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.384,
+            "BAK": 4.527,
+            "OVRL": 4.113,
+            "windows": 3
+          },
+          "siSdr": null
         }
       }
     },
@@ -1886,6 +2678,36 @@
             "windows": 3
           },
           "siSdr": 4.02
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.436,
+            "BAK": 3.873,
+            "OVRL": 3.006,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.612,
+            "BAK": 3.78,
+            "OVRL": 3.083,
+            "windows": 3
+          },
+          "siSdr": 8.32
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.324,
+            "BAK": 4.031,
+            "OVRL": 2.969,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.671,
+            "BAK": 4.11,
+            "OVRL": 3.267,
+            "windows": 3
+          },
+          "siSdr": 11.87
         }
       }
     },
@@ -1956,6 +2778,36 @@
             "windows": 3
           },
           "siSdr": 8.13
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.455,
+            "BAK": 3.833,
+            "OVRL": 3.055,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.824,
+            "BAK": 2.993,
+            "OVRL": 2.966,
+            "windows": 3
+          },
+          "siSdr": 12.91
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.537,
+            "BAK": 4.018,
+            "OVRL": 3.212,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.34,
+            "BAK": 4.488,
+            "OVRL": 4.042,
+            "windows": 3
+          },
+          "siSdr": 18.13
         }
       }
     },
@@ -2026,6 +2878,36 @@
             "windows": 3
           },
           "siSdr": 5.66
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.628,
+            "BAK": 4.176,
+            "OVRL": 3.366,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.482,
+            "BAK": 4.529,
+            "OVRL": 4.2,
+            "windows": 3
+          },
+          "siSdr": 9.43
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.622,
+            "BAK": 4.193,
+            "OVRL": 3.358,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.533,
+            "BAK": 4.66,
+            "OVRL": 4.316,
+            "windows": 3
+          },
+          "siSdr": 19.06
         }
       }
     },
@@ -2096,6 +2978,36 @@
             "windows": 3
           },
           "siSdr": 8.55
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.597,
+            "BAK": 4.166,
+            "OVRL": 3.357,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.494,
+            "BAK": 4.734,
+            "OVRL": 4.325,
+            "windows": 3
+          },
+          "siSdr": 15.34
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.613,
+            "BAK": 4.172,
+            "OVRL": 3.366,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.453,
+            "BAK": 4.626,
+            "OVRL": 4.222,
+            "windows": 3
+          },
+          "siSdr": 23.84
         }
       }
     },
@@ -2166,6 +3078,36 @@
             "windows": 3
           },
           "siSdr": 8.57
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.146,
+            "BAK": 3.982,
+            "OVRL": 2.868,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.293,
+            "BAK": 3.699,
+            "OVRL": 2.856,
+            "windows": 3
+          },
+          "siSdr": 5.9
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.297,
+            "BAK": 3.954,
+            "OVRL": 2.99,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.623,
+            "BAK": 4.227,
+            "OVRL": 3.314,
+            "windows": 3
+          },
+          "siSdr": 8.78
         }
       }
     },
@@ -2236,6 +3178,36 @@
             "windows": 3
           },
           "siSdr": 5.72
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.415,
+            "BAK": 4.017,
+            "OVRL": 3.115,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.894,
+            "BAK": 4.239,
+            "OVRL": 3.545,
+            "windows": 3
+          },
+          "siSdr": 11.7
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.485,
+            "BAK": 4.12,
+            "OVRL": 3.224,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.167,
+            "BAK": 4.566,
+            "OVRL": 3.907,
+            "windows": 3
+          },
+          "siSdr": 15.84
         }
       }
     },
@@ -2306,6 +3278,36 @@
             "windows": 3
           },
           "siSdr": 2.95
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.148,
+            "BAK": 2.532,
+            "OVRL": 2.23,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.69,
+            "BAK": 1.469,
+            "OVRL": 1.777,
+            "windows": 3
+          },
+          "siSdr": 0.42
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.251,
+            "BAK": 3.925,
+            "OVRL": 2.944,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.225,
+            "BAK": 2.194,
+            "OVRL": 2.124,
+            "windows": 3
+          },
+          "siSdr": 4.14
         }
       }
     },
@@ -2376,6 +3378,36 @@
             "windows": 3
           },
           "siSdr": 3.72
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.404,
+            "BAK": 3.845,
+            "OVRL": 3.046,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.501,
+            "BAK": 2.988,
+            "OVRL": 2.784,
+            "windows": 3
+          },
+          "siSdr": 10.67
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.466,
+            "BAK": 4.073,
+            "OVRL": 3.194,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.773,
+            "BAK": 4.005,
+            "OVRL": 3.409,
+            "windows": 3
+          },
+          "siSdr": 12.08
         }
       }
     },
@@ -2446,6 +3478,36 @@
             "windows": 3
           },
           "siSdr": -4.08
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.45,
+            "BAK": 3.507,
+            "OVRL": 2.929,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.791,
+            "BAK": 1.777,
+            "OVRL": 2.183,
+            "windows": 3
+          },
+          "siSdr": -1.35
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.457,
+            "BAK": 3.488,
+            "OVRL": 2.915,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.039,
+            "BAK": 2.858,
+            "OVRL": 3.045,
+            "windows": 3
+          },
+          "siSdr": -2.82
         }
       }
     },
@@ -2516,6 +3578,36 @@
             "windows": 3
           },
           "siSdr": 4.78
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.278,
+            "BAK": 3.337,
+            "OVRL": 2.691,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.219,
+            "BAK": 1.599,
+            "OVRL": 1.674,
+            "windows": 3
+          },
+          "siSdr": 9.6
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.476,
+            "BAK": 4.041,
+            "OVRL": 3.181,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.9,
+            "BAK": 1.977,
+            "OVRL": 2.387,
+            "windows": 3
+          },
+          "siSdr": 10.35
         }
       }
     },
@@ -2583,6 +3675,36 @@
             "SIG": 3.988,
             "BAK": 3.711,
             "OVRL": 3.468,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "rnnoise-gate": {
+          "dnsmos": {
+            "SIG": 3.115,
+            "BAK": 2.98,
+            "OVRL": 2.402,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.923,
+            "BAK": 2.69,
+            "OVRL": 2.788,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "dfn3-gate": {
+          "dnsmos": {
+            "SIG": 3.305,
+            "BAK": 3.97,
+            "OVRL": 2.996,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.086,
+            "BAK": 3.968,
+            "OVRL": 3.604,
             "windows": 3
           },
           "siSdr": null

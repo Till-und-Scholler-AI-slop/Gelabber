@@ -86,8 +86,9 @@ fn main() -> Result<()> {
     let model_path = PathBuf::from(&args[1]);
     let out_dir = PathBuf::from(&args[2]);
     fs::create_dir_all(&out_dir)?;
-    // The library defaults are the real-time ones (LADSPA plugin, C API):
-    // attenuation limit 100 dB, local-SNR thresholds -10/30/20 dB.
+    // The library defaults, as the LADSPA plugin and libDF's own wasm build
+    // use them: attenuation limit 100 dB, local-SNR thresholds -10/30/20 dB.
+    // (libDF's C API sets -15/35/35 itself.)
     let mut r_params = RuntimeParams::default();
     // DFN_PARAMS="atten_lim_db,min,max_erb,max_df[,post_filter_beta]" overrides
     // them, e.g. "100,-15,35,35" for the deep-filter command line defaults.

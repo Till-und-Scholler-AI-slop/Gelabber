@@ -60,7 +60,8 @@ MODEL="$WORK/src/deepfilternet/models/DeepFilterNet3_onnx.tar.gz"
 # Two DeepFilterNet3 settings that differ only in when libDF skips model
 # stages: the deep-filter command line's thresholds (-15/35/35 dB local SNR),
 # which ran the full model on every clip here, and the library defaults
-# (-10/30/20 dB) that the LADSPA plugin and the C API start with.
+# (-10/30/20 dB) that the LADSPA plugin and libDF's own wasm build (wasm.rs)
+# start with. libDF's C API (capi.rs) sets -15/35/35 itself.
 DFN_PARAMS=100,-15,35,35 "$TARGET_DIR/release/dfn-bench" "$MODEL" "$WORK/out/dfn3" "${CLIPS[@]}" \
   > "$RESULTS/cpu-dfn3.json"
 "$TARGET_DIR/release/dfn-bench" "$MODEL" "$WORK/out/dfn3-lib" "${CLIPS[@]}" > "$RESULTS/cpu-dfn3-lib.json"
@@ -69,5 +70,7 @@ if [ -n "$DFN_WASM" ]; then
 fi
 echo "load average after engines: $(cut -d' ' -f1-3 /proc/loadavg)" >> "$RESULTS/machine.txt"
 
+# The app's default input gate after both filters (GEL-27).
+node gate.mjs > "$RESULTS/gate.json"
 node score.mjs > /dev/null
 echo "results in $RESULTS"
