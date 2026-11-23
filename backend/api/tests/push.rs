@@ -1747,12 +1747,56 @@ async fn a_last_call_waits_for_do_not_disturb_and_is_tried_again(pool: PgPool) {
     .await
     .unwrap();
     // The push service is down: asked, but not counted as told.
-    assert_eq!(sweep(&state).await.unwrap(), 1);
+    assert_eq!(sweep(&state).await.unwrap(), 0);
     assert_eq!(next(&mut hits).await.path, "fail/bob");
     assert_eq!(warned(&pool).await, 0);
     assert_eq!(subscriptions(&pool).await, 1);
-    assert_eq!(sweep(&state).await.unwrap(), 1);
+    assert_eq!(sweep(&state).await.unwrap(), 0);
     assert_eq!(next(&mut hits).await.path, "fail/bob");
+}
+
+/// With the push service down, a round of the worker ends after one batch:
+/// it does not claim the same subscriptions again and again until the service
+/// is back. The next round tries them again.
+#[sqlx::test]
+async fn a_last_call_round_ends_while_the_push_service_is_down(pool: PgPool) {
+    use gelabber_api::push::last_call::round;
+    let World {
+        state,
+        mut b,
+        mut hits,
+        service,
+        ..
+    } = setup_long(pool.clone()).await;
+    subscribe(&mut b, &Browser::new(&service, "fail/bob")).await;
+    // More than one batch (200) of subscriptions, all of them due.
+    sqlx::query(
+        "INSERT INTO push_subscriptions (endpoint, user_id, session_hash, p256dh, auth)
+         SELECT endpoint || '-' || n, user_id, session_hash, p256dh, auth
+         FROM push_subscriptions, generate_series(1, 250) AS n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    session_ends_in(&pool, b.user_id(), "10 hours").await;
+
+    let asked = |hits: &mut mpsc::UnboundedReceiver<Hit>| {
+        let mut asked = 0;
+        while hits.try_recv().is_ok() {
+            asked += 1;
+        }
+        asked
+    };
+    tokio::time::timeout(Duration::from_secs(30), round(&state))
+        .await
+        .expect("the round ends");
+    assert_eq!(asked(&mut hits), 200);
+    assert_eq!(warned(&pool).await, 0);
+    assert_eq!(subscriptions(&pool).await, 251);
+    tokio::time::timeout(Duration::from_secs(30), round(&state))
+        .await
+        .expect("the round ends");
+    assert_eq!(asked(&mut hits), 200);
 }
 
 async fn voice(client: &mut Client, server: &str, name: &str) -> String {
