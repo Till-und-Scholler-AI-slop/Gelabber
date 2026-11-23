@@ -38,11 +38,11 @@ is the order of the work; check each step's result before the next one.
    `git log --first-parent --format='%h %s' <last tag>..HEAD`. Check the
    upgrade traps that came up before: image pins that must move together,
    new required `.env` variables, and migrations that cannot be undone.
-5. **Pull request** `release: vX.Y.Z` to `main`, reviewed by a maintainer
-   other than the person who asked for the release. **Merging it deploys
+5. **Pull request** `release: vX.Y.Z` to `main`. A maintainer merges it once
+   `ci-ok` is green; no second approval is needed. **Merging it deploys
    production:** `release.yml` moves `latest` and the server's Watchtower
-   pulls it. So the merge needs an explicit go from a person, never only an
-   agent's approval, and before it the operator takes a backup
+   pulls it. So the merge needs an explicit go from a maintainer, never only
+   an agent's decision, and before it the operator takes a backup
    (`deploy/backup.sh`, see `deploy/README.md` "Backup") or pauses
    Watchtower. With a migration in the notes, rollback is only through that
    backup. Until the release is out, nothing else is merged into `main`.
@@ -53,9 +53,8 @@ is the order of the work; check each step's result before the next one.
    cancelled, re-run it on `main`'s head. `release.yml` by hand
    (`-f tag=vX.Y.Z -f image_run_id=<publish run>`) only repairs a release.
    Never `gh release create`.
-7. **Desktop packages.** The pacman repository job waits for the
-   `github-pages` environment approval. A maintainer approves it, not an
-   agent. The `libwebrtc-packages` and `build-deps` releases stay
+7. **Desktop packages.** The pacman repository job publishes to GitHub
+   Pages without an approval. The `libwebrtc-packages` and `build-deps` releases stay
    pre-releases: as "Latest", the apps' updater and the web client's
    download links would point at them.
 8. **Planning.** In Linear, complete the milestone, move its open issues to

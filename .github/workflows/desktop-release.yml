@@ -103,8 +103,7 @@ jobs:
             --clobber --repo "$GITHUB_REPOSITORY"
 
   # Public: the repository on GitHub Pages. Off until the repository
-  # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment
-  # should require an approval (desktop/packaging/arch/README.md).
+  # variable ARCH_REPO_PUBLISH is "true" (desktop/packaging/arch/README.md).
   arch-repo-publish:
     name: Publish the pacman repository
     if: vars.ARCH_REPO_PUBLISH == 'true'

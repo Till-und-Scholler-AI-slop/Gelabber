@@ -36,13 +36,17 @@ The **shipped line** is the latest release tag on `main`.
 - **Hotfixes** for the shipped line: PR to `main`, then a sync PR from `main`
   to the development line that keeps the hotfix commits, so ancestry proves the
   sync.
-- **Each fix** gets its own reviewed PR before a release PR bundles it.
-- **Protection:** the `Version branches` ruleset covers `refs/heads/v[0-9]*`
-  (PR required, same reviews as `main`); every change reaches `main` and `v*`
-  through a PR. A new version branch name must match that pattern, or gets the
-  same protection by hand before its first commit.
-- **Review:** a product PR is reviewed by a maintainer other than the person
-  who asked for the work.
+- **Each fix** gets its own PR before a release PR bundles it.
+- **Protection:** the rulesets `Main Protection` and `Version branches`
+  (`refs/heads/v[0-9]*`) require a PR and a green `ci-ok`, and block force
+  pushes and deletion. Nobody bypasses them, admins included. A new version
+  branch name must match that pattern, or gets the same protection by hand
+  before its first commit.
+- **Merge and review:** a maintainer (write access or more) merges their own
+  PR once `ci-ok` is green; no approval from the other maintainer is
+  required. The maintainer reviews the change first, with AI if they like,
+  and an agent merges only when that maintainer says so. Others contribute
+  through forks.
 
 ## Planning
 
