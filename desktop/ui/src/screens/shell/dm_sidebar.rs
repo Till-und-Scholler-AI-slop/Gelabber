@@ -294,7 +294,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
         });
 }
 
-const NAV_ROW: f32 = 36.0;
+// friends.css `.dm-nav`: `padding: 8px 8px 4px`, `gap: 2px` and a 1px
+// border under it; index.css `.dm-row`: 44px high, `padding: 0 10px`.
+const NAV_PAD_TOP: f32 = 8.0;
+const NAV_PAD_BOTTOM: f32 = 4.0;
+const NAV_GAP: f32 = 2.0;
+const NAV_ROW: f32 = 44.0;
+const NAV_INSET: f32 = 10.0;
 
 /// "Freunde" and "Anfragen" above the conversations (#563), with counts of
 /// what waits for an answer. Returns where the list starts.
@@ -322,10 +328,10 @@ fn friend_nav(ui: &mut Ui, app: &mut AppCtx, rect: Rect) -> f32 {
             route == Route::DmRequests,
         ),
     ];
-    let top = rect.top() + 52.0 + 8.0;
+    let top = rect.top() + 52.0 + NAV_PAD_TOP;
     for (i, (label, href, count, active)) in rows.into_iter().enumerate() {
         let row = Rect::from_min_size(
-            pos2(rect.left() + 8.0, top + (NAV_ROW + 4.0) * i as f32),
+            pos2(rect.left() + 8.0, top + (NAV_ROW + NAV_GAP) * i as f32),
             Vec2::new(rect.width() - 1.0 - 16.0, NAV_ROW),
         );
         let id = Id::unique(("dm-nav", href));
@@ -340,7 +346,7 @@ fn friend_nav(ui: &mut Ui, app: &mut AppCtx, rect: Rect) -> f32 {
         };
         common::fill(ui.painter(), row, theme.radius.md, fill);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, label));
-        let mut right = row.right() - 10.0;
+        let mut right = row.right() - NAV_INSET;
         if count > 0 {
             let r = count_badge(
                 ui.painter(),
@@ -351,19 +357,17 @@ fn friend_nav(ui: &mut Ui, app: &mut AppCtx, rect: Rect) -> f32 {
             );
             right = r.left() - 10.0;
         }
-        let color = if lit || active || count > 0 {
-            c.text
-        } else {
-            c.muted
-        };
-        let name = line(ui, label, text::BODY, color, right - row.left() - 12.0);
-        paint_mid(ui.painter(), &name, row.left() + 12.0, row.center().y);
+        // A count leaves the label muted, as on the web (no `.is-unread`).
+        let color = if lit || active { c.text } else { c.muted };
+        let left = row.left() + NAV_INSET;
+        let name = line(ui, label, text::BODY, color, right - left);
+        paint_mid(ui.painter(), &name, left, row.center().y);
         common::focus_visible(ui, &response, row, theme.radius.md);
         if response.clicked() {
             app.nav.navigate(href);
         }
     }
-    let bottom = top + (NAV_ROW + 4.0) * 2.0 + 4.0;
+    let bottom = top + NAV_ROW * 2.0 + NAV_GAP + NAV_PAD_BOTTOM;
     hairline_h(
         ui.painter(),
         &theme,
@@ -371,4 +375,64 @@ fn friend_nav(ui: &mut Ui, app: &mut AppCtx, rect: Rect) -> f32 {
         bottom,
     );
     bottom + 1.0
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for_label, workspace};
+    use crate::platform::paths::testing::TempConfig;
+    use egui_kittest::kittest::Queryable;
+    use serde_json::json;
+
+    /// "Freunde" and "Anfragen" as the web draws them (friends.css
+    /// `.dm-nav`, index.css `.dm-row`): 44px rows 2px apart under 8px, 4px
+    /// and a border below, the conversations 8px under that border, the
+    /// label 10px in.
+    #[test]
+    fn friend_rows_sit_like_the_web() {
+        let _config = TempConfig::new("dm-nav-rows");
+        let api = FakeApi::start(true, |method, path, _| match (method, path) {
+            ("GET", "/dms") => Some(Reply::json(json!([{
+                "id": "00000000-0000-4000-8000-0000000000d1", "kind": "dm",
+                "created_at": "2026-01-01T00:00:00Z",
+                "peer": {"id": "00000000-0000-4000-8000-00000000007c", "name": "Jonas",
+                         "avatar_url": null}
+            }]))),
+            _ => workspace(method, path),
+        });
+        let mut h = launcher(&api, "/d");
+        wait_for_label(&mut h, "Jonas");
+        h.run_steps(4);
+        let friends = h.get_by_label("Freunde").rect();
+        let requests = h.get_by_label("Anfragen").rect();
+        let jonas = h.get_by_label("Jonas").rect();
+        // The sidebar starts at the window's top: its 52px header, then 8px.
+        assert_eq!(friends.top(), 52.0 + 8.0, "under the header");
+        assert_eq!((friends.height(), requests.height()), (44.0, 44.0));
+        assert_eq!(requests.top() - friends.bottom(), 2.0, "gap");
+        // 4px padding, the 1px border, then the list's 8px.
+        assert_eq!(jonas.top() - requests.bottom(), 4.0 + 1.0 + 8.0);
+
+        let image = h.render().expect("render");
+        let theme = crate::theme::Theme::dark();
+        let is = |c: egui::Color32, x: f32, y: f32| {
+            image.get_pixel(x as u32, y as u32).0[..3] == c.to_array()[..3]
+        };
+        // The divider fills the pixel row 4px under "Anfragen", only that one.
+        let line = requests.bottom() + 4.0;
+        for x in [friends.left() + 20.0, friends.right() - 20.0] {
+            assert!(is(theme.c.border, x, line), "divider at {x},{line}");
+            assert!(!is(theme.c.border, x, line - 1.0) && !is(theme.c.border, x, line + 1.0));
+        }
+        // The label's first ink is 10px in (plus the glyph's own bearing).
+        let ink = (0..40)
+            .map(|dx| friends.left() + dx as f32)
+            .find(|&x| {
+                (friends.top() as u32..friends.bottom() as u32)
+                    .any(|y| !is(theme.c.panel, x, y as f32))
+            })
+            .expect("the label");
+        let inset = ink - friends.left();
+        assert!((10.0..12.0).contains(&inset), "label inset {inset}");
+    }
 }
