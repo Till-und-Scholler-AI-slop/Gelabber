@@ -12,6 +12,7 @@ const fixture = vi.hoisted(() => ({
   },
   queries: [] as unknown[],
   chips: [] as { label: string; options: { value: string; label: string }[] }[],
+  overview: undefined as { mail: boolean; mail_failing: boolean } | undefined,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -35,6 +36,7 @@ vi.mock("../queries.ts", () => ({
     fixture.queries.push(query);
     return { refetch: vi.fn(), ...fixture.result };
   },
+  useOperatorOverview: () => ({ data: fixture.overview }),
   useOperatorRefresh: () => vi.fn(),
 }));
 vi.mock("../../components/ui/ChipGroup.tsx", () => ({
@@ -56,6 +58,7 @@ const account = (overrides: Partial<Account> = {}): Account => ({
   avatar_url: null,
   created_at: "2026-10-01T10:00:00Z",
   status: "active",
+  email_verified: true,
   disabled_at: null,
   disabled_reason: null,
   operator: false,
@@ -71,6 +74,7 @@ beforeEach(() => {
   fixture.result = {};
   fixture.queries = [];
   fixture.chips = [];
+  fixture.overview = undefined;
 });
 afterEach(() => setLocale("de", { persist: false }));
 
@@ -90,7 +94,8 @@ describe("Konten page", () => {
     expect(fixture.chips[0]?.options).toEqual([
       { value: "all", label: "Alle" },
       { value: "disabled", label: "Gesperrt" },
-      { value: "pending", label: "Unbestätigt" },
+      // Pending registrations and accounts from before account mail.
+      { value: "unconfirmed", label: "Unbestätigt" },
     ]);
     expect(fixture.queries.at(-1)).toEqual({
       q: undefined,
@@ -140,6 +145,26 @@ describe("Konten page", () => {
     expect(html).not.toContain('aria-label="Aktionen für Lena"');
   });
 
+  it("marks an address that was never confirmed (GEL-40)", () => {
+    fixture.result = {
+      data: page([account({ status: "unconfirmed", email_verified: false })]),
+    };
+    const html = render();
+    expect(html).toContain(
+      'class="ui-badge ui-badge--warning" title="Registriert, als dieser Server keine Mails verschickte. Meldet sich erst nach der Bestätigung wieder an.">Nie bestätigt',
+    );
+  });
+
+  it("says when the last account mail failed", () => {
+    fixture.result = { data: page([account()]) };
+    fixture.overview = { mail: true, mail_failing: false };
+    expect(render()).not.toContain("operator-notice");
+    fixture.overview = { mail: true, mail_failing: true };
+    expect(text(render())).toContain(
+      "Die letzte Mail ist nicht rausgegangen. Prüfe die SMTP-Einstellungen und das Log der API (account mail failed).",
+    );
+  });
+
   it("pages, and has an empty state and a load error", () => {
     fixture.result = { data: page([account()], 75) };
     expect(text(render())).toContain("1–50 von 75 Zurück Weiter");
@@ -158,6 +183,10 @@ describe("Konten page", () => {
     expect(body).toContain("Accounts");
     expect(body).toContain("Name Email Since Servers Status Actions");
     expect(body).toContain("2 / 5 2 owned, member of 5 Unconfirmed");
+    fixture.result = {
+      data: page([account({ status: "unconfirmed", email_verified: false })]),
+    };
+    expect(text(render())).toContain("Never confirmed");
     expect(fixture.chips.at(-1)?.options.map((o) => o.label)).toEqual([
       "All",
       "Disabled",

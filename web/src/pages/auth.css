@@ -107,6 +107,14 @@
   margin-top: var(--lr-space-6);
   font: var(--lr-type-body);
 }
+/* Under the sign-in form's refusal of an unconfirmed address: the way to a
+   new confirmation link, and to a new password. */
+.auth-confirm-help {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  font: var(--lr-type-meta);
+}
 
 .auth-link {
   color: var(--lr-accent-text);

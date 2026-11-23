@@ -473,6 +473,7 @@ fn is_auth_path(path: &str) -> bool {
         "/api/auth/login"
             | "/api/auth/register"
             | "/api/auth/verify-email"
+            | "/api/auth/verify-email/resend"
             | "/api/auth/password-reset"
             | "/api/auth/password-reset/confirm"
     ) || path.starts_with("/api/auth/oidc/")
@@ -582,15 +583,20 @@ impl MailBudget {
 /// of that address is used up and the mail should be dropped. A reserved
 /// mail that is not sent after all goes back with [`mail_unsent`].
 pub fn mail_allowed(state: &AppState, budget: MailBudget, email: &str) -> bool {
+    mail_reserved(state, budget, email).is_ok()
+}
+
+/// [`mail_allowed`] for a caller that may say why nothing was sent (an
+/// operator): past the budget, the seconds until the next mail fits.
+pub fn mail_reserved(state: &AppState, budget: MailBudget, email: &str) -> Result<(), u64> {
     let bucket = budget.bucket();
-    let allowed = state
+    let reserved = state
         .limiter
-        .hit(bucket, &account_key(email), budget.per_hour(), HOUR)
-        .is_ok();
-    if !allowed {
+        .hit(bucket, &account_key(email), budget.per_hour(), HOUR);
+    if reserved.is_err() {
         state.metrics.rate_limited(bucket);
     }
-    allowed
+    reserved
 }
 
 /// Gives back a mail [`mail_allowed`] reserved: only sent mail counts.
@@ -770,6 +776,7 @@ mod tests {
     fn sign_in_through_a_provider_counts_as_auth() {
         for path in [
             "/api/auth/login",
+            "/api/auth/verify-email/resend",
             "/api/auth/oidc/google/start",
             "/api/auth/oidc/pending",
             "/api/auth/oidc/complete",

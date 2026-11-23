@@ -22,18 +22,21 @@ import {
   SearchField,
 } from "../parts.tsx";
 import { usePaging } from "../paging.ts";
-import { useOperatorAccounts } from "../queries.ts";
+import { useOperatorAccounts, useOperatorOverview } from "../queries.ts";
 import type { Account, AccountFilter, AccountStatus } from "../types.ts";
 
+// "Unbestätigt" lists pending registrations and the accounts from a time
+// without account mail alike: both need their address confirmed.
 const ACCOUNT_FILTERS = [
   "all",
   "disabled",
-  "pending",
+  "unconfirmed",
 ] as const satisfies readonly AccountFilter[];
 
 const STATUS_TONE = {
   active: "success",
   pending: "warning",
+  unconfirmed: "warning",
   disabled: "danger",
 } as const satisfies Record<AccountStatus, string>;
 
@@ -49,6 +52,7 @@ export function AccountsPage() {
     offset: offset || undefined,
   });
   const actions = useAccountActions();
+  const mailFailing = useOperatorOverview().data?.mail_failing === true;
   const data = query.data;
   settle(
     data && !query.isPlaceholderData
@@ -58,6 +62,9 @@ export function AccountsPage() {
 
   return (
     <OperatorPageFrame page="konten">
+      {mailFailing ? (
+        <p className="operator-notice">{t("accounts.mailFailing")}</p>
+      ) : null}
       <div className="operator-toolbar">
         <SearchField
           label={t("accounts.searchLabel")}
@@ -182,7 +189,9 @@ export function AccountTable({
                       ? t("accounts.disabledReason", {
                           reason: account.disabled_reason,
                         })
-                      : undefined
+                      : account.status === "unconfirmed"
+                        ? t("accounts.unconfirmedHint")
+                        : undefined
                   }
                 >
                   {t(`accounts.status.${account.status}`)}

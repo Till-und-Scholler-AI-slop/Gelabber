@@ -75,7 +75,7 @@ async fn an_operator_gets_the_area_bootstrap(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(
         res.body,
-        json!({ "registration": "open", "mail": false, "open_reports": 0, "open_feedback": 0 })
+        json!({ "registration": "open", "mail": false, "mail_failing": false, "open_reports": 0, "open_feedback": 0 })
     );
 
     // Open reports are counted, closed ones are not.
@@ -115,7 +115,7 @@ async fn an_operator_gets_the_area_bootstrap(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(
         res.body,
-        json!({ "registration": "invitation", "mail": false, "open_reports": 1, "open_feedback": 0 })
+        json!({ "registration": "invitation", "mail": false, "mail_failing": false, "open_reports": 1, "open_feedback": 0 })
     );
     // The bootstrap writes no audit row.
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM operator_audit")
@@ -300,6 +300,16 @@ async fn the_account_routes_answer_401_and_404_like_the_area(pool: PgPool) {
         (
             Method::POST,
             format!("/api/operator/accounts/{tom_id}/enable"),
+            None,
+        ),
+        (
+            Method::POST,
+            format!("/api/operator/accounts/{tom_id}/resend-confirmation"),
+            None,
+        ),
+        (
+            Method::POST,
+            format!("/api/operator/accounts/{tom_id}/confirm"),
             None,
         ),
     ];
@@ -610,6 +620,291 @@ async fn the_account_list_searches_filters_and_pages(pool: PgPool) {
         rows[3].1,
         json!({ "q": "TOM@", "filter": "all", "offset": 0 })
     );
+}
+
+// ---- Accounts: unconfirmed addresses (GEL-40) ----
+
+/// Lena (confirmed, so an operator with mail on) and Tom, registered while
+/// mail was off and never confirmed; then mail is on. Returns Lena's
+/// browser against the state with mail, the state, its mailer and Tom's id.
+async fn unconfirmed_tom(pool: &PgPool) -> (Client, AppState, Mailer, String) {
+    let plain = operator_state(pool.clone());
+    let lena = registered(&plain, LENA, "Lena").await;
+    sqlx::query("UPDATE users SET email_verified_at = now() WHERE email = $1")
+        .bind(LENA)
+        .execute(pool)
+        .await
+        .unwrap();
+    let tom = registered(&plain, TOM, "Tom").await;
+    let mut state = plain.clone();
+    let mailer = Mailer::memory(&url::Url::parse("https://chat.example.org/").unwrap());
+    state.mail = Some(mailer.clone());
+    (
+        moved(&lena, &state),
+        state,
+        mailer,
+        tom.user_id().to_owned(),
+    )
+}
+
+async fn account_action(op: &mut Client, id: &str, action: &str) -> common::Response {
+    op.send(
+        Method::POST,
+        &format!("/api/operator/accounts/{id}/{action}"),
+        None,
+    )
+    .await
+}
+
+#[sqlx::test]
+async fn unconfirmed_accounts_show_as_such_and_can_be_filtered(pool: PgPool) {
+    let (mut lena, state, _mailer, tom_id) = unconfirmed_tom(&pool).await;
+    sqlx::query(
+        "INSERT INTO users (email, name, password_hash, registration_pending) \
+         VALUES ('pia@example.test', 'Pia', 'x', true)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let res = lena.send(Method::GET, "/api/operator/accounts", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let accounts = res.body["accounts"].as_array().unwrap();
+    let row = |name: &str| {
+        accounts
+            .iter()
+            .find(|a| a["name"] == name)
+            .unwrap_or_else(|| panic!("{name} in {accounts:?}"))
+            .clone()
+    };
+    assert_eq!(row("Pia")["status"], "pending");
+    assert_eq!(row("Pia")["email_verified"], false);
+    // Signs in with nothing but a new link until confirmed.
+    assert_eq!(row("Tom")["status"], "unconfirmed");
+    assert_eq!(row("Tom")["id"], tom_id);
+    assert_eq!(row("Tom")["email_verified"], false);
+    assert_eq!(row("Lena")["status"], "active");
+    assert_eq!(row("Lena")["email_verified"], true);
+
+    let res = lena
+        .send(
+            Method::GET,
+            "/api/operator/accounts?filter=unconfirmed",
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let names: Vec<&str> = res.body["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Pia", "Tom"]);
+    assert_eq!(res.body["total"], 2);
+
+    // Without mail nothing asks for the confirmation, so Tom signs in as
+    // before and counts as active; the flag still says it.
+    let plain = {
+        let mut plain = state.clone();
+        plain.mail = None;
+        plain
+    };
+    let mut lena = moved(&lena, &plain);
+    let res = lena
+        .send(Method::GET, "/api/operator/accounts?q=tom", None)
+        .await;
+    assert_eq!(res.body["accounts"][0]["status"], "active", "{}", res.body);
+    assert_eq!(res.body["accounts"][0]["email_verified"], false);
+}
+
+#[sqlx::test]
+async fn an_operator_resends_the_confirmation_mail(pool: PgPool) {
+    let (mut lena, state, mailer, tom_id) = unconfirmed_tom(&pool).await;
+    let lena_id = lena.user_id().to_owned();
+
+    let res = account_action(&mut lena, &tom_id, "resend-confirmation").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["id"], tom_id);
+    assert_eq!(res.body["status"], "unconfirmed");
+    let sent = outbox(&mailer, 1).await;
+    assert_eq!(sent[0].to, TOM);
+    assert!(
+        sent[0].body.contains("/verify-email#token="),
+        "{}",
+        sent[0].body
+    );
+    let rows: Vec<(String, Option<Uuid>, serde_json::Value)> = sqlx::query_as(
+        "SELECT action, target_user, detail FROM operator_audit \
+         WHERE action LIKE 'accounts.%' AND action <> 'accounts.list' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [(
+            "accounts.resend".to_owned(),
+            Some(tom_id.parse().unwrap()),
+            json!({})
+        )]
+    );
+
+    // The link works as any other: with Tom's password.
+    let mut tom = Client::from_state(state.clone());
+    tom.bootstrap().await;
+    let res = tom
+        .send(
+            Method::POST,
+            "/api/auth/verify-email",
+            Some(json!({ "token": mail_token(&sent[0]), "password": PASSWORD })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // A confirmed address gets no link; the page was out of date.
+    let res = account_action(&mut lena, &tom_id, "resend-confirmation").await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["account"], "stale");
+    let res = account_action(&mut lena, &lena_id, "resend-confirmation").await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    let res = account_action(
+        &mut lena,
+        &Uuid::new_v4().to_string(),
+        "resend-confirmation",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mailer.outbox().len(), 1);
+
+    // Without mail there is nothing to send.
+    let mut plain = state.clone();
+    plain.mail = None;
+    let mut lena = moved(&lena, &plain);
+    sqlx::query("UPDATE users SET email_verified_at = NULL WHERE email = $1")
+        .bind(TOM)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let res = account_action(&mut lena, &tom_id, "resend-confirmation").await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["mail"], "unavailable");
+}
+
+/// The operator's mails come out of the address's registration mails, so
+/// the console cannot flood an inbox either.
+#[sqlx::test]
+async fn resending_keeps_to_the_hourly_mails(pool: PgPool) {
+    let (mut lena, _state, mailer, tom_id) = unconfirmed_tom(&pool).await;
+    for _ in 0..5 {
+        let res = account_action(&mut lena, &tom_id, "resend-confirmation").await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+    let res = account_action(&mut lena, &tom_id, "resend-confirmation").await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+    assert_eq!(res.body["error"], "rate_limited");
+    outbox(&mailer, 5).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mailer.outbox().len(), 5);
+    let resends: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM operator_audit WHERE action = 'accounts.resend'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(resends, 5);
+}
+
+/// Betrieb notes when the last mail the relay was handed failed.
+#[sqlx::test]
+async fn the_overview_says_when_mail_fails(pool: PgPool) {
+    let (lena, state, _mailer, tom_id) = unconfirmed_tom(&pool).await;
+    let mut lena = moved(&lena, &state);
+    let res = lena.send(Method::GET, "/api/operator", None).await;
+    assert_eq!(res.body["mail"], true, "{}", res.body);
+    assert_eq!(res.body["mail_failing"], false, "{}", res.body);
+
+    let mut failing = state.clone();
+    let refusing = Mailer::refusing(&url::Url::parse("https://chat.example.org/").unwrap());
+    failing.mail = Some(refusing.clone());
+    let mut lena = moved(&lena, &failing);
+    let res = account_action(&mut lena, &tom_id, "resend-confirmation").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for _ in 0..200 {
+        if refusing.last_failed() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let res = lena.send(Method::GET, "/api/operator", None).await;
+    assert_eq!(res.body["mail_failing"], true, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn an_operator_marks_an_address_confirmed(pool: PgPool) {
+    let (mut lena, _state, mailer, tom_id) = unconfirmed_tom(&pool).await;
+    let res = account_action(&mut lena, &tom_id, "resend-confirmation").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let link = mail_token(&outbox(&mailer, 1).await[0]);
+
+    let res = account_action(&mut lena, &tom_id, "confirm").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["status"], "active");
+    assert_eq!(res.body["email_verified"], true);
+    // Tom signs in with his password now; the link he was sent is gone.
+    let mut tom = Client::from_state(_state.clone());
+    tom.bootstrap().await;
+    let res = tom
+        .send(
+            Method::POST,
+            "/api/auth/verify-email",
+            Some(json!({ "token": link, "password": PASSWORD })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
+    let res = tom.login(TOM, PASSWORD).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Once more changes nothing, and says so.
+    let res = account_action(&mut lena, &tom_id, "confirm").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let rows: Vec<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT action, detail FROM operator_audit WHERE action = 'accounts.confirm' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ("accounts.confirm".to_owned(), json!({ "changed": true })),
+            ("accounts.confirm".to_owned(), json!({ "changed": false })),
+        ]
+    );
+
+    // A pending registration confirmed this way is no longer one: a new
+    // registration of the address cannot take it over.
+    sqlx::query(
+        "INSERT INTO users (email, name, password_hash, registration_pending) \
+         VALUES ('pia@example.test', 'Pia', 'x', true)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let pia: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'pia@example.test'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let res = account_action(&mut lena, &pia.to_string(), "confirm").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let (pending, verified): (bool, bool) = sqlx::query_as(
+        "SELECT registration_pending, email_verified_at IS NOT NULL FROM users WHERE id = $1",
+    )
+    .bind(pia)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((pending, verified), (false, true));
 }
 
 #[sqlx::test]

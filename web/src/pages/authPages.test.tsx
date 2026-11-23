@@ -51,6 +51,8 @@ vi.mock("../auth/registration.ts", async (importOriginal) => ({
 }));
 
 import { AuthFrame } from "./AuthLayout.tsx";
+import { confirmationHelpReason } from "../auth/confirmationHelp.ts";
+import { ConfirmationHelp } from "./ConfirmationHelp.tsx";
 import { LoginPage } from "./LoginPage.tsx";
 import { MailSent, RegisterPage } from "./RegisterPage.tsx";
 
@@ -437,5 +439,90 @@ describe("sign-in through a provider", () => {
       '<p role="status" class="ui-form-error">Die Anmeldung beim Anbieter hat nicht geklappt. Bitte noch einmal versuchen.</p>',
     );
     expect(html).not.toContain('id="invitation"');
+  });
+});
+
+describe("an address that was never confirmed (GEL-40)", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("shows help only with account mail, for the two refusals", () => {
+    expect(confirmationHelpReason("email_unverified", undefined, true)).toBe(
+      "email_unverified",
+    );
+    expect(confirmationHelpReason(null, "account_unverified", true)).toBe(
+      "provider",
+    );
+    // A newer refusal on the page replaces the provider's.
+    expect(
+      confirmationHelpReason("invalid_credentials", "account_unverified", true),
+    ).toBeNull();
+    expect(
+      confirmationHelpReason("email_unverified", "account_unverified", true),
+    ).toBe("email_unverified");
+    expect(confirmationHelpReason(null, "cancelled", true)).toBeNull();
+    for (const mail of [false, undefined]) {
+      expect(confirmationHelpReason("email_unverified", undefined, mail)).toBe(
+        null,
+      );
+      expect(confirmationHelpReason(null, "account_unverified", mail)).toBe(
+        null,
+      );
+    }
+  });
+
+  it("offers the mail and a new password after a provider refused", () => {
+    fixture.mail = true;
+    fixture.search = { oidc_error: "account_unverified" };
+    const html = render(<LoginPage />);
+    expect(html).toContain(
+      "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde. Bestätige sie, dann klappt auch die Anmeldung über den Anbieter.",
+    );
+    expect(html).not.toContain("Einstellungen → Sicherheit");
+    expect(html).toContain(
+      "Gib oben deine E-Mail-Adresse ein, dann schicken wir dir einen Bestätigungslink.",
+    );
+    expect(html).toContain(">Bestätigungsmail senden</button>");
+    expect(html).toMatch(
+      /<a href="\/forgot-password" class="ui-button[^"]*">Passwort vergessen\?<\/a>/,
+    );
+    // In the form, before the sign-in button.
+    expect(html.indexOf("Bestätigungsmail senden")).toBeLessThan(
+      html.indexOf('type="submit"'),
+    );
+  });
+
+  it("keeps the old advice without account mail", () => {
+    fixture.mail = false;
+    fixture.search = { oidc_error: "account_unverified" };
+    const html = render(<LoginPage />);
+    expect(html).toContain("Einstellungen → Sicherheit");
+    expect(html).not.toContain("Bestätigungsmail");
+  });
+
+  it("offers the mail again after a password sign-in, once a minute", () => {
+    const html = render(
+      <ConfirmationHelp
+        reason="email_unverified"
+        email="ada@example.com"
+        onInvalidEmail={() => {}}
+      />,
+    );
+    expect(html).toContain(
+      "Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut.",
+    );
+    // The sign-in just sent one.
+    expect(html).toMatch(
+      /<button type="button" disabled=""[^>]*>Erneut senden \(60 s\)<\/button>/,
+    );
+    expect(html).not.toContain("forgot-password");
+  });
+
+  it("speaks English too", () => {
+    setLocale("en", { persist: false });
+    const html = render(
+      <ConfirmationHelp reason="provider" email="" onInvalidEmail={() => {}} />,
+    );
+    expect(html).toContain(">Send confirmation email</button>");
+    expect(html).toContain("Forgot your password?</a>");
   });
 });
