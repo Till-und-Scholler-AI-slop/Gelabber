@@ -1,0 +1,2593 @@
+{
+  "delay": {
+    "rnnoise": [
+      {
+        "clip": "m1-clean",
+        "samples": 960,
+        "ms": 20,
+        "correlation": 0.9843
+      },
+      {
+        "clip": "f1-clean",
+        "samples": 960,
+        "ms": 20,
+        "correlation": 0.9946
+      },
+      {
+        "clip": "m2-clean",
+        "samples": 960,
+        "ms": 20,
+        "correlation": 0.9905
+      }
+    ],
+    "dfn3": [
+      {
+        "clip": "m1-clean",
+        "samples": 1440,
+        "ms": 30,
+        "correlation": 0.9999
+      },
+      {
+        "clip": "f1-clean",
+        "samples": 1440,
+        "ms": 30,
+        "correlation": 0.9999
+      },
+      {
+        "clip": "m2-clean",
+        "samples": 1440,
+        "ms": 30,
+        "correlation": 0.9999
+      }
+    ],
+    "dfn3-lib": [
+      {
+        "clip": "m1-clean",
+        "samples": 1440,
+        "ms": 30,
+        "correlation": 0.9991
+      },
+      {
+        "clip": "f1-clean",
+        "samples": 1440,
+        "ms": 30,
+        "correlation": 0.999
+      },
+      {
+        "clip": "m2-clean",
+        "samples": 1440,
+        "ms": 30,
+        "correlation": 0.9994
+      }
+    ]
+  },
+  "compensatedLagSamples": {
+    "rnnoise": 960,
+    "dfn3": 1440,
+    "dfn3-lib": 1440
+  },
+  "rnnoiseWasmVsNativeMaxAbsDiff": 0.004443385696504265,
+  "dfn3NativeVsWasmMaxAbsDiff": 0.000014007091522216797,
+  "clips": [
+    {
+      "id": "m1-clean",
+      "target": "m1",
+      "condition": "clean",
+      "snrDb": null,
+      "seconds": 11.02,
+      "peakGainDb": -0.1,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.692,
+            "BAK": 4.179,
+            "OVRL": 3.479,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.568,
+            "BAK": 4.565,
+            "OVRL": 4.348,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.686,
+            "BAK": 4.212,
+            "OVRL": 3.483,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.572,
+            "BAK": 4.668,
+            "OVRL": 4.375,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.719,
+            "BAK": 4.206,
+            "OVRL": 3.513,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.583,
+            "BAK": 4.555,
+            "OVRL": 4.344,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.669,
+            "BAK": 4.193,
+            "OVRL": 3.452,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.327,
+            "BAK": 4.465,
+            "OVRL": 4.056,
+            "windows": 2
+          },
+          "siSdr": null
+        }
+      }
+    },
+    {
+      "id": "m1-keyboard-0db",
+      "target": "m1",
+      "condition": "keyboard",
+      "snrDb": 0,
+      "seconds": 11.02,
+      "peakGainDb": -8.35,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.52,
+            "BAK": 2.867,
+            "OVRL": 2.634,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.055,
+            "BAK": 2.292,
+            "OVRL": 2.718,
+            "windows": 2
+          },
+          "siSdr": -0.64
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.466,
+            "BAK": 3.972,
+            "OVRL": 3.115,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.086,
+            "BAK": 3.908,
+            "OVRL": 3.561,
+            "windows": 2
+          },
+          "siSdr": 5.44
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.608,
+            "BAK": 4.2,
+            "OVRL": 3.355,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.317,
+            "BAK": 4.472,
+            "OVRL": 4.006,
+            "windows": 2
+          },
+          "siSdr": 11.04
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.079,
+            "BAK": 3.882,
+            "OVRL": 2.728,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 2.587,
+            "BAK": 2.859,
+            "OVRL": 2.02,
+            "windows": 2
+          },
+          "siSdr": 3.83
+        }
+      }
+    },
+    {
+      "id": "m1-keyboard-10db",
+      "target": "m1",
+      "condition": "keyboard",
+      "snrDb": 10,
+      "seconds": 11.02,
+      "peakGainDb": -0.1,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.597,
+            "BAK": 3.212,
+            "OVRL": 2.881,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.513,
+            "BAK": 2.422,
+            "OVRL": 3.124,
+            "windows": 2
+          },
+          "siSdr": 9.38
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.596,
+            "BAK": 4.088,
+            "OVRL": 3.327,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.375,
+            "BAK": 4.342,
+            "OVRL": 4.036,
+            "windows": 2
+          },
+          "siSdr": 11.02
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.689,
+            "BAK": 4.225,
+            "OVRL": 3.479,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.263,
+            "BAK": 4.203,
+            "OVRL": 3.898,
+            "windows": 2
+          },
+          "siSdr": 15.03
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.368,
+            "BAK": 3.92,
+            "OVRL": 3.044,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.212,
+            "BAK": 3.33,
+            "OVRL": 2.751,
+            "windows": 2
+          },
+          "siSdr": 4.92
+        }
+      }
+    },
+    {
+      "id": "m1-mouse-0db",
+      "target": "m1",
+      "condition": "mouse",
+      "snrDb": 0,
+      "seconds": 11.02,
+      "peakGainDb": -12.49,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.562,
+            "BAK": 4.115,
+            "OVRL": 3.271,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.564,
+            "BAK": 3.201,
+            "OVRL": 2.905,
+            "windows": 2
+          },
+          "siSdr": -0.57
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.544,
+            "BAK": 4.165,
+            "OVRL": 3.288,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.283,
+            "BAK": 4.273,
+            "OVRL": 3.886,
+            "windows": 2
+          },
+          "siSdr": 8.99
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.611,
+            "BAK": 4.196,
+            "OVRL": 3.356,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.321,
+            "BAK": 4.603,
+            "OVRL": 4.095,
+            "windows": 2
+          },
+          "siSdr": 20.76
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.96,
+            "BAK": 3.911,
+            "OVRL": 2.644,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 2.046,
+            "BAK": 3.603,
+            "OVRL": 1.909,
+            "windows": 2
+          },
+          "siSdr": 4.33
+        }
+      }
+    },
+    {
+      "id": "m1-mouse-10db",
+      "target": "m1",
+      "condition": "mouse",
+      "snrDb": 10,
+      "seconds": 11.02,
+      "peakGainDb": -1.9,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.662,
+            "BAK": 4.147,
+            "OVRL": 3.429,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.103,
+            "BAK": 3.238,
+            "OVRL": 3.368,
+            "windows": 2
+          },
+          "siSdr": 9.43
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.668,
+            "BAK": 4.208,
+            "OVRL": 3.463,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.528,
+            "BAK": 4.363,
+            "OVRL": 4.182,
+            "windows": 2
+          },
+          "siSdr": 13.48
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.688,
+            "BAK": 4.21,
+            "OVRL": 3.484,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.565,
+            "BAK": 4.665,
+            "OVRL": 4.401,
+            "windows": 2
+          },
+          "siSdr": 23.65
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.326,
+            "BAK": 3.906,
+            "OVRL": 3.008,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.309,
+            "BAK": 3.68,
+            "OVRL": 2.946,
+            "windows": 2
+          },
+          "siSdr": 5.82
+        }
+      }
+    },
+    {
+      "id": "m1-fan-0db",
+      "target": "m1",
+      "condition": "fan",
+      "snrDb": 0,
+      "seconds": 11.02,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 1.866,
+            "BAK": 1.333,
+            "OVRL": 1.348,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.148,
+            "BAK": 2.108,
+            "OVRL": 2.463,
+            "windows": 2
+          },
+          "siSdr": -0.52
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.394,
+            "BAK": 4.165,
+            "OVRL": 3.158,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.721,
+            "BAK": 4.264,
+            "OVRL": 3.43,
+            "windows": 2
+          },
+          "siSdr": 4.58
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.471,
+            "BAK": 4.151,
+            "OVRL": 3.234,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.924,
+            "BAK": 4.501,
+            "OVRL": 3.713,
+            "windows": 2
+          },
+          "siSdr": 6.55
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.063,
+            "BAK": 3.936,
+            "OVRL": 2.807,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.124,
+            "BAK": 3.695,
+            "OVRL": 2.729,
+            "windows": 2
+          },
+          "siSdr": 6.45
+        }
+      }
+    },
+    {
+      "id": "m1-fan-10db",
+      "target": "m1",
+      "condition": "fan",
+      "snrDb": 10,
+      "seconds": 11.02,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.586,
+            "BAK": 2.873,
+            "OVRL": 2.653,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.44,
+            "BAK": 2.8,
+            "OVRL": 3.266,
+            "windows": 2
+          },
+          "siSdr": 9.46
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.636,
+            "BAK": 4.205,
+            "OVRL": 3.417,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.525,
+            "BAK": 4.71,
+            "OVRL": 4.349,
+            "windows": 2
+          },
+          "siSdr": 10.46
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.668,
+            "BAK": 4.213,
+            "OVRL": 3.465,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.569,
+            "BAK": 4.746,
+            "OVRL": 4.412,
+            "windows": 2
+          },
+          "siSdr": 13.72
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.555,
+            "BAK": 4.187,
+            "OVRL": 3.345,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.122,
+            "BAK": 4.142,
+            "OVRL": 3.724,
+            "windows": 2
+          },
+          "siSdr": 8.85
+        }
+      }
+    },
+    {
+      "id": "m1-tv-0db",
+      "target": "m1",
+      "condition": "tv",
+      "snrDb": 0,
+      "seconds": 11.02,
+      "peakGainDb": -3.07,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.256,
+            "BAK": 2.507,
+            "OVRL": 2.239,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.306,
+            "BAK": 2.051,
+            "OVRL": 2.702,
+            "windows": 2
+          },
+          "siSdr": -0.32
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.393,
+            "BAK": 3.851,
+            "OVRL": 3.048,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.944,
+            "BAK": 2.454,
+            "OVRL": 2.738,
+            "windows": 2
+          },
+          "siSdr": 0.92
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.591,
+            "BAK": 4.079,
+            "OVRL": 3.305,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.227,
+            "BAK": 3.676,
+            "OVRL": 3.619,
+            "windows": 2
+          },
+          "siSdr": 5.91
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.227,
+            "BAK": 3.841,
+            "OVRL": 2.895,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.059,
+            "BAK": 2.347,
+            "OVRL": 2.069,
+            "windows": 2
+          },
+          "siSdr": 4.29
+        }
+      }
+    },
+    {
+      "id": "m1-tv-10db",
+      "target": "m1",
+      "condition": "tv",
+      "snrDb": 10,
+      "seconds": 11.02,
+      "peakGainDb": -1.15,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.55,
+            "BAK": 3.287,
+            "OVRL": 2.899,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.46,
+            "BAK": 2.931,
+            "OVRL": 3.435,
+            "windows": 2
+          },
+          "siSdr": 9.66
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.595,
+            "BAK": 4.155,
+            "OVRL": 3.362,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.503,
+            "BAK": 4.542,
+            "OVRL": 4.256,
+            "windows": 2
+          },
+          "siSdr": 9.95
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.683,
+            "BAK": 4.203,
+            "OVRL": 3.479,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.637,
+            "BAK": 4.731,
+            "OVRL": 4.48,
+            "windows": 2
+          },
+          "siSdr": 12.84
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.507,
+            "BAK": 4.038,
+            "OVRL": 3.228,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.527,
+            "BAK": 3.413,
+            "OVRL": 2.957,
+            "windows": 2
+          },
+          "siSdr": 4.69
+        }
+      }
+    },
+    {
+      "id": "m1-second-voice-0db",
+      "target": "m1",
+      "condition": "second-voice",
+      "snrDb": 0,
+      "seconds": 11.02,
+      "peakGainDb": -0.27,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.438,
+            "BAK": 3.84,
+            "OVRL": 3.089,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.059,
+            "BAK": 1.566,
+            "OVRL": 2.001,
+            "windows": 2
+          },
+          "siSdr": 0.55
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.355,
+            "BAK": 3.725,
+            "OVRL": 2.939,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.975,
+            "BAK": 1.524,
+            "OVRL": 1.932,
+            "windows": 2
+          },
+          "siSdr": -0.44
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.594,
+            "BAK": 3.651,
+            "OVRL": 3.093,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.915,
+            "BAK": 2.148,
+            "OVRL": 2.567,
+            "windows": 2
+          },
+          "siSdr": 2.35
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.969,
+            "BAK": 3.222,
+            "OVRL": 2.45,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 2.603,
+            "BAK": 2.12,
+            "OVRL": 1.873,
+            "windows": 2
+          },
+          "siSdr": 1.19
+        }
+      }
+    },
+    {
+      "id": "m1-second-voice-10db",
+      "target": "m1",
+      "condition": "second-voice",
+      "snrDb": 10,
+      "seconds": 11.02,
+      "peakGainDb": -0.16,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.433,
+            "BAK": 3.071,
+            "OVRL": 2.678,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.024,
+            "BAK": 1.624,
+            "OVRL": 2.067,
+            "windows": 2
+          },
+          "siSdr": 10.55
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.455,
+            "BAK": 4.083,
+            "OVRL": 3.213,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.982,
+            "BAK": 1.951,
+            "OVRL": 2.445,
+            "windows": 2
+          },
+          "siSdr": 9.5
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.642,
+            "BAK": 3.845,
+            "OVRL": 3.257,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.625,
+            "BAK": 2.801,
+            "OVRL": 3.393,
+            "windows": 2
+          },
+          "siSdr": 12.87
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.047,
+            "BAK": 3.351,
+            "OVRL": 2.539,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.284,
+            "BAK": 2.121,
+            "OVRL": 2.16,
+            "windows": 2
+          },
+          "siSdr": 6.02
+        }
+      }
+    },
+    {
+      "id": "m1-reverb",
+      "target": "m1",
+      "condition": "reverb",
+      "snrDb": null,
+      "seconds": 11.02,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 2.843,
+            "BAK": 2.531,
+            "OVRL": 2.155,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.005,
+            "BAK": 2.218,
+            "OVRL": 2.606,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.278,
+            "BAK": 2.947,
+            "OVRL": 2.488,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.927,
+            "BAK": 3.408,
+            "OVRL": 3.183,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.464,
+            "BAK": 3.95,
+            "OVRL": 3.096,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 4.089,
+            "BAK": 4.276,
+            "OVRL": 3.706,
+            "windows": 2
+          },
+          "siSdr": null
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.225,
+            "BAK": 3.445,
+            "OVRL": 2.695,
+            "windows": 2
+          },
+          "pdnsmos": {
+            "SIG": 3.792,
+            "BAK": 2.589,
+            "OVRL": 2.685,
+            "windows": 2
+          },
+          "siSdr": null
+        }
+      }
+    },
+    {
+      "id": "f1-clean",
+      "target": "f1",
+      "condition": "clean",
+      "snrDb": null,
+      "seconds": 10.59,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.584,
+            "BAK": 4.143,
+            "OVRL": 3.357,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.324,
+            "BAK": 4.532,
+            "OVRL": 4.085,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.626,
+            "BAK": 4.205,
+            "OVRL": 3.44,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.065,
+            "BAK": 4.386,
+            "OVRL": 3.816,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.633,
+            "BAK": 4.194,
+            "OVRL": 3.433,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.332,
+            "BAK": 4.521,
+            "OVRL": 4.081,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.58,
+            "BAK": 4.166,
+            "OVRL": 3.349,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.032,
+            "BAK": 4.157,
+            "OVRL": 3.635,
+            "windows": 1
+          },
+          "siSdr": null
+        }
+      }
+    },
+    {
+      "id": "f1-keyboard-0db",
+      "target": "f1",
+      "condition": "keyboard",
+      "snrDb": 0,
+      "seconds": 10.59,
+      "peakGainDb": -11.46,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.4,
+            "BAK": 2.261,
+            "OVRL": 2.301,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.805,
+            "BAK": 1.942,
+            "OVRL": 2.297,
+            "windows": 1
+          },
+          "siSdr": -1.05
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.071,
+            "BAK": 3.483,
+            "OVRL": 2.565,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.251,
+            "BAK": 2.403,
+            "OVRL": 2.114,
+            "windows": 1
+          },
+          "siSdr": 8.54
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.336,
+            "BAK": 3.956,
+            "OVRL": 3.001,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.124,
+            "BAK": 4.18,
+            "OVRL": 3.681,
+            "windows": 1
+          },
+          "siSdr": 13.18
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.405,
+            "BAK": 3.805,
+            "OVRL": 2.099,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.253,
+            "BAK": 3.681,
+            "OVRL": 1.949,
+            "windows": 1
+          },
+          "siSdr": 4.94
+        }
+      }
+    },
+    {
+      "id": "f1-keyboard-10db",
+      "target": "f1",
+      "condition": "keyboard",
+      "snrDb": 10,
+      "seconds": 10.59,
+      "peakGainDb": -1.36,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.68,
+            "BAK": 2.533,
+            "OVRL": 2.686,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.432,
+            "BAK": 2.151,
+            "OVRL": 2.948,
+            "windows": 1
+          },
+          "siSdr": 8.91
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.564,
+            "BAK": 4.072,
+            "OVRL": 3.305,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.159,
+            "BAK": 3.229,
+            "OVRL": 3.305,
+            "windows": 1
+          },
+          "siSdr": 13.89
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.609,
+            "BAK": 4.202,
+            "OVRL": 3.403,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.388,
+            "BAK": 4.559,
+            "OVRL": 4.116,
+            "windows": 1
+          },
+          "siSdr": 17.67
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.27,
+            "BAK": 3.576,
+            "OVRL": 2.03,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.379,
+            "BAK": 3.13,
+            "OVRL": 2.143,
+            "windows": 1
+          },
+          "siSdr": 6.68
+        }
+      }
+    },
+    {
+      "id": "f1-mouse-0db",
+      "target": "f1",
+      "condition": "mouse",
+      "snrDb": 0,
+      "seconds": 10.59,
+      "peakGainDb": -11.94,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.483,
+            "BAK": 3.903,
+            "OVRL": 3.087,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.184,
+            "BAK": 3.192,
+            "OVRL": 3.297,
+            "windows": 1
+          },
+          "siSdr": -0.9
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.522,
+            "BAK": 4.111,
+            "OVRL": 3.226,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.093,
+            "BAK": 3.77,
+            "OVRL": 3.481,
+            "windows": 1
+          },
+          "siSdr": 9.44
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.555,
+            "BAK": 4.178,
+            "OVRL": 3.307,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.132,
+            "BAK": 4.417,
+            "OVRL": 3.803,
+            "windows": 1
+          },
+          "siSdr": 22.05
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.375,
+            "BAK": 3.806,
+            "OVRL": 2.113,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 1.888,
+            "BAK": 3.874,
+            "OVRL": 1.66,
+            "windows": 1
+          },
+          "siSdr": 7.06
+        }
+      }
+    },
+    {
+      "id": "f1-mouse-10db",
+      "target": "f1",
+      "condition": "mouse",
+      "snrDb": 10,
+      "seconds": 10.59,
+      "peakGainDb": -1.87,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.537,
+            "BAK": 4.017,
+            "OVRL": 3.251,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.283,
+            "BAK": 3.727,
+            "OVRL": 3.715,
+            "windows": 1
+          },
+          "siSdr": 9.1
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.609,
+            "BAK": 4.19,
+            "OVRL": 3.407,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.718,
+            "BAK": 3.61,
+            "OVRL": 3.232,
+            "windows": 1
+          },
+          "siSdr": 16.14
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.604,
+            "BAK": 4.17,
+            "OVRL": 3.385,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.254,
+            "BAK": 4.435,
+            "OVRL": 3.976,
+            "windows": 1
+          },
+          "siSdr": 24.8
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.739,
+            "BAK": 3.632,
+            "OVRL": 2.402,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.554,
+            "BAK": 2.928,
+            "OVRL": 2.028,
+            "windows": 1
+          },
+          "siSdr": 11.33
+        }
+      }
+    },
+    {
+      "id": "f1-fan-0db",
+      "target": "f1",
+      "condition": "fan",
+      "snrDb": 0,
+      "seconds": 10.59,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 2.843,
+            "BAK": 1.787,
+            "OVRL": 1.822,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.361,
+            "BAK": 2.009,
+            "OVRL": 2.601,
+            "windows": 1
+          },
+          "siSdr": -1.05
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.158,
+            "BAK": 3.982,
+            "OVRL": 2.883,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.759,
+            "BAK": 4.333,
+            "OVRL": 3.44,
+            "windows": 1
+          },
+          "siSdr": 8.09
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.007,
+            "BAK": 4.017,
+            "OVRL": 2.789,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.27,
+            "BAK": 4.361,
+            "OVRL": 3.113,
+            "windows": 1
+          },
+          "siSdr": 11.51
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 1.923,
+            "BAK": 3.68,
+            "OVRL": 1.715,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.375,
+            "BAK": 3.158,
+            "OVRL": 2.069,
+            "windows": 1
+          },
+          "siSdr": 10.96
+        }
+      }
+    },
+    {
+      "id": "f1-fan-10db",
+      "target": "f1",
+      "condition": "fan",
+      "snrDb": 10,
+      "seconds": 10.59,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.642,
+            "BAK": 3.333,
+            "OVRL": 2.97,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.574,
+            "BAK": 2.826,
+            "OVRL": 3.365,
+            "windows": 1
+          },
+          "siSdr": 8.96
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.365,
+            "BAK": 4.042,
+            "OVRL": 3.124,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.067,
+            "BAK": 4.202,
+            "OVRL": 3.685,
+            "windows": 1
+          },
+          "siSdr": 14.53
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.314,
+            "BAK": 3.986,
+            "OVRL": 3.055,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.737,
+            "BAK": 4.106,
+            "OVRL": 3.345,
+            "windows": 1
+          },
+          "siSdr": 18.71
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.018,
+            "BAK": 3.409,
+            "OVRL": 2.462,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.657,
+            "BAK": 1.97,
+            "OVRL": 1.517,
+            "windows": 1
+          },
+          "siSdr": 6.82
+        }
+      }
+    },
+    {
+      "id": "f1-tv-0db",
+      "target": "f1",
+      "condition": "tv",
+      "snrDb": 0,
+      "seconds": 10.59,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.326,
+            "BAK": 2.082,
+            "OVRL": 2.03,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.477,
+            "BAK": 1.735,
+            "OVRL": 2.363,
+            "windows": 1
+          },
+          "siSdr": -0.75
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.251,
+            "BAK": 3.372,
+            "OVRL": 2.716,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.788,
+            "BAK": 1.588,
+            "OVRL": 2.037,
+            "windows": 1
+          },
+          "siSdr": 1.46
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 2.92,
+            "BAK": 3.154,
+            "OVRL": 2.34,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.743,
+            "BAK": 3.076,
+            "OVRL": 2.243,
+            "windows": 1
+          },
+          "siSdr": 5.36
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.517,
+            "BAK": 3.316,
+            "OVRL": 2.148,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.388,
+            "BAK": 2.214,
+            "OVRL": 1.687,
+            "windows": 1
+          },
+          "siSdr": 2.85
+        }
+      }
+    },
+    {
+      "id": "f1-tv-10db",
+      "target": "f1",
+      "condition": "tv",
+      "snrDb": 10,
+      "seconds": 10.59,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.465,
+            "BAK": 2.803,
+            "OVRL": 2.576,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.237,
+            "BAK": 2.181,
+            "OVRL": 2.751,
+            "windows": 1
+          },
+          "siSdr": 9.22
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.439,
+            "BAK": 3.685,
+            "OVRL": 3.015,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.969,
+            "BAK": 3.583,
+            "OVRL": 3.438,
+            "windows": 1
+          },
+          "siSdr": 11.97
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.518,
+            "BAK": 4.075,
+            "OVRL": 3.256,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.626,
+            "BAK": 3.262,
+            "OVRL": 2.945,
+            "windows": 1
+          },
+          "siSdr": 12.91
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.895,
+            "BAK": 3.579,
+            "OVRL": 2.494,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.629,
+            "BAK": 2.565,
+            "OVRL": 1.937,
+            "windows": 1
+          },
+          "siSdr": 5.2
+        }
+      }
+    },
+    {
+      "id": "f1-second-voice-0db",
+      "target": "f1",
+      "condition": "second-voice",
+      "snrDb": 0,
+      "seconds": 10.59,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.483,
+            "BAK": 2.404,
+            "OVRL": 2.312,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.311,
+            "BAK": 1.78,
+            "OVRL": 2.353,
+            "windows": 1
+          },
+          "siSdr": -0.49
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.48,
+            "BAK": 2.627,
+            "OVRL": 2.458,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.189,
+            "BAK": 1.74,
+            "OVRL": 2.21,
+            "windows": 1
+          },
+          "siSdr": -1.37
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.264,
+            "BAK": 3.189,
+            "OVRL": 2.62,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.482,
+            "BAK": 1.891,
+            "OVRL": 2.128,
+            "windows": 1
+          },
+          "siSdr": -3.14
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.882,
+            "BAK": 2.676,
+            "OVRL": 2.099,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.795,
+            "BAK": 1.782,
+            "OVRL": 1.764,
+            "windows": 1
+          },
+          "siSdr": -4.35
+        }
+      }
+    },
+    {
+      "id": "f1-second-voice-10db",
+      "target": "f1",
+      "condition": "second-voice",
+      "snrDb": 10,
+      "seconds": 10.59,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.414,
+            "BAK": 3.157,
+            "OVRL": 2.683,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 4.076,
+            "BAK": 2.12,
+            "OVRL": 2.578,
+            "windows": 1
+          },
+          "siSdr": 9.52
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.335,
+            "BAK": 3.341,
+            "OVRL": 2.715,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.424,
+            "BAK": 1.798,
+            "OVRL": 1.904,
+            "windows": 1
+          },
+          "siSdr": 9.67
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.152,
+            "BAK": 3.595,
+            "OVRL": 2.724,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.09,
+            "BAK": 2.256,
+            "OVRL": 2.104,
+            "windows": 1
+          },
+          "siSdr": 8.94
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.249,
+            "BAK": 3.378,
+            "OVRL": 1.968,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 2.268,
+            "BAK": 1.809,
+            "OVRL": 1.405,
+            "windows": 1
+          },
+          "siSdr": 6.36
+        }
+      }
+    },
+    {
+      "id": "f1-reverb",
+      "target": "f1",
+      "condition": "reverb",
+      "snrDb": null,
+      "seconds": 10.59,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 2.655,
+            "BAK": 2.174,
+            "OVRL": 1.864,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.771,
+            "BAK": 2.065,
+            "OVRL": 2.317,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 2.336,
+            "BAK": 1.572,
+            "OVRL": 1.52,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.965,
+            "BAK": 2.919,
+            "OVRL": 2.879,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.073,
+            "BAK": 3.095,
+            "OVRL": 2.387,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.944,
+            "BAK": 4.197,
+            "OVRL": 3.535,
+            "windows": 1
+          },
+          "siSdr": null
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.879,
+            "BAK": 3.232,
+            "OVRL": 2.321,
+            "windows": 1
+          },
+          "pdnsmos": {
+            "SIG": 3.664,
+            "BAK": 3.803,
+            "OVRL": 3.228,
+            "windows": 1
+          },
+          "siSdr": null
+        }
+      }
+    },
+    {
+      "id": "m2-clean",
+      "target": "m2",
+      "condition": "clean",
+      "snrDb": null,
+      "seconds": 12.62,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.555,
+            "BAK": 4.123,
+            "OVRL": 3.305,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.296,
+            "BAK": 4.344,
+            "OVRL": 3.963,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.581,
+            "BAK": 4.163,
+            "OVRL": 3.362,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.353,
+            "BAK": 4.645,
+            "OVRL": 4.161,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.611,
+            "BAK": 4.186,
+            "OVRL": 3.392,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.402,
+            "BAK": 4.6,
+            "OVRL": 4.169,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.404,
+            "BAK": 3.93,
+            "OVRL": 3.089,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.058,
+            "BAK": 4.269,
+            "OVRL": 3.724,
+            "windows": 3
+          },
+          "siSdr": null
+        }
+      }
+    },
+    {
+      "id": "m2-keyboard-0db",
+      "target": "m2",
+      "condition": "keyboard",
+      "snrDb": 0,
+      "seconds": 12.62,
+      "peakGainDb": -15.43,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.387,
+            "BAK": 2.991,
+            "OVRL": 2.554,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.709,
+            "BAK": 2.53,
+            "OVRL": 2.678,
+            "windows": 3
+          },
+          "siSdr": -0.97
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.403,
+            "BAK": 3.882,
+            "OVRL": 2.991,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.714,
+            "BAK": 3.949,
+            "OVRL": 3.236,
+            "windows": 3
+          },
+          "siSdr": 8.32
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.334,
+            "BAK": 4.059,
+            "OVRL": 2.993,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.758,
+            "BAK": 4.355,
+            "OVRL": 3.443,
+            "windows": 3
+          },
+          "siSdr": 11.88
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.077,
+            "BAK": 4.073,
+            "OVRL": 2.775,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 2.62,
+            "BAK": 4.215,
+            "OVRL": 2.487,
+            "windows": 3
+          },
+          "siSdr": 4.02
+        }
+      }
+    },
+    {
+      "id": "m2-keyboard-10db",
+      "target": "m2",
+      "condition": "keyboard",
+      "snrDb": 10,
+      "seconds": 12.62,
+      "peakGainDb": -5.16,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.442,
+            "BAK": 2.805,
+            "OVRL": 2.532,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.083,
+            "BAK": 2.274,
+            "OVRL": 2.774,
+            "windows": 3
+          },
+          "siSdr": 9.04
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.427,
+            "BAK": 3.669,
+            "OVRL": 2.938,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.948,
+            "BAK": 3.118,
+            "OVRL": 3.116,
+            "windows": 3
+          },
+          "siSdr": 12.9
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.55,
+            "BAK": 4.117,
+            "OVRL": 3.272,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.397,
+            "BAK": 4.598,
+            "OVRL": 4.165,
+            "windows": 3
+          },
+          "siSdr": 18.13
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.954,
+            "BAK": 3.868,
+            "OVRL": 2.641,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 2.929,
+            "BAK": 3.757,
+            "OVRL": 2.639,
+            "windows": 3
+          },
+          "siSdr": 8.13
+        }
+      }
+    },
+    {
+      "id": "m2-mouse-0db",
+      "target": "m2",
+      "condition": "mouse",
+      "snrDb": 0,
+      "seconds": 12.62,
+      "peakGainDb": -12.7,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.643,
+            "BAK": 4.009,
+            "OVRL": 3.282,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.444,
+            "BAK": 4.041,
+            "OVRL": 3.953,
+            "windows": 3
+          },
+          "siSdr": -0.65
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.642,
+            "BAK": 4.178,
+            "OVRL": 3.38,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.482,
+            "BAK": 4.592,
+            "OVRL": 4.241,
+            "windows": 3
+          },
+          "siSdr": 9.43
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.647,
+            "BAK": 4.205,
+            "OVRL": 3.392,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.488,
+            "BAK": 4.655,
+            "OVRL": 4.274,
+            "windows": 3
+          },
+          "siSdr": 19.07
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.304,
+            "BAK": 4.047,
+            "OVRL": 2.98,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 2.774,
+            "BAK": 3.299,
+            "OVRL": 2.232,
+            "windows": 3
+          },
+          "siSdr": 5.66
+        }
+      }
+    },
+    {
+      "id": "m2-mouse-10db",
+      "target": "m2",
+      "condition": "mouse",
+      "snrDb": 10,
+      "seconds": 12.62,
+      "peakGainDb": -2.98,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.593,
+            "BAK": 4.132,
+            "OVRL": 3.345,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.431,
+            "BAK": 4.208,
+            "OVRL": 4.028,
+            "windows": 3
+          },
+          "siSdr": 9.34
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.614,
+            "BAK": 4.182,
+            "OVRL": 3.385,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.511,
+            "BAK": 4.717,
+            "OVRL": 4.346,
+            "windows": 3
+          },
+          "siSdr": 15.34
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.633,
+            "BAK": 4.194,
+            "OVRL": 3.402,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.453,
+            "BAK": 4.619,
+            "OVRL": 4.232,
+            "windows": 3
+          },
+          "siSdr": 23.85
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.222,
+            "BAK": 3.844,
+            "OVRL": 2.884,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 2.921,
+            "BAK": 3.71,
+            "OVRL": 2.628,
+            "windows": 3
+          },
+          "siSdr": 8.55
+        }
+      }
+    },
+    {
+      "id": "m2-fan-0db",
+      "target": "m2",
+      "condition": "fan",
+      "snrDb": 0,
+      "seconds": 12.62,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 2.378,
+            "BAK": 1.562,
+            "OVRL": 1.544,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.012,
+            "BAK": 1.865,
+            "OVRL": 2.265,
+            "windows": 3
+          },
+          "siSdr": -0.84
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.142,
+            "BAK": 4.058,
+            "OVRL": 2.896,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.3,
+            "BAK": 3.851,
+            "OVRL": 2.913,
+            "windows": 3
+          },
+          "siSdr": 5.9
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.342,
+            "BAK": 4.119,
+            "OVRL": 3.098,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.562,
+            "BAK": 4.441,
+            "OVRL": 3.343,
+            "windows": 3
+          },
+          "siSdr": 8.8
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.826,
+            "BAK": 3.745,
+            "OVRL": 2.531,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 2.824,
+            "BAK": 3.433,
+            "OVRL": 2.468,
+            "windows": 3
+          },
+          "siSdr": 8.57
+        }
+      }
+    },
+    {
+      "id": "m2-fan-10db",
+      "target": "m2",
+      "condition": "fan",
+      "snrDb": 10,
+      "seconds": 12.62,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.453,
+            "BAK": 2.767,
+            "OVRL": 2.527,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.181,
+            "BAK": 2.421,
+            "OVRL": 2.876,
+            "windows": 3
+          },
+          "siSdr": 9.13
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.413,
+            "BAK": 4.085,
+            "OVRL": 3.143,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.798,
+            "BAK": 4.342,
+            "OVRL": 3.521,
+            "windows": 3
+          },
+          "siSdr": 11.71
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.526,
+            "BAK": 4.188,
+            "OVRL": 3.306,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.144,
+            "BAK": 4.644,
+            "OVRL": 3.945,
+            "windows": 3
+          },
+          "siSdr": 15.87
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.254,
+            "BAK": 4.02,
+            "OVRL": 2.984,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.218,
+            "BAK": 3.232,
+            "OVRL": 2.704,
+            "windows": 3
+          },
+          "siSdr": 5.72
+        }
+      }
+    },
+    {
+      "id": "m2-tv-0db",
+      "target": "m2",
+      "condition": "tv",
+      "snrDb": 0,
+      "seconds": 12.62,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.291,
+            "BAK": 2.026,
+            "OVRL": 2.024,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.304,
+            "BAK": 1.587,
+            "OVRL": 2.095,
+            "windows": 3
+          },
+          "siSdr": -0.45
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.107,
+            "BAK": 2.565,
+            "OVRL": 2.186,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.663,
+            "BAK": 1.593,
+            "OVRL": 1.873,
+            "windows": 3
+          },
+          "siSdr": 0.41
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.153,
+            "BAK": 3.912,
+            "OVRL": 2.855,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.156,
+            "BAK": 2.267,
+            "OVRL": 2.122,
+            "windows": 3
+          },
+          "siSdr": 4.14
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.925,
+            "BAK": 3.69,
+            "OVRL": 2.577,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 2.726,
+            "BAK": 2.149,
+            "OVRL": 1.826,
+            "windows": 3
+          },
+          "siSdr": 2.95
+        }
+      }
+    },
+    {
+      "id": "m2-tv-10db",
+      "target": "m2",
+      "condition": "tv",
+      "snrDb": 10,
+      "seconds": 12.62,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.435,
+            "BAK": 3.21,
+            "OVRL": 2.776,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.878,
+            "BAK": 2.064,
+            "OVRL": 2.469,
+            "windows": 3
+          },
+          "siSdr": 9.51
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.442,
+            "BAK": 3.96,
+            "OVRL": 3.124,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.709,
+            "BAK": 3.514,
+            "OVRL": 3.16,
+            "windows": 3
+          },
+          "siSdr": 10.67
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.561,
+            "BAK": 4.172,
+            "OVRL": 3.318,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.124,
+            "BAK": 4.358,
+            "OVRL": 3.821,
+            "windows": 3
+          },
+          "siSdr": 12.08
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.075,
+            "BAK": 3.655,
+            "OVRL": 2.674,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.294,
+            "BAK": 2.421,
+            "OVRL": 2.353,
+            "windows": 3
+          },
+          "siSdr": 3.72
+        }
+      }
+    },
+    {
+      "id": "m2-second-voice-0db",
+      "target": "m2",
+      "condition": "second-voice",
+      "snrDb": 0,
+      "seconds": 12.62,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.48,
+            "BAK": 3.105,
+            "OVRL": 2.754,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.389,
+            "BAK": 1.825,
+            "OVRL": 2.49,
+            "windows": 3
+          },
+          "siSdr": 0.3
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.487,
+            "BAK": 3.568,
+            "OVRL": 2.973,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.872,
+            "BAK": 1.891,
+            "OVRL": 2.287,
+            "windows": 3
+          },
+          "siSdr": -1.35
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.468,
+            "BAK": 3.425,
+            "OVRL": 2.894,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.93,
+            "BAK": 2.535,
+            "OVRL": 2.82,
+            "windows": 3
+          },
+          "siSdr": -2.82
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.975,
+            "BAK": 2.978,
+            "OVRL": 2.303,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 2.738,
+            "BAK": 2.189,
+            "OVRL": 1.868,
+            "windows": 3
+          },
+          "siSdr": -4.08
+        }
+      }
+    },
+    {
+      "id": "m2-second-voice-10db",
+      "target": "m2",
+      "condition": "second-voice",
+      "snrDb": 10,
+      "seconds": 12.62,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.346,
+            "BAK": 2.479,
+            "OVRL": 2.352,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.113,
+            "BAK": 1.631,
+            "OVRL": 1.991,
+            "windows": 3
+          },
+          "siSdr": 10.3
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.282,
+            "BAK": 3.31,
+            "OVRL": 2.679,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.438,
+            "BAK": 1.613,
+            "OVRL": 1.759,
+            "windows": 3
+          },
+          "siSdr": 9.59
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.501,
+            "BAK": 4.086,
+            "OVRL": 3.226,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.9,
+            "BAK": 2.186,
+            "OVRL": 2.52,
+            "windows": 3
+          },
+          "siSdr": 10.35
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 2.811,
+            "BAK": 3.39,
+            "OVRL": 2.3,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 2.604,
+            "BAK": 2.093,
+            "OVRL": 1.851,
+            "windows": 3
+          },
+          "siSdr": 4.78
+        }
+      }
+    },
+    {
+      "id": "m2-reverb",
+      "target": "m2",
+      "condition": "reverb",
+      "snrDb": null,
+      "seconds": 12.62,
+      "peakGainDb": 0,
+      "engines": {
+        "noisy": {
+          "dnsmos": {
+            "SIG": 3.243,
+            "BAK": 2.926,
+            "OVRL": 2.478,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.058,
+            "BAK": 2.875,
+            "OVRL": 2.984,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "rnnoise": {
+          "dnsmos": {
+            "SIG": 3.015,
+            "BAK": 2.963,
+            "OVRL": 2.318,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.935,
+            "BAK": 3.438,
+            "OVRL": 3.169,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "dfn3": {
+          "dnsmos": {
+            "SIG": 3.344,
+            "BAK": 3.916,
+            "OVRL": 3.001,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 4.259,
+            "BAK": 4.334,
+            "OVRL": 3.874,
+            "windows": 3
+          },
+          "siSdr": null
+        },
+        "dfn3-lib": {
+          "dnsmos": {
+            "SIG": 3.257,
+            "BAK": 3.974,
+            "OVRL": 2.962,
+            "windows": 3
+          },
+          "pdnsmos": {
+            "SIG": 3.988,
+            "BAK": 3.711,
+            "OVRL": 3.468,
+            "windows": 3
+          },
+          "siSdr": null
+        }
+      }
+    }
+  ]
+}
