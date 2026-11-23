@@ -13,7 +13,9 @@
 //!    password whoever registered it chose.
 //! 5. An account that was never confirmed (registered while mail was off)
 //!    is refused (`oidc_account_unverified`): its password may be a
-//!    stranger's. Its owner signs in with it and connects the provider.
+//!    stranger's. Its owner signs in with it and connects the provider,
+//!    or confirms the address first (a new link, a reset, or an operator;
+//!    GEL-40), after which this is case 3.
 //! 6. Otherwise a new account, after the operator's admission gate.
 //!
 //! A disabled account is refused (`account_disabled`) in 1 and 3–5, never

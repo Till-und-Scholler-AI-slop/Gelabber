@@ -662,8 +662,9 @@ pub(super) fn invalid() -> ApiError {
 }
 
 /// The store side of binding, asked before the message transaction takes
-/// the channel lock: each object exists with its declared size and its
-/// first bytes are the declared type, and all of them fit one message.
+/// the channel lock: each object exists with its declared size, its
+/// first bytes are the declared type, a picture shows a readable size
+/// within the pixel bounds, and all of them fit one message.
 /// All objects are asked at once; a slow store holds this request only,
 /// never the channel. The database conditions are checked again under the
 /// lock in `bind_to_message`.
@@ -743,16 +744,18 @@ pub async fn check_uploads(
                 AT[index], "mismatch",
             )])));
         }
+        let refuse = |code| ApiError::Validation(FieldErrors::from([(AT[index], code)]));
         if sniff::too_many_pixels(&row.content_type, &head) {
-            return Err(ApiError::Validation(FieldErrors::from([(
-                AT[index], "too_long",
-            )])));
+            return Err(refuse("too_long"));
         }
         // Not prepared yet, or maybe not to the end (a send cancelled or
         // failed while it ran): the object may still be the original.
-        // Stripping a clean file again changes nothing.
+        // Stripping a clean file again changes nothing. `prepare` checks
+        // the pixel bounds again on the whole file and refuses a picture
+        // whose size it cannot read; it writes nothing when it refuses, so
+        // a later send is refused again.
         if metadata::strips(&row.content_type) && (row.stripped_size.is_none() || original) {
-            media::prepare(
+            let prepared = media::prepare(
                 db,
                 store,
                 row.id,
@@ -761,6 +764,11 @@ pub async fn check_uploads(
                 row.size_bytes,
             )
             .await?;
+            match prepared {
+                media::Prepared::Ready => {}
+                media::Prepared::TooManyPixels => return Err(refuse("too_long")),
+                media::Prepared::Unreadable => return Err(refuse("mismatch")),
+            }
         }
         Ok(())
     });

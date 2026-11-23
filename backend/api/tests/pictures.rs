@@ -228,8 +228,9 @@ async fn phone_photo_loses_its_location_and_gets_thumbnails(pool: PgPool) {
 #[sqlx::test]
 async fn thumbnail_link_serves_the_original_until_it_exists(pool: PgPool) {
     let (mut owner, mut member, channel) = owner_and_member(pool.clone()).await;
-    // Not decodable: the worker keeps it without thumbnails.
-    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+    // A size but no pixel data, so not decodable: the worker keeps it
+    // without thumbnails.
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x40\0\0\0\x40\x08\x06\0\0\0\0\0\0\0";
     let id = upload(&mut owner, &channel, "pic.png", "image/png", png).await;
     post(&mut owner, &channel, &[&id]).await;
     wait_for_worker(&pool, &id).await;

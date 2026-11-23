@@ -89,8 +89,13 @@ pub struct Message {
     /// A GIF message: empty content, no attachments.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gif: Option<Gif>,
-    /// Users the message mentions, resolved when it was written (`mentions.rs`).
+    /// Users the message mentions, resolved when it was written (`mentions.rs`),
+    /// as its reader may see them: without anyone else's hidden mention.
     pub mentions: Vec<Uuid>,
+    /// Mentioned, but shown to nobody else (GEL-43): an event carries them
+    /// for the gateway to hand each their own ([`persist_event`]).
+    #[serde(skip)]
+    pub hidden_mentions: Vec<Uuid>,
     /// `@everyone`: every member of the conversation is mentioned.
     pub mention_everyone: bool,
     /// The message this one answers (issue #251).
@@ -138,6 +143,8 @@ struct MessageRow {
     created_order: i64,
     reactions: sqlx::types::Json<Vec<reactions::Reaction>>,
     gif: Option<sqlx::types::Json<Gif>>,
+    /// As the viewer reads them: every query selects
+    /// `mentions_seen_by(m.mentions, m.hidden_mentions, <viewer>)` (GEL-43).
     mentions: Vec<Uuid>,
     mentions_everyone: bool,
     system_kind: Option<String>,
@@ -145,6 +152,9 @@ struct MessageRow {
     /// Only [`MESSAGE_BY_ID_SQL`] reads it; lists filter by viewer instead.
     #[sqlx(default)]
     sender_only: bool,
+    /// Only [`MESSAGE_BY_ID_SQL`] reads it, for the events sent from it.
+    #[sqlx(default)]
+    hidden_mentions: Vec<Uuid>,
 }
 
 impl From<MessageRow> for Message {
@@ -166,6 +176,7 @@ impl From<MessageRow> for Message {
             reactions: row.reactions.0,
             gif: row.gif.map(|gif| gif.0),
             mentions: row.mentions,
+            hidden_mentions: row.hidden_mentions,
             mention_everyone: row.mentions_everyone,
             reply: None,
             previews: Vec::new(),
@@ -173,6 +184,19 @@ impl From<MessageRow> for Message {
             nonce: None,
             sender_only: row.sender_only,
         }
+    }
+}
+
+impl Message {
+    /// Everyone the message mentions, hidden or not: whom to notify.
+    pub fn mentioned(&self) -> Vec<Uuid> {
+        let mut all = self.mentions.clone();
+        all.extend(
+            self.hidden_mentions
+                .iter()
+                .filter(|id| !self.mentions.contains(id)),
+        );
+        all
     }
 }
 
@@ -187,13 +211,19 @@ struct MessageInsert {
     created_order: i64,
     gif: Option<sqlx::types::Json<Gif>>,
     mentions: Vec<Uuid>,
+    hidden_mentions: Vec<Uuid>,
     mentions_everyone: bool,
     system_kind: Option<String>,
     system_params: Option<sqlx::types::Json<serde_json::Value>>,
 }
 
 impl MessageInsert {
+    /// The message as its author reads it: the author is never mentioned,
+    /// so without the hidden mentions.
     fn into_message(self, user: &User) -> Message {
+        let hidden = self.hidden_mentions;
+        let mut mentions = self.mentions;
+        mentions.retain(|id| !hidden.contains(id));
         Message {
             id: self.id,
             channel_id: self.channel_id,
@@ -210,7 +240,8 @@ impl MessageInsert {
             attachments: Vec::new(),
             reactions: Vec::new(),
             gif: self.gif.map(|gif| gif.0),
-            mentions: self.mentions,
+            mentions,
+            hidden_mentions: hidden,
             mention_everyone: self.mentions_everyone,
             reply: None,
             previews: Vec::new(),
@@ -415,9 +446,9 @@ async fn create_message(
         other => other,
     };
     let row = sqlx::query_as::<_, MessageInsert>(
-        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to, here_users, sender_only) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone, system_kind, system_params",
+        "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to, here_users, sender_only, hidden_mentions) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, hidden_mentions, mentions_everyone, system_kind, system_params",
     )
     .bind(channel_id)
     .bind(user.id)
@@ -428,6 +459,7 @@ async fn create_message(
     .bind(reply_to)
     .bind(&mentioned.here_users)
     .bind(sender_only)
+    .bind(&mentioned.hidden)
     .fetch_one(&mut *tx)
     .await?;
     let bound =
@@ -617,17 +649,18 @@ async fn update_message(
 
     // An edit names its mentions anew. Only a mention still unread counts:
     // one added to a message the user has read stays read.
-    let here_users: Option<Vec<Uuid>> =
-        sqlx::query_scalar("SELECT here_users FROM messages WHERE id = $1")
+    let (here_users, hidden): (Option<Vec<Uuid>>, Vec<Uuid>) =
+        sqlx::query_as("SELECT here_users, hidden_mentions FROM messages WHERE id = $1")
             .bind(message_id)
             .fetch_optional(&state.db)
             .await?
-            .flatten();
+            .unwrap_or_default();
     let granted = mentions::Granted::of(
         &current.content,
         current.mention_everyone,
         &current.mentions,
         here_users.as_deref(),
+        &hidden,
     );
     if let MessagingChannel::Dm { .. } = access {
         crate::dms::request::precheck(
@@ -660,15 +693,16 @@ async fn update_message(
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, \
              edited_at = CASE WHEN content IS DISTINCT FROM $2 THEN now() ELSE edited_at END, \
-             mentions = $3, mentions_everyone = $4, here_users = $5 \
+             mentions = $3, mentions_everyone = $4, here_users = $5, hidden_mentions = $6 \
          WHERE id = $1 \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone, system_kind, system_params",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, hidden_mentions, mentions_everyone, system_kind, system_params",
     )
     .bind(message_id)
     .bind(&content)
     .bind(&mentioned.users)
     .bind(mentioned.everyone)
     .bind(&mentioned.here_users)
+    .bind(&mentioned.hidden)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
@@ -851,6 +885,21 @@ async fn persist_event(
     if message.sender_only {
         return Ok(());
     }
+    let mut delta =
+        serde_json::to_value(&*message).map_err(|err| ApiError::Internal(err.to_string()))?;
+    // Everyone reads the message without the hidden mentions, also when it
+    // was read for one of them; the gateway hands each their own (GEL-43).
+    if !message.hidden_mentions.is_empty() {
+        let hidden = &message.hidden_mentions;
+        let shown: Vec<Uuid> = message
+            .mentions
+            .iter()
+            .filter(|id| !hidden.contains(id))
+            .copied()
+            .collect();
+        delta["mentions"] = serde_json::json!(shown);
+        delta[crate::gateway::protocol::HIDDEN_MENTIONS] = serde_json::json!(hidden);
+    }
     delivery::enqueue(
         db,
         message.revision,
@@ -859,9 +908,7 @@ async fn persist_event(
             server_id: server,
             channel_id: Some(message.channel_id),
             entity_id: Some(message.id),
-            delta: Some(
-                serde_json::to_value(message).map_err(|err| ApiError::Internal(err.to_string()))?,
-            ),
+            delta: Some(delta),
         },
     )
     .await
@@ -1156,10 +1203,10 @@ pub(crate) async fn lock_access(
     Ok(MessagingChannel::Dm { channel })
 }
 
-/// `$1` the message; `$2` the viewer whose hidden reactions (#619) count,
-/// or NULL for what everyone sees.
+/// `$1` the message; `$2` the viewer whose hidden reactions (#619) and
+/// hidden mention (GEL-43) count, or NULL for what everyone sees.
 const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, m.sender_only, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$2) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, mentions_seen_by(m.mentions, m.hidden_mentions, $2) AS mentions, m.hidden_mentions, m.mentions_everyone, m.system_kind, m.system_params, m.sender_only, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$2) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
          FROM messages m JOIN users u ON u.id = m.author_id \
          WHERE m.id = $1";
 
@@ -1207,7 +1254,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, mentions_seen_by(m.mentions, m.hidden_mentions, $5) AS mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) AND ",
             readable_by!("5"),
@@ -1225,7 +1272,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, mentions_seen_by(m.mentions, m.hidden_mentions, $5) AS mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) AND ",
             readable_by!("5"),
@@ -1252,7 +1299,7 @@ async fn load_page(
     } else {
         sqlx::query_as::<_, MessageRow>(concat!(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$3) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, mentions_seen_by(m.mentions, m.hidden_mentions, $3) AS mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$3) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND ",
             readable_by!("3"),

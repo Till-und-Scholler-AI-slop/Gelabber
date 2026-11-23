@@ -42,6 +42,9 @@ pub fn router() -> Router<AppState> {
 pub struct Overview {
     pub registration: RegistrationMode,
     pub mail: bool,
+    /// The newest mail this API process handed to the relay failed
+    /// (GEL-40); `gelabber_mail_failed_total` counts them all.
+    pub mail_failing: bool,
     pub open_reports: i64,
     /// Feedback entries that are open (#542); pending ones are not.
     pub open_feedback: i64,
@@ -62,6 +65,7 @@ async fn overview(
     Ok(Json(Overview {
         registration: state.registration,
         mail: state.mail.is_some(),
+        mail_failing: state.mail.as_ref().is_some_and(|mail| mail.last_failed()),
         open_reports,
         open_feedback,
     }))

@@ -25,6 +25,7 @@ app that still loads it only gets the notice to update
 | `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows); a test desktop session with a ScreenCast portal |
 | `native/patches/` | Patches applied to libwebrtc; `libmediasoupclient/` to libmediasoupclient |
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
+| `native/tests/pipewire_chunk_test.cc` | Application sound on Linux stays inside PipeWire's buffer whatever offset and size a chunk carries; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `native/tests/playout_limiter_test.cc` | The playout limiter for volumes above 100 % on generated mixes; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `native/tests/audio_device_switch_test.cc` | Switching the microphone or speakers against a fake device module that refuses devices: restart, and rollback to the previous device; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
@@ -153,7 +154,9 @@ toolchain. On Windows the same holds with the MSVC STL and a DLL.
 The libwebrtc build needs network access to `*.googlesource.com`, ~30 GB
 disk and takes hours on 4 cores; CI caches the result (`.github/workflows/desktop-native.yml`)
 and keeps each package as an asset of the `libwebrtc-packages` release, named by the cache
-key, so an evicted cache costs a download and not a build.
+key, so an evicted cache costs a download and not a build. A job of its own
+(`.github/workflows/libwebrtc-store.yml`) stores it after a push or release, so the
+build, which runs fetched code, never holds a write token.
 
 ```sh
 desktop/native/scripts/build-libwebrtc-linux.sh /mnt/webrtc /mnt/libwebrtc-package
@@ -565,6 +568,9 @@ separate decision.
   channel layout, its ports and the links from them are replaced and the
   session manager leaves the capture unlinked, so the core replaces a capture
   stream that lost its links.
+  A buffer's samples are read from its chunk's offset for the chunk's size
+  in whole frames, both kept inside the buffer's mapped memory as pw-cat
+  keeps them (`native/src/pipewire_chunk.h`), whatever the chunk says.
   The mix goes at the pace of the sound card. Samples arrive a graph
   quantum at a time at the card's rate, and a mix on the system clock ran a
   stream's buffer dry every few seconds when the card was a little slower

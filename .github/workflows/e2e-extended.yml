@@ -61,6 +61,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Login to GHCR for pinned test MinIO
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -74,7 +76,7 @@ jobs:
           MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
         run: |
           set -euo pipefail
-          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          repo="${GITHUB_REPOSITORY,,}"
           pin="ghcr.io/${repo}/minio:${MINIO_RELEASE}"
           grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" deploy/compose/compose.yaml
           grep -F "ghcr.io/${repo}/minio:${MINIO_RELEASE}" deploy/compose/compose.yaml

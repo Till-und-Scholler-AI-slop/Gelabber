@@ -326,6 +326,13 @@ Form fields:
 
 Client validation: email via `validateEmail`, password non-empty → "Passwort fehlt.".
 
+Confirmation help (v0.13, GEL-40; `pages/ConfirmationHelp.tsx`): only while server mail is on, between the error line and the submit button. A muted line, a secondary button and an inline status:
+
+- After the form's sign-in answered `email_unverified` (that sign-in just mailed a link): line **"Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut."**, button **"Link erneut senden"**, disabled for 60 s from the refusal (**"Erneut senden ({n} s)"**).
+- On `?oidc_error=account_unverified` while the form has no newer refusal: the error line reads **"Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde. Bestätige sie, dann klappt auch die Anmeldung über den Anbieter."**; line **"Gib oben deine E-Mail-Adresse ein, dann schicken wir dir einen Bestätigungslink. Weißt du dein Passwort nicht mehr, setz ein neues: Das bestätigt die Adresse auch."**, button **"Bestätigungsmail senden"**, then ghost button-link **"Passwort vergessen?"** to the forgot-password screen (passes the typed email).
+
+The button checks the typed email with `validateEmail` (an error marks the email field, nothing is sent), then `POST /api/auth/verify-email/resend {email}` with the trimmed address. `202` → status **"Falls zu dieser Adresse ein unbestätigtes Konto gehört, ist ein Link unterwegs. Er gilt 24 Stunden."** and 60 s cooldown; `429` with `Retry-After` → that cooldown plus the error message. A new reason restarts the help (and its cooldown).
+
 ### 3.3 Register `/register` (`pages/RegisterPage.tsx:32-162`)
 
 [invite banner] **h1 "Konto anlegen"**, lead **"Schon registriert? "** + link **"Anmelden"**. Fields: **Name** (text, nickname, autofocus, maxLength 64, hint **"Für andere sichtbar."**), **E-Mail-Adresse**, **Passwort** (new-password, hint **"Mindestens 8 Zeichen."**), FormError, submit **"Registrieren"** (pending **"Konto wird angelegt…"**).

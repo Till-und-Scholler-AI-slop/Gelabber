@@ -13,6 +13,14 @@ use super::protocol::{
 };
 use crate::error::ApiError;
 
+/// A member connected to a server ([`Gateway::present_members`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Present {
+    pub u: Uuid,
+    /// Invisible by hand (#590): connected, but shown to nobody.
+    pub invisible: bool,
+}
+
 /// Set one connection's status, recompute the user aggregate.
 /// KEYS: conn, user, conn-index, mode. ARGV: status, ttl_ms, conn-key.
 /// Returns the previous and new aggregate and the manual mode (#590), read
@@ -633,16 +641,34 @@ impl Gateway {
     /// Who is shown on a server and how, the manual modes (#590) applied:
     /// an invisible member is left out.
     pub async fn presence_snapshot(&self, server_id: Uuid) -> Result<Vec<PresenceEntry>, ApiError> {
-        self.snapshot(server_id, true).await
+        Ok(self
+            .snapshot(server_id, true)
+            .await?
+            .into_iter()
+            .map(|(entry, _)| entry)
+            .collect())
     }
 
     /// Who is really connected on a server, whatever they show (`@here`:
-    /// an invisible member is there all the same).
-    pub async fn present_members(&self, server_id: Uuid) -> Result<Vec<PresenceEntry>, ApiError> {
-        self.snapshot(server_id, false).await
+    /// an invisible member is there all the same, and says so).
+    pub async fn present_members(&self, server_id: Uuid) -> Result<Vec<Present>, ApiError> {
+        Ok(self
+            .snapshot(server_id, false)
+            .await?
+            .into_iter()
+            .filter(|(entry, _)| entry.st != PresenceStatus::Offline)
+            .map(|(entry, mode)| Present {
+                u: entry.u,
+                invisible: mode == PresenceMode::Invisible,
+            })
+            .collect())
     }
 
-    async fn snapshot(&self, server_id: Uuid, shown: bool) -> Result<Vec<PresenceEntry>, ApiError> {
+    async fn snapshot(
+        &self,
+        server_id: Uuid,
+        shown: bool,
+    ) -> Result<Vec<(PresenceEntry, PresenceMode)>, ApiError> {
         let users: Vec<String> = self
             .with_conn(|mut conn| {
                 let key = server_set_key(server_id);
@@ -686,11 +712,11 @@ impl Gateway {
                 .and_then(Option::as_deref)
                 .map_or(PresenceMode::Auto, PresenceMode::from_redis);
             match raw.as_deref().and_then(PresenceStatus::parse) {
-                Some(st) if !shown => snap.push(PresenceEntry { u: user_id, st }),
+                Some(st) if !shown => snap.push((PresenceEntry { u: user_id, st }, mode)),
                 Some(st) => match st.shown(mode) {
                     // Invisible, and still connected: not stale.
                     PresenceStatus::Offline => {}
-                    st => snap.push(PresenceEntry { u: user_id, st }),
+                    st => snap.push((PresenceEntry { u: user_id, st }, mode)),
                 },
                 None => stale.push((user_id, mode)),
             }
@@ -748,7 +774,7 @@ impl Gateway {
                 }
             }
         }
-        snap.sort_by_key(|entry| entry.u);
+        snap.sort_by_key(|(entry, _)| entry.u);
         Ok(snap)
     }
 

@@ -3,7 +3,7 @@
 //!
 //! Counters are process-local (one API container). Cardinality is bounded:
 //! method + status, plus small fixed sets of rate-limit buckets, upstream
-//! calls, caches and link preview outcomes.
+//! calls, caches, link preview outcomes and mail kinds (`crate::mail`).
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -25,7 +25,10 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn scrape(State(state): State<AppState>) -> Response {
-    let body = state.metrics.render();
+    let mut body = state.metrics.render();
+    if let Some(mailer) = &state.mail {
+        mailer.render_metrics(&mut body);
+    }
     (
         StatusCode::OK,
         [(

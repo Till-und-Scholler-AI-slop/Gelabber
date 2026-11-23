@@ -17,6 +17,7 @@
 //! pub/unpub, mute/deafen). SDP and ICE go to the media socket, not `/ws`.
 //! Those frames are not mixed into `op: "e"`.
 
+mod budget;
 mod conn;
 pub mod delivery;
 mod hub;
@@ -40,7 +41,7 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub use hub::{ConnTable, EventLog, Gateway, Recheck, VoiceRoster};
-pub use live::ModeCheck;
+pub use live::{ModeCheck, Present};
 
 /// Sockets one account may hold on one API process: several tabs, a phone
 /// and the desktop app fit. Each socket can hold a pool connection while it

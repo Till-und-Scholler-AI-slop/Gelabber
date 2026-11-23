@@ -19,10 +19,10 @@ use crate::metrics::HttpMetrics;
 use crate::previews::LinkPreviews;
 use crate::storage::ObjectStore;
 
-/// One subscribe's replay, gap and `ok` together, written while the frame's
-/// transaction holds the session and server rows. A client that reads too
-/// slowly for it loses the socket instead of keeping the rows and a pool
-/// connection for minutes.
+/// One subscribe's replay, gap and `ok` together. They are written after the
+/// frame's transaction has ended (GEL-42), so no row or pool connection waits
+/// on them; a client that reads too slowly for them loses the socket instead
+/// of holding its own loop for minutes.
 pub const REPLAY_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Shared handles for request handlers. Both clients are created lazily so

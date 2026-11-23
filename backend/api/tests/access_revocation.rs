@@ -1104,3 +1104,47 @@ async fn logout_on_another_process_closes_an_idle_socket_without_waiting(pool: P
     );
     closed_without_events(&mut ws).await;
 }
+
+/// Disabled as if the operator's session cleanup never ran (#694): the rows
+/// stay, so only the account's `disabled_at` ends what they hold open.
+async fn disable_leaving_sessions(pool: &PgPool, client: &Client) {
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1::uuid")
+        .bind(client.user_id())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test]
+async fn a_disabled_accounts_socket_closes_on_its_next_frame(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut owner = register(&state, "owner").await;
+    let (sid, text, _, _) = server(&mut owner, "Disabled").await;
+    let mut ws = connect(addr, &owner).await;
+    subscribe(&mut ws, sid, text).await;
+    disable_leaving_sessions(&pool, &owner).await;
+    send(&mut ws, json!({"op":"s", "s":sid, "c":text})).await;
+    publish(&state, sid, text).await;
+    closed_without_events(&mut ws).await;
+}
+
+#[sqlx::test]
+async fn a_disabled_accounts_media_lease_is_not_renewed(pool: PgPool) {
+    let state = common::ws_state(pool.clone());
+    let mut owner = register(&state, "owner").await;
+    let (_, _, voice, _) = server(&mut owner, "Disabled lease").await;
+    let ticket = claim(&mut owner, voice).await;
+    let key = session_authority_key(ticket["auth"]["session"].as_str().unwrap());
+    assert_eq!(
+        redis_get(key.clone()).await.as_deref(),
+        Some(owner.user_id())
+    );
+    disable_leaving_sessions(&pool, &owner).await;
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while redis_get(key.clone()).await.is_some() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("lease expires once the account is disabled");
+}

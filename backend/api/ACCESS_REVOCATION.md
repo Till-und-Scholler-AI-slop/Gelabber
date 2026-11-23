@@ -56,9 +56,21 @@ worker UUID. Logout cleanup targets a permanently deleted session hash.
    after unban or a new join works.
 
 Leave/kick/ban/delete serialize against invite join, gateway room registration,
-outbound sends and ticket mint using the server row. Session row locks serialize
-socket actions/ticket mint against logout. All authorization queries within a
-lock use the same DB connection (including the one-connection pool regression).
+the gateway's checks of outbound frames and ticket mint using the server row.
+Session row locks serialize socket actions/ticket mint against logout. All
+authorization queries within a lock use the same DB connection (including the
+one-connection pool regression).
+
+The gateway never holds a transaction, and so neither row lock, while it writes
+to a socket (GEL-42): a client that stops reading would otherwise keep the
+server row from a kick or ban, which waits at most 5 s for it, and hold a
+gateway pool connection. It checks, reads everything it is about to send
+(replay, `ok`, presence and voice snapshots, signaling replies), ends the
+transaction, then writes. A dequeued batch was queued before its check, so a
+removal that commits between check and write only lets frames from before the
+removal out; later frames are checked again, and the socket's next check drops
+the server. A subscribe's presence announce stays under the lock, so it cannot
+put back presence a removal has just cleared.
 
 A Redis failure during member/channel invalidation rejects and rolls back that
 REST mutation. A Redis failure on logout does **not** preserve the DB session:

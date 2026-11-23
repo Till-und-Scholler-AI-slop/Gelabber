@@ -15,7 +15,9 @@
 //! With account mail on (`SMTP_HOST`, [`crate::mail`]) registration answers
 //! `202` with `verification_sent` and no session, the same whether or not
 //! the address already has an account; the mail tells the two apart. An
-//! unconfirmed account cannot sign in (`403 email_unverified`). Without it,
+//! unconfirmed account cannot sign in (`403 email_unverified`); anyone may
+//! ask for a new link for it, with the same `202` for every address
+//! (`verify-email/resend`, GEL-40). Without it,
 //! registration signs in at once and `409 email_taken` names a known
 //! address, as before.
 
@@ -36,12 +38,13 @@ use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::auth::oidc::routes::Peer;
 use crate::config::RegistrationMode;
 use crate::cookies::{self, CSRF_COOKIE, SESSION_COOKIE, SetCookie};
 use crate::error::{ApiError, FieldErrors};
 use crate::i18n::{self, Locale};
 use crate::json::Body;
-use crate::limits::{self, MailBudget};
+use crate::limits::{self, Guesser, MailBudget};
 use crate::mail::{Mail, Mailer};
 use crate::operator;
 use crate::password;
@@ -81,6 +84,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/session", get(current_session))
         .route("/api/auth/mail", get(mail_status))
         .route("/api/auth/verify-email", post(verify_email))
+        .route("/api/auth/verify-email/resend", post(resend_confirmation))
         .route("/api/auth/password-reset", post(request_password_reset))
         .route(
             "/api/auth/password-reset/confirm",
@@ -191,6 +195,7 @@ impl std::fmt::Debug for VerifyBody {
     }
 }
 
+/// An address that should get a reset or a new confirmation link.
 #[derive(Debug, Deserialize)]
 pub struct ResetRequestBody {
     #[serde(default)]
@@ -469,6 +474,7 @@ pub fn send_mail_to(
 async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Peer(peer): Peer,
     Body(body): Body<LoginBody>,
 ) -> Result<Response, ApiError> {
     transport_allowed(&state, &headers)?;
@@ -483,7 +489,8 @@ async fn login(
     // may still carry the spelling that was typed.
     let ascii = validate::ascii_domain(&typed);
     let email = ascii.clone().unwrap_or_else(|| typed.clone());
-    limits::login_attempt(&state, &email)?;
+    let ip = limits::client_ip(&headers, peer);
+    let guess = limits::login_attempt(&state, &email, Guesser::Address(&ip))?;
 
     // Register never stores anything longer, so this cannot match; fail
     // before the lookup and the hash, with the same answer as a wrong
@@ -508,7 +515,7 @@ async fn login(
     let Some(credentials) = found.filter(|_| ok) else {
         return Err(ApiError::InvalidCredentials);
     };
-    limits::login_succeeded(&state, &email);
+    limits::login_succeeded(&state, guess);
     // Only after the password matched, so the answer tells nothing to
     // someone who does not know it. A disabled account gets no new
     // confirmation link either.
@@ -631,8 +638,9 @@ pub(crate) fn signed_out_cookies(
 
 /// Sets a new password after checking the current one. Every session of the
 /// account ends, this one included, and the caller gets a fresh one: a
-/// stolen cookie dies with the old password. Wrong guesses count against the
-/// account like failed logins, so a hijacked session cannot brute-force it.
+/// stolen cookie dies with the old password. Wrong guesses from all of the
+/// account's sessions share one count, apart from sign-in, so a hijacked
+/// session can neither brute-force it nor lock the owner out of signing in.
 ///
 /// An account without a password (it signs in through a provider) sets its
 /// first one without `current_password`, but only from a session signed in
@@ -655,7 +663,7 @@ async fn change_password(
 
     if stored.is_some() {
         let key = validate::canonical(&current.user.email);
-        limits::login_attempt(&state, &key)?;
+        let guess = limits::login_attempt(&state, &key, Guesser::Session)?;
         let ok = body.current_password.chars().count() <= validate::PASSWORD_MAX
             && password::verify(body.current_password, stored).await?;
         if !ok {
@@ -664,7 +672,7 @@ async fn change_password(
                 "wrong",
             )])));
         }
-        limits::login_succeeded(&state, &key);
+        limits::login_succeeded(&state, guess);
     } else {
         recently_signed_in(&current)?;
     }
@@ -715,6 +723,7 @@ async fn mail_status(State(state): State<AppState>) -> Json<MailStatus> {
 async fn verify_email(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Peer(peer): Peer,
     Body(body): Body<VerifyBody>,
 ) -> Result<Response, ApiError> {
     transport_allowed(&state, &headers)?;
@@ -728,7 +737,8 @@ async fn verify_email(
     }
     let user = session::reload(&state.db, user_id).await?;
     let key = validate::canonical(&user.email);
-    limits::login_attempt(&state, &key)?;
+    let ip = limits::client_ip(&headers, peer);
+    let guess = limits::login_attempt(&state, &key, Guesser::Address(&ip))?;
     // An account without a password has no pending registration to confirm
     // (a provider's takeover clears it); `verify` then answers `wrong`.
     let stored = user::password_hash_by_id(&state.db, user_id).await?;
@@ -739,7 +749,7 @@ async fn verify_email(
             "password", "wrong",
         )])));
     }
-    limits::login_succeeded(&state, &key);
+    limits::login_succeeded(&state, guess);
     // A disabled account stays unconfirmed and keeps its link (#517).
     if user::is_disabled(&state.db, user_id).await? {
         return Err(ApiError::AccountDisabled);
@@ -753,6 +763,55 @@ async fn verify_email(
     info!(%user_id, "e-mail address confirmed");
     let user = session::reload(&state.db, user_id).await?;
     signed_in(&state, &headers, user, StatusCode::OK).await
+}
+
+/// Mails a new confirmation link (GEL-40) if the address has an account
+/// that is not confirmed and not disabled. Anyone may ask, without a
+/// password: the answer is `202` either way, the link goes only to the
+/// inbox and still asks for the account's password. It comes out of the
+/// address's registration mails, like the link a password sign-in sends.
+async fn resend_confirmation(
+    State(state): State<AppState>,
+    Body(body): Body<ResetRequestBody>,
+) -> Result<Response, ApiError> {
+    let mailer = state.mail.as_ref().ok_or(ApiError::NotFound)?;
+    let mut errors = FieldErrors::new();
+    let email = validate::email(&body.email, &mut errors);
+    validate::finish(errors)?;
+    let typed = email.expect("validated");
+    // Either spelling of the domain, as at sign-in.
+    let ascii = validate::ascii_domain(&typed);
+    let mut found = user::credentials_by_email(&state.db, &typed).await?;
+    if found.is_none()
+        && let Some(ascii) = &ascii
+    {
+        found = user::credentials_by_email(&state.db, ascii).await?;
+    }
+    let email = ascii.unwrap_or(typed);
+
+    if let Some(credentials) = found
+        && !credentials.email_verified
+        && !credentials.disabled
+        && limits::mail_allowed(&state, MailBudget::Registration, &email)
+    {
+        send_confirmation(&state, mailer, credentials.id, &email);
+        info!(user_id = %credentials.id, "confirmation link requested");
+    }
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({}))).into_response())
+}
+
+/// Mails `email` a new confirmation link for `user_id` after the response.
+/// The caller reserved it from [`MailBudget::Registration`]; the operator
+/// console sends one too (`operator::accounts`).
+pub fn send_confirmation(state: &AppState, mailer: &Mailer, user_id: uuid::Uuid, email: &str) {
+    send_mail(
+        state,
+        mailer,
+        MailBudget::Registration,
+        user_id,
+        email,
+        Outgoing::Confirm,
+    );
 }
 
 /// Mails a reset link to the address if it has an account. The answer is
