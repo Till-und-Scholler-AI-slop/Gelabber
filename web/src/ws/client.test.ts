@@ -535,6 +535,50 @@ describe("gateway client", () => {
     random.mockRestore();
   });
 
+  it("reconnects at once after the watchdog drops a socket that stayed up", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    let now = 0;
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 100,
+      maxRetryMs: 400,
+      heartbeatMs: 20,
+      deadMs: 40,
+      now: () => now,
+      open: () => {
+        const socket = new FakeSocket();
+        // A black-holed path: only the watchdog notices it.
+        socket.holdClose = true;
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    // A streak of failed sockets builds up the backoff…
+    sockets[0]?.emit("close");
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[1]?.emit("close");
+    await vi.advanceTimersByTimeAsync(50);
+    sockets[2]?.emit("close");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sockets).toHaveLength(4);
+    // …and a socket that went silent after a heartbeat interval clears it.
+    sockets[3]?.emit("open");
+    now += 50;
+    await vi.advanceTimersByTimeAsync(20);
+    expect(sockets[3]?.closed).toBe(true);
+    // A 0 ms timeout set inside a fake-timer tick runs 1 ms later; the old
+    // backoff would wait 200 ms.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets).toHaveLength(5);
+
+    gateway.stop();
+    random.mockRestore();
+  });
+
   it("starts a new session without the old backoff", async () => {
     vi.useFakeTimers();
     const sockets: FakeSocket[] = [];
