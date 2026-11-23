@@ -54,8 +54,9 @@ is the order of the work; check each step's result before the next one.
    (`-f tag=vX.Y.Z -f image_run_id=<publish run>`) only repairs a release.
    Never `gh release create`.
 7. **Desktop packages.** The pacman repository job waits for the
-   `github-pages` environment approval. A maintainer approves it, not an
-   agent. The `libwebrtc-packages` and `build-deps` releases stay
+   `github-pages` environment approval. Only Rafi approves it (the
+   environment's one reviewer), never an agent; the rest of the release
+   does not wait for it. The `libwebrtc-packages` and `build-deps` releases stay
    pre-releases: as "Latest", the apps' updater and the web client's
    download links would point at them.
 8. **Planning.** In Linear, complete the milestone, move its open issues to
