@@ -356,7 +356,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
                     let extra = ((ui.available_width() - total) / natural.len() as f32).max(0.0);
                     super::row(ui, 32.0, gap, |ui| {
                         for ((label, short, minutes), w) in MUTES.iter().zip(&natural) {
-                            if chip(ui, short(), label(), w + extra, saving).clicked() {
+                            // At most what is left of the line, so the
+                            // layout's rounding never wraps the last chip.
+                            let left = ui.available_size_before_wrap().x;
+                            let width = (w + extra).min(left.max(*w));
+                            if chip(ui, short(), label(), width, saving).clicked() {
                                 save = Some(own.mute(*minutes));
                             }
                         }
@@ -706,5 +710,34 @@ mod tests {
             "Diese Stufe kennt diese Version von Gelabber nicht.",
         );
         assert!(api.seen.lock().iter().all(|r| !r.starts_with("PUT")));
+    }
+
+    /// The mute chips share the row's width exactly; now that the row
+    /// wraps (GEL-39), rounding must not push the last one onto a line
+    /// of its own.
+    #[test]
+    fn the_mute_chips_fill_one_line() {
+        let _config = TempConfig::new("notify-mute-line");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Benachrichtigungen für #allgemein");
+        harness
+            .get_by_label("Benachrichtigungen für #allgemein")
+            .click();
+        wait_for_label(&mut harness, "15 Minuten");
+        harness.run_steps(4);
+        let chips: Vec<egui::Rect> = [
+            "15 Minuten",
+            "1 Stunde",
+            "8 Stunden",
+            "24 Stunden",
+            "Bis ich es wieder einschalte",
+        ]
+        .iter()
+        .map(|l| harness.get_by_label(l).rect())
+        .collect();
+        for chip in &chips {
+            assert!((chip.min.y - chips[0].min.y).abs() < 0.5, "{chips:?}");
+        }
     }
 }
