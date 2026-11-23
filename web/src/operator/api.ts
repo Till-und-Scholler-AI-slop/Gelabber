@@ -53,6 +53,16 @@ export const disableAccount = (id: string, reason?: string) =>
 export const enableAccount = (id: string) =>
   api<Account>(`/operator/accounts/${id}/enable`, { method: "POST" });
 
+/** Mails a new confirmation link; `429` past the address's hourly mails. */
+export const resendConfirmation = (id: string) =>
+  api<Account>(`/operator/accounts/${id}/resend-confirmation`, {
+    method: "POST",
+  });
+
+/** Marks the address confirmed, after checking with its owner. */
+export const confirmAccount = (id: string) =>
+  api<Account>(`/operator/accounts/${id}/confirm`, { method: "POST" });
+
 export const listServerAdmins = (query: ServerQuery, signal?: AbortSignal) =>
   api<ServerAdminPage>(`/operator/servers${searchOf(query)}`, { signal });
 

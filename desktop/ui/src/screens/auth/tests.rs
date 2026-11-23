@@ -610,6 +610,8 @@ fn a_refused_provider_sign_in_says_why() {
         &mut harness,
         "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde.",
     );
+    // With account mail, the way to confirm it (GEL-40).
+    wait_for_text(&mut harness, "Gib oben deine E-Mail-Adresse ein");
     // The button is back for another try.
     harness.get_by_label("Über Google anmelden");
 
@@ -951,4 +953,135 @@ fn a_disabled_account_is_told_at_sign_in() {
         .get_by_role_and_label(Role::Button, "Anmelden")
         .click();
     wait_for_text(&mut harness, "Dieses Konto ist gesperrt.");
+}
+
+/// `confirmationHelpReason`: only with account mail, for the two refusals;
+/// the page's own refusal replaces the provider's.
+#[test]
+fn the_confirmation_help_follows_the_refusal() {
+    use super::login::{HelpReason, help_reason};
+    let mail = Some(true);
+    assert_eq!(
+        help_reason(Some("email_unverified"), None, mail),
+        Some(HelpReason::EmailUnverified)
+    );
+    for code in ["oidc_account_unverified", "account_unverified"] {
+        assert_eq!(
+            help_reason(Some(code), None, mail),
+            Some(HelpReason::Provider)
+        );
+    }
+    assert_eq!(
+        help_reason(None, Some("account_unverified"), mail),
+        Some(HelpReason::Provider)
+    );
+    assert_eq!(
+        help_reason(
+            Some("invalid_credentials"),
+            Some("account_unverified"),
+            mail
+        ),
+        None
+    );
+    assert_eq!(help_reason(None, Some("cancelled"), mail), None);
+    for mail in [Some(false), None] {
+        assert_eq!(help_reason(Some("email_unverified"), None, mail), None);
+        assert_eq!(help_reason(None, Some("account_unverified"), mail), None);
+    }
+}
+
+/// GEL-40: the stand-in API with the resend route, keeping its bodies.
+fn resend_api(
+    login: Option<&'static str>,
+) -> (FakeApi, std::sync::Arc<parking_lot::Mutex<Vec<String>>>) {
+    let bodies: std::sync::Arc<parking_lot::Mutex<Vec<String>>> = Default::default();
+    let kept = bodies.clone();
+    let api = FakeApi::start(false, move |method, at, body| match (method, at) {
+        ("POST", "/auth/verify-email/resend") => {
+            kept.lock().push(body.to_owned());
+            Some(Reply::status(202, serde_json::json!({})))
+        }
+        ("POST", "/auth/login") => login.map(|code| Reply::error(403, code)),
+        _ => None,
+    });
+    (api, bodies)
+}
+
+/// A provider found an account whose address was never confirmed: the
+/// page says how to confirm it, sends the link to the typed address, and
+/// offers a new password, as the web's `ConfirmationHelp`.
+#[test]
+fn an_unconfirmed_address_gets_its_link_after_a_provider_refused() {
+    let _config = TempConfig::new("auth-confirm-help-provider");
+    let (api, bodies) = resend_api(None);
+    let mut harness = launcher(&api, "/login?oidc_error=account_unverified");
+    wait_for_text(
+        &mut harness,
+        "Bestätige sie, dann klappt auch die Anmeldung über den Anbieter.",
+    );
+    assert!(
+        harness
+            .query_by_label_contains("Einstellungen → Sicherheit")
+            .is_none()
+    );
+    wait_for_text(&mut harness, "Gib oben deine E-Mail-Adresse ein");
+
+    // Without an address focus moves to the field and nothing is sent.
+    harness
+        .get_by_role_and_label(Role::Button, "Bestätigungsmail senden")
+        .click();
+    wait_for(&mut harness, "focus on the address", |h| {
+        crate::app::testkit::focused_label(h).as_deref() == Some("E-Mail-Adresse")
+    });
+    assert!(!api.saw("POST /auth/verify-email/resend"));
+
+    type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
+    harness
+        .get_by_role_and_label(Role::Button, "Bestätigungsmail senden")
+        .click();
+    wait_for_text(
+        &mut harness,
+        "Falls zu dieser Adresse ein unbestätigtes Konto gehört, ist ein Link unterwegs.",
+    );
+    let sent: serde_json::Value = serde_json::from_str(&bodies.lock()[0]).expect("body");
+    assert_eq!(sent, serde_json::json!({"email": "lena@example.test"}));
+    // Once a minute.
+    let button = harness.get_by_label_contains("Erneut senden (");
+    assert!(button.accesskit_node().is_disabled());
+
+    // The way to a new password, with the address.
+    harness
+        .get_by_role_and_label(Role::Button, "Passwort vergessen?")
+        .click();
+    wait_for(&mut harness, "the reset page", |h| {
+        h.query_by_label("Link schicken").is_some()
+    });
+}
+
+/// A password sign-in of such an account sent a link already; the page
+/// offers another once a minute has passed.
+#[test]
+fn a_refused_password_sign_in_offers_the_link_again() {
+    let _config = TempConfig::new("auth-confirm-help-login");
+    let (api, _bodies) = resend_api(Some("email_unverified"));
+    let mut harness = launcher(&api, "/login");
+    wait_for_label(&mut harness, "E-Mail-Adresse");
+    type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
+    type_into(&mut harness, "Passwort", "parity-pass-123");
+    harness
+        .get_by_role_and_label(Role::Button, "Anmelden")
+        .click();
+    wait_for_text(&mut harness, "Bitte bestätige zuerst deine E-Mail-Adresse.");
+    wait_for_text(
+        &mut harness,
+        "Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut.",
+    );
+    let button = harness.get_by_label_contains("Erneut senden (");
+    assert_eq!(button.accesskit_node().role(), Role::Button);
+    assert!(button.accesskit_node().is_disabled());
+    assert!(
+        harness
+            .query_by_role_and_label(Role::Button, "Passwort vergessen?")
+            .is_none()
+    );
 }

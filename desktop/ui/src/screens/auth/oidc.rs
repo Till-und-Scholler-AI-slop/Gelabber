@@ -236,6 +236,9 @@ pub fn message(error: &OidcError) -> &'static str {
 #[derive(Default)]
 pub struct ProviderSignIn {
     flow: Option<Flow>,
+    /// The code of the last refusal shown on the form, for the help the
+    /// page adds to some (GEL-40); see [`Self::take_refusal`].
+    refusal: Option<String>,
 }
 
 impl ProviderSignIn {
@@ -285,9 +288,18 @@ impl ProviderSignIn {
                 ));
                 return true;
             }
-            Err(error) => fail(errors, &error, order),
+            Err(error) => {
+                self.refusal = Some(error.code().to_owned());
+                fail(errors, &error, order);
+            }
         }
         false
+    }
+
+    /// The code of a refusal the last [`Self::poll`] put on the form
+    /// (`oidc_account_unverified`, or a flow's `account_unverified`), once.
+    pub fn take_refusal(&mut self) -> Option<String> {
+        self.refusal.take()
     }
 
     /// Whether a flow is running.

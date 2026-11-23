@@ -27,6 +27,7 @@ import {
   OIDC_LEAVING_MS,
   oidcPending,
   register,
+  requestConfirmationMail,
   requestPasswordReset,
   resetPassword,
   resetSessionForTests,
@@ -356,6 +357,25 @@ describe("session store", () => {
     expect(await resetPassword("f".repeat(64), "password123")).toEqual(ada);
     expect(useSession.getState().status).toBe("authenticated");
     expect(calls).toContain("POST /api/auth/password-reset/confirm");
+  });
+
+  it("asking for a new confirmation link changes nothing either", async () => {
+    const calls = fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: null, csrf_token: "c0" }),
+      "POST /api/auth/verify-email/resend": () => json(202, {}),
+    });
+    const fetch = vi.mocked(globalThis.fetch);
+    await ensureSession();
+
+    await requestConfirmationMail("ada@example.com");
+    const body: unknown = JSON.parse(
+      String(fetch.mock.calls.at(-1)?.[1]?.body),
+    );
+    expect(body).toEqual({ email: "ada@example.com" });
+    expect(calls).toContain("POST /api/auth/verify-email/resend");
+    expect(useSession.getState().status).toBe("anonymous");
+    expect(getCsrfToken()).toBe("c0");
   });
 
   it("logout is optimistic: the tab is out before the server answers", async () => {

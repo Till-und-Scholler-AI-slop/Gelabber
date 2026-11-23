@@ -64,6 +64,7 @@ const overview = (overrides: Partial<OperatorOverview> = {}) =>
   ({
     registration: "invitation",
     mail: true,
+    mail_failing: false,
     open_reports: 0,
     open_feedback: 0,
     ...overrides,

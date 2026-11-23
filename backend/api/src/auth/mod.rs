@@ -15,7 +15,9 @@
 //! With account mail on (`SMTP_HOST`, [`crate::mail`]) registration answers
 //! `202` with `verification_sent` and no session, the same whether or not
 //! the address already has an account; the mail tells the two apart. An
-//! unconfirmed account cannot sign in (`403 email_unverified`). Without it,
+//! unconfirmed account cannot sign in (`403 email_unverified`); anyone may
+//! ask for a new link for it, with the same `202` for every address
+//! (`verify-email/resend`, GEL-40). Without it,
 //! registration signs in at once and `409 email_taken` names a known
 //! address, as before.
 
@@ -82,6 +84,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/session", get(current_session))
         .route("/api/auth/mail", get(mail_status))
         .route("/api/auth/verify-email", post(verify_email))
+        .route("/api/auth/verify-email/resend", post(resend_confirmation))
         .route("/api/auth/password-reset", post(request_password_reset))
         .route(
             "/api/auth/password-reset/confirm",
@@ -192,6 +195,7 @@ impl std::fmt::Debug for VerifyBody {
     }
 }
 
+/// An address that should get a reset or a new confirmation link.
 #[derive(Debug, Deserialize)]
 pub struct ResetRequestBody {
     #[serde(default)]
@@ -759,6 +763,55 @@ async fn verify_email(
     info!(%user_id, "e-mail address confirmed");
     let user = session::reload(&state.db, user_id).await?;
     signed_in(&state, &headers, user, StatusCode::OK).await
+}
+
+/// Mails a new confirmation link (GEL-40) if the address has an account
+/// that is not confirmed and not disabled. Anyone may ask, without a
+/// password: the answer is `202` either way, the link goes only to the
+/// inbox and still asks for the account's password. It comes out of the
+/// address's registration mails, like the link a password sign-in sends.
+async fn resend_confirmation(
+    State(state): State<AppState>,
+    Body(body): Body<ResetRequestBody>,
+) -> Result<Response, ApiError> {
+    let mailer = state.mail.as_ref().ok_or(ApiError::NotFound)?;
+    let mut errors = FieldErrors::new();
+    let email = validate::email(&body.email, &mut errors);
+    validate::finish(errors)?;
+    let typed = email.expect("validated");
+    // Either spelling of the domain, as at sign-in.
+    let ascii = validate::ascii_domain(&typed);
+    let mut found = user::credentials_by_email(&state.db, &typed).await?;
+    if found.is_none()
+        && let Some(ascii) = &ascii
+    {
+        found = user::credentials_by_email(&state.db, ascii).await?;
+    }
+    let email = ascii.unwrap_or(typed);
+
+    if let Some(credentials) = found
+        && !credentials.email_verified
+        && !credentials.disabled
+        && limits::mail_allowed(&state, MailBudget::Registration, &email)
+    {
+        send_confirmation(&state, mailer, credentials.id, &email);
+        info!(user_id = %credentials.id, "confirmation link requested");
+    }
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({}))).into_response())
+}
+
+/// Mails `email` a new confirmation link for `user_id` after the response.
+/// The caller reserved it from [`MailBudget::Registration`]; the operator
+/// console sends one too (`operator::accounts`).
+pub fn send_confirmation(state: &AppState, mailer: &Mailer, user_id: uuid::Uuid, email: &str) {
+    send_mail(
+        state,
+        mailer,
+        MailBudget::Registration,
+        user_id,
+        email,
+        Outgoing::Confirm,
+    );
 }
 
 /// Mails a reset link to the address if it has an account. The answer is

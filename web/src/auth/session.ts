@@ -375,6 +375,17 @@ export async function resetPassword(
   })) as User;
 }
 
+/**
+ * Asks for a new confirmation link for an account whose address was never
+ * confirmed. The answer is the same for every address, and nobody signs in.
+ */
+export async function requestConfirmationMail(email: string): Promise<void> {
+  await api<Record<string, never>>("/auth/verify-email/resend", {
+    method: "POST",
+    body: { email },
+  });
+}
+
 /** Asks for a reset link. The answer is the same for unknown addresses. */
 export async function requestPasswordReset(email: string): Promise<void> {
   await api<Record<string, never>>("/auth/password-reset", {

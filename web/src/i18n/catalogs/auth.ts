@@ -215,6 +215,14 @@ export const auth = defineCatalog(
     "login.submitting": "Anmelden…",
     "login.forgotPasswordNoMail":
       "Passwort vergessen? Frag die Person, die diesen Gelabber-Server betreibt.",
+    // An address that was never confirmed (GEL-40), with account mail on.
+    "login.oidcAccountUnverified":
+      "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde. Bestätige sie, dann klappt auch die Anmeldung über den Anbieter.",
+    "confirmHelp.providerLead":
+      "Gib oben deine E-Mail-Adresse ein, dann schicken wir dir einen Bestätigungslink. Weißt du dein Passwort nicht mehr, setz ein neues: Das bestätigt die Adresse auch.",
+    "confirmHelp.send": "Bestätigungsmail senden",
+    "confirmHelp.sent":
+      "Falls zu dieser Adresse ein unbestätigtes Konto gehört, ist ein Link unterwegs. Er gilt 24 Stunden.",
 
     // /register and the mail it sends
     "register.title": "Konto anlegen",
@@ -491,6 +499,13 @@ export const auth = defineCatalog(
     "login.submitting": "Signing in…",
     "login.forgotPasswordNoMail":
       "Forgot your password? Ask the person who runs this Gelabber server.",
+    "login.oidcAccountUnverified":
+      "There’s already an account with this email address, but the address was never confirmed. Confirm it, and signing in through the provider works too.",
+    "confirmHelp.providerLead":
+      "Enter your email address above and we’ll send you a confirmation link. If you no longer know your password, set a new one: that confirms the address too.",
+    "confirmHelp.send": "Send confirmation email",
+    "confirmHelp.sent":
+      "If this address belongs to an unconfirmed account, a link is on its way. It’s valid for 24 hours.",
 
     "register.title": "Create account",
     "register.haveAccount": "Already registered?",

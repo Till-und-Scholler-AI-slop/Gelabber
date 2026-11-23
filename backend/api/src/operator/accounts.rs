@@ -3,6 +3,12 @@
 //! (`auth::signed_in`), its cookies resolve to nobody (`session::SESSION_ROW`)
 //! and disabling ends its sessions, sockets and media tickets at once. The
 //! servers it owns stay as they are.
+//!
+//! An account whose address was never confirmed (GEL-40) gets a new
+//! confirmation mail here, or its address marked confirmed once the operator
+//! checked with its owner. Marking it confirmed vouches for whoever chose
+//! the password: that is why a provider sign-in refuses such an account
+//! (`auth::oidc::link`, case 5).
 
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -10,13 +16,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgConnection;
+use tracing::info;
 use uuid::Uuid;
 
 use super::access::{self, Operator};
 use super::audit::{self, Action, Targets};
-use crate::auth::{session, validate};
+use crate::auth::{self, session, validate};
 use crate::error::{ApiError, FieldErrors};
 use crate::json::Body;
+use crate::limits::{self, MailBudget};
 use crate::path::Id;
 use crate::state::AppState;
 
@@ -35,9 +43,13 @@ pub struct Account {
     pub email: String,
     pub avatar_url: Option<String>,
     pub created_at: DateTime<Utc>,
-    /// `active`, `pending` (registered, address not confirmed yet) or
+    /// `active`, `pending` (registered while mail is on, address not
+    /// confirmed yet), `unconfirmed` (registered while mail was off, never
+    /// confirmed, and mail is on now: it cannot sign in until confirmed) or
     /// `disabled`.
     pub status: &'static str,
+    /// Whether the address is confirmed, also while mail is off.
+    pub email_verified: bool,
     pub disabled_at: Option<DateTime<Utc>>,
     pub disabled_reason: Option<String>,
     /// Named in `API_OPERATOR_EMAILS` (and confirmed while mail is on).
@@ -70,11 +82,14 @@ impl AccountRow {
             "disabled"
         } else if self.pending {
             "pending"
+        } else if !self.verified && state.mail.is_some() {
+            "unconfirmed"
         } else {
             "active"
         };
         Account {
             operator: access::is_operator_address(state, &self.email, self.verified),
+            email_verified: self.verified,
             id: self.id,
             name: self.name,
             email: self.email,
@@ -117,6 +132,7 @@ macro_rules! account_filter {
              WHEN 'disabled' THEN u.disabled_at IS NOT NULL \
              WHEN 'pending' THEN u.disabled_at IS NULL \
                  AND u.registration_pending AND u.email_verified_at IS NULL \
+             WHEN 'unconfirmed' THEN u.disabled_at IS NULL AND u.email_verified_at IS NULL \
              ELSE true END "
     };
 }
@@ -127,6 +143,8 @@ enum Filter {
     All,
     Disabled,
     Pending,
+    /// Every address not confirmed yet, pending registrations included.
+    Unconfirmed,
 }
 
 impl Filter {
@@ -135,6 +153,7 @@ impl Filter {
             "all" => Some(Self::All),
             "disabled" => Some(Self::Disabled),
             "pending" => Some(Self::Pending),
+            "unconfirmed" => Some(Self::Unconfirmed),
             _ => None,
         }
     }
@@ -144,6 +163,7 @@ impl Filter {
             Self::All => "all",
             Self::Disabled => "disabled",
             Self::Pending => "pending",
+            Self::Unconfirmed => "unconfirmed",
         }
     }
 }
@@ -202,7 +222,7 @@ pub fn offset(raw: Option<&str>, errors: &mut FieldErrors) -> i64 {
     }
 }
 
-/// `GET /api/operator/accounts?q=&filter=all|disabled|pending&offset=`:
+/// `GET /api/operator/accounts?q=&filter=all|disabled|pending|unconfirmed&offset=`:
 /// newest first, [`PAGE`] at a time. `q` matches name or address.
 async fn list(
     State(state): State<AppState>,
@@ -454,12 +474,131 @@ async fn enable(
     Ok(Json(account))
 }
 
+/// `POST /api/operator/accounts/{id}/resend-confirmation`: mails the
+/// account a new confirmation link, as a password sign-in would. Only for
+/// an address that is not confirmed, of an account that is not disabled
+/// (`422 {"account":"stale"}` otherwise: the page was out of date), and
+/// only while mail is on (`422 {"mail":"unavailable"}`). The mail comes out
+/// of the address's registration mails, so past five an hour the answer is
+/// `429` and nothing is written.
+async fn resend_confirmation(
+    State(state): State<AppState>,
+    op: Operator,
+    Id(id): Id,
+) -> Result<Json<Account>, ApiError> {
+    let Some(mailer) = state.mail.clone() else {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "mail",
+            "unavailable",
+        )])));
+    };
+    let mut tx = state.db.begin().await?;
+    let (email, verified, disabled) = lock_target(&mut tx, id).await?.ok_or(ApiError::NotFound)?;
+    if verified || disabled {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "account", "stale",
+        )])));
+    }
+    // Counted under the same form as the link a sign-in sends.
+    let email = validate::canonical(&email);
+    audit::record(
+        &mut tx,
+        &op,
+        Action::AccountsResend,
+        Targets {
+            user: Some(id),
+            ..Targets::default()
+        },
+        json!({}),
+    )
+    .await?;
+    let account = load(&state, &mut tx, id).await?.ok_or(ApiError::NotFound)?;
+    limits::mail_reserved(&state, MailBudget::Registration, &email)
+        .map_err(|retry_after| ApiError::RateLimited { retry_after })?;
+    if let Err(err) = tx.commit().await {
+        limits::mail_unsent(&state, MailBudget::Registration, &email);
+        return Err(err.into());
+    }
+    auth::send_confirmation(&state, &mailer, id, &email);
+    Ok(Json(account))
+}
+
+/// `POST /api/operator/accounts/{id}/confirm`: marks the address
+/// confirmed, for an owner the operator checked with, and drops the
+/// account's open confirmation links. The audit row's `changed` says
+/// whether it was unconfirmed.
+///
+/// Only for an account registered while mail was off. A pending
+/// registration answers `422 {"account":"pending"}`: anyone who registers
+/// the address replaces its password (`user::insert_unverified_in`), so
+/// neither the operator nor the owner can know whose password confirming
+/// it would vouch for. Its owner gets a new link instead. A disabled
+/// account stays unconfirmed (`422 {"account":"stale"}`), as its own link
+/// would leave it.
+async fn confirm(
+    State(state): State<AppState>,
+    op: Operator,
+    Id(id): Id,
+) -> Result<Json<Account>, ApiError> {
+    let mut tx = state.db.begin().await?;
+    let (_, verified, disabled) = lock_target(&mut tx, id).await?.ok_or(ApiError::NotFound)?;
+    if !verified {
+        if disabled {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "account", "stale",
+            )])));
+        }
+        // The row is locked, so no registration replaces it after this.
+        let pending: bool =
+            sqlx::query_scalar("SELECT registration_pending FROM users WHERE id = $1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if pending {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "account", "pending",
+            )])));
+        }
+        sqlx::query(
+            "UPDATE users SET email_verified_at = now(), updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM account_tokens WHERE user_id = $1 AND purpose = 'verify_email'")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        info!(user_id = %id, "e-mail address confirmed by an operator");
+    }
+    audit::record(
+        &mut tx,
+        &op,
+        Action::AccountsConfirm,
+        Targets {
+            user: Some(id),
+            ..Targets::default()
+        },
+        json!({ "changed": !verified }),
+    )
+    .await?;
+    let account = load(&state, &mut tx, id).await?.ok_or(ApiError::NotFound)?;
+    tx.commit().await?;
+    Ok(Json(account))
+}
+
 pub fn router() -> axum::Router<AppState> {
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/api/operator/accounts", get(list))
         .route("/api/operator/accounts/{id}/disable", post(disable))
         .route("/api/operator/accounts/{id}/enable", post(enable))
+        .route(
+            "/api/operator/accounts/{id}/resend-confirmation",
+            post(resend_confirmation),
+        )
+        .route("/api/operator/accounts/{id}/confirm", post(confirm))
 }
 
 #[cfg(test)]

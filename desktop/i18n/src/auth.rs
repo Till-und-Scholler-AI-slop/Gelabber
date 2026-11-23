@@ -153,6 +153,14 @@ crate::strings! {
     login_submitting = "Anmelden…" | "Signing in…";
     login_forgot_password_no_mail = "Passwort vergessen? Frag die Person, die diesen Gelabber-Server betreibt."
         | "Forgot your password? Ask the person who runs this Gelabber server.";
+    // An address that was never confirmed (GEL-40), with account mail on.
+    login_oidc_account_unverified = "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde. Bestätige sie, dann klappt auch die Anmeldung über den Anbieter."
+        | "There’s already an account with this email address, but the address was never confirmed. Confirm it, and signing in through the provider works too.";
+    confirm_help_provider_lead = "Gib oben deine E-Mail-Adresse ein, dann schicken wir dir einen Bestätigungslink. Weißt du dein Passwort nicht mehr, setz ein neues: Das bestätigt die Adresse auch."
+        | "Enter your email address above and we’ll send you a confirmation link. If you no longer know your password, set a new one: that confirms the address too.";
+    confirm_help_send = "Bestätigungsmail senden" | "Send confirmation email";
+    confirm_help_sent = "Falls zu dieser Adresse ein unbestätigtes Konto gehört, ist ein Link unterwegs. Er gilt 24 Stunden."
+        | "If this address belongs to an unconfirmed account, a link is on its way. It’s valid for 24 hours.";
 
     // /register and the mail it sends
     register_title = "Konto anlegen" | "Create account";
