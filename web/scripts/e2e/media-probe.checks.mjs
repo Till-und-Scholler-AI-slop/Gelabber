@@ -617,3 +617,14 @@ test("a named Live is measured on its own tile, not on an unwatched tile drawn b
   state.expectedLiveName = "E2E C";
   assert.equal(measuredVideo(await read(), "live", "E2E C"), undefined);
 });
+
+test("a socket records when it opened, for waits on the app's recovery round", () => {
+  const { window } = consumerProbeFixture();
+  const socket = new window.WebSocket("ws://127.0.0.1/ws");
+  const item = window.__e2e.sockets[0];
+  assert.equal(item.plane, "gateway");
+  assert.equal(item.openedAt, null);
+  const before = Date.now();
+  for (const listener of socket.listeners.get("open") ?? []) listener({});
+  assert.ok(item.openedAt >= before && item.openedAt <= Date.now());
+});

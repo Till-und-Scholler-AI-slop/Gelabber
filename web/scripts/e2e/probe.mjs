@@ -127,8 +127,14 @@ export function instrument({ relay }) {
         liveOff: 0,
         pendingMedia: new Map(),
         mediaRpc: [],
+        openedAt: null,
       };
       state.sockets.push(item);
+      // A new gateway socket starts the app's recovery round
+      // (attachRealtimeRecovery); scenarios wait it out from here.
+      super.addEventListener("open", () => {
+        item.openedAt = Date.now();
+      });
       super.addEventListener("message", (event) => {
         try {
           const frame = JSON.parse(event.data);
