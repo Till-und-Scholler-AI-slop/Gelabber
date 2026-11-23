@@ -17,6 +17,68 @@ scalar loops with WASM SIMD. Fixed 16 MiB memory and a 1 MiB stack avoid runtime
 allocation/growth in `process()` and stack overflow in the upstream model.
 The full third-party license accompanies the binary.
 
+### Enhanced voice: Strong (DeepFilterNet3, GEL-28)
+
+"Enhanced voice: Strong" runs DeepFilterNet3 (DFN3) instead of RNNoise's
+output, in the configuration measured in
+`docs/v0.13-deepfilternet-measurement.md`: the full model, attenuation limit
+100 dB, local-SNR thresholds −15/35/35 dB set explicitly, no post filter.
+Standard (RNNoise) stays the default. Only clients that choose Strong load
+`public/audio/deepfilternet.wasm` (libDF with tract, wasm32 with SIMD128,
+11.9 MB, 3.3 MB as nginx gzips it) and `public/audio/deepfilternet3.tar.gz`
+(the DFN3 model, 8 MB). `DEEPFILTERNET-PROVENANCE.json` records the pins,
+`DEEPFILTERNET-LICENSE.txt` the licences of DeepFilterNet, the model and
+every crate in the module.
+
+`bash scripts/audio/build-deepfilternet.sh` (from `web`) downloads the
+DeepFilterNet source at the pinned commit, checks its SHA-256 and the
+model's, and builds the crate in `scripts/audio/deepfilternet/` with Rust
+1.100.0 (rustup, with the `wasm32-unknown-unknown` target), its
+`Cargo.lock` and a fresh `CARGO_HOME`. No Docker. The result must match the
+hash in the script. What that check covers: two builds on the same machine
+gave the same module only once the build directory was fixed
+(`/tmp/gelabber-deepfilternet-build`); another machine with the same
+toolchain is expected, not verified, to give the same bytes. If it does
+not, the script stops before it installs anything.
+
+The loader (`src/voice/deepFilterNet.ts`) fetches both files with their
+hash in the URL, checks their SHA-256, compiles the module and builds the
+model in a worker (`public/audio/deepfilternet-worker.js`), off the main
+and the audio thread. The worker answers with the module's memory right
+after the build; the worklet's `gelabber-strong` processor restores that
+memory into a fresh instance of the same module. The module imports
+nothing and keeps all its state in linear memory, so the copy is the
+model. The page keeps the copy (about 31 MB) for the next capture.
+
+RNNoise keeps running beside DFN3 for the input gate's speech probability,
+shifted by one 10 ms block because DFN3's output is 10 ms later (as in
+`docs/v0.13-deepfilternet/gate.mjs`). Strong falls back to Standard:
+
+- when the module or model does not download, check or build (same retry
+  delays as RNNoise; RNNoise failing as well still ends in browser filters);
+- when the worker's warm-up already needed more than 10 ms per block;
+- in the worklet, in place (from the next block on it sends RNNoise's
+  output, which skips 10 ms of sound once, as RNNoise is 10 ms ahead of
+  DFN3), when DFN3 and RNNoise take
+  more than 7 ms of each 10 ms block on average over 3 s, when more than
+  one block in twenty takes longer than 10 ms, when the audio clock falls
+  more than 10 % behind the wall clock over 5 s (underruns), or when DFN3
+  fails. The first second is not judged.
+
+The fallback is shown in the voice diagnostics and stays until Strong is
+chosen again or the page reloads. While Strong runs, the diagnostics show
+DFN3's mean time per 10 ms block over the last second and the slowest
+block: wall-clock time on the audio thread from `performance.now()` where
+the worklet has it, otherwise from `Date.now()` in whole milliseconds,
+averaged over 100 blocks. A browser has no CPU clock, so this is not the
+thread CPU time of the measurement in `docs/`. DFN3 adds 10 ms of delay
+over RNNoise; the worklet's own buffer (reblocking and gate look-ahead) is
+the same as Standard's.
+
+`src/voice/strongFilter.test.mjs` runs the worker and the processor in
+Node with the checked-in files: output sample for sample against DFN3
+alone, the gate's shifted speech probability, and each fallback.
+
 Run `npm run test:audio-dsp` to process deterministic synthetic noise, measure
 compute time per 10 ms frame, and compare the actual worklet sample-for-sample
 with direct RNNoise across varying browser render quanta, with the input

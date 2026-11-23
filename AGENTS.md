@@ -128,7 +128,7 @@ before you change a workflow.
 - **Gelabber's gateway** owns tickets, ACL/revocation, Watch, Go Live and the
   separate source lifetimes.
 - **Audio processing** runs in the client with pinned, self-hosted RNNoise
-  assets, never a cloud audio service.
+  and DeepFilterNet3 assets, never a cloud audio service.
 - **Pins:** keep the locked versions; a change updates only the dependencies it
   needs.
 - **Performance claims** state only what was measured. Historical benchmark
