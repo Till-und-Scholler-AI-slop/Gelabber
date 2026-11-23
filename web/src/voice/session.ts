@@ -7,7 +7,11 @@
 // shares), callMicrophone.ts, localVideo.ts, localSourceAudio.ts,
 // receivedAudio.ts and videoLimits.ts.
 
-import { noteAudioProcessing } from "./audioProcessing.ts";
+import {
+  forgetStrongFallback,
+  noteAudioProcessing,
+} from "./audioProcessing.ts";
+import { onStrongRetry } from "./deepFilterNet.ts";
 import { readSenderPriority } from "./mediaPriority.ts";
 import {
   playCallSound,
@@ -212,6 +216,10 @@ function ensureBound(): void {
   gateway.onErr(onErr);
   gateway.onReady(onReady);
   onMediaSettingsChange(handleSettingsChange);
+  voice.unsubscribeStrongRetry?.();
+  voice.unsubscribeStrongRetry = onStrongRetry(() => {
+    if (useVoice.getState().status === "joined") void refreshMic();
+  });
   voice.unsubscribeUserVolumes?.();
   voice.unsubscribeUserVolumes = useUserVolumes.subscribe(() =>
     voice.receivedAudio.applyUserVolumes(),
@@ -961,6 +969,8 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     prev.autoGainControl !== next.autoGainControl ||
     prev.processingMode !== next.processingMode;
   if (recaptureMic) voice.micForceBrowser = false;
+  // Strong chosen again after it switched to Standard: another try.
+  if (prev.processingMode !== next.processingMode) forgetStrongFallback();
   if (prev.audioInputId !== next.audioInputId) voice.micFellBack = false;
   const camChanged = prev.videoInputId !== next.videoInputId;
   const qualityChanged =
@@ -1459,6 +1469,7 @@ export function resetVoiceForTests(): void {
   onMediaSettingsChange(null);
   previous.unsubscribeUserVolumes?.();
   previous.unsubscribePushToTalk?.();
+  previous.unsubscribeStrongRetry?.();
   onPushToTalkGate(null);
   configurePushToTalk(null);
 }

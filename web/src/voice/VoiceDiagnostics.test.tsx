@@ -11,7 +11,14 @@ vi.mock("./diagnostics.ts", async (original) => {
   ) => selector(store.getState());
   return { ...actual, useVoiceDiagnostics: Object.assign(live, store) };
 });
+vi.mock("./audioProcessing.ts", async (original) => {
+  const actual = await original<typeof import("./audioProcessing.ts")>();
+  const store = actual.useAudioProcessing;
+  const live = () => store.getState();
+  return { ...actual, useAudioProcessing: Object.assign(live, store) };
+});
 
+import { noteAudioProcessing, useAudioProcessing } from "./audioProcessing.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import {
   resetDiagnostics,
@@ -73,7 +80,10 @@ function measure(rttMs: number, flows: FlowStats[]): void {
   });
 }
 
-afterEach(() => resetDiagnostics());
+afterEach(() => {
+  resetDiagnostics();
+  noteAudioProcessing(null);
+});
 
 describe("voice diagnostics", () => {
   it("answers first, then lists what is sent and received", () => {
@@ -129,5 +139,39 @@ describe("voice diagnostics", () => {
     expect(html).not.toContain("Verbunden</dt>");
     // 30 bars, the two measured ones on the right.
     expect(html.match(/<span data-tone="weak"/g)).toHaveLength(2);
+  });
+
+  it("shows the Strong filter's time per block and why it switched (GEL-28)", () => {
+    const strong = {
+      dfnMs: 2.46,
+      rnnoiseMs: 0.4,
+      maxMs: 4.1,
+      clock: "performance" as const,
+      fallback: null,
+    };
+    useAudioProcessing.setState({
+      requested: "strong",
+      actual: "strong",
+      strong,
+    });
+    let html = renderToStaticMarkup(<VoiceDiagnostics />);
+    expect(html).toContain("Starker Filter (DeepFilterNet3)");
+    expect(html).toContain(
+      "2,5 ms je 10-ms-Block, langsamster 4,1 ms (Mittel der letzten Sekunde)",
+    );
+    expect(html).toContain("Zeit im Audio-Thread für DeepFilterNet3");
+    useAudioProcessing.setState({
+      actual: "enhanced",
+      strong: { ...strong, fallback: "slow", dfnMs: 8.12 },
+    });
+    html = renderToStaticMarkup(<VoiceDiagnostics />);
+    expect(html).toContain(
+      "aus: Gerät zu langsam, zuletzt 8,1 ms je 10-ms-Block",
+    );
+    // Standard asked for: no such row.
+    noteAudioProcessing(null);
+    expect(renderToStaticMarkup(<VoiceDiagnostics />)).not.toContain(
+      "Starker Filter",
+    );
   });
 });

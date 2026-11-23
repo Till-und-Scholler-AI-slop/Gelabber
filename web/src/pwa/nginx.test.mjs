@@ -337,6 +337,15 @@ describe("production nginx config", () => {
     expect(types).not.toContain("wasm");
   });
 
+  it("compresses DeepFilterNet3's module alone among the wasm files (GEL-28)", () => {
+    // 11.9 MB, 3.3 MB with gzip; rnnoise.wasm barely shrinks.
+    const block = location("= /audio/deepfilternet.wasm");
+    expect(block).toContain("gzip_types application/wasm");
+    // Asked again each time like the rest of /audio/.
+    expect(block).toContain('add_header Cache-Control "no-cache"');
+    expect(block).toContain(MISSING_IS_404);
+  });
+
   it("sends the security headers from every location", () => {
     expect(locations).toEqual(
       expect.arrayContaining([

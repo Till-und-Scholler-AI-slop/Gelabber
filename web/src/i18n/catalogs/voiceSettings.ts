@@ -99,9 +99,12 @@ export const voiceSettings = defineCatalog(
     "upload.customLimitLabel": "Eigenes gemeinsames Video-Limit (Mbit/s)",
     "upload.limitHint":
       "Der Browser passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate.",
-    "mode.enhanced": "Verbesserte Sprache",
+    "mode.enhanced": "Verbesserte Sprache: Standard",
     "mode.enhancedHint":
-      "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz",
+      "Lokale Rauschunterdrückung (RNNoise) und Auto-Gain; Browserfilter als Ersatz",
+    "mode.strong": "Verbesserte Sprache: Stark",
+    "mode.strongHint":
+      "Entfernt mehr Tippen und Klicken (DeepFilterNet3). Braucht mehr Rechenleistung, lädt beim ersten Mal ein größeres Modell, 10 ms mehr Verzögerung; Standard als Ersatz",
     "mode.browser": "Browserfilter",
     "mode.browserHint": "Rauschunterdrückung und Auto-Gain deines Browsers",
     "mode.original": "Original / Musik",
@@ -300,9 +303,12 @@ export const voiceSettings = defineCatalog(
     "upload.customLimitLabel": "Custom combined video limit (Mbit/s)",
     "upload.limitHint":
       "The browser adapts the actual bitrate to the connection. The limit is a cap, not a fixed rate.",
-    "mode.enhanced": "Enhanced voice",
+    "mode.enhanced": "Enhanced voice: Standard",
     "mode.enhancedHint":
-      "Local noise suppression and auto gain; browser filters as a fallback",
+      "Local noise suppression (RNNoise) and auto gain; browser filters as a fallback",
+    "mode.strong": "Enhanced voice: Strong",
+    "mode.strongHint":
+      "Removes more typing and clicks (DeepFilterNet3). Needs more processing power, downloads a larger model the first time, 10 ms more delay; Standard as a fallback",
     "mode.browser": "Browser filters",
     "mode.browserHint": "Your browser’s noise suppression and auto gain",
     "mode.original": "Original / music",

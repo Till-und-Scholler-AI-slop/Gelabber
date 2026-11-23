@@ -174,7 +174,7 @@ describe("microphone test", () => {
       <MicrophoneTest onClose={() => undefined} />,
     );
     expect(html).toContain("<legend>Verarbeitung</legend>");
-    expect(html.match(/type="radio"/g)).toHaveLength(3);
+    expect(html.match(/type="radio"/g)).toHaveLength(4);
     expect(html).not.toContain("beende den Test");
   });
 });
@@ -186,7 +186,8 @@ describe("in English", () => {
     useLocale.setState({ locale: "en" });
     const form = renderToStaticMarkup(<MediaSettingsForm />);
     expect(form).toContain("Microphone gain");
-    expect(form).toContain("Enhanced voice");
+    expect(form).toContain("Enhanced voice: Standard");
+    expect(form).toContain("Enhanced voice: Strong");
     expect(form).toContain("Data saver");
     // Numbers in the language's own form: 2.5, not 2,5.
     expect(form).toContain("video 2.5 Mbit/s combined");

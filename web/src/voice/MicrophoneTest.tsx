@@ -10,6 +10,7 @@ import {
   type ComparisonState,
   type ComparisonClips,
 } from "./microphoneComparison.ts";
+import { retryStrongFilter } from "./deepFilterNet.ts";
 import {
   AUDIO_PROCESSING,
   useMediaSettings,
@@ -88,6 +89,16 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
                   patch({ processingMode: mode });
                   // A running test compares with the new mode straight away.
                   if (running) start();
+                }}
+                // Strong clicked again after it fell back: try again.
+                onClick={() => {
+                  if (
+                    mode === "strong" &&
+                    processingMode === mode &&
+                    retryStrongFilter() &&
+                    running
+                  )
+                    start();
                 }}
               />
               {t(modes[mode].label)}

@@ -390,6 +390,12 @@
   text-align: right;
   overflow-wrap: anywhere;
 }
+.connection-fact-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--lr-subtle);
+  font-weight: 400;
+}
 
 .connection-debug {
   display: flex;
