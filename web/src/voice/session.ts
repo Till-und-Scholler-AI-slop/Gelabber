@@ -1717,7 +1717,12 @@ async function startPeer(
       rollbackSeat(unloaded);
       return;
     }
-    if (recovering && retryableTicketError(error)) {
+    // `gone` on the join: the media server could not check the ticket (its
+    // Redis was away), so a new ticket may pass, also on the first join.
+    if (
+      (recovering && retryableTicketError(error)) ||
+      (error instanceof MediaError && error.code === "gone")
+    ) {
       stopPeer(true);
       scheduleSeatRebuild();
       return;
