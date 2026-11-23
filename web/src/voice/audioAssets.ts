@@ -75,6 +75,10 @@ export async function fetchVerified(
 export function onceWithRetry<T>(load: () => Promise<T>): {
   get: () => Promise<T>;
   reset: () => void;
+  /** Whether the last try failed and the delay still holds. */
+  failed: () => boolean;
+  /** Ends the delay after a failure: the next `get` tries again. */
+  clearFailure: () => void;
 } {
   let pending: Promise<T> | null = null;
   let failure: { error: unknown; count: number; until: number } | null = null;
@@ -103,6 +107,10 @@ export function onceWithRetry<T>(load: () => Promise<T>): {
     reset() {
       pending = null;
       failure = null;
+    },
+    failed: () => failure !== null && Date.now() < failure.until,
+    clearFailure() {
+      if (failure) failure.until = 0;
     },
   };
 }

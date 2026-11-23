@@ -67,6 +67,8 @@ export type VoiceSession = {
   bound: boolean;
   unsubscribeUserVolumes: (() => void) | null;
   unsubscribePushToTalk: (() => void) | null;
+  /** Strong chosen again after it fell back (GEL-28): capture once more. */
+  unsubscribeStrongRetry: (() => void) | null;
   /** Remember a deliberate mute while temporarily deafened, also across
    * room switches. */
   preDeafenMuted: boolean;
@@ -177,6 +179,7 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     bound: false,
     unsubscribeUserVolumes: null,
     unsubscribePushToTalk: null,
+    unsubscribeStrongRetry: null,
     preDeafenMuted: false,
     soundOnJoin: false,
     streamReported: false,

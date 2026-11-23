@@ -5,7 +5,6 @@ import { fetchVerified, onceWithRetry } from "./audioAssets.ts";
 import {
   forgetStrongFallback,
   loadStrongFilter,
-  STRONG_BLOCK_MS,
   strongFellBack,
   strongInfo,
   strongRemembered,
@@ -178,7 +177,8 @@ function infoFor(
     inputGain: 1,
     contextState: null,
     gate: actual === "original" ? "off" : null,
-    strong: settings.processingMode === "strong" ? strongInfo() : null,
+    // Only where DFN3 may run: never beside browser filters.
+    strong: actual === "strong" ? strongInfo() : null,
   };
 }
 
@@ -295,6 +295,15 @@ export async function createProcessor(
   let resumeTimer: ReturnType<typeof setTimeout> | undefined;
   let cancelResume: (() => void) | undefined;
   let message = info.message;
+  // A graph rebuilt with Standard after Strong fell back still says why.
+  const fellBack =
+    settings.processingMode === "strong" && actual === "enhanced"
+      ? strongRemembered()
+      : null;
+  if (fellBack) {
+    info.strong = { ...strongInfo(), dfnMs: fellBack.dfnMs };
+    fallBack(fellBack.reason, "");
+  }
   const fault = () => {
     if (!disposed && !faulted) {
       faulted = true;
@@ -427,41 +436,57 @@ export async function createProcessor(
         info.strong = { ...strongInfo(), dfnMs: remembered.dfnMs };
         fallBack(remembered.reason, "");
       } else if (strongLoad) {
+        // The worker's warm-up time is no verdict: the worklet measures.
         const loaded = await strongLoad;
         if (loaded instanceof Error) fallBack("load", loaded.message);
-        else if (loaded.blockMs > STRONG_BLOCK_MS) {
-          info.strong = { ...strongInfo(), dfnMs: loaded.blockMs };
-          strongFellBack("slow", loaded.blockMs);
-          fallBack("slow", "");
-        } else strong = loaded;
+        else strong = loaded;
       }
       await ctx.audioWorklet.addModule(
         `/audio/rnnoise-worklet.js?v=${ASSET_HASH}`,
       );
-      node = new AudioWorkletNode(
-        ctx,
-        strong ? "gelabber-strong" : "gelabber-rnnoise",
-        {
+      const filterNode = (name: string, extra: Record<string, unknown>) =>
+        new AudioWorkletNode(ctx, name, {
           numberOfInputs: 1,
           numberOfOutputs: 1,
           outputChannelCount: [1],
           processorOptions: {
             model,
-            ...(strong
-              ? {
-                  dfn: {
-                    module: strong.module,
-                    memory: strong.memory,
-                    state: strong.state,
-                  },
-                }
-              : {}),
+            ...extra,
             gate: gateConfig(settings, actual),
             gain: settings.inputGain,
           },
-        },
-      );
-      await workletReady(node);
+        });
+      if (strong) {
+        // Strong that does not start (no memory for the model copy, or too
+        // slow to say hello) is Standard, not browser filters. A processor
+        // error is RNNoise's, which Standard would hit as well.
+        try {
+          node = filterNode("gelabber-strong", {
+            dfn: {
+              module: strong.module,
+              memory: strong.memory,
+              state: strong.state,
+            },
+          });
+          await workletReady(node);
+        } catch (error) {
+          if (faulted || disposed) throw error;
+          if (node) {
+            node.onprocessorerror = null;
+            node.port.onmessage = null;
+            node.port.postMessage({ op: "dispose" });
+            node.port.close();
+            node.disconnect();
+            node = undefined;
+          }
+          strongFellBack("error", null);
+          fallBack("error", "");
+        }
+      }
+      if (!node) {
+        node = filterNode("gelabber-rnnoise", {});
+        await workletReady(node);
+      }
       node.onprocessorerror = fault;
       source.connect(node);
       node.connect(gain);

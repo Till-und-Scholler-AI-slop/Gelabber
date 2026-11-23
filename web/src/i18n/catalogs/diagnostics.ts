@@ -159,8 +159,10 @@ export const diagnostics = defineCatalog(
     "mic.strongTime":
       "{ms} ms je 10-ms-Block, langsamster {max} ms (Mittel der letzten Sekunde)",
     "mic.strongWaiting": "läuft; erste Messung nach einer Sekunde",
-    "mic.strongOff": "aus: {reason}",
-    "mic.strongOffTime": "aus: {reason}, zuletzt {ms} ms je 10-ms-Block",
+    "mic.strongOff":
+      "aus: {reason}. Noch einmal „Verbesserte Sprache: Stark“ wählen, um es erneut zu versuchen",
+    "mic.strongOffTime":
+      "aus: {reason}, zuletzt {ms} ms je 10-ms-Block. Noch einmal „Verbesserte Sprache: Stark“ wählen, um es erneut zu versuchen",
     "mic.strongHint":
       "Zeit im Audio-Thread für DeepFilterNet3 je 10 ms Ton. Braucht er mit RNNoise im Mittel mehr als 7 ms, wechselt Gelabber zu Standard.",
     "mic.strongCoarse": "Uhr des Browsers in ganzen Millisekunden",
@@ -369,8 +371,10 @@ export const diagnostics = defineCatalog(
     "mic.strongTime":
       "{ms} ms per 10 ms block, slowest {max} ms (mean of the last second)",
     "mic.strongWaiting": "running; first reading after a second",
-    "mic.strongOff": "off: {reason}",
-    "mic.strongOffTime": "off: {reason}, last {ms} ms per 10 ms block",
+    "mic.strongOff":
+      "off: {reason}. Choose “Enhanced voice: Strong” again to retry",
+    "mic.strongOffTime":
+      "off: {reason}, last {ms} ms per 10 ms block. Choose “Enhanced voice: Strong” again to retry",
     "mic.strongHint":
       "Time DeepFilterNet3 takes on the audio thread for 10 ms of sound. If it needs more than 7 ms on average together with RNNoise, Gelabber switches to Standard.",
     "mic.strongCoarse": "browser clock in whole milliseconds",

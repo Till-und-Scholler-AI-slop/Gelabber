@@ -41,7 +41,9 @@ hash in the script. What that check covers: two builds on the same machine
 gave the same module only once the build directory was fixed
 (`/tmp/gelabber-deepfilternet-build`); another machine with the same
 toolchain is expected, not verified, to give the same bytes. If it does
-not, the script stops before it installs anything.
+not, the script stops before it installs anything. Because the directory
+is fixed, run one build at a time: a second build started meanwhile
+deletes the first one's files.
 
 The loader (`src/voice/deepFilterNet.ts`) fetches both files with their
 hash in the URL, checks their SHA-256, compiles the module and builds the
@@ -58,17 +60,27 @@ shifted by one 10 ms block because DFN3's output is 10 ms later (as in
 
 - when the module or model does not download, check or build (same retry
   delays as RNNoise; RNNoise failing as well still ends in browser filters);
-- when the worker's warm-up already needed more than 10 ms per block;
+- when the Strong processor does not start: no memory for the model copy
+  (it says so right after its hello and runs RNNoise) or no hello within
+  2 s (the page starts the Standard processor instead);
 - in the worklet, in place (from the next block on it sends RNNoise's
   output, which skips 10 ms of sound once, as RNNoise is 10 ms ahead of
-  DFN3), when DFN3 and RNNoise take
-  more than 7 ms of each 10 ms block on average over 3 s, when more than
-  one block in twenty takes longer than 10 ms, when the audio clock falls
-  more than 10 % behind the wall clock over 5 s (underruns), or when DFN3
-  fails. The first second is not judged.
+  DFN3), when DFN3 and RNNoise take more than 7 ms of each 10 ms block on
+  average over 3 s, when more than one block in twenty takes longer than
+  10 ms, when the audio clock falls more than 10 % behind the wall clock
+  in two 5 s windows in a row (underruns), or when DFN3 fails. The first
+  second is not judged. A single pause of more than 150 ms between two
+  render quanta (a suspended context, an output device switch, a clock
+  step) is an interruption, not lag: the underrun measurement starts over.
 
-The fallback is shown in the voice diagnostics and stays until Strong is
-chosen again or the page reloads. While Strong runs, the diagnostics show
+The worker's warm-up time is no verdict: the worker is not a real-time
+thread. The fallback is shown in the voice diagnostics and stays until the
+user clicks Strong again (in the settings or the microphone test), chooses
+another mode, or reloads the page. A load failure is not kept: the next
+capture tries again after the retry delay, or at once when Strong is
+clicked again.
+
+While Strong runs, the diagnostics show
 DFN3's mean time per 10 ms block over the last second and the slowest
 block: wall-clock time on the audio thread from `performance.now()` where
 the worklet has it, otherwise from `Date.now()` in whole milliseconds,

@@ -9,7 +9,8 @@ import {
 import {
   DFN_MODEL_HASH,
   DFN_WASM_HASH,
-  forgetStrongFallback,
+  onStrongRetry,
+  retryStrongFilter,
   setStrongBuilderForTests,
 } from "./deepFilterNet.ts";
 import { DEFAULT_MEDIA_SETTINGS } from "./settings.ts";
@@ -693,9 +694,11 @@ describe("Enhanced voice: Strong (GEL-28)", () => {
   type Node = {
     name: string;
     options: { processorOptions: Record<string, unknown> };
+    sent: unknown[];
     port: { onmessage: ((event: { data: unknown }) => void) | null };
   };
-  function strongGraph(clock = "performance") {
+  /** `silent`: processors that never say hello. */
+  function strongGraph(clock = "performance", silent: string[] = []) {
     const nodes: Node[] = [];
     class Context {
       state = "running";
@@ -717,9 +720,10 @@ describe("Enhanced voice: Strong (GEL-28)", () => {
     }
     class Worklet {
       onprocessorerror: (() => void) | null = null;
+      sent: unknown[] = [];
       port = {
         onmessage: null as ((event: { data: unknown }) => void) | null,
-        postMessage() {},
+        postMessage: (data: unknown) => this.sent.push(data),
         close() {},
       };
       constructor(
@@ -728,9 +732,10 @@ describe("Enhanced voice: Strong (GEL-28)", () => {
         public options: { processorOptions: Record<string, unknown> },
       ) {
         nodes.push(this);
-        queueMicrotask(() =>
-          this.port.onmessage?.({ data: { ready: true, clock } }),
-        );
+        if (!silent.includes(name))
+          queueMicrotask(() =>
+            this.port.onmessage?.({ data: { ready: true, clock } }),
+          );
       }
       connect() {}
       disconnect() {}
@@ -858,10 +863,51 @@ describe("Enhanced voice: Strong (GEL-28)", () => {
     expect(nodes[1]!.name).toBe("gelabber-rnnoise");
     expect(next.info.actual).toBe("enhanced");
     expect(next.info.strong?.fallback).toBe("slow");
-    forgetStrongFallback();
+    // A gain change rebuilds the graph with what runs: still says why.
+    const rebuilt = await createProcessor(stream().raw, strong, "enhanced");
+    expect(rebuilt.info.message).toBe(
+      "Starker Filter auf Standard umgestellt: Gerät zu langsam",
+    );
+    expect(rebuilt.info.strong?.fallback).toBe("slow");
+    // Choosing Strong again (clicking it while it is chosen) tries again.
+    const retried = vi.fn();
+    const stop = onStrongRetry(retried);
+    expect(retryStrongFilter()).toBe(true);
+    expect(retried).toHaveBeenCalledOnce();
+    expect(retryStrongFilter()).toBe(false);
+    stop();
     const retry = await createProcessor(stream().raw, strong, "strong");
-    expect(nodes[2]!.name).toBe("gelabber-strong");
-    [processor, next, retry].forEach((p) => p.dispose());
+    expect(nodes.at(-1)!.name).toBe("gelabber-strong");
+    [processor, next, rebuilt, retry].forEach((p) => p.dispose());
+  });
+
+  it("uses Standard when the Strong worklet does not start", async () => {
+    const { nodes } = strongGraph("performance", ["gelabber-strong"]);
+    setStrongBuilderForTests(async () => built);
+    const failed = vi.fn();
+    const processor = await createProcessor(
+      stream().raw,
+      strong,
+      "strong",
+      failed,
+    );
+    expect(nodes.map((node) => node.name)).toEqual([
+      "gelabber-strong",
+      "gelabber-rnnoise",
+    ]);
+    expect(nodes[0]!.sent).toContainEqual({ op: "dispose" });
+    expect(failed).not.toHaveBeenCalled();
+    expect(processor.info).toMatchObject({
+      actual: "enhanced",
+      message: "Starker Filter auf Standard umgestellt: Filter ausgefallen",
+      strong: { fallback: "error" },
+    });
+    expect(processor.usable()).toBe(true);
+    // Not tried again on the next capture.
+    const next = await createProcessor(stream().raw, strong, "strong");
+    expect(nodes.at(-1)!.name).toBe("gelabber-rnnoise");
+    processor.dispose();
+    next.dispose();
   });
 
   it("uses Standard when DeepFilterNet3 does not load", async () => {
@@ -879,15 +925,32 @@ describe("Enhanced voice: Strong (GEL-28)", () => {
     processor.dispose();
   });
 
-  it("uses Standard when the worker already measured a slow device", async () => {
+  it("loads again at once when Strong is chosen again after a failed load", async () => {
+    const { nodes } = strongGraph();
+    const build = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Starker Filter startet nicht"))
+      .mockResolvedValue(built);
+    setStrongBuilderForTests(build);
+    (await createProcessor(stream().raw, strong, "strong")).dispose();
+    // Within the retry delay the next capture does not load again ...
+    (await createProcessor(stream().raw, strong, "strong")).dispose();
+    expect(build).toHaveBeenCalledOnce();
+    // ... unless the user clicks Strong again.
+    expect(retryStrongFilter()).toBe(true);
+    const processor = await createProcessor(stream().raw, strong, "strong");
+    expect(nodes.at(-1)!.name).toBe("gelabber-strong");
+    expect(retryStrongFilter()).toBe(false);
+    processor.dispose();
+  });
+
+  it("leaves the verdict to the worklet when the worker's warm-up was slow", async () => {
+    // The worker is no real-time thread: a slow warm-up proves little.
     const { nodes } = strongGraph();
     setStrongBuilderForTests(async () => ({ ...built, blockMs: 12 }));
     const processor = await createProcessor(stream().raw, strong, "strong");
-    expect(nodes.map((node) => node.name)).toEqual(["gelabber-rnnoise"]);
-    expect(processor.info.strong).toMatchObject({
-      fallback: "slow",
-      dfnMs: 12,
-    });
+    expect(nodes.map((node) => node.name)).toEqual(["gelabber-strong"]);
+    expect(processor.info.strong?.fallback).toBeNull();
     processor.dispose();
   });
 
@@ -898,5 +961,7 @@ describe("Enhanced voice: Strong (GEL-28)", () => {
     expect(result.processor.info.requested).toBe("strong");
     expect(result.processor.info.actual).toBe("browser");
     expect(result.processor.nativeFallback).toBe(true);
+    // No Strong row that would claim DFN3 is running.
+    expect(result.processor.info.strong).toBeNull();
   });
 });

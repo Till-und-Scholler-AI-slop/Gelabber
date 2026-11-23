@@ -14,9 +14,6 @@ export const DFN_MODEL_HASH =
  * model runs on every block (libDF's defaults skip it on many and rate
  * worse than RNNoise). No post filter. */
 export const DFN_PARAMS = [100, -15, 35, 35] as const;
-/** One 10 ms block at 48 kHz. A device whose worker needs longer than
- * this per block cannot run Strong in real time. */
-export const STRONG_BLOCK_MS = 10;
 /** How much later DFN3's output is than RNNoise's (measured: 30 against
  * 20 ms). */
 export const STRONG_EXTRA_DELAY_MS = 10;
@@ -28,7 +25,8 @@ export type StrongFilter = {
   /** The model's state pointer in that memory. */
   state: number;
   buildMs: number;
-  /** Time per block while the worker warmed the code up. */
+  /** Time per block while the worker warmed the code up: a hint only,
+   * the worker is no real-time thread. */
   blockMs: number;
 };
 type Built = Omit<StrongFilter, "module">;
@@ -131,7 +129,23 @@ export function strongRemembered(): {
 } | null {
   return slow;
 }
-/** The user chose the mode again: Strong gets another try. */
+/** The user chose another mode: Strong gets another try. */
 export function forgetStrongFallback(): void {
   slow = null;
+}
+const retryListeners = new Set<() => void>();
+/** Called when Strong is chosen again while it runs as Standard. */
+export function onStrongRetry(listener: () => void): () => void {
+  retryListeners.add(listener);
+  return () => retryListeners.delete(listener);
+}
+/** Strong clicked again while it ran as Standard: forget why (or end the
+ * wait after a failed load) and have the captures try again. False when
+ * there was nothing to retry. */
+export function retryStrongFilter(): boolean {
+  if (!slow && !strongFilter.failed()) return false;
+  slow = null;
+  strongFilter.clearFailure();
+  retryListeners.forEach((listener) => listener());
+  return true;
 }
