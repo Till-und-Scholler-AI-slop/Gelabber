@@ -2088,3 +2088,124 @@ async fn a_second_seat_in_the_call_rings_nobody(pool: PgPool) {
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
     assert!(hits.try_recv().is_err());
 }
+
+/// Gives every member of the server but its owner a setting of `level` and
+/// `voice` for it.
+async fn crowd_settings(pool: &PgPool, server: &str, level: &str, voice: bool) {
+    sqlx::query(
+        "INSERT INTO notification_settings (user_id, scope_kind, scope_id, level, voice)
+         SELECT m.user_id, 'server', m.server_id, $2, $3 FROM server_members m
+         JOIN servers s ON s.id=m.server_id AND s.owner_id<>m.user_id
+         WHERE m.server_id=$1::uuid
+         ON CONFLICT (user_id, scope_kind, scope_id)
+         DO UPDATE SET level=EXCLUDED.level, voice=EXCLUDED.voice",
+    )
+    .bind(server)
+    .bind(level)
+    .bind(voice)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Takes the settings of crowd members for the server away until `left`
+/// members have one.
+async fn crowd_settings_left(pool: &PgPool, server: &str, left: i64) {
+    sqlx::query(
+        "DELETE FROM notification_settings WHERE scope_id=$1::uuid AND user_id IN (
+           SELECT n.user_id FROM notification_settings n JOIN users u ON u.id=n.user_id
+           WHERE n.scope_id=$1::uuid AND u.email LIKE 'crowd-%'
+           ORDER BY n.user_id
+           LIMIT GREATEST((SELECT count(*) FROM notification_settings
+                           WHERE scope_id=$1::uuid) - $2, 0))",
+    )
+    .bind(server)
+    .bind(left)
+    .execute(pool)
+    .await
+    .unwrap();
+    let have: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM notification_settings WHERE scope_id=$1::uuid")
+            .bind(server)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(have, left);
+}
+
+/// More than 500 members who chose "all" are a crowd, as for `@everyone`: an
+/// ordinary message pages none of them; a mention still reaches whom it
+/// names.
+#[sqlx::test]
+async fn an_ordinary_message_pages_no_crowd(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        server,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+    crowd(&pool, &server, 600).await;
+    crowd_settings(&pool, &server, "all", false).await;
+    let first = self::channel(&mut a, &server, "eins").await;
+    post(&mut a, &first, "an alle").await;
+    post(&mut a, &dm, "marker").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
+    post(&mut a, &first, &format!("<@{bob}> du")).await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "@Bob du");
+
+    // 500 are still pushed to.
+    crowd_settings_left(&pool, &server, 500).await;
+    let second = self::channel(&mut a, &server, "zwei").await;
+    post(&mut a, &second, "an fast alle").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "an fast alle");
+    assert!(hits.try_recv().is_err());
+}
+
+/// The same for a voice push: more than 500 who asked to hear of a call
+/// beginning are a crowd, and nobody is rung.
+#[sqlx::test]
+async fn a_call_rings_no_crowd(pool: PgPool) {
+    let World {
+        state,
+        mut a,
+        mut b,
+        server,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    crowd(&pool, &server, 600).await;
+    crowd_settings(&pool, &server, "mentions", true).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app(state.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .unwrap();
+    let mut ada = connect(addr, &a).await;
+
+    let lounge = voice(&mut a, &server, "Lounge").await;
+    sig(&mut ada, &server, &lounge, "j", None).await;
+    post(&mut a, &dm, "marker").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
+
+    // 500 are still rung.
+    crowd_settings_left(&pool, &server, 500).await;
+    let second = voice(&mut a, &server, "Zwei").await;
+    sig(&mut ada, &server, &second, "j", None).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["body"], "Ada ist im Sprachkanal Zwei.");
+    assert!(hits.try_recv().is_err());
+}

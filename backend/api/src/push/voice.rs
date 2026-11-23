@@ -26,7 +26,7 @@ use futures_util::StreamExt;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::{Payload, Push, Target, default_level, navigate, send, settle};
+use super::{MAX_RECIPIENTS, Payload, Push, Target, default_level, navigate, send, settle};
 use crate::{
     auth::user::User, error::ApiError, i18n, servers::permissions::Permission, state::AppState,
 };
@@ -123,27 +123,33 @@ async fn deliver(
     // Members who see the voice channel and may join it and do not mute the
     // server: for a Live those at "all", for a call those who asked. Live
     // sessions only, not from someone the recipient blocks (#565), not in Do
-    // not disturb (#590).
+    // not disturb (#590). More than `MAX_RECIPIENTS` of them are a crowd,
+    // as for `@everyone`, and nobody is paged.
     let targets: Vec<Target> = sqlx::query_as(concat!(
-        "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
+        "WITH hearing AS (
+            SELECT m.user_id FROM server_members m
+            JOIN servers sv ON sv.id=m.server_id
+            JOIN users u ON u.id=m.user_id
+            LEFT JOIN notification_settings ss ON ss.user_id=m.user_id
+              AND ss.scope_kind='server' AND ss.scope_id=m.server_id
+            WHERE m.server_id=$1 AND m.user_id<>$2
+              AND channel_visible_to($3, m.user_id)
+              AND (m.user_id=sv.owner_id
+                   OR server_member_bits(m.server_id, m.user_id) & $4 <> 0)
+              AND CASE WHEN $6 THEN ss.voice IS TRUE ELSE COALESCE(ss.level, $5)='all' END
+              AND NOT (ss.muted IS TRUE AND (ss.muted_until IS NULL OR ss.muted_until>now()))
+              AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                              WHERE b.blocker_id=m.user_id AND b.blocked_id=$2)
+              AND NOT ",
+        crate::dnd_active!(),
+        "   LIMIT $7 + 1)
+         SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
                 u.notifications_hide_content AS hide_content, u.locale
-         FROM server_members m
-         JOIN servers sv ON sv.id=m.server_id
-         JOIN push_subscriptions p ON p.user_id=m.user_id
+         FROM hearing h
+         JOIN push_subscriptions p ON p.user_id=h.user_id
          JOIN sessions s ON s.token_hash=p.session_hash AND s.expires_at>now()
-         JOIN users u ON u.id=m.user_id
-         LEFT JOIN notification_settings ss ON ss.user_id=m.user_id
-           AND ss.scope_kind='server' AND ss.scope_id=m.server_id
-         WHERE m.server_id=$1 AND m.user_id<>$2
-           AND channel_visible_to($3, m.user_id)
-           AND (m.user_id=sv.owner_id
-                OR server_member_bits(m.server_id, m.user_id) & $4 <> 0)
-           AND CASE WHEN $6 THEN ss.voice IS TRUE ELSE COALESCE(ss.level, $5)='all' END
-           AND NOT (ss.muted IS TRUE AND (ss.muted_until IS NULL OR ss.muted_until>now()))
-           AND NOT EXISTS (SELECT 1 FROM user_blocks b
-                           WHERE b.blocker_id=m.user_id AND b.blocked_id=$2)
-           AND NOT ",
-        crate::dnd_active!()
+         JOIN users u ON u.id=h.user_id
+         WHERE (SELECT count(*) FROM hearing) <= $7"
     ))
     .bind(server)
     .bind(who)
@@ -151,6 +157,7 @@ async fn deliver(
     .bind(Permission::JoinVoice as i32)
     .bind(default_level(state, server).await?)
     .bind(occasion == Occasion::Started)
+    .bind(MAX_RECIPIENTS as i64)
     .fetch_all(&state.db)
     .await?;
     if targets.is_empty() {

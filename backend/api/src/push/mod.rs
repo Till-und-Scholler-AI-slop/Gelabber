@@ -69,6 +69,8 @@ const MAX_ENDPOINT: usize = 1024;
 const TTL_SECS: u64 = 3600;
 /// `@everyone` in a server with more members than this pushes only to the
 /// ones named in the message: a crowd that large is not paged by phone.
+/// More who chose "all" ([`listening`]), or who would hear of a voice
+/// channel ([`voice`]), than this are paged by none.
 const MAX_RECIPIENTS: usize = 500;
 /// `@everyone` pushes per server within [`EVERYONE_WINDOW`], whoever wrote
 /// them; beyond that only the members named in the message are pushed to.
@@ -957,6 +959,10 @@ fn ordinary_may_push(state: &AppState, channel: Uuid) -> bool {
 /// channel and "all" in a small server, else those with an "all" of their
 /// own on the channel or the server and "mentions". The levels themselves
 /// are read with the subscriptions.
+///
+/// More than [`MAX_RECIPIENTS`] with an "all" of their own are a crowd, as
+/// for `@everyone`, and nobody is paged. A small server has no more than
+/// [`SMALL_SERVER`] members to begin with.
 async fn listening(
     state: &AppState,
     message: &Message,
@@ -975,20 +981,25 @@ async fn listening(
         .await?;
         return Ok((everyone, "all"));
     }
-    let chose = sqlx::query_scalar(
+    let mut chose: Vec<Uuid> = sqlx::query_scalar(
         "SELECT DISTINCT n.user_id FROM notification_settings n
          JOIN server_members m ON m.server_id=$1 AND m.user_id=n.user_id
          JOIN servers s ON s.id=m.server_id AND s.blocked_at IS NULL
          WHERE n.level='all' AND n.user_id<>$2
            AND ((n.scope_kind='channel' AND n.scope_id=$3)
                 OR (n.scope_kind='server' AND n.scope_id=$1))
-           AND channel_visible_to($3, n.user_id)",
+           AND channel_visible_to($3, n.user_id)
+         LIMIT $4",
     )
     .bind(server)
     .bind(message.author.id)
     .bind(message.channel_id)
+    .bind(MAX_RECIPIENTS as i64 + 1)
     .fetch_all(&state.db)
     .await?;
+    if chose.len() > MAX_RECIPIENTS {
+        chose.clear();
+    }
     Ok((chose, "mentions"))
 }
 
