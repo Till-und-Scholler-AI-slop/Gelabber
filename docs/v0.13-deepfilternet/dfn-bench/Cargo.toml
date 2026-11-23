@@ -1,0 +1,23 @@
+[package]
+name = "dfn-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "GEL-28: DeepFilterNet3 (libDF + tract) per-10-ms-block timing and enhancement"
+
+# Its own workspace, so cargo does not look for one further up the repository.
+[workspace]
+
+[dependencies]
+# The pinned DeepFilterNet source that fetch.sh extracts. Without
+# "default-model" the model is read from the pinned tarball, not embedded.
+deep_filter = { path = "../work/src/deepfilternet/libDF", default-features = false, features = ["tract", "wav-utils"] }
+ndarray = "0.15.6"
+anyhow = "1.0.82"
+# clock_gettime(CLOCK_THREAD_CPUTIME_ID): CPU time per hop, unaffected by
+# other processes taking the core.
+libc = "0.2.154"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

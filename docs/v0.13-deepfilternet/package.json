@@ -1,0 +1,12 @@
+{
+  "name": "gelabber-gel28-measurement",
+  "private": true,
+  "description": "GEL-28: RNNoise vs DeepFilterNet3 offline measurement (see ../v0.13-deepfilternet-measurement.md)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "onnxruntime-node": "1.31.1"
+  }
+}
