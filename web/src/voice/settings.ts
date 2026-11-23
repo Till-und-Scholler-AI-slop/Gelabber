@@ -36,12 +36,20 @@ export const AUDIO_QUALITY = {
 } as const;
 
 export type AudioQuality = keyof typeof AUDIO_QUALITY;
-export type AudioProcessingMode = "enhanced" | "browser" | "original";
+/** "enhanced" is "Enhanced voice: Standard" (RNNoise), the default;
+ * "strong" is "Enhanced voice: Strong" (DeepFilterNet3, GEL-28). The
+ * desktop app stores the same values. */
+export type AudioProcessingMode =
+  "enhanced" | "strong" | "browser" | "original";
 /** Each mode's name and hint, as `voiceSettings` catalog keys. */
 export const AUDIO_PROCESSING = {
   enhanced: {
     label: "mode.enhanced",
     hint: "mode.enhancedHint",
+  },
+  strong: {
+    label: "mode.strong",
+    hint: "mode.strongHint",
   },
   browser: {
     label: "mode.browser",
@@ -55,8 +63,15 @@ export const AUDIO_PROCESSING = {
   AudioProcessingMode,
   { label: VoiceSettingsKey; hint: VoiceSettingsKey }
 >;
+/** Anything unknown is Standard, as an older client reads "strong". */
 export function asProcessingMode(value: unknown): AudioProcessingMode {
-  return value === "browser" || value === "original" ? value : "enhanced";
+  return value === "strong" || value === "browser" || value === "original"
+    ? value
+    : "enhanced";
+}
+/** Standard or Strong: a noise filter of Gelabber's own in a worklet. */
+export function isLocalFilter(mode: AudioProcessingMode): boolean {
+  return mode === "enhanced" || mode === "strong";
 }
 
 /** Sound for a share: the user's own choice, or "auto" while he has made

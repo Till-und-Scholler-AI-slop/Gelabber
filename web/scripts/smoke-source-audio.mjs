@@ -1048,7 +1048,9 @@ try {
   );
   await changeMic(
     () =>
-      owner.page.getByRole("radio", { name: /Verbesserte Sprache/ }).check(),
+      owner.page
+        .getByRole("radio", { name: /Verbesserte Sprache: Standard/ })
+        .check(),
     true,
   );
   // Back to the voice room, past the settings' two pages.

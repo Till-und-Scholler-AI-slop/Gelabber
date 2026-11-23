@@ -8,6 +8,15 @@ export const diagnostics = defineCatalog(
   {
     "processing.inactive": "Mikrofon inaktiv",
     "processing.enhanced": "Lokale Rauschunterdrückung aktiv",
+    "processing.strong": "Starke Rauschunterdrückung aktiv (DeepFilterNet3)",
+    "processing.strongFellBack":
+      "Starker Filter auf Standard umgestellt: {reason}",
+    "processing.strongUnavailable":
+      "Starker Filter nicht verfügbar ({reason}); Standard aktiv",
+    "strong.reason.slow": "Gerät zu langsam",
+    "strong.reason.underrun": "Audio kam nicht hinterher",
+    "strong.reason.error": "Filter ausgefallen",
+    "strong.reason.load": "nicht geladen",
     "processing.browser": "Browserfilter aktiv",
     "processing.original": "Original / Musik aktiv",
     "processing.browserNoFilters":
@@ -38,6 +47,7 @@ export const diagnostics = defineCatalog(
       "Lokaler Rauschfilter wird nicht unterstützt",
     "processing.error.workletTimeout": "Rauschfilter startet nicht",
     "processing.error.workletFailed": "Rauschfilter konnte nicht starten",
+    "processing.error.strongBuild": "Starker Filter startet nicht",
     "processing.error.cancelled": "Mikrofonanfrage abgebrochen",
     "processing.error.cancelledOrFailed":
       "Mikrofonanfrage abgebrochen oder Audioprozessor ausgefallen",
@@ -145,6 +155,15 @@ export const diagnostics = defineCatalog(
     "mic.gateNone": "nicht aktiv (ohne Audio-Worklet)",
     "mic.gateOpen": "offen",
     "mic.gateClosed": "zu",
+    "mic.strong": "Starker Filter (DeepFilterNet3)",
+    "mic.strongTime":
+      "{ms} ms je 10-ms-Block, langsamster {max} ms (Mittel der letzten Sekunde)",
+    "mic.strongWaiting": "läuft; erste Messung nach einer Sekunde",
+    "mic.strongOff": "aus: {reason}",
+    "mic.strongOffTime": "aus: {reason}, zuletzt {ms} ms je 10-ms-Block",
+    "mic.strongHint":
+      "Zeit im Audio-Thread für DeepFilterNet3 je 10 ms Ton. Braucht er mit RNNoise im Mittel mehr als 7 ms, wechselt Gelabber zu Standard.",
+    "mic.strongCoarse": "Uhr des Browsers in ganzen Millisekunden",
     "value.on": "an",
     "value.off": "aus",
     "value.yes": "ja",
@@ -207,6 +226,14 @@ export const diagnostics = defineCatalog(
   {
     "processing.inactive": "Microphone inactive",
     "processing.enhanced": "Local noise suppression on",
+    "processing.strong": "Strong noise suppression on (DeepFilterNet3)",
+    "processing.strongFellBack": "Strong filter switched to Standard: {reason}",
+    "processing.strongUnavailable":
+      "Strong filter unavailable ({reason}); Standard on",
+    "strong.reason.slow": "device too slow",
+    "strong.reason.underrun": "audio fell behind",
+    "strong.reason.error": "filter failed",
+    "strong.reason.load": "not loaded",
     "processing.browser": "Browser filters on",
     "processing.original": "Original / music on",
     "processing.browserNoFilters":
@@ -236,6 +263,7 @@ export const diagnostics = defineCatalog(
       "Local noise filter isn’t supported",
     "processing.error.workletTimeout": "Noise filter doesn’t start",
     "processing.error.workletFailed": "Noise filter could not start",
+    "processing.error.strongBuild": "Strong filter doesn’t start",
     "processing.error.cancelled": "Microphone request cancelled",
     "processing.error.cancelledOrFailed":
       "Microphone request cancelled or audio processor failed",
@@ -337,6 +365,15 @@ export const diagnostics = defineCatalog(
     "mic.gateNone": "not active (no audio worklet)",
     "mic.gateOpen": "open",
     "mic.gateClosed": "closed",
+    "mic.strong": "Strong filter (DeepFilterNet3)",
+    "mic.strongTime":
+      "{ms} ms per 10 ms block, slowest {max} ms (mean of the last second)",
+    "mic.strongWaiting": "running; first reading after a second",
+    "mic.strongOff": "off: {reason}",
+    "mic.strongOffTime": "off: {reason}, last {ms} ms per 10 ms block",
+    "mic.strongHint":
+      "Time DeepFilterNet3 takes on the audio thread for 10 ms of sound. If it needs more than 7 ms on average together with RNNoise, Gelabber switches to Standard.",
+    "mic.strongCoarse": "browser clock in whole milliseconds",
     "value.on": "on",
     "value.off": "off",
     "value.yes": "yes",

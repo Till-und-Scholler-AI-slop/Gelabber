@@ -7,7 +7,10 @@
 // shares), callMicrophone.ts, localVideo.ts, localSourceAudio.ts,
 // receivedAudio.ts and videoLimits.ts.
 
-import { noteAudioProcessing } from "./audioProcessing.ts";
+import {
+  forgetStrongFallback,
+  noteAudioProcessing,
+} from "./audioProcessing.ts";
 import { readSenderPriority } from "./mediaPriority.ts";
 import {
   playCallSound,
@@ -961,6 +964,8 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     prev.autoGainControl !== next.autoGainControl ||
     prev.processingMode !== next.processingMode;
   if (recaptureMic) voice.micForceBrowser = false;
+  // Strong chosen again after it switched to Standard: another try.
+  if (prev.processingMode !== next.processingMode) forgetStrongFallback();
   if (prev.audioInputId !== next.audioInputId) voice.micFellBack = false;
   const camChanged = prev.videoInputId !== next.videoInputId;
   const qualityChanged =
