@@ -320,7 +320,7 @@ async fn link_allowed(
         )])));
     }
     let key = validate::canonical(&current.user.email);
-    let guess = limits::login_attempt(state, &key, Guesser::Session(current.id))?;
+    let guess = limits::login_attempt(state, &key, Guesser::Session)?;
     let ok = current_password.chars().count() <= validate::PASSWORD_MAX
         && password::verify(current_password, stored).await?;
     if !ok {

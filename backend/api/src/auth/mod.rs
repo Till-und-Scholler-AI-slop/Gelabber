@@ -634,9 +634,9 @@ pub(crate) fn signed_out_cookies(
 
 /// Sets a new password after checking the current one. Every session of the
 /// account ends, this one included, and the caller gets a fresh one: a
-/// stolen cookie dies with the old password. Wrong guesses count against
-/// this session like failed logins against an address, so a hijacked
-/// session cannot brute-force it, nor lock out the owner elsewhere.
+/// stolen cookie dies with the old password. Wrong guesses from all of the
+/// account's sessions share one count, apart from sign-in, so a hijacked
+/// session can neither brute-force it nor lock the owner out of signing in.
 ///
 /// An account without a password (it signs in through a provider) sets its
 /// first one without `current_password`, but only from a session signed in
@@ -659,7 +659,7 @@ async fn change_password(
 
     if stored.is_some() {
         let key = validate::canonical(&current.user.email);
-        let guess = limits::login_attempt(&state, &key, Guesser::Session(current.id))?;
+        let guess = limits::login_attempt(&state, &key, Guesser::Session)?;
         let ok = body.current_password.chars().count() <= validate::PASSWORD_MAX
             && password::verify(body.current_password, stored).await?;
         if !ok {

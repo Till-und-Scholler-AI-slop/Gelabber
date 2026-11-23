@@ -67,8 +67,8 @@ impl std::fmt::Debug for DeleteAccountBody {
 }
 
 /// Deletes the signed-in account, for good. The password is checked like a
-/// password change: wrong guesses count against this session like failed
-/// logins. An account without a password types its address instead, from a
+/// password change: wrong guesses count against the account's signed-in
+/// sessions like failed logins. An account without a password types its address instead, from a
 /// session signed in less than [`auth::REAUTH_WINDOW`] ago
 /// (`403 reauth_required` otherwise). While the account owns a server the
 /// answer is `409 owns_servers` with those servers.
@@ -87,7 +87,7 @@ async fn delete_me(
             return Err(field("password", "required"));
         }
         let key = validate::canonical(&current.user.email);
-        let guess = limits::login_attempt(&state, &key, Guesser::Session(current.id))?;
+        let guess = limits::login_attempt(&state, &key, Guesser::Session)?;
         let ok = body.password.chars().count() <= validate::PASSWORD_MAX
             && password::verify(body.password, stored).await?;
         if !ok {

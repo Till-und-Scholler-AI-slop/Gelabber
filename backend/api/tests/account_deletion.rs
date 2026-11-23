@@ -236,7 +236,7 @@ async fn a_wrong_password_is_refused_and_counts_like_a_failed_login(pool: PgPool
     let res = delete_me(&mut ada, json!({ "password": "not the one" })).await;
     assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
     assert!(res.headers.contains_key("retry-after"));
-    // The count belongs to this session (GEL-44): signing in elsewhere
+    // The count belongs to the account's sessions (GEL-44): signing in
     // still works.
     let mut other = Client::from_state(state.clone());
     other.bootstrap().await;
