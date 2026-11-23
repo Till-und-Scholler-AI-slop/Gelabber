@@ -328,11 +328,14 @@ const STRONG = {
   meanShare: 0.7,
   lateShare: 0.05,
   // Underruns: over 5 s of the wall clock, the audio clock may fall behind
-  // by 10 % at most. A longer pause between two render quanta (a suspended
-  // context) starts the measurement over.
+  // by 10 % at most, judged on two windows in a row. A single pause between
+  // two render quanta longer than gapMs is an interruption (a suspended
+  // context, an output device switch, a clock step), not lag: it starts
+  // the measurement over.
   lagWindowMs: 5000,
   lagShare: 0.1,
-  gapMs: 1000,
+  lagWindows: 2,
+  gapMs: 150,
   reportBlocks: 100,
 };
 const clock =
@@ -349,6 +352,7 @@ class StrongLoad {
     this.dfnSum = 0;
     this.late = 0;
     this.lagStart = null;
+    this.lagBehind = 0; // windows in a row that fell behind
     this.lagFrame = 0;
     this.lastWall = null;
     this.count = 0;
@@ -391,6 +395,7 @@ class StrongLoad {
     const last = this.lastWall;
     this.lastWall = nowMs;
     if (this.lagStart === null || nowMs - last > STRONG.gapMs) {
+      this.lagBehind = 0;
       this.lagStart = nowMs;
       this.lagFrame = frame;
       return null;
@@ -400,7 +405,9 @@ class StrongLoad {
     const audioMs = ((frame - this.lagFrame) * 1000) / sampleRate;
     this.lagStart = nowMs;
     this.lagFrame = frame;
-    return wallMs - audioMs > STRONG.lagShare * wallMs ? "underrun" : null;
+    this.lagBehind =
+      wallMs - audioMs > STRONG.lagShare * wallMs ? this.lagBehind + 1 : 0;
+    return this.lagBehind >= STRONG.lagWindows ? "underrun" : null;
   }
   /** Mean DFN3 and DFN3 + RNNoise times of the judged blocks. */
   window() {
@@ -476,7 +483,15 @@ class StrongProcessor extends AudioWorkletProcessor {
     super();
     const config = options.processorOptions;
     Object.assign(this, createRNNoise(config.model));
-    this.dfn = new DeepFilter(config.dfn);
+    // Without memory for the model (or a broken copy) this is Standard,
+    // said on the port right after the hello.
+    let failed = false;
+    try {
+      this.dfn = new DeepFilter(config.dfn);
+    } catch {
+      this.dfn = null;
+      failed = true;
+    }
     this.load = new StrongLoad();
     this.speech = 0; // RNNoise's probability for the block before
     this.frame = new Float32Array(this.size);
@@ -489,6 +504,7 @@ class StrongProcessor extends AudioWorkletProcessor {
     this.gate.configure(config.gate);
     this.gate.setGain(config.gain ?? 1);
     this.port.postMessage({ ready: true, clock: clock.name });
+    if (failed) this.fallBack("error");
     this.port.onmessage = (event) => {
       gateMessage(this, event.data);
       if (event.data?.op !== "dispose" || this.disposed) return;

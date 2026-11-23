@@ -16,17 +16,19 @@ const asset = (name) =>
 const PARAMS = [100, -15, 35, 35];
 
 /** The worklet file in a context of its own. `clock.t` is what
- * `performance.now()` returns there; `currentFrame` follows `run`. */
+ * `performance.now()` returns there; `currentFrame` follows `run`; `sent`
+ * holds what processors post on their ports. */
 function loadWorklet() {
   const processors = {};
   const clock = { t: 0 };
+  const sent = [];
   const context = vm.createContext({
     WebAssembly,
     sampleRate: RATE,
     currentFrame: 0,
     performance: { now: () => clock.t },
     AudioWorkletProcessor: class {
-      port = { postMessage() {}, onmessage: null };
+      port = { postMessage: (data) => sent.push(data), onmessage: null };
     },
     registerProcessor(name, ctor) {
       processors[name] = ctor;
@@ -37,6 +39,7 @@ function loadWorklet() {
     processors,
     clock,
     context,
+    sent,
     StrongLoad: vm.runInContext("StrongLoad", context),
   };
 }
@@ -141,13 +144,14 @@ describe("Strong load monitor", () => {
   });
 
   /** Render quanta whose wall-clock time runs `stretch` times their
-   * length, after a second of blocks. */
-  function quanta(load, seconds, stretch, gapAt = -1) {
+   * length, after a second of blocks; at quantum `gapAt` the thread stalls
+   * for `gapMs`. */
+  function quanta(load, seconds, stretch, gapAt = -1, gapMs = 5000) {
     feed(load, 101, 2);
     let wall = 1000,
       frame = 0;
     for (let q = 0; q < (seconds * RATE) / QUANTUM; q++) {
-      wall += ((QUANTUM * 1000) / RATE) * stretch + (q === gapAt ? 5000 : 0);
+      wall += ((QUANTUM * 1000) / RATE) * stretch + (q === gapAt ? gapMs : 0);
       frame += QUANTUM;
       const verdict = load.quantum(wall, frame);
       if (verdict) return verdict;
@@ -164,6 +168,35 @@ describe("Strong load monitor", () => {
     expect(quanta(new StrongLoad(), 20, 1, 400)).toBeNull();
   });
 
+  it("takes one stall for an interruption, not for lag", () => {
+    // An output device switch or an OS audio interruption: 0.6 s at once.
+    expect(quanta(new StrongLoad(), 20, 1, 400, 600)).toBeNull();
+    expect(quanta(new StrongLoad(), 20, 1, 400, 120)).toBeNull();
+  });
+
+  it("needs two windows in a row that fall behind", () => {
+    const load = new StrongLoad();
+    feed(load, 101, 2);
+    let wall = 1000,
+      frame = 0;
+    const step = (QUANTUM * 1000) / RATE;
+    const verdicts = [];
+    // Behind by 15 % for 6 s, then on time, then behind again for 12 s.
+    for (const [seconds, stretch] of [
+      [6, 1.15],
+      [6, 1],
+      [12, 1.15],
+    ])
+      for (let q = 0; q < (seconds * RATE) / QUANTUM; q++) {
+        wall += step * stretch;
+        frame += QUANTUM;
+        const verdict = load.quantum(wall, frame);
+        if (verdict) verdicts.push(Math.round(wall / 1000));
+      }
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toBeGreaterThan(18);
+  });
+
   it("reports the mean time per block since the last report", () => {
     const load = new StrongLoad();
     feed(load, 50, 2, 0.5);
@@ -175,19 +208,15 @@ describe("Strong load monitor", () => {
 });
 
 describe("Strong processor", { timeout: 60_000 }, () => {
-  function strong(gate = { mode: "off" }) {
+  function strong(
+    gate = { mode: "off" },
+    dfn = { module: dfnModule, memory: built.memory, state: built.state },
+  ) {
     const worklet = loadWorklet();
-    const messages = [];
     const processor = new worklet.processors["gelabber-strong"]({
-      processorOptions: {
-        model: rnnoiseModule,
-        dfn: { module: dfnModule, memory: built.memory, state: built.state },
-        gate,
-        gain: 1,
-      },
+      processorOptions: { model: rnnoiseModule, dfn, gate, gain: 1 },
     });
-    processor.port.postMessage = (data) => messages.push(data);
-    return { ...worklet, processor, messages };
+    return { ...worklet, processor, messages: worklet.sent };
   }
 
   /** Runs `input` in render quanta. Unless `stretch` says otherwise, the
@@ -320,8 +349,36 @@ describe("Strong processor", { timeout: 60_000 }, () => {
 
   it("switches to RNNoise when the audio falls behind the clock", () => {
     const setup = strong();
-    run(setup, voice(6000), { stretch: 1.2 });
+    // Two windows of 5 s on the wall clock after the first second.
+    run(setup, voice(10_000), { stretch: 1.2 });
     expect(setup.messages.find((m) => m.fallback)?.fallback).toBe("underrun");
+  });
+
+  it("starts as Standard when DFN3 cannot be set up", () => {
+    // Memory that cannot hold the model, as on a phone short of memory.
+    const setup = strong(
+      { mode: "off" },
+      { module: dfnModule, memory: new ArrayBuffer(65_536), state: 8 },
+    );
+    expect(setup.processor.dfn).toBeNull();
+    expect(setup.messages[0]).toMatchObject({ ready: true });
+    expect(setup.messages[1]).toMatchObject({
+      op: "strong",
+      fallback: "error",
+    });
+    const input = voice(300);
+    const output = run(setup, input);
+    const standard = loadWorklet().processors["gelabber-rnnoise"];
+    const reference = run(
+      {
+        ...loadWorklet(),
+        processor: new standard({
+          processorOptions: { model: rnnoiseModule, gate: { mode: "off" } },
+        }),
+      },
+      input,
+    );
+    expect(Array.from(output)).toEqual(Array.from(reference));
   });
 
   it("switches to RNNoise when DFN3 fails", () => {
