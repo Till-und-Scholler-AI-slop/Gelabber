@@ -924,14 +924,20 @@ export class MediasoupConnection implements MediaConnection {
     const held = this.publications.get("s");
     const sharp = this.screenSharp;
     if (!held || held.sharp === sharp) return;
-    await this.options
-      .request(
+    try {
+      await this.options.request(
         "screenMode",
         { producerId: held.producer.id, sharp },
         this.sendDeadlineEpochMs,
-      )
-      // A server without GEL-32 refuses it; the Live works as before.
-      .catch(() => {});
+      );
+    } catch (error) {
+      // A server without GEL-32 cannot parse the frame and answers
+      // `bad_request`; the Live works as before, so that counts as told.
+      // Anything else (a timeout, a closed connection) leaves the mode
+      // untold, and the next call sends it again.
+      if (!(error instanceof MediaError && error.code === "bad_request"))
+        return;
+    }
     if (this.publications.get("s") === held) held.sharp = sharp;
   }
   closeSource(kind: TrackKind, expectedProducerId?: string): Promise<void> {
