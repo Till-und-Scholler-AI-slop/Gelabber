@@ -397,6 +397,26 @@ export async function chatFaultScenarios(h, f) {
         await navigate(f.member, c.path, f.base);
         await until(async () => entered, Boolean, "history-response-not-held");
         check(oldRows, "fixture-delayed-rest-missing-old-rows");
+        // The history read can leave before the new socket's subscribe is
+        // acknowledged. A subscribe without a cursor replays nothing (the app
+        // reads the history again instead), so changes made before the `ok`
+        // never arrive as live events (GEL-36).
+        await until(
+          () =>
+            nativeEvaluate(
+              f.member,
+              (id) =>
+                window.__e2e.sockets.some(
+                  (x) =>
+                    x.plane === "gateway" &&
+                    x.ws.readyState === 1 &&
+                    x.topics.has(id),
+                ),
+              c.id,
+            ),
+          Boolean,
+          "fixture-subscription-not-acknowledged",
+        );
         const before = await snapshot(f.member);
         check(
           (
