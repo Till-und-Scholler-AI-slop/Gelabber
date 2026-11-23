@@ -84,17 +84,19 @@ async fn join(call: &mut Call<'_>) -> Result<(), ApiError> {
         .gateway
         .bind_server(call.conn, &mut *call.db, call.server_id, call.user.id)
         .await?;
-    let snapshot = call
+    let joined = call
         .state
         .gateway
         .join_voice(call.conn, call.user.id, call.server_id, call.channel_id)
         .await?;
-    // Nobody else there: a call begins, and those who asked hear of it by
+    // Nobody there, not even this user on another device or a socket from
+    // before a reconnect: a call begins, and those who asked hear of it by
     // push (#616).
-    if snapshot.is_empty() {
+    if joined.opened {
         crate::push::voice::started(call.state, call.user, call.server_id, call.channel_id);
     }
-    call.out.extend(snapshot.into_iter().map(ServerFrame::sig));
+    call.out
+        .extend(joined.snapshot.into_iter().map(ServerFrame::sig));
     Ok(())
 }
 

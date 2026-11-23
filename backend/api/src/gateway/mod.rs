@@ -41,6 +41,7 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub use hub::{ConnTable, EventLog, Gateway, Recheck, VoiceRoster};
+pub use leases::VoiceJoin;
 pub use live::{ModeCheck, Present};
 
 /// Sockets one account may hold on one API process: several tabs, a phone

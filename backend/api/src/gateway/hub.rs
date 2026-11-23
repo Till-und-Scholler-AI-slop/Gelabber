@@ -1160,14 +1160,15 @@ impl Gateway {
 
     /// Seat this socket in `channel_id`, leaving any other voice room first.
     /// Returns other members (and their pubs) so the handler can snapshot
-    /// them onto this socket without waiting for Pub/Sub.
+    /// them onto this socket without waiting for Pub/Sub, and whether the
+    /// room was empty before.
     pub async fn join_voice(
         &self,
         id: ConnId,
         user_id: Uuid,
         server_id: Uuid,
         channel_id: Uuid,
-    ) -> Result<Vec<SigEvent>, ApiError> {
+    ) -> Result<super::leases::VoiceJoin, ApiError> {
         self.voice
             .join_voice(id, user_id, server_id, channel_id)
             .await

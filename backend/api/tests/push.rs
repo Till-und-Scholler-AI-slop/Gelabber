@@ -2037,3 +2037,54 @@ async fn a_call_that_begins_pushes_who_asked(pool: PgPool) {
     );
     assert!(hits.try_recv().is_err());
 }
+
+/// A second seat of someone already in the call (another device, or a
+/// rejoin after a reconnect while the old seat lasts) begins no call: the
+/// channel was not empty.
+#[sqlx::test]
+async fn a_second_seat_in_the_call_rings_nobody(pool: PgPool) {
+    let World {
+        state,
+        mut a,
+        mut b,
+        server,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let r = b
+        .send(
+            Method::PUT,
+            &format!("/api/servers/{server}/notification-settings"),
+            Some(json!({"level": null, "muted": false, "voice": true})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let lounge = voice(&mut a, &server, "Lounge").await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app(state.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .unwrap();
+
+    let mut phone = connect(addr, &a).await;
+    sig(&mut phone, &server, &lounge, "j", None).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["body"], "Ada ist im Sprachkanal Lounge.");
+
+    // As if the cooldown had run out: Ada's second device sits down beside
+    // the first, and nobody hears of a call beginning.
+    state.limiter.refund("push-call", &lounge);
+    let mut laptop = connect(addr, &a).await;
+    sig(&mut laptop, &server, &lounge, "j", None).await;
+    post(&mut a, &dm, "marker").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
+    assert!(hits.try_recv().is_err());
+}
