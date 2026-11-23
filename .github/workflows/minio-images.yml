@@ -1,0 +1,155 @@
+# Builds the pinned MinIO CE server and mc images from source
+# (deploy/compose/minio, deploy/compose/mc) and checks them, with a read-only
+# token: the build runs fetched Go modules. ci.yml calls it for pull requests,
+# publish-minio.yml before it pushes the images from main.
+name: MinIO CE images
+
+on:
+  workflow_call:
+    inputs:
+      keep:
+        description: Upload the built images as the artifact minio-images
+        type: boolean
+        required: false
+        default: false
+    outputs:
+      minio-release:
+        value: ${{ jobs.build.outputs.minio-release }}
+      mc-release:
+        value: ${{ jobs.build.outputs.mc-release }}
+
+permissions:
+  contents: read
+
+env:
+  MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
+  MC_RELEASE: RELEASE.2025-08-13T08-35-41Z
+
+jobs:
+  build:
+    name: Build and check
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    outputs:
+      minio-release: ${{ env.MINIO_RELEASE }}
+      mc-release: ${{ env.MC_RELEASE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Image names
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY,,}"
+          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' backend/Cargo.toml | head -n 1)"
+          echo "GHCR_IMAGE=ghcr.io/${repo}/minio" >> "$GITHUB_ENV"
+          echo "LOCAL_IMAGE=gelabber/minio" >> "$GITHUB_ENV"
+          echo "GHCR_MC_IMAGE=ghcr.io/${repo}/mc" >> "$GITHUB_ENV"
+          echo "LOCAL_MC_IMAGE=gelabber/mc" >> "$GITHUB_ENV"
+          echo "GELABBER_VERSION=${ver}" >> "$GITHUB_ENV"
+
+      - name: Compose pin matches
+        run: |
+          set -euo pipefail
+          grep -F "${GHCR_IMAGE}:${MINIO_RELEASE}" deploy/compose/compose.yaml
+          grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" deploy/compose/compose.yaml
+          grep -F "ARG MINIO_RELEASE=${MINIO_RELEASE}" deploy/compose/minio/Dockerfile
+          grep -F "${GHCR_MC_IMAGE}:${MC_RELEASE}" deploy/compose/compose.yaml
+          grep -F "MC_RELEASE: ${MC_RELEASE}" deploy/compose/compose.yaml
+          grep -F "ARG MC_RELEASE=${MC_RELEASE}" deploy/compose/mc/Dockerfile
+          test "${GELABBER_VERSION}" = "v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' backend/Cargo.toml | head -n 1)"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/compose/minio
+          file: deploy/compose/minio/Dockerfile
+          build-args: |
+            MINIO_RELEASE=${{ env.MINIO_RELEASE }}
+          load: true
+          provenance: false
+          tags: gelabber/minio:${{ env.MINIO_RELEASE }}
+
+      - name: Verify minio --version
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm --entrypoint /usr/bin/minio \
+            "${LOCAL_IMAGE}:${MINIO_RELEASE}" --version)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -F "${MINIO_RELEASE}"
+
+      - name: Build mc
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/compose/mc
+          file: deploy/compose/mc/Dockerfile
+          build-args: |
+            MC_RELEASE=${{ env.MC_RELEASE }}
+          load: true
+          provenance: false
+          tags: gelabber/mc:${{ env.MC_RELEASE }}
+
+      - name: Verify mc --version
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm "${LOCAL_MC_IMAGE}:${MC_RELEASE}" --version)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -F "${MC_RELEASE}"
+
+      # #196: minio-init on an existing install keeps its objects, the API
+      # user reaches its bucket only, and a rerun rotates the password.
+      - name: minio-init grants the bucket only
+        run: |
+          set -euo pipefail
+          docker network create gelabber-init-test
+          docker run -d --name minio --network gelabber-init-test \
+            -e MINIO_ROOT_USER=root-ci -e MINIO_ROOT_PASSWORD=root-ci-password \
+            "${LOCAL_IMAGE}:${MINIO_RELEASE}" server /data
+          mc() { docker run --rm --network gelabber-init-test -e "MC_HOST_$1=$2" \
+            "${LOCAL_MC_IMAGE}:${MC_RELEASE}" "${@:3}"; }
+          root=http://root-ci:root-ci-password@minio:9000
+          deadline=$((SECONDS + 120))
+          until mc r "$root" ready r >/dev/null 2>&1; do
+            [ "$SECONDS" -lt "$deadline" ] || { docker logs minio; exit 1; }
+            sleep 2
+          done
+          mc r "$root" mb r/gelabber r/other
+          docker run --rm --network gelabber-init-test -e "MC_HOST_r=$root" --entrypoint sh \
+            "${LOCAL_MC_IMAGE}:${MC_RELEASE}" -c 'echo old | mc pipe r/gelabber/att/old'
+          init() { docker run --rm --network gelabber-init-test \
+            -v "$PWD/deploy/compose/minio-init.sh:/minio-init.sh:ro" --entrypoint /bin/sh \
+            -e MINIO_ROOT_USER=root-ci -e MINIO_ROOT_PASSWORD=root-ci-password \
+            -e MINIO_BUCKET=gelabber -e MINIO_APP_USER=gelabber-api -e "MINIO_APP_PASSWORD=$1" \
+            "${LOCAL_MC_IMAGE}:${MC_RELEASE}" /minio-init.sh; }
+          init app-ci-password
+          init app-ci-password
+          app=http://gelabber-api:app-ci-password@minio:9000
+          test "$(mc a "$app" cat a/gelabber/att/old)" = old
+          docker run --rm --network gelabber-init-test -e "MC_HOST_a=$app" --entrypoint sh \
+            "${LOCAL_MC_IMAGE}:${MC_RELEASE}" -c 'echo new | mc pipe a/gelabber/att/new && mc rm a/gelabber/att/new'
+          for denied in "ls a/other" "mb a/evil" "rb a/gelabber" "admin user list a" "anonymous set download a/gelabber"; do
+            if mc a "$app" $denied >/dev/null 2>&1; then echo "app user may: $denied"; exit 1; fi
+          done
+          init app-ci-rotated
+          if mc a "$app" cat a/gelabber/att/old >/dev/null 2>&1; then echo "old password still works"; exit 1; fi
+          test "$(mc a http://gelabber-api:app-ci-rotated@minio:9000 cat a/gelabber/att/old)" = old
+          if init short >/dev/null 2>&1; then echo "short password accepted"; exit 1; fi
+          if init root-ci-password >/dev/null 2>&1; then echo "root password accepted"; exit 1; fi
+
+      # publish-minio.yml pushes them in a job of its own.
+      - name: Save the images
+        if: inputs.keep
+        run: docker save -o minio-images.tar "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${LOCAL_MC_IMAGE}:${MC_RELEASE}"
+
+      - name: Upload the images
+        if: inputs.keep
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: minio-images
+          path: minio-images.tar
+          retention-days: 1

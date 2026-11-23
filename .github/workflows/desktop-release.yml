@@ -23,13 +23,25 @@ jobs:
   build:
     # Other releases (the build-deps mirror) are no app version.
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
-    # For its libwebrtc jobs, which store a new package in a release.
-    permissions:
-      contents: write
     uses: ./.github/workflows/desktop-native.yml
     with:
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
     secrets: inherit
+
+  # As in ci.yml: a new libwebrtc package is stored by a job that runs none
+  # of libwebrtc's build code.
+  libwebrtc-store:
+    name: Store libwebrtc packages
+    needs: build
+    if: >-
+      !cancelled() &&
+      (needs.build.outputs.libwebrtc-linux-store != '' || needs.build.outputs.libwebrtc-windows-store != '')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/libwebrtc-store.yml
+    with:
+      linux-key: ${{ needs.build.outputs.libwebrtc-linux-store }}
+      windows-key: ${{ needs.build.outputs.libwebrtc-windows-store }}
 
   # The app tarball becomes a release asset, which the PKGBUILD downloads.
   # `build` includes the third-party notices, so none go out of date.
