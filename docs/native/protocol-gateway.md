@@ -402,7 +402,7 @@ Rust: `backend/api/src/messages/mod.rs:64-108`; TS: `web/src/messages/types.ts:5
 | `attachments` | `[{id, filename, content_type, size}]` | |
 | `reactions` | `[{emoji: string, user_ids: [uuid]}]` | |
 | `gif` | omitted or `{provider, slug, title, width, height, url, still: string\|null}` | |
-| `mentions` | `[uuid]` | |
+| `mentions` | `[uuid]` | as this socket's user may see them: an invisible member `@here` reached is in it only for themselves (messages sent from v0.13 on, GEL-43; older ones keep everyone `@here` reached) |
 | `mention_everyone` | bool | |
 | `reply` | omitted or `{id, deleted, [author:{id,name}], [excerpt], [has_attachment:true], [has_gif:true], [system]}`; deleted original = `{id, deleted:true}` | |
 | `previews` | omitted when empty; `[{url, title?, description?, site_name?, image?:{url,width,height}, youtube_id?}]` | image url always `/api/previews/…` |
@@ -525,7 +525,8 @@ Manual mode (#590, `backend/api/src/presence.rs`): the account's
 `presence_mode` is applied on top of the sockets' aggregate before anyone
 else sees it: `idle` → always `i`, `dnd` → `d`, `invisible` → treated as
 offline (no frame, left out of snapshots and the friend list, and no `x`
-when its last socket closes; `@here` still reaches the account). Sockets
+when its last socket closes; `@here` still reaches the account, which alone
+sees itself among the message's `mentions`). Sockets
 only ever send `o`/`i`. The account's own sockets get the
 mode itself as `pm` and show it instead of what the server reports (an
 invisible account shows "Unsichtbar", not offline). While `invisible` the

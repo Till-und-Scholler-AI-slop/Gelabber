@@ -16,6 +16,7 @@ import {
 } from "@tanstack/react-query";
 import { useRef } from "react";
 
+import { ApiError } from "../api/client.ts";
 import {
   scopeGeneration,
   stampHolds,
@@ -290,6 +291,9 @@ function snapshot(
   };
 }
 
+/** Writes the whole snapshot back, wiping anything newer: only for the burst
+ * writes that check no later write of theirs is in flight. Other writes undo
+ * only their own change (`putBack`, `unpatchChannel`). */
 function restore(
   client: QueryClient,
   userId: string,
@@ -318,6 +322,35 @@ function replaceRow<T extends { id: string }>(
     ? rows.map((row) => (row.id === tmp ? real : row))
     : rows.filter((row) => row.id !== tmp);
 }
+
+const byId = (row: { id: string }) => row.id;
+
+/**
+ * Undoes an optimistic removal that failed: the row goes back after the
+ * nearest row that stood before it and is still there. Rows that came or
+ * went while the request was in flight stay as they are, and a row that is
+ * back already is left alone.
+ */
+function putBack<T>(
+  rows: T[],
+  before: readonly T[],
+  row: T,
+  key: (row: T) => string,
+): T[] {
+  const id = key(row);
+  if (rows.some((r) => key(r) === id)) return rows;
+  for (let i = before.findIndex((r) => key(r) === id) - 1; i >= 0; i--) {
+    const anchor = key(before[i]!);
+    const at = rows.findIndex((r) => key(r) === anchor);
+    if (at >= 0) return [...rows.slice(0, at + 1), row, ...rows.slice(at + 1)];
+  }
+  return [row, ...rows];
+}
+
+/** A removal that failed because its target is already gone (a member who
+ * left, a channel deleted elsewhere): there is nothing to put back. */
+const targetGone = (error: unknown) =>
+  error instanceof ApiError && error.code === "not_found";
 
 // ---------------------------------------------------------------------------
 // Servers
@@ -449,9 +482,57 @@ export function useServerIcon(serverId: string) {
   });
 }
 
-export function useDeleteServer() {
-  const client = useQueryClient();
-  return useMutation({
+/** Deletes and leaves of servers share this key, so the list is read again
+ * only once none of them is in flight. */
+const removeServerKey = ["servers", "remove"];
+const resyncServerList = new Set<string>();
+
+/**
+ * A delete or leave that failed: the server's row goes back into the list.
+ * While it was out, events had nothing to patch: its detail shows the
+ * snapshot again at once and is read anew, and the list is read again once
+ * no other delete or leave is in flight, which an earlier read could undo.
+ */
+function undoRemoveServer(
+  client: QueryClient,
+  ctx: { userId: string; generation: number; snap: Snapshot },
+  serverId: string,
+  error: unknown,
+): void {
+  if (targetGone(error)) return;
+  const { userId, generation, snap } = ctx;
+  const before = snap.list;
+  const row = before?.find((s) => s.id === serverId);
+  if (before && row)
+    patchList(client, userId, generation, (list) =>
+      putBack(list, before, row, byId),
+    );
+  const key = serverKeys.detail(userId, generation, serverId);
+  if (snap.detail && client.getQueryData(key) === undefined) {
+    client.setQueryData(key, snap.detail);
+    void client.invalidateQueries({ queryKey: key });
+  }
+  resyncServerList.add(`${userId}/${generation}`);
+}
+
+function settleRemoveServer(
+  client: QueryClient,
+  ctx: { userId: string; generation: number },
+): void {
+  const id = `${ctx.userId}/${ctx.generation}`;
+  if (
+    client.isMutating({ mutationKey: removeServerKey }) > 1 ||
+    !resyncServerList.delete(id)
+  )
+    return;
+  void client.invalidateQueries({
+    queryKey: serverKeys.list(ctx.userId, ctx.generation),
+  });
+}
+
+export function deleteServerOptions(client: QueryClient) {
+  return mutationOptions({
+    mutationKey: removeServerKey,
     mutationFn: (serverId: string) => remote.deleteServer(serverId),
     onMutate: (serverId) => {
       const stamp = takeStamp();
@@ -462,15 +543,23 @@ export function useDeleteServer() {
     },
     onError: (error, serverId, ctx) => {
       if (!stampHolds(ctx)) return;
-      restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      undoRemoveServer(client, ctx, serverId, error);
       notifyError(error, translate(servers, "error.serverNotDeleted"));
+    },
+    onSettled: (_data, _error, _serverId, ctx) => {
+      if (stampHolds(ctx)) settleRemoveServer(client, ctx);
     },
   });
 }
 
-export function useLeaveServer() {
+export function useDeleteServer() {
   const client = useQueryClient();
-  return useMutation({
+  return useMutation(deleteServerOptions(client));
+}
+
+export function leaveServerOptions(client: QueryClient) {
+  return mutationOptions({
+    mutationKey: removeServerKey,
     mutationFn: (serverId: string) => remote.leaveServer(serverId),
     onMutate: (serverId) => {
       const stamp = takeStamp();
@@ -481,10 +570,18 @@ export function useLeaveServer() {
     },
     onError: (error, serverId, ctx) => {
       if (!stampHolds(ctx)) return;
-      restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      undoRemoveServer(client, ctx, serverId, error);
       notifyError(error, translate(servers, "error.serverNotLeft"));
     },
+    onSettled: (_data, _error, _serverId, ctx) => {
+      if (stampHolds(ctx)) settleRemoveServer(client, ctx);
+    },
   });
+}
+
+export function useLeaveServer() {
+  const client = useQueryClient();
+  return useMutation(leaveServerOptions(client));
 }
 
 /**
@@ -564,9 +661,8 @@ export function useCreateCategory(serverId: string) {
   });
 }
 
-export function useUpdateCategory(serverId: string) {
-  const client = useQueryClient();
-  return useMutation({
+export function updateCategoryOptions(client: QueryClient, serverId: string) {
+  return mutationOptions({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       remote.updateCategory(id, name.trim()),
     onMutate: ({ id, name }) => {
@@ -587,9 +683,19 @@ export function useUpdateCategory(serverId: string) {
       );
       return { ...stamp, snap };
     },
-    onError: (error, _vars, ctx) => {
+    onError: (error, { id, name }, ctx) => {
       if (!stampHolds(ctx)) return;
-      restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      // The old name comes back unless a later rename replaced ours.
+      const was = ctx.snap.detail?.categories.find((c) => c.id === id);
+      if (was)
+        patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
+          ...detail,
+          categories: detail.categories.map((c) =>
+            c.id === id && c.name === name.trim()
+              ? { ...c, name: was.name }
+              : c,
+          ),
+        }));
       notifyError(error, translate(servers, "error.categoryNotSaved"));
     },
     onSuccess: (category, _vars, ctx) => {
@@ -604,9 +710,13 @@ export function useUpdateCategory(serverId: string) {
   });
 }
 
-export function useDeleteCategory(serverId: string) {
+export function useUpdateCategory(serverId: string) {
   const client = useQueryClient();
-  return useMutation({
+  return useMutation(updateCategoryOptions(client, serverId));
+}
+
+export function deleteCategoryOptions(client: QueryClient, serverId: string) {
+  return mutationOptions({
     mutationFn: (id: string) => remote.deleteCategory(id),
     onMutate: (id) => {
       const stamp = takeStamp();
@@ -628,12 +738,33 @@ export function useDeleteCategory(serverId: string) {
       );
       return { ...stamp, snap };
     },
-    onError: (error, _id, ctx) => {
+    onError: (error, id, ctx) => {
       if (!stampHolds(ctx)) return;
-      restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      const before = ctx.snap.detail;
+      const was = before?.categories.find((c) => c.id === id);
+      if (before && was && !targetGone(error)) {
+        // Only the channels we uncategorised and nobody moved since go back.
+        const ours = new Set(
+          before.channels.filter((ch) => ch.category_id === id).map(byId),
+        );
+        patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
+          ...detail,
+          categories: putBack(detail.categories, before.categories, was, byId),
+          channels: detail.channels.map((ch) =>
+            ours.has(ch.id) && ch.category_id === null
+              ? { ...ch, category_id: id }
+              : ch,
+          ),
+        }));
+      }
       notifyError(error, translate(servers, "error.categoryNotDeleted"));
     },
   });
+}
+
+export function useDeleteCategory(serverId: string) {
+  const client = useQueryClient();
+  return useMutation(deleteCategoryOptions(client, serverId));
 }
 
 // ---------------------------------------------------------------------------
@@ -691,9 +822,44 @@ export function useCreateChannel(serverId: string) {
   });
 }
 
-export function useUpdateChannel(serverId: string) {
-  const client = useQueryClient();
-  return useMutation({
+/** A channel as the PATCH will leave it. */
+function patchChannel(ch: Channel, patch: UpdateChannelInput): Channel {
+  const next = { ...ch };
+  if (patch.name !== undefined)
+    next.name =
+      ch.kind === "text" ? slugifyChannelName(patch.name) : patch.name.trim();
+  if (patch.category_id !== undefined) next.category_id = patch.category_id;
+  if (patch.role_ids !== undefined) {
+    next.limited = patch.role_ids.length > 0;
+    next.role_ids = patch.role_ids;
+  }
+  return next;
+}
+
+const sameIds = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((id, i) => id === b[i]);
+
+/** A failed PATCH: each field it set goes back to `was`, unless something
+ * later (another edit, an event) has replaced the value it wrote. */
+function unpatchChannel(
+  ch: Channel,
+  was: Channel,
+  patch: UpdateChannelInput,
+): Channel {
+  const ours = patchChannel(was, patch);
+  const next = { ...ch };
+  if (patch.name !== undefined && ch.name === ours.name) next.name = was.name;
+  if (patch.category_id !== undefined && ch.category_id === ours.category_id)
+    next.category_id = was.category_id;
+  if (patch.role_ids !== undefined && sameIds(ch.role_ids, ours.role_ids)) {
+    next.limited = was.limited;
+    next.role_ids = was.role_ids;
+  }
+  return next;
+}
+
+export function updateChannelOptions(client: QueryClient, serverId: string) {
+  return mutationOptions({
     mutationFn: ({ id, patch }: { id: string; patch: UpdateChannelInput }) =>
       remote.updateChannel(id, patch),
     onMutate: ({ id, patch }) => {
@@ -707,29 +873,23 @@ export function useUpdateChannel(serverId: string) {
         serverId,
         (detail) => ({
           ...detail,
-          channels: detail.channels.map((ch) => {
-            if (ch.id !== id) return ch;
-            const next = { ...ch };
-            if (patch.name !== undefined)
-              next.name =
-                ch.kind === "text"
-                  ? slugifyChannelName(patch.name)
-                  : patch.name.trim();
-            if (patch.category_id !== undefined)
-              next.category_id = patch.category_id;
-            if (patch.role_ids !== undefined) {
-              next.limited = patch.role_ids.length > 0;
-              next.role_ids = patch.role_ids;
-            }
-            return next;
-          }),
+          channels: detail.channels.map((ch) =>
+            ch.id === id ? patchChannel(ch, patch) : ch,
+          ),
         }),
       );
       return { ...stamp, snap };
     },
-    onError: (error, _vars, ctx) => {
+    onError: (error, { id, patch }, ctx) => {
       if (!stampHolds(ctx)) return;
-      restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      const was = ctx.snap.detail?.channels.find((ch) => ch.id === id);
+      if (was)
+        patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
+          ...detail,
+          channels: detail.channels.map((ch) =>
+            ch.id === id ? unpatchChannel(ch, was, patch) : ch,
+          ),
+        }));
       notifyError(error, translate(servers, "error.channelNotSaved"));
     },
     onSuccess: (channel, _vars, ctx) => {
@@ -744,9 +904,13 @@ export function useUpdateChannel(serverId: string) {
   });
 }
 
-export function useDeleteChannel(serverId: string) {
+export function useUpdateChannel(serverId: string) {
   const client = useQueryClient();
-  return useMutation({
+  return useMutation(updateChannelOptions(client, serverId));
+}
+
+export function deleteChannelOptions(client: QueryClient, serverId: string) {
+  return mutationOptions({
     mutationFn: (id: string) => remote.deleteChannel(id),
     onMutate: (id) => {
       const stamp = takeStamp();
@@ -764,12 +928,23 @@ export function useDeleteChannel(serverId: string) {
       );
       return { ...stamp, snap };
     },
-    onError: (error, _id, ctx) => {
+    onError: (error, id, ctx) => {
       if (!stampHolds(ctx)) return;
-      restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      const before = ctx.snap.detail;
+      const was = before?.channels.find((ch) => ch.id === id);
+      if (before && was && !targetGone(error))
+        patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
+          ...detail,
+          channels: putBack(detail.channels, before.channels, was, byId),
+        }));
       notifyError(error, translate(servers, "error.channelNotDeleted"));
     },
   });
+}
+
+export function useDeleteChannel(serverId: string) {
+  const client = useQueryClient();
+  return useMutation(deleteChannelOptions(client, serverId));
 }
 
 // ---------------------------------------------------------------------------
@@ -872,9 +1047,26 @@ export function applyMemberJoined(
   });
 }
 
-export function useKickMember(serverId: string) {
-  const client = useQueryClient();
-  return useMutation({
+/** A kick or ban that failed: the member goes back into the list, unless
+ * they had left already. */
+function undoDropMember(
+  client: QueryClient,
+  ctx: { userId: string; generation: number; snap: Snapshot },
+  serverId: string,
+  memberId: string,
+  error: unknown,
+): void {
+  const before = ctx.snap.detail?.members;
+  const was = before?.find((member) => member.user_id === memberId);
+  if (!before || !was || targetGone(error)) return;
+  patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
+    ...detail,
+    members: putBack(detail.members, before, was, (m) => m.user_id),
+  }));
+}
+
+export function kickMemberOptions(client: QueryClient, serverId: string) {
+  return mutationOptions({
     mutationFn: (memberId: string) => remote.kickMember(serverId, memberId),
     onMutate: (memberId) => {
       const stamp = takeStamp();
@@ -883,17 +1075,21 @@ export function useKickMember(serverId: string) {
       dropMember(client, stamp.userId, stamp.generation, serverId, memberId);
       return { ...stamp, snap };
     },
-    onError: (error, _memberId, ctx) => {
+    onError: (error, memberId, ctx) => {
       if (!stampHolds(ctx)) return;
-      restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      undoDropMember(client, ctx, serverId, memberId, error);
       notifyError(error, translate(servers, "error.memberNotKicked"));
     },
   });
 }
 
-export function useBanMember(serverId: string) {
+export function useKickMember(serverId: string) {
   const client = useQueryClient();
-  return useMutation({
+  return useMutation(kickMemberOptions(client, serverId));
+}
+
+export function banMemberOptions(client: QueryClient, serverId: string) {
+  return mutationOptions({
     mutationFn: (memberId: string) => remote.banMember(serverId, memberId),
     onMutate: (memberId) => {
       const stamp = takeStamp();
@@ -902,9 +1098,9 @@ export function useBanMember(serverId: string) {
       dropMember(client, stamp.userId, stamp.generation, serverId, memberId);
       return { ...stamp, snap };
     },
-    onError: (error, _memberId, ctx) => {
+    onError: (error, memberId, ctx) => {
       if (!stampHolds(ctx)) return;
-      restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      undoDropMember(client, ctx, serverId, memberId, error);
       notifyError(error, translate(servers, "error.memberNotBanned"));
     },
     onSuccess: (_data, _memberId, ctx) => {
@@ -914,6 +1110,11 @@ export function useBanMember(serverId: string) {
       });
     },
   });
+}
+
+export function useBanMember(serverId: string) {
+  const client = useQueryClient();
+  return useMutation(banMemberOptions(client, serverId));
 }
 
 export function useUnbanMember(serverId: string) {

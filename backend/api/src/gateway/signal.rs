@@ -4,7 +4,6 @@
 //! and a voice channel. Frames stay off the chat stream (`op: "e"`).
 //! SDP and ICE are not accepted here — the media socket is the only path.
 
-use axum::extract::ws::{Message, WebSocket};
 use uuid::Uuid;
 
 use super::hub::ConnId;
@@ -16,7 +15,9 @@ use crate::servers::membership;
 use crate::servers::permissions::Permission;
 use crate::state::AppState;
 
-type Sink = futures_util::stream::SplitSink<WebSocket, Message>;
+/// The frames this socket gets back. The caller writes them once the frame's
+/// transaction has ended, so no row lock waits on the client reading them.
+type Out = Vec<ServerFrame>;
 
 struct Call<'a> {
     state: &'a AppState,
@@ -29,7 +30,7 @@ struct Call<'a> {
     track: Option<TrackKind>,
     on: Option<bool>,
     owner: Option<Uuid>,
-    sink: &'a mut Sink,
+    out: &'a mut Out,
 }
 
 pub async fn handle(
@@ -38,13 +39,13 @@ pub async fn handle(
     user: &User,
     conn: ConnId,
     frame: ClientFrame,
-    sink: &mut Sink,
+    out: &mut Out,
 ) -> Result<(), ApiError> {
     let ClientFrame::Sig { s, c, t, k, on, o } = frame else {
-        return send_err(sink, "bad_request", None, None).await;
+        return send_err(out, "bad_request", None, None).await;
     };
     let (Some(server_id), Some(channel_id), Some(kind)) = (s, c, t) else {
-        return send_err(sink, "bad_request", s, c).await;
+        return send_err(out, "bad_request", s, c).await;
     };
 
     let mut call = Call {
@@ -58,7 +59,7 @@ pub async fn handle(
         track: k,
         on,
         owner: o,
-        sink,
+        out,
     };
     if let Err(err) = membership::lock_server_conn(call.db, server_id, false).await {
         return reject(&mut call, err).await;
@@ -93,9 +94,7 @@ async fn join(call: &mut Call<'_>) -> Result<(), ApiError> {
     if snapshot.is_empty() {
         crate::push::voice::started(call.state, call.user, call.server_id, call.channel_id);
     }
-    for event in snapshot {
-        send_sig(call.sink, event).await?;
-    }
+    call.out.extend(snapshot.into_iter().map(ServerFrame::sig));
     Ok(())
 }
 
@@ -127,7 +126,7 @@ async fn require_room(call: &mut Call<'_>) -> Result<bool, ApiError> {
         return Ok(true);
     }
     send_err(
-        call.sink,
+        call.out,
         "bad_request",
         Some(call.server_id),
         Some(call.channel_id),
@@ -230,7 +229,7 @@ async fn watch(call: &mut Call<'_>) -> Result<(), ApiError> {
 
 async fn bad(call: &mut Call<'_>) -> Result<(), ApiError> {
     send_err(
-        call.sink,
+        call.out,
         "bad_request",
         Some(call.server_id),
         Some(call.channel_id),
@@ -246,7 +245,7 @@ async fn reject(call: &mut Call<'_>, err: ApiError) -> Result<(), ApiError> {
         ApiError::ServerBlocked => "server_blocked",
         other => return Err(other),
     };
-    send_err(call.sink, code, Some(call.server_id), Some(call.channel_id)).await
+    send_err(call.out, code, Some(call.server_id), Some(call.channel_id)).await
 }
 
 async fn authorize_join(
@@ -296,15 +295,12 @@ async fn load_channel(
     .ok_or(ApiError::NotFound)
 }
 
-async fn send_sig(sink: &mut Sink, event: super::protocol::SigEvent) -> Result<(), ApiError> {
-    super::conn::send(sink, ServerFrame::sig(event)).await
-}
-
 async fn send_err(
-    sink: &mut Sink,
+    out: &mut Out,
     code: &'static str,
     server_id: Option<Uuid>,
     channel_id: Option<Uuid>,
 ) -> Result<(), ApiError> {
-    super::conn::send(sink, ServerFrame::error(code, server_id, channel_id)).await
+    out.push(ServerFrame::error(code, server_id, channel_id));
+    Ok(())
 }

@@ -575,3 +575,231 @@ async fn a_bad_mode_or_duration_is_refused(pool: PgPool) {
         .await;
     assert_eq!(res.body, json!({ "mode": "auto", "until": null }));
 }
+
+/// A third member, Cem, on the world's server.
+async fn join(pool: &PgPool, owner: &mut Client, server: Uuid) -> Client {
+    let mut cem = Client::new(pool.clone());
+    cem.bootstrap().await;
+    let res = cem.register("cem@example.com", "password123", "Cem").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    let code = res.body["code"].as_str().unwrap().to_owned();
+    let res = cem
+        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    cem
+}
+
+async fn follow(ws: &mut Ws, server: Uuid, channel: Uuid) {
+    send_json(ws, json!({ "op": "s", "s": server, "c": channel })).await;
+    recv_until(ws, |f| f["op"] == "ok" && f["c"] == channel.to_string()).await;
+}
+
+async fn post(client: &mut Client, channel: Uuid, content: &str) -> Value {
+    let res = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "content": content })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    res.body
+}
+
+async fn edit(client: &mut Client, message: &str, content: &str) -> Value {
+    let res = client
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{message}"),
+            Some(json!({ "content": content })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    res.body
+}
+
+/// The mentions of message `id` as `client` reads them in the history.
+async fn listed_mentions(client: &mut Client, channel: Uuid, id: &str) -> Value {
+    let res = client
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    res.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == id)
+        .expect("message listed")["mentions"]
+        .clone()
+}
+
+/// The delta of the `t` event of message `id` as this socket hears it.
+async fn heard(ws: &mut Ws, t: &str, id: &str) -> Value {
+    recv_until(ws, |f| f["op"] == "e" && f["t"] == t && f["i"] == id)
+        .await
+        .0["d"]
+        .clone()
+}
+
+/// `@here` reaches an invisible member (GEL-43), but only they learn that
+/// it did: what others read of the message, live, in the history, on an
+/// edit or in a replay, names only the members shown online.
+#[sqlx::test]
+async fn here_reaches_an_invisible_member_without_showing_them(pool: PgPool) {
+    let World {
+        mut owner,
+        mut member,
+        server,
+        channel,
+    } = setup(pool.clone()).await;
+    let bob = member.user_id().to_owned();
+    let mut cem = join(&pool, &mut owner, server).await;
+    let cem_id = cem.user_id().to_owned();
+    let (addr, _state) = common::serve_ws(pool).await;
+    let mut ada_ws = connect(addr, &owner).await;
+    follow(&mut ada_ws, server, channel).await;
+    let mut bob_ws = connect(addr, &member).await;
+    follow(&mut bob_ws, server, channel).await;
+    let mut cem_ws = connect(addr, &cem).await;
+    follow(&mut cem_ws, server, channel).await;
+    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    recv_until(&mut ada_ws, |f| presence_of(&cem_id)(f) && f["st"] == "o").await;
+    set_mode(&mut member, json!({ "mode": "invisible" })).await;
+    recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
+    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "x").await;
+
+    let shown = json!([cem_id]);
+    let mut own = vec![bob.clone(), cem_id.clone()];
+    own.sort();
+    let own = json!(own);
+    let sent = post(&mut owner, channel, "@here kurz?").await;
+    assert_eq!(sent["mentions"], shown);
+    let id = sent["id"].as_str().unwrap().to_owned();
+    for (ws, expected) in [
+        (&mut ada_ws, &shown),
+        (&mut cem_ws, &shown),
+        (&mut bob_ws, &own),
+    ] {
+        let d = heard(ws, "c", &id).await;
+        assert_eq!(&d["mentions"], expected, "{d}");
+        assert!(d.get("hidden_mentions").is_none(), "{d}");
+    }
+    assert_eq!(listed_mentions(&mut owner, channel, &id).await, shown);
+    assert_eq!(listed_mentions(&mut cem, channel, &id).await, shown);
+    assert_eq!(listed_mentions(&mut member, channel, &id).await, own);
+    let res = member.send(Method::GET, "/api/messages/unread", None).await;
+    let row = res
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["channel_id"] == channel.to_string())
+        .unwrap()
+        .clone();
+    assert_eq!(row["mention_count"], 1, "{row}");
+    let res = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages/search?q=kurz"),
+            None,
+        )
+        .await;
+    assert_eq!(res.body["messages"][0]["mentions"], shown, "{}", res.body);
+    let res = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages/{id}/context"),
+            None,
+        )
+        .await;
+    assert_eq!(res.body["messages"][0]["mentions"], shown, "{}", res.body);
+
+    // An edit keeping `@here` keeps whom it reached, Bob still unseen.
+    let edited = edit(&mut owner, &id, "@here kurz? (Tippfehler)").await;
+    assert_eq!(edited["mentions"], shown);
+    for (ws, expected) in [(&mut ada_ws, &shown), (&mut bob_ws, &own)] {
+        let d = heard(ws, "e", &id).await;
+        assert_eq!(&d["mentions"], expected, "{d}");
+        assert!(d.get("hidden_mentions").is_none(), "{d}");
+    }
+    // Bob's reaction sends the message out again, as everyone reads it,
+    // and his answer still shows him his mention.
+    let res = member
+        .send(
+            Method::PUT,
+            &format!("/api/messages/{id}/reactions/%F0%9F%91%8D"),
+            None,
+        )
+        .await;
+    assert!(res.status.is_success(), "{}", res.body);
+    let d = heard(&mut ada_ws, "e", &id).await;
+    assert_eq!(d["mentions"], shown, "{d}");
+
+    // A socket that resumes from the start replays the same.
+    let mut late = connect(addr, &owner).await;
+    send_json(
+        &mut late,
+        json!({ "op": "s", "s": server, "c": channel, "n": 0 }),
+    )
+    .await;
+    let (_, replayed) = recv_until(&mut late, |f| f["op"] == "ok").await;
+    let events: Vec<&Value> = replayed
+        .iter()
+        .filter(|f| f["op"] == "e" && f["i"] == id.as_str())
+        .collect();
+    assert!(!events.is_empty(), "nothing replayed: {replayed:?}");
+    for event in events {
+        assert_eq!(event["d"]["mentions"], shown, "{event}");
+        assert!(event["d"].get("hidden_mentions").is_none(), "{event}");
+    }
+}
+
+/// A member named in the text is shown as mentioned, invisible or not; an
+/// invisible one counts as offline, reached by the name and not by `@here`.
+/// So an edit that drops the name but keeps `@here` drops the mention, as
+/// for an offline member, and shows nobody that `@here` had reached them
+/// (GEL-43).
+#[sqlx::test]
+async fn an_invisible_member_is_shown_only_while_named(pool: PgPool) {
+    let World {
+        mut owner,
+        mut member,
+        server,
+        channel,
+    } = setup(pool.clone()).await;
+    let bob = member.user_id().to_owned();
+    let (addr, _state) = common::serve_ws(pool).await;
+    let mut ada_ws = connect(addr, &owner).await;
+    follow(&mut ada_ws, server, channel).await;
+    let mut bob_ws = connect(addr, &member).await;
+    follow(&mut bob_ws, server, channel).await;
+    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    set_mode(&mut member, json!({ "mode": "invisible" })).await;
+    recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
+
+    let named = format!("@here <@{bob}> kurz?");
+    let sent = post(&mut owner, channel, &named).await;
+    assert_eq!(sent["mentions"], json!([bob]));
+    let id = sent["id"].as_str().unwrap().to_owned();
+    let edited = edit(&mut owner, &id, "@here kurz?").await;
+    assert_eq!(edited["mentions"], json!([]));
+    assert_eq!(heard(&mut ada_ws, "e", &id).await["mentions"], json!([]));
+    assert_eq!(heard(&mut bob_ws, "e", &id).await["mentions"], json!([]));
+    assert_eq!(listed_mentions(&mut owner, channel, &id).await, json!([]));
+    assert_eq!(listed_mentions(&mut member, channel, &id).await, json!([]));
+    // Named again, Bob is shown again.
+    let edited = edit(&mut owner, &id, &named).await;
+    assert_eq!(edited["mentions"], json!([bob]));
+}

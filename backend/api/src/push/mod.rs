@@ -400,7 +400,7 @@ pub fn announce(state: &AppState, message: &Message, server: Option<Uuid>) {
     let Some(push) = state.push.clone() else {
         return;
     };
-    let names_someone = message.mention_everyone || !message.mentions.is_empty();
+    let names_someone = message.mention_everyone || !message.mentioned().is_empty();
     // Whether this message may go to the members who listen to every
     // message of its channel; a mention goes out either way.
     let ordinary = server.is_some() && ordinary_may_push(state, message.channel_id);
@@ -923,7 +923,10 @@ async fn send_recall(
 /// its channel: the names were resolved before the message was stored, and
 /// someone removed since gets no preview.
 async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<Uuid>, ApiError> {
-    if message.mentions.is_empty() {
+    // Hidden mentions (GEL-43) too: hidden from other readers, not from
+    // whom they name.
+    let mentioned = message.mentioned();
+    if mentioned.is_empty() {
         return Ok(Vec::new());
     }
     Ok(sqlx::query_scalar(
@@ -933,7 +936,7 @@ async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<
          AND m.user_id<>$3 AND channel_visible_to($4, m.user_id)",
     )
     .bind(server)
-    .bind(&message.mentions)
+    .bind(&mentioned)
     .bind(message.author.id)
     .bind(message.channel_id)
     .fetch_all(&state.db)

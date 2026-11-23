@@ -51,6 +51,7 @@ pub const API_RATE_MSG_PER_MIN: &str = "API_RATE_MSG_PER_MIN";
 pub const API_RATE_UPLOAD_PER_HOUR: &str = "API_RATE_UPLOAD_PER_HOUR";
 pub const API_UPLOAD_QUOTA_BYTES_PER_DAY: &str = "API_UPLOAD_QUOTA_BYTES_PER_DAY";
 pub const API_RATE_LOGIN_FAILURES_PER_ACCOUNT: &str = "API_RATE_LOGIN_FAILURES_PER_ACCOUNT";
+pub const API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING: &str = "API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING";
 pub const API_RATE_GIF_PER_MIN: &str = "API_RATE_GIF_PER_MIN";
 pub const API_RATE_GIF_MEDIA_PER_MIN: &str = "API_RATE_GIF_MEDIA_PER_MIN";
 pub const KLIPY_API_KEY: &str = "KLIPY_API_KEY";
@@ -1072,6 +1073,10 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         Some(raw) => parse_u32_allow_zero(API_RATE_LOGIN_FAILURES_PER_ACCOUNT, &raw)?,
         None => defaults.login_failures_per_account,
     };
+    let login_failures_ceiling = match get(API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING) {
+        Some(raw) => parse_u32_allow_zero(API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING, &raw)?,
+        None => defaults.login_failures_ceiling,
+    };
     let gif_per_min = match get(API_RATE_GIF_PER_MIN) {
         Some(raw) => parse_u32_allow_zero(API_RATE_GIF_PER_MIN, &raw)?,
         None => defaults.gif_per_min,
@@ -1111,6 +1116,7 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         upload_per_hour,
         upload_bytes_per_day,
         login_failures_per_account,
+        login_failures_ceiling,
         gif_per_min,
         gif_media_per_min,
         preview_per_min,
@@ -1447,8 +1453,10 @@ mod tests {
             (API_RATE_AUTH_PER_MIN, "3"),
             (API_UPLOAD_QUOTA_BYTES_PER_DAY, "0"),
             (API_RATE_GIF_MEDIA_PER_MIN, "500"),
+            (API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING, "0"),
         ]))
         .expect("valid config");
+        assert_eq!(config.limits.login_failures_ceiling, 0);
         assert_eq!(config.limits.auth_per_min, 3);
         assert_eq!(config.limits.upload_bytes_per_day, 0);
         assert_eq!(config.limits.gif_media_per_min, 500);
