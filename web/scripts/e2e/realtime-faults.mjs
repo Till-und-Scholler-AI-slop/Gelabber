@@ -113,16 +113,26 @@ export async function realtimeFaultScenarios(h, f, runtime) {
         }
         stage = "replay-gap";
         await visible(f.member, "E2E overflow 11");
-        const afterReplay = await snapshot(f.member);
-        check(
-          counter(afterReplay, "gaps") > counter(before, "gaps"),
-          "replay-overflow-not-exercised",
-          {
+        // Back online, the history query refetches by itself and can show
+        // the missed rows while the gateway socket is still connecting, so
+        // the resume's gap comes later. Wait for it, do not sample once.
+        let afterReplay;
+        try {
+          afterReplay = await until(
+            () => snapshot(f.member),
+            (s) => counter(s, "gaps") > counter(before, "gaps"),
+            "replay-overflow-not-exercised",
+          );
+        } catch (error) {
+          if (!(error instanceof CheckFailure)) throw error;
+          throw new CheckFailure("replay-overflow-not-exercised", {
             gapsBefore: counter(before, "gaps"),
-            gaps: counter(afterReplay, "gaps"),
+            gaps: error.metrics.last
+              ? counter(error.metrics.last, "gaps")
+              : null,
             outage,
-          },
-        );
+          });
+        }
         // Only the topic created by this scenario. No FLUSHALL/FLUSHDB/global keys.
         stage = "own-topic-reset";
         await runtime.resetTopic(c.id);
