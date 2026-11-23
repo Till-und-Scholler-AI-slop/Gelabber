@@ -71,7 +71,8 @@ async fn presign_named(client: &mut Client, channel: &str, filename: &str) -> Va
 }
 
 /// Smallest bytes that pass the content check for `image/png` (#255).
-const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+/// A PNG header declaring 64×64; the rest is never decoded.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x40\0\0\0\x40\x08\x06\0\0\0\0\0\0\0";
 
 /// A picture: shown inline, unlike the text files the quota tests use.
 async fn presign_png(client: &mut Client, channel: &str, filename: &str) -> Value {

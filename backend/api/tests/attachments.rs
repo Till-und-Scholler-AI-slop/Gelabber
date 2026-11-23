@@ -95,7 +95,8 @@ async fn presign_ok(
 }
 
 /// Smallest bytes that pass the content check for `image/png`.
-const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+/// A PNG header declaring 64×64; the rest is never decoded.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x40\0\0\0\x40\x08\x06\0\0\0\0\0\0\0";
 
 async fn put_object(client: &Client, attachment_id: &str, content_type: &str, bytes: &[u8]) {
     let key = format!("att/{attachment_id}");
@@ -364,10 +365,12 @@ async fn jpeg_png_and_webp_bind_for_the_other_member(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool).await;
     let server = server_with_member(&mut owner, &mut member).await;
     let channel_id = text_channel_id(&server);
+    use gelabber_api::image_size::fixtures;
+    let (jpeg, webp) = (fixtures::jpeg(64, 64), fixtures::webp(64, 64));
     let images: &[(&str, &str, &[u8])] = &[
-        ("cat.jpg", "image/jpeg", &[0xff, 0xd8, 0xff, 0xd9]),
+        ("cat.jpg", "image/jpeg", &jpeg),
         ("cat.png", "image/png", PNG),
-        ("cat.webp", "image/webp", b"RIFF\x04\0\0\0WEBP"),
+        ("cat.webp", "image/webp", &webp),
     ];
     for (filename, content_type, bytes) in images {
         let signed = presign_ok(
@@ -786,7 +789,6 @@ async fn an_image_too_large_to_decode_is_refused(pool: PgPool) {
     for (name, content_type, bytes) in [
         ("edge.png", "image/png", fixtures::png(16384, 4096)),
         ("square.png", "image/png", fixtures::png(8192, 8192)),
-        ("short.png", "image/png", PNG.to_vec()),
         ("comments.jpg", "image/jpeg", late_jpeg),
         ("comments.gif", "image/gif", gif_with_late_frame(640, 480)),
     ] {
@@ -794,6 +796,47 @@ async fn an_image_too_large_to_decode_is_refused(pool: PgPool) {
         let (status, body) = post_files(&mut owner, &channel_id, &[id]).await;
         assert_eq!(status, StatusCode::CREATED, "{name}: {body}");
     }
+}
+
+/// GEL-45: a picture whose size even the whole file does not show could
+/// make every viewer's browser decode any size, so it is refused as not
+/// matching its type, again on a retry. A file shown as a download is not
+/// measured.
+#[sqlx::test]
+async fn a_picture_without_a_readable_size_is_refused(pool: PgPool) {
+    let (mut owner, _) = two_users(pool).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    // A JPEG cut off before its frame header, and a PNG before its size.
+    let mut cut_jpeg = vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
+    cut_jpeg.extend_from_slice(b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
+    let short_png = PNG[..16].to_vec();
+    for (name, content_type, bytes) in [
+        ("cut.jpg", "image/jpeg", cut_jpeg),
+        ("short.png", "image/png", short_png),
+    ] {
+        let id = upload(&mut owner, &channel_id, name, content_type, &bytes).await;
+        for _ in 0..2 {
+            let (status, body) =
+                post_files(&mut owner, &channel_id, std::slice::from_ref(&id)).await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{name}: {body}");
+            assert_eq!(
+                body["fields"]["attachment_ids.0"], "mismatch",
+                "{name}: {body}"
+            );
+        }
+    }
+    let page = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel_id}/messages"),
+            None,
+        )
+        .await;
+    assert!(page.body["messages"].as_array().unwrap().is_empty());
+    let id = upload(&mut owner, &channel_id, "notes.txt", "text/plain", b"hello").await;
+    let (status, body) = post_files(&mut owner, &channel_id, &[id]).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }
 
 /// A GIF with a 1×1 screen whose first frame, of the given size, comes

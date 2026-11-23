@@ -89,6 +89,9 @@ pub enum Prepared {
     /// Its whole file declares a canvas past `sniff::IMAGE_BOUNDS`.
     /// Nothing was written.
     TooManyPixels,
+    /// A picture shown inline whose size even the whole file does not
+    /// prove. Nothing was written.
+    Unreadable,
 }
 
 /// Strip the original's privacy metadata and note its size as shown. Runs
@@ -99,9 +102,10 @@ pub enum Prepared {
 /// push a JPEG's frame header or a GIF's first frame past it (GEL-45).
 /// Here the whole file is at hand, so the pixel bounds are checked again
 /// on it: clients show a picture without thumbnails as the original.
-/// A size even the whole file does not prove (a truncated file, or a
-/// layout `image_size` refuses, such as a stray byte between JPEG
-/// segments that libjpeg skips) is still let through.
+/// A picture shown inline (`validate::is_image`) whose size even the whole
+/// file does not prove is refused as well: a truncated file, or a layout
+/// `image_size` refuses, such as a stray byte between JPEG segments that
+/// libjpeg skips. Browsers may still decode it at any size.
 pub async fn prepare(
     db: &PgPool,
     store: &ObjectStore,
@@ -122,17 +126,21 @@ pub async fn prepare(
     let read_len = bytes.len() as i64;
     let measured = tokio::task::spawn_blocking(move || {
         if super::sniff::too_many_pixels(&kind, &bytes) {
-            return None;
+            return Err(Prepared::TooManyPixels);
         }
         let shown = metadata::display_size(&kind, &bytes);
+        if shown.is_none() && super::validate::is_image(&kind) {
+            return Err(Prepared::Unreadable);
+        }
         let animated = metadata::animated(&kind, &bytes);
         let stripped = metadata::strip(&kind, &bytes);
-        Some((shown, animated, stripped))
+        Ok((shown, animated, stripped))
     })
     .await
     .map_err(|err| ApiError::Internal(format!("picture metadata: {err}")))?;
-    let Some((shown, animated, stripped)) = measured else {
-        return Ok(Prepared::TooManyPixels);
+    let (shown, animated, stripped) = match measured {
+        Ok(measured) => measured,
+        Err(refused) => return Ok(refused),
     };
     let stored_size = match stripped {
         Some(clean) => {

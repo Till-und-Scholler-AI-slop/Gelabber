@@ -30,7 +30,8 @@ pub fn prefix_len(content_type: &str) -> usize {
 
 /// Whether an image declares a canvas past the bounds. A size `head` does
 /// not show is let through: the check cannot prove it. On a prefix that is
-/// only a first pass; `media::prepare` asks again with the whole file.
+/// only a first pass; `media::prepare` asks again with the whole file and
+/// refuses a picture whose size even that does not show.
 pub fn too_many_pixels(content_type: &str, head: &[u8]) -> bool {
     let size = match content_type {
         "image/gif" => gif_size(head),
