@@ -96,6 +96,14 @@ export async function watchSource(
       .first()
       .click({ timeout: Math.max(1, deadlineEpochMs - Date.now()) });
 }
+/** The video `progress` measures. Every Live in the room has a tile with a
+ * video, an unwatched one paused and empty, and two Lives' tiles come in no
+ * fixed order: with `publisher`, only that person's tile counts. */
+export function measuredVideo(s, kind, publisher) {
+  return s.videos.find(
+    (v) => v.kind === kind && (!publisher || v.expectedPublisher === true),
+  );
+}
 export async function progress(
   actor,
   {
@@ -108,11 +116,19 @@ export async function progress(
 ) {
   const start = Date.now();
   const deadline = start + budget;
+  if (publisher)
+    await nativeEvaluate(
+      actor,
+      (name) => {
+        window.__e2e.expectedLiveName = name;
+      },
+      publisher,
+    );
   await watchSource(actor, kind, { deadlineEpochMs: deadline, publisher });
   const first = await until(
     () => snapshot(actor),
     (s) => {
-      const video = s.videos.find((v) => v.kind === kind);
+      const video = measuredVideo(s, kind, publisher);
       return (
         decoded(s) > 0 &&
         // Any simulcast layer of the 640×360 fixture (mediasoupConnection.ts).
@@ -126,11 +142,11 @@ export async function progress(
     Math.max(0, deadline - Date.now()),
   );
   const firstFrameMs = Date.now() - start;
-  const initial = first.videos.find((v) => v.kind === kind);
+  const initial = measuredVideo(first, kind, publisher);
   const last = await until(
     () => snapshot(actor),
     (s) => {
-      const video = s.videos.find((v) => v.kind === kind);
+      const video = measuredVideo(s, kind, publisher);
       return (
         decoded(s) > decoded(first) + 3 &&
         sourceMatches(video, color) &&

@@ -1457,6 +1457,65 @@ async fn do_not_disturb_holds_back_every_push_until_it_ends(pool: PgPool) {
     assert_eq!(bob_browser.open(&hit)["body"], "laut");
 }
 
+/// `@here` pushes to an invisible member it reached (GEL-43), although the
+/// message others read does not name them.
+#[sqlx::test]
+async fn here_pushes_to_an_invisible_member(pool: PgPool) {
+    let World {
+        state,
+        mut a,
+        mut b,
+        server,
+        channel,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    // Only what names Bob pushes, not every message of the server.
+    level(&mut b, "servers", &server, json!("mentions")).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = app(state.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .unwrap();
+    let r = b
+        .send(
+            Method::PUT,
+            "/api/me/presence",
+            Some(json!({"mode": "invisible"})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let mut ws = connect(addr, &b).await;
+    ws.send(Message::Text(
+        json!({"op":"s","s":server}).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    let server_id = Uuid::parse_str(&server).unwrap();
+    let bob = Uuid::parse_str(b.user_id()).unwrap();
+    for _ in 0..100 {
+        let present = state.gateway.present_members(server_id).await.unwrap();
+        if present.iter().any(|entry| entry.u == bob) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let message = post(&mut a, &channel, "@here kurz?").await;
+    assert_eq!(message["mentions"], json!([]));
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    assert_eq!(browser.open(&hit)["body"], "@here kurz?");
+    drop(ws);
+}
+
 /// Do not disturb (#590) holds back friend and message requests (#563)
 /// too.
 #[sqlx::test]
