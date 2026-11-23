@@ -630,3 +630,106 @@ async fn account_usable(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bo
     .await?;
     Ok(found.is_some())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::gateway::Topic;
+
+    fn state(pool: PgPool) -> AppState {
+        let config = crate::Config::from_source(|key| match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+            "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".into()),
+            "REDIS_URL" => Some(std::env::var("REDIS_URL").unwrap()),
+            _ => None,
+        })
+        .unwrap();
+        AppState::with_pool(&config, pool).unwrap()
+    }
+
+    async fn user(pool: &PgPool, name: &str) -> Uuid {
+        crate::auth::user::insert(
+            pool,
+            &format!("{name}@example.test"),
+            name,
+            "unused",
+            Default::default(),
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    /// The member events (`k`) about `user` on the server's topic, oldest
+    /// first.
+    async fn member_events(state: &AppState, server_id: Uuid, user: Uuid) -> Vec<String> {
+        let mut log = state
+            .gateway
+            .load_log(Topic::of(server_id, None))
+            .await
+            .unwrap();
+        log.sort_by_key(|event| event.n);
+        log.into_iter()
+            .filter(|event| event.i == Some(user))
+            .map(|event| event.d.as_ref().unwrap()["k"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// GEL-68: a leave (kick, ban) holds the server row while it removes the
+    /// member and publishes its event. The event of a join that committed
+    /// before it, still on its way, waits for that, finds the member gone
+    /// and sends nothing: the members never get "l" and then "j".
+    #[sqlx::test]
+    async fn a_late_join_event_never_follows_the_leave(pool: PgPool) {
+        let state = state(pool.clone());
+        let ada = user(&pool, "ada").await;
+        let lena = user(&pool, "lena").await;
+        let server_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (name, owner_id, member_permissions) \
+             VALUES ('Keller', $1, $2) RETURNING id",
+        )
+        .bind(ada)
+        .bind(Permissions::DEFAULT_MEMBER.bits())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // Lena's join has committed; its event is still to go.
+        sqlx::query("INSERT INTO server_members (server_id, user_id) VALUES ($1, $2), ($1, $3)")
+            .bind(server_id)
+            .bind(ada)
+            .bind(lena)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Her second tab leaves the way `leave_server` does: the row, the
+        // removal, the event, and the commit last.
+        let mut leave = membership::lock_server(&pool, server_id, true)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM server_members WHERE server_id = $1 AND user_id = $2")
+            .bind(server_id)
+            .bind(lena)
+            .execute(&mut *leave)
+            .await
+            .unwrap();
+        publish_left(&state, server_id, lena).await;
+
+        let joined = tokio::spawn({
+            let state = state.clone();
+            async move { publish_joined(&state, server_id, lena).await }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(member_events(&state, server_id, lena).await, ["l"]);
+        assert!(
+            !joined.is_finished(),
+            "the join's event waits for the leave holding the server"
+        );
+        leave.commit().await.unwrap();
+        joined.await.unwrap();
+
+        assert_eq!(member_events(&state, server_id, lena).await, ["l"]);
+    }
+}
