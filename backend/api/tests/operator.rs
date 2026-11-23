@@ -418,6 +418,116 @@ async fn disabling_ends_every_session_and_refuses_sign_in(pool: PgPool) {
     );
 }
 
+/// The account is disabled together with the end of its sessions, or not
+/// at all (#694): never disabled with sessions left that sockets and voice
+/// leases still renew on.
+#[sqlx::test]
+async fn disabling_is_refused_whole_when_its_sessions_cannot_end(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let tom = registered(&state, TOM, "Tom").await;
+    let tom_id: Uuid = tom.user_id().parse().unwrap();
+    sqlx::query(
+        "CREATE FUNCTION refuse_session_delete() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RAISE EXCEPTION 'sessions cannot be deleted'; END $$",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_session_delete BEFORE DELETE ON sessions \
+         FOR EACH ROW EXECUTE FUNCTION refuse_session_delete()",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let res = disable(&mut lena, tom.user_id(), json!({})).await;
+    assert_eq!(
+        res.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        res.body
+    );
+    let (disabled, sessions): (bool, i64) = sqlx::query_as(
+        "SELECT disabled_at IS NOT NULL, \
+             (SELECT COUNT(*) FROM sessions WHERE user_id = $1) \
+         FROM users WHERE id = $1",
+    )
+    .bind(tom_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((disabled, sessions), (false, 1));
+    assert!(audit_rows(&pool).await.is_empty());
+}
+
+/// Waits until a statement of this test's database waits on a row lock.
+async fn lock_waiter(pool: &PgPool) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                 WHERE datname = current_database() AND wait_event_type = 'Lock')",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("a statement waits on a lock");
+}
+
+/// A socket's frame holds its session row and may then lock the user row
+/// (`presence::restore`), the reverse of disabling's order. When the two
+/// meet in a deadlock and Postgres aborts the disable, it tries again.
+#[sqlx::test]
+async fn disabling_tries_again_after_a_deadlock_with_a_socket(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let tom = registered(&state, TOM, "Tom").await;
+    let tom_id: Uuid = tom.user_id().parse().unwrap();
+
+    // The socket's side: its session row first.
+    let mut socket = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM sessions WHERE user_id = $1 FOR SHARE")
+        .bind(tom_id)
+        .execute(&mut *socket)
+        .await
+        .unwrap();
+    let id = tom.user_id().to_owned();
+    let disabling = tokio::spawn(async move { disable(&mut lena, &id, json!({})).await });
+    // Disabling holds the user row and waits to delete that session.
+    lock_waiter(&pool).await;
+    // Now the user row: Postgres finds the cycle and aborts the disable,
+    // which waited first.
+    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE")
+        .bind(tom_id)
+        .execute(&mut *socket)
+        .await
+        .unwrap();
+    socket.commit().await.unwrap();
+
+    let res = disabling.await.unwrap();
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let (disabled, sessions): (bool, i64) = sqlx::query_as(
+        "SELECT disabled_at IS NOT NULL, \
+             (SELECT COUNT(*) FROM sessions WHERE user_id = $1) \
+         FROM users WHERE id = $1",
+    )
+    .bind(tom_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((disabled, sessions), (true, 0));
+    assert_eq!(audit_rows(&pool).await.len(), 1);
+}
+
 #[sqlx::test]
 async fn operators_cannot_disable_themselves_or_each_other(pool: PgPool) {
     let mut state = operator_state(pool.clone());

@@ -15,6 +15,11 @@ use crate::i18n::Locale;
 /// Redis Pub/Sub channel / replay-key prefix. Keep it short.
 pub const REDIS_PREFIX: &str = "gb:";
 
+/// The key of a message event's delta that lists whom it mentions without
+/// showing it to others (GEL-43). It stays on the server: each socket gets
+/// the event through [`ServerFrame::for_user`].
+pub const HIDDEN_MENTIONS: &str = "hidden_mentions";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Topic {
     Server(Uuid),
@@ -786,6 +791,52 @@ impl ServerFrame {
         }
     }
 
+    /// The frame as `user` may read it. A message event names under
+    /// [`HIDDEN_MENTIONS`] whom it mentions without showing it to others
+    /// (GEL-43): that list never goes out, and `user`, when on it, reads
+    /// themselves among the `mentions`, in their stored (ascending) order.
+    pub fn for_user(self, user: Uuid) -> Self {
+        let (t, s, c, n, ep, i, d, r) = match self {
+            Self::Event {
+                t,
+                s,
+                c,
+                n,
+                ep,
+                i,
+                d: Some(d),
+                r,
+            } if d.get(HIDDEN_MENTIONS).is_some() => (t, s, c, n, ep, i, d, r),
+            frame => return frame,
+        };
+        let mut delta = (*d).clone();
+        let me = user.to_string();
+        let hidden = delta
+            .as_object_mut()
+            .and_then(|fields| fields.remove(HIDDEN_MENTIONS));
+        let own = hidden
+            .as_ref()
+            .and_then(Value::as_array)
+            .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(me.as_str())));
+        if own && let Some(mentions) = delta.get_mut("mentions").and_then(Value::as_array_mut) {
+            let at = mentions
+                .iter()
+                .position(|id| id.as_str().is_some_and(|id| id > me.as_str()))
+                .unwrap_or(mentions.len());
+            mentions.insert(at, Value::String(me));
+        }
+        Self::Event {
+            t,
+            s,
+            c,
+            n,
+            ep,
+            i,
+            d: Some(Arc::new(delta)),
+            r,
+        }
+    }
+
     pub fn presence_snap(server_id: Uuid, snap: Vec<PresenceEntry>) -> Self {
         Self::Presence {
             s: server_id,
@@ -996,6 +1047,42 @@ mod tests {
         assert!(!json.contains("kind"));
         assert!(!json.contains("server_id"));
         assert!(!json.contains("payload"));
+    }
+
+    /// Hidden mentions (GEL-43) never go out; the one they name reads
+    /// themselves among the mentions, in order.
+    #[test]
+    fn hidden_mentions_reach_only_whom_they_name() {
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let event = |d: serde_json::Value| {
+            ServerFrame::event(Event {
+                t: EventKind::C,
+                s: Uuid::from_u128(9),
+                c: Some(Uuid::from_u128(8)),
+                n: 1,
+                ep: None,
+                r: None,
+                i: Some(Uuid::from_u128(7)),
+                d: Some(Arc::new(d)),
+            })
+        };
+        let delta = |frame: ServerFrame| match frame {
+            ServerFrame::Event { d: Some(d), .. } => (*d).clone(),
+            other => panic!("not an event: {other:?}"),
+        };
+        let sent = event(serde_json::json!({"mentions": [a, c], "hidden_mentions": [b]}));
+        assert_eq!(
+            delta(sent.clone().for_user(b)),
+            serde_json::json!({"mentions": [a, b, c]})
+        );
+        assert_eq!(
+            delta(sent.for_user(a)),
+            serde_json::json!({"mentions": [a, c]})
+        );
+        // Anything else passes untouched.
+        let plain = event(serde_json::json!({"mentions": [a]}));
+        assert_eq!(plain.clone().for_user(a), plain);
+        assert_eq!(ServerFrame::Heartbeat.for_user(a), ServerFrame::Heartbeat);
     }
 
     /// The publish template as `EventLog::publish_revision` builds it: the

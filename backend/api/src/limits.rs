@@ -5,9 +5,13 @@
 //! address, IPv6 per /64; everything else by the account of the session,
 //! which the gate resolves once for the handler as well, or by the address
 //! when the cookie matches no live session.
-//! Password guesses are also counted per account ([`login_attempt`] /
-//! [`login_succeeded`]), so spreading guesses over many addresses does not
-//! multiply them. Upload *bytes* are a durable daily quota in Postgres so
+//! Password guesses are also counted per account and guesser
+//! ([`login_attempt`] / [`login_succeeded`]): a stranger's wrong guesses
+//! use up their own address (IPv6 per /56), not the owner's way in
+//! (GEL-44). A much higher ceiling per account keeps guesses spread over
+//! many addresses from multiplying; addresses the account signed in from
+//! are exempt from it.
+//! Upload *bytes* are a durable daily quota in Postgres so
 //! a restart cannot reset them. Request windows live in process — v1 is a
 //! single node.
 //!
@@ -15,8 +19,9 @@
 //! `quota_exceeded`) and `Retry-After`. The UI maps those codes; it does not
 //! spin.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -36,7 +41,16 @@ pub const API_PER_MIN: u32 = 180;
 pub const MSG_PER_MIN: u32 = 60;
 pub const UPLOAD_PER_HOUR: u32 = 60;
 pub const UPLOAD_BYTES_PER_DAY: u64 = 1024 * 1024 * 1024; // 1 GiB
+/// Failed password checks per account and guesser (client address, or all
+/// signed-in sessions together) within [`LOGIN_FAILURE_WINDOW`].
 pub const LOGIN_FAILURES_PER_ACCOUNT: u32 = 10;
+/// Failed sign-ins per account within [`LOGIN_FAILURE_WINDOW`] from all
+/// addresses together, except known ones (see [`KNOWN_ADDRESS_GRACE`]).
+pub const LOGIN_FAILURES_ACCOUNT_CEILING: u32 = 100;
+/// An address the account signed in from with its password skips the
+/// ceiling for the session lifetime plus this long, counted from its latest
+/// such sign-in: the owner signs in there again when that session ends.
+pub const KNOWN_ADDRESS_GRACE: Duration = Duration::from_secs(30 * 24 * 3600);
 /// GIF search, trending and sends per user. Each one is a request against
 /// the operator's Klipy key, whose testing tier allows 100 per hour in total.
 pub const GIF_PER_MIN: u32 = 30;
@@ -107,9 +121,12 @@ pub struct Limits {
     pub msg_per_min: u32,
     pub upload_per_hour: u32,
     pub upload_bytes_per_day: u64,
-    /// Failed logins per account within [`LOGIN_FAILURE_WINDOW`]; `0` turns
-    /// the per-account count off.
+    /// Failed password checks per account and guesser within
+    /// [`LOGIN_FAILURE_WINDOW`]; `0` turns this count off.
     pub login_failures_per_account: u32,
+    /// Failed sign-ins per account from all unknown addresses together
+    /// within [`LOGIN_FAILURE_WINDOW`]; `0` turns the ceiling off.
+    pub login_failures_ceiling: u32,
     /// GIF search/trending/send requests per user per minute (`0` = off).
     pub gif_per_min: u32,
     /// GIF media loads through the relay per user per minute (`0` = off).
@@ -128,6 +145,7 @@ impl Default for Limits {
             upload_per_hour: UPLOAD_PER_HOUR,
             upload_bytes_per_day: UPLOAD_BYTES_PER_DAY,
             login_failures_per_account: LOGIN_FAILURES_PER_ACCOUNT,
+            login_failures_ceiling: LOGIN_FAILURES_ACCOUNT_CEILING,
             gif_per_min: GIF_PER_MIN,
             gif_media_per_min: GIF_MEDIA_PER_MIN,
             preview_per_min: PREVIEW_PER_MIN,
@@ -153,8 +171,8 @@ impl Inner {
 
     /// Makes room for a new key once the map holds `hard` of them: expired
     /// windows go first; if that is not enough, the eighth of the keys whose
-    /// windows end soonest, the per-account counts (login failures, account
-    /// mail) last. Anyone holding an IPv6 prefix can mint address keys,
+    /// windows end soonest, the per-account counts (login failures, known
+    /// addresses, account mail) last. Anyone holding an IPv6 prefix can mint address keys,
     /// hour-long upload windows among them, one per /64, and such a flood
     /// must not end a lockout early. Per-account counts only
     /// grow through the per-address auth window, so filling the map with them
@@ -263,14 +281,7 @@ impl Limiter {
             return Ok(());
         }
         let key = format!("{bucket}:{id}");
-        let mut inner = self.inner.lock().unwrap_or_else(|err| err.into_inner());
-        if inner.windows.len() > self.soft && now >= inner.next_sweep {
-            inner.sweep(now);
-        }
-        // Only a new key pays for room; a known one never scans the map.
-        if inner.windows.len() >= self.hard && !inner.windows.contains_key(&key) {
-            inner.make_room(now, self.hard);
-        }
+        let mut inner = self.with_room_for(&key, now);
         let slot = inner.windows.entry(key).or_insert(Window {
             count: 0,
             reset_at: now + window,
@@ -287,13 +298,47 @@ impl Limiter {
         Ok(())
     }
 
+    /// The map, locked, with room for `key`.
+    fn with_room_for(&self, key: &str, now: Instant) -> std::sync::MutexGuard<'_, Inner> {
+        let mut inner = self.inner.lock().unwrap_or_else(|err| err.into_inner());
+        if inner.windows.len() > self.soft && now >= inner.next_sweep {
+            inner.sweep(now);
+        }
+        // Only a new key pays for room; a known one never scans the map.
+        if inner.windows.len() >= self.hard && !inner.windows.contains_key(key) {
+            inner.make_room(now, self.hard);
+        }
+        inner
+    }
+
+    /// Sets a mark: a window of one hit that ends `window` from now, also
+    /// when one was still running. [`Self::blocked`] with a max of 1 sees it.
+    pub fn mark(&self, bucket: &str, id: &str, window: Duration) {
+        self.mark_at(bucket, id, window, Instant::now());
+    }
+
+    fn mark_at(&self, bucket: &str, id: &str, window: Duration, now: Instant) {
+        let key = format!("{bucket}:{id}");
+        let mut inner = self.with_room_for(&key, now);
+        inner.windows.insert(
+            key,
+            Window {
+                count: 1,
+                reset_at: now + window,
+            },
+        );
+    }
+
     /// Like [`Self::hit`] once the window is full, without recording a hit.
     pub fn blocked(&self, bucket: &str, id: &str, max: u32) -> Option<u64> {
+        self.blocked_at(bucket, id, max, Instant::now())
+    }
+
+    fn blocked_at(&self, bucket: &str, id: &str, max: u32, now: Instant) -> Option<u64> {
         if max == 0 {
             return None;
         }
         let key = format!("{bucket}:{id}");
-        let now = Instant::now();
         let inner = self.inner.lock().unwrap_or_else(|err| err.into_inner());
         let slot = inner.windows.get(&key).filter(|slot| now < slot.reset_at)?;
         (slot.count >= max).then(|| {
@@ -516,25 +561,129 @@ fn check(
         .map_err(|retry| (bucket, retry))
 }
 
+/// Who checks a password, which decides the counts a wrong one lands in.
+#[derive(Debug, Clone, Copy)]
+pub enum Guesser<'a> {
+    /// Anyone, from this client address ([`client_ip`]): sign-in and the
+    /// confirmation link.
+    Address(&'a str),
+    /// A signed-in session of the account: password change, account
+    /// deletion, linking a provider. All of them share one count, apart from
+    /// sign-in: a session opened through a provider or a reset link brings no
+    /// fresh allowance, and their guesses cannot keep the owner from signing
+    /// in.
+    Session,
+}
+
+/// A guess [`login_attempt`] counted. Hand it to [`login_succeeded`] when
+/// the password was right.
+#[must_use]
+pub struct Guess {
+    account: String,
+    bucket: &'static str,
+    /// The key of the guesser's own count in `bucket`; for an address also
+    /// the key of its known mark.
+    own: String,
+    from_address: bool,
+    /// Whether the guess also counted against the account's ceiling.
+    ceiling: bool,
+}
+
 /// Counts one password guess against `email`, known account or not, before
 /// the hash runs: guesses that arrive together cannot all pass a check made
 /// before the first failure is recorded. Refuses one past the limit like
 /// every other limit (`429 rate_limited`, `Retry-After`), at no Argon2 run.
-/// A guess that turns out right is taken back with [`login_succeeded`].
-pub fn login_attempt(state: &AppState, email: &str) -> Result<(), ApiError> {
-    let max = state.limits.login_failures_per_account;
-    state
-        .limiter
-        .hit("login", &account_key(email), max, LOGIN_FAILURE_WINDOW)
-        .map_err(|retry_after| {
-            state.metrics.rate_limited("login");
-            ApiError::RateLimited { retry_after }
-        })
+///
+/// Each guesser has its own count per account, so a stranger's wrong guesses
+/// never use up the owner's. Guesses from an address also count against the
+/// account's ceiling, unless the account signed in from that address
+/// recently (see [`KNOWN_ADDRESS_GRACE`]): there its owner gets in even
+/// while many addresses guess at once.
+pub fn login_attempt(
+    state: &AppState,
+    email: &str,
+    guesser: Guesser<'_>,
+) -> Result<Guess, ApiError> {
+    count_guess(&state.limiter, &state.limits, email, guesser).map_err(|retry_after| {
+        state.metrics.rate_limited("login");
+        ApiError::RateLimited { retry_after }
+    })
 }
 
-/// The password [`login_attempt`] counted was right: it is no failure.
-pub fn login_succeeded(state: &AppState, email: &str) {
-    state.limiter.refund("login", &account_key(email));
+fn count_guess(
+    limiter: &Limiter,
+    limits: &Limits,
+    email: &str,
+    guesser: Guesser<'_>,
+) -> Result<Guess, u64> {
+    let account = account_key(email);
+    let (bucket, own, from_address) = match guesser {
+        Guesser::Address(ip) => ("login", format!("{account}|{}", guesser_key(ip)), true),
+        Guesser::Session => ("login_session", account.clone(), false),
+    };
+    limiter.hit(
+        bucket,
+        &own,
+        limits.login_failures_per_account,
+        LOGIN_FAILURE_WINDOW,
+    )?;
+    let ceiling = from_address && limiter.blocked("known", &own, 1).is_none();
+    if ceiling
+        && let Err(retry_after) = limiter.hit(
+            "login_all",
+            &account,
+            limits.login_failures_ceiling,
+            LOGIN_FAILURE_WINDOW,
+        )
+    {
+        // Refused before any hash: no guess this address made.
+        limiter.refund(bucket, &own);
+        return Err(retry_after);
+    }
+    Ok(Guess {
+        account,
+        bucket,
+        own,
+        from_address,
+        ceiling,
+    })
+}
+
+/// The password [`login_attempt`] counted was right: it is no failure, and
+/// an address it came from is known to the account from now on.
+pub fn login_succeeded(state: &AppState, guess: Guess) {
+    guess_was_right(
+        &state.limiter,
+        guess,
+        state.session_ttl + KNOWN_ADDRESS_GRACE,
+    );
+}
+
+fn guess_was_right(limiter: &Limiter, guess: Guess, known_for: Duration) {
+    limiter.refund(guess.bucket, &guess.own);
+    if guess.ceiling {
+        limiter.refund("login_all", &guess.account);
+    }
+    if guess.from_address {
+        // From the latest sign-in, so the mark outlives the newest session.
+        limiter.mark("known", &guess.own, known_for);
+    }
+}
+
+/// The guesser a [`client_ip`] key stands for in the login counts: IPv6 per
+/// /56 rather than /64. A home connection is usually delegated a /56, so its
+/// holder needs ten networks, not ten of its own /64s, to fill an account's
+/// ceiling.
+fn guesser_key(ip: &str) -> Cow<'_, str> {
+    let Some(v6) = ip
+        .strip_suffix("/64")
+        .and_then(|prefix| prefix.parse::<Ipv6Addr>().ok())
+    else {
+        return Cow::Borrowed(ip);
+    };
+    let s = v6.segments();
+    let prefix = Ipv6Addr::new(s[0], s[1], s[2], s[3] & 0xff00, 0, 0, 0, 0);
+    Cow::Owned(format!("{prefix}/56"))
 }
 
 /// Which hourly allowance an account mail draws on. Anyone can register an
@@ -613,6 +762,9 @@ fn account_key(email: &str) -> String {
 /// Limiter keys of the per-account counts above, which eviction spares.
 fn is_per_account(key: &str) -> bool {
     key.starts_with("login:")
+        || key.starts_with("login_session:")
+        || key.starts_with("login_all:")
+        || key.starts_with("known:")
         || key.starts_with("mail:")
         || key.starts_with("mail_reset:")
         || key.starts_with("mail_invite:")
@@ -902,6 +1054,112 @@ mod tests {
         }
         assert!(limiter.hit("mail_feedback", "victim", 1, HOUR).is_err());
         assert!(limiter.hit("mail_notice", "victim", 1, HOUR).is_err());
+    }
+
+    /// A flood of address keys must neither lift the account's ceiling nor
+    /// make the owner's address unknown again.
+    #[test]
+    fn the_login_ceiling_and_known_addresses_are_spared_by_eviction() {
+        let limiter = Limiter::with_caps(8, 64);
+        limiter
+            .hit("login_all", "victim", 1, LOGIN_FAILURE_WINDOW)
+            .unwrap();
+        limiter.mark("known", "victim|home", KNOWN_ADDRESS_GRACE);
+        for i in 0..640 {
+            limiter.hit("up", &i.to_string(), 5, HOUR).unwrap();
+        }
+        assert!(limiter.blocked("login_all", "victim", 1).is_some());
+        assert!(limiter.blocked("known", "victim|home", 1).is_some());
+    }
+
+    fn login_limits(per_account: u32, ceiling: u32) -> Limits {
+        Limits {
+            login_failures_per_account: per_account,
+            login_failures_ceiling: ceiling,
+            ..Limits::default()
+        }
+    }
+
+    /// A guess the ceiling refuses is no guess of that address: once the
+    /// ceiling is out of the way it still has its whole allowance.
+    #[test]
+    fn a_guess_refused_by_the_ceiling_leaves_the_address_count_alone() {
+        let limiter = Limiter::new();
+        let full = login_limits(2, 1);
+        let stranger = Guesser::Address("203.0.113.1");
+        let other = Guesser::Address("198.51.100.2");
+        let _ = count_guess(&limiter, &full, "ada@example.com", stranger).unwrap();
+        for _ in 0..3 {
+            assert!(count_guess(&limiter, &full, "ada@example.com", other).is_err());
+        }
+        let no_ceiling = login_limits(2, 0);
+        for _ in 0..2 {
+            let _ = count_guess(&limiter, &no_ceiling, "ada@example.com", other).unwrap();
+        }
+        assert!(count_guess(&limiter, &no_ceiling, "ada@example.com", other).is_err());
+    }
+
+    /// One delegated /56 is one guesser; another /56 is not.
+    #[test]
+    fn login_guessers_group_ipv6_per_56() {
+        assert_eq!(guesser_key("2001:db8:0:1::/64"), "2001:db8::/56");
+        assert_eq!(guesser_key("2001:db8:0:ff::/64"), "2001:db8::/56");
+        assert_eq!(guesser_key("2001:db8:0:100::/64"), "2001:db8:0:100::/56");
+        assert_eq!(guesser_key("203.0.113.7"), "203.0.113.7");
+        assert_eq!(guesser_key("unknown"), "unknown");
+        let limiter = Limiter::new();
+        let limits = login_limits(2, 0);
+        for i in 1..=2 {
+            let ip = format!("2001:db8:0:{i}::/64");
+            let _ =
+                count_guess(&limiter, &limits, "ada@example.com", Guesser::Address(&ip)).unwrap();
+        }
+        let same = Guesser::Address("2001:db8:0:3::/64");
+        assert!(count_guess(&limiter, &limits, "ada@example.com", same).is_err());
+        let next = Guesser::Address("2001:db8:0:100::/64");
+        assert!(count_guess(&limiter, &limits, "ada@example.com", next).is_ok());
+    }
+
+    /// Every session of an account draws on one count, which sign-in does
+    /// not share.
+    #[test]
+    fn signed_in_guesses_share_one_count_apart_from_sign_in() {
+        let limiter = Limiter::new();
+        let limits = login_limits(2, 1);
+        for _ in 0..2 {
+            let _ = count_guess(&limiter, &limits, "ada@example.com", Guesser::Session).unwrap();
+        }
+        assert!(count_guess(&limiter, &limits, "ada@example.com", Guesser::Session).is_err());
+        let home = Guesser::Address("192.0.2.10");
+        assert!(count_guess(&limiter, &limits, "ada@example.com", home).is_ok());
+    }
+
+    /// A right password from an address makes it known for `known_for`
+    /// from that sign-in, also when a mark from an earlier one still runs.
+    #[test]
+    fn each_sign_in_renews_the_known_mark() {
+        let limiter = Limiter::new();
+        let limits = login_limits(2, 1);
+        let home = Guesser::Address("192.0.2.10");
+        let guess = count_guess(&limiter, &limits, "ada@example.com", home).unwrap();
+        let own = guess.own.clone();
+        // An earlier sign-in's mark with one minute left.
+        limiter.mark("known", &own, MINUTE);
+        guess_was_right(&limiter, guess, HOUR);
+        let after_old_mark = Instant::now() + 2 * MINUTE;
+        assert!(
+            limiter
+                .blocked_at("known", &own, 1, after_old_mark)
+                .is_some()
+        );
+        let guess = count_guess(&limiter, &limits, "ada@example.com", home).unwrap();
+        assert!(!guess.ceiling, "a known address skips the ceiling");
+        let after_new_mark = Instant::now() + HOUR + MINUTE;
+        assert!(
+            limiter
+                .blocked_at("known", &own, 1, after_new_mark)
+                .is_none()
+        );
     }
 
     #[test]

@@ -184,9 +184,10 @@ pub async fn lock_server(
 }
 
 /// [`lock_server`] exclusively for kick, ban and server delete, waiting at
-/// most 5 s. Readers hold the row shared only briefly, so a longer wait means
-/// someone keeps it held (a member stalling their own ban); the caller gets
-/// a retryable answer. The rest of the transaction waits as usual.
+/// most 5 s. Readers hold the row shared only briefly (the gateway ends its
+/// check before writing to a socket, GEL-42), so a longer wait means
+/// something keeps it held; the caller gets a retryable answer. The rest of
+/// the transaction waits as usual.
 pub async fn lock_server_bounded(
     db: &PgPool,
     server_id: Uuid,

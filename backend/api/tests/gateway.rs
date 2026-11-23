@@ -732,7 +732,20 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
     }
     let mut ws = connect_reading_slowly(addr, &session_cookie(&owner)).await;
     send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Read nothing until the server has given up on the socket. A fixed sleep
+    // raced the subscribe's own checks, which run before the replay write
+    // starts and take longer under load. The socket attaches after the
+    // handshake, so wait for it to appear before waiting for it to go.
+    let connections = &state.gateway.connections;
+    let gave_up = tokio::time::timeout(Duration::from_secs(15), async {
+        while connections.socket_count().await == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        while connections.socket_count().await > 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
 
     let mut subscribed = false;
     let ended = tokio::time::timeout(Duration::from_secs(10), async {
@@ -771,11 +784,70 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
         .query_async::<i32>(&mut redis)
         .await
         .unwrap();
+    assert!(
+        gave_up.is_ok(),
+        "the server kept a socket that stopped reading during its replay"
+    );
     assert!(!subscribed, "the replay was not supposed to finish");
     assert!(
         ended.is_ok(),
         "the socket stayed open after a failed replay"
     );
+}
+
+/// A member whose socket stops reading during a subscribe's replay holds no
+/// lock on the server row (GEL-42): kick waits at most 5 s for it and would
+/// answer 429 while the replay is still being written.
+#[sqlx::test]
+async fn a_stalled_subscribe_does_not_hold_off_a_kick(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Stalled").await;
+    let (s, c) = ids(&server);
+    join_member(&mut owner, &mut member, &s.to_string()).await;
+    let mut state = common::ws_state_with_dead(pool, 60_000);
+    // Longer than kick's 5 s lock wait.
+    state.ws_replay_deadline = Duration::from_secs(8);
+    let addr = common::serve_ws_state(state.clone()).await;
+    let big = "x".repeat(1024 * 1024);
+    for _ in 0..6 {
+        publish(&state, s, c, EventKind::C, &big).await;
+    }
+    let mut ws = connect_reading_slowly(addr, &session_cookie(&member)).await;
+    send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    // The replay write is blocked by now.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let started = std::time::Instant::now();
+    let kicked = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{s}/kick"),
+            Some(json!({ "user_id": member.user_id() })),
+        )
+        .await;
+    let waited = started.elapsed();
+
+    let topic = gelabber_api::gateway::Topic::Channel(c);
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    redis::cmd("DEL")
+        .arg(topic.seq_key())
+        .arg(topic.log_key())
+        .arg(topic.epoch_key())
+        .arg(topic.delivery_key())
+        .query_async::<i32>(&mut redis)
+        .await
+        .unwrap();
+    assert_eq!(kicked.status, StatusCode::NO_CONTENT, "{}", kicked.body);
+    // The subscribe's checks hold the lock briefly; its write must not.
+    assert!(
+        waited < Duration::from_secs(4),
+        "kick waited {waited:?} for the stalled socket"
+    );
+    drop(ws);
 }
 
 /// A client frame over 16 KiB is refused by the WebSocket layer before it is

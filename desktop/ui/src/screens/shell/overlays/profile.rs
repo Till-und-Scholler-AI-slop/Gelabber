@@ -616,3 +616,101 @@ pub fn user_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut UserDialog) -> bool {
     );
     !(output.close_requested || done)
 }
+
+#[cfg(test)]
+mod tests {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+    use serde_json::json;
+
+    use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for, workspace};
+    use crate::platform::paths::testing::TempConfig;
+
+    const JONAS: &str = "00000000-0000-4000-8000-000000000038";
+
+    /// Lena opens Jonas, who is no friend and not blocked: in German the
+    /// four actions are wider than the dialog. They wrap onto a second
+    /// row 12 below (`.member-profile__actions`), keep their height, and
+    /// none reaches past the body's 24px padding (GEL-39).
+    #[test]
+    fn the_actions_wrap_inside_the_dialog() {
+        let _config = TempConfig::new("member-profile-wrap");
+        let api = FakeApi::start(true, |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/servers/{HOME}") => {
+                let mut detail = workspace(method, path)?.body;
+                detail["members"].as_array_mut()?.push(json!({
+                    "user_id": JONAS, "name": "Jonas", "avatar_url": null,
+                    "joined_at": "2026-01-02T00:00:00Z", "status_text": null,
+                    "accent_color": null, "avatar_decoration": null, "role": "member",
+                    "role_ids": []
+                }));
+                Some(Reply::json(detail))
+            }
+            ("GET", "/friends") => Some(Reply::json(
+                json!({"friends": [], "incoming": [], "outgoing": []}),
+            )),
+            ("GET", "/users/me/blocks") => Some(Reply::json(json!([]))),
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        let ctx = harness.ctx.clone();
+        fn shown(h: &egui_kittest::Harness<'_, crate::setup::Launcher>, label: &str) -> bool {
+            h.query_all_by_label(label).next().is_some()
+        }
+        // Opened again until the server's members are in (it closes
+        // without them).
+        wait_for(&mut harness, "the dialog", |h| {
+            if !shown(h, "Nachricht senden") {
+                super::super::open_member(&ctx, HOME.parse().unwrap(), JONAS.parse().unwrap());
+            }
+            shown(h, "Freund hinzufügen") && shown(h, "Blockieren")
+        });
+        harness.run_steps(4);
+        let button = |label: &str| {
+            harness
+                .query_all_by_label(label)
+                .filter(|n| n.accesskit_node().role() == Role::Button)
+                .map(|n| n.rect())
+                .collect::<Vec<_>>()
+        };
+        // The header's ✕ is the square "Schließen", 12 in from the card.
+        let closes = button("Schließen");
+        let x = closes
+            .iter()
+            .find(|r| (r.width() - r.height()).abs() < 0.5)
+            .expect("the header's close");
+        let content_right = x.max.x + 12.0 - 1.0 - 24.0;
+        let footer = closes
+            .iter()
+            .find(|r| (r.width() - r.height()).abs() >= 0.5)
+            .expect("the footer's close");
+        let actions = [
+            button("Nachricht senden")[0],
+            button("Freund hinzufügen")[0],
+            button("Blockieren")[0],
+            *footer,
+        ];
+        let first = actions[0];
+        for a in &actions {
+            assert!(
+                f64::from(a.max.x) <= f64::from(content_right) + 0.5,
+                "{a:?} past {content_right}"
+            );
+            assert!((a.height() - first.height()).abs() < 0.5, "{a:?}");
+        }
+        let last = actions[3];
+        assert!(
+            last.min.y > first.max.y,
+            "the last action wraps: {actions:?}"
+        );
+        let row_above = actions
+            .iter()
+            .filter(|a| a.min.y < last.min.y)
+            .map(|a| a.max.y)
+            .fold(f64::MIN, |m, y| m.max(f64::from(y)));
+        assert!(
+            (f64::from(last.min.y) - row_above - 12.0).abs() < 0.5,
+            "a 12px row gap: {actions:?}"
+        );
+    }
+}
