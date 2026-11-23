@@ -336,11 +336,25 @@ async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, Ap
 /// carrying the row `GET /api/servers/{id}` lists. Best effort, like the
 /// other server events: a client that misses it has the member on its next
 /// detail read. Nothing when they already left again.
+///
+/// Read and published under the server row, shared (GEL-68). A leave, kick
+/// or ban holds the row exclusively while it removes the member and
+/// publishes its own event, so it either waits for this event or has
+/// removed the member before the read here: "j" never follows that "l".
 pub(crate) async fn publish_joined(state: &AppState, server_id: Uuid, user_id: Uuid) {
+    let mut tx = match membership::lock_server(&state.db, server_id, false).await {
+        Ok(tx) => tx,
+        // Deleted meanwhile; its members are gone with it.
+        Err(ApiError::NotFound) => return,
+        Err(err) => {
+            warn!(error = err.code(), %server_id, "server not locked for the join event");
+            return;
+        }
+    };
     let row = sqlx::query_as::<_, MemberRow>(concat!(member_rows!(), " AND m.user_id = $2"))
         .bind(server_id)
         .bind(user_id)
-        .fetch_optional(&state.db)
+        .fetch_optional(&mut *tx)
         .await;
     let row = match row {
         Ok(Some(row)) => row,
@@ -365,6 +379,10 @@ pub(crate) async fn publish_joined(state: &AppState, server_id: Uuid, user_id: U
     .await
     {
         warn!(error = err.code(), %server_id, "member joined event not published");
+    }
+    // Releases the row; nothing was written.
+    if let Err(err) = tx.commit().await {
+        warn!(error = %err, %server_id, "join event lock not released cleanly");
     }
 }
 
@@ -479,15 +497,18 @@ async fn leave_server(
         .execute(&mut *tx)
         .await?;
     moderation::after_removal(&state, &mut tx, server_id, user.id, "not_found").await?;
+    publish_left(&state, server_id, user.id).await;
     tx.commit().await?;
     state.gateway.announce_recheck(Recheck::User(user.id)).await;
     info!(server_id = %server_id, user_id = %user.id, "member left");
-    publish_left(&state, server_id, user.id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// After the commit of a member leaving on their own: the server's other
-/// members drop them from their lists at once (GEL-22). A server event
+/// A member leaving on their own: the server's other members drop them
+/// from their lists at once (GEL-22). Sent before the commit, while the
+/// leave holds the server row, like the kick's and ban's events: a join's
+/// event waits for the row ([`publish_joined`]), so it cannot follow this
+/// one, and a rejoin's event comes after it. A server event
 /// `{"t": "c", "i": <user>, "d": {"k": "l"}}`, next to the join's `"j"`.
 /// Not the removal event `t: "d"`: released clients read a server `t: "d"`
 /// for their own id as "you were removed", and the leaver's sockets on
