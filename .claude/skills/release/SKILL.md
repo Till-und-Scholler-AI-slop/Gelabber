@@ -38,11 +38,11 @@ is the order of the work; check each step's result before the next one.
    `git log --first-parent --format='%h %s' <last tag>..HEAD`. Check the
    upgrade traps that came up before: image pins that must move together,
    new required `.env` variables, and migrations that cannot be undone.
-5. **Pull request** `release: vX.Y.Z` to `main`, reviewed by a maintainer
-   other than the person who asked for the release. **Merging it deploys
+5. **Pull request** `release: vX.Y.Z` to `main`. A maintainer merges it once
+   `ci-ok` is green; no second approval is needed. **Merging it deploys
    production:** `release.yml` moves `latest` and the server's Watchtower
-   pulls it. So the merge needs an explicit go from a person, never only an
-   agent's approval, and before it the operator takes a backup
+   pulls it. So the merge needs an explicit go from a maintainer, never only
+   an agent's decision, and before it the operator takes a backup
    (`deploy/backup.sh`, see `deploy/README.md` "Backup") or pauses
    Watchtower. With a migration in the notes, rollback is only through that
    backup. Until the release is out, nothing else is merged into `main`.
