@@ -837,8 +837,17 @@ export async function sample({ deadlineEpochMs } = {}) {
     const qualityFrames = video.getVideoPlaybackQuality?.().totalVideoFrames;
     const callbackFrames = rendered.presented || rendered.callbacks;
     const hasQuality = Number.isSafeInteger(qualityFrames) && qualityFrames > 0;
+    // Whose Live the tile shows, against the name a scenario expects; only
+    // the comparison leaves the page, never the caption.
+    const name = video
+      .closest("figure")
+      .querySelector(".voice-live-caption-name")?.textContent;
     return {
       kind: live ? "live" : "camera",
+      expectedPublisher:
+        typeof state.expectedLiveName === "string"
+          ? name?.trim() === state.expectedLiveName
+          : null,
       width: video.videoWidth,
       height: video.videoHeight,
       paused: video.paused,
