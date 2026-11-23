@@ -352,17 +352,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
                             Block::single(ui, short(), text::UI, c.text).width() + 26.0
                         })
                         .collect();
-                    let total = natural.iter().sum::<f32>() + gap * (natural.len() - 1) as f32;
-                    let extra = ((ui.available_width() - total) / natural.len() as f32).max(0.0);
-                    super::row(ui, 32.0, gap, |ui| {
-                        for ((label, short, minutes), w) in MUTES.iter().zip(&natural) {
-                            // At most what is left of the line, so the
-                            // layout's rounding never wraps the last chip.
-                            let left = ui.available_size_before_wrap().x;
-                            let width = (w + extra).min(left.max(*w));
-                            if chip(ui, short(), label(), width, saving).clicked() {
-                                save = Some(own.mute(*minutes));
-                            }
+                    shared_line(ui, &natural, gap, |ui, i, width| {
+                        let (label, short, minutes) = &MUTES[i];
+                        if chip(ui, short(), label(), width, saving).clicked() {
+                            save = Some(own.mute(*minutes));
                         }
                     });
                 }
@@ -505,6 +498,22 @@ fn voice_switch(ui: &mut Ui, on: bool, disabled: bool) -> Option<bool> {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     changed.then_some(value)
+}
+
+/// Items of `natural` width that share one 32 tall line (`flex: 1 0 auto`):
+/// `add` gets each item's index and width.
+fn shared_line(ui: &mut Ui, natural: &[f32], gap: f32, mut add: impl FnMut(&mut Ui, usize, f32)) {
+    let total = natural.iter().sum::<f32>() + gap * (natural.len() - 1) as f32;
+    let extra = ((ui.available_width() - total) / natural.len() as f32).max(0.0);
+    super::row(ui, 32.0, gap, |ui| {
+        for (i, w) in natural.iter().enumerate() {
+            // At most what is left of the line: egui rounds each rect's
+            // edges to 1/32, and a last item a hair wider than the rest
+            // would wrap onto a line of its own.
+            let left = ui.available_size_before_wrap().x;
+            add(ui, i, (w + extra).min(left.max(*w)));
+        }
+    });
 }
 
 /// `.notify-mute-row .ui-chip`: a 32px pill, centred label; `title` the
@@ -712,9 +721,53 @@ mod tests {
         assert!(api.seen.lock().iter().all(|r| !r.starts_with("PUT")));
     }
 
-    /// The mute chips share the row's width exactly; now that the row
-    /// wraps (GEL-39), rounding must not push the last one onto a line
-    /// of its own.
+    /// Items that share a line exactly stay on it whatever their
+    /// fractional widths: egui rounds each rect's edges to 1/32, which
+    /// without the cap pushes the last item onto a line of its own.
+    #[test]
+    fn a_shared_line_never_wraps_its_last_item() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        use egui::{Rect, Sense, UiBuilder, vec2};
+
+        let natural = [83.17, 71.9, 79.33, 88.61, 210.07];
+        let mut wrapped = Vec::new();
+        for step in 0..200 {
+            let width = 600.0 + step as f32 * 0.05;
+            let laid = Rc::new(RefCell::new((Rect::NOTHING, Vec::<Rect>::new())));
+            let out = laid.clone();
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(vec2(800.0, 200.0))
+                .build_ui(move |ui| {
+                    let bounds = Rect::from_min_size(ui.max_rect().min, vec2(width, 100.0));
+                    ui.scope_builder(UiBuilder::new().max_rect(bounds), |ui| {
+                        let mut items = Vec::new();
+                        super::shared_line(ui, &natural, 8.0, |ui, _, w| {
+                            items.push(ui.allocate_exact_size(vec2(w, 32.0), Sense::click()).0);
+                        });
+                        *out.borrow_mut() = (bounds, items);
+                    });
+                });
+            harness.run();
+            let (bounds, items) = laid.borrow().clone();
+            let filled = (items[4].right() - bounds.right()).abs() < 0.5;
+            if !filled || items.iter().any(|r| r.top() != items[0].top()) {
+                wrapped.push((width, items));
+            }
+        }
+        assert!(
+            wrapped.is_empty(),
+            "{} wrapped: {:?}",
+            wrapped.len(),
+            wrapped.first()
+        );
+    }
+
+    /// The real dialog keeps its five mute chips on one line now that the
+    /// row wraps (GEL-39). At this width it passes without the cap in
+    /// `shared_line` too; `a_shared_line_never_wraps_its_last_item` is
+    /// the test that proves the cap.
     #[test]
     fn the_mute_chips_fill_one_line() {
         let _config = TempConfig::new("notify-mute-line");
