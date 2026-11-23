@@ -27,12 +27,13 @@ app that still loads it only gets the notice to update
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `native/tests/pipewire_chunk_test.cc` | Application sound on Linux stays inside PipeWire's buffer whatever offset and size a chunk carries; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `native/tests/playout_limiter_test.cc` | The playout limiter for volumes above 100 % on generated mixes; plain C++, built and run by `core/tests/voice.rs` like the mix test |
+| `native/tests/strong_filter_test.cc` | The "strong" microphone filter's slot (`native/src/strong_filter.h`) against a fake filter: built off the audio thread, warm-up, restart per stream, fallback to RNNoise when it cannot be built, fails or is too slow; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `native/tests/audio_device_switch_test.cc` | Switching the microphone or speakers against a fake device module that refuses devices: restart, and rollback to the previous device; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.33 with the server's router codecs (VP8 and H264 in three layers, VP9 as SVC, AV1 as one stream); on Windows also application sound through process loopback |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
-| `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
+| `core/tests/voice.rs` | Microphone modes, RNNoise, DeepFilterNet3, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 | `i18n/` | Rust crate `gelabber-i18n`: the interface text in German and English, one catalog per namespace, and the check that no text is left outside them (docs/i18n.md) |
 | `client/`, `call/`, `ui/`, `gelabber/` | The app (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
 | `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the setup page (in the sign-in pages' frame), the Tauri app's update notice and its "Server wechseln …" in the user menu, the references of the scenes `setup*`, `update-*` and those with `desktop` |
@@ -484,7 +485,21 @@ separate decision.
   AGC. The web client's modes carry over: `enhanced` runs RNNoise (same
   source commit and model as `web/public/audio`) after the APM, `browser`
   uses the APM's noise suppression/AGC, `original` captures stereo without
-  either. Input gain, the input sensitivity gate (`native/src/input_gate.h`,
+  either. `strong` ("Enhanced voice: Strong", GEL-28) runs DeepFilterNet3
+  in place of RNNoise's output: libDF with tract in Rust
+  (`core/src/strong_filter.rs`, the full model of the commit
+  `docs/v0.13-deepfilternet-measurement.md` measured, embedded into the
+  binary, thresholds -15/35/35 dB, no attenuation limit, no post filter),
+  handed to the core as four C functions (`gm_set_strong_filter`) and held
+  by `native/src/strong_filter.h`. It runs on the APM's mono block (the APM
+  always runs mono) and adds 10 ms. RNNoise keeps running beside it: its
+  speech probability, one block earlier to match the delay, still drives
+  the gate, and its output is sent while the model is built (about half a
+  second, on a thread of its own when the mode is chosen) and after
+  DeepFilterNet3 could not be built, failed on a block or took more than
+  half the real time over a second; choosing the mode again tries again.
+  `gm_audio_levels` reports which filter ran (`filter`, `strongFilter`), and
+  the diagnostics say so. Input gain, the input sensitivity gate (`native/src/input_gate.h`,
   the same steps and numbers as the web worklet's `InputGate`: automatic
   from the noise floor and RNNoise's speech probability, or a threshold;
   off, without delay, for `original` and push-to-talk; 20 ms look-ahead

@@ -41,7 +41,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 10
+#define GM_ABI_VERSION 11
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -74,6 +74,28 @@ typedef void (*gm_event_fn)(void* user, gm_event_kind kind, uint64_t request, co
 GM_API uint32_t gm_abi_version(void);
 GM_API const char* gm_last_error(void);
 GM_API void gm_string_free(char* s);
+/* The "strong" microphone filter (processingMode "strong", GEL-28):
+ * DeepFilterNet3, which the embedder brings (desktop/core builds it with
+ * libDF and tract). Engines created afterwards use these functions; NULL, or
+ * a filter missing one of them, leaves "strong" without a filter (RNNoise's
+ * output, levels "strongFilter.state" "unavailable"). The functions must not
+ * unwind into the core.
+ * - create: builds a filter, on a thread of the core's own, never the audio
+ *   thread; may take a second. NULL on failure, with a NUL-terminated reason
+ *   in error (error_size bytes).
+ * - reset: forgets the history, at the start of a new capture stream.
+ * - process: one 10 ms mono block at 48 kHz, count (480) samples in -1..1,
+ *   filtered in place; on the audio thread. 0, or negative on failure (the
+ *   core then falls back to RNNoise's output).
+ * - destroy: on any thread but the audio thread.
+ * reset and process are never called at the same time for one filter. */
+typedef struct gm_strong_filter {
+  void* (*create)(char* error, size_t error_size);
+  void (*reset)(void* filter);
+  int (*process)(void* filter, float* samples, size_t count);
+  void (*destroy)(void* filter);
+} gm_strong_filter;
+GM_API void gm_set_strong_filter(const gm_strong_filter* filter);
 /* Route libwebrtc logs to stderr: 0 none, 1 error, 2 warning, 3 info, 4 verbose. */
 GM_API void gm_set_log_level(int level);
 /* The system's video codecs beside libwebrtc's own, as an engine would use
@@ -112,7 +134,16 @@ GM_API int gm_audio_configure(gm_engine* engine, const char* options_json);
 GM_API int gm_audio_monitor(gm_engine* engine, const char* options_json);
 /* Microphone meters while capture runs, 0..100 like the web client's:
  * {"input": before RNNoise and gain, "processed": as sent, "clipping": bool,
- *  "denoised": bool (RNNoise ran), "blocks": 10 ms blocks processed so far
+ *  "denoised": bool (RNNoise ran; also in "strong", for the gate),
+ *  "filter": "off|standard|strong" (whose output the last block carries:
+ *  RNNoise's is "standard", also in "strong" until DeepFilterNet3 is ready or
+ *  after it fell back),
+ *  "strongFilter": {"state": "off|unavailable|loading|active|failed|slow"
+ *  (off: another mode; failed: it could not be built or failed on a block;
+ *  slow: it took more than half the real time over a second; choosing
+ *  "strong" again tries again), "error": why it failed or "",
+ *  "msPerBlock": its mean time per 10 ms block over the last second},
+ *  "blocks": 10 ms blocks processed so far
  *  (stops growing while capture is idle), "channels": of the last block,
  *  "playout": {"gain": master gain of volumes above 1 (1..4), "peak": loudest
  *  sample played in the last 100 ms (fraction of full scale), "reduction":
@@ -149,12 +180,17 @@ GM_API char* gm_transport_stats(gm_transport* transport);
 /* Local sources. */
 /* Microphone through the engine's audio device module and its processing,
  * matching the web client's modes. options_json (all optional):
- * {"processingMode": "enhanced|browser|original" (default enhanced),
+ * {"processingMode": "enhanced|strong|browser|original" (default enhanced),
  *  "echoCancellation": true, "noiseSuppression": true, "autoGainControl": true,
  *  "inputGain": 1.0, "gate": {"mode": "off|auto|manual", "thresholdDb": -50}}
  * gate: input sensitivity after RNNoise and the gain (input_gate.h), off
  * without the key and always off in original;
  * enhanced: RNNoise instead of WebRTC noise suppression, AGC as configured;
+ * strong: as enhanced, with DeepFilterNet3 (gm_set_strong_filter) in place of
+ * RNNoise's output on the APM's mono block and 10 ms more delay; RNNoise
+ * keeps running beside it for the gate's speech probability (one block
+ * earlier, matching the delay) and its output is sent while the filter
+ * loads (about half a second) or after it fell back (gm_audio_levels);
  * browser: WebRTC noise suppression and AGC as configured; original: neither,
  * stereo when echo cancellation is off. Echo cancellation is as configured in
  * every mode. Processing is per engine (one capture path): the newest

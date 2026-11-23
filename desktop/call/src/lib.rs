@@ -171,6 +171,17 @@ pub struct MicTest {
     pub clipping: bool,
     /// The input sensitivity gate, as the test hears it.
     pub input_gate: Option<GateLevels>,
+    /// The noise filter the test hears.
+    pub noise_filter: Option<NoiseFilterLevels>,
+}
+
+/// The microphone's noise filter on its last 10 ms block (GEL-28).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NoiseFilterLevels {
+    pub used: logic::NoiseFilterUsed,
+    pub strong: logic::StrongFilterState,
+    /// DeepFilterNet3's mean time per 10 ms block over the last second.
+    pub ms_per_block: f64,
 }
 
 /// The input sensitivity gate's last 10 ms block (GEL-27), in dB of full
@@ -214,6 +225,8 @@ pub struct CallState {
     pub push_to_talk_open: bool,
     /// The input sensitivity gate of the call's microphone, while it sends.
     pub input_gate: Option<GateLevels>,
+    /// The noise filter of the call's microphone, while it sends.
+    pub noise_filter: Option<NoiseFilterLevels>,
     /// The call whose connection was lost, to offer joining it again.
     pub lost_call: Option<(Uuid, Uuid)>,
 }
