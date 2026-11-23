@@ -143,7 +143,10 @@ namespace gelabber
 			if (drop)
 				api.destroy(drop);
 			if (on)
+			{
 				SetError("");
+				blockFailed.store(false);
+			}
 			if (load)
 			{
 				if (loader.joinable())
@@ -200,8 +203,9 @@ namespace gelabber
 			const float spent = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - start).count();
 			if (result < 0)
 			{
+				// The audio thread only sets a flag; Error() words it.
+				blockFailed.store(true);
 				state.store(StrongState::Failed);
-				SetError("the filter failed on a block");
 				return false;
 			}
 			windowMs += spent;
@@ -231,6 +235,8 @@ namespace gelabber
 		// Why it failed, else empty.
 		std::string Error() const
 		{
+			if (blockFailed.load())
+				return "the filter failed on a block";
 			std::lock_guard lock(errorMutex);
 			return error;
 		}
@@ -299,8 +305,11 @@ namespace gelabber
 
 		std::atomic<StrongState> state{ StrongState::Off };
 		std::atomic<float> busyMs{ 0.0f };
+		// The loader's reason, and a failed block's flag (the capture thread
+		// takes no lock for it).
 		mutable std::mutex errorMutex;
 		std::string error;
+		std::atomic<bool> blockFailed{ false };
 
 		// Capture thread only.
 		uint64_t seenGeneration{ 0 };

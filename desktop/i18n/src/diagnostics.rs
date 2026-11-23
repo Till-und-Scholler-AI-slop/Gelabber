@@ -270,6 +270,8 @@ crate::strings! {
         | "Desktop app: original sound (stereo, no filters)";
     processing_desktop_enhanced = "Desktop-App: RNNoise im nativen Kern"
         | "Desktop app: RNNoise in the native core";
+    processing_desktop_no_filter = "Desktop-App: kein Rauschfilter, das Mikrofon läuft nicht mit 48 kHz"
+        | "Desktop app: no noise filter, the microphone does not run at 48 kHz";
     processing_desktop_strong = "Desktop-App: DeepFilterNet3 im nativen Kern"
         | "Desktop app: DeepFilterNet3 in the native core";
     processing_desktop_strong_loading = "Desktop-App: DeepFilterNet3 lädt, bis dahin RNNoise"
@@ -290,6 +292,8 @@ crate::strings! {
         | "filter failed";
     strong_reason_load = "nicht geladen"
         | "not loaded";
+    strong_reason_rate = "Mikrofon nicht mit 48 kHz"
+        | "microphone not at 48 kHz";
     mic_noise_webrtc = "Rauschfilter (WebRTC)" | "Noise filter (WebRTC)";
     mic_auto_gain_webrtc = "Auto-Gain (WebRTC)" | "Auto gain (WebRTC)";
     ui_save_title = "Diagnose speichern" | "Save diagnostics";

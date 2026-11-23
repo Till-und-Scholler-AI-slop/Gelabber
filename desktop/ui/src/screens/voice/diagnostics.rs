@@ -141,7 +141,8 @@ pub fn processing_message(state: &CallState, mode: &str, chosen: &str) -> String
 /// `nativeInfo`'s message for a capture on `captured`: the mode, and
 /// "; Standardmikrofon" where the chosen microphone did not open. In
 /// "strong", `filter` (the core's last block) tells DeepFilterNet3 from
-/// RNNoise standing in for it.
+/// RNNoise standing in for it; in Standard and Strong it tells a capture
+/// that runs no filter at all (not at 48 kHz).
 pub fn processing_text(
     mode: &str,
     filter: Option<NoiseFilterLevels>,
@@ -149,6 +150,7 @@ pub fn processing_text(
     chosen: &str,
 ) -> String {
     let words = match mode {
+        "enhanced" | "strong" if unfiltered(filter) => texts::processing_desktop_no_filter(),
         "browser" => texts::processing_desktop_browser(),
         "original" => texts::processing_desktop_original(),
         "strong" => match filter {
@@ -174,10 +176,18 @@ pub fn processing_text(
     }
 }
 
+/// The core ran neither RNNoise nor DeepFilterNet3 on the last block:
+/// they need 48 kHz, which a device may not deliver (a 44.1 kHz mix format).
+fn unfiltered(filter: Option<NoiseFilterLevels>) -> bool {
+    filter.is_some_and(|f| f.used == NoiseFilterUsed::Off)
+}
+
 /// The mode that runs: "strong" falls back to RNNoise ("enhanced") when
-/// DeepFilterNet3 is not ready, failed or is too slow.
+/// DeepFilterNet3 is not ready, failed or is too slow; "none" where
+/// Standard or Strong runs no filter at all.
 pub fn effective_mode(mode: &str, filter: Option<NoiseFilterLevels>) -> &str {
     match filter {
+        _ if matches!(mode, "enhanced" | "strong") && unfiltered(filter) => "none",
         Some(f) if mode == "strong" && f.used != NoiseFilterUsed::Strong => "enhanced",
         _ => mode,
     }
@@ -197,6 +207,9 @@ pub fn filter_buffer_ms(mode: &str, filter: Option<NoiseFilterLevels>) -> u32 {
 /// per block, or why Standard runs instead.
 pub fn strong_text(filter: NoiseFilterLevels) -> String {
     let ms = |value: f64| gelabber_i18n::intl::format_number(value, 1, 1);
+    if filter.used == NoiseFilterUsed::Off {
+        return texts::mic_strong_off(texts::strong_reason_rate());
+    }
     let reason = match filter.strong {
         StrongFilterState::Slow => texts::strong_reason_slow(),
         StrongFilterState::Failed => texts::strong_reason_error(),
@@ -1450,6 +1463,60 @@ mod tests {
         assert_eq!(filter_buffer_ms("strong", None), 10);
         assert_eq!(filter_buffer_ms("enhanced", None), 10);
         assert_eq!(filter_buffer_ms("original", None), 0);
+    }
+
+    /// A microphone that does not run at 48 kHz (a 44.1 kHz Windows mix
+    /// format) gets neither filter: Standard and Strong say so instead of
+    /// naming a filter that does not run.
+    #[test]
+    fn without_48_khz_no_filter_runs_and_the_diagnostics_say_so() {
+        use gelabber_call::NoiseFilterLevels;
+        use gelabber_call::logic::{NoiseFilterUsed, StrongFilterState};
+        let none = |strong| {
+            Some(NoiseFilterLevels {
+                used: NoiseFilterUsed::Off,
+                strong,
+                ms_per_block: 0.0,
+            })
+        };
+        let words = "Desktop-App: kein Rauschfilter, das Mikrofon läuft nicht mit 48 kHz";
+        assert_eq!(
+            processing_text("strong", none(StrongFilterState::Active), Some(""), ""),
+            words
+        );
+        assert_eq!(
+            processing_text("enhanced", none(StrongFilterState::Off), Some(""), ""),
+            words
+        );
+        assert_eq!(
+            effective_mode("strong", none(StrongFilterState::Active)),
+            "none"
+        );
+        assert_eq!(
+            effective_mode("enhanced", none(StrongFilterState::Off)),
+            "none"
+        );
+        assert_eq!(
+            filter_buffer_ms("strong", none(StrongFilterState::Active)),
+            0
+        );
+        assert_eq!(
+            filter_buffer_ms("enhanced", none(StrongFilterState::Off)),
+            0
+        );
+        assert_eq!(
+            strong_text(none(StrongFilterState::Active).unwrap()),
+            "aus: Mikrofon nicht mit 48 kHz"
+        );
+        // The other modes report no filter of Gelabber's own anyway.
+        assert_eq!(
+            effective_mode("browser", none(StrongFilterState::Off)),
+            "browser"
+        );
+        assert_eq!(
+            processing_text("browser", none(StrongFilterState::Off), Some(""), ""),
+            "Desktop-App: WebRTC-Rauschfilter im nativen Kern"
+        );
     }
 
     /// The web's "Starker Filter (DeepFilterNet3)" row: the time per block,

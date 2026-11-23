@@ -205,6 +205,7 @@ int main()
 		fake.processFails = true;
 		Expect(!Run(filter).used, "a block it fails on stays as it was");
 		Expect(filter.State() == StrongState::Failed, "and it has failed");
+		Expect(filter.Error() == "the filter failed on a block", "saying why");
 		const int processed = fake.processed;
 		Run(filter);
 		Expect(fake.processed == processed, "failed, it no longer runs");
@@ -212,6 +213,7 @@ int main()
 		filter.Select(true);
 		Expect(WaitFor(filter, StrongState::Active) && fake.created == 2 && fake.destroyed == 1,
 		       "chosen again, a new filter replaces the failed one");
+		Expect(filter.Error().empty(), "and the failure is forgotten");
 	}
 	{
 		Clear();
