@@ -646,12 +646,15 @@ pub fn processing_default_mic(words: &str) -> String {
     }
 }
 
-/// DeepFilterNet3's time per block (web `mic.strongTime`, without the
-/// slowest block, which the core does not keep).
-pub fn mic_strong_time(ms: &str) -> String {
+/// DeepFilterNet3's time per block and its slowest (web `mic.strongTime`).
+pub fn mic_strong_time(ms: &str, max: &str) -> String {
     match get() {
-        Locale::De => format!("{ms} ms je 10-ms-Block (Mittel der letzten Sekunde)"),
-        Locale::En => format!("{ms} ms per 10 ms block (mean of the last second)"),
+        Locale::De => {
+            format!("{ms} ms je 10-ms-Block, langsamster {max} ms (Mittel der letzten Sekunde)")
+        }
+        Locale::En => {
+            format!("{ms} ms per 10 ms block, slowest {max} ms (mean of the last second)")
+        }
     }
 }
 

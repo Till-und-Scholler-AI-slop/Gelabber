@@ -217,7 +217,10 @@ pub fn strong_text(filter: NoiseFilterLevels) -> String {
         StrongFilterState::Loading => return texts::mic_strong_loading().into(),
         StrongFilterState::Active | StrongFilterState::Off => {
             return if filter.ms_per_block > 0.0 {
-                texts::mic_strong_time(&ms(filter.ms_per_block))
+                texts::mic_strong_time(
+                    &ms(filter.ms_per_block),
+                    &ms(filter.max_ms.max(filter.ms_per_block)),
+                )
             } else {
                 texts::mic_strong_waiting().into()
             };
@@ -552,7 +555,7 @@ fn facts(ui: &mut Ui, rows: &[(&str, String, bool)], width: f32, style: TextStyl
                 dd,
                 style.weight(500.0),
                 c.text,
-                (w - label.width() - 12.0).max(20.0),
+                value_width(w, label.width()),
             );
             label.paint(ui.painter(), pos2(x, *y + pad));
             value.paint(ui.painter(), pos2(x + w - value.width(), *y + pad));
@@ -567,7 +570,16 @@ fn facts(ui: &mut Ui, rows: &[(&str, String, bool)], width: f32, style: TextStyl
         }
         let w = if *wide { width } else { col_w };
         let x = left + if col == 1 { col_w + 28.0 } else { 0.0 };
-        let value = Block::wrapped(ui, dd, style.weight(500.0), c.text, w * 0.6);
+        // Measured at the width it is painted with (beside its label), so
+        // a value that wraps gets the row height it needs.
+        let label = Block::single(ui, dt, style, c.subtle);
+        let value = Block::wrapped(
+            ui,
+            dd,
+            style.weight(500.0),
+            c.text,
+            value_width(w, label.width()),
+        );
         row_h = row_h.max(2.0 * pad + value.height().max(style.line_px()) + 1.0);
         if col == 0 && cells.is_empty() {
             row_h = 2.0 * pad + value.height().max(style.line_px()) + 1.0;
@@ -588,6 +600,24 @@ fn facts(ui: &mut Ui, rows: &[(&str, String, bool)], width: f32, style: TextStyl
         Rect::from_min_max(pos2(left, top), pos2(left + width, y)),
         Sense::hover(),
     );
+}
+
+/// The core's word for the Strong filter's state, for the export.
+fn strong_state_name(state: StrongFilterState) -> &'static str {
+    match state {
+        StrongFilterState::Off => "off",
+        StrongFilterState::Unavailable => "unavailable",
+        StrongFilterState::Loading => "loading",
+        StrongFilterState::Active => "active",
+        StrongFilterState::Failed => "failed",
+        StrongFilterState::Slow => "slow",
+    }
+}
+
+/// The width a value wraps at in a `facts` cell of width `w`, beside a
+/// label `label_w` wide.
+fn value_width(w: f32, label_w: f32) -> f32 {
+    (w - label_w - 12.0).max(20.0)
 }
 
 fn on_off(value: Option<bool>) -> String {
@@ -779,7 +809,8 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
     ];
     // DeepFilterNet3's time on this machine, or why it is off.
     if let Some(f) = state.noise_filter.filter(|_| in_call && mode == "strong") {
-        rows.push((texts::mic_strong(), strong_text(f), false));
+        // Across, like the web's `is-wide` row: its text is long.
+        rows.push((texts::mic_strong(), strong_text(f), true));
     }
     facts(ui, &rows, width, text::BODY, 9.0);
     ui.add_space(28.0);
@@ -804,6 +835,12 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
             "sampleRate": in_call.then_some(48_000),
             "channels": in_call.then_some(if mode == "original" { 2 } else { 1 }),
             "inputGain": p.input_gain,
+            // GEL-28, like the web's `effectiveProcessing.strong`.
+            "strong": state.noise_filter.filter(|_| in_call && mode == "strong").map(|f| serde_json::json!({
+                "state": strong_state_name(f.strong),
+                "msPerBlock": f.ms_per_block,
+                "maxMs": f.max_ms,
+            })),
         });
         let payload = diag::export(
             &data,
@@ -1344,6 +1381,55 @@ fn gate_text(
 mod tests {
     use super::*;
 
+    /// A value that wraps beside a long label gets the height it is
+    /// painted with, so the next block does not overlap it (GEL-28: the
+    /// "Starker Filter (DeepFilterNet3)" row ran into "Für die Fehlersuche").
+    #[test]
+    fn a_wrapping_fact_gets_its_whole_height() {
+        let label = "Starker Filter (DeepFilterNet3)";
+        let value = "0,5 ms je 10-ms-Block (Mittel der letzten Sekunde)";
+        let (pad, width) = (9.0, 575.0);
+        let measured = std::cell::Cell::new((0.0_f32, 0.0_f32));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1280.0, 600.0))
+            .build_ui(|ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), crate::theme::Theme::dark());
+                let c = Theme::of(ui.ctx()).c;
+                let top = ui.cursor().min.y;
+                let rows = [
+                    (
+                        "Eingabeempfindlichkeit",
+                        "automatisch, zu".to_string(),
+                        false,
+                    ),
+                    (label, value.to_string(), false),
+                ];
+                facts(ui, &rows, width, text::BODY, pad);
+                let col_w = (width - 28.0) / 2.0;
+                let label_w = Block::single(ui, label, text::BODY, c.subtle).width();
+                let painted = Block::wrapped(
+                    ui,
+                    value,
+                    text::BODY.weight(500.0),
+                    c.text,
+                    value_width(col_w, label_w),
+                )
+                .height();
+                measured.set((ui.cursor().min.y - top, painted));
+            });
+        harness.run_steps(2);
+        let (used, painted) = measured.get();
+        assert!(
+            painted > text::BODY.line_px() * 1.5,
+            "the value wraps in this layout ({painted})"
+        );
+        assert!(
+            used >= 2.0 * pad + painted,
+            "row height {used} < painted value {painted} plus padding"
+        );
+    }
+
     #[test]
     fn quality_words() {
         let good = Connection {
@@ -1423,6 +1509,7 @@ mod tests {
                 used,
                 strong,
                 ms_per_block: 0.7,
+                max_ms: 1.2,
             });
             processing_message(&state, "strong", "")
         };
@@ -1455,6 +1542,7 @@ mod tests {
             used: NoiseFilterUsed::Standard,
             strong: StrongFilterState::Slow,
             ms_per_block: 6.0,
+            max_ms: 7.0,
         });
         assert_eq!(effective_mode("strong", standard), "enhanced");
         assert_eq!(effective_mode("strong", None), "strong");
@@ -1477,6 +1565,7 @@ mod tests {
                 used: NoiseFilterUsed::Off,
                 strong,
                 ms_per_block: 0.0,
+                max_ms: 0.0,
             })
         };
         let words = "Desktop-App: kein Rauschfilter, das Mikrofon läuft nicht mit 48 kHz";
@@ -1530,11 +1619,12 @@ mod tests {
                 used,
                 strong,
                 ms_per_block,
+                max_ms: 1.86,
             })
         };
         assert_eq!(
             row(NoiseFilterUsed::Strong, StrongFilterState::Active, 0.734),
-            "0,7 ms je 10-ms-Block (Mittel der letzten Sekunde)"
+            "0,7 ms je 10-ms-Block, langsamster 1,9 ms (Mittel der letzten Sekunde)"
         );
         assert_eq!(
             row(NoiseFilterUsed::Strong, StrongFilterState::Active, 0.0),

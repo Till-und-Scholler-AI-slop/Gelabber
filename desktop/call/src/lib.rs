@@ -182,6 +182,8 @@ pub struct NoiseFilterLevels {
     pub strong: logic::StrongFilterState,
     /// DeepFilterNet3's mean time per 10 ms block over the last second.
     pub ms_per_block: f64,
+    /// Its slowest block in that second.
+    pub max_ms: f64,
 }
 
 /// The input sensitivity gate's last 10 ms block (GEL-27), in dB of full

@@ -170,6 +170,7 @@ namespace gelabber
 		levels.strong      = strong.State();
 		levels.strongError = strong.Error();
 		levels.strongMs    = strong.BusyMs();
+		levels.strongMaxMs = strong.MaxMs();
 		levels.blocks      = blockCount.load();
 		levels.channels    = lastChannels.load();
 		levels.gate        = gate.Report();
