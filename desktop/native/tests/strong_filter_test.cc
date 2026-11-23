@@ -226,6 +226,7 @@ int main()
 		Expect(used == StrongFilter::kWindowBlocks, "until a window is over, a slow filter runs");
 		Expect(filter.State() == StrongState::Slow, "6 ms per 10 ms block is too slow");
 		Expect(filter.BusyMs() >= 6.0f, "the time per block is reported");
+		Expect(filter.MaxMs() >= filter.BusyMs() && filter.MaxMs() >= 6.0f, "and its slowest block");
 		const int processed = fake.processed;
 		Expect(!Run(filter).used && fake.processed == processed, "too slow, it no longer runs");
 		fake.processMs = 0;
@@ -239,6 +240,7 @@ int main()
 		for (int i = 0; i < StrongFilter::kWindowBlocks; ++i)
 			Run(filter);
 		Expect(filter.State() == StrongState::Active && filter.BusyMs() < 5.0f, "fast enough, it stays");
+		Expect(filter.MaxMs() < 5.0f, "the slowest block is of the last window only");
 	}
 	{
 		Clear();

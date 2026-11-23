@@ -350,6 +350,7 @@ pub fn noise_filter_levels(levels: &Value) -> Option<crate::NoiseFilterLevels> {
             _ => StrongFilterState::Off,
         },
         ms_per_block: strong["msPerBlock"].as_f64().unwrap_or(0.0),
+        max_ms: strong["maxMs"].as_f64().unwrap_or(0.0),
     })
 }
 
@@ -1655,7 +1656,7 @@ mod tests {
     fn the_noise_filter_is_read_from_the_meters() {
         let levels = json!({
             "filter": "standard",
-            "strongFilter": {"state": "slow", "error": "", "msPerBlock": 6.25},
+            "strongFilter": {"state": "slow", "error": "", "msPerBlock": 6.25, "maxMs": 9.5},
         });
         assert_eq!(
             noise_filter_levels(&levels),
@@ -1663,6 +1664,7 @@ mod tests {
                 used: NoiseFilterUsed::Standard,
                 strong: StrongFilterState::Slow,
                 ms_per_block: 6.25,
+                max_ms: 9.5,
             })
         );
         let active = json!({"filter": "strong", "strongFilter": {"state": "active"}});

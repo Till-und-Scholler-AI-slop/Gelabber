@@ -20,6 +20,7 @@
 #ifndef GELABBER_STRONG_FILTER_H
 #define GELABBER_STRONG_FILTER_H
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -120,6 +121,7 @@ namespace gelabber
 					filter = nullptr;
 					state.store(StrongState::Off);
 					busyMs.store(0.0f);
+					maxMs.store(0.0f);
 				}
 				else if (!hasApi)
 					state.store(StrongState::Unavailable);
@@ -209,9 +211,11 @@ namespace gelabber
 				return false;
 			}
 			windowMs += spent;
+			windowMaxMs = std::max(windowMaxMs, spent);
 			if (++windowBlocks == kWindowBlocks)
 			{
 				busyMs.store(windowMs / kWindowBlocks);
+				maxMs.store(windowMaxMs);
 				const float blockMs = 1000.0f * kBlockFrames / kRate;
 				if (windowMs > kMaxBusyShare * blockMs * kWindowBlocks)
 					state.store(StrongState::Slow);
@@ -244,6 +248,11 @@ namespace gelabber
 		float BusyMs() const
 		{
 			return busyMs.load();
+		}
+		// The slowest block of that window, in ms.
+		float MaxMs() const
+		{
+			return maxMs.load();
 		}
 
 	private:
@@ -285,6 +294,7 @@ namespace gelabber
 		void StartWindow()
 		{
 			windowMs     = 0.0f;
+			windowMaxMs  = 0.0f;
 			windowBlocks = 0;
 		}
 
@@ -305,6 +315,7 @@ namespace gelabber
 
 		std::atomic<StrongState> state{ StrongState::Off };
 		std::atomic<float> busyMs{ 0.0f };
+		std::atomic<float> maxMs{ 0.0f };
 		// The loader's reason, and a failed block's flag (the capture thread
 		// takes no lock for it).
 		mutable std::mutex errorMutex;
@@ -316,6 +327,7 @@ namespace gelabber
 		bool streamStarted{ false };
 		int warm{ 0 };
 		float windowMs{ 0.0f };
+		float windowMaxMs{ 0.0f };
 		int windowBlocks{ 0 };
 		std::array<float, kBlockFrames> buffer{};
 	};

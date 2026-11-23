@@ -142,7 +142,8 @@ GM_API int gm_audio_monitor(gm_engine* engine, const char* options_json);
  *  (off: another mode; failed: it could not be built or failed on a block;
  *  slow: it took more than half the real time over a second; choosing
  *  "strong" again tries again), "error": why it failed or "",
- *  "msPerBlock": its mean time per 10 ms block over the last second},
+ *  "msPerBlock": its mean time per 10 ms block over the last second,
+ *  "maxMs": its slowest block in that second},
  *  "blocks": 10 ms blocks processed so far
  *  (stops growing while capture is idle), "channels": of the last block,
  *  "playout": {"gain": master gain of volumes above 1 (1..4), "peak": loudest

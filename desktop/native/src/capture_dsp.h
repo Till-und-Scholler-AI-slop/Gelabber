@@ -55,6 +55,7 @@ namespace gelabber
 		StrongState strong{ StrongState::Off };
 		std::string strongError;
 		float strongMs{ 0.0f };
+		float strongMaxMs{ 0.0f };
 		// Blocks processed since the engine started, and the channel count
 		// of the last one: lets callers tell live meters from stale ones.
 		uint64_t blocks{ 0 };
