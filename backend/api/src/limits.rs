@@ -97,6 +97,36 @@ pub const FEEDBACK_FORM_PER_HOUR: i64 = 20;
 /// the same way: at most this many confirmation mails a day.
 pub const FEEDBACK_FORM_PER_DAY: i64 = 100;
 
+/// Frames one WebSocket may send per minute, and how many at once (GEL-55).
+/// Every frame costs a session and access check in the gateway pool. The
+/// burst covers a reconnect, which subscribes to every text channel of the
+/// open server and every DM at once.
+pub const WS_FRAMES: FrameRate = FrameRate {
+    per_min: 1200,
+    burst: 300,
+};
+/// Typing frames per socket. Each one reaches every subscriber of the
+/// channel, and each of them checks its access to receive it. The clients
+/// send one every 3 s while someone types, and a stop.
+pub const WS_TYPING: FrameRate = FrameRate {
+    per_min: 30,
+    burst: 10,
+};
+/// Voice signal frames (`sig`) per socket: join, leave, publish, mute,
+/// deafen and watch, each sent on to the server's members.
+pub const WS_SIG: FrameRate = FrameRate {
+    per_min: 120,
+    burst: 20,
+};
+/// Presence frames (`p`) per socket. One that flips the user between idle
+/// and online reaches every member of every server the user is in. The web
+/// client sends one when it goes idle or comes back, the desktop app at
+/// most one every 10 s while there is input.
+pub const WS_PRESENCE: FrameRate = FrameRate {
+    per_min: 30,
+    burst: 10,
+};
+
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 pub(crate) const HOUR: Duration = Duration::from_secs(3600);
 
@@ -134,6 +164,21 @@ pub struct Limits {
     /// Messages per user per minute whose links get previews (`0` = off);
     /// a server allows [`PREVIEW_SERVER_FACTOR`] times as many.
     pub preview_per_min: u32,
+    /// Inbound frame budget of one WebSocket ([`WS_FRAMES`]).
+    pub ws_frames: FrameRate,
+    /// Typing frames of one WebSocket ([`WS_TYPING`]).
+    pub ws_typing: FrameRate,
+    /// Voice signal frames of one WebSocket ([`WS_SIG`]).
+    pub ws_sig: FrameRate,
+    /// Presence frames of one WebSocket ([`WS_PRESENCE`]).
+    pub ws_presence: FrameRate,
+}
+
+/// A token bucket's refill per minute and size. `per_min == 0` turns it off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameRate {
+    pub per_min: u32,
+    pub burst: u32,
 }
 
 impl Default for Limits {
@@ -149,6 +194,10 @@ impl Default for Limits {
             gif_per_min: GIF_PER_MIN,
             gif_media_per_min: GIF_MEDIA_PER_MIN,
             preview_per_min: PREVIEW_PER_MIN,
+            ws_frames: WS_FRAMES,
+            ws_typing: WS_TYPING,
+            ws_sig: WS_SIG,
+            ws_presence: WS_PRESENCE,
         }
     }
 }

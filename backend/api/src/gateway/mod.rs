@@ -17,6 +17,7 @@
 //! pub/unpub, mute/deafen). SDP and ICE go to the media socket, not `/ws`.
 //! Those frames are not mixed into `op: "e"`.
 
+mod budget;
 mod conn;
 pub mod delivery;
 mod hub;

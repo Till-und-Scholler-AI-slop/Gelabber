@@ -75,6 +75,10 @@ Server (env-configurable, defaults shown) — `backend/api/src/config.rs:20-25,8
 | media ticket TTL | `MEDIA_TICKET_TTL_SECS` | 30 s | | `config.rs:89` |
 | outbound queue | — | 1024 frames | overflow closes the socket (client reconnects/resyncs) | `hub.rs:28-36,105-112` |
 | catch-up buffer | — | 128 live events buffered across topics while subscribing; overflow closes socket | `hub/fanout.rs:8,226-235` |
+| frame budget | `API_RATE_WS_FRAMES_PER_MIN`, `API_RATE_WS_FRAMES_BURST` | 1200/min, burst 300 | client frames per socket; past it the server stops reading until it refills (§2) | `limits.rs` (`WS_FRAMES`), `gateway/budget.rs` |
+| typing budget | `API_RATE_WS_TYPING_PER_MIN`, `API_RATE_WS_TYPING_BURST` | 30/min, burst 10 | `y` frames per socket; past it they are dropped | `limits.rs` (`WS_TYPING`) |
+| signal budget | `API_RATE_WS_SIG_PER_MIN`, `API_RATE_WS_SIG_BURST` | 120/min, burst 20 | `sig` frames per socket; past it they wait like other frames | `limits.rs` (`WS_SIG`) |
+| presence budget | `API_RATE_WS_PRESENCE_PER_MIN`, `API_RATE_WS_PRESENCE_BURST` | 30/min, burst 10 | `p` frames per socket; past it they wait like other frames | `limits.rs` (`WS_PRESENCE`) |
 
 Client (web) — `web/src/ws/client.ts:48-51`:
 
@@ -169,6 +173,19 @@ Web mirror: `web/src/ws/protocol.ts:25-44`. Unknown `op` or bad JSON →
 
 "Activity" frames reset the server idle timer, flip `i`→`o` and slide the
 session expiry (throttled) — `conn.rs:122-129,165-168,247-273`. A heartbeat does none of that.
+
+**Frame budget (v0.13, GEL-55).** Every message a socket sends (text, ping,
+pong, binary) spends a token of its frame budget, `sig` frames also one of
+the signal budget, `p` frames one of the presence budget, `y` frames one of
+the typing budget (defaults and env in §1.2). Over the frame, signal or
+presence budget the server holds the frame and reads nothing more from the
+socket until the budget refills: the client's sends back up in TCP, in
+order, and none is lost. A `y` over the typing budget is dropped. There is
+no error frame and no close, so a client needs no special handling; it must
+not send `y` more often than the web client (one per 3 s while typing, plus
+the stop), nor `p` more often than the desktop app (at most one per 10 s
+while there is input, plus the change to idle). Source:
+`backend/api/src/gateway/budget.rs`, `conn.rs` (`next_inbound`).
 
 ### 2.1 Topics
 
