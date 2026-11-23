@@ -51,7 +51,11 @@ vi.mock("../auth/registration.ts", async (importOriginal) => ({
 }));
 
 import { AuthFrame } from "./AuthLayout.tsx";
-import { confirmationHelpReason } from "../auth/confirmationHelp.ts";
+import { ApiError } from "../api/client.ts";
+import {
+  confirmationHelpReason,
+  sendConfirmationLink,
+} from "../auth/confirmationHelp.ts";
 import { ConfirmationHelp } from "./ConfirmationHelp.tsx";
 import { LoginPage } from "./LoginPage.tsx";
 import { MailSent, RegisterPage } from "./RegisterPage.tsx";
@@ -515,6 +519,43 @@ describe("an address that was never confirmed (GEL-40)", () => {
       /<button type="button" disabled=""[^>]*>Erneut senden \(60 s\)<\/button>/,
     );
     expect(html).not.toContain("forgot-password");
+  });
+
+  it("sends the typed address, trimmed, and only a usable one", async () => {
+    const request = vi.fn<(email: string) => Promise<void>>(async () => {});
+    expect(await sendConfirmationLink("  ", request)).toEqual({
+      kind: "invalid",
+      code: "required",
+    });
+    expect(await sendConfirmationLink("ada@", request)).toEqual({
+      kind: "invalid",
+      code: "invalid",
+    });
+    expect(request).not.toHaveBeenCalled();
+
+    expect(await sendConfirmationLink(" ada@example.com ", request)).toEqual({
+      kind: "sent",
+    });
+    expect(request).toHaveBeenCalledWith("ada@example.com");
+  });
+
+  it("waits as long as the server asks after too many requests", async () => {
+    const limited = vi.fn<(email: string) => Promise<void>>(async () => {
+      throw new ApiError("rate_limited", 429, "slow down", {}, 12.5);
+    });
+    expect(await sendConfirmationLink("ada@example.com", limited)).toEqual({
+      kind: "failed",
+      code: "rate_limited",
+      retryAfter: 13,
+    });
+    const down = vi.fn<(email: string) => Promise<void>>(async () => {
+      throw new TypeError("offline");
+    });
+    expect(await sendConfirmationLink("ada@example.com", down)).toEqual({
+      kind: "failed",
+      code: "internal",
+      retryAfter: null,
+    });
   });
 
   it("speaks English too", () => {

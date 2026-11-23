@@ -882,8 +882,9 @@ async fn an_operator_marks_an_address_confirmed(pool: PgPool) {
         ]
     );
 
-    // A pending registration confirmed this way is no longer one: a new
-    // registration of the address cannot take it over.
+    // A pending registration is not confirmed this way: anyone who
+    // registers the address replaces its password, so nobody can say whose
+    // password it holds. Its owner gets a new link instead.
     sqlx::query(
         "INSERT INTO users (email, name, password_hash, registration_pending) \
          VALUES ('pia@example.test', 'Pia', 'x', true)",
@@ -896,7 +897,8 @@ async fn an_operator_marks_an_address_confirmed(pool: PgPool) {
         .await
         .unwrap();
     let res = account_action(&mut lena, &pia.to_string(), "confirm").await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["account"], "pending");
     let (pending, verified): (bool, bool) = sqlx::query_as(
         "SELECT registration_pending, email_verified_at IS NOT NULL FROM users WHERE id = $1",
     )
@@ -904,7 +906,42 @@ async fn an_operator_marks_an_address_confirmed(pool: PgPool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!((pending, verified), (false, true));
+    assert_eq!((pending, verified), (true, false));
+    let res = account_action(&mut lena, &pia.to_string(), "resend-confirmation").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Neither answer wrote an audit row beyond Tom's two and Pia's resend.
+    let confirms: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM operator_audit WHERE action = 'accounts.confirm'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(confirms, 2);
+}
+
+/// A disabled account stays unconfirmed, as its own link leaves it.
+#[sqlx::test]
+async fn a_disabled_account_is_not_marked_confirmed(pool: PgPool) {
+    let (mut lena, _state, _mailer, tom_id) = unconfirmed_tom(&pool).await;
+    let res = disable(&mut lena, &tom_id, json!({})).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    let res = account_action(&mut lena, &tom_id, "confirm").await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["account"], "stale");
+    let verified: bool =
+        sqlx::query_scalar("SELECT email_verified_at IS NOT NULL FROM users WHERE id = $1::uuid")
+            .bind(&tom_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!verified);
+    let confirms: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM operator_audit WHERE action = 'accounts.confirm'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(confirms, 0);
 }
 
 #[sqlx::test]

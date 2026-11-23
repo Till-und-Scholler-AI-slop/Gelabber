@@ -476,20 +476,42 @@ async fn resend_confirmation(
 
 /// `POST /api/operator/accounts/{id}/confirm`: marks the address
 /// confirmed, for an owner the operator checked with, and drops the
-/// account's open confirmation links. A pending registration stops being
-/// one, so a later registration of the address no longer takes it over.
-/// The audit row's `changed` says whether it was unconfirmed.
+/// account's open confirmation links. The audit row's `changed` says
+/// whether it was unconfirmed.
+///
+/// Only for an account registered while mail was off. A pending
+/// registration answers `422 {"account":"pending"}`: anyone who registers
+/// the address replaces its password (`user::insert_unverified_in`), so
+/// neither the operator nor the owner can know whose password confirming
+/// it would vouch for. Its owner gets a new link instead. A disabled
+/// account stays unconfirmed (`422 {"account":"stale"}`), as its own link
+/// would leave it.
 async fn confirm(
     State(state): State<AppState>,
     op: Operator,
     Id(id): Id,
 ) -> Result<Json<Account>, ApiError> {
     let mut tx = state.db.begin().await?;
-    let (_, verified, _) = lock_target(&mut tx, id).await?.ok_or(ApiError::NotFound)?;
+    let (_, verified, disabled) = lock_target(&mut tx, id).await?.ok_or(ApiError::NotFound)?;
     if !verified {
+        if disabled {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "account", "stale",
+            )])));
+        }
+        // The row is locked, so no registration replaces it after this.
+        let pending: bool =
+            sqlx::query_scalar("SELECT registration_pending FROM users WHERE id = $1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if pending {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "account", "pending",
+            )])));
+        }
         sqlx::query(
-            "UPDATE users SET email_verified_at = now(), registration_pending = false, \
-                 updated_at = now() \
+            "UPDATE users SET email_verified_at = now(), updated_at = now() \
              WHERE id = $1",
         )
         .bind(id)

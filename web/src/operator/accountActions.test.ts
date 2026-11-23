@@ -135,10 +135,25 @@ describe("account row menu", () => {
     pick(entries, "Adresse als bestätigt markieren").onSelect();
     expect(on.resend).toHaveBeenCalledOnce();
     expect(on.confirm).toHaveBeenCalledOnce();
-    // A pending registration as well.
+    // A pending registration gets the link but is never marked confirmed:
+    // its password may be a stranger's.
     expect(
       labels(accountMenuEntries({ ...unconfirmed, status: "pending" }, on)),
-    ).toContain("Bestätigungsmail senden");
+    ).toEqual([
+      "Direktnachricht",
+      "separator",
+      "Bestätigungsmail senden",
+      "separator",
+      "Konto sperren",
+    ]);
+    expect(
+      labels(
+        accountMenuEntries(
+          { ...unconfirmed, status: "pending" },
+          { ...on, resend: undefined },
+        ),
+      ),
+    ).toEqual(["Direktnachricht", "separator", "Konto sperren"]);
     // Without account mail there is nothing to send.
     expect(
       labels(accountMenuEntries(unconfirmed, { ...on, resend: undefined })),

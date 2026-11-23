@@ -35,7 +35,7 @@ export type AccountHandlers = {
 
 /**
  * A row's menu. An unconfirmed address that is not disabled can get a new
- * link or be marked confirmed. A disabled account can be enabled; any
+ * link, and be marked confirmed unless it is a pending registration. A disabled account can be enabled; any
  * other can be disabled unless it is an operator's. Empty when nothing
  * applies.
  */
@@ -51,18 +51,24 @@ export function accountMenuEntries(
       onSelect: on.message,
     });
   if (!account.email_verified && account.status !== "disabled") {
-    if (entries.length > 0) entries.push({ kind: "separator" });
+    const help: MenuEntry[] = [];
     if (on.resend)
-      entries.push({
+      help.push({
         kind: "item",
         label: translate(operator, "accounts.menu.resend"),
         onSelect: on.resend,
       });
-    entries.push({
-      kind: "item",
-      label: translate(operator, "accounts.menu.confirm"),
-      onSelect: on.confirm,
-    });
+    // Anyone who registers a pending address replaces its password, so
+    // nobody can vouch for it; its owner gets a new link instead.
+    if (account.status !== "pending")
+      help.push({
+        kind: "item",
+        label: translate(operator, "accounts.menu.confirm"),
+        onSelect: on.confirm,
+      });
+    if (help.length > 0 && entries.length > 0)
+      entries.push({ kind: "separator" });
+    entries.push(...help);
   }
   const change: MenuEntry | null =
     account.status === "disabled"

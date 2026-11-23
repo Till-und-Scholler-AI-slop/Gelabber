@@ -161,6 +161,9 @@ export function LoginPage() {
         )}
         {help ? (
           <ConfirmationHelp
+            // A new reason starts over, so a sign-in refused after the
+            // provider's help gets its cooldown for the link it just sent.
+            key={help}
             reason={help}
             email={email}
             onInvalidEmail={(code) =>
