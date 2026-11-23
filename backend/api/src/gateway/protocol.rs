@@ -20,6 +20,18 @@ pub const REDIS_PREFIX: &str = "gb:";
 /// the event through [`ServerFrame::for_user`].
 pub const HIDDEN_MENTIONS: &str = "hidden_mentions";
 
+/// The key of a message event's delta that holds the fields its author
+/// reads otherwise (GEL-21: an edit they made for themselves under a
+/// block). It stays on the server too: [`ServerFrame::for_user`] puts the
+/// fields on the author's copy and drops them from everyone's.
+pub const AUTHOR_VIEW: &str = "author_view";
+
+/// The key of a message event's delta (`true`) that marks it for its
+/// author's sockets alone (GEL-21: their edit kept for themselves under a
+/// block). [`ServerFrame::for_user`] drops the event for everyone else; the
+/// key never goes out.
+pub const AUTHOR_ONLY: &str = "author_only";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Topic {
     Server(Uuid),
@@ -795,7 +807,10 @@ impl ServerFrame {
     /// [`HIDDEN_MENTIONS`] whom it mentions without showing it to others
     /// (GEL-43): that list never goes out, and `user`, when on it, reads
     /// themselves among the `mentions`, in their stored (ascending) order.
-    pub fn for_user(self, user: Uuid) -> Self {
+    /// Under [`AUTHOR_VIEW`] it holds what its author reads otherwise
+    /// (GEL-21): only the author's copy carries those fields. An event
+    /// marked [`AUTHOR_ONLY`] is `None` for everyone but its author.
+    pub fn for_user(self, user: Uuid) -> Option<Self> {
         let (t, s, c, n, ep, i, d, r) = match self {
             Self::Event {
                 t,
@@ -806,11 +821,31 @@ impl ServerFrame {
                 i,
                 d: Some(d),
                 r,
-            } if d.get(HIDDEN_MENTIONS).is_some() => (t, s, c, n, ep, i, d, r),
-            frame => return frame,
+            } if [HIDDEN_MENTIONS, AUTHOR_VIEW, AUTHOR_ONLY]
+                .iter()
+                .any(|key| d.get(key).is_some()) =>
+            {
+                (t, s, c, n, ep, i, d, r)
+            }
+            frame => return Some(frame),
         };
         let mut delta = (*d).clone();
         let me = user.to_string();
+        let author = delta["author"]["id"].as_str() == Some(me.as_str());
+        let author_only = delta
+            .as_object_mut()
+            .and_then(|fields| fields.remove(AUTHOR_ONLY));
+        if author_only.is_some() && !author {
+            return None;
+        }
+        let author_view = delta
+            .as_object_mut()
+            .and_then(|fields| fields.remove(AUTHOR_VIEW));
+        if author
+            && let (Some(fields), Some(Value::Object(view))) = (delta.as_object_mut(), author_view)
+        {
+            fields.extend(view);
+        }
         let hidden = delta
             .as_object_mut()
             .and_then(|fields| fields.remove(HIDDEN_MENTIONS));
@@ -825,7 +860,7 @@ impl ServerFrame {
                 .unwrap_or(mentions.len());
             mentions.insert(at, Value::String(me));
         }
-        Self::Event {
+        Some(Self::Event {
             t,
             s,
             c,
@@ -834,7 +869,7 @@ impl ServerFrame {
             i,
             d: Some(Arc::new(delta)),
             r,
-        }
+        })
     }
 
     pub fn presence_snap(server_id: Uuid, snap: Vec<PresenceEntry>) -> Self {
@@ -1072,17 +1107,51 @@ mod tests {
         };
         let sent = event(serde_json::json!({"mentions": [a, c], "hidden_mentions": [b]}));
         assert_eq!(
-            delta(sent.clone().for_user(b)),
+            delta(sent.clone().for_user(b).unwrap()),
             serde_json::json!({"mentions": [a, b, c]})
         );
         assert_eq!(
-            delta(sent.for_user(a)),
+            delta(sent.for_user(a).unwrap()),
             serde_json::json!({"mentions": [a, c]})
         );
         // Anything else passes untouched.
         let plain = event(serde_json::json!({"mentions": [a]}));
-        assert_eq!(plain.clone().for_user(a), plain);
-        assert_eq!(ServerFrame::Heartbeat.for_user(a), ServerFrame::Heartbeat);
+        assert_eq!(plain.clone().for_user(a), Some(plain));
+        assert_eq!(
+            ServerFrame::Heartbeat.for_user(a),
+            Some(ServerFrame::Heartbeat)
+        );
+
+        // The author's own view (GEL-21) reaches the author alone.
+        let edited = event(serde_json::json!({
+            "author": {"id": a},
+            "content": "alt",
+            "edited_at": null,
+            "author_view": {"content": "neu", "edited_at": "2026-11-23T10:00:00Z"},
+        }));
+        assert_eq!(
+            delta(edited.clone().for_user(a).unwrap()),
+            serde_json::json!({
+                "author": {"id": a},
+                "content": "neu",
+                "edited_at": "2026-11-23T10:00:00Z",
+            })
+        );
+        assert_eq!(
+            delta(edited.for_user(b).unwrap()),
+            serde_json::json!({"author": {"id": a}, "content": "alt", "edited_at": null})
+        );
+        // An event marked for its author reaches no one else.
+        let own = event(serde_json::json!({
+            "author": {"id": a},
+            "content": "neu",
+            "author_only": true,
+        }));
+        assert_eq!(
+            delta(own.clone().for_user(a).unwrap()),
+            serde_json::json!({"author": {"id": a}, "content": "neu"})
+        );
+        assert_eq!(own.for_user(b), None);
     }
 
     /// The publish template as `EventLog::publish_revision` builds it: the
