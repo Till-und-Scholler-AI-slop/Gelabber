@@ -732,7 +732,20 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
     }
     let mut ws = connect_reading_slowly(addr, &session_cookie(&owner)).await;
     send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Read nothing until the server has given up on the socket. A fixed sleep
+    // raced the subscribe's own checks, which run before the replay write
+    // starts and take longer under load. The socket attaches after the
+    // handshake, so wait for it to appear before waiting for it to go.
+    let connections = &state.gateway.connections;
+    let gave_up = tokio::time::timeout(Duration::from_secs(15), async {
+        while connections.socket_count().await == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        while connections.socket_count().await > 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
 
     let mut subscribed = false;
     let ended = tokio::time::timeout(Duration::from_secs(10), async {
@@ -771,6 +784,10 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
         .query_async::<i32>(&mut redis)
         .await
         .unwrap();
+    assert!(
+        gave_up.is_ok(),
+        "the server kept a socket that stopped reading during its replay"
+    );
     assert!(!subscribed, "the replay was not supposed to finish");
     assert!(
         ended.is_ok(),
