@@ -408,6 +408,50 @@ async fn disabling_ends_every_session_and_refuses_sign_in(pool: PgPool) {
     );
 }
 
+/// The account is disabled together with the end of its sessions, or not
+/// at all (#694): never disabled with sessions left that sockets and voice
+/// leases still renew on.
+#[sqlx::test]
+async fn disabling_is_refused_whole_when_its_sessions_cannot_end(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let tom = registered(&state, TOM, "Tom").await;
+    let tom_id: Uuid = tom.user_id().parse().unwrap();
+    sqlx::query(
+        "CREATE FUNCTION refuse_session_delete() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RAISE EXCEPTION 'sessions cannot be deleted'; END $$",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_session_delete BEFORE DELETE ON sessions \
+         FOR EACH ROW EXECUTE FUNCTION refuse_session_delete()",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let res = disable(&mut lena, tom.user_id(), json!({})).await;
+    assert_eq!(
+        res.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        res.body
+    );
+    let (disabled, sessions): (bool, i64) = sqlx::query_as(
+        "SELECT disabled_at IS NOT NULL, \
+             (SELECT COUNT(*) FROM sessions WHERE user_id = $1) \
+         FROM users WHERE id = $1",
+    )
+    .bind(tom_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((disabled, sessions), (false, 1));
+    assert!(audit_rows(&pool).await.is_empty());
+}
+
 #[sqlx::test]
 async fn operators_cannot_disable_themselves_or_each_other(pool: PgPool) {
     let mut state = operator_state(pool.clone());

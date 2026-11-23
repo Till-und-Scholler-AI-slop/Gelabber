@@ -10,7 +10,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgConnection;
-use tracing::warn;
 use uuid::Uuid;
 
 use super::access::{self, Operator};
@@ -278,13 +277,17 @@ async fn load(
 /// The target row, locked for the change: its address, whether that is
 /// confirmed, and whether it is disabled. `None` for an account under
 /// deletion, which the console no longer shows.
+///
+/// `NO KEY UPDATE` still orders disable, enable and deletion, but lets rows
+/// that reference the account be written meanwhile: a socket's batch may do
+/// that while it holds its session row, which disabling deletes.
 async fn lock_target(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<(String, bool, bool)>, ApiError> {
     Ok(sqlx::query_as(
         "SELECT email, email_verified_at IS NOT NULL, disabled_at IS NOT NULL \
-         FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+         FROM users WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut *conn)
@@ -334,6 +337,7 @@ async fn disable(
             "Operators are set in API_OPERATOR_EMAILS.",
         ));
     }
+    let mut revoked = Vec::new();
     if !disabled {
         sqlx::query(
             "UPDATE users SET disabled_at = now(), disabled_reason = $2, updated_at = now() \
@@ -343,6 +347,14 @@ async fn disable(
         .bind(reason)
         .execute(&mut *tx)
         .await?;
+        // In the same transaction, like account deletion: the account is
+        // never disabled with sessions left that sockets and voice leases
+        // still renew on (#694).
+        revoked =
+            sqlx::query_scalar("DELETE FROM sessions WHERE user_id = $1 RETURNING token_hash")
+                .bind(id)
+                .fetch_all(&mut *tx)
+                .await?;
         audit::record(
             &mut tx,
             &op,
@@ -357,13 +369,9 @@ async fn disable(
     }
     tx.commit().await?;
 
-    if !disabled {
-        // The account is disabled now whatever happens here: its cookies
-        // resolve to nobody. This closes what they still hold open.
-        if let Err(err) = session::revoke_all(&state, id).await {
-            warn!(user_id = %id, error = err.code(), "sessions of a disabled account not revoked");
-        }
-    }
+    // Closes at once what the deleted sessions still hold open; the sockets'
+    // and leases' own session checks end them even if this is lost.
+    session::disconnect(&state, &revoked).await;
     let mut conn = state.db.acquire().await?;
     let account = load(&state, &mut conn, id)
         .await?

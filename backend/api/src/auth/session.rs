@@ -311,9 +311,22 @@ impl CurrentSession {
         Ok(exists.map(|_| tx))
     }
 
+    /// The account is checked too, like in [`resolve`]: a disabled one ends
+    /// its sockets and voice leases even with session rows left (#694). Only
+    /// the session row is locked; disabling and deletion lock the user row
+    /// first and then delete the sessions, so locking both here could
+    /// deadlock with them.
     async fn lock_row(&self, db: &mut sqlx::PgConnection) -> Result<Option<Vec<u8>>, ApiError> {
-        Ok(sqlx::query_scalar("SELECT token_hash FROM sessions WHERE token_hash = $1 AND user_id = $2 AND expires_at > now() FOR SHARE")
-            .bind(&self.hash).bind(self.user.id).fetch_optional(db).await?)
+        Ok(sqlx::query_scalar(
+            "SELECT s.token_hash FROM sessions s JOIN users u ON u.id = s.user_id \
+             WHERE s.token_hash = $1 AND s.user_id = $2 AND s.expires_at > now() \
+                 AND u.disabled_at IS NULL AND u.deleted_at IS NULL \
+             FOR SHARE OF s",
+        )
+        .bind(&self.hash)
+        .bind(self.user.id)
+        .fetch_optional(db)
+        .await?)
     }
 }
 
