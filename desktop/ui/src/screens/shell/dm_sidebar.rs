@@ -379,7 +379,7 @@ fn friend_nav(ui: &mut Ui, app: &mut AppCtx, rect: Rect) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for_label, workspace};
+    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label, workspace};
     use crate::platform::paths::testing::TempConfig;
     use egui_kittest::kittest::Queryable;
     use serde_json::json;
@@ -434,5 +434,65 @@ mod tests {
             .expect("the label");
         let inset = ink - friends.left();
         assert!((10.0..12.0).contains(&inset), "label inset {inset}");
+    }
+
+    /// A waiting request shows its count, but "Anfragen" stays muted: the
+    /// web's `.dm-row` is `--lr-muted` and the nav rows never get
+    /// `.is-unread`.
+    #[test]
+    fn a_count_leaves_the_label_muted() {
+        let _config = TempConfig::new("dm-nav-count");
+        let api = FakeApi::start(true, |method, path, _| match (method, path) {
+            ("GET", "/dms/requests") => Some(Reply::json(json!([{
+                "id": "00000000-0000-4000-8000-0000000000d2", "kind": "dm",
+                "created_at": "2026-01-01T00:00:00Z",
+                "peer": {"id": "00000000-0000-4000-8000-00000000007d", "name": "Mara",
+                         "avatar_url": null},
+                "request": {"incoming": true}
+            }]))),
+            _ => workspace(method, path),
+        });
+        let client = gelabber_client::Client::new(&api.origin).expect("client");
+        let state = client.clone();
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .with_max_steps(10_000)
+            .with_step_dt(1.0 / 60.0)
+            .build_eframe(move |cc| {
+                crate::Launcher::with_app(cc, client.clone(), Some("/d".into()))
+            });
+        wait_for(&mut h, "the request", |_| {
+            state.with_state(|s| s.dm_requests.as_ref().is_some_and(|r| r.len() == 1))
+        });
+        wait_for_label(&mut h, "Anfragen");
+        h.run_steps(4);
+        let row = h.get_by_label("Anfragen").rect();
+
+        let image = h.render().expect("render");
+        let theme = crate::theme::Theme::dark();
+        let px = |x: f32, y: f32| image.get_pixel(x as u32, y as u32).0;
+        let ys = row.top() as u32..row.bottom() as u32;
+        // The badge is drawn at the row's right end.
+        let accent = theme.c.accent.to_array();
+        assert!(
+            (row.right() as u32 - 40..row.right() as u32).any(|x| ys
+                .clone()
+                .any(|y| px(x as f32, y as f32)[..3] == accent[..3])),
+            "the count badge"
+        );
+        // The label (well left of the badge) has ink, none of it brighter
+        // than the muted colour; the dark theme's full text colour would be.
+        let peak = |p: &[u8]| p[..3].iter().copied().max().unwrap_or(0);
+        let brightest = (row.left() as u32 + 8..row.left() as u32 + 80)
+            .flat_map(|x| ys.clone().map(move |y| peak(&px(x as f32, y as f32))))
+            .max()
+            .unwrap_or(0);
+        let muted = peak(&theme.c.muted.to_array());
+        let panel = peak(&theme.c.panel.to_array());
+        assert!(brightest > panel + 60, "the label has ink ({brightest})");
+        assert!(
+            brightest <= muted + 4,
+            "label brighter than muted ({brightest} > {muted})"
+        );
     }
 }
