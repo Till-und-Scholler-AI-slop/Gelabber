@@ -596,11 +596,13 @@ pub(crate) async fn account_alive(
 }
 
 /// [`account_alive`] for an account that must also be able to sign in:
-/// not disabled by an operator (`users.disabled_at`).
+/// not disabled by an operator (`users.disabled_at`). A share lock, as
+/// disabling takes the row only `FOR NO KEY UPDATE`: a key-share lock would
+/// not wait for it and could hand the server to an account being disabled.
 async fn account_usable(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<bool, ApiError> {
     let found: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL AND disabled_at IS NULL \
-         FOR KEY SHARE",
+         FOR SHARE",
     )
     .bind(user_id)
     .fetch_optional(&mut *tx)
