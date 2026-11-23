@@ -12,6 +12,36 @@
 //! answer `404` — they have no message resource. A foreign/unknown channel
 //! is the same `404`.
 
+/// SQL: the columns of [`MessageRow`] for message `m` joined with its
+/// author `u`, as the viewer bound at `$n` reads them (NULL: what everyone
+/// reads). Their own hidden reactions (#619) and hidden mention (GEL-43)
+/// count, and an author reads their own view of a message they edited for
+/// themselves under a block (GEL-21, `messages.sender_only_content` …).
+macro_rules! message_columns {
+    ($n:literal) => {
+        concat!(
+            "m.id, m.channel_id, m.author_id, u.name AS author_name, \
+             u.avatar_url AS author_avatar_url, \
+             CASE WHEN m.author_id = $", $n, " THEN COALESCE(m.sender_only_content, m.content) \
+                  ELSE m.content END AS content, \
+             m.created_at, \
+             CASE WHEN m.author_id = $", $n, " THEN COALESCE(m.sender_only_edited_at, m.edited_at) \
+                  ELSE m.edited_at END AS edited_at, \
+             CASE WHEN m.author_id = $", $n, " THEN GREATEST(m.revision, m.sender_only_revision) \
+                  ELSE m.revision END AS revision, \
+             m.created_order, m.gif, \
+             mentions_seen_by(m.mentions, m.hidden_mentions, $", $n, ") AS mentions, \
+             m.mentions_everyone, m.system_kind, m.system_params, \
+             CASE WHEN m.author_id = $", $n, " THEN m.sender_only_descriptions END AS own_descriptions, \
+             COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) \
+                       FROM (SELECT emoji, jsonb_agg(user_id ORDER BY user_id) AS user_ids \
+                             FROM message_reactions \
+                             WHERE message_id = m.id AND (NOT sender_only OR user_id = $", $n, ") \
+                             GROUP BY emoji) r), '[]'::jsonb) AS reactions"
+        )
+    };
+}
+
 pub mod mentions;
 pub mod reactions;
 pub mod replies;
@@ -117,6 +147,10 @@ pub struct Message {
     /// author reads it, and no event or push goes out for it.
     #[serde(skip)]
     pub sender_only: bool,
+    /// The alt texts its author keeps for themselves (GEL-21), by
+    /// attachment id; read only for the author.
+    #[serde(skip)]
+    pub own_descriptions: Option<BTreeMap<Uuid, Option<String>>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -155,6 +189,7 @@ struct MessageRow {
     /// Only [`MESSAGE_BY_ID_SQL`] reads it, for the events sent from it.
     #[sqlx(default)]
     hidden_mentions: Vec<Uuid>,
+    own_descriptions: Option<sqlx::types::Json<BTreeMap<Uuid, Option<String>>>>,
 }
 
 impl From<MessageRow> for Message {
@@ -183,6 +218,7 @@ impl From<MessageRow> for Message {
             system: SystemMessage::from_columns(row.system_kind, row.system_params),
             nonce: None,
             sender_only: row.sender_only,
+            own_descriptions: row.own_descriptions.map(|own| own.0),
         }
     }
 }
@@ -197,6 +233,24 @@ impl Message {
                 .filter(|id| !self.mentions.contains(id)),
         );
         all
+    }
+
+    /// Puts the reader's own alt texts (GEL-21) on the attachments.
+    pub fn own_descriptions(&mut self) {
+        let Some(own) = &self.own_descriptions else {
+            return;
+        };
+        for attachment in &mut self.attachments {
+            if let Some(text) = own.get(&attachment.id) {
+                attachment.description = text.clone();
+            }
+        }
+    }
+
+    /// The attachments, as the reader sees them.
+    fn attach(&mut self, attachments: Vec<Attachment>) {
+        self.attachments = attachments;
+        self.own_descriptions();
     }
 }
 
@@ -215,6 +269,9 @@ struct MessageInsert {
     mentions_everyone: bool,
     system_kind: Option<String>,
     system_params: Option<sqlx::types::Json<serde_json::Value>>,
+    /// After an edit: the alt texts the author still keeps for themselves.
+    #[sqlx(default)]
+    own_descriptions: Option<sqlx::types::Json<BTreeMap<Uuid, Option<String>>>>,
 }
 
 impl MessageInsert {
@@ -248,6 +305,7 @@ impl MessageInsert {
             system: SystemMessage::from_columns(self.system_kind, self.system_params),
             nonce: None,
             sender_only: false,
+            own_descriptions: self.own_descriptions.map(|own| own.0),
         }
     }
 }
@@ -307,7 +365,7 @@ async fn list_messages(
 
     let mut page = load_page(&state.db, channel_id, user.id, before, after, limit).await?;
     attachments::for_messages(&state.db, &mut page.messages).await?;
-    replies::for_messages(&state.db, &mut page.messages).await?;
+    replies::for_messages(&state.db, &mut page.messages, Some(user.id)).await?;
     previews::for_messages(&state.db, &mut page.messages).await?;
     Ok(Json(page))
 }
@@ -489,6 +547,7 @@ async fn create_message(
         access.event_server_id(),
         EventKind::C,
         &mut message,
+        Some(user.id),
     )
     .await?;
     tx.commit().await?;
@@ -649,14 +708,15 @@ async fn update_message(
 
     // An edit names its mentions anew. Only a mention still unread counts:
     // one added to a message the user has read stays read.
-    let (here_users, hidden): (Option<Vec<Uuid>>, Vec<Uuid>) =
-        sqlx::query_as("SELECT here_users, hidden_mentions FROM messages WHERE id = $1")
+    // What everyone reads, also where the author reads their own (GEL-21).
+    let (here_users, hidden, shared): (Option<Vec<Uuid>>, Vec<Uuid>, String) =
+        sqlx::query_as("SELECT here_users, hidden_mentions, content FROM messages WHERE id = $1")
             .bind(message_id)
             .fetch_optional(&state.db)
             .await?
             .unwrap_or_default();
     let granted = mentions::Granted::of(
-        &current.content,
+        &shared,
         current.mention_everyone,
         &current.mentions,
         here_users.as_deref(),
@@ -679,23 +739,45 @@ async fn update_message(
     let mut tx = state.db.begin().await?;
     let access = lock_access(&mut tx, current.channel_id, user.id).await?;
     access.require_send()?;
-    if let MessagingChannel::Dm { .. } = access {
-        crate::dms::request::check_edit(
-            &mut tx,
-            current.channel_id,
+    let edit = match access {
+        MessagingChannel::Dm { .. } => {
+            crate::dms::request::check_edit(
+                &mut tx,
+                current.channel_id,
+                user.id,
+                &content,
+                current.sender_only,
+            )
+            .await?
+        }
+        MessagingChannel::Server { .. } => crate::blocks::Edit::Message,
+    };
+    if edit == crate::blocks::Edit::OwnView {
+        let server = access.event_server_id();
+        return own_edit(
+            &state,
+            tx,
+            server,
             user.id,
-            &content,
-            current.sender_only,
+            message_id,
+            Some(&content),
+            &descriptions,
         )
-        .await?;
+        .await
+        .map(Json);
     }
     // Only a new text marks the message edited; alt texts alone do not.
+    // The text is everyone's now, also for an author who kept their own
+    // (GEL-21), and so are the alt texts it sets.
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, \
              edited_at = CASE WHEN content IS DISTINCT FROM $2 THEN now() ELSE edited_at END, \
-             mentions = $3, mentions_everyone = $4, here_users = $5, hidden_mentions = $6 \
+             mentions = $3, mentions_everyone = $4, here_users = $5, hidden_mentions = $6, \
+             sender_only_content = NULL, sender_only_edited_at = NULL, \
+             sender_only_descriptions = NULLIF(sender_only_descriptions - $7::text[], '{}'::jsonb) \
          WHERE id = $1 \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, hidden_mentions, mentions_everyone, system_kind, system_params",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, hidden_mentions, mentions_everyone, system_kind, system_params, \
+                   sender_only_descriptions AS own_descriptions",
     )
     .bind(message_id)
     .bind(&content)
@@ -703,6 +785,7 @@ async fn update_message(
     .bind(mentioned.everyone)
     .bind(&mentioned.here_users)
     .bind(&mentioned.hidden)
+    .bind(described_ids(&descriptions))
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
@@ -726,12 +809,13 @@ async fn update_message(
     let mut message = row.into_message(&user);
     message.sender_only = current.sender_only;
     // Read under the lock: a concurrent alt edit may have changed others.
-    message.attachments = attachments::for_message(&mut *tx, message_id).await?;
+    message.attach(attachments::for_message(&mut *tx, message_id).await?);
     persist_event(
         &mut tx,
         access.event_server_id(),
         EventKind::E,
         &mut message,
+        Some(user.id),
     )
     .await?;
     // The event shows open reactions; the answer the caller's hidden ones too.
@@ -768,14 +852,30 @@ async fn describe_only(
     let mut tx = state.db.begin().await?;
     let access = lock_access(&mut tx, channel_id, user_id).await?;
     access.require_send()?;
-    // A DM closed by a block takes no edits, alt texts included (#565),
-    // but the one blocked edits what only they see (#619).
-    if let MessagingChannel::Dm { .. } = access {
-        crate::blocks::in_dm(&mut *tx, channel_id, user_id)
+    // A DM closed by a block takes no edits from the blocker, alt texts
+    // included (#565); the one blocked edits as ever (#619, GEL-21).
+    if let MessagingChannel::Dm { .. } = access
+        && crate::blocks::in_dm(&mut *tx, channel_id, user_id)
             .await?
-            .refuse_edit(sender_only)?;
+            .edit(sender_only)?
+            == crate::blocks::Edit::OwnView
+    {
+        let server = access.event_server_id();
+        return own_edit(state, tx, server, user_id, message_id, None, descriptions).await;
     }
-    let changed = attachments::describe(&mut tx, message_id, descriptions).await?;
+    let mut changed = attachments::describe(&mut tx, message_id, descriptions).await?;
+    // The texts set are everyone's now, also the author's (GEL-21).
+    changed |= sqlx::query(
+        "UPDATE messages \
+         SET sender_only_descriptions = NULLIF(sender_only_descriptions - $2::text[], '{}'::jsonb) \
+         WHERE id = $1 AND sender_only_descriptions ?| $2::text[]",
+    )
+    .bind(message_id)
+    .bind(described_ids(descriptions))
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        > 0;
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
         .bind(user_id)
@@ -783,11 +883,11 @@ async fn describe_only(
         .await?
         .ok_or(ApiError::NotFound)?;
     let mut message = Message::from(row);
-    message.attachments = attachments::for_message(&mut *tx, message_id).await?;
+    message.attach(attachments::for_message(&mut *tx, message_id).await?);
     if !changed {
         // Someone else's request already wrote these texts.
         tx.rollback().await?;
-        replies::for_messages(&state.db, std::slice::from_mut(&mut message)).await?;
+        replies::for_messages(&state.db, std::slice::from_mut(&mut message), Some(user_id)).await?;
         previews::for_messages(&state.db, std::slice::from_mut(&mut message)).await?;
         return Ok(message);
     }
@@ -796,6 +896,7 @@ async fn describe_only(
         access.event_server_id(),
         EventKind::E,
         &mut message,
+        Some(user_id),
     )
     .await?;
     // The event shows open reactions; the answer the caller's hidden ones too.
@@ -803,6 +904,78 @@ async fn describe_only(
     tx.commit().await?;
     delivery::wake(state);
     Ok(message)
+}
+
+/// GEL-21: an edit by the one blocked of a message the blocker has seen
+/// (#619), of the text (`content`) and/or alt texts, under the channel
+/// lock in `tx`. It is stored as the author's own view: the blocker keeps
+/// what they saw, also after an unblock. Its event reaches the author's
+/// sockets alone ([`crate::gateway::protocol::AUTHOR_ONLY`]); like a
+/// sender-only message it brings no mentions, pushes or link previews.
+async fn own_edit(
+    state: &AppState,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    server: Uuid,
+    user_id: Uuid,
+    message_id: Uuid,
+    content: Option<&str>,
+    descriptions: &[(Uuid, Option<String>)],
+) -> Result<Message, ApiError> {
+    let texts: BTreeMap<Uuid, Option<String>> = descriptions.iter().cloned().collect();
+    // A revision of its own, so the author's clients take it over what they
+    // hold, while the peer's copy keeps the one they read.
+    let revision = delivery::revision(&mut tx).await?;
+    sqlx::query(
+        "UPDATE messages SET \
+             sender_only_edited_at = CASE WHEN $2::text IS NOT NULL \
+                 AND COALESCE(sender_only_content, content) IS DISTINCT FROM $2 \
+                 THEN now() ELSE sender_only_edited_at END, \
+             sender_only_content = COALESCE($2, sender_only_content), \
+             sender_only_descriptions = CASE WHEN $3::jsonb = '{}'::jsonb \
+                 THEN sender_only_descriptions \
+                 ELSE COALESCE(sender_only_descriptions, '{}'::jsonb) || $3::jsonb END, \
+             sender_only_revision = $4 \
+         WHERE id = $1",
+    )
+    .bind(message_id)
+    .bind(content)
+    .bind(sqlx::types::Json(&texts))
+    .bind(revision)
+    .execute(&mut *tx)
+    .await?;
+    let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
+        .bind(message_id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let mut message = Message::from(row);
+    message.attach(attachments::for_message(&mut *tx, message_id).await?);
+    replies::for_messages(&mut *tx, std::slice::from_mut(&mut message), Some(user_id)).await?;
+    previews::for_messages(&mut *tx, std::slice::from_mut(&mut message)).await?;
+    let mut delta =
+        serde_json::to_value(&message).map_err(|err| ApiError::Internal(err.to_string()))?;
+    delta[crate::gateway::protocol::AUTHOR_ONLY] = serde_json::json!(true);
+    delivery::enqueue(
+        &mut tx,
+        revision,
+        EventDraft {
+            kind: EventKind::E,
+            server_id: server,
+            channel_id: Some(message.channel_id),
+            entity_id: Some(message.id),
+            delta: Some(delta),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    delivery::wake(state);
+    Ok(message)
+}
+
+/// The attachment ids of an edit's alt texts, as JSON keys.
+fn described_ids(texts: &[(Uuid, Option<String>)]) -> Vec<String> {
+    texts.iter().map(|(id, _)| id.to_string()).collect()
 }
 
 async fn delete_message(
@@ -870,9 +1043,16 @@ async fn persist_event(
     server: Uuid,
     kind: EventKind,
     message: &mut Message,
+    reader: Option<Uuid>,
 ) -> Result<(), ApiError> {
     reactions::populate(db, message).await?;
-    replies::for_messages(&mut *db, std::slice::from_mut(message)).await?;
+    // A sender-only message (#619) is read by its author alone.
+    let reader = if message.sender_only {
+        Some(message.author.id)
+    } else {
+        reader
+    };
+    replies::for_messages(&mut *db, std::slice::from_mut(message), reader).await?;
     previews::for_messages(&mut *db, std::slice::from_mut(message)).await?;
     message.revision = delivery::revision(db).await?;
     sqlx::query("UPDATE messages SET revision=$2 WHERE id=$1")
@@ -885,8 +1065,17 @@ async fn persist_event(
     if message.sender_only {
         return Ok(());
     }
+    let mut shared = message.clone();
+    if reader.is_some() {
+        replies::for_messages(&mut *db, std::slice::from_mut(&mut shared), None).await?;
+    }
+    let own = shared_view(db, &mut shared).await?;
     let mut delta =
-        serde_json::to_value(&*message).map_err(|err| ApiError::Internal(err.to_string()))?;
+        serde_json::to_value(&shared).map_err(|err| ApiError::Internal(err.to_string()))?;
+    if let Some(own) = own {
+        delta[crate::gateway::protocol::AUTHOR_VIEW] = own;
+    }
+    let message = &shared;
     // Everyone reads the message without the hidden mentions, also when it
     // was read for one of them; the gateway hands each their own (GEL-43).
     if !message.hidden_mentions.is_empty() {
@@ -912,6 +1101,60 @@ async fn persist_event(
         },
     )
     .await
+}
+
+/// GEL-21: puts what everyone reads on `message` (text, edit time, alt
+/// texts), whoever it was read for, and returns its author's own view of
+/// them when they keep one, for the gateway to hand them
+/// ([`crate::gateway::protocol::AUTHOR_VIEW`]).
+async fn shared_view(
+    db: &mut sqlx::PgConnection,
+    message: &mut Message,
+) -> Result<Option<serde_json::Value>, ApiError> {
+    #[derive(FromRow)]
+    struct Views {
+        content: String,
+        edited_at: Option<DateTime<Utc>>,
+        own_content: Option<String>,
+        own_edited_at: Option<DateTime<Utc>>,
+        own_descriptions: Option<sqlx::types::Json<BTreeMap<Uuid, Option<String>>>>,
+    }
+    let views: Option<Views> = sqlx::query_as(
+        "SELECT content, edited_at, sender_only_content AS own_content, \
+                sender_only_edited_at AS own_edited_at, \
+                sender_only_descriptions AS own_descriptions \
+         FROM messages WHERE id = $1 \
+           AND (sender_only_content IS NOT NULL OR sender_only_descriptions IS NOT NULL)",
+    )
+    .bind(message.id)
+    .fetch_optional(&mut *db)
+    .await?;
+    let Some(views) = views else {
+        return Ok(None);
+    };
+    let texts: Vec<(Uuid, Option<String>)> =
+        sqlx::query_as("SELECT id, description FROM attachments WHERE message_id = $1")
+            .bind(message.id)
+            .fetch_all(&mut *db)
+            .await?;
+    for attachment in &mut message.attachments {
+        if let Some((_, text)) = texts.iter().find(|(id, _)| *id == attachment.id) {
+            attachment.description = text.clone();
+        }
+    }
+    message.content = views.content.clone();
+    message.edited_at = views.edited_at;
+    message.own_descriptions = None;
+    let mut own = message.clone();
+    own.content = views.own_content.unwrap_or(views.content);
+    own.edited_at = views.own_edited_at.or(views.edited_at);
+    own.own_descriptions = views.own_descriptions.map(|texts| texts.0);
+    own.own_descriptions();
+    Ok(Some(serde_json::json!({
+        "content": own.content,
+        "edited_at": own.edited_at,
+        "attachments": own.attachments,
+    })))
 }
 
 /// A picked GIF as stored: alone in its message, resolved by Klipy so its
@@ -987,6 +1230,7 @@ async fn suppress_previews(
             access.event_server_id(),
             EventKind::E,
             &mut message,
+            None,
         )
         .await?;
     }
@@ -1050,7 +1294,7 @@ pub(crate) async fn attach_previews(
         .await?;
     let mut message = Message::from(row);
     message.attachments = attachments::for_message(&mut *tx, job.message_id).await?;
-    persist_event(&mut tx, job.server_id, EventKind::E, &mut message).await?;
+    persist_event(&mut tx, job.server_id, EventKind::E, &mut message, None).await?;
     tx.commit().await?;
     delivery::wake(state);
     Ok(())
@@ -1082,7 +1326,7 @@ pub(crate) async fn attachments_ready(state: &AppState, message_id: Uuid) -> Res
     };
     let mut message = Message::from(row);
     message.attachments = attachments::for_message(&mut *tx, message_id).await?;
-    persist_event(&mut tx, server_id, EventKind::E, &mut message).await?;
+    persist_event(&mut tx, server_id, EventKind::E, &mut message, None).await?;
     tx.commit().await?;
     delivery::wake(state);
     Ok(())
@@ -1203,12 +1447,15 @@ pub(crate) async fn lock_access(
     Ok(MessagingChannel::Dm { channel })
 }
 
-/// `$1` the message; `$2` the viewer whose hidden reactions (#619) and
-/// hidden mention (GEL-43) count, or NULL for what everyone sees.
-const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, mentions_seen_by(m.mentions, m.hidden_mentions, $2) AS mentions, m.hidden_mentions, m.mentions_everyone, m.system_kind, m.system_params, m.sender_only, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$2) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
-         FROM messages m JOIN users u ON u.id = m.author_id \
-         WHERE m.id = $1";
+/// `$1` the message; `$2` the viewer ([`message_columns`]), or NULL for
+/// what everyone sees.
+const MESSAGE_BY_ID_SQL: &str = concat!(
+    "SELECT ",
+    message_columns!("2"),
+    ", m.hidden_mentions, m.sender_only \
+     FROM messages m JOIN users u ON u.id = m.author_id \
+     WHERE m.id = $1"
+);
 
 /// SQL condition: message `m` is one the viewer (bound at `$n`) may read.
 /// A sender-only message (#619) is its author's alone.
@@ -1235,8 +1482,8 @@ async fn message_for(
     }
     let access = messaging_channel(db, row.channel_id, user_id).await?;
     let mut message = Message::from(row);
-    message.attachments = attachments::for_message(db, message.id).await?;
-    replies::for_messages(db, std::slice::from_mut(&mut message)).await?;
+    message.attach(attachments::for_message(db, message.id).await?);
+    replies::for_messages(db, std::slice::from_mut(&mut message), Some(user_id)).await?;
     previews::for_messages(db, std::slice::from_mut(&mut message)).await?;
     Ok((access, message))
 }
@@ -1253,9 +1500,9 @@ async fn load_page(
     let rows = if let Some(cursor) = before {
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(concat!(
-            "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, mentions_seen_by(m.mentions, m.hidden_mentions, $5) AS mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
-             FROM messages m JOIN users u ON u.id = m.author_id \
+            "SELECT ",
+            message_columns!("5"),
+            " FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) AND ",
             readable_by!("5"),
             " ORDER BY m.created_at DESC, m.id DESC \
@@ -1271,9 +1518,9 @@ async fn load_page(
     } else if let Some(cursor) = after {
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(concat!(
-            "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, mentions_seen_by(m.mentions, m.hidden_mentions, $5) AS mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$5) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
-             FROM messages m JOIN users u ON u.id = m.author_id \
+            "SELECT ",
+            message_columns!("5"),
+            " FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) AND ",
             readable_by!("5"),
             " ORDER BY m.created_at ASC, m.id ASC \
@@ -1298,9 +1545,9 @@ async fn load_page(
         });
     } else {
         sqlx::query_as::<_, MessageRow>(concat!(
-            "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, mentions_seen_by(m.mentions, m.hidden_mentions, $3) AS mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$3) GROUP BY emoji) r),'[]'::jsonb) AS reactions \
-             FROM messages m JOIN users u ON u.id = m.author_id \
+            "SELECT ",
+            message_columns!("3"),
+            " FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND ",
             readable_by!("3"),
             " ORDER BY m.created_at DESC, m.id DESC \

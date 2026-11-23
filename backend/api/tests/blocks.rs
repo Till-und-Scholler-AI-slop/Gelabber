@@ -491,7 +491,12 @@ async fn an_edit_of_a_seen_message_stays_the_senders(pool: PgPool) {
     let bobs_text = format!("<@{ada}> neuer text");
     let edited = edit(&mut w.bob, &seen, json!({ "content": bobs_text })).await;
     assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
-    assert_eq!(edited.body["content"], bobs_text.as_str(), "{}", edited.body);
+    assert_eq!(
+        edited.body["content"],
+        bobs_text.as_str(),
+        "{}",
+        edited.body
+    );
     assert!(edited.body["edited_at"].is_string(), "{}", edited.body);
     assert!(
         edited.body["revision"].as_i64().unwrap() > before["revision"].as_i64().unwrap(),
@@ -514,10 +519,16 @@ async fn an_edit_of_a_seen_message_stays_the_senders(pool: PgPool) {
         "alter text"
     );
     // Search goes by the text each reads.
-    assert_eq!(found(&mut w.bob, &dm, "neuer").await, [seen.clone()]);
+    assert_eq!(
+        found(&mut w.bob, &dm, "neuer").await,
+        std::slice::from_ref(&seen)
+    );
     assert!(found(&mut w.bob, &dm, "alter").await.is_empty());
     assert!(found(&mut w.ada, &dm, "neuer").await.is_empty());
-    assert_eq!(found(&mut w.ada, &dm, "alter").await, [seen.clone()]);
+    assert_eq!(
+        found(&mut w.ada, &dm, "alter").await,
+        std::slice::from_ref(&seen)
+    );
     // The mention he added pings nobody.
     assert_eq!(unread_row(&mut w.ada, &dm).await["mention_count"], 0);
 
@@ -1157,7 +1168,7 @@ async fn the_blocker_hears_nothing_of_hidden_messages(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn an_edit_of_a_seen_message_reaches_no_socket_and_stays_his_live(pool: PgPool) {
+async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     let state = common::ws_state(pool);
     let addr = common::serve_ws_state(state.clone()).await;
     let mut w = world(state).await;
@@ -1170,31 +1181,52 @@ async fn an_edit_of_a_seen_message_reaches_no_socket_and_stays_his_live(pool: Pg
     block(&mut w.ada, &bob).await;
     let mut ada_ws = socket(addr, &w.ada).await;
     let mut bob_ws = socket(addr, &w.bob).await;
+    let mut head = Value::Null;
     for ws in [&mut ada_ws, &mut bob_ws] {
         ws.send(Message::Text(
             json!({ "op": "s", "s": dm, "c": dm }).to_string().into(),
         ))
         .await
         .unwrap();
-        assert!(
-            frame(ws, Duration::from_secs(5), |f| f["op"] == "ok")
-                .await
-                .is_some()
-        );
+        head = frame(ws, Duration::from_secs(5), |f| f["op"] == "ok")
+            .await
+            .expect("subscribed");
     }
 
-    // His edit of what she saw goes out to no socket, like his hidden
-    // messages: his other devices read it on their next history load.
+    // His edit of what she saw goes out to his sockets alone.
     let edited = edit(&mut w.bob, &seen, json!({ "content": "neu" })).await;
     assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
     let event = |f: &Value| f["op"] == "e";
-    for ws in [&mut ada_ws, &mut bob_ws] {
-        assert!(
-            frame(ws, Duration::from_millis(800), event)
-                .await
-                .is_none(),
-            "no event for an edit of his own"
-        );
+    let his = frame(&mut bob_ws, Duration::from_secs(5), event)
+        .await
+        .expect("his edit event");
+    assert_eq!(his["t"], "e", "{his}");
+    assert_eq!(his["d"]["content"], "neu", "{his}");
+    assert_eq!(his["d"]["edited_at"], edited.body["edited_at"], "{his}");
+    assert_eq!(his["r"], edited.body["revision"], "{his}");
+    assert!(his["d"].get("author_only").is_none(), "{his}");
+    assert!(
+        frame(&mut ada_ws, Duration::from_millis(800), event)
+            .await
+            .is_none(),
+        "no event for her"
+    );
+    // Nor when she resumes from before it.
+    for (client, expect) in [(&w.ada, false), (&w.bob, true)] {
+        let mut ws = socket(addr, client).await;
+        ws.send(Message::Text(
+            json!({ "op": "s", "s": dm, "c": dm, "n": head["n"], "ep": head["ep"] })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let first = frame(&mut ws, Duration::from_secs(5), |f| {
+            f["op"] == "e" || f["op"] == "ok"
+        })
+        .await
+        .expect("resumed");
+        assert_eq!(first["op"] == "e", expect, "{first}");
     }
 
     // After the unblock her reaction goes out to both, each with the text

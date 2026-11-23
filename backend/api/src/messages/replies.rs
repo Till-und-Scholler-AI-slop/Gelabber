@@ -127,9 +127,12 @@ fn mask_spoilers(line: &str) -> String {
 }
 
 // The original must stay in the reply's channel; a row that says otherwise
-// is answered as deleted rather than leaking another channel's text.
+// is answered as deleted rather than leaking another channel's text. `$2`
+// is the reader: the original's author reads their own text of it (GEL-21).
 const REPLIES_SQL: &str = "SELECT m.id AS message_id, m.reply_to, o.id AS original_id, \
-        o.author_id, u.name AS author_name, o.content, \
+        o.author_id, u.name AS author_name, \
+        CASE WHEN o.author_id = $2 THEN COALESCE(o.sender_only_content, o.content) \
+             ELSE o.content END AS content, \
         EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = o.id) AS has_attachment, \
         o.gif IS NOT NULL AS has_gif, o.system_kind, o.system_params \
      FROM messages m \
@@ -137,10 +140,12 @@ const REPLIES_SQL: &str = "SELECT m.id AS message_id, m.reply_to, o.id AS origin
      LEFT JOIN users u ON u.id = o.author_id \
      WHERE m.id = ANY($1) AND m.reply_to IS NOT NULL";
 
-/// Fill `reply` on every message that answers another one.
+/// Fill `reply` on every message that answers another one, as `reader`
+/// reads it (`None`: what everyone reads).
 pub async fn for_messages(
     db: impl PgExecutor<'_>,
     messages: &mut [Message],
+    reader: Option<Uuid>,
 ) -> Result<(), ApiError> {
     let ids: Vec<Uuid> = messages.iter().map(|m| m.id).collect();
     if ids.is_empty() {
@@ -148,6 +153,7 @@ pub async fn for_messages(
     }
     let rows = sqlx::query_as::<_, ReplyRow>(REPLIES_SQL)
         .bind(&ids)
+        .bind(reader)
         .fetch_all(db)
         .await?;
     let mut by_message: std::collections::HashMap<Uuid, Reply> = rows
