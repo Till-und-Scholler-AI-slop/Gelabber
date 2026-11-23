@@ -50,12 +50,14 @@ main() {
     if [ "$current" = "$server" ]; then
       echo "==> $conf already has [gelabber]"
     else
-      echo "==> Setting the [gelabber] server in $conf (was: ${current:-none})"
+      echo "==> Setting the [gelabber] server in $conf (was: ${current:-none}; copy in $conf.gelabber.bak)"
       awk -v server="$server" '
         /^\[/ { s = /^\[gelabber\]/; print; if (s) print server; next }
         s && /^[[:space:]]*Server[[:space:]]*=/ { next }
         { print }' "$conf" >"$work/pacman.conf"
-      # Rewritten in place: the file keeps its owner and mode.
+      # Rewritten in place: the file keeps its owner and mode. The copy
+      # restores it if the rewrite is cut short (Ctrl-C, full disk).
+      cp -p "$conf" "$conf.gelabber.bak"
       cat "$work/pacman.conf" >"$conf"
     fi
   else
