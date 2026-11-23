@@ -764,7 +764,7 @@ A's sockets get `{"op":"bl"}` (protocol-gateway §3) and read the list and `GET 
 | `attachments` | `Attachment[]` | always (may be `[]`) |
 | `reactions` | `{emoji: string, user_ids: uuid[]}[]`, sorted by emoji (text), user_ids sorted | always |
 | `gif` | `Gif` (§12) | optional (absent when none) |
-| `mentions` | uuid[] — users the server resolved as mentioned | always |
+| `mentions` | uuid[] — users the server resolved as mentioned, as the reader may see them: an invisible member `@here` reached is listed only for themselves (messages sent from v0.13 on, GEL-43; older ones keep everyone `@here` reached) | always |
 | `mention_everyone` | bool | always |
 | `reply` | `Reply` | optional |
 | `previews` | `LinkPreview[]` | optional, absent when empty |
