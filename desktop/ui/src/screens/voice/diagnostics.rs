@@ -184,12 +184,36 @@ pub fn effective_mode(mode: &str, filter: Option<NoiseFilterLevels>) -> &str {
 }
 
 /// The filter's buffer as the web counts it (`workletBufferMs` without
-/// the gate): 10 ms for RNNoise, 10 ms more for DeepFilterNet3.
+/// the gate): 10 ms for Gelabber's own filters. DeepFilterNet3's own 10 ms
+/// over RNNoise are not a buffer; the mode's hint says so, as on the web.
 pub fn filter_buffer_ms(mode: &str, filter: Option<NoiseFilterLevels>) -> u32 {
     match effective_mode(mode, filter) {
-        "strong" => 20,
-        "enhanced" => 10,
+        "strong" | "enhanced" => 10,
         _ => 0,
+    }
+}
+
+/// The "Starker Filter (DeepFilterNet3)" row (web `strongText`): its time
+/// per block, or why Standard runs instead.
+pub fn strong_text(filter: NoiseFilterLevels) -> String {
+    let ms = |value: f64| gelabber_i18n::intl::format_number(value, 1, 1);
+    let reason = match filter.strong {
+        StrongFilterState::Slow => texts::strong_reason_slow(),
+        StrongFilterState::Failed => texts::strong_reason_error(),
+        StrongFilterState::Unavailable => texts::strong_reason_load(),
+        StrongFilterState::Loading => return texts::mic_strong_loading().into(),
+        StrongFilterState::Active | StrongFilterState::Off => {
+            return if filter.ms_per_block > 0.0 {
+                texts::mic_strong_time(&ms(filter.ms_per_block))
+            } else {
+                texts::mic_strong_waiting().into()
+            };
+        }
+    };
+    if filter.ms_per_block > 0.0 {
+        texts::mic_strong_off_time(reason, &ms(filter.ms_per_block))
+    } else {
+        texts::mic_strong_off(reason)
     }
 }
 
@@ -740,15 +764,9 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
             false,
         ),
     ];
-    // DeepFilterNet3's cost on this machine, while it runs.
-    if let Some(f) = state.noise_filter.filter(|f| {
-        in_call && mode == "strong" && f.used == NoiseFilterUsed::Strong && f.ms_per_block > 0.0
-    }) {
-        rows.push((
-            texts::mic_strong_time(),
-            texts::mic_strong_ms(&gelabber_i18n::intl::format_number(f.ms_per_block, 2, 2)),
-            false,
-        ));
+    // DeepFilterNet3's time on this machine, or why it is off.
+    if let Some(f) = state.noise_filter.filter(|_| in_call && mode == "strong") {
+        rows.push((texts::mic_strong(), strong_text(f), false));
     }
     facts(ui, &rows, width, text::BODY, 9.0);
     ui.add_space(28.0);
@@ -1428,9 +1446,52 @@ mod tests {
         assert_eq!(effective_mode("strong", standard), "enhanced");
         assert_eq!(effective_mode("strong", None), "strong");
         assert_eq!(effective_mode("browser", standard), "browser");
-        assert_eq!(filter_buffer_ms("strong", None), 20);
-        assert_eq!(filter_buffer_ms("strong", standard), 10);
+        // As on the web: the buffer is Standard's, DFN3's 10 ms are its own.
+        assert_eq!(filter_buffer_ms("strong", None), 10);
         assert_eq!(filter_buffer_ms("enhanced", None), 10);
         assert_eq!(filter_buffer_ms("original", None), 0);
+    }
+
+    /// The web's "Starker Filter (DeepFilterNet3)" row: the time per block,
+    /// or why Standard runs instead.
+    #[test]
+    fn the_strong_filter_row_shows_its_time_or_why_it_is_off() {
+        use gelabber_call::NoiseFilterLevels;
+        use gelabber_call::logic::{NoiseFilterUsed, StrongFilterState};
+        let row = |used, strong, ms_per_block| {
+            strong_text(NoiseFilterLevels {
+                used,
+                strong,
+                ms_per_block,
+            })
+        };
+        assert_eq!(
+            row(NoiseFilterUsed::Strong, StrongFilterState::Active, 0.734),
+            "0,7 ms je 10-ms-Block (Mittel der letzten Sekunde)"
+        );
+        assert_eq!(
+            row(NoiseFilterUsed::Strong, StrongFilterState::Active, 0.0),
+            "läuft; erste Messung nach einer Sekunde"
+        );
+        assert_eq!(
+            row(NoiseFilterUsed::Standard, StrongFilterState::Loading, 0.0),
+            "lädt"
+        );
+        assert_eq!(
+            row(NoiseFilterUsed::Standard, StrongFilterState::Slow, 6.04),
+            "aus: Gerät zu langsam, zuletzt 6,0 ms je 10-ms-Block"
+        );
+        assert_eq!(
+            row(NoiseFilterUsed::Standard, StrongFilterState::Failed, 0.0),
+            "aus: Filter ausgefallen"
+        );
+        assert_eq!(
+            row(
+                NoiseFilterUsed::Standard,
+                StrongFilterState::Unavailable,
+                0.0
+            ),
+            "aus: nicht geladen"
+        );
     }
 }

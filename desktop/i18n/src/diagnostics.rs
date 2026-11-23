@@ -278,8 +278,18 @@ crate::strings! {
         | "Desktop app: DeepFilterNet3 unavailable, RNNoise instead";
     processing_desktop_strong_slow = "Desktop-App: DeepFilterNet3 zu langsam für dieses Gerät, RNNoise als Ersatz"
         | "Desktop app: DeepFilterNet3 too slow on this device, RNNoise instead";
-    mic_strong_time = "Rechenzeit DeepFilterNet3"
-        | "DeepFilterNet3 CPU time";
+    mic_strong = "Starker Filter (DeepFilterNet3)"
+        | "Strong filter (DeepFilterNet3)";
+    mic_strong_waiting = "läuft; erste Messung nach einer Sekunde"
+        | "running; first reading after a second";
+    mic_strong_loading = "lädt"
+        | "loading";
+    strong_reason_slow = "Gerät zu langsam"
+        | "device too slow";
+    strong_reason_error = "Filter ausgefallen"
+        | "filter failed";
+    strong_reason_load = "nicht geladen"
+        | "not loaded";
     mic_noise_webrtc = "Rauschfilter (WebRTC)" | "Noise filter (WebRTC)";
     mic_auto_gain_webrtc = "Auto-Gain (WebRTC)" | "Auto gain (WebRTC)";
     ui_save_title = "Diagnose speichern" | "Save diagnostics";
@@ -632,11 +642,28 @@ pub fn processing_default_mic(words: &str) -> String {
     }
 }
 
-/// DeepFilterNet3's time per block: "{ms} ms je 10-ms-Block".
-pub fn mic_strong_ms(ms: &str) -> String {
+/// DeepFilterNet3's time per block (web `mic.strongTime`, without the
+/// slowest block, which the core does not keep).
+pub fn mic_strong_time(ms: &str) -> String {
     match get() {
-        Locale::De => format!("{ms} ms je 10-ms-Block"),
-        Locale::En => format!("{ms} ms per 10 ms block"),
+        Locale::De => format!("{ms} ms je 10-ms-Block (Mittel der letzten Sekunde)"),
+        Locale::En => format!("{ms} ms per 10 ms block (mean of the last second)"),
+    }
+}
+
+/// Strong runs as Standard: "aus: {reason}" (web `mic.strongOff`).
+pub fn mic_strong_off(reason: &str) -> String {
+    match get() {
+        Locale::De => format!("aus: {reason}"),
+        Locale::En => format!("off: {reason}"),
+    }
+}
+
+/// The same with its last time (web `mic.strongOffTime`).
+pub fn mic_strong_off_time(reason: &str, ms: &str) -> String {
+    match get() {
+        Locale::De => format!("aus: {reason}, zuletzt {ms} ms je 10-ms-Block"),
+        Locale::En => format!("off: {reason}, last {ms} ms per 10 ms block"),
     }
 }
 
