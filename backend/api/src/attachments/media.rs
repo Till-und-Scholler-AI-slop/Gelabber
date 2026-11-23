@@ -99,6 +99,9 @@ pub enum Prepared {
 /// push a JPEG's frame header or a GIF's first frame past it (GEL-45).
 /// Here the whole file is at hand, so the pixel bounds are checked again
 /// on it: clients show a picture without thumbnails as the original.
+/// A size even the whole file does not prove (a truncated file, or a
+/// layout `image_size` refuses, such as a stray byte between JPEG
+/// segments that libjpeg skips) is still let through.
 pub async fn prepare(
     db: &PgPool,
     store: &ObjectStore,
