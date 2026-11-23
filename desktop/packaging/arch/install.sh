@@ -42,11 +42,25 @@ main() {
   pacman-key --add "$work/gelabber.asc" >/dev/null
   pacman-key --lsign-key "$fingerprint" >/dev/null
 
+  server="Server = $repo_url/\$arch"
   if grep -q '^\[gelabber\]' "$conf"; then
-    echo "==> $conf already has [gelabber], left as it is"
+    # An older or hand-written section can point elsewhere; pacman then
+    # gets 404 for gelabber.db. Keep the section, replace its Server lines.
+    current="$(awk '/^\[/ { s = /^\[gelabber\]/ } s && /^[[:space:]]*Server[[:space:]]*=/' "$conf")"
+    if [ "$current" = "$server" ]; then
+      echo "==> $conf already has [gelabber]"
+    else
+      echo "==> Setting the [gelabber] server in $conf (was: ${current:-none})"
+      awk -v server="$server" '
+        /^\[/ { s = /^\[gelabber\]/; print; if (s) print server; next }
+        s && /^[[:space:]]*Server[[:space:]]*=/ { next }
+        { print }' "$conf" >"$work/pacman.conf"
+      # Rewritten in place: the file keeps its owner and mode.
+      cat "$work/pacman.conf" >"$conf"
+    fi
   else
     echo "==> Adding [gelabber] to $conf"
-    printf '\n[gelabber]\nSigLevel = Required DatabaseRequired\nServer = %s/$arch\n' "$repo_url" >>"$conf"
+    printf '\n[gelabber]\nSigLevel = Required DatabaseRequired\n%s\n' "$server" >>"$conf"
   fi
 
   # pacman asks on the terminal, not on the pipe that brought this script.

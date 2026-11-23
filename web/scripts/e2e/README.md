@@ -1,6 +1,6 @@
 # Actual-app acceptance scenarios
 
-Gelabber 0.9 uses mediasoup 0.29.0 through the official Rust binding
+Gelabber uses mediasoup 0.33 through the official Rust binding
 and public mediasoup-client 3.26.0, with Gelabber's own v4 WebSocket/authority
 contract. A publishing voice connection uses separate SDK send and receive PCs
 (at most two active PCs); a Live is watched inside the call. Native

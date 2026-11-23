@@ -46,14 +46,28 @@ fn api(unread: u32, posts: Arc<Mutex<Vec<(String, String)>>>) -> FakeApi {
     })
 }
 
-fn open_dialog(harness: &mut App) {
-    crate::app::testkit::open_account(harness, "Lena");
-    wait_for(harness, "Feedback geben", |h| {
-        h.query_all_by_role(Role::MenuItem).any(|n| {
+fn feedback_item(harness: &egui_kittest::Harness<'_, crate::Launcher>) -> Option<egui::Rect> {
+    harness
+        .query_all_by_role(Role::MenuItem)
+        .find(|n| {
             n.accesskit_node()
                 .label()
                 .is_some_and(|l| l.starts_with("Feedback geben"))
         })
+        .map(|n| n.rect())
+}
+
+fn open_dialog(harness: &mut App) {
+    crate::app::testkit::open_account(harness, "Lena");
+    // The account popover opens above the avatar at the height of the frame
+    // before. The frame in which "Feedback geben" first shows (once
+    // /feedback/status answered) can still draw the menu one row too low
+    // when egui has no pass left to redo it, and a click there lands on
+    // "Server wechseln …" (GEL-41). Clicked once it stays where it is.
+    let last = std::cell::Cell::new(None);
+    wait_for(harness, "Feedback geben in place", |h| {
+        let rect = feedback_item(h);
+        rect.is_some() && last.replace(rect) == rect
     });
     harness
         .query_all_by_role(Role::MenuItem)

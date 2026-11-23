@@ -173,7 +173,7 @@ jobs:
       # summary says whether it changed, the artifact holds the file to commit.
       - name: Rust toolchain (notices)
         if: steps.build.outcome == 'success'
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
 
       - name: Renew the third-party notices
         id: notices
@@ -381,7 +381,7 @@ jobs:
             xvfb xauth mesa-vulkan-drivers gdb
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
         with:
           components: rustfmt, clippy
 
@@ -420,7 +420,7 @@ jobs:
 
       # Every test of the workspace. This core is built with H264, so the
       # loopback call must use it.
-      - name: Loopback call against mediasoup 0.29
+      - name: Loopback call against mediasoup 0.33
         if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
@@ -596,7 +596,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
 
       - name: Notices are current
         run: python3 desktop/packaging/third-party-notices.py --check
@@ -659,7 +659,7 @@ jobs:
 
       - name: Rust toolchain
         id: toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
         with:
           components: rustfmt, clippy
 
@@ -1163,7 +1163,7 @@ jobs:
       # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
       # picker; the test skips where Windows cannot capture. A release build
       # makes the call alone, without the tests that measure frame rates.
-      - name: Loopback call against mediasoup 0.29
+      - name: Loopback call against mediasoup 0.33
         id: tests
         if: ${{ !cancelled() && steps.worker.outcome == 'success' }}
         timeout-minutes: 20

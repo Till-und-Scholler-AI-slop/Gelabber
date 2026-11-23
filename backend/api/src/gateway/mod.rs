@@ -1,7 +1,7 @@
 //! Native WebSocket gateway (issue #6).
 //!
 //! Same Axum process as the REST API. Session cookie on the upgrade,
-//! compact JSON frames, Redis 8.10.1 Pub/Sub for fan-out, bounded Redis
+//! compact JSON frames, Redis 8.10 Pub/Sub for fan-out, bounded Redis
 //! lists for reconnect catch-up. No Socket.IO, no LiveKit.
 //!
 //! **Issue 5 (REST messages)** owns create/edit/delete persistence. A write

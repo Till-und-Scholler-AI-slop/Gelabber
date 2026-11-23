@@ -643,6 +643,56 @@ It uses only its own throwaway containers and runs a real rollback to an old
 API binary; the older `deploy/tools/check-chat-migration-restore.py` stays available
 as a quick schema/data drill without object store or binary acceptance.
 
+## PostgreSQL major upgrade
+
+A release that moves the bundled PostgreSQL to a new major version (v0.12.1:
+18 → 19) needs one extra step. The image keeps each major version's data in a
+folder of its own on the volume (`/var/lib/postgresql/18/docker`,
+`…/19/docker`). The new image finds no data of its own version and refuses to
+start: `docker compose up` shows "there appears to be PostgreSQL data in
+/var/lib/postgresql/18/docker".
+
+Move the data with dump and restore, in a maintenance window, after updating
+the checkout to the release and before `up`. Before you start:
+
+- **Pause Watchtower** (or whatever updates your containers) until the rollout
+  is done, so nothing starts api or media in between.
+- **Free disk space:** about three times the database size. During the
+  upgrade the volume holds both clusters, and `backups/` holds the dump next
+  to the one from `backup.sh`. The size: `docker compose exec postgres sh -c
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT pg_size_pretty(pg_database_size(current_database()))"'`.
+
+```bash
+cd deploy/compose
+sh ../backup.sh              # as in "Backup": the usual snapshot pair first
+sh ../postgres-upgrade.sh
+# then the rollout as in "Rollout and rollback with exact digests"
+```
+
+Only the Gelabber database (`POSTGRES_DB`) is moved, owned by
+`POSTGRES_USER`, as the bundled setup has it. Roles, databases or settings
+you added to this PostgreSQL yourself are not copied: recreate them on 19.
+
+`postgres-upgrade.sh` stops api, web, media and postgres, starts the old
+version (`postgres:18.6-alpine3.24`, or `GELABBER_POSTGRES_OLD_IMAGE`) on its
+data without a network, creates the new cluster with the user, password and
+database from `.env`, copies the database with `pg_dump`/`pg_restore`, and
+checks that every table has the same number of rows on both sides. The dump
+and both row counts stay in `backups/<time>-postgres-18-to-19/`. On success
+the new postgres runs and the rest of the stack is still stopped; on an error
+nothing on the old cluster has changed. Running it again after a successful
+run does nothing.
+
+The old cluster stays on the volume. Going back means the previous release's
+`compose.yaml` again: it starts PostgreSQL 18 on the old data, as it was
+before the upgrade, so everything written since is lost. Once the new version
+runs well, free the space:
+
+```bash
+docker run --rm -v "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql"}}{{.Name}}{{end}}{{end}}' "$(docker compose ps -q postgres)"):/var/lib/postgresql" \
+  postgres:19.0-alpine3.24 rm -rf /var/lib/postgresql/18
+```
+
 ## Metrics
 
 No debug UI in `web`. Grafana does not start with `docker compose up`:
@@ -653,7 +703,7 @@ docker compose -f compose.yaml -f compose.observability.yaml up -d
 # Homelab: a third -f compose.homelab.yaml
 ```
 
-Grafana 13.3.0: `http://127.0.0.1:3000/d/gelabber/gelabber` (user `GRAFANA_ADMIN_USER`, default `admin`, with the `GRAFANA_ADMIN_PASSWORD` from `.env`; anonymous viewer). File: `deploy/compose/grafana/dashboards/gelabber.json`. Prometheus v3.16.0: `http://127.0.0.1:9090`, scrapes `api:8080/metrics` and `media:8081/metrics`. Not behind Caddy. Process tracing is JSON on stdout (`RUST_LOG`), no Jaeger.
+Grafana 13.3.1: `http://127.0.0.1:3000/d/gelabber/gelabber` (user `GRAFANA_ADMIN_USER`, default `admin`, with the `GRAFANA_ADMIN_PASSWORD` from `.env`; anonymous viewer). File: `deploy/compose/grafana/dashboards/gelabber.json`. Prometheus v3.16.0: `http://127.0.0.1:9090`, scrapes `api:8080/metrics` and `media:8081/metrics`. Not behind Caddy. Process tracing is JSON on stdout (`RUST_LOG`), no Jaeger.
 
 ## Images and release gate
 
@@ -663,7 +713,7 @@ The existing separate GitHub Actions layer caches for API and media stay. Cold b
 
 The slow local cache acceptance starts with `python3 backend/build/check-rust-cache.py --baseline-ref <commit-before-cache-change> --output /tmp/gelabber-rust-cache`. It checks source, shared, version and feature changes in buildx caches of their own and compares three different source rebuilds with the previous Dockerfiles. JSON and full logs contain the cache hits and the measured run times of the build stage, without image export; at least 20 percent improvement is checked. `--keep-images` then exports images from the unchanged source state for a separate readiness check. This runner belongs to local acceptance and does not run in CI.
 
-The Compose default is the published version `v0.12.0`. Existing release tags are not overwritten. MinIO independently uses the existing CE pin `RELEASE.2025-10-15T17-29-55Z`. Org packages can be private: `docker login ghcr.io` or build locally. All stack pins stay. The source build sets `CARGO_HTTP_CAINFO`. Behind a TLS-inspecting proxy the build stops when crates.io's certificate does not verify; `docker build --build-arg TRUST_PRESENTED_CRATES_CA=true` (or `docker compose build --build-arg TRUST_PRESENTED_CRATES_CA=true api media`) makes `backend/build/rust-build-ca.sh` trust the chain the proxy presents, for the build stage only.
+The Compose default is the published version `v0.12.1`. Existing release tags are not overwritten. MinIO independently uses the existing CE pin `RELEASE.2025-10-15T17-29-55Z`. Org packages can be private: `docker login ghcr.io` or build locally. All stack pins stay. The source build sets `CARGO_HTTP_CAINFO`. Behind a TLS-inspecting proxy the build stops when crates.io's certificate does not verify; `docker build --build-arg TRUST_PRESENTED_CRATES_CA=true` (or `docker compose build --build-arg TRUST_PRESENTED_CRATES_CA=true api media`) makes `backend/build/rust-build-ca.sh` trust the chain the proxy presents, for the build stage only.
 
 CI runs every area for each push to main, so that deploy/workflow changes have a definite CI SHA too. Pushes that arrive while a run is going wait in one queue, and GitHub keeps only the newest waiting run: the commits in between get no CI run and no images. A pull request runs only the areas its files touch (`.github/workflows/scripts/changes.py`); `ci-ok` sums them up. CI builds the touched images for a PR without pushing. The image workflow starts on main only after a successful `CI` push run of the same SHA; failed/cancelled CI starts no publish job.
 

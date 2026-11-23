@@ -10,7 +10,7 @@ import urllib.request
 import uuid
 
 OWNER_LABEL = "io.gelabber.media-image-smoke"
-REDIS_IMAGE = "redis:8.10.1-alpine"
+REDIS_IMAGE = "redis:8.10.3-alpine"
 
 
 def docker(*arguments, timeout=20):

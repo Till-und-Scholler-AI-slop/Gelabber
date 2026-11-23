@@ -25,8 +25,9 @@ curl -fsSL https://till-und-scholler-ai-slop.github.io/Gelabber/install.sh | sud
 ```
 
 It checks that the downloaded key has the fingerprint below, adds it to
-pacman's keyring, appends `[gelabber]` to `/etc/pacman.conf` unless it is
-there already, and runs `pacman -Syu gelabber-desktop`, which updates the
+pacman's keyring, appends `[gelabber]` to `/etc/pacman.conf` (or sets the
+`Server` line of a `[gelabber]` section that is there already), and runs
+`pacman -Syu gelabber-desktop`, which updates the
 rest of the system too and asks before it does. Running it again only
 installs or updates the package. Arguments go to pacman
 (`… | sudo sh -s -- --noconfirm`).

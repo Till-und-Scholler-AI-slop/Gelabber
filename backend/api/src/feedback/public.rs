@@ -326,17 +326,23 @@ async fn confirm(
 
 /// Starts the sweeper once per process: every [`SWEEP_EVERY`] it deletes
 /// pending entries whose link ran out and clears the run-out hashes of
-/// confirmed ones.
+/// confirmed ones. The first sweep comes one interval after the start, not
+/// at once: an entry that ran out shortly before is gone 10 minutes later
+/// either way, and a sweep racing the first requests made tests that expire
+/// an entry by hand flaky.
 pub fn start(state: AppState) {
     if state.feedback_worker_started.swap(true, Ordering::AcqRel) {
         return;
     }
     tokio::spawn(async move {
-        while !state.db.is_closed() {
+        loop {
+            tokio::time::sleep(SWEEP_EVERY).await;
+            if state.db.is_closed() {
+                break;
+            }
             if let Err(err) = sweep(&state).await {
                 warn!(error = ?err, "feedback sweep failed");
             }
-            tokio::time::sleep(SWEEP_EVERY).await;
         }
     });
 }

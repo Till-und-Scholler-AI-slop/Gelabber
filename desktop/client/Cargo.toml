@@ -21,7 +21,7 @@ serde_json = "1.0.151"
 uuid = { version = "1.27.0", features = ["serde", "v4"] }
 chrono = { version = "0.4.45", default-features = false, features = ["serde", "clock", "std"] }
 thiserror = "2"
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 tracing = "0.1"
 url = "2"
 # Sign-in through a provider (oidc.rs): the PKCE pair and the app's state.
