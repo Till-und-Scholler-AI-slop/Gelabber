@@ -10,6 +10,7 @@
 //! handle closes the native object.
 
 mod ffi;
+pub mod strong_filter;
 
 /// C ABI version of the native core this crate was written against.
 pub const ABI_VERSION: u32 = ffi::GM_ABI_VERSION;
@@ -152,6 +153,8 @@ impl Engine {
                 expected: ffi::GM_ABI_VERSION,
             });
         }
+        // "strong" microphones get DeepFilterNet3 from this crate.
+        strong_filter::register();
         let options = json_arg(&serde_json::json!({
             "audio": match audio { Audio::Default => "default", Audio::Dummy => "dummy" }
         }))?;
@@ -204,6 +207,8 @@ impl Engine {
 
     /// Microphone meters while capture runs, 0..100:
     /// `{"input","processed","clipping","denoised","blocks","channels"}`,
+    /// the noise filter that ran (`"filter"`, `"strongFilter"`: see
+    /// `gm_audio_levels`), the gate's `"gate"`
     /// and the playout limiter's `"playout": {"gain","peak","reduction","windows"}`.
     pub fn audio_levels(&self) -> Result<Value> {
         // SAFETY: live engine.

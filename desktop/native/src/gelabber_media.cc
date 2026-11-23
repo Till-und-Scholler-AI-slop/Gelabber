@@ -92,6 +92,8 @@ using gelabber::ParseGateMode;
 using gelabber::MicrophoneHub;
 using gelabber::MicrophoneSource;
 using gelabber::MonitoringAudioDevice;
+using gelabber::NoiseFilter;
+using gelabber::NoiseFilterName;
 using gelabber::PlayoutDevices;
 using gelabber::PreviousAudioDevice;
 using gelabber::PushAudioSource;
@@ -100,6 +102,8 @@ using gelabber::RecvListener;
 using gelabber::SelectPlayoutDevice;
 using gelabber::SelectRecordingDevice;
 using gelabber::SendListener;
+using gelabber::StrongFilterApi;
+using gelabber::StrongStateName;
 
 namespace
 {
@@ -428,6 +432,11 @@ namespace
 
 	std::once_flag initialized;
 
+	// The strong filter's functions (gm_set_strong_filter) for engines
+	// created from then on.
+	std::mutex strongFilterMutex;
+	std::optional<StrongFilterApi> strongFilterApi;
+
 #if defined(WEBRTC_WIN)
 	// libwebrtc leaves Winsock to its embedder, and the network thread's
 	// socket server needs it from its constructor on. Never cleaned up:
@@ -582,8 +591,8 @@ namespace
 	std::string CaptureMode(const json& options)
 	{
 		auto mode = options.value("processingMode", std::string("enhanced"));
-		if (mode != "enhanced" && mode != "browser" && mode != "original")
-			throw std::invalid_argument("processingMode must be enhanced, browser or original");
+		if (mode != "enhanced" && mode != "strong" && mode != "browser" && mode != "original")
+			throw std::invalid_argument("processingMode must be enhanced, strong, browser or original");
 		return mode;
 	}
 
@@ -601,7 +610,8 @@ namespace
 
 	void ApplyCaptureMode(gm_engine& engine, const std::string& mode, const json& options)
 	{
-		engine.dsp->SetDenoise(mode == "enhanced");
+		engine.dsp->SetNoiseFilter(
+		  mode == "strong" ? NoiseFilter::Strong : mode == "enhanced" ? NoiseFilter::Standard : NoiseFilter::Off);
 		engine.dsp->SetGain(static_cast<float>(options.value("inputGain", 1.0)));
 		ApplyGate(engine, options, mode == "original");
 	}
@@ -622,6 +632,15 @@ const char* gm_last_error(void)
 void gm_string_free(char* s)
 {
 	std::free(s);
+}
+
+void gm_set_strong_filter(const gm_strong_filter* filter)
+{
+	std::lock_guard lock(strongFilterMutex);
+	if (filter && filter->create && filter->reset && filter->process && filter->destroy)
+		strongFilterApi = StrongFilterApi{ filter->create, filter->reset, filter->process, filter->destroy };
+	else
+		strongFilterApi.reset();
 }
 
 void gm_set_log_level(int level)
@@ -654,7 +673,10 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		if (!engine->network->Start() || !engine->worker->Start() || !engine->signaling->Start())
 			throw std::runtime_error("failed to start libwebrtc threads");
 
-		engine->dsp = std::make_shared<gelabber::CaptureDsp>();
+		{
+			std::lock_guard lock(strongFilterMutex);
+			engine->dsp = std::make_shared<gelabber::CaptureDsp>(strongFilterApi ? &*strongFilterApi : nullptr);
+		}
 		engine->apm = webrtc::BuiltinAudioProcessingBuilder()
 		                .SetCapturePostProcessing(std::make_unique<CapturePostProcessor>(engine->dsp))
 		                .Build(webrtc::CreateEnvironment(std::make_unique<ApmFieldTrials>()));
@@ -908,6 +930,11 @@ char* gm_audio_levels(gm_engine* engine)
 		                       { "processed", levels.processed },
 		                       { "clipping", levels.clipping },
 		                       { "denoised", levels.denoised },
+		                       { "filter", NoiseFilterName(levels.filter) },
+		                       { "strongFilter",
+		                         { { "state", StrongStateName(levels.strong) },
+		                           { "error", levels.strongError },
+		                           { "msPerBlock", levels.strongMs } } },
 		                       { "blocks", levels.blocks },
 		                       { "channels", levels.channels },
 		                       { "gate",

@@ -23,7 +23,9 @@ namespace gelabber
 		}
 	} // namespace
 
-	CaptureDsp::CaptureDsp() = default;
+	CaptureDsp::CaptureDsp(const StrongFilterApi* strongApi) : strong(strongApi)
+	{
+	}
 
 	CaptureDsp::~CaptureDsp()
 	{
@@ -31,14 +33,10 @@ namespace gelabber
 			rnnoise_destroy(state);
 	}
 
-	void CaptureDsp::SetDenoise(bool enabled)
+	void CaptureDsp::SetNoiseFilter(NoiseFilter filter)
 	{
-		denoise.store(enabled);
-	}
-
-	bool CaptureDsp::Denoise() const
-	{
-		return denoise.load();
+		noiseFilter.store(filter);
+		strong.Select(filter == NoiseFilter::Strong);
 	}
 
 	void CaptureDsp::SetGain(float value)
@@ -69,7 +67,9 @@ namespace gelabber
 		windowFrames          = 0;
 		windowTarget          = std::max(1, sampleRateHz * kWindowMs / 1000);
 		windowClipping        = false;
+		previousSpeech        = 0.0f;
 		gate.Reset(sampleRateHz);
+		strong.Restart();
 	}
 
 	void CaptureDsp::Process(float* const* channels, int numChannels, int numFrames)
@@ -86,8 +86,14 @@ namespace gelabber
 		// RNNoise takes 480-sample frames at 48 kHz, which is exactly one
 		// APM block; other rates pass through (the APM resamples mics to
 		// 48 kHz unless the device itself is slower).
-		const bool canDenoise = denoise.load() && sampleRate.load() == kRnnoiseRate &&
+		const auto mode       = noiseFilter.load();
+		const bool canDenoise = mode != NoiseFilter::Off && sampleRate.load() == kRnnoiseRate &&
 		                        numFrames == rnnoise_get_frame_size();
+		// DeepFilterNet3 on the APM's mono output, from the same input as
+		// RNNoise, which keeps running for the gate and as the fallback.
+		const bool tryStrong = canDenoise && mode == NoiseFilter::Strong && numChannels == 1;
+		if (tryStrong)
+			unfiltered.assign(channels[0], channels[0] + numFrames);
 		// RNNoise's speech probability for the gate: the most likely channel.
 		float speech = -1.0f;
 		if (canDenoise)
@@ -103,6 +109,20 @@ namespace gelabber
 				speech = std::max(speech, rnnoise_process_frame(states[c], channels[c], scratch.data()));
 			}
 		}
+		const bool strongUsed = tryStrong && strong.Process(unfiltered.data(), numFrames, sampleRate.load());
+		if (strongUsed)
+			std::copy(unfiltered.begin(), unfiltered.end(), channels[0]);
+		// The gate gets the probability of the block it gates: with
+		// DeepFilterNet3's output RNNoise's from the block before, as
+		// docs/v0.13-deepfilternet/gate.mjs measured it.
+		if (canDenoise)
+		{
+			const float current = speech;
+			if (strongUsed)
+				speech = previousSpeech;
+			previousSpeech = current;
+		}
+		filterUsed.store(strongUsed ? NoiseFilter::Strong : canDenoise ? NoiseFilter::Standard : NoiseFilter::Off);
 		denoised.store(canDenoise);
 		lastChannels.store(numChannels);
 		blockCount.fetch_add(1);
@@ -142,13 +162,17 @@ namespace gelabber
 	CaptureLevels CaptureDsp::Levels() const
 	{
 		CaptureLevels levels;
-		levels.raw       = rawLevel.load();
-		levels.processed = processedLevel.load();
-		levels.clipping  = clipping.load();
-		levels.denoised  = denoised.load();
-		levels.blocks    = blockCount.load();
-		levels.channels  = lastChannels.load();
-		levels.gate      = gate.Report();
+		levels.raw         = rawLevel.load();
+		levels.processed   = processedLevel.load();
+		levels.clipping    = clipping.load();
+		levels.denoised    = denoised.load();
+		levels.filter      = filterUsed.load();
+		levels.strong      = strong.State();
+		levels.strongError = strong.Error();
+		levels.strongMs    = strong.BusyMs();
+		levels.blocks      = blockCount.load();
+		levels.channels    = lastChannels.load();
+		levels.gate        = gate.Report();
 		return levels;
 	}
 } // namespace gelabber

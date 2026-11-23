@@ -9,3 +9,25 @@ version = "0.12.0"
 edition = "2024"
 rust-version = "1.100.0"
 license = "MIT"
+
+# DeepFilterNet3 (GEL-28, core/src/strong_filter.rs) in debug builds too:
+# tract-core's debug assertions reject the model (a check of node names that
+# release builds skip), and unoptimised it would be too slow for the audio
+# thread, which then falls back to RNNoise.
+[profile.dev.package.tract-core]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-linalg]
+opt-level = 3
+[profile.dev.package.tract-data]
+opt-level = 3
+[profile.dev.package.tract-pulse-opl]
+opt-level = 3
+[profile.dev.package.deep_filter]
+opt-level = 3
+[profile.dev.package.rustfft]
+opt-level = 3
+[profile.dev.package.realfft]
+opt-level = 3
+[profile.dev.package.ndarray]
+opt-level = 3
