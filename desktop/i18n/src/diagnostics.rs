@@ -270,6 +270,16 @@ crate::strings! {
         | "Desktop app: original sound (stereo, no filters)";
     processing_desktop_enhanced = "Desktop-App: RNNoise im nativen Kern"
         | "Desktop app: RNNoise in the native core";
+    processing_desktop_strong = "Desktop-App: DeepFilterNet3 im nativen Kern"
+        | "Desktop app: DeepFilterNet3 in the native core";
+    processing_desktop_strong_loading = "Desktop-App: DeepFilterNet3 lädt, bis dahin RNNoise"
+        | "Desktop app: DeepFilterNet3 loading, RNNoise until then";
+    processing_desktop_strong_failed = "Desktop-App: DeepFilterNet3 nicht verfügbar, RNNoise als Ersatz"
+        | "Desktop app: DeepFilterNet3 unavailable, RNNoise instead";
+    processing_desktop_strong_slow = "Desktop-App: DeepFilterNet3 zu langsam für dieses Gerät, RNNoise als Ersatz"
+        | "Desktop app: DeepFilterNet3 too slow on this device, RNNoise instead";
+    mic_strong_time = "Rechenzeit DeepFilterNet3"
+        | "DeepFilterNet3 CPU time";
     mic_noise_webrtc = "Rauschfilter (WebRTC)" | "Noise filter (WebRTC)";
     mic_auto_gain_webrtc = "Auto-Gain (WebRTC)" | "Auto gain (WebRTC)";
     ui_save_title = "Diagnose speichern" | "Save diagnostics";
@@ -619,6 +629,14 @@ pub fn processing_default_mic(words: &str) -> String {
     match get() {
         Locale::De => format!("{words}; Standardmikrofon"),
         Locale::En => format!("{words}; default microphone"),
+    }
+}
+
+/// DeepFilterNet3's time per block: "{ms} ms je 10-ms-Block".
+pub fn mic_strong_ms(ms: &str) -> String {
+    match get() {
+        Locale::De => format!("{ms} ms je 10-ms-Block"),
+        Locale::En => format!("{ms} ms per 10 ms block"),
     }
 }
 

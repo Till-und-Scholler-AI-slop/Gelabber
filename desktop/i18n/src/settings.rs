@@ -210,8 +210,11 @@ crate::strings! {
         | "The desktop app adapts the actual bitrate to the connection. The limit is a cap, not a fixed rate.";
     media_apply_note = "Änderungen gelten beim nächsten Start und werden, soweit unterstützt, auch auf laufende Streams angewendet."
         | "Changes apply from the next start and, where supported, to running streams too.";
-    media_mode_enhanced = "Verbesserte Sprache" | "Enhanced voice";
-    media_mode_enhanced_hint = "Lokale Rauschunterdrückung" | "Local noise suppression";
+    media_mode_enhanced = "Verbesserte Sprache: Standard" | "Enhanced voice: Standard";
+    media_mode_enhanced_hint = "Lokale Rauschunterdrückung (RNNoise)" | "Local noise suppression (RNNoise)";
+    media_mode_strong = "Verbesserte Sprache: Stark" | "Enhanced voice: Strong";
+    media_mode_strong_hint = "Stärkere lokale Rauschunterdrückung (DeepFilterNet3), auch gegen Tippen und Klicks; mehr Rechenzeit, 10 ms mehr Verzögerung"
+        | "Stronger local noise suppression (DeepFilterNet3), also against typing and clicks; more CPU, 10 ms more delay";
     media_mode_browser = "WebRTC-Filter" | "WebRTC filters";
     media_mode_browser_hint = "Rauschunterdrückung und Auto-Gain von WebRTC"
         | "WebRTC’s noise suppression and auto gain";

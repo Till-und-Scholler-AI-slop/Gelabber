@@ -204,9 +204,12 @@ impl Kind {
 /// Microphone processing (`AudioProcessingMode`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ProcessingMode {
-    /// RNNoise in the core.
+    /// RNNoise in the core ("Enhanced voice: Standard").
     #[default]
     Enhanced,
+    /// DeepFilterNet3 in the core, RNNoise beside it for the gate and as
+    /// the fallback ("Enhanced voice: Strong", GEL-28).
+    Strong,
     /// WebRTC's noise suppression and auto gain.
     Browser,
     /// Stereo where possible, no filters.
@@ -217,13 +220,16 @@ impl ProcessingMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Enhanced => "enhanced",
+            Self::Strong => "strong",
             Self::Browser => "browser",
             Self::Original => "original",
         }
     }
 
+    /// Anything else, a newer client's mode too, is Standard.
     pub fn parse(text: &str) -> Self {
         match text {
+            "strong" => Self::Strong,
             "browser" => Self::Browser,
             "original" => Self::Original,
             _ => Self::Enhanced,
@@ -295,6 +301,55 @@ pub fn gate_levels(levels: &Value) -> Option<crate::GateLevels> {
         level_db: gate["levelDb"].as_f64()?,
         threshold_db: gate["thresholdDb"].as_f64()?,
         open: gate["open"].as_bool().unwrap_or(true),
+    })
+}
+
+/// Whose output the microphone's last block carried (`filter` of
+/// `gm_audio_levels`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NoiseFilterUsed {
+    #[default]
+    Off,
+    /// RNNoise, also in Strong while DeepFilterNet3 loads or after it fell back.
+    Standard,
+    Strong,
+}
+
+/// Where DeepFilterNet3 stands (`strongFilter.state`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StrongFilterState {
+    /// Another mode.
+    #[default]
+    Off,
+    /// The core has no DeepFilterNet3.
+    Unavailable,
+    Loading,
+    Active,
+    /// It could not be built or failed on a block: Standard instead.
+    Failed,
+    /// Too slow for this machine: Standard instead.
+    Slow,
+}
+
+/// The noise filter of the microphone's last block, if the core reports it.
+pub fn noise_filter_levels(levels: &Value) -> Option<crate::NoiseFilterLevels> {
+    let used = match levels.get("filter")?.as_str()? {
+        "standard" => NoiseFilterUsed::Standard,
+        "strong" => NoiseFilterUsed::Strong,
+        _ => NoiseFilterUsed::Off,
+    };
+    let strong = levels.get("strongFilter")?;
+    Some(crate::NoiseFilterLevels {
+        used,
+        strong: match strong["state"].as_str().unwrap_or_default() {
+            "unavailable" => StrongFilterState::Unavailable,
+            "loading" => StrongFilterState::Loading,
+            "active" => StrongFilterState::Active,
+            "failed" => StrongFilterState::Failed,
+            "slow" => StrongFilterState::Slow,
+            _ => StrongFilterState::Off,
+        },
+        ms_per_block: strong["msPerBlock"].as_f64().unwrap_or(0.0),
     })
 }
 
@@ -1565,6 +1620,68 @@ mod tests {
         let user = Uuid::new_v4();
         assert_eq!(video_key(user, Kind::V), video_key(user, Kind::V));
         assert_ne!(video_key(user, Kind::V), video_key(user, Kind::S));
+    }
+
+    /// GEL-28: "strong" is stored as the web stores it; a value this app
+    /// does not know (a newer client's) is Standard.
+    #[test]
+    fn the_strong_filter_is_a_mode_of_its_own() {
+        for mode in [
+            ProcessingMode::Enhanced,
+            ProcessingMode::Strong,
+            ProcessingMode::Browser,
+            ProcessingMode::Original,
+        ] {
+            assert_eq!(ProcessingMode::parse(mode.as_str()), mode);
+        }
+        assert_eq!(ProcessingMode::Strong.as_str(), "strong");
+        assert_eq!(ProcessingMode::parse("stronger"), ProcessingMode::Enhanced);
+        // The gate and Opus treat it as voice, like Standard.
+        assert_eq!(
+            GateMode::for_settings(ProcessingMode::Strong, false, true),
+            GateMode::Auto
+        );
+        assert_eq!(
+            codec_options(Kind::A, ProcessingMode::Strong, false),
+            codec_options(Kind::A, ProcessingMode::Enhanced, false)
+        );
+        assert_eq!(
+            microphone_options(ProcessingMode::Strong, true, true, true, 1.0, json!(null))["processingMode"],
+            "strong"
+        );
+    }
+
+    #[test]
+    fn the_noise_filter_is_read_from_the_meters() {
+        let levels = json!({
+            "filter": "standard",
+            "strongFilter": {"state": "slow", "error": "", "msPerBlock": 6.25},
+        });
+        assert_eq!(
+            noise_filter_levels(&levels),
+            Some(crate::NoiseFilterLevels {
+                used: NoiseFilterUsed::Standard,
+                strong: StrongFilterState::Slow,
+                ms_per_block: 6.25,
+            })
+        );
+        let active = json!({"filter": "strong", "strongFilter": {"state": "active"}});
+        let read = noise_filter_levels(&active).unwrap();
+        assert_eq!(
+            (read.used, read.strong),
+            (NoiseFilterUsed::Strong, StrongFilterState::Active)
+        );
+        for (state, parsed) in [
+            ("off", StrongFilterState::Off),
+            ("unavailable", StrongFilterState::Unavailable),
+            ("loading", StrongFilterState::Loading),
+            ("failed", StrongFilterState::Failed),
+        ] {
+            let levels = json!({"filter": "off", "strongFilter": {"state": state}});
+            assert_eq!(noise_filter_levels(&levels).unwrap().strong, parsed);
+        }
+        // An older core reports neither.
+        assert_eq!(noise_filter_levels(&json!({"denoised": true})), None);
     }
 
     #[test]

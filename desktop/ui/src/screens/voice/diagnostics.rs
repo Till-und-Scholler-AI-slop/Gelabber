@@ -6,7 +6,8 @@
 
 use egui::{Color32, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use gelabber_call::diagnostics::{self as diag, Diagnostics, FlowGroup};
-use gelabber_call::{CallState, CallStatus, Connection, MicStatus, logic};
+use gelabber_call::logic::{NoiseFilterUsed, StrongFilterState};
+use gelabber_call::{CallState, CallStatus, Connection, MicStatus, NoiseFilterLevels, logic};
 use gelabber_i18n::diagnostics as texts;
 
 use crate::app::AppCtx;
@@ -134,21 +135,61 @@ pub fn processing_message(state: &CallState, mode: &str, chosen: &str) -> String
     if state.mic != MicStatus::Live {
         return logic::mic_listen_only().into();
     }
-    processing_text(mode, state.mic_input.as_deref(), chosen)
+    processing_text(mode, state.noise_filter, state.mic_input.as_deref(), chosen)
 }
 
 /// `nativeInfo`'s message for a capture on `captured`: the mode, and
-/// "; Standardmikrofon" where the chosen microphone did not open.
-pub fn processing_text(mode: &str, captured: Option<&str>, chosen: &str) -> String {
+/// "; Standardmikrofon" where the chosen microphone did not open. In
+/// "strong", `filter` (the core's last block) tells DeepFilterNet3 from
+/// RNNoise standing in for it.
+pub fn processing_text(
+    mode: &str,
+    filter: Option<NoiseFilterLevels>,
+    captured: Option<&str>,
+    chosen: &str,
+) -> String {
     let words = match mode {
         "browser" => texts::processing_desktop_browser(),
         "original" => texts::processing_desktop_original(),
+        "strong" => match filter {
+            Some(f) if f.used == NoiseFilterUsed::Strong => texts::processing_desktop_strong(),
+            Some(f) => match f.strong {
+                StrongFilterState::Loading => texts::processing_desktop_strong_loading(),
+                StrongFilterState::Failed | StrongFilterState::Unavailable => {
+                    texts::processing_desktop_strong_failed()
+                }
+                StrongFilterState::Slow => texts::processing_desktop_strong_slow(),
+                StrongFilterState::Active | StrongFilterState::Off => {
+                    texts::processing_desktop_strong()
+                }
+            },
+            None => texts::processing_desktop_strong(),
+        },
         _ => texts::processing_desktop_enhanced(),
     };
     if captured.is_some_and(|c| c != chosen) {
         texts::processing_default_mic(words)
     } else {
         words.into()
+    }
+}
+
+/// The mode that runs: "strong" falls back to RNNoise ("enhanced") when
+/// DeepFilterNet3 is not ready, failed or is too slow.
+pub fn effective_mode(mode: &str, filter: Option<NoiseFilterLevels>) -> &str {
+    match filter {
+        Some(f) if mode == "strong" && f.used != NoiseFilterUsed::Strong => "enhanced",
+        _ => mode,
+    }
+}
+
+/// The filter's buffer as the web counts it (`workletBufferMs` without
+/// the gate): 10 ms for RNNoise, 10 ms more for DeepFilterNet3.
+pub fn filter_buffer_ms(mode: &str, filter: Option<NoiseFilterLevels>) -> u32 {
+    match effective_mode(mode, filter) {
+        "strong" => 20,
+        "enhanced" => 10,
+        _ => 0,
     }
 }
 
@@ -657,7 +698,7 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
     } else {
         "–".into()
     };
-    let rows: Vec<(&str, String, bool)> = vec![
+    let mut rows: Vec<(&str, String, bool)> = vec![
         (
             texts::mic_processing(),
             processing_message(&state, mode, &p.audio_input_id),
@@ -687,7 +728,7 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
         (
             texts::mic_buffer(),
             if in_call {
-                format!("{} ms", if mode == "enhanced" { 10 } else { 0 })
+                format!("{} ms", filter_buffer_ms(mode, state.noise_filter))
             } else {
                 "–".into()
             },
@@ -699,6 +740,16 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
             false,
         ),
     ];
+    // DeepFilterNet3's cost on this machine, while it runs.
+    if let Some(f) = state.noise_filter.filter(|f| {
+        in_call && mode == "strong" && f.used == NoiseFilterUsed::Strong && f.ms_per_block > 0.0
+    }) {
+        rows.push((
+            texts::mic_strong_time(),
+            texts::mic_strong_ms(&gelabber_i18n::intl::format_number(f.ms_per_block, 2, 2)),
+            false,
+        ));
+    }
     facts(ui, &rows, width, text::BODY, 9.0);
     ui.add_space(28.0);
 
@@ -717,7 +768,7 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
         let at = diag::now_iso();
         let processing = serde_json::json!({
             "requested": mode,
-            "actual": mode,
+            "actual": effective_mode(mode, state.noise_filter),
             "message": processing_message(&state, mode, &p.audio_input_id),
             "sampleRate": in_call.then_some(48_000),
             "channels": in_call.then_some(if mode == "original" { 2 } else { 1 }),
@@ -1323,5 +1374,63 @@ mod tests {
             processing_message(&state, "enhanced", "usb"),
             "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu"
         );
+    }
+
+    /// GEL-28: "strong" says whether DeepFilterNet3 runs or RNNoise stands
+    /// in for it, and why.
+    #[test]
+    fn the_strong_filter_says_what_runs() {
+        use gelabber_call::NoiseFilterLevels;
+        use gelabber_call::logic::{NoiseFilterUsed, StrongFilterState};
+        let mut state = CallState {
+            channel: Some(uuid::Uuid::nil()),
+            mic_input: Some(String::new()),
+            ..CallState::default()
+        };
+        let mut said = |used, strong| {
+            state.noise_filter = Some(NoiseFilterLevels {
+                used,
+                strong,
+                ms_per_block: 0.7,
+            });
+            processing_message(&state, "strong", "")
+        };
+        assert_eq!(
+            said(NoiseFilterUsed::Strong, StrongFilterState::Active),
+            "Desktop-App: DeepFilterNet3 im nativen Kern"
+        );
+        assert_eq!(
+            said(NoiseFilterUsed::Standard, StrongFilterState::Loading),
+            "Desktop-App: DeepFilterNet3 lädt, bis dahin RNNoise"
+        );
+        assert_eq!(
+            said(NoiseFilterUsed::Standard, StrongFilterState::Failed),
+            "Desktop-App: DeepFilterNet3 nicht verfügbar, RNNoise als Ersatz"
+        );
+        assert_eq!(
+            said(NoiseFilterUsed::Standard, StrongFilterState::Unavailable),
+            "Desktop-App: DeepFilterNet3 nicht verfügbar, RNNoise als Ersatz"
+        );
+        assert_eq!(
+            said(NoiseFilterUsed::Standard, StrongFilterState::Slow),
+            "Desktop-App: DeepFilterNet3 zu langsam für dieses Gerät, RNNoise als Ersatz"
+        );
+        // Not measured yet (muted): what was chosen.
+        assert_eq!(
+            processing_text("strong", None, Some(""), ""),
+            "Desktop-App: DeepFilterNet3 im nativen Kern"
+        );
+        let standard = Some(NoiseFilterLevels {
+            used: NoiseFilterUsed::Standard,
+            strong: StrongFilterState::Slow,
+            ms_per_block: 6.0,
+        });
+        assert_eq!(effective_mode("strong", standard), "enhanced");
+        assert_eq!(effective_mode("strong", None), "strong");
+        assert_eq!(effective_mode("browser", standard), "browser");
+        assert_eq!(filter_buffer_ms("strong", None), 20);
+        assert_eq!(filter_buffer_ms("strong", standard), 10);
+        assert_eq!(filter_buffer_ms("enhanced", None), 10);
+        assert_eq!(filter_buffer_ms("original", None), 0);
     }
 }

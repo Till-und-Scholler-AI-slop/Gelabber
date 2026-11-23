@@ -222,6 +222,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 MicTestPhase::Pending => texts::mic_test_starting().into(),
                 MicTestPhase::Active => super::diagnostics::processing_text(
                     &p.processing_mode,
+                    test.noise_filter,
                     test.device.as_deref(),
                     &p.audio_input_id,
                 ),

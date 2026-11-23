@@ -29,11 +29,16 @@ const HINT: TextStyle = text::META;
 
 /// `AUDIO_PROCESSING_DESKTOP`: mode, label and hint as the desktop app
 /// words them, since its native core filters, not a browser.
-pub const PROCESSING_MODES: [(&str, Text, Text); 3] = [
+pub const PROCESSING_MODES: [(&str, Text, Text); 4] = [
     (
         "enhanced",
         texts::media_mode_enhanced,
         texts::media_mode_enhanced_hint,
+    ),
+    (
+        "strong",
+        texts::media_mode_strong,
+        texts::media_mode_strong_hint,
     ),
     (
         "browser",
