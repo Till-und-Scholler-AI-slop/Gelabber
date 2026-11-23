@@ -85,6 +85,7 @@ const json = (body: unknown, status = 200) =>
     headers: { "Content-Type": "application/json" },
   });
 const failure = () => json({ error: "forbidden" }, 403);
+const notFound = () => json({ error: "not_found" }, 404);
 
 let client: QueryClient;
 let respond: (url: URL, init: RequestInit) => Response | Promise<Response>;
@@ -193,6 +194,14 @@ describe.each([
       "paul",
     ]);
   });
+
+  it("does not bring back a member who had left already", async () => {
+    respond = notFound;
+    const observer = new MutationObserver(client, options(client, "s1"));
+    await observer.mutate("mira").catch(() => null);
+
+    expect(userIds(cachedDetail().members)).toEqual(["lena", "jonas", "tom"]);
+  });
 });
 
 describe("a failed channel delete", () => {
@@ -217,6 +226,17 @@ describe("a failed channel delete", () => {
       "spiele",
       "neu",
     ]);
+  });
+
+  it("does not bring back a channel deleted elsewhere", async () => {
+    respond = notFound;
+    const observer = new MutationObserver(
+      client,
+      deleteChannelOptions(client, "s1"),
+    );
+    await observer.mutate("allgemein").catch(() => null);
+
+    expect(ids(cachedDetail().channels)).toEqual(["spiele"]);
   });
 });
 
@@ -331,6 +351,18 @@ describe("a failed category delete", () => {
 
     expect(cachedDetail().channels[0]).toEqual(channel("allgemein", "games"));
   });
+
+  it("does not bring back a category deleted elsewhere", async () => {
+    respond = notFound;
+    const observer = new MutationObserver(
+      client,
+      deleteCategoryOptions(client, "s1"),
+    );
+    await observer.mutate("talk").catch(() => null);
+
+    expect(ids(cachedDetail().categories)).toEqual(["games"]);
+    expect(cachedDetail().channels[0]).toEqual(channel("allgemein"));
+  });
 });
 
 describe("a failed category rename", () => {
@@ -417,5 +449,46 @@ describe.each([
     await done;
 
     expect(cachedList()).toEqual([listItem, server("s2", "Umbenannt")]);
+  });
+
+  it("reads the list again, which missed changes to the row", async () => {
+    respond = failure;
+    const observer = new MutationObserver(client, options(client));
+    expect(client.getQueryState(keys().list)?.isInvalidated).toBe(false);
+    await observer.mutate("s1").catch(() => null);
+
+    expect(ids(cachedList())).toEqual(["s1", "s2"]);
+    expect(client.getQueryState(keys().list)?.isInvalidated).toBe(true);
+  });
+
+  it("reads the list again only once no other removal is in flight", async () => {
+    const first = held();
+    const second = held();
+    holdEach(first, second);
+    const a = new MutationObserver(client, options(client));
+    const b = new MutationObserver(client, deleteServerOptions(client));
+    const doneA = a.mutate("s1").catch(() => null);
+    const doneB = b.mutate("s2");
+    await vi.waitFor(() => expect(cachedList()).toEqual([]));
+
+    first.resolve(failure());
+    await doneA;
+    // A read now could answer before the other removal and bring s2 back.
+    expect(ids(cachedList())).toEqual(["s1"]);
+    expect(client.getQueryState(keys().list)?.isInvalidated).toBe(false);
+
+    second.resolve(json(null, 204));
+    await doneB;
+    expect(client.getQueryState(keys().list)?.isInvalidated).toBe(true);
+  });
+
+  it("does not bring back a server that is gone", async () => {
+    respond = notFound;
+    const observer = new MutationObserver(client, options(client));
+    await observer.mutate("s1").catch(() => null);
+
+    expect(ids(cachedList())).toEqual(["s2"]);
+    expect(client.getQueryData(keys().detail)).toBeUndefined();
+    expect(client.getQueryState(keys().list)?.isInvalidated).toBe(false);
   });
 });

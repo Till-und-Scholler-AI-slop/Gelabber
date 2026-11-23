@@ -16,6 +16,7 @@ import {
 } from "@tanstack/react-query";
 import { useRef } from "react";
 
+import { ApiError } from "../api/client.ts";
 import {
   scopeGeneration,
   stampHolds,
@@ -346,6 +347,11 @@ function putBack<T>(
   return [row, ...rows];
 }
 
+/** A removal that failed because its target is already gone (a member who
+ * left, a channel deleted elsewhere): there is nothing to put back. */
+const targetGone = (error: unknown) =>
+  error instanceof ApiError && error.code === "not_found";
+
 // ---------------------------------------------------------------------------
 // Servers
 
@@ -476,16 +482,24 @@ export function useServerIcon(serverId: string) {
   });
 }
 
+/** Deletes and leaves of servers share this key, so the list is read again
+ * only once none of them is in flight. */
+const removeServerKey = ["servers", "remove"];
+const resyncServerList = new Set<string>();
+
 /**
  * A delete or leave that failed: the server's row goes back into the list.
- * Its detail was dropped from the cache, so events in the meantime had
- * nothing to patch; the snapshot shows again at once and is read anew.
+ * While it was out, events had nothing to patch: its detail shows the
+ * snapshot again at once and is read anew, and the list is read again once
+ * no other delete or leave is in flight, which an earlier read could undo.
  */
 function undoRemoveServer(
   client: QueryClient,
   ctx: { userId: string; generation: number; snap: Snapshot },
   serverId: string,
+  error: unknown,
 ): void {
+  if (targetGone(error)) return;
   const { userId, generation, snap } = ctx;
   const before = snap.list;
   const row = before?.find((s) => s.id === serverId);
@@ -498,10 +512,27 @@ function undoRemoveServer(
     client.setQueryData(key, snap.detail);
     void client.invalidateQueries({ queryKey: key });
   }
+  resyncServerList.add(`${userId}/${generation}`);
+}
+
+function settleRemoveServer(
+  client: QueryClient,
+  ctx: { userId: string; generation: number },
+): void {
+  const id = `${ctx.userId}/${ctx.generation}`;
+  if (
+    client.isMutating({ mutationKey: removeServerKey }) > 1 ||
+    !resyncServerList.delete(id)
+  )
+    return;
+  void client.invalidateQueries({
+    queryKey: serverKeys.list(ctx.userId, ctx.generation),
+  });
 }
 
 export function deleteServerOptions(client: QueryClient) {
   return mutationOptions({
+    mutationKey: removeServerKey,
     mutationFn: (serverId: string) => remote.deleteServer(serverId),
     onMutate: (serverId) => {
       const stamp = takeStamp();
@@ -512,8 +543,11 @@ export function deleteServerOptions(client: QueryClient) {
     },
     onError: (error, serverId, ctx) => {
       if (!stampHolds(ctx)) return;
-      undoRemoveServer(client, ctx, serverId);
+      undoRemoveServer(client, ctx, serverId, error);
       notifyError(error, translate(servers, "error.serverNotDeleted"));
+    },
+    onSettled: (_data, _error, _serverId, ctx) => {
+      if (stampHolds(ctx)) settleRemoveServer(client, ctx);
     },
   });
 }
@@ -525,6 +559,7 @@ export function useDeleteServer() {
 
 export function leaveServerOptions(client: QueryClient) {
   return mutationOptions({
+    mutationKey: removeServerKey,
     mutationFn: (serverId: string) => remote.leaveServer(serverId),
     onMutate: (serverId) => {
       const stamp = takeStamp();
@@ -535,8 +570,11 @@ export function leaveServerOptions(client: QueryClient) {
     },
     onError: (error, serverId, ctx) => {
       if (!stampHolds(ctx)) return;
-      undoRemoveServer(client, ctx, serverId);
+      undoRemoveServer(client, ctx, serverId, error);
       notifyError(error, translate(servers, "error.serverNotLeft"));
+    },
+    onSettled: (_data, _error, _serverId, ctx) => {
+      if (stampHolds(ctx)) settleRemoveServer(client, ctx);
     },
   });
 }
@@ -704,7 +742,7 @@ export function deleteCategoryOptions(client: QueryClient, serverId: string) {
       if (!stampHolds(ctx)) return;
       const before = ctx.snap.detail;
       const was = before?.categories.find((c) => c.id === id);
-      if (before && was) {
+      if (before && was && !targetGone(error)) {
         // Only the channels we uncategorised and nobody moved since go back.
         const ours = new Set(
           before.channels.filter((ch) => ch.category_id === id).map(byId),
@@ -894,7 +932,7 @@ export function deleteChannelOptions(client: QueryClient, serverId: string) {
       if (!stampHolds(ctx)) return;
       const before = ctx.snap.detail;
       const was = before?.channels.find((ch) => ch.id === id);
-      if (before && was)
+      if (before && was && !targetGone(error))
         patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
           ...detail,
           channels: putBack(detail.channels, before.channels, was, byId),
@@ -1009,16 +1047,18 @@ export function applyMemberJoined(
   });
 }
 
-/** A kick or ban that failed: the member goes back into the list. */
+/** A kick or ban that failed: the member goes back into the list, unless
+ * they had left already. */
 function undoDropMember(
   client: QueryClient,
   ctx: { userId: string; generation: number; snap: Snapshot },
   serverId: string,
   memberId: string,
+  error: unknown,
 ): void {
   const before = ctx.snap.detail?.members;
   const was = before?.find((member) => member.user_id === memberId);
-  if (!before || !was) return;
+  if (!before || !was || targetGone(error)) return;
   patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
     ...detail,
     members: putBack(detail.members, before, was, (m) => m.user_id),
@@ -1037,7 +1077,7 @@ export function kickMemberOptions(client: QueryClient, serverId: string) {
     },
     onError: (error, memberId, ctx) => {
       if (!stampHolds(ctx)) return;
-      undoDropMember(client, ctx, serverId, memberId);
+      undoDropMember(client, ctx, serverId, memberId, error);
       notifyError(error, translate(servers, "error.memberNotKicked"));
     },
   });
@@ -1060,7 +1100,7 @@ export function banMemberOptions(client: QueryClient, serverId: string) {
     },
     onError: (error, memberId, ctx) => {
       if (!stampHolds(ctx)) return;
-      undoDropMember(client, ctx, serverId, memberId);
+      undoDropMember(client, ctx, serverId, memberId, error);
       notifyError(error, translate(servers, "error.memberNotBanned"));
     },
     onSuccess: (_data, _memberId, ctx) => {
