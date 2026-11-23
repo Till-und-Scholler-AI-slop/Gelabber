@@ -22,6 +22,7 @@
 
 #include "app_audio.h"
 #include "app_audio_mix.h"
+#include "pipewire_chunk.h"
 
 #include <dlfcn.h>
 #include <pipewire/pipewire.h>
@@ -828,13 +829,13 @@ namespace gelabber
 				const spa_data& data = b->buffer->datas[0];
 				if (data.data && data.chunk)
 				{
-					const auto* begin = reinterpret_cast<const float*>(
-					  static_cast<const uint8_t*>(data.data) + data.chunk->offset);
-					// Whole frames.
-					const size_t count =
-					  std::min<size_t>(data.chunk->size, data.maxsize) / (sizeof(float) * kChannels) * kChannels;
+					// Whole frames, inside the mapped memory (pipewire_chunk.h).
+					const auto span =
+					  ChunkFrames(data.maxsize, data.chunk->offset, data.chunk->size, sizeof(float) * kChannels);
+					const auto* begin =
+					  reinterpret_cast<const float*>(static_cast<const uint8_t*>(data.data) + span.offset);
 					std::lock_guard lock(mutex);
-					capture.input.Push(begin, count);
+					capture.input.Push(begin, span.frames * kChannels);
 				}
 				api.stream_queue_buffer(capture.stream, b);
 			}

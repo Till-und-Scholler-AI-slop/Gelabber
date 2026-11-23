@@ -842,6 +842,18 @@ fn the_source_audio_mix_follows_a_sound_card_whose_clock_is_off() {
     run_host_test("app_audio_mix_test", "the mix against simulated cards");
 }
 
+/// Application sound read from PipeWire's buffers (GEL-47): desktop/native/
+/// tests/pipewire_chunk_test.cc checks that a chunk's offset and size never
+/// lead past the mapped memory.
+#[test]
+fn application_sound_is_read_inside_pipewires_buffer() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipped: the buffers belong to the PipeWire capture");
+        return;
+    }
+    run_host_test("pipewire_chunk_test", "reading PipeWire's buffers");
+}
+
 /// Playback above 100 % on generated mixes: desktop/native/tests/
 /// playout_limiter_test.cc runs the playout limiter without a sound card,
 /// on every platform.
