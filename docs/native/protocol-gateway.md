@@ -385,7 +385,7 @@ Rust: `backend/api/src/messages/mod.rs:64-108`; TS: `web/src/messages/types.ts:5
 | `attachments` | `[{id, filename, content_type, size}]` | |
 | `reactions` | `[{emoji: string, user_ids: [uuid]}]` | |
 | `gif` | omitted or `{provider, slug, title, width, height, url, still: string\|null}` | |
-| `mentions` | `[uuid]` | as this socket's user may see them: an invisible member `@here` reached is in it only for themselves (v0.13, GEL-43) |
+| `mentions` | `[uuid]` | as this socket's user may see them: an invisible member `@here` reached is in it only for themselves (messages sent from v0.13 on, GEL-43; older ones keep everyone `@here` reached) |
 | `mention_everyone` | bool | |
 | `reply` | omitted or `{id, deleted, [author:{id,name}], [excerpt], [has_attachment:true], [has_gif:true], [system]}`; deleted original = `{id, deleted:true}` | |
 | `previews` | omitted when empty; `[{url, title?, description?, site_name?, image?:{url,width,height}, youtube_id?}]` | image url always `/api/previews/…` |

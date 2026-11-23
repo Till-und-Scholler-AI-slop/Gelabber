@@ -4,6 +4,10 @@
 -- `hidden_mentions`: the members among `mentions` whom only they themselves
 -- see as mentioned (`messages/mentions.rs`). `mentions` stays everyone the
 -- message mentions, for the unread counts and pushes.
+--
+-- Not backfilled: nothing recorded who was invisible when a message was
+-- sent, so messages from before this migration keep everyone `@here`
+-- reached in `mentions`, visible to all readers.
 ALTER TABLE messages ADD COLUMN hidden_mentions UUID[] NOT NULL DEFAULT '{}';
 
 -- `mentions` as `viewer` reads them: their own hidden mention, nobody
