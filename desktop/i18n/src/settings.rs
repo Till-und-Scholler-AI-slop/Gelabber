@@ -213,8 +213,8 @@ crate::strings! {
     media_mode_enhanced = "Verbesserte Sprache: Standard" | "Enhanced voice: Standard";
     media_mode_enhanced_hint = "Lokale Rauschunterdrückung (RNNoise)" | "Local noise suppression (RNNoise)";
     media_mode_strong = "Verbesserte Sprache: Stark" | "Enhanced voice: Strong";
-    media_mode_strong_hint = "Stärkere lokale Rauschunterdrückung (DeepFilterNet3), auch gegen Tippen und Klicks; mehr Rechenzeit, 10 ms mehr Verzögerung"
-        | "Stronger local noise suppression (DeepFilterNet3), also against typing and clicks; more CPU, 10 ms more delay";
+    media_mode_strong_hint = "Entfernt mehr Tippen und Klicken (DeepFilterNet3). Braucht mehr Rechenleistung, 10 ms mehr Verzögerung; Standard als Ersatz"
+        | "Removes more typing and clicks (DeepFilterNet3). Needs more processing power, 10 ms more delay; Standard as a fallback";
     media_mode_browser = "WebRTC-Filter" | "WebRTC filters";
     media_mode_browser_hint = "Rauschunterdrückung und Auto-Gain von WebRTC"
         | "WebRTC’s noise suppression and auto gain";
