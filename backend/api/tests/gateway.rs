@@ -2432,6 +2432,57 @@ async fn a_typing_flood_reaches_others_only_within_the_budget(pool: PgPool) {
     assert!(rate_limited(&state, "ws_typing") >= 36);
 }
 
+/// GEL-55: each `p` that flips the user between idle and online is sent to
+/// every member of every server the user is in. Over the presence budget the
+/// frames wait, so a flood of them reaches the others only as far as the
+/// budget goes.
+#[sqlx::test]
+async fn a_presence_flood_reaches_others_only_within_the_budget(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Flood").await;
+    let (server_id, _) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+
+    let mut state = common::ws_state(pool);
+    state.limits.ws_presence = FrameRate {
+        per_min: 60,
+        burst: 3,
+    };
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_within(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_within(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
+    })
+    .await;
+
+    for round in 0..40 {
+        let frame = if round % 2 == 0 {
+            json!({ "op": "p", "st": "i" })
+        } else {
+            json!({ "op": "p" })
+        };
+        send_json(&mut member_ws, frame).await;
+    }
+
+    let mut seen = 0;
+    let window = tokio::time::Instant::now() + Duration::from_millis(500);
+    while let Ok(frame) = tokio::time::timeout_at(window, recv_json(&mut owner_ws)).await {
+        if frame["op"] == "p" && frame["u"] == member.user_id() && frame.get("snap").is_none() {
+            seen += 1;
+        }
+    }
+    // The burst, and at most one more frame refilled meanwhile.
+    assert!(
+        (1..=4).contains(&seen),
+        "{seen} presence changes reached the owner"
+    );
+    assert!(rate_limited(&state, "ws_presence") >= 1);
+}
+
 /// GEL-55: frames over a socket's frame budget wait for it, unread, and
 /// none of them is lost.
 #[sqlx::test]

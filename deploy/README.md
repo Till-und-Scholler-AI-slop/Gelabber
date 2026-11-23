@@ -392,13 +392,14 @@ The stack runs one API process, so keep both together well below Postgres' `max_
 
 ### Frames from WebSockets
 
-Each WebSocket has a budget for the frames its client sends, so one client cannot keep the gateway pool busy or flood a channel with typing or voice frames that every member then has to receive. The budget applies before the socket's check, so a frame over it costs no database or Redis work. Each budget refills per minute up to its burst; `0` per minute turns it off, a burst is at least 1:
+Each WebSocket has a budget for the frames its client sends, so one client cannot keep the gateway pool busy or flood a channel or server with typing, voice or presence frames that every member then has to receive. The budget applies before the socket's check, so a frame over it costs no database or Redis work. Each budget refills per minute up to its burst; `0` per minute turns it off, a burst is at least 1:
 
 - `API_RATE_WS_FRAMES_PER_MIN` (default 1200) and `API_RATE_WS_FRAMES_BURST` (300): all frames. Past the budget the socket stops reading until it refills; the client's frames wait in the connection and none is lost. The burst covers a reconnect, which subscribes to every text channel of the open server and every direct message at once.
 - `API_RATE_WS_TYPING_PER_MIN` (30) and `API_RATE_WS_TYPING_BURST` (10): typing frames. Past the budget they are dropped; the apps repeat them every 3 seconds while someone types.
 - `API_RATE_WS_SIG_PER_MIN` (120) and `API_RATE_WS_SIG_BURST` (20): voice frames (join, leave, camera or screen on and off, mute, deafen, watching a Live). Past the budget they wait like other frames.
+- `API_RATE_WS_PRESENCE_PER_MIN` (30) and `API_RATE_WS_PRESENCE_BURST` (10): presence frames (away, back online). Each change is sent to every member of every server the user is in. Past the budget they wait like other frames.
 
-The socket stays open either way and gets no error, so the apps do not reconnect. Frames that had to wait count as `gelabber_rate_limited_total{bucket="ws_frames"}` or `{bucket="ws_sig"}`, dropped typing frames as `{bucket="ws_typing"}`.
+The socket stays open either way and gets no error, so the apps do not reconnect. Frames that had to wait count as `gelabber_rate_limited_total{bucket="ws_frames"}`, `{bucket="ws_sig"}` or `{bucket="ws_presence"}`, dropped typing frames as `{bucket="ws_typing"}`.
 
 ## Public pages
 

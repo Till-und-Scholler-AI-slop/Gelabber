@@ -104,6 +104,14 @@ pub const WS_SIG: FrameRate = FrameRate {
     per_min: 120,
     burst: 20,
 };
+/// Presence frames (`p`) per socket. One that flips the user between idle
+/// and online reaches every member of every server the user is in. The web
+/// client sends one when it goes idle or comes back, the desktop app at
+/// most one every 10 s while there is input.
+pub const WS_PRESENCE: FrameRate = FrameRate {
+    per_min: 30,
+    burst: 10,
+};
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 pub(crate) const HOUR: Duration = Duration::from_secs(3600);
@@ -145,6 +153,8 @@ pub struct Limits {
     pub ws_typing: FrameRate,
     /// Voice signal frames of one WebSocket ([`WS_SIG`]).
     pub ws_sig: FrameRate,
+    /// Presence frames of one WebSocket ([`WS_PRESENCE`]).
+    pub ws_presence: FrameRate,
 }
 
 /// A token bucket's refill per minute and size. `per_min == 0` turns it off.
@@ -169,6 +179,7 @@ impl Default for Limits {
             ws_frames: WS_FRAMES,
             ws_typing: WS_TYPING,
             ws_sig: WS_SIG,
+            ws_presence: WS_PRESENCE,
         }
     }
 }

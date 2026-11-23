@@ -83,6 +83,7 @@ impl Held {
         match &self.inbound {
             Inbound::Text(Some(ClientFrame::Typing { .. })) => Class::Typing,
             Inbound::Text(Some(ClientFrame::Sig { .. })) => Class::Signal,
+            Inbound::Text(Some(ClientFrame::Presence { .. })) => Class::Presence,
             _ => Class::Frame,
         }
     }

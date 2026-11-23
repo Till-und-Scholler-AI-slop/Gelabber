@@ -11,6 +11,12 @@
 //! - a voice signal frame also needs a signal token and waits the same way:
 //!   it changes a seat's state (mute, deafen, publish), so dropping one would
 //!   leave the server's view different from the client's;
+//! - a presence frame (`p`) also needs a presence token and waits too. One
+//!   that flips the user between idle and online is announced to every
+//!   member of every server the user is in, and the client's last status
+//!   has to arrive. A client makes the user idle only with a `p` (the
+//!   server's own idle timer takes minutes), so this bounds the flips back
+//!   to online as well;
 //! - a typing frame over the typing budget is dropped. Typing is best effort
 //!   and repeated every few seconds while someone types; a missed stop ends
 //!   with the typing TTL.
@@ -28,6 +34,7 @@ pub(super) enum Class {
     Frame,
     Typing,
     Signal,
+    Presence,
 }
 
 /// What [`FrameBudget::admit`] decided for a frame.
@@ -47,6 +54,7 @@ pub(super) enum Admit {
 pub(super) const FRAMES_BUCKET: &str = "ws_frames";
 pub(super) const TYPING_BUCKET: &str = "ws_typing";
 pub(super) const SIG_BUCKET: &str = "ws_sig";
+pub(super) const PRESENCE_BUCKET: &str = "ws_presence";
 
 struct Bucket {
     tokens: f64,
@@ -98,6 +106,7 @@ pub(super) struct FrameBudget {
     frames: Bucket,
     typing: Bucket,
     signal: Bucket,
+    presence: Bucket,
 }
 
 impl FrameBudget {
@@ -106,21 +115,31 @@ impl FrameBudget {
             frames: Bucket::new(limits.ws_frames, now),
             typing: Bucket::new(limits.ws_typing, now),
             signal: Bucket::new(limits.ws_sig, now),
+            presence: Bucket::new(limits.ws_presence, now),
+        }
+    }
+
+    /// The class's own budget that a frame waits for, besides the frame
+    /// budget.
+    fn own(&mut self, class: Class) -> Option<(&mut Bucket, &'static str)> {
+        match class {
+            Class::Signal => Some((&mut self.signal, SIG_BUCKET)),
+            Class::Presence => Some((&mut self.presence, PRESENCE_BUCKET)),
+            Class::Frame | Class::Typing => None,
         }
     }
 
     /// Spends the tokens a frame of `class` needs, or says why not.
     pub(super) fn admit(&mut self, class: Class, now: Instant) -> Admit {
         let frames = self.frames.wait(now);
-        let signal = match class {
-            Class::Signal => self.signal.wait(now),
-            Class::Frame | Class::Typing => Duration::ZERO,
-        };
-        if !signal.is_zero() {
-            return Admit::Wait {
-                wait: signal.max(frames),
-                bucket: SIG_BUCKET,
-            };
+        if let Some((own, bucket)) = self.own(class) {
+            let wait = own.wait(now);
+            if !wait.is_zero() {
+                return Admit::Wait {
+                    wait: wait.max(frames),
+                    bucket,
+                };
+            }
         }
         if !frames.is_zero() {
             return Admit::Wait {
@@ -129,13 +148,16 @@ impl FrameBudget {
             };
         }
         self.frames.take();
-        match class {
-            Class::Frame => {}
-            Class::Signal => self.signal.take(),
-            // The frame token stays spent: a typing flood is read no faster
-            // than any other.
-            Class::Typing if self.typing.wait(now).is_zero() => self.typing.take(),
-            Class::Typing => return Admit::Drop,
+        if let Some((own, _)) = self.own(class) {
+            own.take();
+        }
+        // The frame token stays spent: a typing flood is read no faster
+        // than any other.
+        if class == Class::Typing {
+            if !self.typing.wait(now).is_zero() {
+                return Admit::Drop;
+            }
+            self.typing.take();
         }
         Admit::Handle
     }
@@ -151,6 +173,7 @@ mod tests {
             ws_frames: rate(frames),
             ws_typing: rate(typing),
             ws_sig: rate(sig),
+            ws_presence: rate(sig),
             ..Limits::default()
         }
     }
@@ -216,10 +239,35 @@ mod tests {
     }
 
     #[test]
+    fn presence_frames_wait_for_their_own_budget() {
+        let now = Instant::now();
+        let mut budget = FrameBudget::new(&limits((60, 10), (60, 5), (60, 5)), now);
+        budget.presence = Bucket::new(
+            FrameRate {
+                per_min: 30,
+                burst: 1,
+            },
+            now,
+        );
+        assert_eq!(budget.admit(Class::Presence, now), Admit::Handle);
+        let Admit::Wait { wait, bucket } = budget.admit(Class::Presence, now) else {
+            panic!("second presence frame");
+        };
+        assert_eq!(bucket, PRESENCE_BUCKET);
+        assert!(wait > Duration::from_millis(1990), "{wait:?}");
+        // The signal budget is a different one.
+        assert_eq!(budget.admit(Class::Signal, now), Admit::Handle);
+        assert_eq!(
+            budget.admit(Class::Presence, now + Duration::from_secs(2)),
+            Admit::Handle
+        );
+    }
+
+    #[test]
     fn a_rate_of_zero_turns_a_budget_off() {
         let now = Instant::now();
         let mut budget = FrameBudget::new(&limits((0, 1), (0, 1), (0, 1)), now);
-        for class in [Class::Frame, Class::Typing, Class::Signal] {
+        for class in [Class::Frame, Class::Typing, Class::Signal, Class::Presence] {
             for _ in 0..100 {
                 assert_eq!(budget.admit(class, now), Admit::Handle);
             }

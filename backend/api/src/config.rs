@@ -77,6 +77,8 @@ pub const API_RATE_WS_TYPING_PER_MIN: &str = "API_RATE_WS_TYPING_PER_MIN";
 pub const API_RATE_WS_TYPING_BURST: &str = "API_RATE_WS_TYPING_BURST";
 pub const API_RATE_WS_SIG_PER_MIN: &str = "API_RATE_WS_SIG_PER_MIN";
 pub const API_RATE_WS_SIG_BURST: &str = "API_RATE_WS_SIG_BURST";
+pub const API_RATE_WS_PRESENCE_PER_MIN: &str = "API_RATE_WS_PRESENCE_PER_MIN";
+pub const API_RATE_WS_PRESENCE_BURST: &str = "API_RATE_WS_PRESENCE_BURST";
 pub const SMTP_HOST: &str = "SMTP_HOST";
 pub const SMTP_PORT: &str = "SMTP_PORT";
 pub const SMTP_SECURITY: &str = "SMTP_SECURITY";
@@ -1097,6 +1099,11 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         (API_RATE_WS_SIG_PER_MIN, API_RATE_WS_SIG_BURST),
         defaults.ws_sig,
     )?;
+    let ws_presence = parse_frame_rate(
+        get,
+        (API_RATE_WS_PRESENCE_PER_MIN, API_RATE_WS_PRESENCE_BURST),
+        defaults.ws_presence,
+    )?;
     Ok(Limits {
         auth_per_min,
         api_per_min,
@@ -1110,6 +1117,7 @@ fn parse_limits(get: &impl Fn(&str) -> Option<String>) -> Result<Limits, ConfigE
         ws_frames,
         ws_typing,
         ws_sig,
+        ws_presence,
     })
 }
 
@@ -1456,6 +1464,7 @@ mod tests {
             (API_RATE_WS_FRAMES_PER_MIN, "0"),
             (API_RATE_WS_TYPING_PER_MIN, "12"),
             (API_RATE_WS_TYPING_BURST, "2"),
+            (API_RATE_WS_PRESENCE_PER_MIN, "6"),
         ]))
         .expect("valid config");
         assert_eq!(config.limits.ws_frames.per_min, 0);
@@ -1471,6 +1480,13 @@ mod tests {
             }
         );
         assert_eq!(config.limits.ws_sig, Limits::default().ws_sig);
+        assert_eq!(
+            config.limits.ws_presence,
+            FrameRate {
+                per_min: 6,
+                burst: Limits::default().ws_presence.burst
+            }
+        );
 
         let err = Config::from_source(source(&[
             (DATABASE_URL, "postgres://u:p@localhost/db"),
