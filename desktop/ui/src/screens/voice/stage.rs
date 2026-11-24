@@ -78,29 +78,6 @@ fn js_round(v: f64) -> i32 {
     (v + 0.5).floor() as i32
 }
 
-/// `arrangeStage` (the overview): the pinned picture or the first Live in
-/// the spotlight, the other Lives in the filmstrip.
-pub fn arrange_stage<T: Clone>(
-    shares: &[T],
-    cameras: &[T],
-    pinned: Option<PicId>,
-    id: impl Fn(&T) -> PicId,
-) -> (Option<T>, Vec<T>) {
-    let spotlight = shares
-        .iter()
-        .chain(cameras)
-        .find(|t| Some(id(t)) == pinned)
-        .or(shares.first())
-        .cloned();
-    let spot = spotlight.as_ref().map(&id);
-    let filmstrip = shares
-        .iter()
-        .filter(|t| Some(id(t)) != spot)
-        .cloned()
-        .collect();
-    (spotlight, filmstrip)
-}
-
 /// `rasterOrder`: a pinned picture first, then the Lives, then the cameras.
 pub fn raster_order<T: Clone>(
     shares: &[T],
@@ -586,9 +563,6 @@ mod tests {
         );
         assert_eq!(focus_of(&[], &cameras, None, Some(a), id), Some(cameras[1]));
         assert_eq!(focus_of(&shares, &cameras, pinned, Some(a), id), pinned);
-        let (spot, film) = arrange_stage(&shares, &cameras, None, id);
-        assert_eq!(spot, Some(shares[0]));
-        assert!(film.is_empty());
         assert_eq!(view_for(None, true), View::Fokus);
         assert_eq!(view_for(Some(View::Raster), true), View::Raster);
     }

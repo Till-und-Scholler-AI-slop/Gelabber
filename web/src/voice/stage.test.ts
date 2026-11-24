@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  arrangeStage,
   createLongPress,
   fitGrid,
   focusOf,
@@ -20,42 +19,7 @@ import {
 const tile = (id: string, kind: StageKind) => ({ id, kind });
 const live = tile("mia-s", "live");
 const screen = tile("lena-s", "live");
-const other = tile("kim-s", "live");
 const camera = tile("rafi-v", "camera");
-
-describe("stage", () => {
-  it("puts the first Live in the spotlight, the others in the filmstrip", () => {
-    expect(arrangeStage([live, screen, other], [camera], null)).toEqual({
-      spotlight: live,
-      filmstrip: [screen, other],
-    });
-  });
-
-  it("swaps a pinned share into the spotlight", () => {
-    expect(arrangeStage([live, screen, other], [camera], "kim-s")).toEqual({
-      spotlight: other,
-      filmstrip: [live, screen],
-    });
-  });
-
-  it("takes a pinned camera there too, the shares going to the filmstrip", () => {
-    expect(arrangeStage([screen], [camera], "rafi-v")).toEqual({
-      spotlight: camera,
-      filmstrip: [screen],
-    });
-  });
-
-  it("has no stage for cameras alone", () => {
-    expect(arrangeStage([], [camera], null)).toEqual({
-      spotlight: null,
-      filmstrip: [],
-    });
-  });
-
-  it("forgets a pin whose picture ended", () => {
-    expect(arrangeStage([screen], [], "gone-s").spotlight).toBe(screen);
-  });
-});
 
 describe("raster", () => {
   it("puts a pinned picture first, then the Lives, then the cameras", () => {

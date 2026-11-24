@@ -1,28 +1,9 @@
 // How a room's pictures are laid out. The channel's page gives every
 // picture a tile of its own, sized to fill the stage (Raster, fitGrid), or
 // one picture the stage over a row of the others and the people (Fokus,
-// focusRects). The overview keeps one spotlight, a filmstrip of the other
-// Lives, and cameras in their owners' places among the participants.
+// focusRects).
 
 export type StageKind = "live" | "camera";
-
-/** The first Live takes the spotlight unless someone pinned another picture
- * there, a camera included. The filmstrip holds the Lives that are not in
- * it; cameras stay with their owners. */
-export function arrangeStage<T extends { id: string; kind: StageKind }>(
-  shares: readonly T[],
-  cameras: readonly T[],
-  pinned: string | null,
-): { spotlight: T | null; filmstrip: T[] } {
-  const spotlight =
-    [...shares, ...cameras].find((tile) => tile.id === pinned) ??
-    shares[0] ??
-    null;
-  return {
-    spotlight,
-    filmstrip: shares.filter((tile) => tile !== spotlight),
-  };
-}
 
 /** The stage's pictures in their order: a pinned one first, then the
  * Lives, then the cameras. */

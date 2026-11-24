@@ -53,15 +53,14 @@ type VoiceTileProps = {
   label: string;
   mirror?: boolean;
   screen?: boolean;
-  live?: boolean;
   /** The camera's owner is speaking. */
   speaking?: boolean;
-  /** Large, in the room's spotlight. */
+  /** In front on the stage (Fokus, Kino). */
   spotlight?: boolean;
   /** "Anheften": whether the picture is pinned to the front. */
   pinned?: boolean;
   onTogglePin?: () => void;
-  /** A press on the picture: the filmstrip swaps it into the spotlight. */
+  /** A press on the picture: Fokus's row brings it to the front. */
   onSelect?: () => void;
   /** False where the name is written next to the tile already. */
   caption?: boolean;
@@ -76,7 +75,7 @@ type VoiceTileProps = {
   /** Watching this Live without being in the call: how to stop. */
   onStopWatching?: () => void;
   /** A Live on the channel's stage: its caption is the LIVE badge, the
-   * owner's name and `watchers`, the count of who watches; no Live tag. */
+   * owner's name and `watchers`, the count of who watches. */
   liveCaption?: { name: string; watchers: ReactNode };
 };
 
@@ -172,7 +171,6 @@ function VideoSurface({
   label,
   mirror,
   screen: isScreen,
-  live,
   speaking,
   spotlight,
   pinned = false,
@@ -476,28 +474,23 @@ function VideoSurface({
           <figcaption className="voice-video-caption">{label}</figcaption>
         )
       ) : null}
-      {(live && !liveCaption) || sourceAudioNotice ? (
+      {sourceAudioNotice ? (
         <div className="voice-video-tags">
-          {live && !liveCaption ? (
-            <span className="voice-video-live">{t("live.badge")}</span>
-          ) : null}
-          {sourceAudioNotice ? (
-            <span
-              role="status"
-              className={`voice-video-sound${sourceAudioOn ? "" : " voice-video-sound--off"}`}
-              title={sourceAudioNotice}
-            >
-              {sourceAudioOn ? (
-                <SpeakerIcon size={12} />
-              ) : (
-                <SpeakerOffIcon size={12} />
-              )}
-              <span aria-hidden="true">
-                {sourceAudioOn ? t("tile.withSound") : t("tile.withoutSound")}
-              </span>
-              <span className="sr-only">{sourceAudioNotice}</span>
+          <span
+            role="status"
+            className={`voice-video-sound${sourceAudioOn ? "" : " voice-video-sound--off"}`}
+            title={sourceAudioNotice}
+          >
+            {sourceAudioOn ? (
+              <SpeakerIcon size={12} />
+            ) : (
+              <SpeakerOffIcon size={12} />
+            )}
+            <span aria-hidden="true">
+              {sourceAudioOn ? t("tile.withSound") : t("tile.withoutSound")}
             </span>
-          ) : null}
+            <span className="sr-only">{sourceAudioNotice}</span>
+          </span>
         </div>
       ) : null}
       {immersive ? (

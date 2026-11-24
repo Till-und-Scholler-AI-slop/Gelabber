@@ -190,8 +190,6 @@ crate::strings! {
         | "Esc";
     room_stage = "Bühne"
         | "Stage";
-    room_streams = "Übertragungen"
-        | "Streams";
     room_without_camera = "Ohne Kamera"
         | "Without camera";
     room_participants = "Teilnehmer im Sprachkanal"

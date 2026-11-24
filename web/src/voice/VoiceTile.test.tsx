@@ -60,16 +60,15 @@ describe("the own Live's sound", () => {
         stream={null}
         label="Lena (du) — Live"
         screen
-        live
         sourceAudioNotice={notice}
         sourceAudioOn={on}
       />,
     );
 
-  it("says it in a tag beside the Live tag, in full for screen readers", () => {
+  it("says it in a tag, in full for screen readers", () => {
     const html = tile("Ton wird mitgesendet", true);
     expect(html).toMatch(
-      /<div class="voice-video-tags"><span class="voice-video-live">Live<\/span><span role="status" class="voice-video-sound" title="Ton wird mitgesendet">/,
+      /<div class="voice-video-tags"><span role="status" class="voice-video-sound" title="Ton wird mitgesendet">/,
     );
     expect(html).toContain('<span aria-hidden="true">Mit Ton</span>');
     expect(html).toContain('<span class="sr-only">Ton wird mitgesendet</span>');
@@ -86,7 +85,7 @@ describe("the own Live's sound", () => {
 
   it("has no tag without a notice", () => {
     const html = renderToStaticMarkup(
-      <VoiceTile stream={null} label="Lena (du) — Live" screen live />,
+      <VoiceTile stream={null} label="Lena (du) — Live" screen />,
     );
     expect(html).not.toContain("voice-video-sound");
   });
@@ -115,7 +114,6 @@ describe("tile actions", () => {
           stream={null}
           label="Mia — Live"
           screen
-          live
           spotlight={spotlight}
           sourceWatch={{ watching, toggle: () => undefined }}
         />,
@@ -134,7 +132,6 @@ describe("tile actions", () => {
           stream={null}
           label="Mia"
           screen
-          live
           sourceWatch={{ watching, toggle: () => undefined, owner }}
         />,
       );
@@ -161,7 +158,6 @@ describe("watching full size", () => {
         stream={null}
         label="Mia — Live"
         screen
-        live
         onStopWatching={() => undefined}
         onClose={() => undefined}
       />,
@@ -207,18 +203,16 @@ describe("a Live's caption on the stage (#521)", () => {
         stream={null}
         label="Jonas — Live"
         screen
-        live
         liveCaption={{ name: "Jonas", watchers: <b data-count="">3</b> }}
         {...props}
       />,
     );
 
-  it("is the badge, the name and the count, with no Live tag on top", () => {
+  it("is the badge, the name and the count, with no tag on top", () => {
     const html = live();
     expect(html).toContain(
       '<figcaption class="voice-video-caption voice-live-caption"><span class="voice-live-caption-badge">Live</span><span class="voice-live-caption-name">Jonas</span><b data-count="">3</b></figcaption>',
     );
-    expect(html).not.toContain("voice-video-live");
     expect(html).not.toContain("voice-video-tags");
   });
 
@@ -227,22 +221,14 @@ describe("a Live's caption on the stage (#521)", () => {
     expect(html).toMatch(
       /<div class="voice-video-tags"><span role="status" class="voice-video-sound[ "]/,
     );
-    expect(html).not.toContain("voice-video-live");
   });
 
-  it("leaves cameras and the overview's Lives as they were", () => {
+  it("leaves a camera's caption as it was", () => {
     const camera = renderToStaticMarkup(
       <VoiceTile stream={null} label="Mia" />,
     );
     expect(camera).toContain(
       '<figcaption class="voice-video-caption">Mia</figcaption>',
     );
-    const overview = renderToStaticMarkup(
-      <VoiceTile stream={null} label="Jonas — Live" screen live />,
-    );
-    expect(overview).toContain(
-      '<figcaption class="voice-video-caption">Jonas — Live</figcaption>',
-    );
-    expect(overview).toContain('<span class="voice-video-live">Live</span>');
   });
 });
