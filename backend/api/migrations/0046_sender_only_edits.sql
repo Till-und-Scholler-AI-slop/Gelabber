@@ -19,8 +19,3 @@ ALTER TABLE messages
     ADD COLUMN sender_only_edited_at TIMESTAMPTZ,
     ADD COLUMN sender_only_descriptions JSONB,
     ADD COLUMN sender_only_revision BIGINT;
-
--- Search reads B's own text for B: the few such rows of a channel without
--- a scan of all its messages.
-CREATE INDEX messages_sender_only_content_idx ON messages (channel_id)
-    WHERE sender_only_content IS NOT NULL;
