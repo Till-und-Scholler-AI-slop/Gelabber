@@ -56,6 +56,17 @@ class ReleaseWiring(unittest.TestCase):
 
     def test_the_repository_is_published_after_the_tarball(self):
         self.assertIn('release-asset', self.jobs.get('arch-repo-publish', set()))
+        self.assertIn('release-asset', self.jobs.get('arch-repo-pages', set()))
+
+    def test_the_pages_artifact_is_uploaded_a_job_before_the_deployment(self):
+        # Right after an upload in the same job, deploy-pages often finds no
+        # artifact (actions/deploy-pages#451, GEL-73).
+        text = WORKFLOW.read_text()
+        self.assertIn('arch-repo-pages', self.jobs.get('arch-repo-publish', set()))
+        self.assertIn('actions/upload-pages-artifact@', job_text(text, 'arch-repo-pages'))
+        publish = job_text(text, 'arch-repo-publish')
+        self.assertNotIn('upload-pages-artifact', publish)
+        self.assertIn('artifact_name: ${{ needs.arch-repo-pages.outputs.artifact }}', publish)
 
 
 def job_text(text, name):
