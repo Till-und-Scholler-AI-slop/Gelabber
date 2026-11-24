@@ -73,6 +73,7 @@ export function ServerRail({
         <ServerList servers={servers ?? []} activeId={activeId} />
       )}
       <div className="server-rail-footer">
+        <span className="server-rail-separator" aria-hidden="true" />
         <button
           type="button"
           onClick={() => setAdding(true)}
