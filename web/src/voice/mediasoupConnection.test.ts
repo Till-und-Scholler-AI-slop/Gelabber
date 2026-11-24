@@ -17,11 +17,12 @@ import {
   type ReceivedSource,
   type RtpSenderParameters,
 } from "./mediasoupConnection.ts";
-import type {
-  ConsumerAnnouncement,
-  MediaMethod,
-  MediaRequest,
-  MediaRequests,
+import {
+  MediaError,
+  type ConsumerAnnouncement,
+  type MediaMethod,
+  type MediaRequest,
+  type MediaRequests,
 } from "./media.ts";
 
 const GENERATION = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -1459,15 +1460,43 @@ describe("public mediasoup connection lifecycle", () => {
     await f.connection.setScreenMode(false);
     await f.connection.publish(publication("s", new Capture("live", "video")));
     expect(f.calls("screenMode")).toEqual([]);
+    // A server without GEL-32 cannot parse the frame and answers bad_request.
     f.intercept((method) =>
       method === "screenMode"
-        ? Promise.reject(new Error("bad_request"))
+        ? Promise.reject(new MediaError("bad_request"))
         : undefined,
     );
     await expect(f.connection.setScreenMode(true)).resolves.toBeUndefined();
     expect(f.connection.sender("s")).toBeDefined();
     expect(f.onError).not.toHaveBeenCalled();
+    // The Live works as before: the refusal counts as told, no retries.
+    await f.connection.setScreenMode(true);
+    expect(f.calls("screenMode")).toHaveLength(1);
   });
+
+  it.each(["request_timeout", "connection_closed"])(
+    "tells a sharp Live's mode again after a %s",
+    async (code) => {
+      const f = fixture();
+      await f.start();
+      const sender = await f.connection.publish(
+        publication("s", new Capture("live", "video")),
+      );
+      f.intercept((method) =>
+        method === "screenMode"
+          ? Promise.reject(new MediaError(code))
+          : undefined,
+      );
+      await expect(f.connection.setScreenMode(true)).resolves.toBeUndefined();
+      f.intercept(undefined);
+      await f.connection.setScreenMode(true);
+      await f.connection.setScreenMode(true);
+      expect(f.calls("screenMode")).toEqual([
+        { producerId: sender.producerId, sharp: true },
+        { producerId: sender.producerId, sharp: true },
+      ]);
+    },
+  );
 
   it("pauses native publication and sends exact source ownership without stopping capture", async () => {
     const f = fixture();
