@@ -294,6 +294,9 @@
 }
 .overview-card {
   padding: 6px 20px 14px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-surface);
 }
 /* A busy channel without a mention: one line (GEL-75). */
 .overview-card--line {
@@ -315,9 +318,6 @@
 .overview-card__preview-author {
   color: var(--lr-text);
   font-weight: 500;
-}
-.overview-card {
-  padding: 6px 20px 14px;
 }
 .overview-card__head {
   display: flex;
