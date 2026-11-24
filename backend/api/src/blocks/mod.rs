@@ -6,6 +6,12 @@
 //! (`dm_not_allowed`, `not_found`), never "blocked"; A gets `blocked`. B's
 //! writes into an existing DM are not refused but stored for B alone
 //! (#619, `messages.sender_only`): B's composer stays and nothing tells B.
+//! B's edit of a message A has already seen is B's alone too (GEL-21,
+//! [`Edit::OwnView`], `messages.sender_only_content` and its siblings):
+//! it answers as any edit, A keeps the text and alt texts A saw, also after
+//! an unblock, B reads B's own, and its event reaches B's sockets alone.
+//! An edit after the unblock is everyone's again. B's delete of such a
+//! message deletes it for both, as for any message A has seen.
 //! Blocking ends their friendship, drops friend requests between them and
 //! declines a pending message request from B, in one transaction. B's
 //! pushes and mention counts do not reach A (`crate::push`,
@@ -78,15 +84,28 @@ impl Block {
         }
     }
 
-    /// An edit in their DM (#619): the blocker gets `blocked`;
-    /// the one blocked may change only what the peer never saw, their
-    /// sender-only messages, and gets `dm_closed` for the rest.
-    pub fn refuse_edit(self, sender_only: bool) -> Result<(), ApiError> {
+    /// An edit in their DM of a message `sender_only` or not (#619): the
+    /// blocker gets `blocked`; the one blocked edits as ever, and what the
+    /// peer has seen changes for them alone (GEL-21).
+    pub fn edit(self, sender_only: bool) -> Result<Edit, ApiError> {
         match self {
-            Self::Theirs if sender_only => Ok(()),
-            other => other.refuse(ApiError::DmClosed),
+            Self::None => Ok(Edit::Message),
+            Self::Mine => Err(ApiError::Blocked),
+            // Only its author reads it already.
+            Self::Theirs if sender_only => Ok(Edit::Message),
+            Self::Theirs => Ok(Edit::OwnView),
         }
     }
+}
+
+/// What an edit changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edit {
+    /// The message, for whoever reads it.
+    Message,
+    /// Its author's own view of it (GEL-21): the peer who blocks them keeps
+    /// what they saw.
+    OwnView,
 }
 
 pub async fn between<'e, E: PgExecutor<'e>>(

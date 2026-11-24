@@ -290,7 +290,8 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
         StatusCode::FORBIDDEN,
         "blocked",
     );
-    // What only Bob reads he may change; what Ada has seen stays.
+    // What only Bob reads he may change; an edit of what Ada has seen
+    // stays his (GEL-21, `an_edit_of_a_seen_message_stays_the_senders`).
     let fixed = w
         .bob
         .send(
@@ -308,7 +309,7 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
             Some(json!({ "content": "geändert" })),
         )
         .await;
-    refused(&edit, StatusCode::FORBIDDEN, "dm_closed");
+    assert_eq!(edit.status, StatusCode::OK, "{}", edit.body);
     // An alt text alone (the text unchanged) is an edit too (#575).
     let alt = w
         .bob
@@ -321,7 +322,7 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
             })),
         )
         .await;
-    refused(&alt, StatusCode::FORBIDDEN, "dm_closed");
+    assert_eq!(alt.status, StatusCode::OK, "{}", alt.body);
 
     // Both still read it; each sees only their own side.
     let mine = w
@@ -341,7 +342,7 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
     assert_eq!(again.status, StatusCode::OK, "{}", again.body);
     assert_eq!(
         history(&mut w.bob, &dm).await,
-        ["vorher", "auch vorher", "", "nachher!"]
+        ["geändert", "auch vorher", "", "nachher!"]
     );
     assert_eq!(
         history(&mut w.ada, &dm).await,
@@ -397,6 +398,260 @@ async fn an_existing_dm_stays_readable_and_closes_for_writing(pool: PgPool) {
         .await;
     assert!(dm_now.body.get("blocked").is_none());
     assert!(dm_now.body.get("request").is_none(), "still accepted");
+}
+
+/// The message `id` as `client` reads it in the history of `channel`, or
+/// `Null` when it is not there.
+async fn read(client: &mut Client, channel: &str, id: &str) -> Value {
+    let res = client
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    res.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == id)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+/// The message `id` as `client` reads it around it (jump to message).
+async fn jump_to(client: &mut Client, channel: &str, id: &str) -> Value {
+    let res = client
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages/{id}/context"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    res.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == id)
+        .cloned()
+        .unwrap()
+}
+
+async fn edit(client: &mut Client, id: &str, body: Value) -> Response {
+    client
+        .send(Method::PATCH, &format!("/api/messages/{id}"), Some(body))
+        .await
+}
+
+/// The ids `client` finds for `q` in `channel`.
+async fn found(client: &mut Client, channel: &str, q: &str) -> Vec<String> {
+    let res = client
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages/search?q={q}"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    res.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// No alt text on the first attachment of `message`.
+fn undescribed(message: &Value) -> bool {
+    message["attachments"][0]
+        .get("description")
+        .is_none_or(Value::is_null)
+}
+
+/// GEL-21: the one blocked edits a message the blocker has already seen.
+/// The edit answers as ever and is stored as their own view; the blocker
+/// keeps what they saw, also after an unblock.
+#[sqlx::test]
+async fn an_edit_of_a_seen_message_stays_the_senders(pool: PgPool) {
+    let mut w = world(common::state(pool)).await;
+    let ada = w.ada.user_id().to_owned();
+    let bob = w.bob.user_id().to_owned();
+    w.ada.befriend(&bob).await;
+    let dm = open_dm(&mut w.ada, &bob).await;
+    let dm = dm.body["id"].as_str().unwrap().to_owned();
+    let sent = text(&mut w.bob, &dm, "alter text").await;
+    let seen = sent.body["id"].as_str().unwrap().to_owned();
+    let (photo, picture) = picture_message(&mut w.bob, &dm).await;
+    let before = read(&mut w.ada, &dm, &seen).await;
+    block(&mut w.ada, &bob).await;
+
+    // Bob's edit answers like any edit.
+    let bobs_text = format!("<@{ada}> neuer text");
+    let edited = edit(&mut w.bob, &seen, json!({ "content": bobs_text })).await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    assert_eq!(
+        edited.body["content"],
+        bobs_text.as_str(),
+        "{}",
+        edited.body
+    );
+    assert!(edited.body["edited_at"].is_string(), "{}", edited.body);
+    assert!(
+        edited.body["revision"].as_i64().unwrap() > before["revision"].as_i64().unwrap(),
+        "{}",
+        edited.body
+    );
+    // He reads his text everywhere, by history and by id ...
+    let his = read(&mut w.bob, &dm, &seen).await;
+    assert_eq!(his["content"], bobs_text.as_str(), "{his}");
+    assert_eq!(his["edited_at"], edited.body["edited_at"], "{his}");
+    assert_eq!(his["revision"], edited.body["revision"], "{his}");
+    assert_eq!(
+        jump_to(&mut w.bob, &dm, &seen).await["content"],
+        bobs_text.as_str()
+    );
+    // ... and Ada what she saw, down to the revision.
+    assert_eq!(read(&mut w.ada, &dm, &seen).await, before);
+    assert_eq!(
+        jump_to(&mut w.ada, &dm, &seen).await["content"],
+        "alter text"
+    );
+    // Search goes by the text each reads.
+    assert_eq!(
+        found(&mut w.bob, &dm, "neuer").await,
+        std::slice::from_ref(&seen)
+    );
+    assert!(found(&mut w.bob, &dm, "alter").await.is_empty());
+    assert!(found(&mut w.ada, &dm, "neuer").await.is_empty());
+    assert_eq!(
+        found(&mut w.ada, &dm, "alter").await,
+        std::slice::from_ref(&seen)
+    );
+    // The mention he added pings nobody.
+    assert_eq!(unread_row(&mut w.ada, &dm).await["mention_count"], 0);
+
+    // An alt text alone (#575) goes the same way.
+    let alt = edit(
+        &mut w.bob,
+        &photo,
+        json!({ "content": "", "attachment_descriptions": { &picture: "Ein Hund" } }),
+    )
+    .await;
+    assert_eq!(alt.status, StatusCode::OK, "{}", alt.body);
+    assert_eq!(alt.body["attachments"][0]["description"], "Ein Hund");
+    assert_eq!(
+        read(&mut w.bob, &dm, &photo).await["attachments"][0]["description"],
+        "Ein Hund"
+    );
+    assert!(undescribed(&read(&mut w.ada, &dm, &photo).await));
+    // His answer to it quotes his own text to him.
+    let answer = w
+        .bob
+        .send(
+            Method::POST,
+            &format!("/api/channels/{dm}/messages"),
+            Some(json!({ "content": "siehe oben", "reply_to": seen })),
+        )
+        .await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    assert_eq!(
+        answer.body["reply"]["excerpt"],
+        bobs_text.as_str(),
+        "{}",
+        answer.body
+    );
+    // A reaction's answer shows his text too.
+    let reacted = react(&mut w.bob, &seen).await;
+    assert_eq!(reacted.status, StatusCode::OK, "{}", reacted.body);
+    assert_eq!(reacted.body["content"], bobs_text.as_str());
+    // Edited again, and once with the text unchanged: all stays his.
+    let again = edit(&mut w.bob, &seen, json!({ "content": "noch neuer" })).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+    assert_eq!(again.body["content"], "noch neuer");
+    let same = edit(&mut w.bob, &seen, json!({ "content": "noch neuer" })).await;
+    assert_eq!(same.body["content"], "noch neuer", "{}", same.body);
+
+    // Unblocking shows Ada none of it.
+    unblock(&mut w.ada, &bob).await;
+    let hers = read(&mut w.ada, &dm, &seen).await;
+    assert_eq!(hers["content"], "alter text", "{hers}");
+    assert!(hers["edited_at"].is_null(), "{hers}");
+    assert!(undescribed(&read(&mut w.ada, &dm, &photo).await));
+    assert_eq!(unread_row(&mut w.ada, &dm).await["mention_count"], 0);
+    assert_eq!(read(&mut w.bob, &dm, &seen).await["content"], "noch neuer");
+    assert_eq!(
+        read(&mut w.bob, &dm, &photo).await["attachments"][0]["description"],
+        "Ein Hund"
+    );
+    // Her reaction's answer keeps her text, and he keeps his.
+    let hers = react(&mut w.ada, &seen).await;
+    assert_eq!(hers.status, StatusCode::OK, "{}", hers.body);
+    assert_eq!(hers.body["content"], "alter text", "{}", hers.body);
+    assert_eq!(read(&mut w.bob, &dm, &seen).await["content"], "noch neuer");
+
+    // An edit after the unblock is everyone's again: back to the text she
+    // reads is an edit for him all the same.
+    let back = edit(&mut w.bob, &seen, json!({ "content": "alter text" })).await;
+    assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+    for client in [&mut w.ada, &mut w.bob] {
+        let message = read(client, &dm, &seen).await;
+        assert_eq!(message["content"], "alter text", "{message}");
+        assert!(message["edited_at"].is_string(), "{message}");
+    }
+    // Dropping only his own alt text changes nothing she reads, and sends
+    // her no event: her copy does not take its revision. (Hers may still
+    // move by the picture's own processing, which runs on its own time.)
+    let mut photo_before = read(&mut w.ada, &dm, &photo).await;
+    let dropped = edit(
+        &mut w.bob,
+        &photo,
+        json!({ "attachment_descriptions": { &picture: null } }),
+    )
+    .await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    assert!(undescribed(&dropped.body), "{}", dropped.body);
+    assert!(undescribed(&read(&mut w.bob, &dm, &photo).await));
+    let mut photo_after = read(&mut w.ada, &dm, &photo).await;
+    assert_ne!(photo_after["revision"], dropped.body["revision"]);
+    for photo in [&mut photo_before, &mut photo_after] {
+        photo.as_object_mut().unwrap().remove("revision");
+    }
+    assert_eq!(photo_after, photo_before);
+    let open = edit(&mut w.bob, &seen, json!({ "content": "für alle" })).await;
+    assert_eq!(open.status, StatusCode::OK, "{}", open.body);
+    for client in [&mut w.ada, &mut w.bob] {
+        let message = read(client, &dm, &seen).await;
+        assert_eq!(message["content"], "für alle", "{message}");
+        assert!(message["edited_at"].is_string(), "{message}");
+    }
+    let cat = edit(
+        &mut w.bob,
+        &photo,
+        json!({ "attachment_descriptions": { &picture: "Eine Katze" } }),
+    )
+    .await;
+    assert_eq!(cat.status, StatusCode::OK, "{}", cat.body);
+    for client in [&mut w.ada, &mut w.bob] {
+        assert_eq!(
+            read(client, &dm, &photo).await["attachments"][0]["description"],
+            "Eine Katze"
+        );
+    }
+
+    // Under a new block, deleting a message Ada saw is a delete as ever,
+    // also after an edit of his own: it is gone for both.
+    block(&mut w.ada, &bob).await;
+    let private = edit(&mut w.bob, &photo, json!({ "content": "weg damit" })).await;
+    assert_eq!(private.status, StatusCode::OK, "{}", private.body);
+    let gone = w
+        .bob
+        .send(Method::DELETE, &format!("/api/messages/{photo}"), None)
+        .await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.body);
+    assert!(read(&mut w.bob, &dm, &photo).await.is_null());
+    assert!(read(&mut w.ada, &dm, &photo).await.is_null());
 }
 
 #[sqlx::test]
@@ -937,4 +1192,172 @@ async fn the_blocker_hears_nothing_of_hidden_messages(pool: PgPool) {
             .is_none(),
         "no delete event reaches Ada"
     );
+}
+
+#[sqlx::test]
+async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
+    let state = common::ws_state(pool);
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut w = world(state).await;
+    let bob = w.bob.user_id().to_owned();
+    w.ada.befriend(&bob).await;
+    let dm = open_dm(&mut w.ada, &bob).await;
+    let dm = dm.body["id"].as_str().unwrap().to_owned();
+    let sent = text(&mut w.bob, &dm, "alt").await;
+    let seen = sent.body["id"].as_str().unwrap().to_owned();
+    block(&mut w.ada, &bob).await;
+    let mut ada_ws = socket(addr, &w.ada).await;
+    let mut bob_ws = socket(addr, &w.bob).await;
+    let mut head = Value::Null;
+    for ws in [&mut ada_ws, &mut bob_ws] {
+        ws.send(Message::Text(
+            json!({ "op": "s", "s": dm, "c": dm }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+        head = frame(ws, Duration::from_secs(5), |f| f["op"] == "ok")
+            .await
+            .expect("subscribed");
+    }
+
+    // His edit of what she saw goes out to his sockets alone.
+    let edited = edit(&mut w.bob, &seen, json!({ "content": "neu" })).await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    let event = |f: &Value| f["op"] == "e";
+    let his = frame(&mut bob_ws, Duration::from_secs(5), event)
+        .await
+        .expect("his edit event");
+    assert_eq!(his["t"], "e", "{his}");
+    assert_eq!(his["d"]["content"], "neu", "{his}");
+    assert_eq!(his["d"]["edited_at"], edited.body["edited_at"], "{his}");
+    assert_eq!(his["r"], edited.body["revision"], "{his}");
+    assert!(his["d"].get("author_only").is_none(), "{his}");
+    assert!(
+        frame(&mut ada_ws, Duration::from_millis(800), event)
+            .await
+            .is_none(),
+        "no event for her"
+    );
+    // Nor when she resumes from before it.
+    for (client, expect) in [(&w.ada, false), (&w.bob, true)] {
+        let mut ws = socket(addr, client).await;
+        ws.send(Message::Text(
+            json!({ "op": "s", "s": dm, "c": dm, "n": head["n"], "ep": head["ep"] })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let first = frame(&mut ws, Duration::from_secs(5), |f| {
+            f["op"] == "e" || f["op"] == "ok"
+        })
+        .await
+        .expect("resumed");
+        assert_eq!(first["op"] == "e", expect, "{first}");
+    }
+    // From the start she still replays what she saw: his edit rewrote
+    // none of the earlier entries.
+    let mut ws = socket(addr, &w.ada).await;
+    ws.send(Message::Text(
+        json!({ "op": "s", "s": dm, "c": dm, "n": 0, "ep": head["ep"] })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let replayed = frame(&mut ws, Duration::from_secs(5), |f| {
+        (f["op"] == "e" && f["i"] == seen) || f["op"] == "ok"
+    })
+    .await
+    .expect("replayed");
+    assert_eq!(replayed["op"], "e", "{replayed}");
+    assert_eq!(replayed["d"]["content"], "alt", "{replayed}");
+
+    // After the unblock her reaction goes out to both, each with the text
+    // they read.
+    unblock(&mut w.ada, &bob).await;
+    assert_eq!(react(&mut w.ada, &seen).await.status, StatusCode::OK);
+    let hers = frame(&mut ada_ws, Duration::from_secs(5), event)
+        .await
+        .expect("her reaction event");
+    assert_eq!(hers["d"]["content"], "alt", "{hers}");
+    assert!(hers["d"]["edited_at"].is_null(), "{hers}");
+    assert_eq!(hers["d"]["reactions"][0]["emoji"], "👍", "{hers}");
+    let his = frame(&mut bob_ws, Duration::from_secs(5), event)
+        .await
+        .expect("her reaction event, for him");
+    assert_eq!(his["d"]["content"], "neu", "{his}");
+    assert_eq!(his["d"]["edited_at"], edited.body["edited_at"], "{his}");
+    assert_eq!(his["d"]["reactions"][0]["emoji"], "👍", "{his}");
+    assert_eq!(his["r"], hers["r"]);
+    for frame in [&hers, &his] {
+        assert!(frame["d"].get("author_view").is_none(), "{frame}");
+    }
+
+    // Her answer to it quotes to each the text they read.
+    let answer = w
+        .ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{dm}/messages"),
+            Some(json!({ "content": "worauf?", "reply_to": seen })),
+        )
+        .await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    assert_eq!(answer.body["reply"]["excerpt"], "alt", "{}", answer.body);
+    let created = |f: &Value| f["op"] == "e" && f["t"] == "c";
+    let hers = frame(&mut ada_ws, Duration::from_secs(5), created)
+        .await
+        .expect("her answer");
+    assert_eq!(hers["d"]["reply"]["excerpt"], "alt", "{hers}");
+    let his = frame(&mut bob_ws, Duration::from_secs(5), created)
+        .await
+        .expect("her answer, for him");
+    assert_eq!(his["d"]["reply"]["excerpt"], "neu", "{his}");
+    for frame in [&hers, &his] {
+        assert!(frame["d"].get("reply_author_view").is_none(), "{frame}");
+    }
+    assert_eq!(
+        read(&mut w.bob, &dm, answer.body["id"].as_str().unwrap()).await["reply"]["excerpt"],
+        "neu"
+    );
+}
+
+/// GEL-21: his own text shows the previews of its own links only.
+#[sqlx::test]
+async fn an_edit_of_a_seen_message_keeps_only_its_own_previews(pool: PgPool) {
+    let mut w = world(common::state(pool.clone())).await;
+    let bob = w.bob.user_id().to_owned();
+    w.ada.befriend(&bob).await;
+    let dm = open_dm(&mut w.ada, &bob).await;
+    let dm = dm.body["id"].as_str().unwrap().to_owned();
+    let sent = text(&mut w.bob, &dm, "siehe https://example.org/").await;
+    let seen = sent.body["id"].as_str().unwrap().to_owned();
+    sqlx::query(
+        "WITH p AS (INSERT INTO link_previews (url_hash, url, status, title) \
+         VALUES (sha256('https://example.org/'), 'https://example.org/', 'ok', 'Beispiel') RETURNING id) \
+         INSERT INTO message_previews (message_id, preview_id, position) SELECT $1::uuid, id, 0 FROM p",
+    )
+    .bind(&seen)
+    .execute(&pool)
+    .await
+    .unwrap();
+    block(&mut w.ada, &bob).await;
+
+    let edited = edit(&mut w.bob, &seen, json!({ "content": "ohne link" })).await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    assert!(edited.body.get("previews").is_none(), "{}", edited.body);
+    assert!(read(&mut w.bob, &dm, &seen).await.get("previews").is_none());
+    assert_eq!(
+        read(&mut w.ada, &dm, &seen).await["previews"][0]["url"],
+        "https://example.org/"
+    );
+    // With the link back in his text, so is its preview.
+    let again = edit(
+        &mut w.bob,
+        &seen,
+        json!({ "content": "doch https://example.org/" }),
+    )
+    .await;
+    assert_eq!(again.body["previews"][0]["url"], "https://example.org/");
 }

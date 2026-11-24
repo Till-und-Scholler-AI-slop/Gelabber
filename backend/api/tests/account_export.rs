@@ -807,3 +807,51 @@ async fn feedback_images_count_toward_the_size_limit(pool: PgPool) {
     assert_eq!(built(&state, ada_id).await, "failed");
     assert_eq!(attempts(&pool).await, 1);
 }
+
+/// GEL-21: a message edited for oneself under a block is exported as its
+/// author reads it.
+#[sqlx::test]
+async fn the_archive_holds_an_edit_kept_for_oneself(pool: PgPool) {
+    let state = common::state(pool);
+    let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
+    let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
+    let bob_id = uuid(bob.user_id());
+    ada.befriend(bob.user_id()).await;
+    let res = ada
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": bob.user_id() })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let dm = id_of(&res.body);
+    let sent = post(&mut bob, &dm, json!({ "content": "alter text" })).await;
+    let res = ada
+        .send(
+            Method::PUT,
+            &format!("/api/users/me/blocks/{}", bob.user_id()),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let edited = bob
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{}", id_of(&sent)),
+            Some(json!({ "content": "neuer text" })),
+        )
+        .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+
+    let res = request(&mut bob).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    assert_eq!(built(&state, bob_id).await, "ready");
+    let entries = download(&mut bob).await;
+    let messages = json_entry(&entries, &format!("messages/dms/{dm}.json"))["messages"].clone();
+    assert_eq!(messages[0]["content"], "neuer text", "{messages}");
+    assert_eq!(
+        messages[0]["edited_at"], edited.body["edited_at"],
+        "{messages}"
+    );
+}

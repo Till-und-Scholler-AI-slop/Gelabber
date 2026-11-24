@@ -253,6 +253,7 @@ consecutive frames, never as a JSON array (`conn.rs:695-713`).
 | buffer holds exactly `n+1..=head` | those `e` frames (ascending) then `ok` |
 | any seq missing from the buffer | `gap` then `ok` |
 
+- A socket's `n` may skip values: an event for one user's eyes only (v0.13, GEL-21: an edit kept for its author under a block, §4.2) is left out for everyone else, live and on resume, and does not rewrite the earlier replay entries of its message. Clients accept any `n` above their cursor, so a skip is no gap — `conn.rs` (`take_batch`, `subscribe`), `protocol.rs` (`ServerFrame::for_user`).
 - Live delivery: if a live event's `ep` differs from the epoch the socket last saw for that topic, the server first sends `{"op":"gap","s","c","ep":<new>}` then the event — `hub/fanout.rs:238-246`.
 - Redis Pub/Sub reconnect on the server → `{"op":"resync"}` to every socket (catch-up and epochs cleared) — `hub/fanout.rs:54-62`.
 
@@ -368,6 +369,7 @@ without orders compare `read_at`. Never move a cached read position backwards.
 |---|---|---|---|---|---|---|
 | message sent (incl. system message, GIF) | channel | `c` | message id | full `Message` (4.3), incl. `nonce` of the sender's attempt | = `d.revision` | `messages/mod.rs:358-361,564-589` |
 | message edited | channel | `e` | message id | full `Message` | yes | `messages/mod.rs:488-491` |
+| message edited in a DM by the one blocked, of a message the blocker has seen (v0.13, GEL-21) | channel | `e` | message id | full `Message` as its author reads it | yes | **only to the author's sockets**; the blocker gets no event and keeps the text they saw, also after an unblock. `messages/mod.rs` (`own_edit`) |
 | reaction added/removed | channel | `e` | message id | full `Message` with new `reactions` | yes | `messages/reactions.rs:145-148` |
 | link previews resolved after send (background job) | channel | `e` | message id | full `Message` with `previews` | yes | `messages/mod.rs:720` |
 | previews removed by the author (`DELETE /api/messages/{id}/previews`) | channel | `e` | message id | full `Message` without `previews` (key omitted) | yes | `messages/mod.rs:641-659` |
@@ -402,7 +404,7 @@ Rust: `backend/api/src/messages/mod.rs:64-108`; TS: `web/src/messages/types.ts:5
 | `id` | uuid | |
 | `channel_id` | uuid | |
 | `author` | `{id: uuid, name: string, avatar_url: string\|null}` | |
-| `content` | string | empty for GIF/system messages |
+| `content` | string | empty for GIF/system messages. As this socket's user reads it: the author of a message they edited for themselves under a block (v0.13, GEL-21) reads their own text on every event of it, everyone else the shared one; `edited_at`, the alt texts and `previews` (only those of links in the text read) likewise |
 | `created_at` | RFC 3339 (µs precision) | |
 | `edited_at` | RFC 3339 \| `null` | |
 | `revision` | i64 | |
@@ -412,7 +414,7 @@ Rust: `backend/api/src/messages/mod.rs:64-108`; TS: `web/src/messages/types.ts:5
 | `gif` | omitted or `{provider, slug, title, width, height, url, still: string\|null}` | |
 | `mentions` | `[uuid]` | as this socket's user may see them: an invisible member `@here` reached is in it only for themselves (messages sent from v0.13 on, GEL-43; older ones keep everyone `@here` reached) |
 | `mention_everyone` | bool | |
-| `reply` | omitted or `{id, deleted, [author:{id,name}], [excerpt], [has_attachment:true], [has_gif:true], [system]}`; deleted original = `{id, deleted:true}` | |
+| `reply` | omitted or `{id, deleted, [author:{id,name}], [excerpt], [has_attachment:true], [has_gif:true], [system]}`; deleted original = `{id, deleted:true}` | `excerpt` as this socket's user reads it: the quoted message's author reads their own text of it (v0.13, GEL-21) |
 | `previews` | omitted when empty; `[{url, title?, description?, site_name?, image?:{url,width,height}, youtube_id?}]` | image url always `/api/previews/…` |
 | `system` | omitted or `{kind: string, params: object}` (e.g. `kind:"live_started"`) | |
 | `nonce` | omitted or uuid | only on create response + its event: the sender swaps its pending `tmp:<nonce>` row |

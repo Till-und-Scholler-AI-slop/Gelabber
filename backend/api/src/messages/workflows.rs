@@ -482,15 +482,29 @@ async fn search(
     } else {
         None
     };
-    let rows: Vec<MessageRow> = sqlx::query_as("SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
-        u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,mentions_seen_by(m.mentions,m.hidden_mentions,$6) AS mentions,m.mentions_everyone,m.system_kind,m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$6) GROUP BY emoji) r),'[]'::jsonb) AS reactions
-        FROM messages m JOIN users u ON u.id=m.author_id
-        WHERE m.channel_id=$1 AND to_tsvector('simple',m.content) @@ websearch_to_tsquery('simple',$2)
+    // By the text the caller reads: an author who edited a message for
+    // themselves (GEL-21) finds their own text, not the one others read.
+    let rows: Vec<MessageRow> = sqlx::query_as(concat!(
+        "SELECT ",
+        message_columns!("6"),
+        " FROM messages m JOIN users u ON u.id=m.author_id
+        WHERE m.channel_id=$1
+          AND ((to_tsvector('simple',m.content) @@ websearch_to_tsquery('simple',$2)
+                AND (m.sender_only_content IS NULL OR m.author_id<>$6))
+            OR (m.sender_only_content IS NOT NULL AND m.author_id=$6
+                AND to_tsvector('simple',m.sender_only_content) @@ websearch_to_tsquery('simple',$2)))
           AND ($3::timestamptz IS NULL OR (m.created_at,m.id)<($3,$4))
           AND (NOT m.sender_only OR m.author_id=$6)
-        ORDER BY m.created_at DESC,m.id DESC LIMIT $5")
-        .bind(channel_id).bind(q).bind(bound.map(|b| b.0)).bind(bound.map(|b| b.1))
-        .bind(limit+1).bind(user.id).fetch_all(&state.db).await?;
+        ORDER BY m.created_at DESC,m.id DESC LIMIT $5"
+    ))
+    .bind(channel_id)
+    .bind(q)
+    .bind(bound.map(|b| b.0))
+    .bind(bound.map(|b| b.1))
+    .bind(limit + 1)
+    .bind(user.id)
+    .fetch_all(&state.db)
+    .await?;
     let has_more = rows.len() as i64 > limit;
     let mut messages: Vec<Message> = rows
         .into_iter()
@@ -499,7 +513,7 @@ async fn search(
         .collect();
     messages.reverse();
     attachments::for_messages(&state.db, &mut messages).await?;
-    super::replies::for_messages(&state.db, &mut messages).await?;
+    super::replies::for_messages(&state.db, &mut messages, Some(user.id)).await?;
     crate::previews::for_messages(&state.db, &mut messages).await?;
     Ok(Json(MessagePage { messages, has_more }))
 }
@@ -520,7 +534,7 @@ async fn context(
     Ids(channel_id, message_id): Ids,
 ) -> Result<Json<MessageContext>, ApiError> {
     messaging_channel(&state.db, channel_id, user.id).await?;
-    let rows: Vec<MessageRow> = sqlx::query_as(
+    let rows: Vec<MessageRow> = sqlx::query_as(concat!(
         "WITH target AS (SELECT created_at,id FROM messages WHERE channel_id=$1 AND id=$2
             AND (NOT sender_only OR author_id=$3)),
         selected AS (
@@ -531,11 +545,11 @@ async fn context(
           (SELECT m.id FROM messages m,target t WHERE m.channel_id=$1
              AND (m.created_at,m.id)>=(t.created_at,t.id) AND (NOT m.sender_only OR m.author_id=$3)
            ORDER BY m.created_at,m.id LIMIT 31)
-        ) SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
-            u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,mentions_seen_by(m.mentions,m.hidden_mentions,$3) AS mentions,m.mentions_everyone,m.system_kind,m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id AND (NOT sender_only OR user_id=$3) GROUP BY emoji) r),'[]'::jsonb) AS reactions
-          FROM selected JOIN messages m ON m.id=selected.id JOIN users u ON u.id=m.author_id
+        ) SELECT ",
+        message_columns!("3"),
+        " FROM selected JOIN messages m ON m.id=selected.id JOIN users u ON u.id=m.author_id
           ORDER BY m.created_at,m.id",
-    )
+    ))
     .bind(channel_id)
     .bind(message_id)
     .bind(user.id)
@@ -547,7 +561,7 @@ async fn context(
     let last = messages.last().expect("nonempty snapshot");
     let after = format!("{}|{}", last.created_at.to_rfc3339(), last.id);
     attachments::for_messages(&state.db, &mut messages).await?;
-    super::replies::for_messages(&state.db, &mut messages).await?;
+    super::replies::for_messages(&state.db, &mut messages, Some(user.id)).await?;
     crate::previews::for_messages(&state.db, &mut messages).await?;
     Ok(Json(MessageContext {
         target_id: message_id,

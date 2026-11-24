@@ -623,6 +623,7 @@ pub async fn for_messages(db: &PgPool, messages: &mut [Message]) -> Result<(), A
     }
     for message in messages {
         message.attachments = by_message.remove(&message.id).unwrap_or_default();
+        message.own_descriptions();
     }
     Ok(())
 }
