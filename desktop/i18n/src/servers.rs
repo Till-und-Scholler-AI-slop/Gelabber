@@ -1,8 +1,7 @@
 //! Servers (web/src/i18n/catalogs/servers.ts): adding, creating and joining
 //! one, the category and channel dialogs, invite links, the server's
 //! overview, the sidebar's voice heading and the toasts of failed server
-//! writes. The overview's voice room card keeps the wording of the web's
-//! voice catalog (`room.*`, `participant.*`).
+//! writes.
 
 use crate::{Locale, get, plural};
 
@@ -64,33 +63,21 @@ crate::strings! {
     terms_uses_unlimited_note = "unbegrenzt nutzbar" | "unlimited uses";
 
     overview_label = "Übersicht" | "Overview";
-    overview_alone = "Noch keine weiteren Mitglieder." | "No other members yet.";
     overview_invite = "Einladen" | "Invite";
-    overview_no_room = "Kein Sprachkanal" | "No voice channel";
-    overview_no_room_hint = "Erstelle einen Sprachkanal in der Seitenleiste."
-        | "Create a voice channel in the sidebar.";
-    overview_unread = "Ungelesen" | "Unread";
-    overview_draft = "Entwurf" | "Draft";
-    overview_attachment = "Anhang" | "Attachment";
+    overview_alone = "Noch keine weiteren Mitglieder." | "No other members yet.";
+    /// The "@" on a "Verpasst" card.
+    overview_mentioned = "Du wurdest erwähnt" | "You were mentioned";
+    /// The header's search field look-alike, which opens the quick switcher.
+    overview_search = "Springen zu …" | "Jump to …";
+    overview_missed = "Verpasst" | "Missed";
+    overview_shared = "Geteilt" | "Shared";
+    /// A "Verpasst" card: mark the channel read.
+    overview_mark_read = "Gelesen" | "Mark read";
+    overview_open = "Öffnen" | "Open";
+    overview_all_read = "Alles gelesen." | "All caught up.";
+    /// The own stream's name and the own messages' author.
     overview_you = "Du" | "You";
-    overview_yesterday = "Gestern" | "Yesterday";
-
-    // The overview's voice room card (web voice `room.*`, `participant.*`).
-    room_connected = "Verbunden" | "Connected";
-    room_deafened = "Taub" | "Deafened";
-    room_muted = "Stumm" | "Muted";
-    room_speaking = "Spricht" | "Speaking";
-    room_present = "Im Raum" | "In the room";
-    room_self = "(du)" | "(you)";
-    room_camera_on = "Kamera an" | "Camera on";
-    room_own_profile = "Dein Profil" | "Your profile";
-    room_profile = "Profil und Lautstärke" | "Profile and volume";
-    room_switch_note_unnamed = "deinen Sprachkanal" | "your voice channel";
-    room_join = "Beitreten" | "Join";
-    room_switch_here = "Hierher wechseln" | "Switch here";
-    room_no_permission = "Keine Berechtigung für Sprachkanäle." | "No permission for voice channels.";
-    room_test_microphone = "Mikrofon testen" | "Test microphone";
-    room_call_settings = "Anrufeinstellungen" | "Call settings";
+    overview_own_screen = "Dein Bildschirm" | "Your screen";
 
     load_server = "Der Server konnte nicht geladen werden." | "The server couldn’t be loaded.";
 
@@ -172,44 +159,104 @@ pub fn terms_uses_limited(count: u64) -> String {
     }
 }
 
-/// "{count} Mitglied(er)".
-pub fn overview_members(count: u64) -> String {
+/// "Guten Morgen, {name}" (05:00–10:59).
+pub fn overview_greeting_morning(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Guten Morgen, {name}"),
+        Locale::En => format!("Good morning, {name}"),
+    }
+}
+
+/// "Guten Tag, {name}" (11:00–17:59).
+pub fn overview_greeting_day(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Guten Tag, {name}"),
+        Locale::En => format!("Good afternoon, {name}"),
+    }
+}
+
+/// "Guten Abend, {name}" (18:00–04:59).
+pub fn overview_greeting_evening(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Guten Abend, {name}"),
+        Locale::En => format!("Good evening, {name}"),
+    }
+}
+
+/// A "Verpasst" card's unread count: "{count} neu".
+pub fn overview_new(count: u64) -> String {
     let n = crate::intl::count(count);
     match get() {
-        Locale::De => plural(count, format!("{n} Mitglied"), format!("{n} Mitglieder")),
-        Locale::En => plural(count, format!("{n} member"), format!("{n} members")),
+        Locale::De => format!("{n} neu"),
+        Locale::En => format!("{n} new"),
     }
 }
 
-/// "{count} im Sprachkanal".
-pub fn overview_in_voice(count: u64) -> String {
+/// The unread messages a card does not show: "{count} weitere".
+pub fn overview_more(count: u64) -> String {
+    let n = crate::intl::count(count);
     match get() {
-        Locale::De => format!("{count} im Sprachkanal"),
-        Locale::En => format!("{count} in a voice channel"),
+        Locale::De => format!("{n} weitere"),
+        Locale::En => format!("{n} more"),
     }
 }
 
-/// "{count} in Sprachkanälen".
-pub fn overview_in_voice_rooms(count: u64) -> String {
+/// The same with only one channel unread: "{count} ältere anzeigen".
+pub fn overview_older(count: u64) -> String {
+    let n = crate::intl::count(count);
     match get() {
-        Locale::De => format!("{count} in Sprachkanälen"),
-        Locale::En => format!("{count} in voice channels"),
+        Locale::De => format!("{n} ältere anzeigen"),
+        Locale::En => format!("Show {n} older"),
     }
 }
 
-/// A person's tile line with the camera on: "{status} · Kamera an".
-pub fn room_status_camera(status: &str) -> String {
+/// The unread channels past the shown cards: "{count} weitere Kanäle".
+pub fn overview_more_channels(count: u64) -> String {
+    let n = crate::intl::count(count);
     match get() {
-        Locale::De => format!("{status} · Kamera an"),
-        Locale::En => format!("{status} · Camera on"),
+        Locale::De => plural(
+            count,
+            format!("{n} weiterer Kanal"),
+            format!("{n} weitere Kanäle"),
+        ),
+        Locale::En => plural(
+            count,
+            format!("{n} more channel"),
+            format!("{n} more channels"),
+        ),
     }
 }
 
-/// "Du verlässt dabei {channel}." (web voice `room.switchNote`).
-pub fn room_switch_note(channel: &str) -> String {
+/// The first card's reply field: "Antworten in #{channel}".
+pub fn overview_reply(channel: &str) -> String {
     match get() {
-        Locale::De => format!("Du verlässt dabei {channel}."),
-        Locale::En => format!("This leaves {channel}."),
+        Locale::De => format!("Antworten in #{channel}"),
+        Locale::En => format!("Reply in #{channel}"),
+    }
+}
+
+/// A stream: "Bildschirm von {name} ansehen".
+pub fn overview_watch(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Bildschirm von {name} ansehen"),
+        Locale::En => format!("Watch {name}’s screen"),
+    }
+}
+
+/// A stream's viewers: "{count} Zuschauer".
+pub fn overview_viewers(count: u64) -> String {
+    let n = crate::intl::count(count);
+    match get() {
+        Locale::De => format!("{n} Zuschauer"),
+        Locale::En => plural(count, format!("{n} viewer"), format!("{n} viewers")),
+    }
+}
+
+/// A shared picture without alt text: "Bild von {name}".
+pub fn overview_picture_by(name: &str) -> String {
+    match get() {
+        Locale::De => format!("Bild von {name}"),
+        Locale::En => format!("Picture from {name}"),
     }
 }
 
@@ -220,5 +267,20 @@ mod tests {
     #[test]
     fn the_voice_heading_matches_in_both_languages() {
         assert_eq!(voice_headings(), ["sprachkanäle", "voice channels"]);
+    }
+
+    #[test]
+    fn the_overview_counts_in_both_languages() {
+        let _de = crate::on_this_thread(Locale::De);
+        assert_eq!(overview_greeting_evening("Rafi"), "Guten Abend, Rafi");
+        assert_eq!(overview_new(5), "5 neu");
+        assert_eq!(overview_more_channels(1), "1 weiterer Kanal");
+        assert_eq!(overview_more_channels(3), "3 weitere Kanäle");
+        assert_eq!(overview_older(2), "2 ältere anzeigen");
+        assert_eq!(overview_reply("allgemein"), "Antworten in #allgemein");
+        let _en = crate::on_this_thread(Locale::En);
+        assert_eq!(overview_greeting_day("Rafi"), "Good afternoon, Rafi");
+        assert_eq!(overview_more_channels(1), "1 more channel");
+        assert_eq!(overview_older(2), "Show 2 older");
     }
 }

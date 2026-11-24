@@ -10,10 +10,12 @@
   min-width: 0;
   overflow: auto;
   scrollbar-width: thin;
+  /* Two columns once there is room for both (GEL-69, design D). */
+  container-type: inline-size;
 }
 .community-overview__bar {
   height: var(--lr-header-height);
-  padding: 0 24px;
+  padding: 0 16px 0 24px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -22,79 +24,480 @@
   font: var(--lr-type-title-sm);
   font-size: 15px;
 }
-.community-overview__bar svg {
+.community-overview__bar > svg {
+  flex-shrink: 0;
   color: var(--lr-muted);
 }
-/* One column: the server, its voice channel, what is unread. */
+.community-overview__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* "Springen zu …": looks like a field, opens the quick switcher. */
+.overview-jump {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 248px;
+  min-width: 0;
+  height: 32px;
+  margin-left: auto;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-panel);
+  color: var(--lr-muted);
+  font: 400 13px / 1 var(--lr-font);
+  cursor: pointer;
+}
+.overview-jump:hover {
+  border-color: var(--lr-border-strong);
+  color: var(--lr-text);
+}
+.overview-jump:focus-visible {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+}
+.overview-jump > svg {
+  flex-shrink: 0;
+}
+.overview-jump__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-jump kbd,
+.overview-reply kbd {
+  flex-shrink: 0;
+  padding: 3px 5px;
+  border: 1px solid var(--lr-border-strong);
+  border-radius: 5px;
+  color: var(--lr-muted);
+  font: 500 11px / 1 var(--lr-font);
+}
+/* The page: what was missed on the left, what was shared on the right. */
 .community-overview__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+  padding: 32px 40px;
+}
+/* "Geteilt" gets its own column only where "Verpasst" keeps about 650 px
+   beside it; with the member list open at 1440 px it goes below. */
+@container (min-width: 1000px) {
+  .community-overview__body {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+}
+.overview-main {
   display: flex;
   flex-direction: column;
-  gap: 32px;
-  width: 100%;
-  max-width: 760px;
-  padding: 32px;
+  gap: 28px;
+  min-width: 0;
 }
-.community-overview__head {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.community-overview__head h1 {
+.overview-greeting {
   font: var(--lr-type-page);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
-.community-overview__head p,
-.community-overview__alone p,
-.community-overview__no-room p {
-  color: var(--lr-muted);
-  font: 400 13px / 1.4 var(--lr-font);
+.overview-heading {
+  margin-bottom: 12px;
+  font: var(--lr-type-title-sm);
 }
-.community-overview__alone {
+
+/* Lives: a large picture each, two side by side. */
+.overview-streams {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 20px;
+}
+@container (min-width: 560px) {
+  .overview-streams {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.overview-stream {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lr-text);
+  text-align: left;
+  cursor: pointer;
+}
+.overview-stream:focus-visible {
+  outline: none;
+}
+.overview-stream:focus-visible .overview-stream__picture {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+}
+.overview-stream__picture {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: #000;
+}
+.overview-stream__picture video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s var(--lr-ease-enter);
+}
+.overview-stream:hover .overview-stream__picture video {
+  transform: scale(1.02);
+}
+.overview-stream__stand-in {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--lr-panel);
+}
+.overview-stream__live,
+.overview-stream__viewers {
+  position: absolute;
+  top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+}
+.overview-stream__live {
+  left: 12px;
+  background: var(--lr-live);
+  color: var(--lr-on-live);
+  font: 700 11px / 1 var(--lr-font);
+  letter-spacing: 0.04em;
+}
+.overview-stream__viewers {
+  right: 12px;
+  background: rgb(14 14 16 / 0.82);
+  color: #f2f2f2;
+  font: 600 12px / 1 var(--lr-font);
+  font-variant-numeric: tabular-nums;
+}
+.overview-stream__by {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  min-width: 0;
+}
+.overview-stream__by .gel-avatar {
+  --avatar-size: 28px;
+}
+.overview-stream__name {
+  min-width: 0;
+  overflow: hidden;
+  font: 600 14px / 1.3 var(--lr-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Verpasst: one card per channel. */
+.overview-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.overview-card,
+.overview-quiet {
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-surface);
+}
+.overview-card {
+  padding: 6px 20px 14px;
+}
+.overview-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 42px;
+}
+.overview-card__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--lr-text);
+  font: 600 14px / 1 var(--lr-font);
+}
+.overview-card__name > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-card__name > svg {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+.overview-card__name:hover > span {
+  text-decoration: underline;
+}
+.overview-card__at {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
+  font: 700 11px / 20px var(--lr-font);
+}
+.overview-card__new {
+  color: var(--lr-muted);
+  font: 500 13px / 1 var(--lr-font);
+  white-space: nowrap;
+}
+.overview-card__actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.overview-card__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--lr-radius-sm);
+  background: none;
+  color: var(--lr-muted);
+  font: 500 13px / 1 var(--lr-font);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.overview-card__action:hover {
+  background: var(--lr-hover);
+  color: var(--lr-text);
+}
+:is(
+  .overview-card__action,
+  .overview-card__name,
+  .overview-card__more
+):focus-visible {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+  border-radius: var(--lr-radius-sm);
+}
+.overview-card__more {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--lr-muted);
+  font: 500 13px / 1 var(--lr-font);
+}
+.overview-card__more:hover {
+  color: var(--lr-text);
+}
+.overview-cards__hidden {
+  color: var(--lr-muted);
+  font: 500 13px / 1.4 var(--lr-font);
+}
+/* A message as in the chat; one that mentions me in the chat's colours. */
+.overview-message {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  margin: 0 -10px;
+  padding: 8px 10px;
+  border-radius: var(--lr-radius-md);
+}
+.overview-message[data-mentioned] {
+  background: color-mix(in srgb, var(--lr-warning) 13%, var(--lr-surface));
+}
+.overview-message .gel-avatar {
+  --avatar-size: 32px;
+}
+.overview-message__body {
+  min-width: 0;
+}
+.overview-message__top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.overview-message__author {
+  min-width: 0;
+  overflow: hidden;
+  font: 600 14px / 1.3 var(--lr-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-message__top time {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.overview-message__text {
+  margin-top: 3px;
+  color: var(--lr-text);
+  font: var(--lr-type-body);
+  overflow-wrap: anywhere;
+}
+.overview-card[data-busy] .overview-message__text {
+  color: var(--lr-muted);
+}
+/* Pictures as a preview, not at chat size (design: 320 px, 16:9). */
+.overview-message .lr-attachments {
+  max-width: 320px;
+  margin-top: 8px;
+}
+.overview-message .lr-attachment-image,
+.overview-message .lr-attachment-image img {
+  max-height: 180px;
+}
+.overview-message .lr-attachment-image img {
+  object-fit: cover;
+}
+/* The frame and focus ring are the field shell's (#561). */
+.overview-reply .ui-field-bare {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+}
+.overview-reply {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  margin-top: 12px;
+  padding-inline: 12px;
+}
+.overview-quiet {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 16px;
-  margin-top: 10px;
+  padding: 18px 20px;
+  color: var(--lr-muted);
+  font: 400 14px / 1.45 var(--lr-font);
 }
-.community-overview__no-room {
+
+/* Geteilt: pictures as 16:9, other files as a row. */
+/* Below "Verpasst" on narrow pages: side by side, not page-wide. */
+.overview-shared__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.overview-shared__picture,
+.overview-shared__file {
+  width: 100%;
+  border: 1px solid var(--lr-border);
+  cursor: pointer;
+}
+.overview-shared__picture:focus-visible,
+.overview-shared__file:focus-visible {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+}
+.overview-shared__picture {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  padding: 0;
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-panel);
+}
+.overview-shared__picture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.overview-shared__by,
+.overview-shared__tag {
+  position: absolute;
+  background: rgb(14 14 16 / 0.84);
+  color: #f2f2f2;
+}
+.overview-shared__by {
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  padding: 3px 8px 3px 3px;
+  border-radius: var(--lr-radius-full);
+  font: 600 12px / 1 var(--lr-font);
+  white-space: nowrap;
+}
+.overview-shared__by .gel-avatar {
+  --avatar-size: 20px;
+  font-size: 9px;
+}
+.overview-shared__tag {
+  top: 8px;
+  right: 8px;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 6px;
+  font: 600 11px / 1 var(--lr-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-shared__file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-surface);
+  color: var(--lr-text);
+  text-align: left;
+}
+.overview-shared__file:hover {
+  background: var(--lr-hover);
+}
+.overview-shared__file > svg {
+  flex-shrink: 0;
+  color: var(--lr-accent-text);
+}
+.overview-shared__text {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-.community-overview__no-room h2 {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 28px;
-  font: var(--lr-type-title-sm);
-}
-.community-overview__no-room svg {
-  flex-shrink: 0;
-  color: var(--lr-muted);
-}
-/* The voice room as a part of the column: its name, then its people as
-   tiles of one size. The channel's own page keeps the room as it is. */
-.community-overview .voice-room {
-  padding: 0;
-}
-.community-overview .voice-room-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  min-height: 28px;
-}
-.community-overview .voice-room-heading > svg {
-  flex-shrink: 0;
-  color: var(--lr-muted);
-}
-.community-overview .voice-room[data-joined] .voice-room-heading > svg {
-  color: var(--lr-online);
-}
-.community-overview .voice-room-name {
   min-width: 0;
 }
+.overview-shared__filename,
+.overview-shared__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-shared__filename {
+  font: 600 13px / 1.3 var(--lr-font);
+}
+.overview-shared__meta {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+/* "Verbunden" beside a voice room's name (VoiceRoom's `overview` mode). */
 .voice-room-connected {
   display: inline-flex;
   align-items: center;
@@ -114,128 +517,6 @@
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-}
-.community-overview .voice-room .voice-room-participants {
-  margin: 12px 0 0;
-}
-.community-overview .voice-room .voice-room-self {
-  color: var(--lr-muted);
-  font-weight: 400;
-}
-.community-overview .voice-room .voice-room-actions {
-  margin-top: 16px;
-}
-@media (min-width: 641px) {
-  .community-overview .voice-room .voice-room-participants {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  /* The channel's cards and free seat, compact: the same avatar, dot,
-     name and status line on a fixed 168×136 card. */
-  .community-overview .voice-room .voice-room-participant,
-  .community-overview .voice-room .voice-room-seat {
-    width: 168px;
-    height: 136px;
-    aspect-ratio: auto;
-    padding: 12px;
-  }
-  .community-overview .voice-room .voice-room-avatar,
-  .community-overview .voice-room .voice-room-seat-circle {
-    width: 56px;
-    height: 56px;
-  }
-  .community-overview .voice-room .voice-room-participant-text {
-    margin-top: 6px;
-  }
-}
-/* Unread text channels: one bordered list, the names in one column so the
-   previews start in line. */
-.overview-unread {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.overview-unread__title {
-  color: var(--lr-muted);
-  font: var(--lr-type-caps);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.overview-unread__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius-lg);
-  background: var(--lr-surface);
-  overflow: hidden;
-}
-.overview-unread__list > li + li {
-  border-top: 1px solid var(--lr-border);
-}
-.overview-unread__row {
-  display: grid;
-  grid-template-columns: 18px 120px minmax(0, 1fr) auto minmax(18px, auto);
-  grid-template-areas: "icon name preview time badge";
-  align-items: center;
-  column-gap: 12px;
-  min-height: 52px;
-  padding: 0 14px;
-  color: var(--lr-text);
-}
-.overview-unread__row:hover {
-  background: var(--lr-hover);
-}
-.overview-unread__row:focus-visible {
-  outline: 2px solid var(--lr-focus);
-  outline-offset: -2px;
-}
-.overview-unread__row > svg {
-  grid-area: icon;
-  color: var(--lr-muted);
-}
-.overview-unread__name {
-  grid-area: name;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-.overview-unread__name > span:first-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.overview-unread__preview {
-  grid-area: preview;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--lr-muted);
-  font-size: 13px;
-}
-.overview-unread__author {
-  color: var(--lr-text);
-}
-.overview-unread__time {
-  grid-area: time;
-  color: var(--lr-subtle);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.overview-unread__badge {
-  grid-area: badge;
-  display: flex;
-  justify-content: flex-end;
-}
-.overview-unread__badge > * {
-  margin-left: 0;
 }
 .lr-channel-content {
   background: var(--lr-bg);
@@ -308,24 +589,24 @@ html[data-compact-rooms="true"] .voice-room-participants {
   gap: 12px;
   margin-block: 16px;
 }
+@media (max-width: 1130px) {
+  /* Room for the members button, fixed at the bar's right end. */
+  .community-overview-layout:has(> .member-drawer-trigger)
+    .community-overview__bar {
+    padding-right: 156px;
+  }
+}
 @media (max-width: 800px) {
   /* The phone's top bar already names the place. */
   .community-overview__bar {
     display: none;
   }
   .community-overview__body {
-    gap: 28px;
     padding: 20px 24px 28px;
   }
 }
-/* A phone: the preview takes a line of its own under the name. */
-@media (max-width: 640px) {
-  .overview-unread__row {
-    grid-template-columns: 18px minmax(0, 1fr) auto minmax(18px, auto);
-    grid-template-areas:
-      "icon name time badge"
-      ". preview preview preview";
-    row-gap: 2px;
-    padding-block: 10px;
+@media (prefers-reduced-motion: reduce) {
+  .overview-stream__picture video {
+    transition: none;
   }
 }

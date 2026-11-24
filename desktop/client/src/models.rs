@@ -954,6 +954,19 @@ pub struct Attachment {
     pub description: Option<String>,
 }
 
+/// One file of `GET /api/servers/{id}/attachments` (the overview's
+/// "Geteilt"): the attachment with its message, channel and sender, and
+/// when the message was sent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SharedFile {
+    #[serde(flatten)]
+    pub attachment: Attachment,
+    pub message_id: Uuid,
+    pub channel_id: Uuid,
+    pub author: Author,
+    pub created_at: Timestamp,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Reaction {
     pub emoji: String,

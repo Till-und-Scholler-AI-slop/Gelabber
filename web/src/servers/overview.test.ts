@@ -1,237 +1,154 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { setLocale } from "../i18n/locale.ts";
+import { describe, expect, it } from "vitest";
+import type { Badge } from "../messages/notifyLevel.ts";
+import type { ReadState } from "../messages/readState.ts";
 import type { Message } from "../messages/types.ts";
-import type { Channel, Member, ServerDetail } from "./types.ts";
+import type { Channel } from "./types.ts";
 import {
-  messagePreview,
-  overviewLine,
-  overviewRoom,
-  shortWhen,
-  unreadChannels,
+  BUSY_UNREAD,
+  CARDS_MAX,
+  greetingKey,
+  isPicture,
+  mentionsMe,
+  missedCards,
+  sharedShown,
+  shownCount,
+  unreadTail,
 } from "./overview.ts";
 
-const channels = [
-  { id: "chat", name: "allgemein", kind: "text" },
-  { id: "living", name: "Wohnzimmer", kind: "voice" },
-  { id: "work", name: "Werkbank", kind: "voice" },
-  { id: "tmp:voice", name: "Pending", kind: "voice" },
-] as Channel[];
-const members = [
-  { user_id: "me", name: "Rafi" },
-  { user_id: "mia", name: "Mia" },
-  { user_id: "silas", name: "Silas" },
-] as Member[];
-const server = { id: "s", channels, members } as ServerDetail;
-const idle = { status: "idle", serverId: null, channelId: null };
-const roster = { mia: { channelId: "work", muted: false, deafened: false } };
+const text = (id: string, name = id) =>
+  ({ id, name, kind: "text", server_id: "s" }) as Channel;
+const row = (
+  channel_id: string,
+  unread_count: number,
+  latest_order: number,
+  mention_count = 0,
+  read_order: number | null = null,
+) =>
+  ({
+    channel_id,
+    server_id: "s",
+    unread_count,
+    latest_order,
+    mention_count,
+    read_order,
+  }) as ReadState;
+const unread = (count = 0): Badge => ({ count, dot: true });
 
-describe("community overview", () => {
-  it("prefers a current call only when it belongs to this server", () => {
-    expect(
-      overviewRoom(
-        server,
-        roster,
-        { status: "joined", serverId: "s", channelId: "living" },
-        "work",
-      )?.id,
-    ).toBe("living");
-    expect(
-      overviewRoom(server, roster, {
-        status: "joined",
-        serverId: "other",
-        channelId: "living",
-      })?.id,
-    ).toBe("work");
-  });
-  it("uses a remembered room or actual occupancy, ignoring text, deleted, pending and stale users", () => {
-    expect(overviewRoom(server, roster, idle, "living")?.id).toBe("living");
-    for (const remembered of ["chat", "deleted", "tmp:voice"])
-      expect(overviewRoom(server, roster, idle, remembered)?.id).toBe("work");
-    expect(
-      overviewRoom(
-        server,
-        { stranger: { channelId: "work", muted: false, deafened: false } },
-        idle,
-      )?.id,
-    ).toBe("living");
-    expect(
-      overviewRoom({ ...server, channels: [channels[0]!] }, roster, idle),
-    ).toBeUndefined();
-  });
-  it("says how many belong and how many are in a voice channel", () => {
-    const joined = { status: "joined", serverId: "s", channelId: "living" };
-    expect(overviewLine(server, {}, idle, "me")).toBe("3 Mitglieder");
-    expect(overviewLine(server, roster, idle, "me")).toBe(
-      "3 Mitglieder · 1 im Sprachkanal",
-    );
-    // The own call counts before the roster echo; a stale own entry does not.
-    expect(
-      overviewLine(
-        server,
-        {
-          ...roster,
-          me: roster.mia,
-          silas: { ...roster.mia, channelId: "work" },
-        },
-        joined,
-        "me",
-      ),
-    ).toBe("3 Mitglieder · 3 in Sprachkanälen");
-    expect(overviewLine(server, { me: roster.mia }, idle, "me")).toBe(
-      "3 Mitglieder",
-    );
-    // Strangers, text channels and other servers' calls are no one here.
-    expect(
-      overviewLine(
-        server,
-        {
-          stranger: roster.mia,
-          silas: { channelId: "chat", muted: false, deafened: false },
-        },
-        { ...joined, serverId: "other" },
-        "me",
-      ),
-    ).toBe("3 Mitglieder");
-    expect(
-      overviewLine({ ...server, members: [members[0]!] }, {}, joined, "me"),
-    ).toBe("1 Mitglied · 1 im Sprachkanal");
-  });
-  it("lists unread text channels, newest first, then in the sidebar's order", () => {
-    const text = (id: string) =>
-      ({ id, name: id, kind: "text", server_id: "s" }) as Channel;
-    const list = [
-      text("a"),
-      text("b"),
-      text("c"),
-      text("d"),
-      text("tmp:e"),
-      channels[1]!,
-    ];
-    const badges = new Map([
-      ["a", { count: 0, dot: true }],
-      ["b", { count: 0, dot: false }],
-      ["c", { count: 2, dot: true }],
-      ["d", { count: 0, dot: true }],
-      ["tmp:e", { count: 1, dot: true }],
-      ["living", { count: 1, dot: true }],
-    ]);
-    const ids = (latest: Map<string, number | null>) =>
-      unreadChannels(list, badges, latest).map((channel) => channel.id);
-    expect(
-      ids(
-        new Map([
-          ["a", 3],
-          ["c", 9],
-          ["d", null],
-        ]),
-      ),
-    ).toEqual(["c", "a", "d"]);
-    // An older API without the newest message keeps the sidebar's order.
-    expect(ids(new Map())).toEqual(["a", "c", "d"]);
-  });
-  it("previews a message in one line, the way a reply quotes it", () => {
-    const message = (change: Partial<Message>) =>
-      ({
-        author: { id: "mia", name: "Mia", avatar_url: null },
-        content: "",
-        attachments: [],
-        ...change,
-      }) as Message;
-    const people = [
-      { id: "00000000-0000-4000-8000-000000000001", name: "Rafi" },
-    ];
-    expect(
-      messagePreview(
-        message({
-          content:
-            "Hey <@00000000-0000-4000-8000-000000000001>,\n\nschau ||geheim|| an",
-        }),
-        people,
-        "me",
-      ),
-    ).toEqual({ author: "Mia", text: "Hey @Rafi, schau ▒▒▒ an" });
-    expect(
-      messagePreview(
-        message({
-          author: { id: "me", name: "Rafi", avatar_url: null },
-          gif: { slug: "x" } as Message["gif"],
-        }),
-        people,
-        "me",
-      ),
-    ).toEqual({ author: "Du", text: "GIF" });
-    expect(
-      messagePreview(
-        message({ attachments: [{ id: "f" }] as Message["attachments"] }),
-        people,
-        "me",
-      ).text,
-    ).toBe("Anhang");
-    expect(
-      messagePreview(
-        message({
-          system: { kind: "live_started", params: { voice_name: "Sofa" } },
-        }),
-        people,
-        "me",
-      ),
-    ).toEqual({ author: null, text: "Mia ist live in Sofa." });
-  });
-  it("dates a message briefly", () => {
-    const now = new Date(2026, 9, 29, 20, 0);
-    expect(shortWhen(new Date(2026, 9, 29, 18, 28).toISOString(), now)).toBe(
-      "18:28",
-    );
-    expect(shortWhen(new Date(2026, 9, 28, 23, 59).toISOString(), now)).toBe(
-      "Gestern",
-    );
-    expect(shortWhen(new Date(2026, 9, 21, 9, 0).toISOString(), now)).toBe(
-      "21.10.",
-    );
-    expect(shortWhen(new Date(2025, 11, 31, 9, 0).toISOString(), now)).toBe(
-      "31.12.25",
-    );
-    expect(shortWhen("nonsense", now)).toBe("");
+describe("greeting", () => {
+  it("greets by the local hour", () => {
+    expect(greetingKey(4)).toBe("overview.greetingEvening");
+    expect(greetingKey(5)).toBe("overview.greetingMorning");
+    expect(greetingKey(10)).toBe("overview.greetingMorning");
+    expect(greetingKey(11)).toBe("overview.greetingDay");
+    expect(greetingKey(17)).toBe("overview.greetingDay");
+    expect(greetingKey(18)).toBe("overview.greetingEvening");
+    expect(greetingKey(23)).toBe("overview.greetingEvening");
+    expect(greetingKey(0)).toBe("overview.greetingEvening");
   });
 });
 
-describe("community overview in English", () => {
-  afterEach(() => setLocale("de", { persist: false }));
+describe("missed channels", () => {
+  const channels = [
+    text("general"),
+    text("homework"),
+    text("memes"),
+    { id: "voice", name: "Voice", kind: "voice" } as Channel,
+    text("tmp:new"),
+    text("quiet"),
+  ];
 
-  it("counts members and who is in a voice channel", () => {
-    setLocale("en", { persist: false });
-    expect(overviewLine(server, roster, idle, "me")).toBe(
-      "3 members · 1 in a voice channel",
-    );
-    expect(
-      overviewLine(
-        { ...server, members: [members[0]!] },
-        {},
-        { status: "joined", serverId: "s", channelId: "living" },
-        "me",
-      ),
-    ).toBe("1 member · 1 in a voice channel");
+  it("puts mentions first, then the newest message, and leaves out read channels", () => {
+    const rows = new Map([
+      ["general", row("general", 5, 40, 1, 35)],
+      ["homework", row("homework", 3, 50)],
+      ["memes", row("memes", 12, 45)],
+      ["quiet", row("quiet", 0, 60)],
+    ]);
+    const badges = new Map<string, Badge>([
+      ["general", unread(1)],
+      ["homework", unread()],
+      ["memes", unread()],
+      ["quiet", { count: 0, dot: false }],
+      ["voice", unread()],
+      ["tmp:new", unread()],
+    ]);
+    const { cards, hidden } = missedCards(channels, rows, badges);
+    expect(cards.map((c) => c.channel.id)).toEqual([
+      "general",
+      "homework",
+      "memes",
+    ]);
+    expect(hidden).toBe(0);
+    expect(cards[0]).toMatchObject({
+      unread: 5,
+      mentioned: true,
+      readOrder: 35,
+      busy: false,
+    });
+    // Busy without a mention: dimmed, one message.
+    expect(cards[2]?.busy).toBe(true);
+    expect(cards[2]?.unread).toBeGreaterThanOrEqual(BUSY_UNREAD);
   });
 
-  it("names the own message, an attachment and yesterday", () => {
-    setLocale("en", { persist: false });
-    expect(
-      messagePreview(
-        {
-          author: { id: "me", name: "Rafi", avatar_url: null },
-          content: "",
-          attachments: [{ id: "f" }],
-        } as Message,
-        [],
-        "me",
-      ),
-    ).toEqual({ author: "You", text: "Attachment" });
-    const now = new Date(2026, 9, 29, 20, 0);
-    expect(shortWhen(new Date(2026, 9, 28, 23, 59).toISOString(), now)).toBe(
-      "Yesterday",
+  it("keeps the sidebar's order between equals and caps the cards", () => {
+    const many = Array.from({ length: CARDS_MAX + 2 }, (_, n) => text(`c${n}`));
+    const rows = new Map(many.map((c) => [c.id, row(c.id, 1, 7)]));
+    const badges = new Map(many.map((c) => [c.id, unread()]));
+    const { cards, hidden } = missedCards(many, rows, badges);
+    expect(cards.map((c) => c.channel.id)).toEqual(["c0", "c1", "c2", "c3"]);
+    expect(hidden).toBe(2);
+  });
+
+  it("gives one channel alone more room and a busy one less", () => {
+    const card = {
+      channel: text("a"),
+      unread: 3,
+      mentioned: false,
+      latest: 1,
+      readOrder: null,
+      busy: false,
+    };
+    expect(shownCount(card, true)).toBe(5);
+    expect(shownCount(card, false)).toBe(2);
+    expect(shownCount({ ...card, busy: true }, false)).toBe(1);
+    expect(shownCount({ ...card, busy: true }, true)).toBe(5);
+  });
+});
+
+describe("unread messages of a card", () => {
+  const page = [10, 11, 12, 13].map(
+    (order) => ({ id: `m${order}`, created_order: order }) as Message,
+  );
+  it("takes the newest ones after the read position", () => {
+    expect(unreadTail(page, 11, 5).map((m) => m.id)).toEqual(["m12", "m13"]);
+    expect(unreadTail(page, 11, 1).map((m) => m.id)).toEqual(["m13"]);
+    expect(unreadTail(page, null, 2).map((m) => m.id)).toEqual(["m12", "m13"]);
+    expect(unreadTail(page, 13, 2)).toEqual([]);
+  });
+});
+
+describe("mentions and files", () => {
+  it("knows a message that reaches me", () => {
+    expect(mentionsMe({ mentions: ["me"] }, "me")).toBe(true);
+    expect(mentionsMe({ mentions: ["mia"] }, "me")).toBe(false);
+    expect(mentionsMe({ mentions: [], mention_everyone: true }, "me")).toBe(
+      true,
     );
-    expect(shortWhen(new Date(2026, 9, 21, 9, 0).toISOString(), now)).toBe(
-      "21/10",
+  });
+
+  it("leaves out files of messages already shown and keeps four", () => {
+    const files = ["a", "b", "c", "d", "e", "f"].map((id) => ({
+      id,
+      message_id: `m-${id}`,
+    }));
+    expect(sharedShown(files, new Set(["m-b"])).map((file) => file.id)).toEqual(
+      ["a", "c", "d", "e"],
     );
+  });
+
+  it("tells pictures from other files", () => {
+    expect(isPicture("image/png")).toBe(true);
+    expect(isPicture("image/svg+xml")).toBe(false);
+    expect(isPicture("application/pdf")).toBe(false);
   });
 });

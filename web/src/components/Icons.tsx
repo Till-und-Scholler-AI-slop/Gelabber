@@ -187,6 +187,26 @@ export function ChevronIcon(props: IconProps) {
   );
 }
 
+/** A right arrow: "Öffnen", "x weitere" (GEL-69). */
+export function ArrowRightIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </svg>
+  );
+}
+
+/** A file with a folded corner, for files that are not pictures. */
+export function FileIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+    </svg>
+  );
+}
+
 export function PaperclipIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

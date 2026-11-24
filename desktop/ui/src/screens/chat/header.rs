@@ -350,19 +350,26 @@ pub fn show(
     bell.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &bell_name));
     out.bell_clicked = bell.clicked();
     if let Some(r) = toggle_rect {
-        let on = layout::members_visible(ui.ctx());
-        let label = if on {
-            texts::header_members_hide()
-        } else {
-            texts::header_members_show()
-        };
-        let toggle = header_icon(ui, r, Icon::Users, 18.0, on, label, id.with("members"));
-        toggle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-        if toggle.clicked() {
-            layout::set_members_visible(ui.ctx(), !on);
-        }
+        self::members_toggle(ui, r, id.with("members"));
     }
     out
+}
+
+/// `MemberPanelToggle`: shows or hides the member list, in a channel's
+/// header and in the overview's bar.
+pub fn members_toggle(ui: &mut Ui, rect: Rect, id: egui::Id) -> egui::Response {
+    let on = layout::members_visible(ui.ctx());
+    let label = if on {
+        texts::header_members_hide()
+    } else {
+        texts::header_members_show()
+    };
+    let toggle = header_icon(ui, rect, Icon::Users, 18.0, on, label, id);
+    toggle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    if toggle.clicked() {
+        layout::set_members_visible(ui.ctx(), !on);
+    }
+    toggle
 }
 
 fn header_icon(

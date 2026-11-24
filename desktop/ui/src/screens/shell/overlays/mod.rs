@@ -144,6 +144,13 @@ pub fn open(ctx: &egui::Context, overlay: Overlay) {
     ctx.request_repaint();
 }
 
+/// The quick switcher, from a control that stands for Strg+K (the
+/// overview's "Springen zu …").
+pub fn open_switcher(ctx: &egui::Context) {
+    crate::widgets::set_keyboard_focus(ctx, false);
+    open(ctx, Overlay::Switcher(switcher::Switcher::default()));
+}
+
 /// `MemberProfileDialog` for `member` of `server`.
 pub fn open_member(ctx: &egui::Context, server: Uuid, member: Uuid) {
     open(

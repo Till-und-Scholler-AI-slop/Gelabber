@@ -1,94 +1,57 @@
-import { translate } from "../i18n/catalog.ts";
-import { servers } from "../i18n/catalogs/servers.ts";
-import { formatDate, formatTime } from "../i18n/format.ts";
-import { plainText } from "../messages/markdown.ts";
-import { readableMentions, type MentionMember } from "../messages/mentions.ts";
+// The server overview's choices (GEL-69): it shows only what is shown
+// nowhere else. Who is in a call is the sidebar's, who is online the member
+// list's; the overview has the Lives, what was missed and what was shared.
+import type { ReadState } from "../messages/readState.ts";
 import type { Badge } from "../messages/notifyLevel.ts";
-import { asSystem, systemText } from "../messages/system.ts";
-import {
-  asAttachmentList,
-  replyExcerpt,
-  type Message,
-} from "../messages/types.ts";
-import type { VoiceFlags } from "../voice/roster.ts";
-import type { Channel, ServerDetail } from "./types.ts";
+import type { Message } from "../messages/types.ts";
+import type { Channel } from "./types.ts";
 
-type Connection = {
-  status: string;
-  serverId: string | null;
-  channelId: string | null;
+/** The greeting's key by the local hour: morning from 5, day from 11,
+ * evening from 18 and through the night. */
+export function greetingKey(
+  hour: number,
+):
+  | "overview.greetingMorning"
+  | "overview.greetingDay"
+  | "overview.greetingEvening" {
+  if (hour >= 5 && hour < 11) return "overview.greetingMorning";
+  if (hour >= 11 && hour < 18) return "overview.greetingDay";
+  return "overview.greetingEvening";
+}
+
+/** At most this many channel cards under "Verpasst". */
+export const CARDS_MAX = 4;
+/** A channel this busy without a mention is shown dimmed, with one message. */
+export const BUSY_UNREAD = 10;
+/** Messages a card shows: one channel alone gets more room. */
+export const SHOWN_ALONE = 5;
+export const SHOWN_CARD = 2;
+export const SHOWN_BUSY = 1;
+/** Files and pictures under "Geteilt". */
+export const SHARED_MAX = 4;
+/** Asked for beyond those, so what "Verpasst" shows can be left out. */
+export const SHARED_ASKED = 12;
+
+export type MissedCard = {
+  channel: Channel;
+  unread: number;
+  mentioned: boolean;
+  /** Newest message of the channel when the counts were taken. */
+  latest: number | null;
+  /** The read position: messages after it are unread. */
+  readOrder: number | null;
+  busy: boolean;
 };
 
-const isVoice = (channel: Channel) =>
-  channel.kind === "voice" && !channel.id.startsWith("tmp:");
-
-/** Prefer the current call, then the last visited room, then an occupied room. */
-export function overviewRoom(
-  server: Pick<ServerDetail, "id" | "channels" | "members">,
-  roster: Record<string, VoiceFlags>,
-  connection: Connection,
-  remembered?: string,
-): Channel | undefined {
-  const rooms = server.channels.filter(isVoice);
-  const active =
-    connection.status === "joined" && connection.serverId === server.id
-      ? rooms.find((c) => c.id === connection.channelId)
-      : undefined;
-  const knownMembers = new Set(server.members.map((member) => member.user_id));
-  const occupied = new Set(
-    Object.entries(roster)
-      .filter(([id]) => knownMembers.has(id))
-      .map(([, flags]) => flags.channelId),
-  );
-  return (
-    active ??
-    rooms.find((c) => c.id === remembered) ??
-    rooms.find((c) => occupied.has(c.id)) ??
-    rooms[0]
-  );
-}
-
-/** "4 Mitglieder · 2 im Sprachkanal": who belongs, and who of them is in
- * one of the server's voice channels right now. The own call counts as
- * soon as it is joined, before the roster echoes it. */
-export function overviewLine(
-  server: Pick<ServerDetail, "id" | "channels" | "members">,
-  roster: Record<string, VoiceFlags>,
-  connection: Connection,
-  selfId: string,
-): string {
-  const rooms = new Set(server.channels.filter(isVoice).map((c) => c.id));
-  const where = new Map<string, string>();
-  for (const member of server.members) {
-    const channelId =
-      member.user_id === selfId
-        ? connection.status === "joined" && connection.serverId === server.id
-          ? connection.channelId
-          : null
-        : roster[member.user_id]?.channelId;
-    if (channelId && rooms.has(channelId)) where.set(member.user_id, channelId);
-  }
-  const members = translate(servers, "overview.members", {
-    count: server.members.length,
-  });
-  if (where.size === 0) return members;
-  const spread = new Set(where.values()).size > 1;
-  const voice = translate(
-    servers,
-    spread ? "overview.inVoiceRooms" : "overview.inVoice",
-    { count: where.size },
-  );
-  return `${members} · ${voice}`;
-}
-
-/** Text channels with something unread, as the sidebar marks them: the
- * newest message first, then the sidebar's order. */
-export function unreadChannels(
+/** Text channels with something unread, as the sidebar marks them: the ones
+ * that mention me first, then the newest message, then the sidebar's order.
+ * The first `CARDS_MAX` become cards; `hidden` counts the rest. */
+export function missedCards(
   channels: readonly Channel[],
+  rows: ReadonlyMap<string, ReadState>,
   badges: ReadonlyMap<string, Badge>,
-  latest: ReadonlyMap<string, number | null | undefined>,
-): Channel[] {
-  return channels
+): { cards: MissedCard[]; hidden: number } {
+  const all = channels
     .map((channel, index) => ({ channel, index }))
     .filter(({ channel }) => {
       if (channel.kind !== "text" || channel.id.startsWith("tmp:"))
@@ -96,61 +59,84 @@ export function unreadChannels(
       const badge = badges.get(channel.id);
       return Boolean(badge && (badge.count > 0 || badge.dot));
     })
+    .map(({ channel, index }) => {
+      const row = rows.get(channel.id);
+      const unread = Math.max(0, row?.unread_count ?? 0);
+      const mentioned = (badges.get(channel.id)?.count ?? 0) > 0;
+      return {
+        index,
+        card: {
+          channel,
+          unread,
+          mentioned,
+          latest: row?.latest_order ?? null,
+          readOrder: row?.read_order ?? null,
+          busy: !mentioned && unread >= BUSY_UNREAD,
+        },
+      };
+    })
     .sort(
       (a, b) =>
-        (latest.get(b.channel.id) ?? -Infinity) -
-          (latest.get(a.channel.id) ?? -Infinity) || a.index - b.index,
+        Number(b.card.mentioned) - Number(a.card.mentioned) ||
+        (b.card.latest ?? -Infinity) - (a.card.latest ?? -Infinity) ||
+        a.index - b.index,
     )
-    .map(({ channel }) => channel);
-}
-
-/** One line on a message: who wrote it and what, as a reply quotes it
- * (spoilers hidden, mentions as names). A system message names its
- * person itself. */
-export function messagePreview(
-  message: Pick<
-    Message,
-    "author" | "content" | "attachments" | "gif" | "system"
-  >,
-  members: readonly MentionMember[],
-  selfId: string,
-): { author: string | null; text: string } {
-  const system = asSystem(message.system);
-  if (system)
-    return { author: null, text: systemText(system, message.author.name) };
-  const text =
-    readableMentions(replyExcerpt(plainText(message.content)), members) ||
-    (message.gif
-      ? "GIF"
-      : asAttachmentList(message.attachments).length > 0
-        ? translate(servers, "overview.attachment")
-        : "");
+    .map(({ card }) => card);
   return {
-    author:
-      message.author.id === selfId
-        ? translate(servers, "overview.you")
-        : message.author.name,
-    text,
+    cards: all.slice(0, CARDS_MAX),
+    hidden: Math.max(0, all.length - CARDS_MAX),
   };
 }
 
-const sameDay = (a: Date, b: Date) =>
-  a.getFullYear() === b.getFullYear() &&
-  a.getMonth() === b.getMonth() &&
-  a.getDate() === b.getDate();
+/** How many of a card's newest unread messages it shows. */
+export function shownCount(card: MissedCard, alone: boolean): number {
+  if (alone) return SHOWN_ALONE;
+  return card.busy ? SHOWN_BUSY : SHOWN_CARD;
+}
 
-/** "18:28" today, "Gestern", then "21.10." ("21.10.25" in another year). */
-export function shortWhen(iso: string, now = new Date()): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  if (sameDay(date, now))
-    return formatTime(date, { hour: "2-digit", minute: "2-digit" });
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (sameDay(date, yesterday)) return translate(servers, "overview.yesterday");
-  return formatDate(date, {
-    day: "2-digit",
-    month: "2-digit",
-    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "2-digit" }),
-  });
+/** The newest `count` unread ones of a page (oldest first, as the list
+ * endpoint answers): those after the read position, where it is known. */
+export function unreadTail(
+  page: readonly Message[],
+  readOrder: number | null,
+  count: number,
+): Message[] {
+  const unread =
+    readOrder === null
+      ? page
+      : page.filter(
+          (message) =>
+            message.created_order === undefined ||
+            message.created_order > readOrder,
+        );
+  return unread.slice(Math.max(0, unread.length - count));
+}
+
+/** Whether a message reaches me: named, `@everyone`, or `@here` as
+ * stored for me. */
+export function mentionsMe(
+  message: Pick<Message, "mentions" | "mention_everyone">,
+  me: string,
+): boolean {
+  return message.mention_everyone === true || !!message.mentions?.includes(me);
+}
+
+const PICTURES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+export const isPicture = (contentType: string) => PICTURES.has(contentType);
+
+/** "Geteilt": the newest files, without those of messages "Verpasst"
+ * already shows. */
+export function sharedShown<T extends { message_id: string }>(
+  files: readonly T[],
+  shownMessages: ReadonlySet<string>,
+  max = SHARED_MAX,
+): T[] {
+  return files
+    .filter((file) => !shownMessages.has(file.message_id))
+    .slice(0, max);
 }
