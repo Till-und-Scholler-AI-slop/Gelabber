@@ -66,17 +66,9 @@ export function MemberPanelToggle() {
   );
 }
 
-export function MemberPanel({
-  server,
-  forceVisible = false,
-}: {
-  server: ServerDetail;
-  /** Shown on wide screens even when the user hid the list next to
-   * conversations. */
-  forceVisible?: boolean;
-}) {
+export function MemberPanel({ server }: { server: ServerDetail }) {
   const t = useT(membersCatalog);
-  const hidden = useMemberPanelHidden() && !forceVisible;
+  const hidden = useMemberPanelHidden();
   const serverId = server.id;
   const members = server.members;
   const meUser = useSession((state) => state.user);

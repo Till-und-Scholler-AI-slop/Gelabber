@@ -14,12 +14,16 @@ export function UnreadBadge({
   id,
   rail = false,
   showDot = true,
+  mention = false,
   className,
   ...scope
 }: BadgeScope & {
   id?: string;
   rail?: boolean;
   showDot?: boolean;
+  /** A server's text channel: its number counts mentions, so it shows
+   * "@" instead (GEL-69); the label still says how many. */
+  mention?: boolean;
   className?: string;
 }) {
   const { count, dot } = useBadge(scope);
@@ -49,7 +53,7 @@ export function UnreadBadge({
         role="img"
         aria-label={unreadLabel({ count, dot }) ?? undefined}
       >
-        {count > 99 ? "99+" : count}
+        {mention ? "@" : count > 99 ? "99+" : count}
       </Pill>
     );
   if (!dot) return null;

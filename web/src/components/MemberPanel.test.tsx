@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Member, ServerDetail } from "../servers/types.ts";
 import { MemberPanel } from "./MemberPanel.tsx";
+import { setMemberPanelHidden } from "./memberPanelState.ts";
 
 const SERVER = "server-1";
 const at = "2026-11-17T00:00:00Z";
@@ -38,9 +39,10 @@ function server(members: Member[]): ServerDetail {
 }
 
 function render(members: Member[]): string {
+  setMemberPanelHidden(false);
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
-      <MemberPanel server={server(members)} forceVisible />
+      <MemberPanel server={server(members)} />
     </QueryClientProvider>,
   );
 }
