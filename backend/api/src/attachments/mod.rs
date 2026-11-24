@@ -55,6 +55,100 @@ pub fn router() -> Router<AppState> {
         .route("/api/channels/{id}/attachments", post(presign))
         .route("/api/attachments/{id}", get(download))
         .route("/api/attachments/{id}/upload", put(upload))
+        .route("/api/servers/{id}/attachments", get(shared_in_server))
+}
+
+/// What the server overview's "Geteilt" asks for when it does not say.
+const SHARED_DEFAULT: i64 = 12;
+const SHARED_MAX: i64 = 50;
+
+/// One file sent in a server's text channel (GEL-69): the file and the
+/// message that carries it, so the overview can name who sent it, where,
+/// and open the chat at it.
+#[derive(Debug, Serialize)]
+pub struct SharedFile {
+    #[serde(flatten)]
+    pub attachment: Attachment,
+    pub message_id: Uuid,
+    pub channel_id: Uuid,
+    pub author: messages::Author,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, FromRow)]
+struct SharedRow {
+    #[sqlx(flatten)]
+    file: AttachmentRow,
+    channel_id: Uuid,
+    author_id: Uuid,
+    author_name: String,
+    author_avatar_url: Option<String>,
+    sent_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SharedParams {
+    limit: Option<i64>,
+}
+
+/// The newest files of the server's text channels the user may read,
+/// newest message first; a message's own files in the order they were
+/// sent. Only what each channel's history already shows: no DM, no
+/// limited channel the user cannot see, no sender-only message of
+/// someone else.
+async fn shared_in_server(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    crate::path::Id(server_id): crate::path::Id,
+    Query(params): Query<SharedParams>,
+) -> Result<Json<Vec<SharedFile>>, ApiError> {
+    crate::servers::membership::load(&state.db, server_id, user.id).await?;
+    let limit = match params.limit {
+        None => SHARED_DEFAULT,
+        Some(n) if (1..=SHARED_MAX).contains(&n) => n,
+        Some(_) => {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "limit", "invalid",
+            )])));
+        }
+    };
+    let rows = sqlx::query_as::<_, SharedRow>(
+        "SELECT a.id, a.message_id, a.filename, a.content_type, a.size_bytes, a.width, \
+                a.height, a.placeholder, a.placeholder_version, a.animated, a.thumb_type, \
+                a.description, m.channel_id, m.author_id, u.name AS author_name, \
+                u.avatar_url AS author_avatar_url, m.created_at AS sent_at \
+         FROM attachments a \
+         JOIN messages m ON m.id = a.message_id \
+         JOIN channels c ON c.id = m.channel_id \
+         JOIN users u ON u.id = m.author_id \
+         WHERE c.server_id = $1 AND c.kind = 'text' \
+           AND channel_visible_to(c.id, $2) \
+           AND (NOT m.sender_only OR m.author_id = $2) \
+         ORDER BY m.created_at DESC, m.id DESC, a.created_at, a.id \
+         LIMIT $3",
+    )
+    .bind(server_id)
+    .bind(user.id)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(
+        rows.into_iter()
+            .filter_map(|row| {
+                Some(SharedFile {
+                    message_id: row.file.message_id?,
+                    channel_id: row.channel_id,
+                    author: messages::Author {
+                        id: row.author_id,
+                        name: row.author_name,
+                        avatar_url: row.author_avatar_url,
+                    },
+                    created_at: row.sent_at,
+                    attachment: row.file.into(),
+                })
+            })
+            .collect(),
+    ))
 }
 
 /// How long a browser may keep an attachment it got through the API: the
