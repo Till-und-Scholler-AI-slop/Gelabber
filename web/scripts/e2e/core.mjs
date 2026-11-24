@@ -267,9 +267,12 @@ export async function coreScenarios(h, f) {
             const src = await f.member.page
               .locator(`img[alt="${filename}"]`)
               .getAttribute("src");
-            const response = await f.member.page.request.get(
-              new URL(src, f.base).href,
-            );
+            // After the reload the picture may show its thumbnail
+            // (`?size=400`, made by the media worker); the bytes sent are
+            // the original's.
+            const original = new URL(src, f.base);
+            original.searchParams.delete("size");
+            const response = await f.member.page.request.get(original.href);
             check(
               response.status() === 200 &&
                 (await response.body()).equals(bytes),

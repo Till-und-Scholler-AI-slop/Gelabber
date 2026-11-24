@@ -153,9 +153,12 @@ export async function chatFaultScenarios(h, f) {
         exact: true,
       });
       await image.waitFor();
-      const downloaded = await f.member.context.request.get(
-        new URL(await image.getAttribute("src"), f.base).href,
-      );
+      // Once the media worker is done the picture shows its thumbnail
+      // (`?size=400`, a JPEG even for a PNG); the bytes sent are the
+      // original's.
+      const original = new URL(await image.getAttribute("src"), f.base);
+      original.searchParams.delete("size");
+      const downloaded = await f.member.context.request.get(original.href);
       check(
         downloaded.status() === 200 && (await downloaded.body()).equals(bytes),
         "retry-attachment-bytes-mismatch",
