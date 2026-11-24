@@ -219,7 +219,8 @@ impl SetupView {
             line += texts::update_line_checking();
         } else if let Some(available) = &self.available {
             line += &texts::update_line_available(available);
-        } else if self.checked {
+        } else if self.checked && self.error.is_none() {
+            // After a failed check nothing says this is the latest.
             line += texts::update_line_latest();
         }
         if let Some(error) = &self.error {
@@ -1842,8 +1843,17 @@ mod tests {
             "Installiert: 0.9.0. Verfügbar: 0.9.1."
         );
         assert_eq!(
+            view(false, None, true, None).line(),
+            "Installiert: 0.9.0. Das ist die neueste Version."
+        );
+        // A failed check knows of no newer version, so it claims none (GEL-72).
+        assert_eq!(
             view(false, None, true, Some("404")).line(),
-            "Installiert: 0.9.0. Das ist die neueste Version. Letzte Suche: 404"
+            "Installiert: 0.9.0. Letzte Suche: 404"
+        );
+        assert_eq!(
+            view(false, Some("0.9.1"), true, Some("404")).line(),
+            "Installiert: 0.9.0. Verfügbar: 0.9.1. Letzte Suche: 404"
         );
 
         let mut downloading = view(false, Some("0.9.1"), true, None);

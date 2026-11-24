@@ -115,9 +115,10 @@ the GlobalShortcuts portal (KDE, GNOME 48+, Hyprland:
 
 15 s after the start and every 6 hours while `autoCheck` holds, the
 `latest-native.json` of the latest GitHub release (`GELABBER_UPDATE_ENDPOINT`
-replaces it) is read. desktop-release.yml writes the same content into
-`latest.json`, which the installed Tauri apps (0.8) read, so their updater
-installs this app; `latest.json` of 0.8 releases names the Tauri installer.
+replaces it) is read. A release becomes the latest only once
+desktop-release.yml has attached the apps (desktop/README.md, "Updates").
+A failed check says so at the end of the status line and claims no latest
+version.
 A newer version shows the notice of the Tauri app's `BANNER`
 (`desktop/parity/reference/update-banner.js`: same texts, in the theme's
 colours, top centre below the 52px header; while the update is at work its

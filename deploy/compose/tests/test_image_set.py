@@ -176,6 +176,8 @@ class Promotion(unittest.TestCase):
         if path == 'actions/runs/1':
             return ci()
         if path == 'releases/latest':
+            return dict(tag_name='v0.2.3', draft=False, prerelease=False, published_at='2026-09-20T00:00:00Z')
+        if path == 'releases/tags/v0.2.4':
             return dict(tag_name='v0.2.4', draft=False, prerelease=False, published_at='2026-09-29T00:00:00Z')
         if path.startswith('releases'):
             return []
@@ -240,7 +242,8 @@ class Promotion(unittest.TestCase):
             m.release()
             args = next(call.args for call in writes.call_args_list if call.args[:3] == ('gh', 'release', 'create'))
             self.assertNotIn('--prerelease', args)
-            self.assertNotIn('--latest=false', args)
+            # Latest only once the desktop apps are attached (desktop-release.yml).
+            self.assertIn('--latest=false', args)
 
     def latest_run(self, api=None, digest=None, run=None, tag=SHA):
         with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=api or self.release_api), patch.object(m, 'tag_sha', return_value=tag), patch.object(m, 'registry_digest', side_effect=digest or (lambda ref: DIGEST)), patch.object(m, 'run', side_effect=run or (lambda *args: SHA)) as calls:
@@ -275,14 +278,28 @@ class Promotion(unittest.TestCase):
 
     def test_latest_refuses_old_draft_and_prerelease_before_alias_writes(self):
         self.prepare_release()
-        for changes in ({'tag_name': 'v0.2.5'}, {'draft': True}, {'prerelease': True}, {'published_at': None}):
+        cases = [('releases/latest', {'tag_name': 'v0.2.5'}), ('releases/latest', {'tag_name': 'v0.10.0'}),
+                 ('releases/tags/v0.2.4', {'draft': True}), ('releases/tags/v0.2.4', {'prerelease': True}),
+                 ('releases/tags/v0.2.4', {'published_at': None})]
+        for where, changes in cases:
             calls = []
             def api(path):
                 value = self.release_api(path)
-                return {**value, **changes} if path == 'releases/latest' else value
-            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                return {**value, **changes} if path == where else value
+            with self.subTest(where=where, changes=changes), self.assertRaises(ValueError):
                 self.latest_run(api=api, run=lambda *args: calls.append(args))
             self.assertEqual(calls, [])
+
+    def test_latest_moves_while_the_release_waits_for_its_desktop_apps(self):
+        # The new release is not GitHub's Latest yet, or it already is (a repair).
+        self.prepare_release()
+        for shown in ('v0.2.3', 'v0.2.4'):
+            def api(path):
+                value = self.release_api(path)
+                return {**value, 'tag_name': shown} if path == 'releases/latest' else value
+            with self.subTest(shown=shown):
+                calls = self.latest_run(api=api)
+                self.assertEqual(len([c for c in calls if c[0] == 'docker']), 4)
 
     def test_latest_preflights_minio_and_all_app_digests_before_any_alias_write(self):
         self.prepare_release()

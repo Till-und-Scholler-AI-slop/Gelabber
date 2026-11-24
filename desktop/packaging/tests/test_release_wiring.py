@@ -57,6 +57,15 @@ class ReleaseWiring(unittest.TestCase):
     def test_the_repository_is_published_after_the_tarball(self):
         self.assertIn('release-asset', self.jobs.get('arch-repo-publish', set()))
 
+    def test_the_release_becomes_latest_only_once_both_apps_are_attached(self):
+        # The apps' updater and the web's download links read releases/latest/download.
+        self.assertEqual(self.jobs.get('mark-latest'), {'release-asset', 'release-asset-windows'})
+        mark = job_text(WORKFLOW.read_text(), 'mark-latest')
+        self.assertIn('gh release edit "$TAG" --latest', mark)
+        self.assertIn('sort -V', mark)
+        image_set = (WORKFLOWS / 'scripts/image_set.py').read_text()
+        self.assertIn("args += ['--latest=false']\n", image_set)
+
 
 def job_text(text, name):
     """The lines of one job, up to the next one."""
@@ -66,8 +75,8 @@ def job_text(text, name):
 
 
 class NativeWiring(unittest.TestCase):
-    """The native app's assets go out under their own names; both update
-    manifests name its installer, so installed Tauri apps update into it."""
+    """The native app's assets go out under their own names; the update
+    manifest names its installer."""
 
     def setUp(self):
         self.release = WORKFLOW.read_text()
@@ -100,21 +109,20 @@ class NativeWiring(unittest.TestCase):
         self.assertIn('name: gelabber-native-windows-x64\n', windows)
         self.assertIn('setup=gelabber-native-windows-x64-setup.exe\n', windows)
         upload = windows.split('gh release upload', 1)[1]
-        for asset in ('"$setup"', '"$setup.sha256"', '"$setup.sig"', 'latest-native.json', 'latest.json'):
+        for asset in ('"$setup"', '"$setup.sha256"', '"$setup.sig"', 'latest-native.json'):
             with self.subTest(asset=asset):
                 self.assertRegex(upload, rf'(^|\s){re.escape(asset)}(\s|$)')
+        # latest.json was the Tauri apps' manifest (0.8); none are left.
+        self.assertNotIn('latest.json', upload.replace('latest-native.json', ''))
         # No Tauri app any more: no asset of its own.
         for job in (linux, windows):
             self.assertNotIn('gelabber-desktop-', job)
 
-    def test_both_manifests_name_the_native_installer(self):
-        # Installed Tauri apps (0.8) read latest.json: the same manifest.
+    def test_the_manifest_names_the_native_installer(self):
         windows = job_text(self.release, 'release-asset-windows')
         self.assertIn('--rawfile signature "$setup.sig"', windows)
         self.assertIn('/releases/download/${TAG}/$setup"', windows)
         self.assertEqual(windows.count('> latest-native.json\n'), 1)
-        self.assertIn('cp latest-native.json latest.json\n', windows)
-        self.assertNotIn('> latest.json', windows)
 
     def test_the_native_app_reads_the_manifest_the_release_writes(self):
         update = (Path(__file__).parents[2] / 'ui/src/platform/update.rs').read_text()
@@ -129,12 +137,9 @@ class NativeWiring(unittest.TestCase):
         self.assertNotIn('name: gelabber-desktop-linux-x64\n', arch)
         self.assertEqual(arch.count('repo.sh build "'), 2, 'test build and release rebuild')
         self.assertEqual(arch.count('gelabber-native-linux-x64.tar.gz site'), 2)
-        # The upgrade test starts from the Tauri package of each release: 0.8.9 without, 0.8.10 with the export.
-        test = arch.split('repo.sh test site', 1)[1].split('\n      - name:', 1)[0]
-        self.assertIn('"tauri/$release/PKGBUILD" "tauri/$release/gelabber-desktop-linux-x64.tar.gz" "$release"', test)
-        self.assertIn('for release in $TAURI_RELEASES; do', arch.split('repo.sh test site', 1)[0].rsplit('\n      - name:', 1)[1])
-        self.assertIn('\n      TAURI_RELEASES: v0.8.9 v0.8.10\n', arch)
-
+        # A user's install from the repository, then upgrade and removal; no Tauri package any more.
+        self.assertIn('\n        run: desktop/packaging/arch/repo.sh test site gelabber-native-linux-x64.tar.gz\n', arch)
+        self.assertNotIn('tauri', arch.lower())
 
 if __name__ == '__main__':
     unittest.main()

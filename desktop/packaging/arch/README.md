@@ -87,11 +87,8 @@ always holds only the newest release.
   `install.sh`, which pins this README's fingerprint and repository address
   (checked by `desktop/packaging/tests`).
 - `repo.sh test`: adds that repository to pacman with `SigLevel = Required`,
-  installs the Tauri package of each 0.8 release in `TAURI_RELEASES` (its
-  PKGBUILD at the tag and its release tarball) with its dependencies, lets
-  it run the fixture page, upgrades it with `-Syu` into this package and
-  checks the import: from WebKitGTK for 0.8.9, only from
-  `legacy-settings.json` for 0.8.10. It starts the app under Xvfb
+  installs this package with `-S` and its dependencies as a new user would,
+  and checks its files. It starts the app under Xvfb
   (`../native/smoke.sh`), upgrades to a newer build, removes with `-Rns` and
   fails if a library is missing or a file is left behind. Then it takes
   the repository and key out of pacman again and installs with the site's

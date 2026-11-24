@@ -239,7 +239,7 @@ puts the tests' mediasoup on it; the CI job tries which one works.
 | Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh`; on Windows `GELABBER_TEST_SCREEN_MONITOR=1` | CI, Linux and Windows (voice: Linux) |
 | App: starts, paints its setup screen and ends (`GELABBER_SMOKE`) | `packaging/native/smoke.sh <gelabber>`; on Windows the job starts `gelabber.exe` itself | CI, Linux (lavapipe under Xvfb, also the installed Arch package) and Windows |
 | Packages: names, files and arguments against the app and the Tauri app's installs | `python3 -m unittest discover -s desktop/packaging/tests` | CI |
-| Update of a Tauri install: Windows (0.8 installer, then this one as its updater runs it), Arch (`pacman -Syu` from the Tauri package) | job `core-windows` (after merge), `packaging/arch/repo.sh test` | CI |
+| Install, update and removal: Windows (the setup, then again as the updater runs it, then the uninstaller), Arch (`pacman -S`, a newer pkgrel with `-Syu`, `-Rns`, `install.sh`) | job `core-windows` (after merge), `packaging/arch/repo.sh test` | CI |
 | Native client calls (gelabber-call): a call on the seeded stack with Chromium people from `web/scripts/parity/call.mjs`, without devices (`GELABBER_FAKE_MEDIA=1`: dummy audio, test pattern camera and Live; speaking from the received bitrate, the own meter beeping like Chromium's fake microphone) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-call --features media --test live -- --ignored` | **only locally** |
 | Native client voice end to end (gelabber-ui): the real app in egui_kittest joins, mutes, deafens, turns the camera on, draws Jonas' camera, switches Raster/Fokus/Kino, fails Go Live without a portal (`GELABBER_FAKE_SCREEN=0`), watches a Live and sets a volume, checked in the Chromium people's pages (`ui/tests/voice_observer.mjs`) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-ui --features media --test voice_live -- --ignored` | **only locally** |
 | Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests`, `packaging/third-party-notices.py --check` | CI |
@@ -273,18 +273,15 @@ docs/native/platform.md). About 15 s after the start and then every 6 hours
 `desktop.json`) it reads
 `https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest-native.json`.
 `release-asset-windows` in `desktop-release.yml` attaches it to every
-release, and the same content as `latest.json`, which the installed Tauri
-apps of 0.8 read: their updater (tauri-plugin-updater, `installMode`
-passive) downloads the native installer, checks its signature with the same
-key and runs it with `/P /UPDATE /R /ARGS <its arguments>`, so they become
-the native app in the same folder. "Latest" is the release GitHub marks as
-latest, by default the newest that is not a pre-release, so pre-releases
-are never offered. A hotfix of an older line would take that mark, and the
-apps of the newer line would see nothing new until its next release (they
-never go back: only a higher version is offered). Publish such a hotfix
-with `gh release create … --latest=false`, or set the mark back on the
-newest release afterwards. Not during a call: the notice waits, and an
-installer downloaded before the call installs once it ended.
+release. "Latest" is the release GitHub marks as latest. `image_set.py`
+creates every release with `--latest=false`, and the job `mark-latest` in
+`desktop-release.yml` gives it the mark once the Linux and Windows apps are
+attached, so neither the apps nor the web's download links see a release
+without them. Pre-releases never get the mark, and neither does a release
+older than the one that has it (a hotfix of an older line, a repeated
+build), so the apps of the newer line keep theirs (they never go back:
+only a higher version is offered). Not during a call: the notice waits,
+and an installer downloaded before the call installs once it ended.
 `GELABBER_UPDATE_ENDPOINT` points the check at another manifest (HTTPS
 only), e.g. one of a test release; its installer needs the same signature.
 
