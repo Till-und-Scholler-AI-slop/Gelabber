@@ -557,19 +557,6 @@ fn a_server_that_did_not_load_offers_a_retry() {
 }
 
 #[test]
-fn an_unread_row_marks_a_draft() {
-    let (client, call) = offline();
-    let mut h = harness(client, call, |ui, _app| {
-        let rect = Rect::from_min_size(pos2(380.0, 300.0), vec2(120.0, 52.0));
-        crate::screens::shell::overview::unread_name(ui, rect, "musik", true);
-        let other = Rect::from_min_size(pos2(380.0, 360.0), vec2(120.0, 52.0));
-        crate::screens::shell::overview::unread_name(ui, other, "spiele", false);
-    });
-    h.run_steps(6);
-    assert_eq!(h.query_all_by_label("Entwurf").count(), 1);
-}
-
-#[test]
 fn the_call_bar_speaks_english() {
     let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
     let (client, call) = offline();

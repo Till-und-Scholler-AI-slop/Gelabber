@@ -1,5 +1,6 @@
 //! Issue #188: sign-in only over a protected transport, failed logins counted
-//! per account, HSTS behind TLS, password change and signing out everywhere.
+//! per account and address (GEL-44), HSTS behind TLS, password change and
+//! signing out everywhere.
 
 mod common;
 
@@ -103,36 +104,58 @@ async fn plain_http_sends_no_hsts(pool: PgPool) {
     assert!(!res.headers.contains_key(STRICT_TRANSPORT_SECURITY));
 }
 
-#[sqlx::test]
-async fn failed_logins_are_limited_per_account_across_addresses(pool: PgPool) {
-    let mut client = signed_up(state_with(
-        pool,
-        &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "3")],
-    ))
-    .await;
-    client.send(Method::POST, "/api/auth/logout", None).await;
+/// A login from `address`, as the proxy next to the API reports it.
+async fn login_at(
+    client: &mut Client,
+    address: &str,
+    email: &str,
+    password: &str,
+) -> common::Response {
+    let address = address.to_owned();
+    client
+        .send_with(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "email": email, "password": password })),
+            move |builder| {
+                builder
+                    .headers_mut()
+                    .unwrap()
+                    .insert("x-forwarded-for", address.parse().unwrap());
+            },
+        )
+        .await
+}
 
-    for i in 0..3 {
-        let res = client
-            .send_with(
-                Method::POST,
-                "/api/auth/login",
-                Some(json!({ "email": "ADA@example.com", "password": "wrong guess" })),
-                |builder| {
-                    let ip = format!("203.0.113.{i}");
-                    builder
-                        .headers_mut()
-                        .unwrap()
-                        .insert("x-forwarded-for", ip.parse().unwrap());
-                },
-            )
-            .await;
+/// A stranger's wrong guesses use up the stranger's address, not the
+/// account: the owner still signs in from anywhere else (GEL-44).
+#[sqlx::test]
+async fn a_strangers_failed_logins_do_not_lock_out_the_owner(pool: PgPool) {
+    let state = state_with(pool, &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "3")]);
+    let mut owner = signed_up(state.clone()).await;
+    owner.send(Method::POST, "/api/auth/logout", None).await;
+    let mut stranger = Client::from_state(state);
+    stranger.bootstrap().await;
+
+    for _ in 0..3 {
+        let res = login_at(
+            &mut stranger,
+            "203.0.113.7",
+            "ADA@example.com",
+            "wrong guess",
+        )
+        .await;
         assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
     }
-
-    // The right password does not help while the account's window is full:
-    // otherwise the limit would only slow down, not stop, a guesser.
-    let blocked = client.login("ada@example.com", "correct horse").await;
+    // The right password does not help from that address while its window
+    // is full: otherwise the limit would only slow down, not stop, a guesser.
+    let blocked = login_at(
+        &mut stranger,
+        "203.0.113.7",
+        "ada@example.com",
+        "correct horse",
+    )
+    .await;
     assert_eq!(
         blocked.status,
         StatusCode::TOO_MANY_REQUESTS,
@@ -142,18 +165,97 @@ async fn failed_logins_are_limited_per_account_across_addresses(pool: PgPool) {
     assert_eq!(blocked.body["error"], "rate_limited");
     assert!(blocked.headers.contains_key(RETRY_AFTER));
 
-    // Another account is not affected.
-    let other = client.login("nobody@example.com", "wrong guess").await;
-    assert_eq!(other.status, StatusCode::UNAUTHORIZED, "{}", other.body);
+    let res = login_at(
+        &mut owner,
+        "198.51.100.20",
+        "ada@example.com",
+        "correct horse",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 }
 
-/// `count` POSTs to `path` with `body`, all in flight at once, each from its
-/// own address and with the client's cookies and CSRF token.
+/// Spreading guesses over many addresses stops at the account's ceiling.
+/// That holds the owner back at a new address too, but not at one the
+/// account signed in from before, which keeps only its own count.
+#[sqlx::test]
+async fn failed_logins_from_many_addresses_stop_at_the_account_ceiling(pool: PgPool) {
+    let state = state_with(
+        pool,
+        &[
+            ("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "2"),
+            ("API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING", "5"),
+        ],
+    );
+    let mut owner = signed_up(state.clone()).await;
+    let home = "192.0.2.10";
+    let res = login_at(&mut owner, home, "ada@example.com", "correct horse").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    owner.send(Method::POST, "/api/auth/logout", None).await;
+    let mut stranger = Client::from_state(state);
+    stranger.bootstrap().await;
+
+    let mut statuses = Vec::new();
+    for i in 0..4 {
+        let address = format!("203.0.113.{i}");
+        for _ in 0..2 {
+            let res = login_at(&mut stranger, &address, "ada@example.com", "wrong guess").await;
+            statuses.push(res.status);
+        }
+    }
+    assert_eq!(
+        tally(&statuses, StatusCode::UNAUTHORIZED),
+        5,
+        "{statuses:?}"
+    );
+    assert_eq!(
+        tally(&statuses, StatusCode::TOO_MANY_REQUESTS),
+        3,
+        "{statuses:?}"
+    );
+
+    let elsewhere = login_at(
+        &mut owner,
+        "198.51.100.20",
+        "ada@example.com",
+        "correct horse",
+    )
+    .await;
+    assert_eq!(
+        elsewhere.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        elsewhere.body
+    );
+    // Another account is not affected.
+    let other = login_at(
+        &mut stranger,
+        "203.0.113.0",
+        "nobody@example.com",
+        "wrong guess",
+    )
+    .await;
+    assert_eq!(other.status, StatusCode::UNAUTHORIZED, "{}", other.body);
+
+    let res = login_at(&mut owner, home, "ada@example.com", "correct horse").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    owner.send(Method::POST, "/api/auth/logout", None).await;
+    for _ in 0..2 {
+        let res = login_at(&mut owner, home, "ada@example.com", "wrong guess").await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    }
+    let res = login_at(&mut owner, home, "ada@example.com", "correct horse").await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+}
+
+/// `count` POSTs to `path` with `body`, all in flight at once, the `i`th
+/// from `address(i)` and each with the client's cookies and CSRF token.
 async fn concurrently(
     client: &Client,
     path: &str,
     body: serde_json::Value,
     count: usize,
+    address: impl Fn(usize) -> String,
 ) -> Vec<StatusCode> {
     use axum::body::Body;
     use axum::http::Request;
@@ -169,7 +271,7 @@ async fn concurrently(
     let requests = (0..count).map(|i| {
         let mut builder = Request::post(path)
             .header(CONTENT_TYPE, "application/json")
-            .header("x-forwarded-for", format!("198.51.100.{i}"));
+            .header("x-forwarded-for", address(i));
         if !cookie.is_empty() {
             builder = builder.header(COOKIE, &cookie);
         }
@@ -190,10 +292,14 @@ fn tally(statuses: &[StatusCode], wanted: StatusCode) -> usize {
     statuses.iter().filter(|status| **status == wanted).count()
 }
 
+fn spread(i: usize) -> String {
+    format!("198.51.100.{i}")
+}
+
 /// Guesses that arrive together must not all pass the check before the
-/// first failure is counted.
+/// first failure is counted, from one address ...
 #[sqlx::test]
-async fn concurrent_login_guesses_stop_at_the_account_limit(pool: PgPool) {
+async fn concurrent_login_guesses_stop_at_the_address_limit(pool: PgPool) {
     let mut client = signed_up(state_with(
         pool,
         &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "3")],
@@ -206,6 +312,7 @@ async fn concurrent_login_guesses_stop_at_the_account_limit(pool: PgPool) {
         "/api/auth/login",
         json!({ "email": "ada@example.com", "password": "wrong guess" }),
         12,
+        |_| "203.0.113.7".to_owned(),
     )
     .await;
     assert_eq!(
@@ -220,8 +327,40 @@ async fn concurrent_login_guesses_stop_at_the_account_limit(pool: PgPool) {
     );
 }
 
+/// ... or from many.
 #[sqlx::test]
-async fn concurrent_password_change_guesses_stop_at_the_account_limit(pool: PgPool) {
+async fn concurrent_login_guesses_stop_at_the_account_ceiling(pool: PgPool) {
+    let mut client = signed_up(state_with(
+        pool,
+        &[("API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING", "3")],
+    ))
+    .await;
+    client.send(Method::POST, "/api/auth/logout", None).await;
+
+    let statuses = concurrently(
+        &client,
+        "/api/auth/login",
+        json!({ "email": "ada@example.com", "password": "wrong guess" }),
+        12,
+        spread,
+    )
+    .await;
+    assert_eq!(
+        tally(&statuses, StatusCode::UNAUTHORIZED),
+        3,
+        "{statuses:?}"
+    );
+    assert_eq!(
+        tally(&statuses, StatusCode::TOO_MANY_REQUESTS),
+        9,
+        "{statuses:?}"
+    );
+}
+
+/// Signed-in guesses count for the account's sessions wherever they come
+/// from.
+#[sqlx::test]
+async fn concurrent_password_change_guesses_stop_at_the_signed_in_limit(pool: PgPool) {
     let client = signed_up(state_with(
         pool,
         &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "3")],
@@ -233,6 +372,7 @@ async fn concurrent_password_change_guesses_stop_at_the_account_limit(pool: PgPo
         "/api/auth/password",
         json!({ "current_password": "wrong guess", "password": "battery staple" }),
         12,
+        spread,
     )
     .await;
     assert_eq!(
@@ -247,36 +387,72 @@ async fn concurrent_password_change_guesses_stop_at_the_account_limit(pool: PgPo
     );
 }
 
-/// A row stored with capitals (before addresses were normalised) has one
-/// failure count, whether the guess comes through login or password change.
+/// Guesses through a session count for all of the account's sessions, apart
+/// from sign-in: whoever holds a stolen cookie gets no fresh allowance from
+/// another session, and the owner still signs in.
 #[sqlx::test]
-async fn guesses_share_one_count_for_an_address_stored_with_capitals(pool: PgPool) {
-    let mut client = signed_up(state_with(
-        pool.clone(),
-        &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "2")],
-    ))
-    .await;
-    sqlx::query("UPDATE users SET email = 'Ada@Example.com'")
-        .execute(&pool)
-        .await
-        .unwrap();
+async fn a_sessions_guesses_do_not_lock_the_account_for_sign_in(pool: PgPool) {
+    let state = state_with(pool, &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "2")]);
+    let mut session = signed_up(state.clone()).await;
+    let change = json!({ "current_password": "wrong guess", "password": "battery staple" });
     for _ in 0..2 {
-        let res = client
-            .send(
-                Method::POST,
-                "/api/auth/password",
-                Some(json!({ "current_password": "wrong guess", "password": "battery staple" })),
-            )
+        let res = session
+            .send(Method::POST, "/api/auth/password", Some(change.clone()))
             .await;
         assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
     }
-    let blocked = client.login("ada@example.com", "correct horse").await;
-    assert_eq!(
-        blocked.status,
-        StatusCode::TOO_MANY_REQUESTS,
-        "{}",
-        blocked.body
-    );
+    let res = session
+        .send(Method::POST, "/api/auth/password", Some(change))
+        .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+
+    let mut owner = Client::from_state(state);
+    owner.bootstrap().await;
+    let res = owner.login("ada@example.com", "correct horse").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    // A new session shares the count of the one that guessed.
+    let res = owner
+        .send(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "current_password": "correct horse", "password": "battery staple" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+}
+
+/// One IPv6 connection is one guesser for the login counts, however many
+/// /64s it holds; the owner on another network still signs in.
+#[sqlx::test]
+async fn ipv6_guesses_count_per_56(pool: PgPool) {
+    let state = state_with(pool, &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "3")]);
+    let mut owner = signed_up(state.clone()).await;
+    owner.send(Method::POST, "/api/auth/logout", None).await;
+    let mut stranger = Client::from_state(state);
+    stranger.bootstrap().await;
+
+    for i in 1..=3 {
+        let address = format!("2001:db8:0:{i}::7");
+        let res = login_at(&mut stranger, &address, "ada@example.com", "wrong guess").await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    }
+    let res = login_at(
+        &mut stranger,
+        "2001:db8:0:4::7",
+        "ada@example.com",
+        "wrong guess",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+
+    let res = login_at(
+        &mut owner,
+        "2001:db8:0:100::5",
+        "ada@example.com",
+        "correct horse",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 }
 
 /// A right password leaves the failure count where it was, so a correct

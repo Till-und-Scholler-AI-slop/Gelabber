@@ -1,0 +1,33 @@
+{
+  "upstream": "https://github.com/Rikorose/DeepFilterNet",
+  "sourceCommit": "7b14b895fe7fc42cab72b4a4c1e49c982bd6404b",
+  "sourceArchiveUrl": "https://codeload.github.com/Rikorose/DeepFilterNet/tar.gz/7b14b895fe7fc42cab72b4a4c1e49c982bd6404b",
+  "sourceArchiveSha256": "60ddfcd8a4b62b78e95c59707a9c9bd6df74f09d72db41abad8987c67f2a680a",
+  "model": "deepfilternet3-model.bin",
+  "modelSource": "models/DeepFilterNet3_onnx.tar.gz in the source archive, unchanged",
+  "modelSha256": "c94d91f70911001c946e0fabb4aa9adc37045f45a03b56008cb0c8244cb63616",
+  "modelLicense": "MIT OR Apache-2.0 (weights relicensed at the source commit)",
+  "wasm": "deepfilternet.wasm",
+  "wasmSha256": "18929d4fed09a64173cd26e958a712ac6466d821b3e327035d8eaa7d2e5fbb33",
+  "crate": "web/scripts/audio/deepfilternet (Cargo.lock pins every crate, tract 0.21.4)",
+  "rustToolchain": "1.100.0",
+  "target": "wasm32-unknown-unknown",
+  "rustflags": "-C target-feature=+simd128 --remap-path-prefix=/tmp/gelabber-deepfilternet-build=/build",
+  "profile": "release: opt-level 3, lto fat, panic abort, strip",
+  "buildDirectory": "/tmp/gelabber-deepfilternet-build",
+  "reproducibility": "Four builds in that directory on one Linux x86-64 machine gave this hash; two builds from different directories did not match each other. Other machines are not verified.",
+  "license": "DEEPFILTERNET-LICENSE.txt",
+  "runtimeParams": {
+    "attenLimDb": 100,
+    "minDbThresh": -15,
+    "maxDbErbThresh": 35,
+    "maxDbDfThresh": 35,
+    "postFilter": false
+  },
+  "format": {
+    "sampleRate": 48000,
+    "channels": 1,
+    "hopSamples": 480
+  },
+  "rebuild": "web/scripts/audio/build-deepfilternet.sh"
+}

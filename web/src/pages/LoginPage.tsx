@@ -2,7 +2,8 @@ import { useMutation } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useRef, useState, type FormEvent } from "react";
 
-import { ApiError } from "../api/client.ts";
+import { ApiError, type ApiErrorCode } from "../api/client.ts";
+import { confirmationHelpReason } from "../auth/confirmationHelp.ts";
 import { useAccountMailStatus } from "../auth/mail.ts";
 import { isInviteRedirect, savePendingRedirect } from "../auth/redirect.ts";
 import {
@@ -23,6 +24,7 @@ import { auth } from "../i18n/catalogs/auth.ts";
 import { InstallDisclosure } from "../pwa/InstallApp.tsx";
 import { installHintUseful, useInstallation } from "../pwa/install.ts";
 import { InviteContextBanner } from "./AuthLayout.tsx";
+import { ConfirmationHelp } from "./ConfirmationHelp.tsx";
 
 export function LoginPage() {
   const t = useT(auth);
@@ -40,6 +42,9 @@ export function LoginPage() {
   const installHint = useInstallation(installHintUseful);
   const accountMail = useAccountMailStatus();
   const invited = isInviteRedirect(redirect);
+  // Why this page's last sign-in was refused, for the confirmation help.
+  const [refusal, setRefusal] = useState<ApiErrorCode | null>(null);
+  const help = confirmationHelpReason(refusal, oidcError, accountMail);
 
   const mutation = useMutation({
     mutationFn: () => login(email, password),
@@ -57,12 +62,14 @@ export function LoginPage() {
         error.code === "email_unverified"
       )
         savePendingRedirect(redirect);
+      setRefusal(error instanceof ApiError ? error.code : "internal");
       fromError(error);
     },
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setRefusal(null);
     const fields: Record<string, string> = {};
     const emailCode = validateEmail(email);
     if (emailCode) fields.email = fieldMessage("email", emailCode);
@@ -145,11 +152,25 @@ export function LoginPage() {
           // Why the provider sign-in came back here; nothing failed on
           // this page, so no alert.
           <p role="status" className="ui-form-error">
-            {oidcErrorMessage(oidcError)}
+            {help === "provider"
+              ? t("login.oidcAccountUnverified")
+              : oidcErrorMessage(oidcError)}
           </p>
         ) : (
           <FormError message={errors.form} />
         )}
+        {help ? (
+          <ConfirmationHelp
+            // A new reason starts over, so a sign-in refused after the
+            // provider's help gets its cooldown for the link it just sent.
+            key={help}
+            reason={help}
+            email={email}
+            onInvalidEmail={(code) =>
+              setFields({ email: fieldMessage("email", code) })
+            }
+          />
+        ) : null}
         <SubmitButton
           size="lg"
           pending={mutation.isPending}

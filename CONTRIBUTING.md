@@ -25,7 +25,8 @@ against them will not be merged:
 - Signaling is Gelabber's own WebSocket protocol. No LiveKit, Daily, Agora,
   Twilio, Stream or Socket.IO.
 - mediasoup is the only SFU, with no fallback or backend selector.
-- Audio processing runs in the client with self-hosted RNNoise assets.
+- Audio processing runs in the client with self-hosted RNNoise and
+  DeepFilterNet3 assets.
 - Dependency versions are pinned exactly. A change updates only the
   dependencies it needs.
 - The two clients stay at parity: a feature of the web client gets its

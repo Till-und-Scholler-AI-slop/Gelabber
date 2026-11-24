@@ -475,6 +475,34 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
         "RNNoise suppresses white noise behind AGC: {agc}"
     );
 
+    // "strong" (GEL-28): DeepFilterNet3 replaces RNNoise's output once it
+    // is built, RNNoise keeps running beside it, and the noise is taken out.
+    let strong = Source::microphone(
+        &engine,
+        &json!({"processingMode": "strong", "autoGainControl": false,
+                "echoCancellation": false}),
+    )
+    .unwrap();
+    let strong_producer = produce(&send, &strong, json!({"codecOptions": {"opusDtx": true}})).await;
+    drop(leveled_producer);
+    let filtered = levels_when(&engine, "strong mode", |l| {
+        l["filter"] == "strong" && l["denoised"] == true && level(l, "input") >= 10.0
+    })
+    .await;
+    assert_eq!(filtered["strongFilter"]["state"], "active", "{filtered}");
+    assert!(
+        level(&filtered, "processed") * 3.0 <= level(&filtered, "input"),
+        "DeepFilterNet3 suppresses white noise: {filtered}"
+    );
+    let busy = levels_when(&engine, "strong mode, a second measured", |l| {
+        l["strongFilter"]["msPerBlock"].as_f64().unwrap_or(0.0) > 0.0
+    })
+    .await;
+    eprintln!(
+        "DeepFilterNet3: {} ms per 10 ms block",
+        busy["strongFilter"]["msPerBlock"]
+    );
+
     // "original": stereo Opus, no processing.
     let original = Source::microphone(
         &engine,
@@ -487,7 +515,7 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
         json!({"codecOptions": {"opusStereo": true, "opusDtx": false}}),
     )
     .await;
-    drop(leveled_producer);
+    drop(strong_producer);
     eprintln!(
         "original rtpParameters: {}",
         original_producer.rtp_parameters().unwrap()["codecs"]
@@ -842,6 +870,18 @@ fn the_source_audio_mix_follows_a_sound_card_whose_clock_is_off() {
     run_host_test("app_audio_mix_test", "the mix against simulated cards");
 }
 
+/// Application sound read from PipeWire's buffers (GEL-47): desktop/native/
+/// tests/pipewire_chunk_test.cc checks that a chunk's offset and size never
+/// lead past the mapped memory.
+#[test]
+fn application_sound_is_read_inside_pipewires_buffer() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipped: the buffers belong to the PipeWire capture");
+        return;
+    }
+    run_host_test("pipewire_chunk_test", "reading PipeWire's buffers");
+}
+
 /// Playback above 100 % on generated mixes: desktop/native/tests/
 /// playout_limiter_test.cc runs the playout limiter without a sound card,
 /// on every platform.
@@ -856,6 +896,14 @@ fn the_playout_limiter_keeps_a_boost_below_full_scale() {
 #[test]
 fn the_input_gate_sends_silence_below_its_threshold() {
     run_host_test("input_gate_test", "the input gate");
+}
+
+/// The strong filter's slot (GEL-28): desktop/native/tests/
+/// strong_filter_test.cc loads, runs, warms up and drops a fake filter and
+/// falls back when it fails or is too slow, on every platform.
+#[test]
+fn the_strong_filter_loads_off_the_audio_thread_and_falls_back() {
+    run_host_test("strong_filter_test", "the strong filter's slot");
 }
 
 /// Switching the microphone or the speakers while they run (#296):

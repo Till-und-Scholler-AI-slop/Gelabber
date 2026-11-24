@@ -354,7 +354,7 @@ pub fn layout(
     revealed: &HashSet<usize>,
     edited: bool,
 ) -> Laid {
-    layout_as(ui, content, width, mentions, revealed, edited, None)
+    layout_as(ui, content, width, mentions, revealed, edited, None, None)
 }
 
 /// A search hit's content (`MessageContent interactive={false}` in
@@ -375,9 +375,32 @@ pub fn layout_hit(
         &HashSet::new(),
         false,
         Some(terms),
+        None,
     )
 }
 
+/// A message's text outside the chat (the overview's "Verpasst" cards):
+/// laid out like a search hit, 14px, in `color`, nothing to click.
+pub fn layout_plain(
+    ui: &Ui,
+    content: &str,
+    width: f32,
+    mentions: &Mentions,
+    color: Color32,
+) -> Laid {
+    layout_as(
+        ui,
+        content,
+        width,
+        mentions,
+        &HashSet::new(),
+        false,
+        Some(&[]),
+        Some(color),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn layout_as(
     ui: &Ui,
     content: &str,
@@ -387,6 +410,8 @@ fn layout_as(
     edited: bool,
     // A search hit, with the words to mark.
     hit: Option<&[String]>,
+    // The text's colour instead of the hit's or the chat's.
+    color: Option<Color32>,
 ) -> Laid {
     let theme = Theme::of(ui.ctx());
     let terms = hit.unwrap_or_default();
@@ -399,11 +424,11 @@ fn layout_as(
             .mentions
             .iter()
             .any(|id| !named.contains(&id.to_string()));
-    let color = if hit {
+    let color = color.unwrap_or(if hit {
         theme.c.text
     } else {
         body_color(&theme)
-    };
+    });
     let mut parts: Vec<Part> = Vec::new();
     let mut spoilers = 0;
     let mut codes = 0;

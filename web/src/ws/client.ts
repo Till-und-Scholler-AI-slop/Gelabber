@@ -74,6 +74,8 @@ export class Gateway {
   private socket: SocketLike | null = null;
   /** Drops listeners for the socket `open` most recently bound. */
   private detachLiveSocket: (() => void) | null = null;
+  /** When the current socket opened; null while it is still connecting. */
+  private openedAt: number | null = null;
   private desired = new Map<string, Topic>();
   private cursors = new Map<string, TopicCursor>();
   private gaps = new Map<
@@ -358,6 +360,7 @@ export class Gateway {
       return;
     }
     this.stopped = false;
+    this.retryAttempt = 0;
     if (typeof window !== "undefined")
       window.addEventListener("online", this.onOnline);
     this.open();
@@ -429,6 +432,7 @@ export class Gateway {
     const url = this.opts.url ?? gatewayUrl();
     const socket = this.opts.open ? this.opts.open(url) : new WebSocket(url);
     this.socket = socket;
+    this.openedAt = null;
     // The watchdog covers the handshake too: one that never answers is dropped.
     this.lastServerAt = this.opts.now();
     this.startWatchdog();
@@ -436,17 +440,14 @@ export class Gateway {
     // we just replaced must not clear the new one or answer on it.
     const epoch = this.epoch;
     const live = () => this.socket === socket && this.epoch === epoch;
-    let opened = false;
-
     const onOpen = () => {
       if (!live()) {
         detach();
         return;
       }
-      this.retryAttempt = 0;
       this.refusedReported = false;
-      opened = true;
-      this.lastServerAt = this.opts.now();
+      this.openedAt = this.opts.now();
+      this.lastServerAt = this.openedAt;
       this.setStatus("open");
       this.startHeartbeat();
       for (const [key, topic] of this.desired) {
@@ -485,6 +486,8 @@ export class Gateway {
       if (!still) return;
       this.socket = null;
       this.clearHeartbeat();
+      const opened = this.openedAt !== null;
+      this.resetBackoffIfHealthy();
       if (!this.stopped) {
         this.scheduleReconnect();
       }
@@ -506,6 +509,21 @@ export class Gateway {
     socket.addEventListener("message", onMessage);
     socket.addEventListener("close", onClose);
     this.detachLiveSocket = detach;
+  }
+
+  /**
+   * Only a socket that stayed up for a heartbeat interval resets the
+   * backoff. One the server closes right after it opens (a subscribe write
+   * failing while Postgres struggles) is a failed attempt, or every client
+   * would reconnect and refetch in a tight loop.
+   */
+  private resetBackoffIfHealthy(): void {
+    if (
+      this.openedAt !== null &&
+      this.opts.now() - this.openedAt >= this.opts.heartbeatMs
+    ) {
+      this.retryAttempt = 0;
+    }
   }
 
   private unbindSocket(): void {
@@ -685,6 +703,7 @@ export class Gateway {
    */
   private dropSocket(): void {
     const socket = this.socket;
+    this.resetBackoffIfHealthy();
     this.unbindSocket();
     this.socket = null;
     this.clearHeartbeat();
@@ -712,10 +731,10 @@ export class Gateway {
 
   private scheduleReconnect(): void {
     this.setStatus("reconnecting");
-    // First drop: reconnect on the next turn so the close handler can
-    // finish. After that, exponential backoff (capped) — still short —
-    // jittered to 50–100 %, so clients dropped together do not retry
-    // together.
+    // First drop (of a session, or of a socket that stayed up): reconnect
+    // on the next turn so the close handler can finish. After that,
+    // exponential backoff (capped) — still short — jittered to 50–100 %,
+    // so clients dropped together do not retry together.
     const base = Math.min(
       this.opts.maxRetryMs,
       this.opts.retryMs * 2 ** (this.retryAttempt - 1),

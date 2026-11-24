@@ -8,7 +8,7 @@ import {
   sampleVideoConsumers,
   samplePublicationFlow,
 } from "./probe.mjs";
-import { armPlaybackRetry, watchSource } from "./media.mjs";
+import { armPlaybackRetry, measuredVideo, watchSource } from "./media.mjs";
 import { CheckFailure } from "./harness.mjs";
 
 function watchControlFixture(appears, nativeConsumer = false) {
@@ -550,4 +550,81 @@ test("publication diagnostics correlate only actual RPC outcomes and retain no p
     media.send(JSON.stringify({ op: "produce", id, k: "s", rtp: "PRIVATE" }));
   assert.equal(window.__e2e.sockets[0].mediaRpc.length, 128);
   assert.equal(window.__e2e.sockets[0].pendingMedia.size, 64);
+});
+
+function liveTile(name, { width = 0, paused = true } = {}) {
+  return {
+    readyState: width ? 4 : 0,
+    videoWidth: width,
+    videoHeight: (width * 9) / 16,
+    paused,
+    closest: () => ({
+      querySelector: (selector) =>
+        selector === "figcaption"
+          ? { classList: { contains: (c) => c === "voice-live-caption" } }
+          : selector === ".voice-live-caption-name"
+            ? { textContent: ` ${name} ` }
+            : null,
+    }),
+  };
+}
+
+test("a named Live is measured on its own tile, not on an unwatched tile drawn before it", async () => {
+  // GEL-36: after the lease outage A's Live came back next to B's; the
+  // unwatched tile (paused, no picture) came first in the DOM.
+  const state = {
+    peers: [],
+    mediaElements: new Set(),
+    incomingTracks: [],
+    heldTracks: [],
+    voiceRoster: [],
+    sockets: [],
+    captures: [],
+    renderedVideos: new WeakMap(),
+  };
+  const context = createContext({
+    window: { __e2e: state },
+    document: {
+      querySelectorAll: () => [
+        liveTile("E2E A"),
+        liveTile("E2E B", { width: 320, paused: false }),
+      ],
+      createElement: () => ({
+        getContext: () => ({
+          drawImage() {},
+          getImageData: () => ({ data: new Array(16).fill(0) }),
+        }),
+      }),
+    },
+  });
+  const read = () => runInContext(`(${sample.toString()})()`, context);
+  const unnamed = await read();
+  assert.deepEqual(
+    [...unnamed.videos.map((v) => v.expectedPublisher)],
+    [null, null],
+  );
+  // Without a publisher the first Live tile counts, as before.
+  assert.equal(measuredVideo(unnamed, "live").width, 0);
+  state.expectedLiveName = "E2E B";
+  const named = await read();
+  assert.deepEqual(
+    [...named.videos.map((v) => v.expectedPublisher)],
+    [false, true],
+  );
+  assert.equal(measuredVideo(named, "live", "E2E B").width, 320);
+  // The report carries the comparison only, never the caption.
+  assert.ok(!JSON.stringify(named.videos).includes("E2E"));
+  state.expectedLiveName = "E2E C";
+  assert.equal(measuredVideo(await read(), "live", "E2E C"), undefined);
+});
+
+test("a socket records when it opened, for waits on the app's recovery round", () => {
+  const { window } = consumerProbeFixture();
+  const socket = new window.WebSocket("ws://127.0.0.1/ws");
+  const item = window.__e2e.sockets[0];
+  assert.equal(item.plane, "gateway");
+  assert.equal(item.openedAt, null);
+  const before = Date.now();
+  for (const listener of socket.listeners.get("open") ?? []) listener({});
+  assert.ok(item.openedAt >= before && item.openedAt <= Date.now());
 });

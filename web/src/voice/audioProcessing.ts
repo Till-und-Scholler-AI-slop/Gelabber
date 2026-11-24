@@ -1,11 +1,25 @@
 import { create } from "zustand";
 import { translate } from "../i18n/catalog.ts";
 import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
+import { fetchVerified, onceWithRetry } from "./audioAssets.ts";
 import {
+  forgetStrongFallback,
+  loadStrongFilter,
+  strongFellBack,
+  strongInfo,
+  strongRemembered,
+  type StrongFallback,
+  type StrongFilter,
+  type StrongInfo,
+} from "./deepFilterNet.ts";
+import {
+  isLocalFilter,
   micConstraints,
   type AudioProcessingMode,
   type MediaSettings,
 } from "./settings.ts";
+
+export { forgetStrongFallback };
 
 /** The input sensitivity gate (GEL-27) in public/audio/rnnoise-worklet.js:
  * off, automatic, or below a threshold in dB. */
@@ -80,6 +94,9 @@ export type ProcessingInfo = {
   contextState: string | null;
   /** The gate as configured, or null where this capture has none. */
   gate: GateMode | null;
+  /** "Enhanced voice: Strong" (GEL-28): DFN3's time per block and why it
+   * runs as Standard. Null unless Strong was asked for. */
+  strong: StrongInfo | null;
 };
 /** Its words in the language of the moment it is noted. */
 const inactive = (): ProcessingInfo => ({
@@ -95,6 +112,7 @@ const inactive = (): ProcessingInfo => ({
   inputGain: 1,
   contextState: null,
   gate: null,
+  strong: null,
 });
 export const useAudioProcessing = create<ProcessingInfo>(() => inactive());
 export function noteAudioProcessing(info: ProcessingInfo | null): void {
@@ -115,95 +133,17 @@ export type MicProcessor = {
 };
 const ASSET_HASH =
   "e66d0eaef35d3774e86377efa8b9897e5b226284fb53059f0c1444881888b71c";
-/** A download that stops arriving gives up; a slow one that keeps arriving
- * does not (the model is about 5.6 MB and sent uncompressed). */
-const MODEL_STALL_MS = 8_000;
-/** After a failed load, captures use the browser filters this long before
- * the model is fetched again, longer after each failure. */
-const MODEL_RETRY_MS = [30_000, 120_000, 600_000];
-let wasm: Promise<WebAssembly.Module> | null = null;
-let modelFailure: { error: unknown; count: number; until: number } | null =
-  null;
-async function fetchModel(): Promise<ArrayBuffer> {
-  const abort = new AbortController();
-  let stall: ReturnType<typeof setTimeout> | undefined;
-  const arm = () => {
-    clearTimeout(stall);
-    stall = setTimeout(
-      () =>
-        abort.abort(
-          new Error(translate(diagnostics, "processing.error.modelStalled")),
-        ),
-      MODEL_STALL_MS,
-    );
-  };
-  arm();
-  try {
-    const response = await fetch(`/audio/rnnoise.wasm?sha256=${ASSET_HASH}`, {
-      cache: "force-cache",
-      signal: abort.signal,
-    });
-    if (!response.ok)
-      throw new Error(translate(diagnostics, "processing.error.modelLoad"));
-    if (!response.body) return await response.arrayBuffer();
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-      arm();
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      size += value.byteLength;
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return bytes.buffer;
-  } finally {
-    clearTimeout(stall);
-  }
-}
-async function loadModel(): Promise<WebAssembly.Module> {
-  if (modelFailure && Date.now() < modelFailure.until) throw modelFailure.error;
-  if (!wasm) {
-    wasm = (async () => {
-      const bytes = await fetchModel();
-      const digest = await crypto.subtle.digest("SHA-256", bytes);
-      const hash = Array.from(new Uint8Array(digest), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join("");
-      if (hash !== ASSET_HASH)
-        throw new Error(
-          translate(diagnostics, "processing.error.modelChecksum"),
-        );
-      const model = await WebAssembly.compile(bytes);
-      modelFailure = null;
-      return model;
-    })().catch((error: unknown) => {
-      wasm = null;
-      const count = (modelFailure?.count ?? 0) + 1;
-      modelFailure = {
-        error,
-        count,
-        until:
-          Date.now() +
-          MODEL_RETRY_MS[Math.min(count, MODEL_RETRY_MS.length) - 1]!,
-      };
-      throw error;
-    });
-  }
-  return wasm;
-}
+/** RNNoise, checked and compiled once per page. After a failed load,
+ * captures use the browser filters for a while before it is fetched again. */
+const rnnoise = onceWithRetry(async () =>
+  WebAssembly.compile(await fetchVerified("rnnoise.wasm", ASSET_HASH)),
+);
 export function resetNoiseModelForTests(): void {
-  wasm = null;
-  modelFailure = null;
+  rnnoise.reset();
 }
 /** A worklet's added delay: 10 ms reblocking, plus the input gate's 20 ms
- * look-ahead while the gate is on. */
+ * look-ahead while the gate is on. The filters' own delay comes on top:
+ * 20 ms for RNNoise, 30 ms for DeepFilterNet3 (GEL-28 measurement). */
 function workletBufferMs(gate: GateMode): number {
   return gate === "off" ? 10 : 30;
 }
@@ -231,13 +171,14 @@ function infoFor(
         : null,
     noiseSuppression: effective.noiseSuppression ?? null,
     autoGainControl: effective.autoGainControl ?? null,
-    addedBufferMs:
-      actual === "enhanced"
-        ? workletBufferMs(gateConfig(settings, actual).mode)
-        : 0,
+    addedBufferMs: isLocalFilter(actual)
+      ? workletBufferMs(gateConfig(settings, actual).mode)
+      : 0,
     inputGain: 1,
     contextState: null,
     gate: actual === "original" ? "off" : null,
+    // Only where DFN3 may run: never beside browser filters.
+    strong: actual === "strong" ? strongInfo() : null,
   };
 }
 
@@ -257,17 +198,19 @@ export async function createProcessor(
     actual,
     translate(
       diagnostics,
-      actual === "enhanced"
-        ? "processing.enhanced"
-        : actual === "browser"
-          ? "processing.browser"
-          : "processing.original",
+      actual === "strong"
+        ? "processing.strong"
+        : actual === "enhanced"
+          ? "processing.enhanced"
+          : actual === "browser"
+            ? "processing.browser"
+            : "processing.original",
     ),
   );
   // "Browser filters" runs the gate in a worklet of its own.
   const gated =
     actual === "browser" && !plain && typeof AudioWorkletNode !== "undefined";
-  if (actual !== "enhanced" && !gated && settings.inputGain === 1) {
+  if (!isLocalFilter(actual) && !gated && settings.inputGain === 1) {
     let disposed = false;
     const ended = () => {
       if (!disposed) onFailure?.();
@@ -293,10 +236,9 @@ export async function createProcessor(
       },
     };
   }
-  const ctx =
-    actual === "enhanced"
-      ? new AudioContext({ sampleRate: 48_000 })
-      : new AudioContext();
+  const ctx = isLocalFilter(actual)
+    ? new AudioContext({ sampleRate: 48_000 })
+    : new AudioContext();
   let source: MediaStreamAudioSourceNode | undefined;
   let gain: GainNode | undefined;
   let node: AudioWorkletNode | undefined;
@@ -304,9 +246,64 @@ export async function createProcessor(
   let disposed = false;
   let faulted = false;
   let resuming: Promise<void> | null = null;
+  /** Strong running as Standard from here on. */
+  const fallBack = (reason: StrongFallback, detail: string) => {
+    info.actual = "enhanced";
+    info.strong = { ...(info.strong ?? strongInfo()), fallback: reason };
+    info.message = translate(
+      diagnostics,
+      reason === "load"
+        ? "processing.strongUnavailable"
+        : "processing.strongFellBack",
+      {
+        reason:
+          reason === "load"
+            ? detail
+            : translate(diagnostics, `strong.reason.${reason}`),
+      },
+    );
+    message = info.message;
+  };
+  /** What the Strong worklet says about DFN3. */
+  const noteStrong = (data: unknown) => {
+    const report = data as {
+      op?: unknown;
+      fallback?: unknown;
+      dfnMs?: unknown;
+      rnnoiseMs?: unknown;
+      maxMs?: unknown;
+    };
+    if (report?.op !== "strong" || !info.strong) return;
+    const ms = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) ? value : null;
+    if (
+      report.fallback === "slow" ||
+      report.fallback === "underrun" ||
+      report.fallback === "error"
+    ) {
+      info.strong.dfnMs = ms(report.dfnMs) ?? info.strong.dfnMs;
+      strongFellBack(report.fallback, info.strong.dfnMs);
+      fallBack(report.fallback, "");
+    } else {
+      info.strong.dfnMs = ms(report.dfnMs);
+      info.strong.rnnoiseMs = ms(report.rnnoiseMs);
+      info.strong.maxMs = ms(report.maxMs);
+    }
+    info.strong = { ...info.strong };
+    onState?.({ ...info });
+  };
   let resumeTimer: ReturnType<typeof setTimeout> | undefined;
   let cancelResume: (() => void) | undefined;
-  const message = info.message;
+  let message = info.message;
+  // A graph rebuilt with Standard after Strong fell back still says why.
+  const fellBack =
+    settings.processingMode === "strong" && actual === "enhanced"
+      ? strongRemembered()
+      : null;
+  if (fellBack) {
+    info.strong = { ...strongInfo(), dfnMs: fellBack.dfnMs };
+    fallBack(fellBack.reason, "");
+  }
   const fault = () => {
     if (!disposed && !faulted) {
       faulted = true;
@@ -335,8 +332,14 @@ export async function createProcessor(
       worklet.port.onmessage = (event: MessageEvent) => {
         if (event.data?.ready) {
           clearTimeout(timeout);
+          if (info.strong)
+            info.strong.clock =
+              event.data.clock === "date" ? "date" : "performance";
           resolve();
-        } else if (!disposed) noteGate(event.data);
+        } else if (!disposed) {
+          noteGate(event.data);
+          noteStrong(event.data);
+        }
       };
     });
   const resume = () => {
@@ -411,7 +414,7 @@ export async function createProcessor(
     destination.channelCount =
       actual === "original" ? Math.min(2, info.channels ?? 2) : 1;
     destination.channelCountMode = "explicit";
-    if (actual === "enhanced") {
+    if (isLocalFilter(actual)) {
       if (
         ctx.sampleRate !== 48_000 ||
         !ctx.audioWorklet ||
@@ -420,21 +423,70 @@ export async function createProcessor(
         throw new Error(
           translate(diagnostics, "processing.error.noiseFilterUnsupported"),
         );
-      const model = await loadModel();
+      const remembered = actual === "strong" ? strongRemembered() : null;
+      const strongLoad: Promise<StrongFilter | Error> | null =
+        actual === "strong" && !remembered
+          ? loadStrongFilter().catch((error: unknown) =>
+              error instanceof Error ? error : new Error(String(error)),
+            )
+          : null;
+      const model = await rnnoise.get();
+      let strong: StrongFilter | null = null;
+      if (remembered) {
+        info.strong = { ...strongInfo(), dfnMs: remembered.dfnMs };
+        fallBack(remembered.reason, "");
+      } else if (strongLoad) {
+        // The worker's warm-up time is no verdict: the worklet measures.
+        const loaded = await strongLoad;
+        if (loaded instanceof Error) fallBack("load", loaded.message);
+        else strong = loaded;
+      }
       await ctx.audioWorklet.addModule(
         `/audio/rnnoise-worklet.js?v=${ASSET_HASH}`,
       );
-      node = new AudioWorkletNode(ctx, "gelabber-rnnoise", {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-        processorOptions: {
-          model,
-          gate: gateConfig(settings, actual),
-          gain: settings.inputGain,
-        },
-      });
-      await workletReady(node);
+      const filterNode = (name: string, extra: Record<string, unknown>) =>
+        new AudioWorkletNode(ctx, name, {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [1],
+          processorOptions: {
+            model,
+            ...extra,
+            gate: gateConfig(settings, actual),
+            gain: settings.inputGain,
+          },
+        });
+      if (strong) {
+        // Strong that does not start (no memory for the model copy, or too
+        // slow to say hello) is Standard, not browser filters. A processor
+        // error is RNNoise's, which Standard would hit as well.
+        try {
+          node = filterNode("gelabber-strong", {
+            dfn: {
+              module: strong.module,
+              memory: strong.memory,
+              state: strong.state,
+            },
+          });
+          await workletReady(node);
+        } catch (error) {
+          if (faulted || disposed) throw error;
+          if (node) {
+            node.onprocessorerror = null;
+            node.port.onmessage = null;
+            node.port.postMessage({ op: "dispose" });
+            node.port.close();
+            node.disconnect();
+            node = undefined;
+          }
+          strongFellBack("error", null);
+          fallBack("error", "");
+        }
+      }
+      if (!node) {
+        node = filterNode("gelabber-rnnoise", {});
+        await workletReady(node);
+      }
       node.onprocessorerror = fault;
       source.connect(node);
       node.connect(gain);
@@ -493,7 +545,7 @@ export async function createProcessor(
     return {
       stream: destination.stream,
       info,
-      enhanced: actual === "enhanced",
+      enhanced: isLocalFilter(actual),
       nativeFallback: false,
       usable: () =>
         !disposed &&
@@ -544,8 +596,9 @@ export async function captureMicrophone(
     typeof AudioContext === "undefined" ||
     typeof AudioWorkletNode === "undefined" ||
     typeof globalThis.crypto?.subtle === "undefined";
+  const local = isLocalFilter(settings.processingMode);
   const actual =
-    (forceBrowser || unavailable) && settings.processingMode === "enhanced"
+    (forceBrowser || unavailable) && local
       ? "browser"
       : settings.processingMode;
   let raw = await getMedia({
@@ -570,9 +623,8 @@ export async function captureMicrophone(
         translate(diagnostics, "processing.error.cancelledOrFailed"),
       );
     }
-    if (forceBrowser || (unavailable && settings.processingMode === "enhanced"))
-      processor.nativeFallback = true;
-    if ((forceBrowser || unavailable) && settings.processingMode === "enhanced")
+    if (forceBrowser || (unavailable && local)) processor.nativeFallback = true;
+    if ((forceBrowser || unavailable) && local)
       processor.info.message = translate(
         diagnostics,
         forceBrowser
@@ -613,7 +665,7 @@ export async function captureMicrophone(
       processor.nativeFallback = true;
       processor.info.message = translate(
         diagnostics,
-        actual === "enhanced"
+        isLocalFilter(actual)
           ? "processing.noiseFilterUnavailable"
           : "processing.unavailable",
         { state: processor.info.message },

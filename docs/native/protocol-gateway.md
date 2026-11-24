@@ -75,6 +75,10 @@ Server (env-configurable, defaults shown) — `backend/api/src/config.rs:20-25,8
 | media ticket TTL | `MEDIA_TICKET_TTL_SECS` | 30 s | | `config.rs:89` |
 | outbound queue | — | 1024 frames | overflow closes the socket (client reconnects/resyncs) | `hub.rs:28-36,105-112` |
 | catch-up buffer | — | 128 live events buffered across topics while subscribing; overflow closes socket | `hub/fanout.rs:8,226-235` |
+| frame budget | `API_RATE_WS_FRAMES_PER_MIN`, `API_RATE_WS_FRAMES_BURST` | 1200/min, burst 300 | client frames per socket; past it the server stops reading until it refills (§2) | `limits.rs` (`WS_FRAMES`), `gateway/budget.rs` |
+| typing budget | `API_RATE_WS_TYPING_PER_MIN`, `API_RATE_WS_TYPING_BURST` | 30/min, burst 10 | `y` frames per socket; past it they are dropped | `limits.rs` (`WS_TYPING`) |
+| signal budget | `API_RATE_WS_SIG_PER_MIN`, `API_RATE_WS_SIG_BURST` | 120/min, burst 20 | `sig` frames per socket; past it they wait like other frames | `limits.rs` (`WS_SIG`) |
+| presence budget | `API_RATE_WS_PRESENCE_PER_MIN`, `API_RATE_WS_PRESENCE_BURST` | 30/min, burst 10 | `p` frames per socket; past it they wait like other frames | `limits.rs` (`WS_PRESENCE`) |
 
 Client (web) — `web/src/ws/client.ts:48-51`:
 
@@ -105,8 +109,16 @@ Native client: replicate exactly — own 15 s `h` timer, reply `h` to every serv
 attempt 0 (first drop):    delay = 0 ms (next tick)
 attempt k >= 1:            base  = min(2000, 200 * 2^(k-1))
                            delay = round(base * (0.5 + random[0,1) * 0.5))
-retryAttempt resets to 0 on every successful `open`.
+retryAttempt resets to 0 on `start()`, and when a socket that has been open
+for at least heartbeatMs (15 s) closes or is dropped by the watchdog.
 ```
+
+A socket the server closes soon after `open` (for example a subscribe whose
+write fails while Postgres is degraded) is a failed attempt like a refused
+handshake, even if it already answered a subscribe with `ok`: resetting on
+`open` would reconnect, resubscribe and refetch at round-trip speed. Only a
+connection that stayed up gets the immediate retry. The native client resets
+the same way (`desktop/client/src/gateway.rs` `Task::run`), with a 10 s cap.
 
 | attempt | base ms | delay range ms |
 |---|---|---|
@@ -132,7 +144,7 @@ So `connecting` is only ever seen for the very first connect after sign-in;
 the connection notice (§6.6) reacts to `reconnecting`.
 
 On every (re)open (`client.ts:400-422`), in this order:
-1. `retryAttempt = 0`, `lastServerAt = now`, status `open`, start heartbeat + watchdog.
+1. Note the open time (for the backoff reset above), `lastServerAt = now`, status `open`, start heartbeat + watchdog.
 2. For every desired topic: send subscribe frame **with resume cursor** (`n`, `ep`) if one is known (§2.3).
 3. If the page/app is "in front": send `{"op":"f","on":true}`.
 4. Fire `ready` listeners (realtime recovery §6.4, voice re-join §7.4).
@@ -169,6 +181,19 @@ Web mirror: `web/src/ws/protocol.ts:25-44`. Unknown `op` or bad JSON →
 
 "Activity" frames reset the server idle timer, flip `i`→`o` and slide the
 session expiry (throttled) — `conn.rs:122-129,165-168,247-273`. A heartbeat does none of that.
+
+**Frame budget (v0.13, GEL-55).** Every message a socket sends (text, ping,
+pong, binary) spends a token of its frame budget, `sig` frames also one of
+the signal budget, `p` frames one of the presence budget, `y` frames one of
+the typing budget (defaults and env in §1.2). Over the frame, signal or
+presence budget the server holds the frame and reads nothing more from the
+socket until the budget refills: the client's sends back up in TCP, in
+order, and none is lost. A `y` over the typing budget is dropped. There is
+no error frame and no close, so a client needs no special handling; it must
+not send `y` more often than the web client (one per 3 s while typing, plus
+the stop), nor `p` more often than the desktop app (at most one per 10 s
+while there is input, plus the change to idle). Source:
+`backend/api/src/gateway/budget.rs`, `conn.rs` (`next_inbound`).
 
 ### 2.1 Topics
 
@@ -228,6 +253,7 @@ consecutive frames, never as a JSON array (`conn.rs:695-713`).
 | buffer holds exactly `n+1..=head` | those `e` frames (ascending) then `ok` |
 | any seq missing from the buffer | `gap` then `ok` |
 
+- A socket's `n` may skip values: an event for one user's eyes only (v0.13, GEL-21: an edit kept for its author under a block, §4.2) is left out for everyone else, live and on resume, and does not rewrite the earlier replay entries of its message. Clients accept any `n` above their cursor, so a skip is no gap — `conn.rs` (`take_batch`, `subscribe`), `protocol.rs` (`ServerFrame::for_user`).
 - Live delivery: if a live event's `ep` differs from the epoch the socket last saw for that topic, the server first sends `{"op":"gap","s","c","ep":<new>}` then the event — `hub/fanout.rs:238-246`.
 - Redis Pub/Sub reconnect on the server → `{"op":"resync"}` to every socket (catch-up and epochs cleared) — `hub/fanout.rs:54-62`.
 
@@ -343,6 +369,7 @@ without orders compare `read_at`. Never move a cached read position backwards.
 |---|---|---|---|---|---|---|
 | message sent (incl. system message, GIF) | channel | `c` | message id | full `Message` (4.3), incl. `nonce` of the sender's attempt | = `d.revision` | `messages/mod.rs:358-361,564-589` |
 | message edited | channel | `e` | message id | full `Message` | yes | `messages/mod.rs:488-491` |
+| message edited in a DM by the one blocked, of a message the blocker has seen (v0.13, GEL-21) | channel | `e` | message id | full `Message` as its author reads it | yes | **only to the author's sockets**; the blocker gets no event and keeps the text they saw, also after an unblock. `messages/mod.rs` (`own_edit`) |
 | reaction added/removed | channel | `e` | message id | full `Message` with new `reactions` | yes | `messages/reactions.rs:145-148` |
 | link previews resolved after send (background job) | channel | `e` | message id | full `Message` with `previews` | yes | `messages/mod.rs:720` |
 | previews removed by the author (`DELETE /api/messages/{id}/previews`) | channel | `e` | message id | full `Message` without `previews` (key omitted) | yes | `messages/mod.rs:641-659` |
@@ -377,7 +404,7 @@ Rust: `backend/api/src/messages/mod.rs:64-108`; TS: `web/src/messages/types.ts:5
 | `id` | uuid | |
 | `channel_id` | uuid | |
 | `author` | `{id: uuid, name: string, avatar_url: string\|null}` | |
-| `content` | string | empty for GIF/system messages |
+| `content` | string | empty for GIF/system messages. As this socket's user reads it: the author of a message they edited for themselves under a block (v0.13, GEL-21) reads their own text on every event of it, everyone else the shared one; `edited_at`, the alt texts and `previews` (only those of links in the text read) likewise |
 | `created_at` | RFC 3339 (µs precision) | |
 | `edited_at` | RFC 3339 \| `null` | |
 | `revision` | i64 | |
@@ -385,9 +412,9 @@ Rust: `backend/api/src/messages/mod.rs:64-108`; TS: `web/src/messages/types.ts:5
 | `attachments` | `[{id, filename, content_type, size}]` | |
 | `reactions` | `[{emoji: string, user_ids: [uuid]}]` | |
 | `gif` | omitted or `{provider, slug, title, width, height, url, still: string\|null}` | |
-| `mentions` | `[uuid]` | |
+| `mentions` | `[uuid]` | as this socket's user may see them: an invisible member `@here` reached is in it only for themselves (messages sent from v0.13 on, GEL-43; older ones keep everyone `@here` reached) |
 | `mention_everyone` | bool | |
-| `reply` | omitted or `{id, deleted, [author:{id,name}], [excerpt], [has_attachment:true], [has_gif:true], [system]}`; deleted original = `{id, deleted:true}` | |
+| `reply` | omitted or `{id, deleted, [author:{id,name}], [excerpt], [has_attachment:true], [has_gif:true], [system]}`; deleted original = `{id, deleted:true}` | `excerpt` as this socket's user reads it: the quoted message's author reads their own text of it (v0.13, GEL-21) |
 | `previews` | omitted when empty; `[{url, title?, description?, site_name?, image?:{url,width,height}, youtube_id?}]` | image url always `/api/previews/…` |
 | `system` | omitted or `{kind: string, params: object}` (e.g. `kind:"live_started"`) | |
 | `nonce` | omitted or uuid | only on create response + its event: the sender swaps its pending `tmp:<nonce>` row |
@@ -508,7 +535,8 @@ Manual mode (#590, `backend/api/src/presence.rs`): the account's
 `presence_mode` is applied on top of the sockets' aggregate before anyone
 else sees it: `idle` → always `i`, `dnd` → `d`, `invisible` → treated as
 offline (no frame, left out of snapshots and the friend list, and no `x`
-when its last socket closes; `@here` still reaches the account). Sockets
+when its last socket closes; `@here` still reaches the account, which alone
+sees itself among the message's `mentions`). Sockets
 only ever send `o`/`i`. The account's own sockets get the
 mode itself as `pm` and show it instead of what the server reports (an
 invisible account shows "Unsichtbar", not offline). While `invisible` the

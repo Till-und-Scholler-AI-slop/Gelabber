@@ -1,0 +1,32 @@
+[package]
+name = "gelabber-deepfilternet"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+description = "DeepFilterNet3 (libDF + tract) as a plain WebAssembly module for the Strong noise filter's AudioWorklet (GEL-28)"
+
+# Its own workspace, so cargo does not look for one further up the repository.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# build-deepfilternet.sh unpacks the pinned DeepFilterNet source next to this
+# crate's copy; the path exists only inside that build.
+# libDF's own "wasm" feature needs wasm-bindgen and its generated JS glue;
+# a few C-ABI exports are enough for the worklet and need no glue.
+deep_filter = { path = "../deepfilternet/libDF", default-features = false, features = ["tract"] }
+ndarray = "0.15.6"
+# A dependency seeds hash maps through getrandom, which has no source on
+# wasm32-unknown-unknown without JS; lib.rs registers a fixed one.
+getrandom = { version = "0.2.14", features = ["custom"] }
+
+# The profile the GEL-28 measurement timed (docs/v0.13-deepfilternet/dfn-wasm),
+# without the name section.
+[profile.release]
+opt-level = 3
+lto = "fat"
+panic = "abort"
+strip = true

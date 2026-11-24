@@ -1,0 +1,9 @@
+date: 2026-11-23T00:48:32Z
+cpu: AMD EPYC 9354P 32-Core Processor
+logical cpus: 8
+hypervisor: yes
+kernel: Linux 6.12.113+deb13-amd64
+node: v26.13.1
+rustc: rustc 1.100.0 (0ef1bc386 2026-11-09)
+load average before engines: 12.94 11.39 11.33
+load average after engines: 14.77 12.93 11.97

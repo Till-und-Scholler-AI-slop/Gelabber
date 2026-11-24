@@ -15,6 +15,29 @@ use crate::i18n::Locale;
 /// Redis Pub/Sub channel / replay-key prefix. Keep it short.
 pub const REDIS_PREFIX: &str = "gb:";
 
+/// The key of a message event's delta that lists whom it mentions without
+/// showing it to others (GEL-43). It stays on the server: each socket gets
+/// the event through [`ServerFrame::for_user`].
+pub const HIDDEN_MENTIONS: &str = "hidden_mentions";
+
+/// The key of a message event's delta that holds the fields its author
+/// reads otherwise (GEL-21: an edit they made for themselves under a
+/// block). It stays on the server too: [`ServerFrame::for_user`] puts the
+/// fields on the author's copy and drops them from everyone's.
+pub const AUTHOR_VIEW: &str = "author_view";
+
+/// The key of a message event's delta that holds the reply quote's excerpt
+/// as the quoted message's author reads it (GEL-21: their own text of it).
+/// [`ServerFrame::for_user`] puts it on that author's copy of `reply` and
+/// drops it from everyone's.
+pub const REPLY_AUTHOR_VIEW: &str = "reply_author_view";
+
+/// The key of a message event's delta (`true`) that marks it for its
+/// author's sockets alone (GEL-21: their edit kept for themselves under a
+/// block). [`ServerFrame::for_user`] drops the event for everyone else; the
+/// key never goes out.
+pub const AUTHOR_ONLY: &str = "author_only";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Topic {
     Server(Uuid),
@@ -786,6 +809,84 @@ impl ServerFrame {
         }
     }
 
+    /// The frame as `user` may read it. A message event names under
+    /// [`HIDDEN_MENTIONS`] whom it mentions without showing it to others
+    /// (GEL-43): that list never goes out, and `user`, when on it, reads
+    /// themselves among the `mentions`, in their stored (ascending) order.
+    /// Under [`AUTHOR_VIEW`] it holds what its author reads otherwise
+    /// (GEL-21): only the author's copy carries those fields, as only the
+    /// quoted message's author's copy carries [`REPLY_AUTHOR_VIEW`]. An event
+    /// marked [`AUTHOR_ONLY`] is `None` for everyone but its author.
+    pub fn for_user(self, user: Uuid) -> Option<Self> {
+        let (t, s, c, n, ep, i, d, r) = match self {
+            Self::Event {
+                t,
+                s,
+                c,
+                n,
+                ep,
+                i,
+                d: Some(d),
+                r,
+            } if [HIDDEN_MENTIONS, AUTHOR_VIEW, REPLY_AUTHOR_VIEW, AUTHOR_ONLY]
+                .iter()
+                .any(|key| d.get(key).is_some()) =>
+            {
+                (t, s, c, n, ep, i, d, r)
+            }
+            frame => return Some(frame),
+        };
+        let mut delta = (*d).clone();
+        let me = user.to_string();
+        let author = delta["author"]["id"].as_str() == Some(me.as_str());
+        let author_only = delta
+            .as_object_mut()
+            .and_then(|fields| fields.remove(AUTHOR_ONLY));
+        if author_only.is_some() && !author {
+            return None;
+        }
+        let author_view = delta
+            .as_object_mut()
+            .and_then(|fields| fields.remove(AUTHOR_VIEW));
+        if author
+            && let (Some(fields), Some(Value::Object(view))) = (delta.as_object_mut(), author_view)
+        {
+            fields.extend(view);
+        }
+        let reply_view = delta
+            .as_object_mut()
+            .and_then(|fields| fields.remove(REPLY_AUTHOR_VIEW));
+        if let Some(excerpt) = reply_view
+            && delta["reply"]["author"]["id"].as_str() == Some(me.as_str())
+        {
+            delta["reply"]["excerpt"] = excerpt;
+        }
+        let hidden = delta
+            .as_object_mut()
+            .and_then(|fields| fields.remove(HIDDEN_MENTIONS));
+        let own = hidden
+            .as_ref()
+            .and_then(Value::as_array)
+            .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(me.as_str())));
+        if own && let Some(mentions) = delta.get_mut("mentions").and_then(Value::as_array_mut) {
+            let at = mentions
+                .iter()
+                .position(|id| id.as_str().is_some_and(|id| id > me.as_str()))
+                .unwrap_or(mentions.len());
+            mentions.insert(at, Value::String(me));
+        }
+        Some(Self::Event {
+            t,
+            s,
+            c,
+            n,
+            ep,
+            i,
+            d: Some(Arc::new(delta)),
+            r,
+        })
+    }
+
     pub fn presence_snap(server_id: Uuid, snap: Vec<PresenceEntry>) -> Self {
         Self::Presence {
             s: server_id,
@@ -996,6 +1097,96 @@ mod tests {
         assert!(!json.contains("kind"));
         assert!(!json.contains("server_id"));
         assert!(!json.contains("payload"));
+    }
+
+    /// Hidden mentions (GEL-43) never go out; the one they name reads
+    /// themselves among the mentions, in order.
+    #[test]
+    fn hidden_mentions_reach_only_whom_they_name() {
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let event = |d: serde_json::Value| {
+            ServerFrame::event(Event {
+                t: EventKind::C,
+                s: Uuid::from_u128(9),
+                c: Some(Uuid::from_u128(8)),
+                n: 1,
+                ep: None,
+                r: None,
+                i: Some(Uuid::from_u128(7)),
+                d: Some(Arc::new(d)),
+            })
+        };
+        let delta = |frame: ServerFrame| match frame {
+            ServerFrame::Event { d: Some(d), .. } => (*d).clone(),
+            other => panic!("not an event: {other:?}"),
+        };
+        let sent = event(serde_json::json!({"mentions": [a, c], "hidden_mentions": [b]}));
+        assert_eq!(
+            delta(sent.clone().for_user(b).unwrap()),
+            serde_json::json!({"mentions": [a, b, c]})
+        );
+        assert_eq!(
+            delta(sent.for_user(a).unwrap()),
+            serde_json::json!({"mentions": [a, c]})
+        );
+        // Anything else passes untouched.
+        let plain = event(serde_json::json!({"mentions": [a]}));
+        assert_eq!(plain.clone().for_user(a), Some(plain));
+        assert_eq!(
+            ServerFrame::Heartbeat.for_user(a),
+            Some(ServerFrame::Heartbeat)
+        );
+
+        // The author's own view (GEL-21) reaches the author alone.
+        let edited = event(serde_json::json!({
+            "author": {"id": a},
+            "content": "alt",
+            "edited_at": null,
+            "author_view": {"content": "neu", "edited_at": "2026-11-23T10:00:00Z"},
+        }));
+        assert_eq!(
+            delta(edited.clone().for_user(a).unwrap()),
+            serde_json::json!({
+                "author": {"id": a},
+                "content": "neu",
+                "edited_at": "2026-11-23T10:00:00Z",
+            })
+        );
+        assert_eq!(
+            delta(edited.for_user(b).unwrap()),
+            serde_json::json!({"author": {"id": a}, "content": "alt", "edited_at": null})
+        );
+        // An event marked for its author reaches no one else.
+        let own = event(serde_json::json!({
+            "author": {"id": a},
+            "content": "neu",
+            "author_only": true,
+        }));
+        assert_eq!(
+            delta(own.clone().for_user(a).unwrap()),
+            serde_json::json!({"author": {"id": a}, "content": "neu"})
+        );
+        assert_eq!(own.for_user(b), None);
+        // A quote of the author's own text reads so for its author alone.
+        let quoting = event(serde_json::json!({
+            "author": {"id": b},
+            "reply": {"id": c, "author": {"id": a}, "excerpt": "alt"},
+            "reply_author_view": "neu",
+        }));
+        assert_eq!(
+            delta(quoting.clone().for_user(a).unwrap()),
+            serde_json::json!({
+                "author": {"id": b},
+                "reply": {"id": c, "author": {"id": a}, "excerpt": "neu"},
+            })
+        );
+        assert_eq!(
+            delta(quoting.for_user(b).unwrap()),
+            serde_json::json!({
+                "author": {"id": b},
+                "reply": {"id": c, "author": {"id": a}, "excerpt": "alt"},
+            })
+        );
     }
 
     /// The publish template as `EventLog::publish_revision` builds it: the

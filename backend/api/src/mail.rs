@@ -7,8 +7,11 @@
 //! account's language (`crate::i18n::mail` holds the texts). Sending runs in
 //! the background after the response (`crate::auth`), so neither the relay's
 //! speed nor its failures tell a caller whether an address has an account.
-//! Failures are logged with the user id, never the address.
+//! Failures are logged with the user id, never the address, and counted
+//! per kind for `/metrics` (`gelabber_mail_failed_total`, GEL-40).
 
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,6 +35,7 @@ pub struct Mailer {
     public_url: String,
     instance: String,
     transport: Transport,
+    health: Arc<Health>,
 }
 
 #[derive(Clone)]
@@ -39,6 +43,17 @@ enum Transport {
     Smtp(AsyncSmtpTransport<Tokio1Executor>),
     /// Tests read what would have been sent.
     Memory(Arc<Mutex<Vec<Sent>>>),
+    /// Tests: every mail fails, as with a relay that is down.
+    Refusing,
+}
+
+/// What became of this process's mails: failures per [`Mail::kind`] (a
+/// fixed set, so the metric's labels stay bounded) and whether the newest
+/// mail failed, which Betrieb shows.
+#[derive(Default)]
+struct Health {
+    failed: Mutex<BTreeMap<&'static str, u64>>,
+    last_failed: AtomicBool,
 }
 
 /// A mail as the memory transport keeps it.
@@ -152,12 +167,21 @@ impl Mailer {
         Self::with_transport(from, public_url, Transport::Memory(Arc::default()))
     }
 
+    /// A mailer whose every mail fails; see [`Self::last_failed`].
+    pub fn refusing(public_url: &url::Url) -> Self {
+        let from = "Gelabber <noreply@gelabber.test>"
+            .parse()
+            .expect("static mailbox");
+        Self::with_transport(from, public_url, Transport::Refusing)
+    }
+
     fn with_transport(from: Mailbox, public_url: &url::Url, transport: Transport) -> Self {
         Self {
             from,
             public_url: public_url.as_str().trim_end_matches('/').to_owned(),
             instance: public_url.host_str().unwrap_or("Gelabber").to_owned(),
             transport,
+            health: Arc::default(),
         }
     }
 
@@ -170,11 +194,50 @@ impl Mailer {
     pub fn outbox(&self) -> Vec<Sent> {
         match &self.transport {
             Transport::Memory(sent) => sent.lock().unwrap_or_else(|err| err.into_inner()).clone(),
-            Transport::Smtp(_) => Vec::new(),
+            Transport::Smtp(_) | Transport::Refusing => Vec::new(),
+        }
+    }
+
+    /// Whether the newest mail this process handed over failed; `false`
+    /// before the first one.
+    pub fn last_failed(&self) -> bool {
+        self.health.last_failed.load(Ordering::Relaxed)
+    }
+
+    /// The failure counter in the Prometheus text format.
+    pub fn render_metrics(&self, out: &mut String) {
+        out.push_str("# HELP gelabber_mail_failed_total Mails the relay did not take, by kind.\n");
+        out.push_str("# TYPE gelabber_mail_failed_total counter\n");
+        let failed = self
+            .health
+            .failed
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        for (kind, count) in failed.iter() {
+            out.push_str(&format!(
+                "gelabber_mail_failed_total{{kind=\"{kind}\"}} {count}\n"
+            ));
         }
     }
 
     pub async fn send(&self, to: &str, mail: &Mail, locale: Locale) -> Result<(), String> {
+        let result = self.deliver(to, mail, locale).await;
+        self.health
+            .last_failed
+            .store(result.is_err(), Ordering::Relaxed);
+        if result.is_err() {
+            *self
+                .health
+                .failed
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .entry(mail.kind())
+                .or_insert(0) += 1;
+        }
+        result
+    }
+
+    async fn deliver(&self, to: &str, mail: &Mail, locale: Locale) -> Result<(), String> {
         let (subject, body) = self.render(mail, locale);
         match &self.transport {
             Transport::Memory(sent) => {
@@ -202,6 +265,7 @@ impl Mailer {
                     .map(|_| ())
                     .map_err(|err| format!("smtp: {err}"))
             }
+            Transport::Refusing => Err("refused".to_owned()),
         }
     }
 

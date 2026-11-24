@@ -119,14 +119,16 @@ fn shared(ctx: &egui::Context) -> Arc<Mutex<OverlayState>> {
     })
 }
 
-/// A left-to-right row exactly `height` tall (`ui.horizontal` would be at
-/// least the 36px interact size).
+/// A left-to-right row of lines exactly `height` tall (`ui.horizontal`
+/// would be at least the 36px interact size). What does not fit wraps
+/// onto a new line `gap` below, as `flex-wrap: wrap; gap` does on the web,
+/// instead of painting past the dialog.
 pub fn row<R>(ui: &mut Ui, height: f32, gap: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), height),
-        egui::Layout::left_to_right(egui::Align::Center),
+        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
         |ui| {
-            ui.spacing_mut().item_spacing.x = gap;
+            ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
             add(ui)
         },
     )
@@ -140,6 +142,13 @@ pub fn open(ctx: &egui::Context, overlay: Overlay) {
     s.overlay = Some(overlay);
     s.opened = ctx.cumulative_frame_nr();
     ctx.request_repaint();
+}
+
+/// The quick switcher, from a control that stands for Strg+K (the
+/// overview's "Springen zu …").
+pub fn open_switcher(ctx: &egui::Context) {
+    crate::widgets::set_keyboard_focus(ctx, false);
+    open(ctx, Overlay::Switcher(switcher::Switcher::default()));
 }
 
 /// `MemberProfileDialog` for `member` of `server`.
@@ -277,4 +286,51 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     drop(s);
     message_toasts::show(ui, app, &mut toasts);
     state.lock().toasts = toasts;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use egui::{Rect, Sense, UiBuilder, vec2};
+
+    /// `flex-wrap: wrap; gap: 12px` (`.member-profile__actions`): what
+    /// does not fit wraps onto a new row 12 below, each keeps its height,
+    /// and what follows the row starts under its last line.
+    #[test]
+    fn a_row_wraps_what_does_not_fit() {
+        type Laid = (Rect, Vec<Rect>, Rect);
+        let laid: Rc<RefCell<Option<Laid>>> = Rc::default();
+        let out = laid.clone();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(400.0, 400.0))
+            .build_ui(move |ui| {
+                let bounds = Rect::from_min_size(ui.max_rect().min, vec2(300.0, 300.0));
+                ui.scope_builder(UiBuilder::new().max_rect(bounds), |ui| {
+                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                    let mut items = Vec::new();
+                    // Four 120 wide buttons: two fit in 300 with the gap.
+                    super::row(ui, 40.0, 12.0, |ui| {
+                        for _ in 0..4 {
+                            items.push(ui.allocate_exact_size(vec2(120.0, 40.0), Sense::click()).0);
+                        }
+                    });
+                    let below = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover()).0;
+                    *out.borrow_mut() = Some((bounds, items, below));
+                });
+            });
+        harness.run();
+        let (bounds, items, below) = laid.borrow().clone().expect("drawn");
+        for item in &items {
+            assert!(item.right() <= bounds.right(), "{item:?} past {bounds:?}");
+            assert_eq!(item.height(), 40.0);
+        }
+        assert_eq!(items[0].top(), items[1].top());
+        assert_eq!(items[1].left(), items[0].right() + 12.0);
+        assert_eq!(items[2].left(), bounds.left());
+        assert_eq!(items[2].top(), items[1].bottom() + 12.0);
+        assert_eq!(items[3].top(), items[2].top());
+        assert!(below.top() >= items[3].bottom(), "{below:?}");
+    }
 }

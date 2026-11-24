@@ -74,7 +74,7 @@ pub struct Prefs {
     pub source_audio_app: String,
     pub source_audio_volume: f64,
     pub source_audio_muted: bool,
-    /// `enhanced`, `browser` or `original`.
+    /// `enhanced` (Standard), `strong`, `browser` or `original`.
     pub processing_mode: String,
     pub economy_mode: bool,
     /// `balanced` or `<height>p<fps>`.
@@ -181,6 +181,7 @@ impl Prefs {
             source_audio_volume: n("sourceAudioVolume", d.source_audio_volume).clamp(0.0, 4.0),
             source_audio_muted: b("sourceAudioMuted", d.source_audio_muted),
             processing_mode: match s("processingMode", "enhanced").as_str() {
+                "strong" => "strong".into(),
                 "browser" => "browser".into(),
                 "original" => "original".into(),
                 _ => "enhanced".into(),
@@ -382,5 +383,18 @@ mod tests {
         assert_eq!(partial.input_gain, 2.0);
         assert_eq!(partial.voice_input, "activity");
         assert!(partial.message_toasts);
+    }
+
+    /// GEL-28: the strong filter is kept; an unknown mode is Standard.
+    #[test]
+    fn the_strong_filter_is_kept_and_unknown_modes_are_standard() {
+        let strong = Prefs {
+            processing_mode: "strong".into(),
+            ..Prefs::default()
+        };
+        assert_eq!(strong.to_json()["processingMode"], "strong");
+        assert_eq!(Prefs::from_json(&strong.to_json()), strong);
+        let unknown = Prefs::from_json(&json!({"processingMode": "ultra"}));
+        assert_eq!(unknown.processing_mode, "enhanced");
     }
 }

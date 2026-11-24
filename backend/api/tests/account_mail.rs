@@ -701,3 +701,151 @@ async fn with_mail_only_a_new_or_pending_account_uses_an_invitation(pool: PgPool
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     assert_eq!(used_by(second).await, Some(bob));
 }
+
+/// GEL-40: an account registered while mail was off, so it never got a
+/// confirmation link.
+async fn legacy_ada(pool: &PgPool) {
+    let mut before = Client::new(pool.clone());
+    before.bootstrap().await;
+    let res = before.register(ADA, PASSWORD, "Ada").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+}
+
+async fn resend(client: &mut Client, email: &str) -> common::Response {
+    post(
+        client,
+        "/api/auth/verify-email/resend",
+        json!({ "email": email }),
+    )
+    .await
+}
+
+#[sqlx::test]
+async fn an_unconfirmed_account_gets_a_new_link_on_request(pool: PgPool) {
+    legacy_ada(&pool).await;
+    let (state, mailer) = mail_state(pool);
+    let mut client = client(&state).await;
+
+    // Asked for without a password: nothing else needs to be known.
+    let res = resend(&mut client, "  Ada@Example.com ").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    assert_eq!(res.body, json!({}));
+    assert!(res.set_cookie(common::SESSION).is_none());
+    let sent = outbox(&mailer, 1).await;
+    assert_eq!(sent[0].to, ADA);
+    assert!(
+        sent[0].body.contains("/verify-email#token="),
+        "{}",
+        sent[0].body
+    );
+
+    // The link still asks for the password, as every confirmation link.
+    let res = post(
+        &mut client,
+        "/api/auth/verify-email",
+        json!({ "token": token(&sent[0]), "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["user"]["name"], "Ada");
+
+    // Confirmed now: a further request answers alike and sends nothing.
+    let res = resend(&mut client, ADA).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mailer.outbox().len(), 1);
+}
+
+#[sqlx::test]
+async fn asking_for_a_link_tells_nothing_about_an_address(pool: PgPool) {
+    let (state, mailer) = mail_state(pool.clone());
+    confirmed_ada(&state, &mailer).await;
+    let mut bob = client(&state).await;
+    let res = bob.register("bob@example.com", PASSWORD, "Bob").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    outbox(&mailer, 2).await;
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE email = 'bob@example.com'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Unknown, confirmed and disabled addresses: the same answer, no mail.
+    let mut stranger = client(&state).await;
+    for email in ["nobody@example.com", ADA, "bob@example.com"] {
+        let res = resend(&mut stranger, email).await;
+        assert_eq!(res.status, StatusCode::ACCEPTED, "{email}: {}", res.body);
+        assert_eq!(res.body, json!({}), "{email}");
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mailer.outbox().len(), 2);
+
+    let res = resend(&mut stranger, "not an address").await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["email"], "invalid");
+}
+
+#[sqlx::test]
+async fn without_mail_there_is_no_link_to_ask_for(pool: PgPool) {
+    legacy_ada(&pool).await;
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+    let res = resend(&mut client, ADA).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+}
+
+/// Asked-for links share the address's registration mails: five an hour,
+/// whoever asks.
+#[sqlx::test]
+async fn asked_for_links_count_against_the_registration_mails(pool: PgPool) {
+    let (state, mailer) = mail_state(pool);
+    let mut stranger = client(&state).await;
+    let res = stranger.register(ADA, PASSWORD, "Ada").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    for _ in 0..8 {
+        let res = resend(&mut stranger, ADA).await;
+        assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    }
+    outbox(&mailer, 5).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mailer.outbox().len(), 5);
+
+    // The reset mails are a budget of their own and stay available.
+    let res = post(
+        &mut stranger,
+        "/api/auth/password-reset",
+        json!({ "email": ADA }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 6).await;
+    assert!(sent[5].body.contains("/reset-password#token="));
+}
+
+/// A relay that refuses every mail shows up in `/metrics`, not only in the
+/// log.
+#[sqlx::test]
+async fn failed_mails_are_counted(pool: PgPool) {
+    legacy_ada(&pool).await;
+    let mut state = common::state(pool);
+    let mailer = Mailer::refusing(&url::Url::parse("https://chat.example.org/").unwrap());
+    state.mail = Some(mailer.clone());
+    let mut client = client(&state).await;
+    assert!(!mailer.last_failed());
+
+    let res = resend(&mut client, ADA).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let line = "gelabber_mail_failed_total{kind=\"confirm_email\"} 1\n";
+    let mut text = String::new();
+    for _ in 0..200 {
+        let (status, _, bytes) = client.send_raw(Method::GET, "/metrics", None).await;
+        assert_eq!(status, StatusCode::OK);
+        text = String::from_utf8(bytes).unwrap();
+        if text.contains(line) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(text.contains(line), "{text}");
+    assert!(text.contains("# TYPE gelabber_mail_failed_total counter"));
+    assert!(mailer.last_failed());
+}

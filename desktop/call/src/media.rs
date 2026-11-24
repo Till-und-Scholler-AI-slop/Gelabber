@@ -542,6 +542,7 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
                     t.processed = levels["processed"].as_f64().unwrap_or(0.0);
                     t.clipping = levels["clipping"].as_bool().unwrap_or(false);
                     t.input_gate = logic::gate_levels(&levels);
+                    t.noise_filter = logic::noise_filter_levels(&levels);
                 });
             } else if now.duration_since(moved) >= MIC_TEST_STALL {
                 fail(&inner, logic::mic_test_stalled());
@@ -2582,7 +2583,10 @@ impl Session {
         let mut levels: Vec<(Uuid, f64)> = Vec::new();
         let sending = !muted && !deafened && inner.gate_open();
         if !sending {
-            inner.write(|s| s.input_gate = None);
+            inner.write(|s| {
+                s.input_gate = None;
+                s.noise_filter = None;
+            });
         }
         if self.fake {
             // Dummy audio captures silence; the fake microphone beeps
@@ -2594,7 +2598,11 @@ impl Session {
             }
         } else if sending && let Ok(meters) = engine.audio_levels() {
             let gate = logic::gate_levels(&meters);
-            inner.write(|s| s.input_gate = gate);
+            let filter = logic::noise_filter_levels(&meters);
+            inner.write(|s| {
+                s.input_gate = gate;
+                s.noise_filter = filter;
+            });
             let blocks = meters["blocks"].as_u64().unwrap_or(0);
             let moved = self.st.lock().mic_blocks.replace(blocks) != Some(blocks);
             levels.push((

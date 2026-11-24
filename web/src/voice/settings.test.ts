@@ -33,6 +33,8 @@ import {
   playbackSliderPosition,
   playbackSliderVolume,
   type SourceAudioShare,
+  asProcessingMode,
+  AUDIO_PROCESSING,
 } from "./settings.ts";
 afterEach(resetMediaSettingsForTests);
 
@@ -135,6 +137,29 @@ describe("capture and explicit bandwidth preferences", () => {
       channelCount: { ideal: 2 },
       sampleRate: { ideal: 48000 },
     });
+  });
+  it("keeps Strong as chosen and captures for it like Standard (GEL-28)", async () => {
+    useMediaSettings.getState().patch({ processingMode: "strong" });
+    expect(useMediaSettings.getState().processingMode).toBe("strong");
+    expect(micConstraints()).toEqual(
+      micConstraints({
+        ...useMediaSettings.getState(),
+        processingMode: "enhanced",
+      }),
+    );
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState().processingMode).toBe("strong");
+    // Standard stays the default and the answer to anything unknown, as an
+    // older client reads "strong".
+    expect(asProcessingMode("strong")).toBe("strong");
+    expect(asProcessingMode("stronger")).toBe("enhanced");
+    expect(DEFAULT_MEDIA_SETTINGS.processingMode).toBe("enhanced");
+    expect(Object.keys(AUDIO_PROCESSING)).toEqual([
+      "enhanced",
+      "strong",
+      "browser",
+      "original",
+    ]);
   });
   it("migrates old automatic caps without changing their browser filters or capture preferences", async () => {
     const storage = useMediaSettings.persist.getOptions().storage!;

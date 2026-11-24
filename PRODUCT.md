@@ -52,7 +52,7 @@ Rules that later work must keep:
 - **Paid offer:** a dedicated managed instance, on request. No provisioning is built until a group asks.
 - **Sign-in with Google:** built as generic OpenID Connect with Google as the first provider. Off by default per instance; on for the hosted instance; self-hosters can enter their own client ID. A Google sign-in with a verified email joins the existing account with that email. Email and password stay for everyone. The desktop app signs in through the system browser and a temporary local port.
 - **Discovery:** off by default. An owner opts a community in; a listing shows name, artwork, description, language and member count; the owner chooses open joining or request to join; every listing has a report button and the operator can delist. On self-hosted instances the directory is off unless the operator turns it on.
-- **Product rules from `AGENTS.md`:** own WebSocket signaling, mediasoup as the only SFU, client-side audio processing with self-hosted RNNoise assets.
+- **Product rules from `AGENTS.md`:** own WebSocket signaling, mediasoup as the only SFU, client-side audio processing with self-hosted RNNoise and DeepFilterNet3 assets.
 
 Undecided:
 

@@ -7,12 +7,14 @@
 import { Button } from "../components/ui/Button.tsx";
 import { useT, type TFunction } from "../i18n/catalog.ts";
 import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
+import { formatNumber } from "../i18n/format.ts";
 import {
   useAudioProcessing,
   useInputGate,
   type GateMode,
   type GateReport,
 } from "./audioProcessing.ts";
+import type { StrongInfo } from "./deepFilterNet.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { flowGroups, lossTone, type FlowGroup } from "./connectionSummary.ts";
 import {
@@ -266,6 +268,24 @@ function gateText(t: T, mode: GateMode | null, report: GateReport | null) {
     : setting;
 }
 
+/** DFN3's time per 10 ms block, or why Strong runs as Standard (GEL-28). */
+function strongText(t: T, strong: StrongInfo) {
+  const ms = (value: number) =>
+    formatNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (strong.fallback) {
+    const reason = t(`strong.reason.${strong.fallback}`);
+    return strong.dfnMs === null
+      ? t("mic.strongOff", { reason })
+      : t("mic.strongOffTime", { reason, ms: ms(strong.dfnMs) });
+  }
+  if (strong.dfnMs === null) return t("mic.strongWaiting");
+  const text = t("mic.strongTime", {
+    ms: ms(strong.dfnMs),
+    max: ms(strong.maxMs ?? strong.dfnMs),
+  });
+  return strong.clock === "date" ? `${text}; ${t("mic.strongCoarse")}` : text;
+}
+
 function Microphone() {
   const t = useT(diagnostics);
   const processing = useAudioProcessing();
@@ -292,6 +312,17 @@ function Microphone() {
           <dt>{t("mic.processing")}</dt>
           <dd>{processing.message}</dd>
         </div>
+        {processing.strong && (
+          <div className="is-wide">
+            <dt>{t("mic.strong")}</dt>
+            <dd>
+              {strongText(t, processing.strong)}
+              <small className="connection-fact-note">
+                {t("mic.strongHint")}
+              </small>
+            </dd>
+          </div>
+        )}
         <div>
           <dt>{t("mic.format")}</dt>
           <dd>{format.length > 0 ? format.join(", ") : "–"}</dd>

@@ -1,6 +1,5 @@
 /* The voice room: one line on who is there, the shares on a stage, the
-   people, and the way in. One set of rules; the phone's follow them. The
-   inline padding lines the room up with the overview's heading. */
+   people, and the way in. One set of rules; the phone's follow them. */
 .voice-room {
   --voice-room-inline: 28px;
   --voice-room-bottom: 28px;
@@ -10,49 +9,11 @@
   color: var(--lr-text);
   text-align: left;
 }
-.voice-room-name {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  font: var(--lr-type-title-sm);
-  overflow-wrap: anywhere;
-}
 .voice-room-summary {
   margin-top: 2px;
   color: var(--lr-muted);
   font: var(--lr-type-body);
   overflow-wrap: anywhere;
-}
-.voice-room-live-badge {
-  border-radius: var(--lr-radius-xs);
-  background: var(--lr-live);
-  color: var(--lr-on-live);
-  padding: 2px 6px;
-  font: var(--lr-type-caps);
-}
-/* The stage: the spotlight first, the other shares in a row under it. Each
-   picture keeps its element; the spotlight is a place, not a copy. */
-.voice-room-stage {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-width: 1100px;
-  margin-top: 16px;
-}
-.voice-room-spotlight {
-  order: -1;
-  flex: 1 0 100%;
-  min-width: 0;
-}
-/* At most half the window: the first row of people stays above the call
-   dock at 1440x900 (#375). Fullscreen is there for the big picture. */
-.voice-room-spotlight .voice-video-tile {
-  max-height: min(calc(var(--lr-100dvh) * 0.5), 520px);
-}
-.voice-room-filmstrip-tile {
-  flex: 0 0 auto;
-  width: 192px;
 }
 /* The channel's stage while pictures run: the pictures filling the space
    between the header and the call bar, and the people without a camera
@@ -865,9 +826,6 @@ html[data-compact-rooms="true"] .voice-room-seat {
     aspect-ratio: 16 / 9;
     border-radius: var(--lr-radius-lg);
   }
-  .voice-room-filmstrip-tile {
-    width: 160px;
-  }
   /* A phone keeps its column: each picture a row of its own, the people
      in threes under them, the page scrolling. */
   .voice-room[data-stage] {
@@ -1069,21 +1027,21 @@ html[data-compact-rooms="true"] .voice-room-seat {
     user-select: none;
     -webkit-user-select: none;
   }
-  /* As the page, the room fills it, so the bar starts at the bottom edge
-     and not under the last row. Inside the overview it stays a row. */
-  .voice-room[data-page]:not([data-joined]) {
+  /* The room fills the page, so the bar starts at the bottom edge and not
+     under the last row. */
+  .voice-room:not([data-joined]) {
     display: flex;
     flex-direction: column;
     min-height: 100%;
   }
-  .voice-room[data-page]:not([data-joined]) .voice-room-participants {
+  .voice-room:not([data-joined]) .voice-room-participants {
     margin-bottom: 20px;
   }
-  .voice-room[data-page]:not([data-joined]) .voice-room-invite {
+  .voice-room:not([data-joined]) .voice-room-invite {
     margin-top: 0;
     margin-bottom: 20px;
   }
-  .voice-room[data-page]:not([data-joined]) .voice-room-actions {
+  .voice-room:not([data-joined]) .voice-room-actions {
     order: 1;
     position: sticky;
     bottom: 0;

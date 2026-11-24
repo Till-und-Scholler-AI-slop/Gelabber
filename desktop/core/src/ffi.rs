@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-pub const GM_ABI_VERSION: u32 = 10;
+pub const GM_ABI_VERSION: u32 = 11;
 
 #[repr(C)]
 pub struct gm_video_frame {
@@ -67,12 +67,22 @@ pub const GM_EVENT_CONNECTION_STATE: gm_event_kind = 3;
 pub type gm_event_fn =
     unsafe extern "C" fn(user: *mut c_void, kind: gm_event_kind, request: u64, json: *const c_char);
 
+#[repr(C)]
+pub struct gm_strong_filter {
+    pub create: Option<unsafe extern "C" fn(error: *mut c_char, error_size: usize) -> *mut c_void>,
+    pub reset: Option<unsafe extern "C" fn(filter: *mut c_void)>,
+    pub process:
+        Option<unsafe extern "C" fn(filter: *mut c_void, samples: *mut f32, count: usize) -> c_int>,
+    pub destroy: Option<unsafe extern "C" fn(filter: *mut c_void)>,
+}
+
 #[link(name = "gelabber_media")]
 unsafe extern "C" {
     pub fn gm_abi_version() -> u32;
     pub fn gm_last_error() -> *const c_char;
     pub fn gm_string_free(s: *mut c_char);
     pub fn gm_set_log_level(level: c_int);
+    pub fn gm_set_strong_filter(filter: *const gm_strong_filter);
     pub fn gm_video_codecs() -> *mut c_char;
 
     pub fn gm_engine_new(options_json: *const c_char) -> *mut gm_engine;

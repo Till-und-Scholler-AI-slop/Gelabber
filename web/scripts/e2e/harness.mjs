@@ -29,10 +29,15 @@ export function check(condition, code, metrics = {}) {
 export async function pollPause(deadline) {
   // Preserve the 200ms polling cadence. A short final wait completes the
   // observation window; it must not launch another native probe at its edge.
+  // A probe gets the rest of the window as its budget, and one started a
+  // few ms before the end runs out of it and counts as a broken native
+  // interface (GEL-36), so the next one needs a quarter second left.
+  const probeBudgetMin = 250;
   const nextProbeAt = Date.now() + 200;
-  const wakeAt = Math.min(nextProbeAt, deadline);
+  const another = nextProbeAt + probeBudgetMin <= deadline;
+  const wakeAt = another ? nextProbeAt : deadline;
   while (Date.now() < wakeAt) await pause(Math.max(1, wakeAt - Date.now()));
-  return nextProbeAt < deadline && Date.now() < deadline;
+  return another && Date.now() + probeBudgetMin <= deadline;
 }
 export async function until(probe, accept, code, timeout = 10_000) {
   const deadline = Date.now() + timeout;

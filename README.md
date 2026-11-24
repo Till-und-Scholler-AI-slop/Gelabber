@@ -30,7 +30,8 @@ in the browser and as a native desktop app for Linux and Windows.
 - **Clients:** a web app that installs as a PWA, and a native desktop app
   for Linux and Windows with global push-to-talk, a tray icon and its own
   updater.
-- **Noise suppression in the client** (RNNoise, self-hosted assets) and an
+- **Noise suppression in the client** (RNNoise, or DeepFilterNet3 as the
+  stronger level; self-hosted assets) and an
   input sensitivity gate (automatic or a threshold) that sends silence
   between your words. No audio leaves your server for processing.
 - **Themes:** 14 presets and a theme editor, checked for contrast.
@@ -166,5 +167,5 @@ Please report a vulnerability privately, not in a public issue:
 
 [MIT](LICENSE). Third-party components keep their own licenses:
 [desktop/packaging/native/THIRD-PARTY-NOTICES.txt](desktop/packaging/native/THIRD-PARTY-NOTICES.txt)
-for the desktop app, and the license files next to the bundled fonts, emoji
-and RNNoise assets.
+for the desktop app, and the license files next to the bundled fonts, emoji,
+RNNoise and DeepFilterNet3 assets.

@@ -121,3 +121,12 @@ export function imageBoxHeight(attachment: Attachment): number {
   const size = knownImageSize(attachment);
   return size ? imageFit(size).height : UNKNOWN_BOX_HEIGHT;
 }
+
+/** The colour shown while a picture loads, when the API sent one. */
+export function placeholderColour(attachment: Attachment): string | undefined {
+  return attachment.placeholder_version === 1 &&
+    typeof attachment.placeholder === "string" &&
+    /^#[0-9a-f]{6}$/i.test(attachment.placeholder)
+    ? attachment.placeholder
+    : undefined;
+}

@@ -145,26 +145,28 @@ pub async fn gate(
 }
 
 /// An edit by the sender of a pending request follows the same text rules.
-/// Under a block only the one blocked edits, and only their sender-only
-/// messages: the peer has seen the others.
+/// Under a block only the one blocked edits, by the same rules, and what
+/// the peer has seen changes for them alone ([`Block::edit`], GEL-21).
 pub async fn check_edit(
     tx: &mut PgConnection,
     channel_id: Uuid,
     user_id: Uuid,
     content: &str,
     sender_only: bool,
-) -> Result<(), ApiError> {
-    crate::blocks::in_dm(&mut *tx, channel_id, user_id)
+) -> Result<crate::blocks::Edit, ApiError> {
+    let edit = crate::blocks::in_dm(&mut *tx, channel_id, user_id)
         .await?
-        .refuse_edit(sender_only)?;
-    match row(&mut *tx, channel_id).await?.request_by {
-        Some(by) if by == user_id => refuse(&Draft {
+        .edit(sender_only)?;
+    if let Some(by) = row(&mut *tx, channel_id).await?.request_by
+        && by == user_id
+    {
+        refuse(&Draft {
             content,
             files: false,
             gif: false,
-        }),
-        _ => Ok(()),
+        })?;
     }
+    Ok(edit)
 }
 
 fn refuse(draft: &Draft<'_>) -> Result<(), ApiError> {

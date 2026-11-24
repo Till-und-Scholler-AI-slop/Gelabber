@@ -8,7 +8,7 @@ release's `gelabber-native-linux-x64.tar.gz`; nothing is compiled on the
 user's machine.
 
 Status: **published** since v0.5.0. Every release from `main` updates the
-repository after a maintainer approves the `github-pages` deployment. The
+repository by itself through the `github-pages` deployment. The
 build contains no H264 codec of its own: H264 goes through the system's
 GStreamer (see the optional dependencies), otherwise calls use VP8.
 
@@ -127,9 +127,10 @@ a pacman repository it calls pacman, which the test covers.
    `ARCH_REPO_GPG_KEY` = the exported private key.
 3. **GitHub Pages** (Settings → Pages): Source "GitHub Actions". The site
    is public, whatever the repository's visibility.
-4. **Approval** (Settings → Environments → `github-pages`): add yourself as
-   required reviewer, and allow deployments from tags `v*` (the default
-   only allows the default branch).
+4. **Deployments** (Settings → Environments → `github-pages`): allow
+   deployments from tags `v*` (the default only allows the default
+   branch). No required reviewer: a release publishes the repository
+   without waiting.
 5. **Turn publishing on** (Settings → Secrets and variables → Actions →
    Variables): `ARCH_REPO_PUBLISH` = `true`. Until then releases only get
    the tarball attached and the repository as a workflow artifact.

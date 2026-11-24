@@ -427,6 +427,9 @@ function install(opts?: {
   /** Per media socket (0-based): the SFU refuses it (a 429 upgrade), so it
    * closes without answering its join. */
   refuseMedia?: (socketIndex: number) => boolean;
+  /** Per media socket (0-based): the SFU answers its join with this error
+   * code, as `gone` when it could not check the ticket. */
+  joinError?: (socketIndex: number) => string | undefined;
   mediaVersion?: number;
 }) {
   const sent: ClientFrame[] = [];
@@ -538,6 +541,7 @@ function install(opts?: {
       const closeHandlers = new Set<() => void>();
       let alive = true;
       const refused = opts?.refuseMedia?.(mediaSockets.length) ?? false;
+      const joinError = opts?.joinError?.(mediaSockets.length);
       const socket: MediaSocket = {
         send: (frame) => {
           mediaSent.push(frame);
@@ -547,13 +551,17 @@ function install(opts?: {
             return;
           }
           const error =
-            frame.op === "produce" ? opts?.produceError?.(frame.k) : undefined;
+            frame.op === "produce"
+              ? opts?.produceError?.(frame.k)?.message
+              : frame.op === "j"
+                ? joinError
+                : undefined;
           if (error) {
             queueMicrotask(() =>
               (onMedia ?? lingering)?.({
                 op: "err",
                 id: frame.id,
-                e: error.message,
+                e: error,
               }),
             );
             return;
@@ -1074,6 +1082,36 @@ describe("voice session", () => {
     await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
     expect(useVoice.getState().status).toBe("joined");
     expect(f.errors).toEqual([]);
+  });
+
+  it("takes a new ticket when the media server could not check the first one", async () => {
+    // Right after a Redis outage the SFU answers the join with `gone`: the
+    // ticket was not checked, not refused (GEL-36).
+    const f = install({
+      joinError: (index) => (index === 0 ? "gone" : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    expect(f.ticketCalls()).toBe(2);
+    expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(useVoice.getState().lostCall).toBeNull();
+    expect(f.errors).toEqual([]);
+    expect(f.sent.some((frame) => frame.op === "sig" && frame.t === "l")).toBe(
+      false,
+    );
+  });
+
+  it("gives up on a ticket the media server keeps failing to check", async () => {
+    const f = install({ joinError: () => "gone" });
+    vi.useFakeTimers();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(f.ticketCalls()).toBe(8);
+    expect(f.errors).toHaveLength(1);
+    expect(useVoice.getState().status).toBe("idle");
+    expect(useVoice.getState().lostCall?.channelId).toBe("voice");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("rolls back local join when the server forbids it", () => {

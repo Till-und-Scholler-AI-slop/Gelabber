@@ -970,7 +970,9 @@ export function ChannelRow({
           <LockIcon size={14} />
         </span>
       ) : null}
-      {text ? <UnreadBadge channelId={channel.id} showDot={false} /> : null}
+      {text ? (
+        <UnreadBadge channelId={channel.id} showDot={false} mention />
+      ) : null}
       {live.length > 0 ? (
         <span className="channel-row-live" title={liveSentence(live, false)}>
           <span aria-hidden="true">Live{/* i18n-ok */}</span>

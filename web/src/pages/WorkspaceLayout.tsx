@@ -57,6 +57,11 @@ import { OperatorSidebar } from "../operator/OperatorSidebar.tsx";
 import { DiscoverSidebar } from "./DiscoverPage.tsx";
 import { translate, useT } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
+import {
+  closeSwitcher,
+  openSwitcher,
+  useSwitcherOpen,
+} from "../components/switcherOpen.ts";
 
 // After the first screen has settled, so it does not land among the start's
 // own notices; not on the page it would lead to.
@@ -173,13 +178,13 @@ function WorkspaceFrame({
   const drawer = useNavigationDrawer();
   const navigationId = useId();
   const { channelId } = useParams({ strict: false });
-  const [switching, setSwitching] = useState(false);
+  const switching = useSwitcherOpen((s) => s.open);
   const [showingKeys, setShowingKeys] = useState(false);
   useShellShortcuts({
     serverId,
     channelId,
     dms: dmActive,
-    onSwitcher: () => setSwitching(true),
+    onSwitcher: openSwitcher,
     onHelp: () => setShowingKeys(true),
   });
   const phone = useMediaQuery(`(max-width: ${NAVIGATION_DRAWER_MAX_WIDTH}px)`);
@@ -277,7 +282,7 @@ function WorkspaceFrame({
       </div>
       <QuickSwitcher
         open={switching}
-        onClose={() => setSwitching(false)}
+        onClose={closeSwitcher}
         current={channelId}
       />
       <ShortcutSheet open={showingKeys} onClose={() => setShowingKeys(false)} />

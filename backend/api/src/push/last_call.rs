@@ -46,8 +46,9 @@ struct Due {
 }
 
 /// Tells the subscriptions of sessions about to end, a batch at a time;
-/// returns how many were due. With several API processes each subscription is
-/// told once: marking it is what claims it.
+/// returns how many are settled: told, or gone for good. One the push
+/// service did not take is due again and does not count. With several API
+/// processes each subscription is told once: marking it is what claims it.
 pub async fn sweep(state: &AppState) -> Result<usize, ApiError> {
     let Some(push) = state.push.clone() else {
         return Ok(0);
@@ -135,14 +136,18 @@ pub async fn sweep(state: &AppState) -> Result<usize, ApiError> {
         .map(|(_, endpoint)| endpoint.clone())
         .collect();
     let sent = settle(state, push, results).await.len();
-    if !missed.is_empty() {
-        let _ = sqlx::query("UPDATE push_subscriptions SET warned_at=NULL WHERE endpoint=ANY($1)")
+    // Those `settle` removed are not due again; on an error count them all.
+    let again = if missed.is_empty() {
+        0
+    } else {
+        sqlx::query("UPDATE push_subscriptions SET warned_at=NULL WHERE endpoint=ANY($1)")
             .bind(&missed)
             .execute(&state.db)
-            .await;
-    }
-    debug!(due = count, sent, "ending sessions told by push");
-    Ok(count)
+            .await
+            .map_or(missed.len(), |done| done.rows_affected() as usize)
+    };
+    debug!(due = count, sent, again, "ending sessions told by push");
+    Ok(count.saturating_sub(again))
 }
 
 pub fn start(state: AppState) {
@@ -166,18 +171,26 @@ pub fn start(state: AppState) {
             if state.db.is_closed() {
                 break;
             }
-            loop {
-                match sweep(&state).await {
-                    Ok(n) if n as i64 >= SWEEP_BATCH => continue,
-                    Ok(_) => break,
-                    Err(error) => {
-                        warn!(error = error.code(), "last call sweep failed");
-                        break;
-                    }
-                }
-            }
+            round(&state).await;
         }
     });
+}
+
+/// One round of the worker: sweep steps while each settles a whole batch. A
+/// step that leaves some due again ends the round, and the next round tries
+/// them: with the push service down, the next step would only claim the same
+/// batch again, as fast as the service fails.
+pub async fn round(state: &AppState) {
+    loop {
+        match sweep(state).await {
+            Ok(n) if n as i64 >= SWEEP_BATCH => continue,
+            Ok(_) => break,
+            Err(error) => {
+                warn!(error = error.code(), "last call sweep failed");
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

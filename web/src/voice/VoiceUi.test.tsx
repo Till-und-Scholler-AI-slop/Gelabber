@@ -243,7 +243,6 @@ describe("active media UI", () => {
     // Watching takes coming along: the way in is the only action.
     expect(html).toContain("Beitreten</button>");
     expect(html).not.toContain("Zuschauen");
-    expect(html).not.toContain('aria-label="Übertragungen"');
     expect(html).not.toContain("data-source=");
   });
   it("does not render Voice remote media outside its active room", () => {
@@ -306,18 +305,6 @@ describe("active media UI", () => {
     );
     // The row says who is live, in a line of its own (#521).
     expect(html.match(/>Ist live<\/span>/g)).toHaveLength(2);
-    // The overview keeps the spotlight for whoever went live first.
-    const overview = renderToStaticMarkup(
-      <VoiceRoom
-        server={server}
-        channelId="stage"
-        channelName="Stage"
-        overview
-      />,
-    );
-    expect(overview).toMatch(
-      /<div class="voice-room-spotlight"><span data-source="bob-screen"/,
-    );
   });
 
   it("shows real avatars and disconnected self, without fictional activity or capture", () => {
@@ -561,7 +548,6 @@ describe("active media UI", () => {
     expect(html.match(/data-source="source-from-a"/g)).toHaveLength(2);
     // Live and camera are tiles of the stage: Alice is live, so her Live
     // is in front and her camera, her entry, in the row with the own seat.
-    expect(html).not.toContain("voice-room-spotlight");
     expect(html.match(/<li class="voice-room-participant/g)).toHaveLength(2);
     expect(html).toMatch(
       /<li class="voice-room-participant has-video voice-stage-item is-strip"(?:(?!<\/li>).)*data-source="source-from-a"/,
@@ -575,23 +561,6 @@ describe("active media UI", () => {
     // The views to switch between, Fokus picked by the Live.
     expect(html).toMatch(
       /role="radiogroup" aria-label="Ansicht"(?:(?!<\/div>).)*aria-checked="false"[^>]*>(?:<svg.*?<\/svg>)?Raster(?:(?!<\/div>).)*aria-checked="true"[^>]*>(?:<svg.*?<\/svg>)?Fokus/,
-    );
-    // The overview: the share in its spotlight, the camera in its owner's
-    // card.
-    const overview = renderToStaticMarkup(
-      <VoiceRoom
-        server={server}
-        channelId="stage"
-        channelName="Room"
-        overview
-      />,
-    );
-    expect(overview.indexOf('aria-label="Übertragungen"')).toBeLessThan(
-      overview.indexOf('aria-label="Teilnehmer im Sprachkanal"'),
-    );
-    expect(overview).toContain('<div class="voice-room-spotlight">');
-    expect(overview).toMatch(
-      /<li class="voice-room-participant has-video"(?:(?!<\/li>).)*data-source="source-from-a"/,
     );
     expect(render("b")).not.toContain('data-source="source-from-a"');
     expect(render("a", "other")).not.toContain('data-source="source-from-a"');
@@ -992,7 +961,7 @@ describe("active media UI", () => {
     expect(dock.match(/is-speaking/g)).toHaveLength(1);
   });
 
-  it("shows the overview's room as its people, and keeps everyone's volume one press away", () => {
+  it("keeps everyone's volume one press away on the room's cards", () => {
     fixture.live = {};
     const members = ["alice", "bob"].map((id) => ({
       user_id: id,
@@ -1007,19 +976,8 @@ describe("active media UI", () => {
           server={{ ...server, members } as unknown as ServerDetail}
           channelId="stage"
           channelName="Stage"
-          overview
         />,
       );
-    const empty = room();
-    expect(empty).toContain('<h2 class="voice-room-name">Stage</h2>');
-    // No line about who is there: an empty room is its name, one free
-    // seat and the way in. The invite prompt is the channel page's.
-    expect(empty).not.toContain("voice-room-summary");
-    expect(empty.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
-    expect(empty).not.toContain("Verbunden");
-    expect(empty).not.toContain("voice-room-invite");
-    expect(empty).toContain("Beitreten</button>");
-
     fixture.roster = {
       a: {
         alice: { channelId: "stage", muted: false, deafened: false },
@@ -1029,9 +987,9 @@ describe("active media UI", () => {
     useUserVolumes.getState().setVolume("bob", 0.7);
     try {
       const html = room();
-      expect(html).not.toContain("Alice und Bob sind da.");
+      expect(html).toContain("Alice und Bob sind da.");
       expect(html.match(/<li class="voice-room-participant"/g)).toHaveLength(2);
-      // The channel's cards, compact: status line and a free seat.
+      // The cards before joining: a status line each and a free seat.
       expect(html.match(/>Im Raum</g)).toHaveLength(2);
       expect(html.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
       expect(html).toContain('aria-label="Optionen für Alice"');
@@ -1043,16 +1001,13 @@ describe("active media UI", () => {
       expect(html.match(/voice-room-volume-chip/g)).toHaveLength(1);
       expect(html).toContain('title="Lokale Lautstärke"');
 
-      // In the call: the heading says so, and the way in is gone.
+      // In the call the way in and the free seat are gone.
       Object.assign(fixture.voice, {
         status: "joined",
         serverId: "a",
         channelId: "stage",
       });
       const inside = room();
-      expect(inside).toContain(
-        '<span class="voice-room-connected">Verbunden</span>',
-      );
       expect(inside).not.toContain("Beitreten");
       expect(inside).not.toContain("voice-room-seat");
     } finally {

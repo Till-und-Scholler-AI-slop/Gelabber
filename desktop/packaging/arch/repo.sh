@@ -222,6 +222,8 @@ install_script() {
     pacman -Q "$package"
     test "$(grep -c '^\[gelabber\]$' /etc/pacman.conf)" = 1
     test "$(grep -c '^Server = file://'"$site"'/\$arch$' /etc/pacman.conf)" = 1
+    # The repair keeps a copy of the file as it was.
+    [ "$run" = 1 ] || grep -qx "Server = file://$site" /etc/pacman.conf.gelabber.bak
     test -x /usr/bin/gelabber
   done
   pacman-key --list-keys "$fpr" >/dev/null

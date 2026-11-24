@@ -140,10 +140,14 @@ crate::strings! {
         | "Custom combined video limit (Mbit/s)";
     upload_limit_hint = "Der Browser passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate."
         | "The browser adapts the actual bitrate to the connection. The limit is a cap, not a fixed rate.";
-    mode_enhanced = "Verbesserte Sprache"
-        | "Enhanced voice";
-    mode_enhanced_hint = "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz"
-        | "Local noise suppression and auto gain; browser filters as a fallback";
+    mode_enhanced = "Verbesserte Sprache: Standard"
+        | "Enhanced voice: Standard";
+    mode_enhanced_hint = "Lokale Rauschunterdrückung (RNNoise) und Auto-Gain; Browserfilter als Ersatz"
+        | "Local noise suppression (RNNoise) and auto gain; browser filters as a fallback";
+    mode_strong = "Verbesserte Sprache: Stark"
+        | "Enhanced voice: Strong";
+    mode_strong_hint = "Entfernt mehr Tippen und Klicken (DeepFilterNet3). Braucht mehr Rechenleistung, lädt beim ersten Mal ein größeres Modell, 10 ms mehr Verzögerung; Standard als Ersatz"
+        | "Removes more typing and clicks (DeepFilterNet3). Needs more processing power, downloads a larger model the first time, 10 ms more delay; Standard as a fallback";
     mode_browser = "Browserfilter"
         | "Browser filters";
     mode_browser_hint = "Rauschunterdrückung und Auto-Gain deines Browsers"

@@ -8,6 +8,9 @@ export type BadgeScope = {
   channelId?: string;
   serverId?: string;
   dms?: boolean;
+  /** Conversations left out of the sum: the DM button skips those the rail
+   * shows as avatars (GEL-65). */
+  except?: ReadonlySet<string>;
 };
 
 /** The badge of one conversation, a whole server or all direct messages
@@ -16,12 +19,14 @@ export function useBadge({
   channelId,
   serverId,
   dms = false,
+  except,
 }: BadgeScope): Badge {
   const reading = useReadingChannel();
   const now = useMuteClock();
   const { data } = useReadState();
   return sumBadges(
     (data ?? [])
+      .filter((row) => !except?.has(row.channel_id))
       .filter((row) =>
         channelId
           ? row.channel_id === channelId

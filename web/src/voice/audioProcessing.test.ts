@@ -6,6 +6,13 @@ import {
   resetNoiseModelForTests,
   useInputGate,
 } from "./audioProcessing.ts";
+import {
+  DFN_MODEL_HASH,
+  DFN_WASM_HASH,
+  onStrongRetry,
+  retryStrongFilter,
+  setStrongBuilderForTests,
+} from "./deepFilterNet.ts";
 import { DEFAULT_MEDIA_SETTINGS } from "./settings.ts";
 function stream() {
   const track = {
@@ -32,7 +39,7 @@ afterEach(() => {
   resetNoiseModelForTests();
 });
 describe("microphone processor ownership", () => {
-  it.each(["enhanced", "browser", "original"] as const)(
+  it.each(["enhanced", "strong", "browser", "original"] as const)(
     "bypasses a rejected gain context for %s without killing the native fallback",
     async (mode) => {
       const contexts: Array<{ closed: boolean }> = [];
@@ -671,5 +678,290 @@ describe("input sensitivity gate", () => {
       mode: "manual",
       thresholdDb: -50,
     });
+  });
+});
+
+describe("Enhanced voice: Strong (GEL-28)", () => {
+  const RNNOISE = [0, 97, 115, 109, 1, 0, 0, 0];
+  // An empty module with a custom section: valid, and told apart by length.
+  const DFN = [0, 97, 115, 109, 1, 0, 0, 0, 0, 2, 1, 120];
+  const MODEL = [9, 9, 9];
+  const HASHES: Record<number, string> = {
+    8: "e66d0eaef35d3774e86377efa8b9897e5b226284fb53059f0c1444881888b71c",
+    12: DFN_WASM_HASH,
+    3: DFN_MODEL_HASH,
+  };
+  type Node = {
+    name: string;
+    options: { processorOptions: Record<string, unknown> };
+    sent: unknown[];
+    port: { onmessage: ((event: { data: unknown }) => void) | null };
+  };
+  /** `silent`: processors that never say hello. */
+  function strongGraph(clock = "performance", silent: string[] = []) {
+    const nodes: Node[] = [];
+    class Context {
+      state = "running";
+      sampleRate = 48_000;
+      audioWorklet = { addModule: vi.fn(async () => {}) };
+      resume = async () => {};
+      close = async () => {
+        this.state = "closed";
+      };
+      createMediaStreamSource() {
+        return { connect() {}, disconnect() {} };
+      }
+      createGain() {
+        return { gain: { value: 1 }, connect() {}, disconnect() {} };
+      }
+      createMediaStreamDestination() {
+        return { stream: stream().raw };
+      }
+    }
+    class Worklet {
+      onprocessorerror: (() => void) | null = null;
+      sent: unknown[] = [];
+      port = {
+        onmessage: null as ((event: { data: unknown }) => void) | null,
+        postMessage: (data: unknown) => this.sent.push(data),
+        close() {},
+      };
+      constructor(
+        _context: unknown,
+        public name: string,
+        public options: { processorOptions: Record<string, unknown> },
+      ) {
+        nodes.push(this);
+        if (!silent.includes(name))
+          queueMicrotask(() =>
+            this.port.onmessage?.({ data: { ready: true, clock } }),
+          );
+      }
+      connect() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("AudioContext", Context);
+    vi.stubGlobal("AudioWorkletNode", Worklet);
+    vi.stubGlobal("crypto", {
+      subtle: {
+        digest: async (_algorithm: string, bytes: ArrayBuffer) =>
+          Uint8Array.from(HASHES[bytes.byteLength]!.match(/../g)!, (part) =>
+            parseInt(part, 16),
+          ).buffer,
+      },
+    });
+    const fetchAsset = vi.fn(
+      async (url: string) =>
+        new Response(
+          new Uint8Array(
+            url.startsWith("/audio/deepfilternet.wasm")
+              ? DFN
+              : url.startsWith("/audio/deepfilternet3-model.bin")
+                ? MODEL
+                : RNNOISE,
+          ),
+        ),
+    );
+    vi.stubGlobal("fetch", fetchAsset);
+    return { nodes, fetchAsset };
+  }
+  const memory = new ArrayBuffer(65_536);
+  const built = { memory, state: 8, buildMs: 500, blockMs: 2 };
+  const strong = {
+    ...DEFAULT_MEDIA_SETTINGS,
+    processingMode: "strong" as const,
+  };
+  afterEach(() => setStrongBuilderForTests());
+
+  it("runs DeepFilterNet3 beside RNNoise with the built model", async () => {
+    const { nodes, fetchAsset } = strongGraph();
+    const build = vi.fn(async () => built);
+    setStrongBuilderForTests(build);
+    const processor = await createProcessor(stream().raw, strong, "strong");
+    expect(fetchAsset.mock.calls.map(([url]) => url)).toEqual(
+      expect.arrayContaining([
+        `/audio/deepfilternet.wasm?sha256=${DFN_WASM_HASH}`,
+        `/audio/deepfilternet3-model.bin?sha256=${DFN_MODEL_HASH}`,
+      ]),
+    );
+    const [module, model] = build.mock.calls[0]! as unknown as [
+      WebAssembly.Module,
+      ArrayBuffer,
+    ];
+    expect(module).toBeInstanceOf(WebAssembly.Module);
+    expect(new Uint8Array(model)).toEqual(new Uint8Array(MODEL));
+    expect(nodes.map((node) => node.name)).toEqual(["gelabber-strong"]);
+    expect(nodes[0]!.options.processorOptions).toMatchObject({
+      dfn: { memory, state: 8 },
+      gate: { mode: "auto", thresholdDb: -50 },
+      gain: 1,
+    });
+    expect(processor.enhanced).toBe(true);
+    expect(processor.info).toMatchObject({
+      requested: "strong",
+      actual: "strong",
+      message: "Starke Rauschunterdrückung aktiv (DeepFilterNet3)",
+      addedBufferMs: 30,
+      gate: "auto",
+      strong: { dfnMs: null, fallback: null, clock: "performance" },
+    });
+    // Built once per page.
+    const again = await createProcessor(stream().raw, strong, "strong");
+    expect(build).toHaveBeenCalledOnce();
+    processor.dispose();
+    again.dispose();
+  });
+
+  it("shows DFN3's time per block as the worklet reports it", async () => {
+    const { nodes } = strongGraph("date");
+    setStrongBuilderForTests(async () => built);
+    const states = vi.fn();
+    const processor = await createProcessor(
+      stream().raw,
+      strong,
+      "strong",
+      undefined,
+      states,
+    );
+    nodes[0]!.port.onmessage?.({
+      data: { op: "strong", dfnMs: 2.5, rnnoiseMs: 0.4, maxMs: 3.1 },
+    });
+    expect(states.mock.lastCall?.[0].strong).toEqual({
+      dfnMs: 2.5,
+      rnnoiseMs: 0.4,
+      maxMs: 3.1,
+      clock: "date",
+      fallback: null,
+    });
+    processor.dispose();
+  });
+
+  it("switches to Standard in place, says why and stays there", async () => {
+    const { nodes } = strongGraph();
+    setStrongBuilderForTests(async () => built);
+    const states = vi.fn();
+    const processor = await createProcessor(
+      stream().raw,
+      strong,
+      "strong",
+      undefined,
+      states,
+    );
+    nodes[0]!.port.onmessage?.({
+      data: { op: "strong", fallback: "slow", dfnMs: 8.1, totalMs: 8.5 },
+    });
+    const info = states.mock.lastCall?.[0];
+    expect(info.actual).toBe("enhanced");
+    expect(info.requested).toBe("strong");
+    expect(info.message).toBe(
+      "Starker Filter auf Standard umgestellt: Gerät zu langsam",
+    );
+    expect(info.strong).toMatchObject({ fallback: "slow", dfnMs: 8.1 });
+    expect(processor.info.actual).toBe("enhanced");
+    // The next capture starts with Standard, until Strong is chosen again.
+    const next = await createProcessor(stream().raw, strong, "strong");
+    expect(nodes[1]!.name).toBe("gelabber-rnnoise");
+    expect(next.info.actual).toBe("enhanced");
+    expect(next.info.strong?.fallback).toBe("slow");
+    // A gain change rebuilds the graph with what runs: still says why.
+    const rebuilt = await createProcessor(stream().raw, strong, "enhanced");
+    expect(rebuilt.info.message).toBe(
+      "Starker Filter auf Standard umgestellt: Gerät zu langsam",
+    );
+    expect(rebuilt.info.strong?.fallback).toBe("slow");
+    // Choosing Strong again (clicking it while it is chosen) tries again.
+    const retried = vi.fn();
+    const stop = onStrongRetry(retried);
+    expect(retryStrongFilter()).toBe(true);
+    expect(retried).toHaveBeenCalledOnce();
+    expect(retryStrongFilter()).toBe(false);
+    stop();
+    const retry = await createProcessor(stream().raw, strong, "strong");
+    expect(nodes.at(-1)!.name).toBe("gelabber-strong");
+    [processor, next, rebuilt, retry].forEach((p) => p.dispose());
+  });
+
+  it("uses Standard when the Strong worklet does not start", async () => {
+    const { nodes } = strongGraph("performance", ["gelabber-strong"]);
+    setStrongBuilderForTests(async () => built);
+    const failed = vi.fn();
+    const processor = await createProcessor(
+      stream().raw,
+      strong,
+      "strong",
+      failed,
+    );
+    expect(nodes.map((node) => node.name)).toEqual([
+      "gelabber-strong",
+      "gelabber-rnnoise",
+    ]);
+    expect(nodes[0]!.sent).toContainEqual({ op: "dispose" });
+    expect(failed).not.toHaveBeenCalled();
+    expect(processor.info).toMatchObject({
+      actual: "enhanced",
+      message: "Starker Filter auf Standard umgestellt: Filter ausgefallen",
+      strong: { fallback: "error" },
+    });
+    expect(processor.usable()).toBe(true);
+    // Not tried again on the next capture.
+    const next = await createProcessor(stream().raw, strong, "strong");
+    expect(nodes.at(-1)!.name).toBe("gelabber-rnnoise");
+    processor.dispose();
+    next.dispose();
+  });
+
+  it("uses Standard when DeepFilterNet3 does not load", async () => {
+    const { nodes } = strongGraph();
+    setStrongBuilderForTests(async () => {
+      throw new Error("Starker Filter startet nicht");
+    });
+    const processor = await createProcessor(stream().raw, strong, "strong");
+    expect(nodes.map((node) => node.name)).toEqual(["gelabber-rnnoise"]);
+    expect(processor.info.actual).toBe("enhanced");
+    expect(processor.info.message).toBe(
+      "Starker Filter nicht verfügbar (Starker Filter startet nicht); Standard aktiv",
+    );
+    expect(processor.info.strong?.fallback).toBe("load");
+    processor.dispose();
+  });
+
+  it("loads again at once when Strong is chosen again after a failed load", async () => {
+    const { nodes } = strongGraph();
+    const build = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Starker Filter startet nicht"))
+      .mockResolvedValue(built);
+    setStrongBuilderForTests(build);
+    (await createProcessor(stream().raw, strong, "strong")).dispose();
+    // Within the retry delay the next capture does not load again ...
+    (await createProcessor(stream().raw, strong, "strong")).dispose();
+    expect(build).toHaveBeenCalledOnce();
+    // ... unless the user clicks Strong again.
+    expect(retryStrongFilter()).toBe(true);
+    const processor = await createProcessor(stream().raw, strong, "strong");
+    expect(nodes.at(-1)!.name).toBe("gelabber-strong");
+    expect(retryStrongFilter()).toBe(false);
+    processor.dispose();
+  });
+
+  it("leaves the verdict to the worklet when the worker's warm-up was slow", async () => {
+    // The worker is no real-time thread: a slow warm-up proves little.
+    const { nodes } = strongGraph();
+    setStrongBuilderForTests(async () => ({ ...built, blockMs: 12 }));
+    const processor = await createProcessor(stream().raw, strong, "strong");
+    expect(nodes.map((node) => node.name)).toEqual(["gelabber-strong"]);
+    expect(processor.info.strong?.fallback).toBeNull();
+    processor.dispose();
+  });
+
+  it("falls back to browser filters where no worklet runs", async () => {
+    vi.stubGlobal("AudioWorkletNode", undefined);
+    const { raw } = stream();
+    const result = await captureMicrophone(async () => raw, strong);
+    expect(result.processor.info.requested).toBe("strong");
+    expect(result.processor.info.actual).toBe("browser");
+    expect(result.processor.nativeFallback).toBe(true);
+    // No Strong row that would claim DFN3 is running.
+    expect(result.processor.info.strong).toBeNull();
   });
 });

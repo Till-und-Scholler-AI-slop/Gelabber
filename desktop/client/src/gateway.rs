@@ -363,7 +363,6 @@ impl Gateway {
             shared: shared.clone(),
             rx,
             focus: false,
-            confirmed: false,
         };
         runtime.spawn(task.run());
         Self { tx, shared }
@@ -425,8 +424,6 @@ struct Task {
     shared: Arc<Shared>,
     rx: mpsc::UnboundedReceiver<Command>,
     focus: bool,
-    /// The open socket answered a subscribe (`ok`).
-    confirmed: bool,
 }
 
 enum Closed {
@@ -470,11 +467,12 @@ impl Task {
                         (self.handler)(GatewayEvent::Refused(None));
                     }
                     let opened = Instant::now();
-                    self.confirmed = false;
                     let closed = self.serve(socket).await;
-                    // Only a socket that worked resets the backoff: one the
-                    // server accepts and drops at once is a failed connect.
-                    if self.confirmed || opened.elapsed() >= self.config.heartbeat {
+                    // Only a socket that stayed up resets the backoff: one
+                    // the server drops soon after it opens is a failed
+                    // connect, even after an `ok` (the next subscribe's
+                    // write can fail and close it), as in client.ts.
+                    if opened.elapsed() >= self.config.heartbeat {
                         attempt = 0;
                     }
                     if let Closed::Stopped = closed {
@@ -620,7 +618,6 @@ impl Task {
                             continue;
                         }
                     };
-                    self.confirmed |= matches!(frame, ServerFrame::Ok { .. });
                     let replies = self.on_frame(frame);
                     for reply in replies {
                         if send(&mut sink, &reply).await.is_err() {
@@ -1051,6 +1048,41 @@ mod tests {
             while let Ok((stream, _)) = listener.accept().await {
                 if let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await {
                     count.fetch_add(1, Ordering::SeqCst);
+                    let _ = socket.close(None).await;
+                }
+            }
+        });
+        let http = Http::new(&format!("http://{addr}")).unwrap();
+        let gateway = Gateway::start(
+            runtime.handle(),
+            http,
+            GatewayConfig::default(),
+            Arc::new(|_| {}),
+        );
+        std::thread::sleep(Duration::from_millis(1_500));
+        gateway.stop();
+        let opens = opens.load(Ordering::SeqCst);
+        assert!((2..10).contains(&opens), "{opens} opens in 1.5 s");
+    }
+
+    /// An `ok` does not make a socket healthy: the server confirms one
+    /// subscribe and closes on the next one's failed write.
+    #[test]
+    fn a_server_that_confirms_then_drops_is_backed_off() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let opens = Arc::new(AtomicUsize::new(0));
+        let count = opens.clone();
+        runtime.spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                if let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let ok = r#"{"op":"ok","s":"00000000-0000-0000-0000-000000000001","n":0}"#;
+                    let _ = socket.send(WsMessage::text(ok)).await;
                     let _ = socket.close(None).await;
                 }
             }

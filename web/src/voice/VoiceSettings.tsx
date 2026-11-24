@@ -1,4 +1,5 @@
 import { useAudioProcessing } from "./audioProcessing.ts";
+import { retryStrongFilter } from "./deepFilterNet.ts";
 import { InputSensitivity } from "./InputSensitivity.tsx";
 import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
@@ -152,6 +153,11 @@ export function MediaSettingsForm({
                     description={t(processingModes[mode].hint)}
                     checked={settings.processingMode === mode}
                     onChange={() => settings.patch({ processingMode: mode })}
+                    // Strong clicked again after it fell back: try again.
+                    onClick={() => {
+                      if (mode === "strong" && settings.processingMode === mode)
+                        retryStrongFilter();
+                    }}
                   />
                 ),
               )}

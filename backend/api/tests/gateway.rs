@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
 use futures_util::{SinkExt, StreamExt};
+use gelabber_api::limits::FrameRate;
 use gelabber_api::{AppState, EventKind, publish_channel, publish_server};
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -732,7 +733,20 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
     }
     let mut ws = connect_reading_slowly(addr, &session_cookie(&owner)).await;
     send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Read nothing until the server has given up on the socket. A fixed sleep
+    // raced the subscribe's own checks, which run before the replay write
+    // starts and take longer under load. The socket attaches after the
+    // handshake, so wait for it to appear before waiting for it to go.
+    let connections = &state.gateway.connections;
+    let gave_up = tokio::time::timeout(Duration::from_secs(15), async {
+        while connections.socket_count().await == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        while connections.socket_count().await > 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
 
     let mut subscribed = false;
     let ended = tokio::time::timeout(Duration::from_secs(10), async {
@@ -771,11 +785,70 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
         .query_async::<i32>(&mut redis)
         .await
         .unwrap();
+    assert!(
+        gave_up.is_ok(),
+        "the server kept a socket that stopped reading during its replay"
+    );
     assert!(!subscribed, "the replay was not supposed to finish");
     assert!(
         ended.is_ok(),
         "the socket stayed open after a failed replay"
     );
+}
+
+/// A member whose socket stops reading during a subscribe's replay holds no
+/// lock on the server row (GEL-42): kick waits at most 5 s for it and would
+/// answer 429 while the replay is still being written.
+#[sqlx::test]
+async fn a_stalled_subscribe_does_not_hold_off_a_kick(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Stalled").await;
+    let (s, c) = ids(&server);
+    join_member(&mut owner, &mut member, &s.to_string()).await;
+    let mut state = common::ws_state_with_dead(pool, 60_000);
+    // Longer than kick's 5 s lock wait.
+    state.ws_replay_deadline = Duration::from_secs(8);
+    let addr = common::serve_ws_state(state.clone()).await;
+    let big = "x".repeat(1024 * 1024);
+    for _ in 0..6 {
+        publish(&state, s, c, EventKind::C, &big).await;
+    }
+    let mut ws = connect_reading_slowly(addr, &session_cookie(&member)).await;
+    send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    // The replay write is blocked by now.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let started = std::time::Instant::now();
+    let kicked = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{s}/kick"),
+            Some(json!({ "user_id": member.user_id() })),
+        )
+        .await;
+    let waited = started.elapsed();
+
+    let topic = gelabber_api::gateway::Topic::Channel(c);
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    redis::cmd("DEL")
+        .arg(topic.seq_key())
+        .arg(topic.log_key())
+        .arg(topic.epoch_key())
+        .arg(topic.delivery_key())
+        .query_async::<i32>(&mut redis)
+        .await
+        .unwrap();
+    assert_eq!(kicked.status, StatusCode::NO_CONTENT, "{}", kicked.body);
+    // The subscribe's checks hold the lock briefly; its write must not.
+    assert!(
+        waited < Duration::from_secs(4),
+        "kick waited {waited:?} for the stalled socket"
+    );
+    drop(ws);
 }
 
 /// A client frame over 16 KiB is refused by the WebSocket layer before it is
@@ -2363,4 +2436,159 @@ async fn an_edit_dropping_a_token_keeps_whom_here_reached(pool: PgPool) {
         .await;
     assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
     assert_eq!(edited.body["mentions"], json!([]));
+}
+
+/// The count `gelabber_rate_limited_total` holds for `bucket`.
+fn rate_limited(state: &AppState, bucket: &str) -> u64 {
+    let needle = format!("gelabber_rate_limited_total{{bucket=\"{bucket}\"}} ");
+    state
+        .metrics
+        .render()
+        .lines()
+        .find_map(|line| line.strip_prefix(needle.as_str()))
+        .map_or(0, |count| count.parse().expect("counter value"))
+}
+
+/// GEL-55: typing frames over a socket's typing budget are dropped before
+/// any database or Redis work, so a flood reaches the other members only as
+/// far as the budget goes, and the flooding socket keeps working.
+#[sqlx::test]
+async fn a_typing_flood_reaches_others_only_within_the_budget(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Flood").await;
+    let (server_id, channel_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+
+    let mut state = common::ws_state(pool);
+    state.limits.ws_typing = FrameRate {
+        per_min: 60,
+        burst: 3,
+    };
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    for ws in [&mut owner_ws, &mut member_ws] {
+        send_json(ws, json!({ "op": "s", "s": server_id, "c": channel_id })).await;
+        recv_within(ws, |f| {
+            f["op"] == "sig" && f["t"] == "r" && f.get("snap").is_some()
+        })
+        .await;
+    }
+
+    for _ in 0..40 {
+        send_json(
+            &mut member_ws,
+            json!({ "op": "y", "s": server_id, "c": channel_id, "on": true }),
+        )
+        .await;
+    }
+    // The flooding socket still answers: a subscribe after the flood.
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_within(&mut member_ws, |f| {
+        f["op"] == "ok" && f["s"] == server_id.to_string() && f.get("c").is_none()
+    })
+    .await;
+
+    let mut seen = 0;
+    let window = tokio::time::Instant::now() + Duration::from_millis(500);
+    while let Ok(frame) = tokio::time::timeout_at(window, recv_json(&mut owner_ws)).await {
+        if frame["op"] == "y" && frame["u"] == member.user_id() {
+            seen += 1;
+        }
+    }
+    // The burst, and at most one more frame refilled meanwhile.
+    assert!(
+        (1..=4).contains(&seen),
+        "{seen} typing frames reached the owner"
+    );
+    assert!(rate_limited(&state, "ws_typing") >= 36);
+}
+
+/// GEL-55: each `p` that flips the user between idle and online is sent to
+/// every member of every server the user is in. Over the presence budget the
+/// frames wait, so a flood of them reaches the others only as far as the
+/// budget goes.
+#[sqlx::test]
+async fn a_presence_flood_reaches_others_only_within_the_budget(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Flood").await;
+    let (server_id, _) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+
+    let mut state = common::ws_state(pool);
+    state.limits.ws_presence = FrameRate {
+        per_min: 60,
+        burst: 3,
+    };
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut member_ws = connect(addr, &session_cookie(&member), None).await;
+    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_within(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    recv_within(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
+    })
+    .await;
+
+    for round in 0..40 {
+        let frame = if round % 2 == 0 {
+            json!({ "op": "p", "st": "i" })
+        } else {
+            json!({ "op": "p" })
+        };
+        send_json(&mut member_ws, frame).await;
+    }
+
+    let mut seen = 0;
+    let window = tokio::time::Instant::now() + Duration::from_millis(500);
+    while let Ok(frame) = tokio::time::timeout_at(window, recv_json(&mut owner_ws)).await {
+        if frame["op"] == "p" && frame["u"] == member.user_id() && frame.get("snap").is_none() {
+            seen += 1;
+        }
+    }
+    // The burst, and at most one more frame refilled meanwhile.
+    assert!(
+        (1..=4).contains(&seen),
+        "{seen} presence changes reached the owner"
+    );
+    assert!(rate_limited(&state, "ws_presence") >= 1);
+}
+
+/// GEL-55: frames over a socket's frame budget wait for it, unread, and
+/// none of them is lost.
+#[sqlx::test]
+async fn frames_over_the_budget_wait_and_none_is_lost(pool: PgPool) {
+    let (owner, _) = two_users(pool.clone()).await;
+    let mut state = common::ws_state(pool);
+    // Two at once, then one every half second.
+    state.limits.ws_frames = FrameRate {
+        per_min: 120,
+        burst: 2,
+    };
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+
+    let start = std::time::Instant::now();
+    for _ in 0..5 {
+        send_json(&mut ws, json!({ "op": "nope" })).await;
+    }
+    // Read without answering the server's heartbeats: each answer would
+    // spend the budget too.
+    let mut answered = Vec::new();
+    while answered.len() < 5 {
+        let msg = tokio::time::timeout(Duration::from_secs(4), ws.next())
+            .await
+            .expect("answer within the budget")
+            .expect("ws open")
+            .expect("ws frame");
+        if let Message::Text(text) = msg
+            && text.as_str().contains("bad_request")
+        {
+            answered.push(start.elapsed());
+        }
+    }
+    assert!(answered[1] < Duration::from_millis(400), "{answered:?}");
+    assert!(answered[4] >= Duration::from_millis(1200), "{answered:?}");
+    assert!(rate_limited(&state, "ws_frames") >= 3);
 }

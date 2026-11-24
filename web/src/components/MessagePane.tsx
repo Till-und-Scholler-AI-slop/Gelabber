@@ -15,6 +15,7 @@ import {
 import { blockedRuns, type BlockedRuns } from "../blocks/runs.ts";
 import { MessageSearch } from "../messages/MessageSearch.tsx";
 import { MessageContextView } from "../messages/MessageContext.tsx";
+import { clearMessageJump, peekMessageJump } from "../messages/messageJump.ts";
 import {
   readBoundary,
   useMarkManyRead,
@@ -193,10 +194,16 @@ export function MessagePane({
     id: string;
     n: number;
   } | null>(null);
+  // A message asked for from outside (the overview's "Geteilt") opens in
+  // its context, as a search hit does.
   const [contextTarget, setContextTarget] = useState<{
     scope: string;
     id: string;
-  } | null>(null);
+  } | null>(() => {
+    const id = peekMessageJump(channelId);
+    return id ? { scope: searchScope, id } : null;
+  });
+  useEffect(() => clearMessageJump(channelId), [channelId]);
   const showingContext = contextTarget?.scope === searchScope;
   const searchField = useRef<HTMLInputElement>(null);
   const closeSearch = useCallback(() => {

@@ -15,21 +15,83 @@ use crate::text::{self, Block, TextStyle};
 use crate::theme::Theme;
 use crate::widgets::{hairline_h, hairline_v};
 
+struct Entry {
+    id: Uuid,
+    name: String,
+    avatar: Option<String>,
+    status: Option<String>,
+    voice: Option<(String, bool, bool)>,
+    live: bool,
+}
+
+impl Entry {
+    /// The line under the name and status: "Live in …" or the voice
+    /// channel's name (MemberPanel's `<small>`).
+    fn voice_line(&self) -> Option<String> {
+        let channel = self.voice.as_ref().map(|(n, _, _)| n.as_str());
+        if self.live {
+            return Some(match channel {
+                Some(n) => members::row_live_in(if n.is_empty() {
+                    members::row_a_voice_channel()
+                } else {
+                    n
+                }),
+                None => members::row_live().to_owned(),
+            });
+        }
+        channel.map(|n| {
+            if n.is_empty() {
+                members::row_in_voice().to_owned()
+            } else {
+                n.to_owned()
+            }
+        })
+    }
+}
+
+/// The row's text column at its width: the voice line wraps there
+/// (`.member-description > small`, `overflow-wrap: anywhere`) and the row
+/// grows with it, as the web list measures its rows (GEL-63).
+struct RowText {
+    voice: Option<Block>,
+    /// Name, status line and voice line together.
+    lines_h: f32,
+}
+
+impl RowText {
+    fn new(ui: &Ui, e: &Entry, width: f32, color: egui::Color32) -> Self {
+        let voice = e
+            .voice_line()
+            .map(|line| Block::wrapped(ui, &line, TextStyle::new(11.0, 400.0, 1.4), color, width));
+        let mut lines_h = 21.0;
+        if e.status.is_some() {
+            lines_h += 2.0 + 18.0;
+        }
+        if let Some(voice) = &voice {
+            lines_h += 3.0 + voice.height();
+        }
+        Self { voice, lines_h }
+    }
+
+    /// The row: 4px above and below the lines, at least the 42px button.
+    fn row_h(&self) -> f32 {
+        f32::max(4.0 + self.lines_h + 4.0, 42.0)
+    }
+}
+
+/// The text column's width in a list `list_w` wide: the list's 10px
+/// padding, then avatar (6 + 32 + 10) on the left and the 22px voice
+/// state column (10 + 22 + 6) on the right.
+fn text_width(list_w: f32) -> f32 {
+    list_w - 2.0 * 10.0 - (6.0 + 32.0 + 10.0) - (10.0 + 22.0 + 6.0)
+}
+
 pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, c.panel);
     hairline_v(&painter, &theme, rect.left(), rect.top()..=rect.bottom());
-
-    struct Entry {
-        id: Uuid,
-        name: String,
-        avatar: Option<String>,
-        status: Option<String>,
-        voice: Option<(String, bool, bool)>,
-        live: bool,
-    }
     let own_seat = crate::screens::voice::session::own_seat(app, server);
     let data = app.client.with_state(|s| {
         let detail = s.detail(server)?;
@@ -121,20 +183,19 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list));
     child.set_clip_rect(list.intersect(ui.clip_rect()));
     let heading_style = TextStyle::new(11.0, 650.0, 1.5).tracking(0.6 / 11.0);
-    let row_h = |e: &Entry| {
-        let mut h = 4.0 + 21.0 + 4.0;
-        if e.status.is_some() {
-            h += 2.0 + 18.0;
-        }
-        if e.live || e.voice.is_some() {
-            h += 3.0 + 15.4;
-        }
-        f32::max(h, 42.0)
-    };
+    let texts: Vec<Vec<RowText>> = groups
+        .iter()
+        .map(|(_, entries)| {
+            entries
+                .iter()
+                .map(|e| RowText::new(&child, e, text_width(list.width()), c.muted))
+                .collect()
+        })
+        .collect();
     let content_h: f32 = 14.0
-        + groups
+        + texts
             .iter()
-            .map(|(_, e)| 8.0 + 16.5 + 6.0 + e.iter().map(|x| row_h(x) + 2.0).sum::<f32>())
+            .map(|t| 8.0 + 16.5 + 6.0 + t.iter().map(|x| x.row_h() + 2.0).sum::<f32>())
             .sum::<f32>()
         + 18.0 * groups.len().saturating_sub(1) as f32
         + 16.0;
@@ -166,8 +227,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                 heading.paint(ui.painter(), pos2(left + 6.0, y));
                 y += 16.5 + 6.0;
                 let offline = *status == PresenceStatus::Offline;
-                for e in entries {
-                    let h = row_h(e);
+                for (e, text) in entries.iter().zip(&texts[gi]) {
+                    let h = text.row_h();
                     let row = Rect::from_min_size(pos2(left, y), Vec2::new(right - left, h));
                     y += h + 2.0;
                     let response = common::click(ui, row, Id::unique(("member-row", server, e.id)));
@@ -213,14 +274,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     common::presence_dot(ui.painter(), &theme, avatar, common::presence(*status));
                     let text_left = avatar.right() + 10.0;
                     let text_right = row.right() - 6.0 - 22.0 - 10.0;
-                    let mut lines_h = 21.0;
-                    if e.status.is_some() {
-                        lines_h += 2.0 + 18.0;
-                    }
-                    if e.live || e.voice.is_some() {
-                        lines_h += 3.0 + 15.4;
-                    }
-                    let mut ty = row.center().y - lines_h / 2.0;
+                    let mut ty = row.center().y - text.lines_h / 2.0;
                     let name_color = if offline { c.muted } else { c.text };
                     let own = me == Some(e.id);
                     let small_style = TextStyle::new(11.0, 400.0, 1.5);
@@ -258,35 +312,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                         block.paint(ui.painter(), pos2(text_left, ty));
                         ty += 18.0;
                     }
-                    let voice_name = e.voice.as_ref().map(|(n, _, _)| n.as_str());
-                    let voice_line = if e.live {
-                        Some(match voice_name {
-                            Some(n) => members::row_live_in(if n.is_empty() {
-                                members::row_a_voice_channel()
-                            } else {
-                                n
-                            }),
-                            None => members::row_live().to_owned(),
-                        })
-                    } else {
-                        voice_name.map(|n| {
-                            if n.is_empty() {
-                                members::row_in_voice().to_owned()
-                            } else {
-                                n.to_owned()
-                            }
-                        })
-                    };
-                    if let Some(voice_line) = voice_line {
+                    if let Some(voice) = &text.voice {
                         ty += 3.0;
-                        let block = Block::wrapped(
-                            ui,
-                            &voice_line,
-                            TextStyle::new(11.0, 400.0, 1.4),
-                            c.muted,
-                            text_right - text_left,
-                        );
-                        block.paint(ui.painter(), pos2(text_left, ty));
+                        voice.paint(ui.painter(), pos2(text_left, ty));
                     }
                     // The 22px column centres its parts, gap 5: VoiceStateIcons
                     // (a 32px box, its two 14px slots at the end) above the Live icon.
@@ -340,4 +368,68 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::{Entry, RowText, text_width};
+
+    fn in_voice(live: bool) -> Entry {
+        Entry {
+            id: uuid::Uuid::nil(),
+            name: "Rafi".into(),
+            avatar: None,
+            status: Some("Viben".into()),
+            voice: Some(("Lernen 1 a bubensahne".into(), false, false)),
+            live,
+        }
+    }
+
+    /// GEL-63: in a narrow member list a long voice line wraps, and its
+    /// row grows with it instead of running into the next one.
+    #[test]
+    fn a_wrapped_voice_line_makes_its_row_taller() {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let out = Rc::clone(&seen);
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            crate::fonts::install(ui.ctx());
+            let mut out = out.borrow_mut();
+            out.clear();
+            for live in [false, true] {
+                for list_w in [200.0, 360.0] {
+                    let text = RowText::new(
+                        ui,
+                        &in_voice(live),
+                        text_width(list_w),
+                        ui.visuals().text_color(),
+                    );
+                    let rows = text.voice.as_ref().map_or(0, |v| v.rows());
+                    let voice_h = text.voice.as_ref().map_or(0.0, |v| v.height());
+                    out.push((live, list_w, rows, voice_h, text.row_h()));
+                }
+            }
+        });
+        harness.run_steps(2);
+        let seen = seen.borrow();
+        let narrow_live = seen.iter().find(|s| s.0 && s.1 == 200.0).expect("narrow");
+        let wide_live = seen.iter().find(|s| s.0 && s.1 == 360.0).expect("wide");
+        assert!(
+            narrow_live.2 > 1,
+            "the voice line wraps when narrow: {seen:?}"
+        );
+        assert!(
+            narrow_live.4 > wide_live.4,
+            "the narrow row grows with its wrapped line: {seen:?}"
+        );
+        for &(_, _, _, voice_h, row_h) in seen.iter() {
+            // Name, status and voice line fit between the row's 4px edges.
+            assert!(
+                4.0 + 21.0 + 2.0 + 18.0 + 3.0 + voice_h + 4.0 <= row_h + 0.01,
+                "a row holds its lines: {seen:?}"
+            );
+        }
+    }
 }

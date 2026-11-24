@@ -110,6 +110,37 @@ for (const engine of [chromium, firefox]) {
     assert.equal(original.actual, "original");
     assert.equal(original.noiseSuppression, false);
     assert.equal(original.autoGainControl, false);
+    // Enhanced voice: Strong (GEL-28): DeepFilterNet3 builds in a worker,
+    // runs in the worklet and reports its time per 10 ms block.
+    await page.evaluate(() => {
+      window.captured.processor.dispose();
+      window.captured.raw.getTracks().forEach((t) => t.stop());
+      window.audioProbe = null;
+      window.settings.useMediaSettings
+        .getState()
+        .patch({ processingMode: "strong", echoCancellation: true });
+    });
+    await page.click("#probe");
+    await page.waitForFunction(() => window.audioProbe, null, {
+      timeout: 60_000,
+    });
+    const strongStart = await page.evaluate(() => ({ ...window.audioProbe }));
+    assert.equal(strongStart.actual, "strong", JSON.stringify(strongStart));
+    assert.equal(strongStart.sampleRate, 48000);
+    await page.waitForFunction(
+      () =>
+        window.captured.processor.info.strong?.dfnMs !== null ||
+        window.captured.processor.info.strong?.fallback,
+      null,
+      { timeout: 15_000 },
+    );
+    // Long enough for the load monitor's first verdict (1 s + 3 s).
+    await page.waitForTimeout(5_000);
+    const strong = await page.evaluate(() =>
+      JSON.parse(JSON.stringify(window.captured.processor.info)),
+    );
+    assert.notEqual(strong.strong.fallback, "error", JSON.stringify(strong));
+    assert.equal(typeof strong.strong.dfnMs, "number");
     await page.evaluate(() => {
       window.captured.processor.dispose();
       window.captured.raw.getTracks().forEach((t) => t.stop());
@@ -279,12 +310,47 @@ for (const engine of [chromium, firefox]) {
       window.captured.processor.dispose();
       window.captured.raw.getTracks().forEach((t) => t.stop());
     });
+    // A missing DeepFilterNet3 module: Strong runs as Standard and says so.
+    await page.unroute("**/audio/rnnoise.wasm*");
+    await page.reload();
+    await page.waitForFunction(() => window.ready);
+    await page.route("**/audio/deepfilternet.wasm*", (route) =>
+      route.fulfill({ status: 404, body: "missing" }),
+    );
+    await page.evaluate(() =>
+      window.settings.useMediaSettings
+        .getState()
+        .patch({ processingMode: "strong" }),
+    );
+    await page.click("#probe");
+    await page.waitForFunction(() => window.audioProbe, null, {
+      timeout: 30_000,
+    });
+    const strongFallback = await page.evaluate(() =>
+      JSON.parse(JSON.stringify(window.audioProbe)),
+    );
+    assert.equal(strongFallback.actual, "enhanced");
+    assert.equal(strongFallback.strong.fallback, "load");
+    assert.match(strongFallback.message, /Starker Filter nicht verfügbar/);
+    await page.evaluate(() => {
+      window.captured.processor.dispose();
+      window.captured.raw.getTracks().forEach((t) => t.stop());
+      window.settings.useMediaSettings
+        .getState()
+        .patch({ processingMode: "enhanced" });
+    });
     results.push({
       browser: engine.name(),
       browserVersion: browser.version(),
       senderPriorities,
       enhanced,
       original,
+      strong: {
+        actual: strong.actual,
+        message: strong.message,
+        ...strong.strong,
+      },
+      strongFallback: strongFallback.message,
       fallback,
       localRecordingPlayback: true,
       mobileWidth: 390,

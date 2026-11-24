@@ -1,4 +1,4 @@
-/* global URL, Event */
+/* global URL, Event, window */
 import { readFile } from "node:fs/promises";
 import {
   api,
@@ -10,6 +10,7 @@ import {
   snapshot,
   until,
 } from "./harness.mjs";
+import { nativeEvaluate } from "./native-evaluate.mjs";
 
 function latch() {
   let release;
@@ -152,9 +153,12 @@ export async function chatFaultScenarios(h, f) {
         exact: true,
       });
       await image.waitFor();
-      const downloaded = await f.member.context.request.get(
-        new URL(await image.getAttribute("src"), f.base).href,
-      );
+      // Once the media worker is done the picture shows its thumbnail
+      // (`?size=400`, a JPEG even for a PNG); the bytes sent are the
+      // original's.
+      const original = new URL(await image.getAttribute("src"), f.base);
+      original.searchParams.delete("size");
+      const downloaded = await f.member.context.request.get(original.href);
       check(
         downloaded.status() === 200 && (await downloaded.body()).equals(bytes),
         "retry-attachment-bytes-mismatch",
@@ -396,6 +400,26 @@ export async function chatFaultScenarios(h, f) {
         await navigate(f.member, c.path, f.base);
         await until(async () => entered, Boolean, "history-response-not-held");
         check(oldRows, "fixture-delayed-rest-missing-old-rows");
+        // The history read can leave before the new socket's subscribe is
+        // acknowledged. A subscribe without a cursor replays nothing (the app
+        // reads the history again instead), so changes made before the `ok`
+        // never arrive as live events (GEL-36).
+        await until(
+          () =>
+            nativeEvaluate(
+              f.member,
+              (id) =>
+                window.__e2e.sockets.some(
+                  (x) =>
+                    x.plane === "gateway" &&
+                    x.ws.readyState === 1 &&
+                    x.topics.has(id),
+                ),
+              c.id,
+            ),
+          Boolean,
+          "fixture-subscription-not-acknowledged",
+        );
         const before = await snapshot(f.member);
         check(
           (
@@ -456,8 +480,55 @@ export async function chatFaultScenarios(h, f) {
     const c = await fresh(f, "E2E paging failure");
     for (let i = 0; i < 55; i++)
       await seed(f.member, c.id, `E2E page ${String(i).padStart(2, "0")}`);
+    // With unread rows the channel opens at the first of them and loads the
+    // older page by itself. Whether the owner's open page had marked the
+    // seeded rows read before the reload is up to timing; settle it here.
+    check(
+      (await api(f.owner, `/channels/${c.id}/read`, "PUT", {})).status === 200,
+      "fixture-read-position-contract-failed",
+    );
+    const reads = new Set();
+    const history = (r) =>
+      r.method() === "GET" &&
+      new URL(r.url()).pathname === `/api/channels/${c.id}/messages`;
+    const started = (r) => history(r) && reads.add(r);
+    const ended = (r) => reads.delete(r);
+    f.owner.page.on("request", started);
+    f.owner.page.on("requestfinished", ended);
+    f.owner.page.on("requestfailed", ended);
     await navigate(f.owner, c.path, f.base);
     await present(f.owner, "E2E page 54");
+    // The new gateway socket starts a recovery round (attachRealtimeRecovery,
+    // useRealtime.ts): up to READY_SPREAD_MS (1 s) after it opened, it reads
+    // the open history again. That read clears a paging error, and the list
+    // then asks for the older page once more by itself, or it cancels the
+    // older read in flight. Fail paging only once that round is over.
+    try {
+      await until(
+        async () => ({
+          ...(await nativeEvaluate(
+            f.owner,
+            (id) => {
+              const s = window.__e2e.sockets.find(
+                (x) => x.plane === "gateway" && x.ws.readyState === 1,
+              );
+              return {
+                openForMs: s?.openedAt ? Date.now() - s.openedAt : null,
+                subscribed: Boolean(s?.topics.has(id)),
+              };
+            },
+            c.id,
+          )),
+          reads: reads.size,
+        }),
+        (s) => s.subscribed && s.openForMs > 1_500 && s.reads === 0,
+        "fixture-history-recovery-not-settled",
+      );
+    } finally {
+      f.owner.page.off("request", started);
+      f.owner.page.off("requestfinished", ended);
+      f.owner.page.off("requestfailed", ended);
+    }
     let requests = 0,
       failing = true;
     await f.owner.page.route(c.endpoint, async (route) => {

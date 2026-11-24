@@ -425,7 +425,7 @@ mod tests {
             crate::chat::composer_chars_left(1200),
             "1.200 Zeichen übrig"
         );
-        assert_eq!(crate::servers::overview_members(1), "1 Mitglied");
+        assert_eq!(crate::servers::overview_more(1500), "1.500 weitere");
         assert_eq!(
             crate::server_settings::members_title(1500),
             "Mitglieder (1.500)"

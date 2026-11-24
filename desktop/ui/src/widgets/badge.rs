@@ -82,15 +82,35 @@ pub fn count_badge(
     count: u32,
     ring: Option<Color32>,
 ) -> Rect {
-    let theme = Theme::of(ui.ctx());
-    let c = &theme.c;
     let label = if count > 99 {
         "99+".to_owned()
     } else {
         count.to_string()
     };
+    label_badge(painter, ui, anchor_bottom_right, &label, ring)
+}
+
+/// The same pill with an `@` for a channel with an unread mention (GEL-69).
+pub fn mention_badge(
+    painter: &Painter,
+    ui: &Ui,
+    anchor_bottom_right: Pos2,
+    ring: Option<Color32>,
+) -> Rect {
+    label_badge(painter, ui, anchor_bottom_right, "@", ring)
+}
+
+fn label_badge(
+    painter: &Painter,
+    ui: &Ui,
+    anchor_bottom_right: Pos2,
+    label: &str,
+    ring: Option<Color32>,
+) -> Rect {
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
     let style = text::TextStyle::new(11.0, 700.0, 1.0);
-    let block = Block::single(ui, &label, style, c.accent_ink);
+    let block = Block::single(ui, label, style, c.accent_ink);
     let width = (block.width() + 10.0).max(18.0);
     let rect = Rect::from_min_max(
         anchor_bottom_right - Vec2::new(width, 18.0),

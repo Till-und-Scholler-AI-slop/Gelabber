@@ -127,8 +127,14 @@ export function instrument({ relay }) {
         liveOff: 0,
         pendingMedia: new Map(),
         mediaRpc: [],
+        openedAt: null,
       };
       state.sockets.push(item);
+      // A new gateway socket starts the app's recovery round
+      // (attachRealtimeRecovery); scenarios wait it out from here.
+      super.addEventListener("open", () => {
+        item.openedAt = Date.now();
+      });
       super.addEventListener("message", (event) => {
         try {
           const frame = JSON.parse(event.data);
@@ -837,8 +843,17 @@ export async function sample({ deadlineEpochMs } = {}) {
     const qualityFrames = video.getVideoPlaybackQuality?.().totalVideoFrames;
     const callbackFrames = rendered.presented || rendered.callbacks;
     const hasQuality = Number.isSafeInteger(qualityFrames) && qualityFrames > 0;
+    // Whose Live the tile shows, against the name a scenario expects; only
+    // the comparison leaves the page, never the caption.
+    const name = video
+      .closest("figure")
+      .querySelector(".voice-live-caption-name")?.textContent;
     return {
       kind: live ? "live" : "camera",
+      expectedPublisher:
+        typeof state.expectedLiveName === "string"
+          ? name?.trim() === state.expectedLiveName
+          : null,
       width: video.videoWidth,
       height: video.videoHeight,
       paused: video.paused,

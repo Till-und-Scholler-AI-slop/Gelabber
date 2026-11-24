@@ -10,6 +10,8 @@ export type OperatorOverview = {
   registration: RegistrationMode;
   /** Account mail is configured, so an invitation can be mailed. */
   mail: boolean;
+  /** The newest mail the API handed to the relay failed (GEL-40). */
+  mail_failing: boolean;
   open_reports: number;
   /** Feedback entries with status `open`. */
   open_feedback: number;
@@ -23,8 +25,9 @@ export type Page = { total: number };
 // ---------------------------------------------------------------------------
 // Konten
 
-export type AccountStatus = "active" | "pending" | "disabled";
-export type AccountFilter = "all" | "disabled" | "pending";
+export type AccountStatus = "active" | "pending" | "unconfirmed" | "disabled";
+/** `unconfirmed`: every address not confirmed yet, pending ones included. */
+export type AccountFilter = "all" | "disabled" | "pending" | "unconfirmed";
 
 export type Account = {
   id: string;
@@ -32,8 +35,14 @@ export type Account = {
   email: string;
   avatar_url: string | null;
   created_at: string;
-  /** `pending`: registered, address not confirmed yet. */
+  /**
+   * `pending`: registered, address not confirmed yet. `unconfirmed`:
+   * registered while the instance sent no mail and never confirmed; with
+   * mail on now, it cannot sign in until it is.
+   */
   status: AccountStatus;
+  /** Whether the address is confirmed, also while mail is off. */
+  email_verified: boolean;
   disabled_at: string | null;
   disabled_reason: string | null;
   /** Named in `API_OPERATOR_EMAILS`; cannot be disabled here. */
