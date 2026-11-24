@@ -497,27 +497,6 @@
   color: var(--lr-muted);
   font: var(--lr-type-meta);
 }
-/* "Verbunden" beside a voice room's name (VoiceRoom's `overview` mode). */
-.voice-room-connected {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: var(--lr-radius-full);
-  background: color-mix(in srgb, var(--lr-online) 14%, transparent);
-  color: var(--lr-online-text);
-  font: var(--lr-type-meta);
-  font-weight: 500;
-  white-space: nowrap;
-}
-.voice-room-connected::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
 .lr-channel-content {
   background: var(--lr-bg);
 }
@@ -578,7 +557,7 @@
   opacity: 0.55;
   cursor: wait;
 }
-html[data-compact-rooms="true"] .voice-room[data-page] {
+html[data-compact-rooms="true"] .voice-room {
   padding-block: 16px;
 }
 html[data-compact-rooms="true"] .voice-room-avatar {

@@ -167,7 +167,7 @@ pub struct Picture {
     pub own: bool,
 }
 
-/// The room as the page and the overview draw it.
+/// The room as the channel's page draws it; the overview reads its Lives.
 #[derive(Clone, Debug, Default)]
 pub struct Room {
     pub server: Uuid,
@@ -342,7 +342,8 @@ pub fn build(s: &State, call: &CallState, server: Uuid, channel: Uuid) -> Option
             });
         }
     }
-    // Whoever went live first keeps the spotlight when another joins in.
+    // Whoever went live first stays first, and in front in Fokus, when
+    // another goes live.
     let rank = |u: &Uuid| {
         live_order
             .iter()
