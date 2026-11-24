@@ -326,10 +326,10 @@ test("actual polling source waits out an early-waking final timer without launch
     pollTimes.push(now);
     return { frames: now };
   };
-  const final = await vm.runInContext("observe", context)(250, cadenceProbe);
+  const final = await vm.runInContext("observe", context)(450, cadenceProbe);
   assert.deepEqual(pollTimes, [0, 200]);
   assert.equal(final.frames, 200);
-  assert.equal(now, 250);
+  assert.equal(now, 450);
   now = 0;
   pollTimes.length = 0;
   await assert.rejects(
@@ -337,12 +337,39 @@ test("actual polling source waits out an early-waking final timer without launch
       cadenceProbe,
       () => false,
       "strict-progress",
-      250,
+      450,
     ),
     (e) => e instanceof CheckFailure && e.metrics.last.frames === 200,
   );
   assert.deepEqual(pollTimes, [0, 200]);
-  assert.equal(now, 250);
+  assert.equal(now, 450);
+  // GEL-36: a probe 2 ms before the end ran out of its budget and failed
+  // the run as a broken native interface. Less than a quarter second
+  // left: no further probe, the window is waited out.
+  for (const window of [202, 449]) {
+    now = 0;
+    pollTimes.length = 0;
+    const edge = await vm.runInContext("observe", context)(
+      window,
+      cadenceProbe,
+    );
+    assert.deepEqual(pollTimes, [0]);
+    assert.equal(edge.frames, 0);
+    assert.equal(now, window);
+    now = 0;
+    pollTimes.length = 0;
+    await assert.rejects(
+      vm.runInContext("until", context)(
+        cadenceProbe,
+        () => false,
+        "strict-progress",
+        window,
+      ),
+      (e) => e instanceof CheckFailure && e.metrics.last.frames === 0,
+    );
+    assert.deepEqual(pollTimes, [0]);
+    assert.equal(now, window);
+  }
   now = 0;
   accepts = 0;
   await assert.rejects(
