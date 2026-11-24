@@ -614,13 +614,14 @@ async fn layers_by_size(server: &Server) {
         // Ten pictures a second, so that a slow machine does not step the
         // picture down before its size is read.
         let source = Source::test_pattern(&engine, width, height, 10).unwrap();
-        // With a start bitrate that carries both layers: what is under
-        // test is their sizes, not how soon the bandwidth estimate of a new
-        // transport lets the large one start.
+        // With a start and a least bitrate that carry both layers: what is
+        // under test is their sizes, not the bandwidth estimate. On a busy
+        // runner the estimate read delays as congestion and fell to 184 kbps,
+        // too slow to climb back before the wait ended (GEL-77).
         let options = json!({
             "codec": format!("video/{codec}"),
             "encodings": [{ "scaleResolutionDownBy": factor }, { "scaleResolutionDownBy": 1 }],
-            "codecOptions": { "videoGoogleStartBitrate": 3000 },
+            "codecOptions": { "videoGoogleStartBitrate": 3000, "videoGoogleMinBitrate": 3000 },
         });
         let native = {
             let send = send.clone();
