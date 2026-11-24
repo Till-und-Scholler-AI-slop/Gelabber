@@ -113,17 +113,31 @@ async fn shared_in_server(
         }
     };
     let rows = sqlx::query_as::<_, SharedRow>(
+        // Each channel's messages with the newest sent files, read from
+        // `attachments_sent_by_channel_idx`, then all files of those
+        // messages: the work grows with the channels and `limit`, not
+        // with every file the server has.
         "SELECT a.id, a.message_id, a.filename, a.content_type, a.size_bytes, a.width, \
                 a.height, a.placeholder, a.placeholder_version, a.animated, a.thumb_type, \
-                a.description, m.channel_id, m.author_id, u.name AS author_name, \
+                a.description, c.id AS channel_id, m.author_id, u.name AS author_name, \
                 u.avatar_url AS author_avatar_url, m.created_at AS sent_at \
-         FROM attachments a \
-         JOIN messages m ON m.id = a.message_id \
-         JOIN channels c ON c.id = m.channel_id \
+         FROM channels c \
+         CROSS JOIN LATERAL ( \
+             SELECT DISTINCT recent.message_id FROM ( \
+                 SELECT a.message_id \
+                 FROM attachments a \
+                 JOIN messages m ON m.id = a.message_id \
+                 WHERE a.channel_id = c.id AND a.message_id IS NOT NULL \
+                   AND (NOT m.sender_only OR m.author_id = $2) \
+                 ORDER BY a.created_at DESC, a.id DESC \
+                 LIMIT $3 \
+             ) recent \
+         ) picked \
+         JOIN messages m ON m.id = picked.message_id AND m.channel_id = c.id \
+         JOIN attachments a ON a.message_id = m.id \
          JOIN users u ON u.id = m.author_id \
          WHERE c.server_id = $1 AND c.kind = 'text' \
            AND channel_visible_to(c.id, $2) \
-           AND (NOT m.sender_only OR m.author_id = $2) \
          ORDER BY m.created_at DESC, m.id DESC, a.created_at, a.id \
          LIMIT $3",
     )

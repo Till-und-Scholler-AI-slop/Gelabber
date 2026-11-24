@@ -14,7 +14,7 @@ mod gif;
 mod header;
 pub(crate) use header::members_toggle;
 pub mod markdown;
-mod mentions;
+pub(crate) mod mentions;
 mod notice;
 mod pane;
 pub(crate) mod pictures;
@@ -70,7 +70,8 @@ struct ChatState {
     account: Option<Uuid>,
     /// A message to show when its conversation opens next (the overview's
     /// "Geteilt"), per conversation.
-    jumps: HashMap<Uuid, Uuid>,
+    /// channel → the message to open at, and when it was asked for.
+    jumps: HashMap<Uuid, (Uuid, std::time::Instant)>,
 }
 
 fn chat_state(ctx: &egui::Context) -> Arc<Mutex<ChatState>> {
@@ -121,6 +122,9 @@ fn ensure_workspace(client: &Client, chat: &mut ChatState) {
 
 /// A failed GIF status is asked for again after this long.
 const GIFS_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long a request to open a channel at a message waits for its page
+/// (`messageJump.ts`'s `JUMP_TTL_MS`).
+const JUMP_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Whether to ask for the GIF status (the composer's GIF button): once per
 /// account data (a sign-in drops it), and again a while after a failure.
@@ -222,7 +226,10 @@ pub enum ChatRequest {
 /// Opens `channel` at `message` when its page shows next: a loaded
 /// message is scrolled to, one that is not opens in its context (`jumpTo`).
 pub fn open_at(ctx: &egui::Context, channel: Uuid, message: Uuid) {
-    chat_state(ctx).lock().jumps.insert(channel, message);
+    chat_state(ctx)
+        .lock()
+        .jumps
+        .insert(channel, (message, std::time::Instant::now()));
 }
 
 /// Requests since the last call, for whoever draws those dialogs.
@@ -467,7 +474,11 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         chat.gif = Default::default();
     }
     chat.shown = Some((channel, frame));
-    if let Some(id) = chat.jumps.remove(&channel) {
+    // A request no page took up in time is dropped, as on the web: a
+    // later visit opens as usual.
+    if let Some((id, at)) = chat.jumps.remove(&channel)
+        && at.elapsed() < JUMP_TTL
+    {
         jump_to(chat, client, channel, id);
     }
     let me = client

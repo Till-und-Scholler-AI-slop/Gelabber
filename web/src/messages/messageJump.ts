@@ -5,18 +5,26 @@ import { create } from "zustand";
 
 export type MessageJump = { channelId: string; messageId: string };
 
-export const useMessageJump = create<{ jump: MessageJump | null }>(() => ({
+/** A request no message pane took up by then is dropped: a later visit to
+ *  the channel, maybe by another account, opens as usual. */
+export const JUMP_TTL_MS = 10_000;
+
+export const useMessageJump = create<{
+  jump: (MessageJump & { at: number }) | null;
+}>(() => ({
   jump: null,
 }));
 
 export function requestMessageJump(jump: MessageJump): void {
-  useMessageJump.setState({ jump });
+  useMessageJump.setState({ jump: { ...jump, at: Date.now() } });
 }
 
 /** The message asked for in this channel, if any. */
 export function peekMessageJump(channelId: string): string | null {
   const { jump } = useMessageJump.getState();
-  return jump?.channelId === channelId ? jump.messageId : null;
+  return jump?.channelId === channelId && Date.now() - jump.at < JUMP_TTL_MS
+    ? jump.messageId
+    : null;
 }
 
 /** Done with this channel's request: a later visit opens as usual. */

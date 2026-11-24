@@ -5,6 +5,7 @@
 //! page do not.
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use chrono::{Local, Timelike, Utc};
 use egui::text::LayoutJob;
@@ -21,6 +22,7 @@ use super::state::{self, Missed, SharedFiles};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::images::{Fit, ImageState, cover_uv};
+use crate::screens::chat::mentions::{Member, to_wire};
 use crate::screens::chat::{self, attachments, content, pictures, time};
 use crate::screens::voice;
 use crate::task::Pending;
@@ -47,6 +49,8 @@ const FETCHED: u32 = 5;
 /// "Geteilt": asked for, and shown.
 const SHARED_LIMIT: u32 = 12;
 const SHARED_SHOWN: usize = 4;
+/// After a failed fetch of a card's messages or of "Geteilt".
+const RETRY_AFTER: Duration = Duration::from_secs(10);
 /// The dark chips over pictures: rgba(14, 14, 16, .84).
 const CHIP: Color32 = Color32::from_rgba_premultiplied(12, 12, 13, 214);
 /// Text on those chips and on the streams' black.
@@ -181,6 +185,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
     };
 
     let streams = streams(app, &detail);
+    // Before the read state is in, "Alles gelesen." would not be known.
+    let read_loaded = app.client.with_state(|s| {
+        detail
+            .channels
+            .iter()
+            .any(|ch| ch.kind == ChannelKind::Text && s.read.contains_key(&ch.id))
+    });
     let unread = unread_channels(app, &detail);
     let single = unread.len() == 1;
     let (cards, more_channels) = cards(unread);
@@ -203,12 +214,19 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                 .map(|card| {
                     let (count, _) = card_look(card.unread, card.mentions, single);
                     let page = missed_messages(ui, app, card.channel, card.latest)?;
-                    let shown = unread_tail(&page, card.read, count);
+                    // As the chat folds them: whoever the user blocks is
+                    // left out here, and counted in "x weitere".
+                    let shown: Vec<Message> = unread_tail(&page, card.read, count)
+                        .into_iter()
+                        .filter(|m| !app.client.with_state(|s| s.blocks_user(m.author.id)))
+                        .collect();
                     in_cards.extend(shown.iter().map(|m| m.id));
                     Some(shown)
                 })
                 .collect();
-            let shared = shared_shown(&shared_files(ui, app, &detail), &in_cards);
+            let mut files = shared_files(ui, app, &detail);
+            files.retain(|f| !app.client.with_state(|s| s.blocks_user(f.author.id)));
+            let shared = shared_shown(&files, &in_cards);
             let two = body.width() >= TWO_COLUMNS;
             let left_w = if two { width - SIDE - GAP } else { width };
             let stream_cols = if body.width() >= TWO_STREAMS {
@@ -238,7 +256,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                 &cards,
                 &fetched,
                 more_channels,
-                single,
+                (single, read_loaded),
             );
             if two && !shared.is_empty() {
                 let side = shared_column(
@@ -673,17 +691,24 @@ fn missed_messages(
             order: latest,
             shown: None,
             pending: Some(fetch_messages(app, channel)),
+            retry_at: None,
         });
         if let Some(page) = entry.pending.as_ref().and_then(Pending::take) {
-            // A failed fetch keeps what was there.
+            // A failed fetch keeps what was there and asks again later.
             if page.is_some() {
                 entry.shown = page;
+                entry.retry_at = None;
+            } else {
+                entry.retry_at = Some(Instant::now() + RETRY_AFTER);
+                ui.ctx().request_repaint_after(RETRY_AFTER);
             }
             entry.pending = None;
         }
         // A new message changes the order: ask again, the old ones stay.
-        if entry.order != latest && entry.pending.is_none() {
+        let retry = entry.retry_at.is_some_and(|at| Instant::now() >= at);
+        if (entry.order != latest || retry) && entry.pending.is_none() {
             entry.order = latest;
+            entry.retry_at = None;
             entry.pending = Some(fetch_messages(app, channel));
         }
         entry.shown.clone()
@@ -713,7 +738,7 @@ fn missed(
     cards: &[Unread],
     fetched: &[Option<Vec<Message>>],
     more_channels: usize,
-    single: bool,
+    (single, read_loaded): (bool, bool),
 ) -> f32 {
     let c = theme.c;
     let (left, top, width) = at;
@@ -721,7 +746,11 @@ fn missed(
     h2.paint(ui.painter(), pos2(left, top));
     let mut y = top + h2.height() + 12.0;
     if cards.is_empty() {
-        return quiet_card(ui, theme, detail, left, y, width);
+        return if read_loaded {
+            quiet_card(ui, theme, detail, left, y, width)
+        } else {
+            y
+        };
     }
     let names: HashMap<String, String> = detail
         .members
@@ -972,7 +1001,12 @@ fn missed_card(
 
     // "x weitere →" ("x ältere anzeigen" with one channel): to the first
     // unread message.
-    let rest = (card.unread - shown as i64).max(0) as u64;
+    // Until the messages are there, how many more is not known yet.
+    let rest = if messages.is_some() {
+        (card.unread - shown as i64).max(0) as u64
+    } else {
+        0
+    };
     if rest > 0 {
         y += 4.0;
         let words = if single {
@@ -1007,11 +1041,21 @@ fn missed_card(
     // The first card answers in place: Enter sends.
     if first {
         y += 12.0;
+        let members: Vec<Member> = people
+            .0
+            .iter()
+            .filter_map(|(id, name)| {
+                Some(Member {
+                    id: id.parse().ok()?,
+                    name: name.clone(),
+                })
+            })
+            .collect();
         y = reply_field(
             ui,
             app,
             theme,
-            channel,
+            (channel, &members),
             &card.name,
             Rect::from_min_size(pos2(inner_left, y), vec2(inner_right - inner_left, 42.0)),
         );
@@ -1239,7 +1283,7 @@ fn reply_field(
     ui: &mut Ui,
     app: &AppCtx,
     theme: &Theme,
-    channel: Uuid,
+    (channel, members): (Uuid, &[Member]),
     name: &str,
     rect: Rect,
 ) -> f32 {
@@ -1307,7 +1351,10 @@ fn reply_field(
     let sent = response.lost_focus()
         && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
     if sent && !draft.trim().is_empty() {
-        app.client.send_message(channel, draft.trim(), None);
+        // A typed `@Name` of a member is sent as their mention, as the
+        // composer sends it.
+        let wire = to_wire(draft.trim(), members, &HashMap::new());
+        app.client.send_message(channel, &wire, None);
         draft.clear();
     }
     state::with(ui.ctx(), |s| {
@@ -1388,15 +1435,23 @@ fn shared_files(ui: &Ui, app: &AppCtx, detail: &ServerDetail) -> Vec<SharedFile>
             key,
             shown: Vec::new(),
             pending: Some(fetch_shared(app, server)),
+            retry_at: None,
         });
         if let Some(files) = entry.pending.as_ref().and_then(Pending::take) {
+            // A failed fetch keeps what was there and asks again later.
             if let Some(files) = files {
                 entry.shown = files;
+                entry.retry_at = None;
+            } else {
+                entry.retry_at = Some(Instant::now() + RETRY_AFTER);
+                ui.ctx().request_repaint_after(RETRY_AFTER);
             }
             entry.pending = None;
         }
-        if entry.key != key && entry.pending.is_none() {
+        let retry = entry.retry_at.is_some_and(|at| Instant::now() >= at);
+        if (entry.key != key || retry) && entry.pending.is_none() {
             entry.key = key;
+            entry.retry_at = None;
             entry.pending = Some(fetch_shared(app, server));
         }
         entry.shown.clone()

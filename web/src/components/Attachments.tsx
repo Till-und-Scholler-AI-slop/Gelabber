@@ -40,6 +40,7 @@ import {
   knownImageSize,
   mosaic,
   PICTURE_BOX,
+  placeholderColour,
   rememberImageSize,
 } from "./imageBox.ts";
 import { lightboxImage } from "./lightboxImage.ts";
@@ -187,15 +188,6 @@ function UploadState({ attachment }: { attachment: Attachment }) {
 /** Animated pictures up to this size play inline; larger ones show their
  *  first frame and play in the viewer (#574). */
 const ANIMATED_INLINE_MAX = 5 * 1024 * 1024;
-
-/** The colour shown while a picture loads, when the API sent one. */
-function placeholderColour(attachment: Attachment): string | undefined {
-  return attachment.placeholder_version === 1 &&
-    typeof attachment.placeholder === "string" &&
-    /^#[0-9a-f]{6}$/i.test(attachment.placeholder)
-    ? attachment.placeholder
-    : undefined;
-}
 
 /** One picture: alone in its own box, or a `tile` of a mosaic. */
 function AttachmentImage({

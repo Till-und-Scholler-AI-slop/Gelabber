@@ -117,6 +117,8 @@ pub struct Missed {
     pub order: Option<i64>,
     pub shown: Option<Vec<Message>>,
     pub pending: Option<Pending<Option<Vec<Message>>>>,
+    /// After a failed fetch: when to ask again.
+    pub retry_at: Option<std::time::Instant>,
 }
 
 /// A server's newest shared files for the overview's "Geteilt".
@@ -125,6 +127,8 @@ pub struct SharedFiles {
     pub key: Option<i64>,
     pub shown: Vec<SharedFile>,
     pub pending: Option<Pending<Option<Vec<SharedFile>>>>,
+    /// After a failed fetch: when to ask again.
+    pub retry_at: Option<std::time::Instant>,
 }
 
 #[derive(Default)]

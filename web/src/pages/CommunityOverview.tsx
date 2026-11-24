@@ -9,9 +9,11 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useSession } from "../auth/session.ts";
+import { useBlockedIds } from "../blocks/queries.ts";
 import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import { AttachmentList } from "../components/Attachments.tsx";
 import { Avatar } from "../components/Avatar.tsx";
+import { placeholderColour } from "../components/imageBox.ts";
 import {
   ArrowRightIcon,
   ChatIcon,
@@ -36,9 +38,9 @@ import { Input } from "../components/ui/Input.tsx";
 import { useT } from "../i18n/catalog.ts";
 import { servers } from "../i18n/catalogs/servers.ts";
 import { useCurrentLocale } from "../i18n/locale.ts";
-import { listMessages, thumbnailUrl } from "../messages/api.ts";
+import { attachmentUrl, listMessages, thumbnailUrl } from "../messages/api.ts";
 import { MessageContent } from "../messages/MessageContent.tsx";
-import type { MentionMember } from "../messages/mentions.ts";
+import { toWire, type MentionMember } from "../messages/mentions.ts";
 import { requestMessageJump } from "../messages/messageJump.ts";
 import { useSendMessage } from "../messages/queries.ts";
 import { useMarkManyRead, useReadState } from "../messages/readState.ts";
@@ -348,6 +350,11 @@ function Missed({
 }) {
   const t = useT(servers);
   const heading = useId();
+  const blocked = useBlockedIds();
+  // Kept by channel: a card that moves down keeps what was typed in it.
+  const [drafts, setDrafts] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
   const members: MentionMember[] = server.members.map((member) => ({
     id: member.user_id,
     name: member.name,
@@ -368,9 +375,23 @@ function Missed({
               key={card.channel.id}
               server={server}
               card={card}
-              messages={missed.messages.get(card.channel.id)}
+              messages={missed.messages
+                .get(card.channel.id)
+                // As the chat folds them: whoever the user blocks is left
+                // out here, and counted in "x weitere".
+                ?.filter((message) => !blocked.has(message.author.id))}
               alone={missed.alone}
-              reply={n === 0}
+              reply={
+                n === 0
+                  ? {
+                      text: drafts.get(card.channel.id) ?? "",
+                      setText: (text) =>
+                        setDrafts((old) =>
+                          new Map(old).set(card.channel.id, text),
+                        ),
+                    }
+                  : null
+              }
               members={members}
             />
           ))}
@@ -421,8 +442,8 @@ function MissedChannel({
   card: MissedCard;
   messages: Message[] | undefined;
   alone: boolean;
-  /** Only the first card has a reply field. */
-  reply: boolean;
+  /** Only the first card has a reply field: its text, kept by channel. */
+  reply: { text: string; setText: (text: string) => void } | null;
   members: readonly MentionMember[];
 }) {
   const t = useT(servers);
@@ -433,8 +454,8 @@ function MissedChannel({
     to: "/s/$serverId/c/$channelId",
     params: { serverId: server.id, channelId: channel.id },
   } as const;
-  const shown = messages?.length ?? 0;
-  const more = Math.max(0, card.unread - shown);
+  // Until the messages are there, how many more is not known yet.
+  const more = messages ? Math.max(0, card.unread - messages.length) : 0;
   return (
     <section
       className="overview-card"
@@ -462,7 +483,10 @@ function MissedChannel({
           <button
             type="button"
             className="overview-card__action"
-            onClick={() => void markRead({ channel: channel.id })}
+            onClick={() =>
+              // Failed, the card stays: the chat's "Gelesen" does the same.
+              void markRead({ channel: channel.id }).catch(() => {})
+            }
           >
             <CheckIcon size={15} />
             {t("overview.markRead")}
@@ -485,7 +509,13 @@ function MissedChannel({
         </Link>
       ) : null}
       {reply && can(server, "send_messages") ? (
-        <ReplyField channelId={channel.id} channelName={channel.name} />
+        <ReplyField
+          channelId={channel.id}
+          channelName={channel.name}
+          members={members}
+          text={reply.text}
+          setText={reply.setText}
+        />
       ) : null}
     </section>
   );
@@ -547,9 +577,15 @@ function OverviewMessage({
 function ReplyField({
   channelId,
   channelName,
+  members,
+  text,
+  setText,
 }: {
   channelId: string;
   channelName: string;
+  members: readonly MentionMember[];
+  text: string;
+  setText: (text: string) => void;
 }) {
   const t = useT(servers);
   const user = useSession((s) => s.user);
@@ -558,7 +594,6 @@ function ReplyField({
     name: user?.name ?? "",
     avatar_url: user?.avatar_url ?? null,
   });
-  const [text, setText] = useState("");
   const label = t("overview.reply", { channel: channelName });
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (
@@ -570,7 +605,9 @@ function ReplyField({
     event.preventDefault();
     const content = text.trim();
     if (!content || !user) return;
-    send.mutate({ content });
+    // A typed `@Name` of a member is sent as their mention, as the
+    // composer sends it.
+    send.mutate({ content: toWire(content, members) });
     setText("");
   };
   return (
@@ -618,7 +655,11 @@ function Shared({
     retry: false,
     placeholderData: keepPreviousData,
   });
-  const files = sharedShown(data ?? [], shownMessages);
+  const blocked = useBlockedIds();
+  const files = sharedShown(
+    (data ?? []).filter((file) => !blocked.has(file.author.id)),
+    shownMessages,
+  );
   if (files.length === 0) return null;
   const textChannels = server.channels.filter((c) => c.kind === "text");
   const names = new Map(server.channels.map((c) => [c.id, c.name]));
@@ -671,12 +712,12 @@ function SharedItem({
         type="button"
         className="overview-shared__picture"
         onClick={open}
-        style={
-          file.placeholder ? { backgroundColor: file.placeholder } : undefined
-        }
+        style={{ backgroundColor: placeholderColour(file) }}
       >
         <img
-          src={thumbnailUrl(file.id, 400)}
+          src={
+            file.thumbnail ? thumbnailUrl(file.id, 400) : attachmentUrl(file.id)
+          }
           alt={
             file.description ??
             t("overview.pictureBy", { name: file.author.name })
