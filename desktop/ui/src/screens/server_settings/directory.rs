@@ -766,9 +766,7 @@ mod tests {
     use parking_lot::Mutex;
     use serde_json::{Value, json};
 
-    use crate::app::testkit::{
-        FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace,
-    };
+    use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for, workspace};
     use crate::platform::paths::testing::TempConfig;
 
     type Harness = egui_kittest::Harness<'static, crate::Launcher>;
@@ -877,10 +875,14 @@ mod tests {
     }
 
     /// To the section, as the scene does: a row out of view takes no click.
-    fn open_section(harness: &mut Harness) {
-        wait_for(harness, "the Verzeichnis link", |h| {
+    /// Only once `loaded` (the form's and the queue's labels) are in: a
+    /// jump while they load stops at the end of the shorter page, and the
+    /// form that comes in then puts Speichern under the window's edge.
+    fn open_section(harness: &mut Harness, loaded: &[&str]) {
+        wait_for(harness, "the Verzeichnis section loaded", |h| {
             h.query_by_role_and_label(Role::Link, "Verzeichnis")
                 .is_some()
+                && loaded.iter().all(|label| h.query_by_label(label).is_some())
         });
         harness
             .get_by_role_and_label(Role::Link, "Verzeichnis")
@@ -913,8 +915,7 @@ mod tests {
         let api = api(stand, Arc::clone(&sent));
         let mut harness = launcher(&api, &route());
         harness.set_size(egui::vec2(1280.0, 1400.0));
-        open_section(&mut harness);
-        wait_for_label(&mut harness, "Im Verzeichnis zeigen");
+        open_section(&mut harness, &["Im Verzeichnis zeigen", "Annehmen"]);
         // The preview's button is drawn but takes no click, and screen
         // readers skip it (`inert`).
         let preview = harness.get_by_role_and_label(Role::Button, "Beitritt anfragen");
@@ -954,8 +955,7 @@ mod tests {
         let api = api(owner(settings(false, "", Value::Null, true)), sent);
         let mut harness = launcher(&api, &route());
         harness.set_size(egui::vec2(1280.0, 1400.0));
-        open_section(&mut harness);
-        wait_for_label(&mut harness, "Im Verzeichnis zeigen");
+        open_section(&mut harness, &["Im Verzeichnis zeigen", "Annehmen"]);
         // The operator took it out: the note says so.
         harness.get_by_label("Der Betreiber hat diesen Server aus dem Verzeichnis genommen.");
         harness
@@ -993,8 +993,7 @@ mod tests {
         };
         let api = api(stand, Arc::clone(&sent));
         let mut harness = launcher(&api, &route());
-        open_section(&mut harness);
-        wait_for_label(&mut harness, "Annehmen");
+        open_section(&mut harness, &["Annehmen"]);
         let link = harness.get_by_role_and_label(Role::Link, "Verzeichnis");
         assert_eq!(
             link.accesskit_node().description().as_deref(),
