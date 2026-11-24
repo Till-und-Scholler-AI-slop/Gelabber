@@ -2,10 +2,11 @@
 //! and read in one Lua turn each.
 
 use super::*;
-use crate::gateway::protocol::EventKind;
+use crate::gateway::protocol::{AUTHOR_ONLY, EventKind};
 
 /// One Redis turn: assign seq, append the replay list, PUBLISH.
-/// `ARGV[5]`, when not empty, is the message an edit or delete is about: its
+/// `ARGV[5]`, when not empty, is the message an edit or delete is about
+/// (empty for an event for its author alone, GEL-21): its
 /// earlier entries of this epoch take the new body under their own `n`, so no
 /// old body stays replayable and the seqs stay contiguous. An edit keeps each
 /// entry's kind (a create stays a create a resuming client can insert); a
@@ -106,8 +107,17 @@ impl EventLog {
         let seq_key = topic.seq_key();
         let log_key = topic.log_key();
         let channel = topic.redis_channel();
+        // An event for its author alone (GEL-21) rewrites nothing: the
+        // earlier entries hold what everyone else reads, and its own entry
+        // is replayed to the author after them.
+        let author_only = placeholder
+            .d
+            .as_ref()
+            .is_some_and(|delta| delta.get(AUTHOR_ONLY).is_some());
         let rewrites = match (draft.kind, draft.channel_id, draft.entity_id) {
-            (EventKind::E | EventKind::D, Some(_), Some(entity)) => entity.to_string(),
+            (EventKind::E | EventKind::D, Some(_), Some(entity)) if !author_only => {
+                entity.to_string()
+            }
             _ => String::new(),
         };
 

@@ -1077,9 +1077,12 @@ impl Serialize for MessagePages<'_> {
             let page: Vec<MessageRow> = self
                 .handle
                 .block_on(
+                    // As the person reads them: with their own text of a
+                    // message they edited for themselves under a block (GEL-21).
                     sqlx::query_as(
-                        "SELECT id, created_at, edited_at, content, reply_to, gif, system_kind, \
-                                system_params \
+                        "SELECT id, created_at, COALESCE(sender_only_edited_at, edited_at) AS edited_at, \
+                                COALESCE(sender_only_content, content) AS content, reply_to, gif, \
+                                system_kind, system_params \
                          FROM messages \
                          WHERE author_id = $1 AND channel_id = $2 \
                            AND ($3::timestamptz IS NULL OR (created_at, id) > ($3, $4)) \
@@ -1103,9 +1106,13 @@ impl Serialize for MessagePages<'_> {
                 .handle
                 .block_on(
                     sqlx::query_as(
-                        "SELECT id, message_id, filename, content_type, size_bytes, description \
-                         FROM attachments WHERE message_id = ANY($1) AND uploader_id = $2 \
-                         ORDER BY created_at, id",
+                        "SELECT a.id, a.message_id, a.filename, a.content_type, a.size_bytes, \
+                                CASE WHEN m.sender_only_descriptions ? a.id::text \
+                                     THEN m.sender_only_descriptions ->> a.id::text \
+                                     ELSE a.description END AS description \
+                         FROM attachments a JOIN messages m ON m.id = a.message_id \
+                         WHERE a.message_id = ANY($1) AND a.uploader_id = $2 \
+                         ORDER BY a.created_at, a.id",
                     )
                     .bind(&ids)
                     .bind(self.user_id)

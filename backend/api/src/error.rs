@@ -134,9 +134,6 @@ pub enum ApiError {
     FriendRequestsFull,
     /// 403: the caller blocks the person they try to reach (#565).
     Blocked,
-    /// 403: writing into a DM whose peer cannot be reached (#565: they
-    /// block the caller). Neutral on purpose: it does not say why.
-    DmClosed,
     /// 409: the caller blocks as many people as allowed.
     BlocksFull,
 }
@@ -208,7 +205,6 @@ impl ApiError {
             Self::FriendRequestDeclined { .. } => "friend_request_declined",
             Self::FriendRequestsFull => "friend_requests_full",
             Self::Blocked => "blocked",
-            Self::DmClosed => "dm_closed",
             Self::BlocksFull => "blocks_full",
         }
     }
@@ -253,7 +249,7 @@ impl ApiError {
             | Self::AlreadyFriends
             | Self::FriendRequestDeclined { .. }
             | Self::FriendRequestsFull => StatusCode::CONFLICT,
-            Self::Blocked | Self::DmClosed => StatusCode::FORBIDDEN,
+            Self::Blocked => StatusCode::FORBIDDEN,
             Self::BlocksFull => StatusCode::CONFLICT,
         }
     }
@@ -322,7 +318,6 @@ impl ApiError {
                 "Too many open friend requests. Wait for some answers first."
             }
             Self::Blocked => "You blocked this person. Unblock them to write.",
-            Self::DmClosed => "You can't send messages in this conversation.",
             Self::BlocksFull => "You block as many people as allowed.",
         }
     }
