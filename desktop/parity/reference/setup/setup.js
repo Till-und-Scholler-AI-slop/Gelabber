@@ -76,7 +76,7 @@ function showUpdates(state) {
   let line = `Installiert: ${state.current}.`;
   if (state.phase === "checking") line += " Suche läuft …";
   else if (state.available) line += ` Verfügbar: ${state.available}.`;
-  else if (state.lastCheck) line += " Das ist die neueste Version.";
+  else if (state.lastCheck && !state.error) line += " Das ist die neueste Version.";
   if (state.error) line += ` Letzte Suche: ${state.error}`;
   const work = installing(state);
   updateStatus.textContent = work ? work[0] : line;

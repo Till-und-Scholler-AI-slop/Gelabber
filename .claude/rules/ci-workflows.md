@@ -20,6 +20,7 @@ Keep CI lean. Pull requests check only what is needed to merge safely.
 - **Caches** are saved only by pushes (`save-if`, `cache-to`). Pull requests only read them, because per-PR copies exceed the repository's cache quota.
 - **Slow build outputs** that the cache quota would evict are kept where nothing evicts them: the libwebrtc packages are assets of the `libwebrtc-packages` release, stored after pushes and releases (`libwebrtc-store.yml`) and fetched on a cache miss (`desktop-native.yml`); the app images' layer cache is each image's `buildcache` tag in the registry, written by `publish-images.yml`.
 - **A release build** (`desktop-native.yml` with `release_tag`) builds, packages, makes one loopback call and tests the installed package, but runs the other code checks no more: CI on `main` ran them on the same commit.
+- **A release becomes "Latest" last.** `image_set.py` creates it with `--latest=false`; `mark-latest` in `desktop-release.yml` sets the mark once both apps are attached, and never on a release older than the current one.
 - **`libwebrtc-packages` and `build-deps` stay pre-releases.** If one became "Latest", `releases/latest/download/latest-native.json` (the apps' updater) and the web client's download links would point at it. A stored libwebrtc package is fetched only when `desktop/native/libwebrtc-packages.sha256` lists its SHA-256.
 - **Runners** are named by version, never `-latest`.
 - **Comments** in workflows are one or two lines saying why. Longer reasoning and history go in commit messages or `docs/`.

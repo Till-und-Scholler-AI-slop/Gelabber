@@ -64,8 +64,8 @@ jobs:
         run: |
           gh release upload "$TAG" gelabber-native-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
 
-  # The installer, its checksum and signature, and the manifests the
-  # installed apps poll: latest-native.json (0.9 on), latest.json (Tauri 0.8).
+  # The installer, its checksum and signature, and latest-native.json, the
+  # manifest the installed apps poll.
   release-asset-windows:
     name: Attach the Windows app to the release
     needs: build
@@ -97,10 +97,37 @@ jobs:
             '{version: $version, pub_date: $date,
               platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > latest-native.json
           cat latest-native.json
-          # The Tauri apps' updater reads latest.json: the same, so they install the native app.
-          cp latest-native.json latest.json
-          gh release upload "$TAG" "$setup" "$setup.sha256" "$setup.sig" latest-native.json latest.json \
+          gh release upload "$TAG" "$setup" "$setup.sha256" "$setup.sig" latest-native.json \
             --clobber --repo "$GITHUB_REPOSITORY"
+
+  # image_set.py creates the release with --latest=false: the apps' updater and
+  # the web's download links read releases/latest/download, so it becomes
+  # Latest only now that both apps are attached.
+  mark-latest:
+    name: Make the release Latest
+    needs: [release-asset, release-asset-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Make the release Latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease -q '"\(.isDraft) \(.isPrerelease)"')"
+          if [ "$release" != "false false" ] || ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$TAG is a draft or a pre-release: it does not become Latest"; exit 0
+          fi
+          # A repeated build of an older release leaves the newer one Latest.
+          current="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          if [ "$(printf '%s\n%s\n' "$current" "$TAG" | sort -V | tail -n1)" != "$TAG" ]; then
+            echo "$current is newer than $TAG and stays Latest"; exit 0
+          fi
+          gh release edit "$TAG" --latest --repo "$GITHUB_REPOSITORY"
+          echo "$TAG is Latest (was $current)"
 
   # Public: the repository on GitHub Pages. Off until the repository
   # variable ARCH_REPO_PUBLISH is "true" (desktop/packaging/arch/README.md).

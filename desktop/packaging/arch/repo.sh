@@ -7,21 +7,15 @@
 #     <site>/x86_64/gelabber.db and the package, <site>/gelabber.asc (public
 #     key), <site>/install.sh (install.sh, which sets that up for a user).
 #     Without a source URL the package records the local file (test builds).
-#   repo.sh test <site> <tarball> <tauri-pkgbuild> <tauri-tarball> <tauri-version>
+#   repo.sh test <site> <tarball>
 #     As a user would: adds the repository and its key to pacman, installs
-#     the Tauri app's package gelabber-desktop (PKGBUILD and tarball of a
-#     release up to 0.8) and lets it run the WebView fixture page
-#     (desktop/ui/tests/fixtures/webview, so python must be installed),
-#     upgrades it with -Syu into the native app, checks what that took over
-#     (from 0.8.10 on only its legacy-settings.json export, else WebKitGTK),
-#     starts it (../native/smoke.sh, so xvfb-run and a Vulkan driver must be
+#     the package with -S, checks its files and libraries, starts it
+#     (../native/smoke.sh, so xvfb-run and a Vulkan driver must be
 #     installed), upgrades to a newer pkgrel, removes with -Rns, and checks
 #     what is left. Then, without the repository and its key, installs with
 #     the site's install.sh piped into sh as from curl, twice, removes again
 #     and checks that a wrong key stops the script. Runs after build in the
-#     same container (same signing key) and as root, once per Tauri release;
-#     the Tauri app's WebKitGTK store lands in
-#     ./webview-fixture-arch/<tauri-version>.
+#     same container (same signing key) and as root.
 #
 # Signing key: ARCH_REPO_GPG_KEY (ASCII-armored private key without
 # passphrase). Without it a throwaway key signs the test build.
@@ -30,7 +24,6 @@ here="$(cd "$(dirname "$0")" && pwd)"
 builder=builder
 package=gelabber-desktop
 id=io.github.till-und-scholler-ai-slop.gelabber
-fixtures="$here/../../ui/tests/fixtures/webview"
 config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/$id"
 data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/$id"
 
@@ -137,71 +130,6 @@ nothing_left() {
   done
 }
 
-# The Tauri app on the fixture page of 127.0.0.1:8124, then of 8123 (the
-# server it keeps): its WebKitGTK storage as a user's, and from 0.8.10 on
-# its export, which then is all the native app may read.
-tauri_fills_storage() {
-  local version="$1" exports="$2"
-  local store="$data_dir/localstorage" export="$config_dir/legacy-settings.json" port server app
-  mkdir -p "$config_dir"
-  for port in 8124 8123; do
-    printf '{"server":"http://127.0.0.1:%s"}' "$port" >"$config_dir/desktop.json"
-    rm -f "/tmp/webview-done-$port"
-    python3 -I "$fixtures/page/serve.py" "$port" "/tmp/webview-done-$port" 2>/dev/null &
-    server=$!
-    # As v0.8.9's smoke test started it; setsid, so the kill takes WebKit's processes too.
-    WEBKIT_DISABLE_COMPOSITING_MODE=1 setsid xvfb-run -a /usr/bin/gelabber-desktop >"/tmp/tauri-$port.log" 2>&1 &
-    app=$!
-    for _ in $(seq 120); do [ -e "/tmp/webview-done-$port" ] && break; sleep 1; done
-    sleep 2
-    # The kill gives no pagehide: phase 2 (inputGain 1.5) reaches the export by its minute timer.
-    if [ "$exports" = 1 ] && [ "$port" = 8123 ]; then
-      for _ in $(seq 120); do grep -qF 'inputGain\":1.5' "$export" 2>/dev/null && break; sleep 1; done
-    fi
-    kill -TERM -- "-$app" 2>/dev/null || true
-    wait "$app" || true
-    kill "$server" 2>/dev/null || true
-    wait "$server" || true
-    if [ ! -e "/tmp/webview-done-$port" ]; then
-      cat "/tmp/tauri-$port.log"
-      echo "the Tauri app did not run the fixture page on port $port" >&2
-      exit 1
-    fi
-  done
-  test -f "$store/http_127.0.0.1_8123.localstorage"
-  mkdir -p "webview-fixture-arch/$version"
-  cp "$store"/http_127.0.0.1_812[34].localstorage* "webview-fixture-arch/$version/"
-  rm -f "webview-fixture-arch/$version"/*-shm
-  if [ "$exports" = 1 ]; then
-    grep -qF 'inputGain\":1.5' "$export" || {
-      echo "the Tauri app $version exported no phase 2 of port 8123" >&2
-      exit 1
-    }
-    rm -rf "$store"
-  else
-    test ! -e "$export"
-  fi
-}
-
-# The native app's first start as the user who had the Tauri app (no
-# GELABBER_CONFIG_DIR): it takes the settings, volumes and drafts from <source>.
-native_takes_over() {
-  local source="$1" work status=0
-  work="$(mktemp -d)"
-  mkdir -m 700 "$work/run"
-  timeout --kill-after=10 70 env -u GELABBER_CONFIG_DIR -u GELABBER_SERVER -u WAYLAND_DISPLAY \
-    XDG_RUNTIME_DIR="$work/run" GELABBER_SMOKE=10 RUST_LOG=info \
-    xvfb-run -a -s "-screen 0 1280x800x24" /usr/bin/gelabber --server https://gelabber.invalid \
-    >"$work/log" 2>&1 || status=$?
-  cat "$work/log"
-  if [ "$status" -ne 0 ] || ! grep -q "^gelabber: took over .* from $source\$" "$work/log"; then
-    echo "the native app's first start took nothing from $source (exit status $status)" >&2
-    exit 1
-  fi
-  rm -rf "$work"
-  python3 -I "$fixtures/check_import.py" "$config_dir"
-}
-
 # A user's first install with the site's install.sh, piped into sh as from
 # curl, on a pacman without the repository; a second run adds nothing and
 # repairs a section whose Server points elsewhere (GEL-38).
@@ -268,58 +196,30 @@ case "${1:-}" in
   test)
     site="$(realpath "${2:?site}")"
     test_tarball="$(realpath "${3:?tarball}")"
-    tauri_pkgbuild="$(realpath "${4:?tauri-pkgbuild}")"
-    tauri_tarball="$(realpath "${5:?tauri-tarball}")"
-    tauri_version="${6:?tauri-version}"
     setup_builder
     use_site "$site"
     # A user who never ran Gelabber, also on a second run.
     rm -rf "$config_dir" "$data_dir"
     pacman -Syu --noconfirm
-    # The Tauri app as its users have it, with its dependencies (WebKitGTK).
-    tauri="$(make_package "$tauri_pkgbuild" "$tauri_version" "$tauri_tarball" "" 1)"
-    pacman -U --noconfirm "$tauri"/*.pkg.tar.zst
-    test -x /usr/bin/gelabber-desktop
-    test -x /opt/gelabber-desktop/gelabber-desktop
-    test -f /usr/share/applications/gelabber-desktop.desktop
-    if [ "$(vercmp "${tauri_version#v}" 0.8.10)" -ge 0 ]; then
-      exports=1 source=legacy-settings.json
-    else
-      exports=0 source=WebKitGTK
-    fi
-    tauri_fills_storage "$tauri_version" "$exports"
-    old="$(pacman -Q "$package" | awk '{print $2}')"
-    new="$(pacman -Sl gelabber | awk -v p="$package" '$2 == p {print $3}')"
-    if [ "$(vercmp "$new" "$old")" -le 0 ]; then
-      echo "the repository's $package $new is not newer than the Tauri package $old" >&2
-      exit 1
-    fi
-    # The upgrade a user gets with -Syu: same name, a newer version.
-    pacman -Syu --noconfirm
-    pacman -Q "$package" | grep -qx "$package $new"
+    pacman -S --noconfirm "$package"
     pacman -Qi "$package"
     test -x /usr/bin/gelabber
     test "$(readlink -f /usr/bin/gelabber-desktop)" = /opt/gelabber/gelabber
     test -f /usr/share/applications/gelabber.desktop
     test -f /usr/share/icons/hicolor/256x256/apps/gelabber.png
-    # The Tauri package's own files went with its version.
-    nothing_left /opt/gelabber-desktop /usr/share/applications/gelabber-desktop.desktop \
-      /usr/share/icons/hicolor/256x256/apps/gelabber-desktop.png
     libraries_found /opt/gelabber/gelabber /opt/gelabber/libgelabber_media.so
-    native_takes_over "$source"
-    # The installed app starts and paints (needs xvfb-run and a Vulkan
-    # driver), through the command the Tauri package had.
-    "$here/../native/smoke.sh" /usr/bin/gelabber-desktop
+    # The installed app starts and paints (needs xvfb-run and a Vulkan driver).
+    "$here/../native/smoke.sh" /usr/bin/gelabber
     upgrade "$site" "$test_tarball"
     pacman -Rns --noconfirm "$package"
     nothing_left /opt/gelabber /usr/bin/gelabber /usr/bin/gelabber-desktop \
       /usr/share/applications/gelabber.desktop /usr/share/icons/hicolor/256x256/apps/gelabber.png
     install_script "$site"
     nothing_left /opt/gelabber /usr/bin/gelabber /usr/bin/gelabber-desktop
-    echo "upgrade from the Tauri package $old to $new, upgrade, removal and install.sh OK"
+    echo "install, upgrade, removal and install.sh OK"
     ;;
   *)
-    echo "usage: repo.sh build <version> <tarball> <site> [source-url] | test <site> <tarball> <tauri-pkgbuild> <tauri-tarball> <tauri-version>" >&2
+    echo "usage: repo.sh build <version> <tarball> <site> [source-url] | test <site> <tarball>" >&2
     exit 2
     ;;
 esac
