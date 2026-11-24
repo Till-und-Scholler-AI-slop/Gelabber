@@ -1,9 +1,9 @@
 //! The server rail (components/ServerRail.tsx, index.css `.server-rail`):
 //! the DM button, the avatars of unread direct messages, one tile per server
-//! with its edge pill, unread count and tooltip, and the dashed "Server
-//! hinzufügen" button under the list.
+//! with its edge pill, unread count and tooltip, and under the list a line
+//! and the "Server hinzufügen" and "Entdecken" tiles (GEL-74).
 
-use egui::{Color32, CornerRadius, Id, Rect, Shape, Stroke, Ui, Vec2, pos2};
+use egui::{Color32, CornerRadius, Id, Rect, Ui, Vec2, pos2};
 use gelabber_i18n::shell;
 use uuid::Uuid;
 
@@ -140,7 +140,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     let failed = !loaded && super::home::bootstrap_failed(ui.ctx(), app.client, loaded);
     // "Entdecken" under "Server hinzufügen", while there is a directory.
     let discover = crate::screens::discover::enabled(ui.ctx(), app) == Some(true);
-    let footer_h = 5.0 + TILE + 16.0 + if discover { 12.0 + TILE } else { 0.0 };
+    // `.server-rail-footer`: 5px, the 1px line, 12px gaps, 16px under it.
+    let footer_h = 5.0 + 1.0 + 12.0 + TILE + 16.0 + if discover { 12.0 + TILE } else { 0.0 };
     let count = if loaded { servers.len() } else { 3 };
     let content_h = 16.0 + ROW * count as f32;
 
@@ -338,9 +339,17 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
         }
     }
 
-    // "Server hinzufügen".
+    // `.server-rail-separator`, then "Server hinzufügen".
+    painter.rect_filled(
+        Rect::from_center_size(
+            pos2(rect.left() + 10.0 + TILE / 2.0, list.bottom() + 5.5),
+            Vec2::new(28.0, 1.0),
+        ),
+        0.0,
+        c.border_strong,
+    );
     let add = Rect::from_min_size(
-        pos2(rect.left() + 10.0, list.bottom() + 5.0),
+        pos2(rect.left() + 10.0, list.bottom() + 5.0 + 1.0 + 12.0),
         Vec2::splat(TILE),
     );
     let response =
@@ -348,18 +357,17 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::Button, true, shell::rail_add_server())
     });
-    if response.hovered() {
-        painter.circle_filled(add.center(), TILE / 2.0, c.hover);
-        painter.circle_stroke(
-            add.center(),
-            TILE / 2.0 - 0.5,
-            Stroke::new(1.0, c.border_strong),
-        );
-    } else {
-        dashed_circle(&painter, add.center(), TILE / 2.0 - 0.5, c.border_strong);
-    }
-    icons::paint_centered(&painter, Icon::Plus, add, 20.0, c.online_text);
-    common::focus_visible(ui, &response, add, TILE / 2.0);
+    let radius = action_tile(
+        ui,
+        &theme,
+        add,
+        Id::unique("rail-add-radius"),
+        Icon::Plus,
+        20.0,
+        response.hovered(),
+        false,
+    );
+    common::focus_visible(ui, &response, add, radius);
     if response.clicked() {
         super::dialogs::open_add(ui.ctx(), AddStep::Choose);
     }
@@ -523,33 +531,76 @@ fn unread_dm_tile(
     response.has_focus() || menu_open
 }
 
-/// "Entdecken" (`DiscoverTile`, `.server-discover-tile`): a square tile
-/// with the compass, amber while the directory is open.
+/// "Entdecken" (`DiscoverTile`, `.server-discover-tile`): a tile like a
+/// server's with the compass; while the directory is open selected, in the
+/// accent, with the edge pill.
 fn discover_tile(ui: &mut Ui, app: &mut AppCtx, theme: &Theme, tile: Rect) {
-    let c = &theme.c;
     let active = matches!(app.nav.route(), crate::route::Route::Discover(_));
     let id = Id::unique("rail-discover");
     let response = common::click(ui, tile, id).on_hover_text(shell::rail_discover());
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, shell::rail_discover()));
-    let hovered = response.hovered();
-    let (fill, fg) = if active {
-        (c.selected, c.accent_text)
-    } else if hovered {
-        (c.hover, c.text)
-    } else {
-        (Color32::TRANSPARENT, c.muted)
-    };
-    if fill != Color32::TRANSPARENT {
-        common::fill(ui.painter(), tile, theme.radius.md, fill);
-    }
-    common::focus_visible(ui, &response, tile, theme.radius.md);
-    icons::paint_centered(ui.painter(), Icon::Compass, tile, 22.0, fg);
+    let radius = action_tile(
+        ui,
+        theme,
+        tile,
+        Id::unique("rail-discover-radius"),
+        Icon::Compass,
+        22.0,
+        response.hovered(),
+        active,
+    );
+    pill(
+        ui,
+        ui.painter(),
+        theme,
+        Id::unique("rail-discover-pill"),
+        tile.left() - 10.0,
+        tile.center().y,
+        active,
+        false,
+        false,
+    );
+    common::focus_visible(ui, &response, tile, radius);
     // A link to `/discover` without a search, also from a search.
     let target = crate::route::Route::Discover(Default::default()).path();
     if response.clicked() && app.nav.location().href() != target {
         app.nav.navigate(&target);
     }
+}
+
+/// "Server hinzufügen" and "Entdecken" (`.server-create-button`,
+/// `.server-discover-tile`): a server tile without a picture. Round on the
+/// surface with a muted icon at rest; the theme's corner, hover and accent
+/// while hovered; selected and accent while `active`. Returns the corner it
+/// drew, for the focus ring.
+#[allow(clippy::too_many_arguments)]
+fn action_tile(
+    ui: &Ui,
+    theme: &Theme,
+    tile: Rect,
+    id: Id,
+    icon: Icon,
+    size: f32,
+    hovered: bool,
+    active: bool,
+) -> f32 {
+    let c = &theme.c;
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(id, active || hovered, motion::FAST);
+    let round = theme.radius.lg * 2.2;
+    let radius = round + (theme.radius.lg - round) * t;
+    let (fill, fg) = if active {
+        (c.selected, c.accent_text)
+    } else if hovered {
+        (c.hover, c.accent_text)
+    } else {
+        (c.surface, c.muted)
+    };
+    ui.painter().rect_filled(tile, corner(radius), fill);
+    icons::paint_centered(ui.painter(), icon, tile, size, fg);
+    radius
 }
 
 /// One server tile: tint and letters (or the icon), round at rest and the
@@ -647,25 +698,6 @@ fn pill(
         },
         color,
     );
-}
-
-/// A 1px dashed circle (`border: 1px dashed`), about 3px dashes and 2px
-/// gaps as Chromium draws them.
-fn dashed_circle(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
-    let circumference = std::f32::consts::TAU * radius;
-    let dashes = (circumference / 5.0).round().max(4.0) as usize;
-    let period = std::f32::consts::TAU / dashes as f32;
-    let dash = period * 0.6;
-    for i in 0..dashes {
-        let start = i as f32 * period - std::f32::consts::FRAC_PI_2 - dash / 2.0;
-        let points: Vec<egui::Pos2> = (0..=4)
-            .map(|k| {
-                let a = start + dash * k as f32 / 4.0;
-                center + Vec2::new(a.cos(), a.sin()) * radius
-            })
-            .collect();
-        painter.add(Shape::line(points, Stroke::new(1.0, color)));
-    }
 }
 
 #[cfg(test)]
