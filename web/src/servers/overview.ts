@@ -1,6 +1,6 @@
-// The server overview's choices (GEL-69): it shows only what is shown
-// nowhere else. Who is in a call is the sidebar's, who is online the member
-// list's; the overview has the Lives, what was missed and what was shared.
+// The server overview's choices (GEL-69, GEL-75): who is online is the
+// member list's; the overview has who is in which call with the way in, the
+// Lives, what was missed and what was shared.
 import type { ReadState } from "../messages/readState.ts";
 import type { Badge } from "../messages/notifyLevel.ts";
 import type { Message } from "../messages/types.ts";
@@ -139,4 +139,59 @@ export function sharedShown<T extends { message_id: string }>(
   return files
     .filter((file) => !shownMessages.has(file.message_id))
     .slice(0, max);
+}
+
+/** "Im Call": at most this many people per voice channel, then "+n". */
+export const CALL_PEOPLE_SHOWN = 6;
+
+export type CallRoom = {
+  channel: Channel;
+  /** Who sits there, in the roster's order. */
+  people: string[];
+  /** Someone there shares a screen. */
+  live: boolean;
+  /** The call the user is in. */
+  mine: boolean;
+};
+
+/** The voice channels someone sits in, for "Im Call" (GEL-75): the user's
+ * own call first, then the fullest, then the sidebar's order. `order` is the
+ * sidebar's channels, `seats` user → their seat, `live` channel → user →
+ * what they share, `mine` the channel of the user's call here or null. */
+export function callRooms(
+  order: readonly Channel[],
+  seats: Readonly<Record<string, { channelId: string }>>,
+  live: Readonly<Record<string, Readonly<Record<string, { s?: true }>>>>,
+  mine: string | null,
+): CallRoom[] {
+  const people = new Map<string, string[]>();
+  for (const [userId, seat] of Object.entries(seats)) {
+    const list = people.get(seat.channelId) ?? [];
+    list.push(userId);
+    people.set(seat.channelId, list);
+  }
+  return order
+    .flatMap((channel, index) => {
+      const inside = channel.kind === "voice" ? people.get(channel.id) : null;
+      if (!inside?.length) return [];
+      const sharing = Object.values(live[channel.id] ?? {});
+      return [
+        {
+          index,
+          room: {
+            channel,
+            people: inside,
+            live: sharing.some((kinds) => kinds.s === true),
+            mine: channel.id === mine,
+          },
+        },
+      ];
+    })
+    .sort(
+      (a, b) =>
+        Number(b.room.mine) - Number(a.room.mine) ||
+        b.room.people.length - a.room.people.length ||
+        a.index - b.index,
+    )
+    .map(({ room }) => room);
 }
