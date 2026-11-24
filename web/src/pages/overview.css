@@ -84,68 +84,104 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 28px;
-  padding: 32px 40px;
+  gap: 24px;
+  padding: 24px 32px;
 }
-/* "Geteilt" gets its own column only where "Verpasst" keeps about 650 px
-   beside it; with the member list open at 1440 px it goes below. */
+/* "Geteilt" gets its own column, two tiles wide, only where "Verpasst"
+   keeps about 650 px beside it; with the member list open at 1440 px it
+   goes below. */
 @container (min-width: 1000px) {
   .community-overview__body {
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr) 332px;
   }
 }
 .overview-main {
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 24px;
   min-width: 0;
+}
+/* One line (GEL-75): the greeting, and "Alles gelesen" beside it when
+   nothing was missed. */
+.overview-hello {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.overview-hello__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
 }
 .overview-greeting {
-  font: var(--lr-type-page);
-  letter-spacing: -0.02em;
+  font: var(--lr-type-title);
+  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
+.overview-all-read {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--lr-radius-full);
+  background: color-mix(in srgb, var(--lr-online) 16%, transparent);
+  color: var(--lr-online-text);
+  font: 600 12px / 1 var(--lr-font);
+  white-space: nowrap;
+}
+.overview-all-read > svg {
+  flex-shrink: 0;
+}
+.overview-alone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  color: var(--lr-muted);
+  font: 400 13px / 1.45 var(--lr-font);
+}
 .overview-heading {
-  margin-bottom: 12px;
-  font: var(--lr-type-title-sm);
+  margin-bottom: 10px;
+  font: 600 14px / 1.3 var(--lr-font);
 }
 
-/* Lives: a large picture each, two side by side. */
+/* Lives: flat cards (GEL-75), the picture small on the left, two side by
+   side where there is room. */
 .overview-streams {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
-  gap: 20px;
-}
-@container (min-width: 560px) {
-  .overview-streams {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 .overview-stream {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: none;
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 12px;
+  width: 334px;
+  max-width: 100%;
+  padding: 8px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-surface);
   color: var(--lr-text);
   text-align: left;
   cursor: pointer;
 }
-.overview-stream:focus-visible {
-  outline: none;
+.overview-stream:hover {
+  border-color: var(--lr-border-strong);
 }
-.overview-stream:focus-visible .overview-stream__picture {
+.overview-stream:focus-visible {
   outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
 }
 .overview-stream__picture {
   position: relative;
   display: block;
+  width: 176px;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius-lg);
+  border-radius: var(--lr-radius-md);
   background: #000;
 }
 .overview-stream__picture video {
@@ -153,10 +189,6 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.3s var(--lr-ease-enter);
-}
-.overview-stream:hover .overview-stream__picture video {
-  transform: scale(1.02);
 }
 .overview-stream__stand-in {
   position: absolute;
@@ -165,60 +197,124 @@
   place-items: center;
   background: var(--lr-panel);
 }
+.overview-stream__stand-in .gel-avatar {
+  --avatar-size: 48px;
+}
 .overview-stream__live,
 .overview-stream__viewers {
   position: absolute;
-  top: 12px;
+  top: 6px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 8px;
-  border-radius: 6px;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
 }
 .overview-stream__live {
-  left: 12px;
+  left: 6px;
   background: var(--lr-live);
   color: var(--lr-on-live);
-  font: 700 11px / 1 var(--lr-font);
+  font: 700 10px / 1 var(--lr-font);
   letter-spacing: 0.04em;
 }
 .overview-stream__viewers {
-  right: 12px;
+  right: 6px;
   background: rgb(14 14 16 / 0.82);
   color: #f2f2f2;
-  font: 600 12px / 1 var(--lr-font);
+  font: 600 11px / 1 var(--lr-font);
   font-variant-numeric: tabular-nums;
+}
+.overview-stream__info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 0;
 }
 .overview-stream__by {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 7px;
   min-width: 0;
 }
 .overview-stream__by .gel-avatar {
-  --avatar-size: 28px;
+  --avatar-size: 20px;
+  font-size: 9px;
 }
-.overview-stream__name {
+.overview-stream__name,
+.overview-stream__channel > span {
   min-width: 0;
   overflow: hidden;
-  font: 600 14px / 1.3 var(--lr-font);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.overview-stream__name {
+  font: 600 14px / 1.2 var(--lr-font);
+}
+.overview-stream__channel {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--lr-muted);
+  font: 400 12px / 1.3 var(--lr-font);
+}
+.overview-stream__channel > svg {
+  flex-shrink: 0;
+}
+.overview-stream__go {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  height: 30px;
+  margin-top: auto;
+  padding: 0 12px;
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
+  font: 600 13px / 1 var(--lr-font);
+  white-space: nowrap;
+}
+.overview-stream__go[data-own] {
+  border: 1px solid var(--lr-border-strong);
+  background: var(--lr-panel);
+  color: var(--lr-text);
+}
+.overview-stream:hover .overview-stream__go {
+  filter: brightness(1.08);
 }
 
 /* Verpasst: one card per channel. */
 .overview-cards {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
 }
-.overview-card,
-.overview-quiet {
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius-lg);
-  background: var(--lr-surface);
+.overview-card {
+  padding: 6px 20px 14px;
+}
+/* A busy channel without a mention: one line (GEL-75). */
+.overview-card--line {
+  padding: 0 20px;
+}
+.overview-card--line .overview-card__head {
+  flex-wrap: nowrap;
+  min-height: 44px;
+}
+.overview-card__preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lr-muted);
+  font: 400 13px / 1.3 var(--lr-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-card__preview-author {
+  color: var(--lr-text);
+  font-weight: 500;
 }
 .overview-card {
   padding: 6px 20px 14px;
@@ -383,44 +479,52 @@
   margin-top: 12px;
   padding-inline: 12px;
 }
-.overview-quiet {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-  padding: 18px 20px;
-  color: var(--lr-muted);
-  font: 400 14px / 1.45 var(--lr-font);
-}
 
-/* Geteilt: pictures as 16:9, other files as a row. */
-/* Below "Verpasst" on narrow pages: side by side, not page-wide. */
+/* Geteilt (GEL-75): one tile size for pictures and files, 160 × 100,
+   never stretched; who sent it and when below. */
 .overview-shared__list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, 160px);
+  gap: 14px 12px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.overview-shared__picture,
-.overview-shared__file {
-  width: 100%;
-  border: 1px solid var(--lr-border);
+.overview-shared__tile {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 160px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lr-text);
+  text-align: left;
   cursor: pointer;
 }
-.overview-shared__picture:focus-visible,
-.overview-shared__file:focus-visible {
+.overview-shared__tile:focus-visible {
+  outline: none;
+}
+.overview-shared__tile:focus-visible
+  :is(.overview-shared__picture, .overview-shared__file) {
   outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
 }
-.overview-shared__picture {
+.overview-shared__picture,
+.overview-shared__file {
   position: relative;
   display: block;
-  aspect-ratio: 16 / 9;
+  width: 160px;
+  height: 100px;
   overflow: hidden;
-  padding: 0;
-  border-radius: var(--lr-radius-lg);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+}
+.overview-shared__tile:hover
+  :is(.overview-shared__picture, .overview-shared__file) {
+  border-color: var(--lr-border-strong);
+}
+.overview-shared__picture {
   background: var(--lr-panel);
 }
 .overview-shared__picture img {
@@ -429,54 +533,28 @@
   height: 100%;
   object-fit: cover;
 }
-.overview-shared__by,
 .overview-shared__tag {
   position: absolute;
+  top: 6px;
+  right: 6px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  padding: 3px 6px;
+  border-radius: 5px;
   background: rgb(14 14 16 / 0.84);
   color: #f2f2f2;
-}
-.overview-shared__by {
-  left: 8px;
-  bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: calc(100% - 16px);
-  padding: 3px 8px 3px 3px;
-  border-radius: var(--lr-radius-full);
-  font: 600 12px / 1 var(--lr-font);
-  white-space: nowrap;
-}
-.overview-shared__by .gel-avatar {
-  --avatar-size: 20px;
-  font-size: 9px;
-}
-.overview-shared__tag {
-  top: 8px;
-  right: 8px;
-  max-width: calc(100% - 16px);
-  overflow: hidden;
-  padding: 3px 7px;
-  border-radius: 6px;
   font: 600 11px / 1 var(--lr-font);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .overview-shared__file {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--lr-radius-lg);
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 12px;
   background: var(--lr-surface);
-  color: var(--lr-text);
-  text-align: left;
-}
-.overview-shared__file:hover {
-  background: var(--lr-hover);
 }
 .overview-shared__file > svg {
-  flex-shrink: 0;
   color: var(--lr-accent-text);
 }
 .overview-shared__text {
@@ -485,7 +563,9 @@
   min-width: 0;
 }
 .overview-shared__filename,
-.overview-shared__meta {
+.overview-shared__meta,
+.overview-shared__name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -496,6 +576,29 @@
 .overview-shared__meta {
   color: var(--lr-muted);
   font: var(--lr-type-meta);
+}
+.overview-shared__by {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--lr-muted);
+  font: 400 12px / 1 var(--lr-font);
+  white-space: nowrap;
+}
+.overview-shared__by .gel-avatar {
+  --avatar-size: 18px;
+  font-size: 8px;
+}
+.overview-shared__name {
+  color: var(--lr-text);
+  font-weight: 600;
+}
+.overview-shared__by time {
+  flex-shrink: 0;
+}
+.overview-shared__by time::before {
+  content: "· ";
 }
 .lr-channel-content {
   background: var(--lr-bg);
@@ -582,10 +685,5 @@ html[data-compact-rooms="true"] .voice-room-participants {
   }
   .community-overview__body {
     padding: 20px 24px 28px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .overview-stream__picture video {
-    transition: none;
   }
 }

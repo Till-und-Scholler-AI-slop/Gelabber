@@ -74,7 +74,10 @@ crate::strings! {
     /// A "Verpasst" card: mark the channel read.
     overview_mark_read = "Gelesen" | "Mark read";
     overview_open = "Öffnen" | "Open";
-    overview_all_read = "Alles gelesen." | "All caught up.";
+    /// Beside the greeting when nothing was missed.
+    overview_all_read = "Alles gelesen" | "All caught up";
+    /// A Live card's button.
+    overview_watch_short = "Zuschauen" | "Watch";
     /// The own stream's name and the own messages' author.
     overview_you = "Du" | "You";
     overview_own_screen = "Dein Bildschirm" | "Your screen";
