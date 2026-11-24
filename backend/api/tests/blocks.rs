@@ -591,7 +591,34 @@ async fn an_edit_of_a_seen_message_stays_the_senders(pool: PgPool) {
     assert_eq!(hers.body["content"], "alter text", "{}", hers.body);
     assert_eq!(read(&mut w.bob, &dm, &seen).await["content"], "noch neuer");
 
-    // An edit after the unblock is everyone's again.
+    // An edit after the unblock is everyone's again: back to the text she
+    // reads is an edit for him all the same.
+    let back = edit(&mut w.bob, &seen, json!({ "content": "alter text" })).await;
+    assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+    for client in [&mut w.ada, &mut w.bob] {
+        let message = read(client, &dm, &seen).await;
+        assert_eq!(message["content"], "alter text", "{message}");
+        assert!(message["edited_at"].is_string(), "{message}");
+    }
+    // Dropping only his own alt text changes nothing she reads, and sends
+    // her no event: her copy does not take its revision. (Hers may still
+    // move by the picture's own processing, which runs on its own time.)
+    let mut photo_before = read(&mut w.ada, &dm, &photo).await;
+    let dropped = edit(
+        &mut w.bob,
+        &photo,
+        json!({ "attachment_descriptions": { &picture: null } }),
+    )
+    .await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    assert!(undescribed(&dropped.body), "{}", dropped.body);
+    assert!(undescribed(&read(&mut w.bob, &dm, &photo).await));
+    let mut photo_after = read(&mut w.ada, &dm, &photo).await;
+    assert_ne!(photo_after["revision"], dropped.body["revision"]);
+    for photo in [&mut photo_before, &mut photo_after] {
+        photo.as_object_mut().unwrap().remove("revision");
+    }
+    assert_eq!(photo_after, photo_before);
     let open = edit(&mut w.bob, &seen, json!({ "content": "für alle" })).await;
     assert_eq!(open.status, StatusCode::OK, "{}", open.body);
     for client in [&mut w.ada, &mut w.bob] {
@@ -1228,6 +1255,23 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
         .expect("resumed");
         assert_eq!(first["op"] == "e", expect, "{first}");
     }
+    // From the start she still replays what she saw: his edit rewrote
+    // none of the earlier entries.
+    let mut ws = socket(addr, &w.ada).await;
+    ws.send(Message::Text(
+        json!({ "op": "s", "s": dm, "c": dm, "n": 0, "ep": head["ep"] })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let replayed = frame(&mut ws, Duration::from_secs(5), |f| {
+        (f["op"] == "e" && f["i"] == seen) || f["op"] == "ok"
+    })
+    .await
+    .expect("replayed");
+    assert_eq!(replayed["op"], "e", "{replayed}");
+    assert_eq!(replayed["d"]["content"], "alt", "{replayed}");
 
     // After the unblock her reaction goes out to both, each with the text
     // they read.
@@ -1249,4 +1293,71 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     for frame in [&hers, &his] {
         assert!(frame["d"].get("author_view").is_none(), "{frame}");
     }
+
+    // Her answer to it quotes to each the text they read.
+    let answer = w
+        .ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{dm}/messages"),
+            Some(json!({ "content": "worauf?", "reply_to": seen })),
+        )
+        .await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    assert_eq!(answer.body["reply"]["excerpt"], "alt", "{}", answer.body);
+    let created = |f: &Value| f["op"] == "e" && f["t"] == "c";
+    let hers = frame(&mut ada_ws, Duration::from_secs(5), created)
+        .await
+        .expect("her answer");
+    assert_eq!(hers["d"]["reply"]["excerpt"], "alt", "{hers}");
+    let his = frame(&mut bob_ws, Duration::from_secs(5), created)
+        .await
+        .expect("her answer, for him");
+    assert_eq!(his["d"]["reply"]["excerpt"], "neu", "{his}");
+    for frame in [&hers, &his] {
+        assert!(frame["d"].get("reply_author_view").is_none(), "{frame}");
+    }
+    assert_eq!(
+        read(&mut w.bob, &dm, answer.body["id"].as_str().unwrap()).await["reply"]["excerpt"],
+        "neu"
+    );
+}
+
+/// GEL-21: his own text shows the previews of its own links only.
+#[sqlx::test]
+async fn an_edit_of_a_seen_message_keeps_only_its_own_previews(pool: PgPool) {
+    let mut w = world(common::state(pool.clone())).await;
+    let bob = w.bob.user_id().to_owned();
+    w.ada.befriend(&bob).await;
+    let dm = open_dm(&mut w.ada, &bob).await;
+    let dm = dm.body["id"].as_str().unwrap().to_owned();
+    let sent = text(&mut w.bob, &dm, "siehe https://example.org/").await;
+    let seen = sent.body["id"].as_str().unwrap().to_owned();
+    sqlx::query(
+        "WITH p AS (INSERT INTO link_previews (url_hash, url, status, title) \
+         VALUES (sha256('https://example.org/'), 'https://example.org/', 'ok', 'Beispiel') RETURNING id) \
+         INSERT INTO message_previews (message_id, preview_id, position) SELECT $1::uuid, id, 0 FROM p",
+    )
+    .bind(&seen)
+    .execute(&pool)
+    .await
+    .unwrap();
+    block(&mut w.ada, &bob).await;
+
+    let edited = edit(&mut w.bob, &seen, json!({ "content": "ohne link" })).await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    assert!(edited.body.get("previews").is_none(), "{}", edited.body);
+    assert!(read(&mut w.bob, &dm, &seen).await.get("previews").is_none());
+    assert_eq!(
+        read(&mut w.ada, &dm, &seen).await["previews"][0]["url"],
+        "https://example.org/"
+    );
+    // With the link back in his text, so is its preview.
+    let again = edit(
+        &mut w.bob,
+        &seen,
+        json!({ "content": "doch https://example.org/" }),
+    )
+    .await;
+    assert_eq!(again.body["previews"][0]["url"], "https://example.org/");
 }

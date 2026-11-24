@@ -41,6 +41,12 @@ pub struct Reply {
     /// excerpt from it, `excerpt` is then empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<SystemMessage>,
+    /// The excerpt of the text the original's author keeps for themselves
+    /// (GEL-21), which they read instead ([`Reply::read_by`]). Never sent as
+    /// is: an event carries it under
+    /// [`crate::gateway::protocol::REPLY_AUTHOR_VIEW`].
+    #[serde(skip)]
+    pub own_excerpt: Option<String>,
 }
 
 #[derive(Debug, FromRow)]
@@ -51,6 +57,7 @@ struct ReplyRow {
     author_id: Option<Uuid>,
     author_name: Option<String>,
     content: Option<String>,
+    own_content: Option<String>,
     has_attachment: bool,
     has_gif: bool,
     system_kind: Option<String>,
@@ -72,6 +79,7 @@ impl From<ReplyRow> for Reply {
             has_attachment: row.has_attachment,
             has_gif: row.has_gif,
             system: SystemMessage::from_columns(row.system_kind, row.system_params),
+            own_excerpt: row.own_content.as_deref().map(excerpt),
         }
     }
 }
@@ -86,6 +94,17 @@ impl Reply {
             has_attachment: false,
             has_gif: false,
             system: None,
+            own_excerpt: None,
+        }
+    }
+
+    /// The quote as `reader` reads it: the original's author reads their own
+    /// text of it (GEL-21), everyone else the shared one.
+    pub fn read_by(&mut self, reader: Option<Uuid>) {
+        if let (Some(author), Some(own)) = (&self.author, &self.own_excerpt)
+            && Some(author.id) == reader
+        {
+            self.excerpt = Some(own.clone());
         }
     }
 }
@@ -127,12 +146,11 @@ fn mask_spoilers(line: &str) -> String {
 }
 
 // The original must stay in the reply's channel; a row that says otherwise
-// is answered as deleted rather than leaking another channel's text. `$2`
-// is the reader: the original's author reads their own text of it (GEL-21).
+// is answered as deleted rather than leaking another channel's text. Its
+// author's own text (GEL-21) comes along for [`Reply::read_by`].
 const REPLIES_SQL: &str = "SELECT m.id AS message_id, m.reply_to, o.id AS original_id, \
-        o.author_id, u.name AS author_name, \
-        CASE WHEN o.author_id = $2 THEN COALESCE(o.sender_only_content, o.content) \
-             ELSE o.content END AS content, \
+        o.author_id, u.name AS author_name, o.content, \
+        o.sender_only_content AS own_content, \
         EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = o.id) AS has_attachment, \
         o.gif IS NOT NULL AS has_gif, o.system_kind, o.system_params \
      FROM messages m \
@@ -141,7 +159,8 @@ const REPLIES_SQL: &str = "SELECT m.id AS message_id, m.reply_to, o.id AS origin
      WHERE m.id = ANY($1) AND m.reply_to IS NOT NULL";
 
 /// Fill `reply` on every message that answers another one, as `reader`
-/// reads it (`None`: what everyone reads).
+/// reads it (`None`: what everyone reads; [`Reply::read_by`] turns it into
+/// another reader's).
 pub async fn for_messages(
     db: impl PgExecutor<'_>,
     messages: &mut [Message],
@@ -153,12 +172,16 @@ pub async fn for_messages(
     }
     let rows = sqlx::query_as::<_, ReplyRow>(REPLIES_SQL)
         .bind(&ids)
-        .bind(reader)
         .fetch_all(db)
         .await?;
     let mut by_message: std::collections::HashMap<Uuid, Reply> = rows
         .into_iter()
-        .map(|row| (row.message_id, Reply::from(row)))
+        .map(|row| {
+            let message_id = row.message_id;
+            let mut reply = Reply::from(row);
+            reply.read_by(reader);
+            (message_id, reply)
+        })
         .collect();
     for message in messages {
         message.reply = by_message.remove(&message.id);

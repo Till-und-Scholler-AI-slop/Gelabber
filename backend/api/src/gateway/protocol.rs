@@ -26,6 +26,12 @@ pub const HIDDEN_MENTIONS: &str = "hidden_mentions";
 /// fields on the author's copy and drops them from everyone's.
 pub const AUTHOR_VIEW: &str = "author_view";
 
+/// The key of a message event's delta that holds the reply quote's excerpt
+/// as the quoted message's author reads it (GEL-21: their own text of it).
+/// [`ServerFrame::for_user`] puts it on that author's copy of `reply` and
+/// drops it from everyone's.
+pub const REPLY_AUTHOR_VIEW: &str = "reply_author_view";
+
 /// The key of a message event's delta (`true`) that marks it for its
 /// author's sockets alone (GEL-21: their edit kept for themselves under a
 /// block). [`ServerFrame::for_user`] drops the event for everyone else; the
@@ -808,7 +814,8 @@ impl ServerFrame {
     /// (GEL-43): that list never goes out, and `user`, when on it, reads
     /// themselves among the `mentions`, in their stored (ascending) order.
     /// Under [`AUTHOR_VIEW`] it holds what its author reads otherwise
-    /// (GEL-21): only the author's copy carries those fields. An event
+    /// (GEL-21): only the author's copy carries those fields, as only the
+    /// quoted message's author's copy carries [`REPLY_AUTHOR_VIEW`]. An event
     /// marked [`AUTHOR_ONLY`] is `None` for everyone but its author.
     pub fn for_user(self, user: Uuid) -> Option<Self> {
         let (t, s, c, n, ep, i, d, r) = match self {
@@ -821,7 +828,7 @@ impl ServerFrame {
                 i,
                 d: Some(d),
                 r,
-            } if [HIDDEN_MENTIONS, AUTHOR_VIEW, AUTHOR_ONLY]
+            } if [HIDDEN_MENTIONS, AUTHOR_VIEW, REPLY_AUTHOR_VIEW, AUTHOR_ONLY]
                 .iter()
                 .any(|key| d.get(key).is_some()) =>
             {
@@ -845,6 +852,14 @@ impl ServerFrame {
             && let (Some(fields), Some(Value::Object(view))) = (delta.as_object_mut(), author_view)
         {
             fields.extend(view);
+        }
+        let reply_view = delta
+            .as_object_mut()
+            .and_then(|fields| fields.remove(REPLY_AUTHOR_VIEW));
+        if let Some(excerpt) = reply_view
+            && delta["reply"]["author"]["id"].as_str() == Some(me.as_str())
+        {
+            delta["reply"]["excerpt"] = excerpt;
         }
         let hidden = delta
             .as_object_mut()
@@ -1152,6 +1167,26 @@ mod tests {
             serde_json::json!({"author": {"id": a}, "content": "neu"})
         );
         assert_eq!(own.for_user(b), None);
+        // A quote of the author's own text reads so for its author alone.
+        let quoting = event(serde_json::json!({
+            "author": {"id": b},
+            "reply": {"id": c, "author": {"id": a}, "excerpt": "alt"},
+            "reply_author_view": "neu",
+        }));
+        assert_eq!(
+            delta(quoting.clone().for_user(a).unwrap()),
+            serde_json::json!({
+                "author": {"id": b},
+                "reply": {"id": c, "author": {"id": a}, "excerpt": "neu"},
+            })
+        );
+        assert_eq!(
+            delta(quoting.for_user(b).unwrap()),
+            serde_json::json!({
+                "author": {"id": b},
+                "reply": {"id": c, "author": {"id": a}, "excerpt": "alt"},
+            })
+        );
     }
 
     /// The publish template as `EventLog::publish_revision` builds it: the

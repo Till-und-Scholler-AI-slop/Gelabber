@@ -736,8 +736,25 @@ pub async fn for_messages(
     }
     for message in messages {
         message.previews = by_message.remove(&message.id).unwrap_or_default();
+        own_text_only(message);
     }
     Ok(())
+}
+
+/// A message read with its author's own text (GEL-21) shows only the
+/// previews of links still in that text: the stored ones follow the text
+/// everyone else reads.
+pub fn own_text_only(message: &mut crate::messages::Message) {
+    if !message.own_text {
+        return;
+    }
+    let kept: Vec<String> = urls::preview_urls(&message.content)
+        .into_iter()
+        .map(String::from)
+        .collect();
+    message
+        .previews
+        .retain(|preview| kept.contains(&preview.url));
 }
 
 /// `/api/previews/{id}/{file}`: the stored image of a current preview, to

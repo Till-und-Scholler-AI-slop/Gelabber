@@ -33,6 +33,7 @@ macro_rules! message_columns {
              mentions_seen_by(m.mentions, m.hidden_mentions, $", $n, ") AS mentions, \
              m.mentions_everyone, m.system_kind, m.system_params, \
              CASE WHEN m.author_id = $", $n, " THEN m.sender_only_descriptions END AS own_descriptions, \
+             COALESCE(m.author_id = $", $n, " AND m.sender_only_content IS NOT NULL, false) AS own_text, \
              COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) \
                        FROM (SELECT emoji, jsonb_agg(user_id ORDER BY user_id) AS user_ids \
                              FROM message_reactions \
@@ -151,6 +152,10 @@ pub struct Message {
     /// attachment id; read only for the author.
     #[serde(skip)]
     pub own_descriptions: Option<BTreeMap<Uuid, Option<String>>>,
+    /// `content` is its author's own text (GEL-21): only the previews of
+    /// links still in it show ([`previews::own_text_only`]).
+    #[serde(skip)]
+    pub own_text: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -190,6 +195,7 @@ struct MessageRow {
     #[sqlx(default)]
     hidden_mentions: Vec<Uuid>,
     own_descriptions: Option<sqlx::types::Json<BTreeMap<Uuid, Option<String>>>>,
+    own_text: bool,
 }
 
 impl From<MessageRow> for Message {
@@ -219,6 +225,7 @@ impl From<MessageRow> for Message {
             nonce: None,
             sender_only: row.sender_only,
             own_descriptions: row.own_descriptions.map(|own| own.0),
+            own_text: row.own_text,
         }
     }
 }
@@ -306,6 +313,7 @@ impl MessageInsert {
             nonce: None,
             sender_only: false,
             own_descriptions: self.own_descriptions.map(|own| own.0),
+            own_text: false,
         }
     }
 }
@@ -768,10 +776,12 @@ async fn update_message(
     }
     // Only a new text marks the message edited; alt texts alone do not.
     // The text is everyone's now, also for an author who kept their own
-    // (GEL-21), and so are the alt texts it sets.
+    // (GEL-21), and so are the alt texts it sets. New is measured against
+    // what the author read: going back to the shared text is an edit too.
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, \
-             edited_at = CASE WHEN content IS DISTINCT FROM $2 THEN now() ELSE edited_at END, \
+             edited_at = CASE WHEN COALESCE(sender_only_content, content) IS DISTINCT FROM $2 \
+                 THEN now() ELSE edited_at END, \
              mentions = $3, mentions_everyone = $4, here_users = $5, hidden_mentions = $6, \
              sender_only_content = NULL, sender_only_edited_at = NULL, \
              sender_only_descriptions = NULLIF(sender_only_descriptions - $7::text[], '{}'::jsonb) \
@@ -863,9 +873,9 @@ async fn describe_only(
         let server = access.event_server_id();
         return own_edit(state, tx, server, user_id, message_id, None, descriptions).await;
     }
-    let mut changed = attachments::describe(&mut tx, message_id, descriptions).await?;
+    let changed = attachments::describe(&mut tx, message_id, descriptions).await?;
     // The texts set are everyone's now, also the author's (GEL-21).
-    changed |= sqlx::query(
+    let own_changed = sqlx::query(
         "UPDATE messages \
          SET sender_only_descriptions = NULLIF(sender_only_descriptions - $2::text[], '{}'::jsonb) \
          WHERE id = $1 AND sender_only_descriptions ?| $2::text[]",
@@ -876,6 +886,13 @@ async fn describe_only(
     .await?
     .rows_affected()
         > 0;
+    if !changed && own_changed {
+        // Only the author's view changed: nothing goes out to anyone else.
+        let message = publish_own(&mut tx, access.event_server_id(), user_id, message_id).await?;
+        tx.commit().await?;
+        delivery::wake(state);
+        return Ok(message);
+    }
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
         .bind(user_id)
@@ -922,9 +939,6 @@ async fn own_edit(
     descriptions: &[(Uuid, Option<String>)],
 ) -> Result<Message, ApiError> {
     let texts: BTreeMap<Uuid, Option<String>> = descriptions.iter().cloned().collect();
-    // A revision of its own, so the author's clients take it over what they
-    // hold, while the peer's copy keeps the one they read.
-    let revision = delivery::revision(&mut tx).await?;
     sqlx::query(
         "UPDATE messages SET \
              sender_only_edited_at = CASE WHEN $2::text IS NOT NULL \
@@ -933,16 +947,36 @@ async fn own_edit(
              sender_only_content = COALESCE($2, sender_only_content), \
              sender_only_descriptions = CASE WHEN $3::jsonb = '{}'::jsonb \
                  THEN sender_only_descriptions \
-                 ELSE COALESCE(sender_only_descriptions, '{}'::jsonb) || $3::jsonb END, \
-             sender_only_revision = $4 \
+                 ELSE COALESCE(sender_only_descriptions, '{}'::jsonb) || $3::jsonb END \
          WHERE id = $1",
     )
     .bind(message_id)
     .bind(content)
     .bind(sqlx::types::Json(&texts))
-    .bind(revision)
     .execute(&mut *tx)
     .await?;
+    let message = publish_own(&mut tx, server, user_id, message_id).await?;
+    tx.commit().await?;
+    delivery::wake(state);
+    Ok(message)
+}
+
+/// GEL-21: after a change to the author's own view of a message only, gives
+/// it a revision of its own, so the author's clients take it over what they
+/// hold while everyone else keeps the one they read, and queues its event
+/// for the author's sockets alone. Returns the message as the author reads it.
+async fn publish_own(
+    tx: &mut sqlx::PgConnection,
+    server: Uuid,
+    user_id: Uuid,
+    message_id: Uuid,
+) -> Result<Message, ApiError> {
+    let revision = delivery::revision(&mut *tx).await?;
+    sqlx::query("UPDATE messages SET sender_only_revision = $2 WHERE id = $1")
+        .bind(message_id)
+        .bind(revision)
+        .execute(&mut *tx)
+        .await?;
     let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
         .bind(message_id)
         .bind(user_id)
@@ -957,7 +991,7 @@ async fn own_edit(
         serde_json::to_value(&message).map_err(|err| ApiError::Internal(err.to_string()))?;
     delta[crate::gateway::protocol::AUTHOR_ONLY] = serde_json::json!(true);
     delivery::enqueue(
-        &mut tx,
+        tx,
         revision,
         EventDraft {
             kind: EventKind::E,
@@ -968,8 +1002,6 @@ async fn own_edit(
         },
     )
     .await?;
-    tx.commit().await?;
-    delivery::wake(state);
     Ok(message)
 }
 
@@ -1052,7 +1084,8 @@ async fn persist_event(
     } else {
         reader
     };
-    replies::for_messages(&mut *db, std::slice::from_mut(message), reader).await?;
+    // The quote as everyone reads it; the answer's below (GEL-21).
+    replies::for_messages(&mut *db, std::slice::from_mut(message), None).await?;
     previews::for_messages(&mut *db, std::slice::from_mut(message)).await?;
     message.revision = delivery::revision(db).await?;
     sqlx::query("UPDATE messages SET revision=$2 WHERE id=$1")
@@ -1060,20 +1093,34 @@ async fn persist_event(
         .bind(message.revision)
         .execute(&mut *db)
         .await?;
+    let mut shared = message.clone();
+    if let Some(reply) = &mut message.reply {
+        reply.read_by(reader);
+    }
     // A sender-only message (#619) reaches its author through the answer
     // and the history; an event would reach the peer's sockets too.
     if message.sender_only {
         return Ok(());
     }
-    let mut shared = message.clone();
-    if reader.is_some() {
-        replies::for_messages(&mut *db, std::slice::from_mut(&mut shared), None).await?;
-    }
-    let own = shared_view(db, &mut shared).await?;
+    // Only a DM holds views of one's own (GEL-21): its event server is the
+    // DM channel.
+    let own = if server == shared.channel_id {
+        shared_view(db, &mut shared).await?
+    } else {
+        None
+    };
     let mut delta =
         serde_json::to_value(&shared).map_err(|err| ApiError::Internal(err.to_string()))?;
     if let Some(own) = own {
         delta[crate::gateway::protocol::AUTHOR_VIEW] = own;
+    }
+    // The quoted message's author reads their own text of it (GEL-21).
+    if let Some(excerpt) = shared
+        .reply
+        .as_ref()
+        .and_then(|reply| reply.own_excerpt.clone())
+    {
+        delta[crate::gateway::protocol::REPLY_AUTHOR_VIEW] = serde_json::json!(excerpt);
     }
     let message = &shared;
     // Everyone reads the message without the hidden mentions, also when it
@@ -1104,8 +1151,8 @@ async fn persist_event(
 }
 
 /// GEL-21: puts what everyone reads on `message` (text, edit time, alt
-/// texts), whoever it was read for, and returns its author's own view of
-/// them when they keep one, for the gateway to hand them
+/// texts, link previews), whoever it was read for, and returns its author's
+/// own view of them when they keep one, for the gateway to hand them
 /// ([`crate::gateway::protocol::AUTHOR_VIEW`]).
 async fn shared_view(
     db: &mut sqlx::PgConnection,
@@ -1145,15 +1192,22 @@ async fn shared_view(
     message.content = views.content.clone();
     message.edited_at = views.edited_at;
     message.own_descriptions = None;
+    if std::mem::take(&mut message.own_text) {
+        // Read for the author: their previews were cut to their text.
+        previews::for_messages(&mut *db, std::slice::from_mut(message)).await?;
+    }
     let mut own = message.clone();
+    own.own_text = views.own_content.is_some();
     own.content = views.own_content.unwrap_or(views.content);
     own.edited_at = views.own_edited_at.or(views.edited_at);
     own.own_descriptions = views.own_descriptions.map(|texts| texts.0);
     own.own_descriptions();
+    previews::own_text_only(&mut own);
     Ok(Some(serde_json::json!({
         "content": own.content,
         "edited_at": own.edited_at,
         "attachments": own.attachments,
+        "previews": own.previews,
     })))
 }
 
