@@ -4,12 +4,25 @@ import { useServerMuted } from "../messages/notificationSettings.ts";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Ref,
+  type RefObject,
+} from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { useDirectoryStatus } from "../discover/queries.ts";
 import { lastDmStillListed } from "../dms/open.ts";
 import { prefetchDms, useDms } from "../dms/queries.ts";
+import { focusAfterLeave, railDms, type RailDm } from "../dms/railDms.ts";
+import type { DirectMessage } from "../dms/types.ts";
+import { useMuteClock } from "../messages/notificationSettings.ts";
+import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { lastDmId, useLastDm } from "../dms/lastDm.ts";
 import {
   lastChannelsFor,
@@ -21,6 +34,7 @@ import type { Server } from "../servers/types.ts";
 import { useVoiceRoster } from "../voice/roster.ts";
 import { ChatIcon, CompassIcon, PlusIcon } from "./Icons.tsx";
 import { AddServerDialog } from "./ServerDialogs.tsx";
+import { Avatar } from "./Avatar.tsx";
 import { ServerIconFace } from "./ServerIcon.tsx";
 import { tileInitials, tileTint } from "./initials.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
@@ -43,9 +57,16 @@ export function ServerRail({
   const t = useT(shell);
   const { data: servers, isPending } = useServers();
   const [adding, setAdding] = useState(false);
+  const unreadDms = useRailDms();
+  const onRail = useMemo(
+    () => new Set(unreadDms.map(({ dm }) => dm.id)),
+    [unreadDms],
+  );
+  const home = useRef<HTMLAnchorElement>(null);
   return (
     <nav aria-label={t("rail.label")} className="server-rail">
-      <HomeTile active={dmActive} />
+      <HomeTile active={dmActive} except={onRail} linkRef={home} />
+      <UnreadDms dms={unreadDms} home={home} />
       {isPending ? (
         <RailPlaceholder />
       ) : (
@@ -106,7 +127,133 @@ function RailPlaceholder() {
   );
 }
 
-function HomeTile({ active }: { active: boolean }) {
+/** Conversations with unread messages, as the rail shows them (railDms.ts).
+ * The same list while nothing it depends on changes, so the DM button's
+ * `except` set is not rebuilt on every render. */
+function useRailDms(): RailDm[] {
+  const { data: dms } = useDms();
+  const { data: rows } = useReadState();
+  const reading = useReadingChannel();
+  const now = useMuteClock();
+  return useMemo(
+    () => railDms(dms, rows, reading, now),
+    [dms, rows, reading, now],
+  );
+}
+
+/** Unread direct messages above the servers (GEL-65): one avatar per
+ * conversation, newest on top, with its count; a line under them. Read,
+ * a conversation leaves the rail; when it held the focus (or its menu
+ * did), the focus goes to the avatar now in its place, else to the DM
+ * button, instead of falling to the page. */
+export function UnreadDms({
+  dms,
+  home,
+}: {
+  dms: RailDm[];
+  home?: RefObject<HTMLElement | null>;
+}) {
+  const t = useT(shell);
+  const list = useRef<HTMLDivElement>(null);
+  const focused = useRef<{ id: string; index: number } | null>(null);
+  useEffect(() => {
+    const was = focused.current;
+    if (!was || dms.some(({ dm }) => dm.id === was.id)) return;
+    focused.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    const tiles = [
+      ...(list.current?.querySelectorAll<HTMLElement>(".server-dm-tile") ?? []),
+    ];
+    const next = focusAfterLeave(was.index, tiles.length);
+    (next === null ? home?.current : tiles[next])?.focus({
+      preventScroll: true,
+    });
+  }, [dms, home]);
+  if (dms.length === 0) return null;
+  return (
+    <>
+      <div
+        ref={list}
+        role="list"
+        aria-label={t("rail.unreadDms")}
+        className="server-rail-dms"
+      >
+        {dms.map(({ dm }, index) => (
+          <div
+            key={dm.id}
+            role="listitem"
+            className="server-rail-dm"
+            // The tile and its menu (a portal, but inside in React).
+            onFocus={() => {
+              focused.current = { id: dm.id, index };
+            }}
+            onBlur={(event) => {
+              const to = event.relatedTarget as HTMLElement | null;
+              if (
+                (event.target as HTMLElement).isConnected &&
+                !event.currentTarget.contains(to) &&
+                !to?.closest("[data-menu-level]")
+              )
+                focused.current = null;
+            }}
+          >
+            <UnreadDmTile dm={dm} />
+          </div>
+        ))}
+      </div>
+      <span className="server-rail-separator" aria-hidden="true" />
+    </>
+  );
+}
+
+function UnreadDmTile({ dm }: { dm: DirectMessage }) {
+  const unreadId = useId();
+  // Its menu: mark read, mute, notifications, as on the DM's row.
+  const menu = useRowMenu();
+  return (
+    <>
+      {/* A conversation is where the drawer leads, as a DM row: it closes
+          (no `keepOpen`) and the conversation is pushed on top. */}
+      <Link
+        to="/d/$channelId"
+        params={{ channelId: dm.id }}
+        title={dm.peer.name}
+        aria-label={dm.peer.name}
+        aria-describedby={unreadId}
+        className="server-tile server-dm-tile is-unread"
+        {...menu.trigger}
+      >
+        <Avatar name={dm.peer.name} url={dm.peer.avatar_url} decorative />
+        <UnreadBadge id={unreadId} channelId={dm.id} rail showDot={false} />
+      </Link>
+      {menu.open ? (
+        <NotificationRowMenu
+          target={{
+            scope: "channel",
+            id: dm.id,
+            name: dm.peer.name,
+            dm: true,
+          }}
+          anchor={menu.anchor}
+          onClose={menu.close}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function HomeTile({
+  active,
+  except,
+  linkRef,
+}: {
+  active: boolean;
+  /** Takes the focus when the last unread DM it held leaves the rail. */
+  linkRef?: Ref<HTMLAnchorElement>;
+  /** The conversations the rail shows as avatars: their counts are there. */
+  except: ReadonlySet<string>;
+}) {
   const t = useT(shell);
   const unreadId = useId();
   const client = useQueryClient();
@@ -115,13 +262,14 @@ function HomeTile({ active }: { active: boolean }) {
   const remembered = lastDmId(byUser, userId);
   const { data: dms } = useDms();
   const openId = lastDmStillListed(remembered, dms) ? remembered : null;
-  const badge = useBadge({ dms: true });
+  const badge = useBadge({ dms: true, except });
   const drawer = useNavigationDrawer();
   // Its menu marks every conversation read.
   const menu = useRowMenu();
   return (
     <div className="server-home-tile">
       <Link
+        ref={linkRef}
         to={openId ? "/d/$channelId" : "/d"}
         params={openId ? { channelId: openId } : undefined}
         state={drawer.keepOpen}
@@ -144,7 +292,7 @@ function HomeTile({ active }: { active: boolean }) {
         {...menu.trigger}
       >
         <ChatIcon size={27} />
-        <UnreadBadge id={unreadId} dms rail showDot={false} />
+        <UnreadBadge id={unreadId} dms except={except} rail showDot={false} />
       </Link>
       {menu.open ? (
         <NotificationRowMenu

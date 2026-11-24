@@ -681,6 +681,45 @@ summary {
   position: static;
   height: 60px;
 }
+/* Unread direct messages above the servers (GEL-65): the person's avatar
+   in a server tile, its count on the corner and the unread pill at the
+   edge. Rows of 60px as the servers', and a line before them, 16px from
+   the tiles on both sides. When the rail is short they give way first and
+   scroll, down to one row, so the servers stay in reach (the much larger
+   shrink factor; desktop rail.rs `rail_heights` splits it the same way). */
+.server-rail-dms {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1000 auto;
+  min-height: 76px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  padding-block: 8px;
+  scrollbar-width: thin;
+}
+.server-rail-dm {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  height: 60px;
+}
+/* A person stays round, also on hover: only the pill answers it. */
+.server-tile.server-dm-tile,
+.server-tile.server-dm-tile:hover {
+  border-radius: 50%;
+}
+.server-dm-tile .gel-avatar {
+  --avatar-size: 44px;
+  font-size: 15px;
+}
+.server-rail-separator {
+  flex-shrink: 0;
+  width: 28px;
+  height: 1px;
+  background: var(--lr-border-strong);
+}
 /* Each server keeps its own theme tint (--lr-tile-1…8) until it has a
    picture; the letters read on every tint. Round at rest, the theme's
    corner where you are or point (a square-ish theme stays square-ish). */

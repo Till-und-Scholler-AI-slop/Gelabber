@@ -29,6 +29,9 @@ pub enum Owner {
     Category(Uuid, Category),
     Server(Uuid, String),
     Dm(Uuid, String),
+    /// An unread DM's avatar on the rail: a DM's menu, but not its row's
+    /// (that row does not light up with it).
+    RailDm(Uuid, String),
     /// The rail's home tile: every conversation.
     AllDms,
     /// A server in Entdecken: its id, name and whether the caller's
@@ -42,7 +45,7 @@ impl Owner {
         match self {
             Owner::Channel(_, ch) => ch.id,
             Owner::Category(_, cat) => cat.id,
-            Owner::Server(id, _) | Owner::Dm(id, _) => *id,
+            Owner::Server(id, _) | Owner::Dm(id, _) | Owner::RailDm(id, _) => *id,
             Owner::AllDms => Uuid::nil(),
             Owner::Listing(id, ..) => *id,
         }
@@ -56,7 +59,7 @@ impl Owner {
             }
             Owner::Channel(..) | Owner::Category(..) => None,
             Owner::Server(id, name) => Some(Target::server(*id, name)),
-            Owner::Dm(id, name) => Some(Target::dm(*id, name.clone())),
+            Owner::Dm(id, name) | Owner::RailDm(id, name) => Some(Target::dm(*id, name.clone())),
             Owner::AllDms => Some(Target::all_dms()),
             Owner::Listing(..) => None,
         }
@@ -68,7 +71,7 @@ impl Owner {
             Owner::Channel(_, ch) if ch.kind == ChannelKind::Text => format!("#{}", ch.name),
             Owner::Channel(_, ch) => ch.name.clone(),
             Owner::Category(_, cat) => shell::row_menu_category_label(&cat.name),
-            Owner::Server(_, name) | Owner::Dm(_, name) => name.clone(),
+            Owner::Server(_, name) | Owner::Dm(_, name) | Owner::RailDm(_, name) => name.clone(),
             Owner::AllDms => shell::rail_dms().into(),
             Owner::Listing(_, name, _) => gelabber_i18n::discovery::actions_more(name),
         }
@@ -109,7 +112,18 @@ pub fn open(ctx: &egui::Context, owner: Owner, anchor: Rect, opener: Option<Id>)
 /// conversation) is open.
 pub fn is_open_for(ctx: &egui::Context, id: Uuid) -> bool {
     state::with(ctx, |s| {
-        s.row_menu.as_ref().is_some_and(|m| m.owner.key() == id)
+        s.row_menu
+            .as_ref()
+            .is_some_and(|m| !matches!(m.owner, Owner::RailDm(..)) && m.owner.key() == id)
+    })
+}
+
+/// Whether the menu of the unread DM `id` on the rail is open.
+pub fn is_open_for_rail_dm(ctx: &egui::Context, id: Uuid) -> bool {
+    state::with(ctx, |s| {
+        s.row_menu
+            .as_ref()
+            .is_some_and(|m| matches!(&m.owner, Owner::RailDm(dm, _) if *dm == id))
     })
 }
 

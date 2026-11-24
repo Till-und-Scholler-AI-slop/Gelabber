@@ -723,14 +723,40 @@ impl State {
             })
     }
 
-    /// The DM button badge: every DM's count.
-    pub fn dms_badge(&self, now: Timestamp) -> Badge {
+    /// The DM button badge: every DM's count but those in `except`, which
+    /// the rail shows as avatars (GEL-65).
+    pub fn dms_badge(&self, now: Timestamp, except: &[Uuid]) -> Badge {
         self.read
             .values()
-            .filter(|r| r.server_id.is_none())
+            .filter(|r| r.server_id.is_none() && !except.contains(&r.channel_id))
             .fold(Badge::default(), |acc, r| {
                 acc + r.badge(self.view.channel, now)
             })
+    }
+
+    /// The DMs the rail shows as avatars above the servers (GEL-65, the
+    /// web's `railDms`): listed DMs whose badge has a number, the newest
+    /// message first, at most `max`. A muted one, one set to "nothing" and
+    /// the one being read have none; an incoming message request is not
+    /// listed until accepted.
+    pub fn rail_dms(&self, now: Timestamp, max: usize) -> Vec<(&DirectMessage, i64)> {
+        let mut unread: Vec<(usize, &DirectMessage, i64, Option<i64>)> = self
+            .dms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, dm)| {
+                let row = self.read.get(&dm.id).filter(|r| r.server_id.is_none())?;
+                let count = row.badge(self.view.channel, now).count;
+                (count > 0).then_some((index, dm, count, row.latest_order))
+            })
+            .collect();
+        // The newest message first; without one, the list's own order.
+        unread.sort_by(|a, b| b.3.cmp(&a.3).then(a.0.cmp(&b.0)));
+        unread
+            .into_iter()
+            .take(max)
+            .map(|(_, dm, count, _)| (dm, count))
+            .collect()
     }
 
     /// Read rows from REST, by position like `rd` (`apply_sync`): an answer
@@ -2353,14 +2379,79 @@ mod tests {
             }
         );
         assert_eq!(
-            s.dms_badge(now),
+            s.dms_badge(now, &[]),
             Badge {
                 count: 2,
                 dot: true
             }
         );
+        assert_eq!(s.dms_badge(now, &[id(3)]), Badge::default());
         s.view.channel = Some(id(3));
-        assert_eq!(s.dms_badge(now), Badge::default());
+        assert_eq!(s.dms_badge(now, &[]), Badge::default());
+    }
+
+    #[test]
+    fn the_rail_shows_unread_dms_newest_first() {
+        let now = chrono::Utc::now();
+        let row = |channel: u128, unread, latest: Option<i64>| ReadState {
+            channel_id: id(channel),
+            server_id: None,
+            read_message_id: None,
+            read_at: None,
+            read_order: None,
+            membership_at: now,
+            latest_order: latest,
+            unread_count: unread,
+            mention_count: 0,
+            level: NotificationLevel::All,
+            muted: false,
+            muted_until: None,
+        };
+        let dm = |channel: u128| DirectMessage {
+            id: id(channel),
+            kind: ChannelKind::Dm,
+            created_at: now,
+            peer: Peer {
+                id: id(channel + 100),
+                name: format!("peer {channel}"),
+                avatar_url: None,
+            },
+            request: None,
+            blocked: false,
+        };
+        let mut s = State {
+            dms: (1..=7).map(dm).collect(),
+            ..State::default()
+        };
+        let mut muted = row(5, 4, Some(50));
+        muted.muted = true;
+        let mut nothing = row(6, 4, Some(60));
+        nothing.level = NotificationLevel::None;
+        s.apply_read_states(vec![
+            row(1, 2, Some(10)),
+            row(2, 0, Some(40)),
+            row(3, 1, Some(30)),
+            row(4, 3, None),
+            muted,
+            nothing,
+            row(7, 1, None),
+            // A message request: not listed, not on the rail.
+            row(8, 9, Some(90)),
+        ]);
+        let ids = |s: &State, max| {
+            s.rail_dms(now, max)
+                .into_iter()
+                .map(|(dm, count)| (dm.id, count))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(&s, 5),
+            vec![(id(3), 1), (id(1), 2), (id(4), 3), (id(7), 1)]
+        );
+        assert_eq!(ids(&s, 2), vec![(id(3), 1), (id(1), 2)]);
+        // The one being read leaves the rail.
+        s.view.channel = Some(id(3));
+        assert_eq!(ids(&s, 2), vec![(id(1), 2), (id(4), 3)]);
     }
 
     #[test]
