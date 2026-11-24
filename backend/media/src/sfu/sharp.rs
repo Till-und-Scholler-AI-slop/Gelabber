@@ -14,13 +14,18 @@
 //! for a while, with a small floor that still prevents the collapse. Smooth
 //! Lives keep mediasoup's own choice. Each viewer can choose sharp or smooth
 //! for itself (`viewMode`); without a choice it follows the sender.
+//!
+//! With more sharp viewers than one tick samples, the gateway samples them in
+//! turns; a viewer keeps its last floor between its turns, and only a
+//! transport that no longer watches any sharp Live goes back to no floor.
 use super::*;
 
 /// How often the gateway samples sharp Lives and their viewers.
 const TICK: Duration = Duration::from_millis(500);
-/// Samples a viewer is judged on: the last ten seconds.
+/// Samples a viewer is judged on: the last ten seconds while every viewer is
+/// sampled each tick.
 const WINDOW: usize = 20;
-/// Samples before the first pin: two seconds of watching.
+/// Samples before the first pin: two seconds of watching, likewise.
 const WARMUP: usize = 4;
 /// Headroom over the full-size stream's highest recent rate, in percent.
 const PIN_PERCENT: u64 = 110;
@@ -36,7 +41,7 @@ const FLOOR_STEP_PERCENT: u64 = 15;
 const POOR_SCORE: u8 = 5;
 /// How long a released viewer gets mediasoup's own choice before the next pin.
 const RELEASE: Duration = Duration::from_secs(30);
-/// Viewers sampled per tick; more wait for a later tick.
+/// Viewers sampled per tick; the others keep their floor and come next.
 const VIEWERS_PER_TICK: usize = 64;
 /// Temporal layers a simulcast stream carries at most (L1T3).
 const TEMPORAL_LAYERS: usize = 3;
@@ -148,6 +153,53 @@ pub(super) fn layer_rates(
     rates
 }
 
+/// Indices of the viewers a tick samples: up to `n` of `sorted`, starting
+/// after `after`, the viewer sampled last, and wrapping around, so every
+/// viewer gets its turn however many there are.
+pub(super) fn turn<K: Ord>(sorted: &[K], after: Option<&K>, n: usize) -> Vec<usize> {
+    let start = after.map_or(0, |after| sorted.partition_point(|k| k <= after));
+    (start..start + n.min(sorted.len()))
+        .map(|i| i % sorted.len())
+        .collect()
+}
+
+/// The floor each viewer transport needs: the sum of the floors of all its
+/// sharp viewers, sampled this tick or not, `FLOOR_MIN` for a viewer without
+/// one yet.
+pub(super) fn transport_floors<T: Copy + Eq + std::hash::Hash>(
+    viewers: impl IntoIterator<Item = (T, Option<u64>)>,
+) -> HashMap<T, u64> {
+    let mut floors = HashMap::new();
+    for (transport, floor) in viewers {
+        let sum: &mut u64 = floors.entry(transport).or_default();
+        *sum = sum.saturating_add(floor.unwrap_or(FLOOR_MIN));
+    }
+    floors
+}
+
+/// The floors a tick applies, 0 to reset. A transport that watches a sharp
+/// Live gets what its viewers need (`wanted`) when that differs from the floor
+/// last applied to it (`applied`); one without an applied floor waits until
+/// one of its viewers is sampled (`sampled`). A transport that no longer
+/// watches one goes back to 0. The caller updates `applied` only for requests
+/// that succeeded, so a failed one is asked again: on the next tick for a
+/// transport that had a floor, on its next turn for one that had none.
+pub(super) fn floor_changes<T: Copy + Eq + std::hash::Hash>(
+    applied: &HashMap<T, u64>,
+    wanted: &HashMap<T, u64>,
+    sampled: &HashSet<T>,
+) -> Vec<(T, u64)> {
+    let set = wanted.iter().filter(|(id, floor)| match applied.get(id) {
+        Some(old) => old != *floor,
+        None => sampled.contains(id),
+    });
+    let reset = applied
+        .keys()
+        .filter(|id| !wanted.contains_key(id))
+        .map(|id| (id, &0));
+    set.chain(reset).map(|(id, floor)| (*id, *floor)).collect()
+}
+
 impl Sfu {
     /// Pins every viewer of a sharp Live to its full size, see the module docs.
     pub(super) fn keep_sharp(weak: Weak<Self>) {
@@ -158,6 +210,8 @@ impl Sfu {
             // Floor last applied per viewer transport.
             let mut floors: HashMap<TransportId, (Arc<Engine>, WebRtcTransport, u64)> =
                 HashMap::new();
+            // The viewer sampled last; the next tick goes on after it.
+            let mut cursor: Option<ConsumerId> = None;
             loop {
                 interval.tick().await;
                 let Some(sfu) = weak.upgrade() else { break };
@@ -175,14 +229,15 @@ impl Sfu {
                         );
                     }
                 }
-                sharp.truncate(VIEWERS_PER_TICK);
-                let watching: HashSet<ConsumerId> =
-                    sharp.iter().map(|(_, s)| s.consumer.id()).collect();
+                sharp.sort_by_key(|(_, s)| s.consumer.id());
+                let ids: Vec<ConsumerId> = sharp.iter().map(|(_, s)| s.consumer.id()).collect();
+                let watching: HashSet<ConsumerId> = ids.iter().copied().collect();
+                // Viewers not sampled this tick keep their state and floor.
                 viewers.retain(|id, _| watching.contains(id));
                 let mut rates: HashMap<ProducerId, LayerRates> = HashMap::new();
-                let mut wanted: HashMap<TransportId, (Arc<Engine>, WebRtcTransport, u64)> =
-                    HashMap::new();
-                for (engine, s) in &sharp {
+                let mut sampled: HashSet<TransportId> = HashSet::new();
+                for index in turn(&ids, cursor.as_ref(), VIEWERS_PER_TICK) {
+                    let s = &sharp[index].1;
                     let producer = s.publication.producer.id();
                     if let std::collections::hash_map::Entry::Vacant(slot) = rates.entry(producer) {
                         let stats =
@@ -204,37 +259,56 @@ impl Sfu {
                     if let Some(floor) = viewer.sample(&rates[&producer], score, Instant::now()) {
                         tracing::debug!(consumer = %s.consumer.id(), floor, "sharp live: viewer floor");
                     }
+                    sampled.insert(s.consumer.transport().id());
+                    cursor = Some(s.consumer.id());
+                }
+                let mut handles: HashMap<TransportId, (Arc<Engine>, WebRtcTransport)> =
+                    HashMap::new();
+                let wanted = transport_floors(sharp.iter().map(|(engine, s)| {
                     let transport = s.consumer.transport();
-                    let entry = wanted
-                        .entry(transport.id())
-                        .or_insert_with(|| (engine.clone(), transport.clone(), 0));
-                    entry.2 = entry.2.saturating_add(viewer.floor().unwrap_or(FLOOR_MIN));
-                }
-                // Transports that no longer watch a sharp Live go back to none.
-                for (id, (engine, transport, _)) in &floors {
-                    if !wanted.contains_key(id) && !transport.closed() {
-                        let t = transport.clone();
-                        let _ = engine
-                            .native(t, |t| async move { t.set_min_outgoing_bitrate(0).await })
-                            .await;
-                    }
-                }
-                for (id, (engine, transport, floor)) in &mut wanted {
-                    *floor = (*floor).max(FLOOR_MIN);
-                    if floors.get(id).is_some_and(|(_, _, old)| old == floor) {
+                    let id = transport.id();
+                    handles
+                        .entry(id)
+                        .or_insert_with(|| (engine.clone(), transport.clone()));
+                    (
+                        id,
+                        viewers.get(&s.consumer.id()).and_then(SharpViewer::floor),
+                    )
+                }));
+                let applied = floors.iter().map(|(id, (_, _, f))| (*id, *f)).collect();
+                for (id, floor) in floor_changes(&applied, &wanted, &sampled) {
+                    let Some((engine, transport)) = handles
+                        .get(&id)
+                        .map(|(e, t)| (e, t))
+                        .or_else(|| floors.get(&id).map(|(e, t, _)| (e, t)))
+                    else {
+                        continue;
+                    };
+                    let (engine, transport) = (engine.clone(), transport.clone());
+                    if transport.closed() {
+                        floors.remove(&id);
                         continue;
                     }
-                    let (t, bitrate) = (transport.clone(), *floor);
-                    if let Err(error) = engine
+                    let t = transport.clone();
+                    match engine
                         .native(t, move |t| async move {
-                            t.set_min_outgoing_bitrate(bitrate).await
+                            t.set_min_outgoing_bitrate(floor).await
                         })
                         .await
                     {
-                        tracing::debug!(%error, "sharp live: floor not applied");
+                        Ok(()) if floor == 0 => {
+                            floors.remove(&id);
+                        }
+                        Ok(()) => {
+                            floors.insert(id, (engine, transport, floor));
+                        }
+                        // The last applied floor stays recorded, so the
+                        // request is asked again.
+                        Err(error) => {
+                            tracing::debug!(%error, floor, "sharp live: floor not applied");
+                        }
                     }
                 }
-                floors = wanted;
             }
         });
     }
@@ -343,6 +417,85 @@ mod tests {
         let now = Instant::now();
         for _ in 0..WINDOW {
             assert_eq!(viewer.sample(&vec![[0; 3]; 3], 10, now), None);
+        }
+    }
+
+    #[test]
+    fn every_viewer_gets_its_turn() {
+        let ids: Vec<u32> = (0..150).collect();
+        let mut cursor = None;
+        let mut ticks = Vec::new();
+        for _ in 0..3 {
+            let turn = turn(&ids, cursor.as_ref(), VIEWERS_PER_TICK);
+            cursor = turn.last().map(|i| ids[*i]);
+            ticks.push(turn);
+        }
+        assert_eq!(ticks[0], (0..64).collect::<Vec<_>>());
+        assert_eq!(ticks[1], (64..128).collect::<Vec<_>>());
+        assert_eq!(ticks[2], (128..150).chain(0..42).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn the_turn_goes_on_after_a_viewer_that_left() {
+        // The viewer sampled last (5) is gone; the next one in order comes.
+        let ids = [1, 3, 7, 9];
+        assert_eq!(turn(&ids, Some(&5), 2), vec![2, 3]);
+        assert_eq!(turn(&ids, Some(&9), 2), vec![0, 1]);
+        assert_eq!(turn(&ids, Some(&3), 64), vec![2, 3, 0, 1]);
+        assert_eq!(turn::<u32>(&[], Some(&3), 64), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_transport_needs_the_floors_of_all_its_viewers() {
+        // Transport 1: a viewer sampled this tick (990 kbit/s) and one whose
+        // turn comes later (1.76 Mbit/s); transport 2: a new viewer only.
+        assert_eq!(
+            transport_floors([(1, Some(990_000)), (1, Some(1_760_000)), (2, None)]),
+            HashMap::from([(1, 2_750_000), (2, FLOOR_MIN)])
+        );
+    }
+
+    #[test]
+    fn a_skipped_transport_keeps_its_floor() {
+        let applied = HashMap::from([(1, 990_000), (2, FLOOR_MIN)]);
+        let wanted = applied.clone();
+        assert_eq!(floor_changes(&applied, &wanted, &HashSet::new()), vec![]);
+    }
+
+    #[test]
+    fn only_a_transport_that_stopped_watching_is_reset() {
+        let applied = HashMap::from([(1, 990_000), (2, 990_000)]);
+        let wanted = HashMap::from([(1, 990_000)]);
+        assert_eq!(
+            floor_changes(&applied, &wanted, &HashSet::new()),
+            vec![(2, 0)]
+        );
+    }
+
+    #[test]
+    fn a_new_transport_gets_its_floor_on_its_turn() {
+        let wanted = HashMap::from([(1, FLOOR_MIN)]);
+        assert_eq!(
+            floor_changes(&HashMap::new(), &wanted, &HashSet::new()),
+            vec![]
+        );
+        assert_eq!(
+            floor_changes(&HashMap::new(), &wanted, &HashSet::from([1])),
+            vec![(1, FLOOR_MIN)]
+        );
+    }
+
+    #[test]
+    fn a_floor_that_was_not_applied_is_asked_for_again() {
+        // The request for 1.76 Mbit/s failed, so 990 kbit/s stays recorded and
+        // the next tick asks again, sampled or not.
+        let applied = HashMap::from([(1, 990_000)]);
+        let wanted = HashMap::from([(1, 1_760_000)]);
+        for _ in 0..2 {
+            assert_eq!(
+                floor_changes(&applied, &wanted, &HashSet::new()),
+                vec![(1, 1_760_000)]
+            );
         }
     }
 

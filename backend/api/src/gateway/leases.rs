@@ -25,6 +25,15 @@ struct SeatRecord {
     w: HashSet<Uuid>,
 }
 
+/// What a socket found when it sat down in a voice channel.
+pub struct VoiceJoin {
+    /// The others in the channel and their pubs, as replayed events.
+    pub snapshot: Vec<SigEvent>,
+    /// The channel held no seat before, none of this user's other sockets
+    /// either: a call begins.
+    pub opened: bool,
+}
+
 /// A seat an API from before #353 wrote can still list the old Go Live
 /// (`l`/`la`) until its lease runs out; those kinds are skipped, not an error.
 fn known_kinds<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HashSet<TrackKind>, D::Error> {
@@ -249,7 +258,7 @@ impl VoiceRoster {
         u: Uuid,
         s: Uuid,
         c: Uuid,
-    ) -> Result<Vec<SigEvent>, ApiError> {
+    ) -> Result<VoiceJoin, ApiError> {
         let _guard = self.connections.inner.voice_ops.lock().await;
         let old = {
             let mut sockets = self.connections.inner.sockets.write().await;
@@ -268,10 +277,11 @@ impl VoiceRoster {
         for (cid, seat) in old {
             self.drop_seat(id, u, cid, seat).await?;
         }
-        let seat = {
+        let (seat, fresh) = {
             let mut sockets = self.connections.inner.sockets.write().await;
             let socket = sockets.get_mut(&id).ok_or(ApiError::Unauthenticated)?;
-            socket
+            let fresh = !socket.rooms.contains_key(&c);
+            let seat = socket
                 .rooms
                 .entry(c)
                 .or_insert(VoiceSeat {
@@ -282,7 +292,8 @@ impl VoiceRoster {
                     deafened: false,
                     watches: HashSet::new(),
                 })
-                .clone()
+                .clone();
+            (seat, fresh)
         };
         if seat.server_id != s {
             return Err(ApiError::NotFound);
@@ -295,6 +306,9 @@ impl VoiceRoster {
         }
         let result = async {
             let rows = self.records(room_key(c)).await?;
+            // The rows include the seat just written; any other, this
+            // user's other sockets too, was there before.
+            let opened = fresh && rows.iter().all(|row| row.id == seat.id);
             type Peer = (bool, bool, HashSet<TrackKind>, HashSet<Uuid>);
             let mut peers: HashMap<Uuid, Peer> = HashMap::new();
             for row in rows.into_iter().filter(|row| row.u != u) {
@@ -323,7 +337,10 @@ impl VoiceRoster {
                 events.push(watching);
             }
             self.aggregate_signal(u, s, c, "j", &HashSet::new()).await?;
-            Ok(events)
+            Ok(VoiceJoin {
+                snapshot: events,
+                opened,
+            })
         }
         .await;
         if result.is_err() {
@@ -1100,7 +1117,7 @@ mod tests {
                 .await
                 .unwrap()
         );
-        let replayed = g.join_voice(sb, b, s, c).await.unwrap();
+        let replayed = g.join_voice(sb, b, s, c).await.unwrap().snapshot;
         let kinds: Vec<_> = replayed.iter().map(|event| event.t).collect();
         assert_eq!(
             kinds,
@@ -1130,6 +1147,37 @@ mod tests {
         g.voice.drop_seat(id, u, c, old).await.unwrap();
         assert_eq!(g.voice_snapshot(s).await.unwrap().len(), 1);
         g.detach(id).await;
+    }
+
+    /// Only a seat in an empty room opens it: not a second socket of the
+    /// same user, nor a join again on the same socket (#616).
+    #[tokio::test]
+    async fn a_join_opens_only_an_empty_room() {
+        let g = gateway();
+        let (u, other, s, c) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let (phone, _rp) = socket(&g, u).await;
+        let (laptop, _rl) = socket(&g, u).await;
+        let (peer, _ro) = socket(&g, other).await;
+        assert!(g.join_voice(phone, u, s, c).await.unwrap().opened);
+        let second = g.join_voice(laptop, u, s, c).await.unwrap();
+        assert!(!second.opened);
+        assert!(second.snapshot.is_empty(), "the own seats are no peers");
+        assert!(!g.join_voice(phone, u, s, c).await.unwrap().opened);
+        assert!(!g.join_voice(peer, other, s, c).await.unwrap().opened);
+        for id in [phone, laptop, peer] {
+            g.leave_voice(id, if id == peer { other } else { u }, s, c)
+                .await
+                .unwrap();
+        }
+        assert!(g.join_voice(laptop, u, s, c).await.unwrap().opened);
+        for id in [phone, laptop, peer] {
+            g.detach(id).await;
+        }
     }
 
     #[tokio::test]
@@ -1309,7 +1357,7 @@ mod tests {
                 .unwrap()
         );
         assert!(g.set_voice_watch(sb, b, s, c, a, true).await.unwrap());
-        let replayed = g.join_voice(sn, newcomer, s, c).await.unwrap();
+        let replayed = g.join_voice(sn, newcomer, s, c).await.unwrap().snapshot;
         assert!(replayed.iter().all(|event| event.replay));
         let watches: HashMap<Uuid, Vec<Uuid>> = replayed
             .iter()

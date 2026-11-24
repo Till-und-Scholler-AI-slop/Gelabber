@@ -198,7 +198,8 @@ async fn stale_audio_refresh_preserves_same_user_replacement_screen_audio() {
     let snapshot = new_api
         .join_voice(observer, observer_user, s, c)
         .await
-        .unwrap();
+        .unwrap()
+        .snapshot;
     assert!(snapshot.iter().any(|event| event.k == Some(TrackKind::S)));
     assert!(snapshot.iter().any(|event| event.k == Some(TrackKind::Sa)));
     old_api.detach(old).await;
