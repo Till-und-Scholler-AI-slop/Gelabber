@@ -537,6 +537,32 @@ fn the_card_waits_for_the_browser_and_can_give_up() {
     assert!(harness.query_by_label("Abbrechen").is_none());
 }
 
+/// A session check that answers late leaves the harness settled on the
+/// placeholder, so the test's own first step is the login page's first
+/// frame. That frame gets the providers' answer between its two passes and
+/// is drawn once with the column centred for the card without the button,
+/// which then lies 46 px lower than from the next frame on. The wait holds
+/// until the button lies still, and the click reaches it (GEL-78).
+#[test]
+fn the_google_button_takes_a_click_after_a_late_session_check() {
+    let _config = TempConfig::new("auth-oidc-late-session");
+    let api = FakeApi::start(false, |method, at, _| match (method, at) {
+        ("GET", "/auth/session") => {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            None
+        }
+        ("POST", "/auth/oidc/google/start") => Some(Reply::json(
+            serde_json::json!({"url": "https://accounts.example/o/auth?x=1"}),
+        )),
+        _ => google(method, at),
+    });
+    let mut harness = launcher(&api, "/login");
+    browser(&harness, false);
+    wait_for_label(&mut harness, "Über Google anmelden");
+    harness.get_by_label("Über Google anmelden").click();
+    wait_for_label(&mut harness, "Weiter im Browser …");
+}
+
 /// The browser comes back with a code: the exchange signs in, and the app
 /// goes where the sign-in was headed.
 #[test]
