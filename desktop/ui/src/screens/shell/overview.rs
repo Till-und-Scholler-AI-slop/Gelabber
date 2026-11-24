@@ -1,8 +1,8 @@
 //! The server's front door, `/s/{id}` (pages/CommunityOverview.tsx,
-//! overview.css, GEL-69): the "Übersicht" bar with "Springen zu …", a
-//! greeting, who is live, what was missed per text channel and what was
-//! shared. It shows only what the sidebar, the member panel and the voice
-//! page do not.
+//! overview.css, GEL-69, GEL-75): the "Übersicht" bar with "Springen zu …",
+//! a greeting, who is in which call with the way in, who is live, what was
+//! missed per text channel and what was shared. Who is online stays the
+//! member panel's.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -11,6 +11,7 @@ use chrono::{Local, Timelike, Utc};
 use egui::text::LayoutJob;
 use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2};
 use gelabber_call::VideoKey;
+use gelabber_client::store::collation_key;
 use gelabber_client::{
     Attachment, ChannelKind, HistoryQuery, Message, Permission, ServerDetail, SharedFile,
 };
@@ -51,6 +52,10 @@ const STREAM_GAP: f32 = 12.0;
 const TILE: Vec2 = vec2(160.0, 100.0);
 const TILE_GAP_X: f32 = 12.0;
 const TILE_GAP_Y: f32 = 14.0;
+/// `.overview-call`: a row of "Im Call", at least 52 high; at most this
+/// many people per row, then "+n".
+const CALL_ROW_H: f32 = 52.0;
+const CALL_SHOWN: usize = 6;
 /// "Verpasst": at most this many cards.
 const MAX_CARDS: usize = 4;
 /// The messages fetched per card: the most one shows.
@@ -193,6 +198,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
         return;
     };
 
+    let rooms = calls(app, &detail);
     let streams = streams(app, &detail);
     // Before the read state is in, "Alles gelesen." would not be known.
     let read_loaded = app.client.with_state(|s| {
@@ -243,6 +249,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
             // "Verpasst" box (GEL-75).
             let all_read = read_loaded && cards.is_empty();
             let mut y = greet(ui, app, &theme, &detail, (left, top, left_w), all_read);
+            if !rooms.is_empty() {
+                y = calls_block(ui, app, &theme, server, (left, y + GAP, left_w), &rooms);
+            }
             if !streams.is_empty() {
                 y = streams_block(ui, app, &theme, server, (left, y + GAP, left_w), &streams);
             }
@@ -520,6 +529,381 @@ fn alone(
         super::dialogs::open_invite(ui.ctx(), detail.server.id, &detail.server.name);
     }
     button.bottom().max(top + row_h)
+}
+
+// --------------------------------------------------------------- im call
+
+/// A voice channel with someone in it, for "Im Call".
+struct CallRoom {
+    channel: Uuid,
+    name: String,
+    /// Who sits there (id, name, picture, the user), by name as the sidebar.
+    people: Vec<(Uuid, String, Option<String>, bool)>,
+    /// Someone there shares a screen.
+    live: bool,
+    /// The user's own call.
+    mine: bool,
+    /// The user is in another call: joining switches.
+    elsewhere: bool,
+    /// The user may join voice channels (`join_voice`).
+    allowed: bool,
+}
+
+/// "Im Call"'s order (`callRooms`, overview.ts): the user's own call first,
+/// then the fullest, then the sidebar's order. `rooms` holds per room in
+/// the sidebar's order whether it is the own call and how many sit there;
+/// returns their indices.
+pub fn call_order(rooms: &[(bool, usize)]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rooms.len()).collect();
+    order.sort_by(|&a, &b| {
+        rooms[b]
+            .0
+            .cmp(&rooms[a].0)
+            .then(rooms[b].1.cmp(&rooms[a].1))
+            .then(a.cmp(&b))
+    });
+    order
+}
+
+/// The server's voice channels with someone in them, as [`call_order`]
+/// sorts them.
+fn calls(app: &AppCtx, detail: &ServerDetail) -> Vec<CallRoom> {
+    let server = detail.server.id;
+    let call = app.call.state();
+    let voice_rooms: Vec<Uuid> = super::channel_sidebar::channel_order(detail)
+        .into_iter()
+        .filter(|id| {
+            detail
+                .channels
+                .iter()
+                .any(|c| c.id == *id && c.kind == ChannelKind::Voice)
+        })
+        .collect();
+    let rooms: Vec<CallRoom> = app.client.with_state(|s| {
+        voice_rooms
+            .into_iter()
+            .filter_map(|channel| {
+                let room = voice::session::build(s, &call, server, channel)?;
+                if room.occupants.is_empty() {
+                    return None;
+                }
+                let mut people: Vec<(Uuid, String, Option<String>, bool)> = room
+                    .occupants
+                    .iter()
+                    .map(|p| (p.id, p.name.clone(), p.avatar.clone(), p.me))
+                    .collect();
+                people.sort_by_cached_key(|(id, name, _, _)| (collation_key(name), *id));
+                Some(CallRoom {
+                    channel,
+                    name: room.channel_name.clone(),
+                    people,
+                    live: room.occupants.iter().any(|p| p.live),
+                    mine: room.here,
+                    elsewhere: room.elsewhere,
+                    allowed: room.allowed,
+                })
+            })
+            .collect()
+    });
+    let keys: Vec<(bool, usize)> = rooms.iter().map(|r| (r.mine, r.people.len())).collect();
+    let mut slots: Vec<Option<CallRoom>> = rooms.into_iter().map(Some).collect();
+    call_order(&keys)
+        .into_iter()
+        .filter_map(|i| slots[i].take())
+        .collect()
+}
+
+/// One row's parts, laid out before the card is painted.
+struct CallLayout {
+    name: Block,
+    live: Option<Block>,
+    count: Block,
+    /// Each person's avatar rect and name block, and "+n".
+    people: Vec<(Rect, Block)>,
+    more: Option<(Block, Rect)>,
+    actions: f32,
+    height: f32,
+}
+
+/// `.overview-calls` (GEL-75): "Im Call" and one card, a row per voice
+/// channel: the speaker and the channel (≤ 240 wide), LIVE, the count; who
+/// sits there (24 px avatars, at most [`CALL_SHOWN`], wrapping); on the
+/// right "Beitreten" ("Hierher wechseln" from another call), "Du bist hier"
+/// and "Öffnen" in the own call, only "Öffnen" without `join_voice`.
+/// Narrower than 560 the people go under the channel. Returns the bottom.
+fn calls_block(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    theme: &Theme,
+    server: Uuid,
+    at: (f32, f32, f32),
+    rooms: &[CallRoom],
+) -> f32 {
+    let c = theme.c;
+    let (left, top, width) = at;
+    let h2 = Block::single(ui, servers::overview_calls(), H2, c.text);
+    h2.paint(ui.painter(), pos2(left, top));
+    let card_top = top + h2.height() + 10.0;
+    let narrow = width <= 560.0;
+    let inner_l = left + 16.0;
+    let inner_r = left + width - 12.0;
+
+    // The way in on the right, per row: its width.
+    let action_w = |room: &CallRoom| -> f32 {
+        if room.mine {
+            let here = Block::single(
+                ui,
+                servers::overview_call_here(),
+                TextStyle::new(12.0, 400.0, 1.3),
+                c.muted,
+            );
+            here.width()
+                + 10.0
+                + Button::new(servers::overview_open())
+                    .small()
+                    .natural_width(ui)
+        } else if room.allowed {
+            Button::new(join_label(room))
+                .small()
+                .icon(Icon::Speaker)
+                .natural_width(ui)
+        } else {
+            Button::new(servers::overview_open())
+                .small()
+                .natural_width(ui)
+        }
+    };
+
+    let mut layouts = Vec::with_capacity(rooms.len());
+    let mut y = card_top;
+    for room in rooms {
+        let actions = action_w(room);
+        // The head: the channel's name up to 240 with its parts.
+        let count = Block::single(
+            ui,
+            &servers::overview_call_people(room.people.len() as u64),
+            TextStyle::new(12.0, 400.0, 1.3),
+            c.muted,
+        );
+        let live = room.live.then(|| {
+            Block::single(
+                ui,
+                "LIVE",
+                TextStyle::new(10.0, 700.0, 1.0).tracking(0.04),
+                c.on_live,
+            )
+        });
+        let extras = 8.0 + count.width() + live.as_ref().map_or(0.0, |b| 8.0 + b.width() + 12.0);
+        let name_max = (240.0 - 16.0 - 8.0 - extras)
+            .min(inner_r - actions - 16.0 - inner_l - 24.0 - extras)
+            .max(40.0);
+        let name = line(ui, &room.name, NAME, c.text, name_max);
+        let head_w = 16.0 + 8.0 + name.width() + extras;
+        // Who sits there: beside the head, or on its own line when narrow.
+        let (px0, px1) = if narrow {
+            (inner_l, inner_r)
+        } else {
+            (inner_l + head_w + 16.0, inner_r - actions - 16.0)
+        };
+        let shown = room.people.len().min(CALL_SHOWN);
+        let rest = room.people.len() - shown;
+        let mut chips: Vec<(f32, Block)> = room.people[..shown]
+            .iter()
+            .map(|(_, name, _, me)| {
+                let shown_name = if *me {
+                    servers::overview_you()
+                } else {
+                    name.as_str()
+                };
+                let block = line(ui, shown_name, SMALL, c.text, 140.0 - 30.0);
+                (24.0 + 6.0 + block.width(), block)
+            })
+            .collect();
+        let more = (rest > 0).then(|| {
+            Block::single(
+                ui,
+                &servers::overview_call_more(rest as u64),
+                TextStyle::new(12.0, 500.0, 1.3),
+                c.muted,
+            )
+        });
+        // Wrap the chips into lines of 24, 6 apart.
+        let mut placed: Vec<(f32, usize)> = Vec::new();
+        let (mut x, mut line_no) = (px0, 0usize);
+        let mut place = |w: f32| -> (f32, usize) {
+            if x > px0 && x + w > px1 {
+                x = px0;
+                line_no += 1;
+            }
+            let at = (x, line_no);
+            x += w + 12.0;
+            at
+        };
+        for (w, _) in &chips {
+            placed.push(place(*w));
+        }
+        let more_at = more.as_ref().map(|b| place(b.width()));
+        let lines = placed
+            .iter()
+            .map(|p| p.1)
+            .chain(more_at.map(|p| p.1))
+            .max()
+            .map_or(0, |l| l + 1) as f32;
+        let people_h = if lines > 0.0 {
+            lines * 24.0 + (lines - 1.0) * 6.0
+        } else {
+            0.0
+        };
+        let (height, people_top) = if narrow {
+            let h = 8.0 + 32.0 + 8.0 + people_h + 8.0;
+            (h.max(CALL_ROW_H), y + 8.0 + 32.0 + 8.0)
+        } else {
+            let h = (people_h.max(32.0) + 16.0).max(CALL_ROW_H);
+            (h, y + (h - people_h) / 2.0)
+        };
+        let people: Vec<(Rect, Block)> = chips
+            .drain(..)
+            .zip(placed)
+            .map(|((_, block), (x, l))| {
+                let rect =
+                    Rect::from_min_size(pos2(x, people_top + l as f32 * 30.0), Vec2::splat(24.0));
+                (rect, block)
+            })
+            .collect();
+        let more = more.zip(more_at).map(|(block, (x, l))| {
+            let rect = Rect::from_min_size(
+                pos2(x, people_top + l as f32 * 30.0),
+                vec2(block.width(), 24.0),
+            );
+            (block, rect)
+        });
+        layouts.push(CallLayout {
+            name,
+            live,
+            count,
+            people,
+            more,
+            actions,
+            height,
+        });
+        y += height;
+    }
+    let card = Rect::from_min_max(pos2(left, card_top), pos2(left + width, y));
+    ui.painter().rect(
+        card,
+        corner(theme.radius.lg),
+        c.surface,
+        Stroke::new(1.0, c.border),
+        StrokeKind::Inside,
+    );
+
+    let mut y = card_top;
+    for (i, (room, lay)) in rooms.iter().zip(&layouts).enumerate() {
+        let painter = ui.painter().clone();
+        if i > 0 {
+            hairline_h(&painter, theme, (left + 1.0)..=(left + width - 1.0), y);
+        }
+        let row = Rect::from_min_size(pos2(left, y), vec2(width, lay.height));
+        let head_cy = if narrow {
+            y + 8.0 + 16.0
+        } else {
+            row.center().y
+        };
+        let mut x = inner_l;
+        icons::paint(
+            &painter,
+            Icon::Speaker,
+            pos2(x, head_cy - 8.0),
+            16.0,
+            c.online_text,
+        );
+        x += 16.0 + 8.0;
+        let name = &lay.name;
+        paint_mid(&painter, name, x, head_cy);
+        let response = ui.interact(
+            Rect::from_min_size(pos2(x, head_cy - 10.0), vec2(name.width(), 20.0)),
+            Id::unique(("overview-call", room.channel)),
+            egui::Sense::hover(),
+        );
+        crate::widgets::announce(&response, egui::Role::Label, &room.name);
+        x += name.width() + 8.0;
+        if let Some(live) = &lay.live {
+            let tag = Rect::from_min_size(pos2(x, head_cy - 9.0), vec2(live.width() + 12.0, 18.0));
+            painter.rect_filled(tag, corner(4.0), c.live);
+            paint_mid(&painter, live, tag.left() + 6.0, head_cy);
+            x = tag.right() + 8.0;
+        }
+        paint_mid(&painter, &lay.count, x, head_cy);
+
+        for ((rect, block), person) in lay.people.iter().zip(&room.people) {
+            common::avatar(
+                ui,
+                app.images,
+                *rect,
+                &person.1,
+                person.2.as_deref(),
+                10.0,
+                1.0,
+                c.surface,
+            );
+            paint_mid(&painter, block, rect.right() + 6.0, rect.center().y);
+        }
+        if let Some((block, rect)) = &lay.more {
+            paint_mid(&painter, block, rect.left(), rect.center().y);
+        }
+
+        // The way in, right-aligned and centred on the head.
+        let mut ax = inner_r - lay.actions;
+        let button_at =
+            |x: f32, w: f32| Rect::from_min_size(pos2(x, head_cy - 16.0), vec2(w, 32.0));
+        let open = |app: &mut AppCtx| {
+            app.nav.navigate(&format!("/s/{server}/c/{}", room.channel));
+        };
+        if room.mine {
+            let here = Block::single(
+                ui,
+                servers::overview_call_here(),
+                TextStyle::new(12.0, 400.0, 1.3),
+                c.muted,
+            );
+            paint_mid(&painter, &here, ax, head_cy);
+            ax += here.width() + 10.0;
+            let button = Button::new(servers::overview_open()).small();
+            let w = button.natural_width(ui);
+            if ui.put(button_at(ax, w), button).clicked() {
+                open(app);
+            }
+        } else if room.allowed {
+            let button = Button::new(join_label(room))
+                .small()
+                .primary()
+                .icon(Icon::Speaker);
+            let w = button.natural_width(ui);
+            if ui.put(button_at(ax, w), button).clicked() {
+                // As "Beitreten" on the voice page: the page opens and the
+                // call starts.
+                open(app);
+                app.call.join(server, room.channel);
+            }
+        } else {
+            let button = Button::new(servers::overview_open()).small();
+            let w = button.natural_width(ui);
+            if ui.put(button_at(ax, w), button).clicked() {
+                open(app);
+            }
+        }
+        y += lay.height;
+    }
+    y
+}
+
+/// "Beitreten", or "Hierher wechseln" from another call (as the voice page).
+fn join_label(room: &CallRoom) -> &'static str {
+    if room.elsewhere {
+        gelabber_i18n::voice::room_switch_here()
+    } else {
+        servers::overview_join()
+    }
 }
 
 // --------------------------------------------------------------- streams
@@ -1864,6 +2248,17 @@ fn skeleton(ui: &Ui, rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calls_put_the_own_first_then_the_fullest_then_the_sidebar() {
+        // (own call, people) in the sidebar's order.
+        assert_eq!(
+            call_order(&[(false, 1), (false, 2), (true, 1)]),
+            vec![2, 1, 0]
+        );
+        assert_eq!(call_order(&[(false, 1), (false, 1)]), vec![0, 1]);
+        assert_eq!(call_order(&[]), Vec::<usize>::new());
+    }
 
     fn unread(n: u128, mentions: i64, latest: i64) -> Unread {
         Unread {

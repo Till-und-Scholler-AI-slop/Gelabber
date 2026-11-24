@@ -116,6 +116,11 @@ export const servers = defineCatalog(
     "overview.alone": "Noch keine weiteren Mitglieder.",
     "overview.invite": "Einladen",
     "overview.you": "Du",
+    "overview.calls": "Im Call",
+    "overview.callPeople": { one: "{count} Person", other: "{count} Personen" },
+    "overview.callMore": "+{count}",
+    "overview.join": "Beitreten",
+    "overview.callHere": "Du bist hier",
 
     "load.server": "Der Server konnte nicht geladen werden.",
     "load.channel": "Dieser Kanal konnte nicht geladen werden.",
@@ -237,6 +242,11 @@ export const servers = defineCatalog(
     "overview.alone": "No other members yet.",
     "overview.invite": "Invite",
     "overview.you": "You",
+    "overview.calls": "In a call",
+    "overview.callPeople": { one: "{count} person", other: "{count} people" },
+    "overview.callMore": "+{count}",
+    "overview.join": "Join",
+    "overview.callHere": "You’re here",
 
     "load.server": "The server couldn’t be loaded.",
     "load.channel": "This channel couldn’t be loaded.",

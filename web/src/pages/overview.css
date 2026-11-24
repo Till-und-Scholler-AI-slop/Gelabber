@@ -147,6 +147,113 @@
   font: 600 14px / 1.3 var(--lr-font);
 }
 
+/* Im Call (GEL-75): one card, a row per voice channel with someone in it:
+   the channel, who sits there, and the way in on the right. */
+.overview-calls__list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-surface);
+}
+.overview-call {
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  min-height: 52px;
+  padding: 8px 12px 8px 16px;
+}
+.overview-call + .overview-call {
+  border-top: 1px solid var(--lr-border);
+}
+.overview-call__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 240px;
+}
+.overview-call__icon {
+  flex-shrink: 0;
+  color: var(--lr-online-text);
+}
+.overview-call__name {
+  min-width: 0;
+  overflow: hidden;
+  font: 600 14px / 1.3 var(--lr-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-call__live {
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--lr-live);
+  color: var(--lr-on-live);
+  font: 700 10px / 18px var(--lr-font);
+  letter-spacing: 0.04em;
+}
+.overview-call__count {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+  font: 400 12px / 1.3 var(--lr-font);
+  white-space: nowrap;
+}
+.overview-call__people {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+.overview-call__person {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 140px;
+  font: 500 13px / 1.3 var(--lr-font);
+}
+.overview-call__person .gel-avatar {
+  --avatar-size: 24px;
+  flex-shrink: 0;
+}
+.overview-call__person > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-call__more {
+  color: var(--lr-muted);
+  font: 500 12px / 1.3 var(--lr-font);
+}
+.overview-call__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.overview-call__here {
+  color: var(--lr-muted);
+  font: 400 12px / 1.3 var(--lr-font);
+  white-space: nowrap;
+}
+/* Narrow: who sits there goes on its own line under the channel. */
+@container (max-width: 560px) {
+  .overview-call {
+    flex-wrap: wrap;
+  }
+  .overview-call__people {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
 /* Lives: flat cards (GEL-75), the picture small on the left, two side by
    side where there is room. */
 .overview-streams {

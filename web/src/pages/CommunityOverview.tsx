@@ -38,6 +38,8 @@ import { FieldShell } from "../components/ui/FieldShell.tsx";
 import { Input } from "../components/ui/Input.tsx";
 import { useT } from "../i18n/catalog.ts";
 import { servers } from "../i18n/catalogs/servers.ts";
+import { voice as voiceTexts } from "../i18n/catalogs/voice.ts";
+import { compareNames } from "../i18n/format.ts";
 import { useCurrentLocale } from "../i18n/locale.ts";
 import { attachmentUrl, listMessages, thumbnailUrl } from "../messages/api.ts";
 import { MessageContent } from "../messages/MessageContent.tsx";
@@ -56,6 +58,8 @@ import { asSystem, systemText } from "../messages/system.ts";
 import type { Message } from "../messages/types.ts";
 import { useBadges } from "../messages/useBadge.ts";
 import {
+  CALL_PEOPLE_SHOWN,
+  callRooms,
   greetingKey,
   isPicture,
   mentionsMe,
@@ -64,22 +68,28 @@ import {
   sharedShown,
   shownCount,
   unreadTail,
+  type CallRoom,
   type MissedCard,
 } from "../servers/overview.ts";
 import { can } from "../servers/permissions.ts";
+import { channelOrder } from "../servers/rows.ts";
 import { listSharedFiles, type SharedFile } from "../servers/sharedFiles.ts";
 import type { ServerDetail } from "../servers/types.ts";
-import { EMPTY_LIVE, useVoiceRoster } from "../voice/roster.ts";
-import { useVoice } from "../voice/session.ts";
+import {
+  EMPTY_LIVE,
+  EMPTY_OCCUPANCY,
+  useVoiceRoster,
+} from "../voice/roster.ts";
+import { joinVoice, useVoice } from "../voice/session.ts";
 import { useLiveWatchers } from "../voice/useLiveWatchers.ts";
-import { joinToWatch } from "../voice/watchLive.ts";
+import { currentCall, joinToWatch } from "../voice/watchLive.ts";
 import "./overview.css";
 
 /**
- * The server's front door (GEL-69): only what is shown nowhere else. The
- * sidebar has the channels and who is in a call, the member list who is
- * online, the call bar the call; here are the Lives, what was missed and
- * what was shared.
+ * The server's front door (GEL-69, GEL-75): the sidebar has the channels,
+ * the member list who is online, the call bar the call; here are who is in
+ * which call with the way in, the Lives, what was missed and what was
+ * shared.
  */
 export function CommunityOverview({ server }: { server: ServerDetail }) {
   const t = useT(servers);
@@ -98,6 +108,7 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
         <div className="community-overview__body">
           <div className="overview-main">
             <Greeting server={server} missed={missed} />
+            <Calls server={server} />
             <Streams server={server} />
             {missed.cards.length > 0 ? (
               <Missed server={server} missed={missed} />
@@ -179,6 +190,143 @@ function Alone({ server }: { server: ServerDetail }) {
         onClose={() => setInviting(false)}
       />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Im Call
+
+/** Who sits in which voice channel, one row each, with the way in. */
+function Calls({ server }: { server: ServerDetail }) {
+  const t = useT(servers);
+  const heading = useId();
+  const me = useUserId();
+  const occupancy = useVoiceRoster(
+    (s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY,
+  );
+  const live = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
+  const call = useVoice(currentCall);
+  const mine = call?.startsWith(`${server.id}/`)
+    ? call.slice(server.id.length + 1)
+    : null;
+  const rooms = useMemo(() => {
+    // My own seat counts at once, before the roster's echo is back.
+    const seats =
+      mine && me && occupancy[me]?.channelId !== mine
+        ? { ...occupancy, [me]: { channelId: mine } }
+        : occupancy;
+    return callRooms(channelOrder(server), seats, live, mine);
+  }, [server, occupancy, live, mine, me]);
+  if (rooms.length === 0) return null;
+  return (
+    <section className="overview-calls" aria-labelledby={heading}>
+      <h2 id={heading} className="overview-heading">
+        {t("overview.calls")}
+      </h2>
+      <ul className="overview-calls__list">
+        {rooms.map((room) => (
+          <CallRow
+            key={room.channel.id}
+            server={server}
+            room={room}
+            elsewhere={call !== null && !room.mine}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function CallRow({
+  server,
+  room,
+  elsewhere,
+}: {
+  server: ServerDetail;
+  room: CallRoom;
+  /** The user is in another call: joining switches, as on the voice page. */
+  elsewhere: boolean;
+}) {
+  const t = useT(servers);
+  const tv = useT(voiceTexts);
+  const navigate = useNavigate();
+  const me = useUserId();
+  const members = new Map(server.members.map((m) => [m.user_id, m]));
+  const people = room.people
+    .map((id) => ({
+      id,
+      name: members.get(id)?.name ?? tv("people.member"),
+      avatar: members.get(id)?.avatar_url ?? null,
+    }))
+    .sort((a, b) => compareNames(a.name, b.name));
+  const shown = people.slice(0, CALL_PEOPLE_SHOWN);
+  const rest = people.length - shown.length;
+  const channelId = room.channel.id;
+  const open = () =>
+    void navigate({
+      to: "/s/$serverId/c/$channelId",
+      params: { serverId: server.id, channelId },
+    });
+  // As "Beitreten" on the voice page: the page opens and the call starts.
+  const join = () => {
+    open();
+    joinVoice({
+      serverId: server.id,
+      channelId,
+      channelName: room.channel.name,
+    });
+  };
+  return (
+    <li className="overview-call">
+      <span className="overview-call__head">
+        <SpeakerIcon size={16} className="overview-call__icon" />
+        <span className="overview-call__name">{room.channel.name}</span>
+        {room.live ? (
+          <span className="overview-call__live">{t("overview.live")}</span>
+        ) : null}
+        <span className="overview-call__count">
+          {t("overview.callPeople", { count: people.length })}
+        </span>
+      </span>
+      <ul className="overview-call__people" aria-label={room.channel.name}>
+        {shown.map((person) => (
+          <li key={person.id} className="overview-call__person">
+            <Avatar name={person.name} url={person.avatar} decorative />
+            <span>{person.id === me ? t("overview.you") : person.name}</span>
+          </li>
+        ))}
+        {rest > 0 ? (
+          <li className="overview-call__more">
+            {t("overview.callMore", { count: rest })}
+          </li>
+        ) : null}
+      </ul>
+      <span className="overview-call__actions">
+        {room.mine ? (
+          <>
+            <span className="overview-call__here">
+              {t("overview.callHere")}
+            </span>
+            <Button size="sm" onClick={open}>
+              {t("overview.open")}
+            </Button>
+          </>
+        ) : can(server, "join_voice") ? (
+          <Button
+            size="sm"
+            variant="primary"
+            icon={<SpeakerIcon size={15} />}
+            onClick={join}
+          >
+            {elsewhere ? tv("room.switchHere") : t("overview.join")}
+          </Button>
+        ) : (
+          <Button size="sm" onClick={open}>
+            {t("overview.open")}
+          </Button>
+        )}
+      </span>
+    </li>
   );
 }
 

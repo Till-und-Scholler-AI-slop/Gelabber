@@ -80,6 +80,12 @@ crate::strings! {
     overview_watch_short = "Zuschauen" | "Watch";
     /// The own stream's name and the own messages' author.
     overview_you = "Du" | "You";
+    /// "Im Call": who sits in which voice channel.
+    overview_calls = "Im Call" | "In a call";
+    /// A voice channel's row in "Im Call": into that call.
+    overview_join = "Beitreten" | "Join";
+    /// The row of the call the user is in.
+    overview_call_here = "Du bist hier" | "You’re here";
     overview_own_screen = "Dein Bildschirm" | "Your screen";
 
     load_server = "Der Server konnte nicht geladen werden." | "The server couldn’t be loaded.";
@@ -244,6 +250,20 @@ pub fn overview_watch(name: &str) -> String {
         Locale::De => format!("Bildschirm von {name} ansehen"),
         Locale::En => format!("Watch {name}’s screen"),
     }
+}
+
+/// A voice channel's row in "Im Call": "{count} Personen".
+pub fn overview_call_people(count: u64) -> String {
+    let n = crate::intl::count(count);
+    match get() {
+        Locale::De => plural(count, format!("{n} Person"), format!("{n} Personen")),
+        Locale::En => plural(count, format!("{n} person"), format!("{n} people")),
+    }
+}
+
+/// The people of a row past the shown ones: "+{count}".
+pub fn overview_call_more(count: u64) -> String {
+    format!("+{}", crate::intl::count(count))
 }
 
 /// A stream's viewers: "{count} Zuschauer".
