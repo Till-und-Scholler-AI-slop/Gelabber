@@ -283,9 +283,21 @@ pub fn wait_for(
     }
 }
 
-/// Steps until a node labelled `label` is in the tree.
+/// Steps until a node labelled `label` is in the tree and lies where it
+/// lay a frame before. A click goes to the place a node had when the test
+/// asked for it, and a node that only just showed may still move: the auth
+/// pages centre their column by the height of the pass before, so a frame
+/// that got an answer between its two passes is drawn once with the column
+/// off by half of what came in (GEL-78).
 pub fn wait_for_label(harness: &mut Harness<'_, Launcher>, label: &str) {
-    wait_for(harness, label, |h| h.query_by_label(label).is_some());
+    use egui_kittest::kittest::NodeT;
+    let last = std::cell::Cell::new(None);
+    wait_for(harness, label, |h| {
+        let place = h
+            .query_by_label(label)
+            .map(|node| node.accesskit_node().bounding_box());
+        place.is_some() && last.replace(place) == place
+    });
 }
 
 /// Steps until a node whose label contains `text` is in the tree.
