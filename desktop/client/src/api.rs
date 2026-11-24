@@ -529,6 +529,15 @@ impl Http {
             .map(|Lenient(v)| v)
     }
 
+    /// The newest files of the server's text channels the user may read,
+    /// newest message first (the overview's "Geteilt"); `limit` 1..=50.
+    pub async fn shared_files(&self, server: Uuid, limit: u32) -> Result<Vec<SharedFile>> {
+        let qs = query(&[("limit", Some(limit.to_string()))]);
+        self.get(&format!("/servers/{server}/attachments{qs}"))
+            .await
+            .map(|Lenient(v)| v)
+    }
+
     /// `max_uses` 1..=10000, `expires_in_hours` 1..=8760; `None` = unlimited.
     pub async fn create_invite(
         &self,
@@ -1363,6 +1372,51 @@ mod tests {
                 "GET /api/directory/listings?language=en&offset=30 HTTP/1.1",
                 "GET /api/directory/listings?q=50%25_&language=de&offset=60 HTTP/1.1",
             ]
+        );
+    }
+
+    /// The overview's shared files: the attachment's fields flattened in,
+    /// with the message, channel, sender and time.
+    #[test]
+    fn shared_files_read_the_flattened_attachment() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (base, seen) = fake_api(|_| {
+            (
+                "200 OK",
+                serde_json::json!([
+                    {
+                        "id": Uuid::from_u128(1), "filename": "Blatt_4.pdf",
+                        "content_type": "application/pdf", "size": 655360,
+                        "message_id": Uuid::from_u128(2), "channel_id": Uuid::from_u128(3),
+                        "author": {"id": Uuid::from_u128(4), "name": "Silas", "avatar_url": null},
+                        "created_at": "2026-11-23T22:40:00Z"
+                    },
+                    {
+                        "id": Uuid::from_u128(5), "filename": "a.png", "content_type": "image/png",
+                        "size": 10, "width": 1600, "height": 900, "thumbnail": true,
+                        "message_id": Uuid::from_u128(6), "channel_id": Uuid::from_u128(3),
+                        "author": {"id": Uuid::from_u128(4), "name": "Silas", "avatar_url": "/api/avatars/x"},
+                        "created_at": "2026-11-23T22:30:00Z"
+                    },
+                    {"broken": true}
+                ])
+                .to_string(),
+            )
+        });
+        let http = Http::new(&base).unwrap();
+        let server = Uuid::from_u128(9);
+        let files = runtime.block_on(http.shared_files(server, 12)).unwrap();
+        assert_eq!(files.len(), 2, "the broken row is left out");
+        assert_eq!(files[0].attachment.filename, "Blatt_4.pdf");
+        assert_eq!(files[0].attachment.size, 655360);
+        assert_eq!(files[0].message_id, Uuid::from_u128(2));
+        assert_eq!(files[0].channel_id, Uuid::from_u128(3));
+        assert_eq!(files[0].author.name, "Silas");
+        assert_eq!(files[1].attachment.width, Some(1600));
+        assert!(files[1].attachment.thumbnail);
+        assert_eq!(
+            seen.lock()[0].0,
+            format!("GET /api/servers/{server}/attachments?limit=12 HTTP/1.1")
         );
     }
 

@@ -107,10 +107,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     if let Route::Channel(s, c) = route {
         let staged = is_voice(app, c) && voice::page::staged(app, s, c);
         layout::set_members_video(ui.ctx(), staged);
+    } else if let Route::Server(_) = route {
+        layout::set_members_video(ui.ctx(), false);
     }
     let members_shown = match route {
-        Route::Server(_) => true,
-        Route::Channel(..) => layout::members_visible(ui.ctx()),
+        // The overview's panel opens and closes as on the channel pages.
+        Route::Server(_) | Route::Channel(..) => layout::members_visible(ui.ctx()),
         _ => false,
     } && blocked_route(app, &route).is_none();
     let cols = layout::columns(ui.ctx(), screen, members_shown);
@@ -219,10 +221,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
                 channel_sidebar::show(ui, app, sidebar, s, None, true);
             }
             panel(ui, app);
-            let page = layout::page_rect(content, cols, true);
+            let visible = members_shown;
+            let page = layout::page_rect(content, cols, visible);
             overview::show(ui, app, page, s);
-            edges::members(ui, content, cols, true);
-            members::show(ui, app, members_rect(content, cols), s);
+            edges::members(ui, content, cols, visible);
+            if visible {
+                members::show(ui, app, members_rect(content, cols), s);
+            }
         }
         Route::Channel(s, c) => {
             if open {

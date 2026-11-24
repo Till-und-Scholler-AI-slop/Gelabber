@@ -1,13 +1,13 @@
 //! What the shell keeps between frames: where the user was last (web
 //! servers/lastPlace.ts, lastChannel.ts, dms/lastDm.ts, per account), which
-//! menu or dialog is open, and the overview's message previews. It lives
-//! in the egui context under the shell's own id.
+//! menu or dialog is open, and what the overview fetched. It lives in the
+//! egui context under the shell's own id.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use gelabber_client::{ApiError, Invite, Message};
+use gelabber_client::{ApiError, Invite, Message, SharedFile};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
@@ -111,12 +111,20 @@ pub enum Dialog {
     },
 }
 
-/// The newest message of a channel for the overview's unread list.
-pub struct Preview {
-    /// The `latest_order` it was fetched for.
+/// A channel's newest messages for the overview's "Verpasst" card.
+pub struct Missed {
+    /// The `latest_order` they were fetched for.
     pub order: Option<i64>,
-    pub shown: Option<Message>,
-    pub pending: Option<Pending<Option<Message>>>,
+    pub shown: Option<Vec<Message>>,
+    pub pending: Option<Pending<Option<Vec<Message>>>>,
+}
+
+/// A server's newest shared files for the overview's "Geteilt".
+pub struct SharedFiles {
+    /// The newest `latest_order` of its channels when they were fetched.
+    pub key: Option<i64>,
+    pub shown: Vec<SharedFile>,
+    pub pending: Option<Pending<Option<Vec<SharedFile>>>>,
 }
 
 #[derive(Default)]
@@ -126,8 +134,14 @@ pub struct ShellState {
     pub memory: HashMap<Uuid, Memory>,
     pub dialog: Option<Dialog>,
     pub server_menu: bool,
-    /// channel → its preview.
-    pub previews: HashMap<Uuid, Preview>,
+    /// channel → the overview card's messages.
+    pub missed: HashMap<Uuid, Missed>,
+    /// server → the overview's shared files.
+    pub shared: HashMap<Uuid, SharedFiles>,
+    /// channel → the text in the overview's reply field.
+    pub replies: HashMap<Uuid, String>,
+    /// A picture of the overview's cards shown large.
+    pub lightbox: Option<crate::screens::chat::attachments::Lightbox>,
     /// The location the route effects ran for last.
     pub effects_for: Option<String>,
     /// A server just created: its overview opens the invite dialog.
@@ -151,7 +165,7 @@ pub fn with<R>(ctx: &egui::Context, f: impl FnOnce(&mut ShellState) -> R) -> R {
     f(&mut state)
 }
 
-/// Another account signed in: its menus, dialogs and previews start
+/// Another account signed in: its menus, dialogs and overview data start
 /// empty; the remembered places stay, each under its own account.
 pub fn switch_account(ctx: &egui::Context, user: Uuid) {
     with(ctx, |s| {

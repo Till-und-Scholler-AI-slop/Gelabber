@@ -19,7 +19,7 @@ pub mod switch;
 pub mod tooltip;
 
 pub use avatar::{Avatar, AvatarSize, Presence};
-pub use badge::{Badge, BadgeTone, count_badge};
+pub use badge::{Badge, BadgeTone, count_badge, mention_badge};
 pub use button::{Button, ButtonSize, ButtonVariant, IconButton};
 pub use field::{FieldOutput, TextField};
 pub use link::Link;

@@ -23,6 +23,8 @@ pub enum Icon {
     Camera,
     CameraOff,
     Chevron,
+    ArrowRight,
+    File,
     Paperclip,
     Expand,
     Collapse,
@@ -62,7 +64,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Icon; 55] = [
+    pub const ALL: [Icon; 57] = [
         Icon::Hash,
         Icon::Speaker,
         Icon::Plus,
@@ -82,6 +84,8 @@ impl Icon {
         Icon::Camera,
         Icon::CameraOff,
         Icon::Chevron,
+        Icon::ArrowRight,
+        Icon::File,
         Icon::Paperclip,
         Icon::Expand,
         Icon::Collapse,
@@ -142,6 +146,8 @@ impl Icon {
             Icon::Camera => include_bytes!("../assets/icons/camera.svg"),
             Icon::CameraOff => include_bytes!("../assets/icons/camera-off.svg"),
             Icon::Chevron => include_bytes!("../assets/icons/chevron.svg"),
+            Icon::ArrowRight => include_bytes!("../assets/icons/arrow-right.svg"),
+            Icon::File => include_bytes!("../assets/icons/file.svg"),
             Icon::Paperclip => include_bytes!("../assets/icons/paperclip.svg"),
             Icon::Expand => include_bytes!("../assets/icons/expand.svg"),
             Icon::Collapse => include_bytes!("../assets/icons/collapse.svg"),

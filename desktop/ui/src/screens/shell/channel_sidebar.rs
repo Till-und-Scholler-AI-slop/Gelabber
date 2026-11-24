@@ -15,7 +15,7 @@ use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::text::{self, Block};
 use crate::theme::{Theme, corner, mix};
-use crate::widgets::{Popover, count_badge, hairline_h};
+use crate::widgets::{Popover, hairline_h, mention_badge};
 
 /// What the list shows, in the web's order (servers/rows.ts).
 enum Row {
@@ -624,15 +624,10 @@ fn channel_row(
     );
     let name_left = row.left() + 10.0 + 17.0 + 10.0;
     let mut name_right = row.right() - 3.0 - 10.0;
-    // The count pill or the LIVE chip sit at the end of the link.
+    // The "@" of an unread mention (a server channel counts nothing else)
+    // or the LIVE chip sit at the end of the link.
     if badge.count > 0 && !voice {
-        let r = count_badge(
-            &painter,
-            ui,
-            pos2(name_right, row.center().y + 9.0),
-            badge.count.min(u32::MAX as i64) as u32,
-            None,
-        );
+        let r = mention_badge(&painter, ui, pos2(name_right, row.center().y + 9.0), None);
         name_right = r.left() - 10.0;
     } else if live && voice {
         let chip_style = text::TextStyle::new(10.0, 700.0, 1.5).tracking(0.04);
