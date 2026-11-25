@@ -462,8 +462,10 @@ summary {
 /* The channel list's fold button and the sidebars' edges (GEL-34). Wide
    screens only: phones and narrow windows keep their drawers, and touch
    screens get the button but no edge to drag. The widths come from
-   SidebarEdge.tsx, fitted to the window. */
-.channel-list-toggle,
+   SidebarEdge.tsx, fitted to the window. The button also carries
+   .lr-header-icon, whose display: grid comes from chat.css, loaded later:
+   both selectors name both classes so this rule wins on phones. */
+.lr-header-icon.channel-list-toggle,
 .sidebar-edge {
   display: none;
 }
@@ -517,7 +519,7 @@ summary {
   user-select: none;
 }
 @media (min-width: 801px) {
-  .channel-list-toggle {
+  .lr-header-icon.channel-list-toggle {
     display: grid;
     position: absolute;
     top: calc((var(--lr-header-height) - 32px) / 2);
