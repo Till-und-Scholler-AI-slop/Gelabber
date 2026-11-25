@@ -526,7 +526,8 @@ summary {
   }
   /* The header lines start after the button. */
   .workspace-main .lr-channel-header,
-  .workspace-main .community-overview__bar {
+  .workspace-main .community-overview__bar,
+  .workspace-main .friends-page__header {
     padding-left: 52px;
   }
   html[data-kino] .channel-list-toggle {
