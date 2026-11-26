@@ -23,6 +23,14 @@ on:
         type: string
         required: false
         default: ""
+    # Release runs only (desktop-release.yml passes them by name).
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+      ARCH_REPO_GPG_KEY:
+        required: false
     # A libwebrtc package to store in the libwebrtc-packages release (pushes,
     # releases): its cache key, or empty. libwebrtc-store.yml stores it.
     outputs:
