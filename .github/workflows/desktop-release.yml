@@ -20,12 +20,41 @@ env:
   RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
 
 jobs:
+  # The release PR's CI run that packaged these apps from the tag's tree
+  # (tested_tree.py); without one, `build` builds them as before (GEL-358).
+  candidate:
+    name: Packages of the release's pull request
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.find.outputs.run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Find the candidate
+        id: find
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/workflows/scripts/tested_tree.py find --candidate >> "$GITHUB_OUTPUT"
+
   build:
+    needs: candidate
     # Other releases (the build-deps mirror) are no app version.
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
+    # read: the candidate run's packages.
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/desktop-native.yml
     with:
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
+      prebuilt_run: ${{ needs.candidate.outputs.run }}
     secrets: inherit
 
   # As in ci.yml: a new libwebrtc package is stored by a job that runs none
