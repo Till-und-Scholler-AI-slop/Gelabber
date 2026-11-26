@@ -136,17 +136,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # More tests run at once than the runner has cores, and each one opens
-      # its own pool: Postgres' default of 100 connections is too few.
-      - name: Raise Postgres connection limit
-        env:
-          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
-        run: |
-          set -euo pipefail
-          docker exec "$POSTGRES_CONTAINER" psql -U gelabber -d gelabber -c 'ALTER SYSTEM SET max_connections = 600'
-          docker restart "$POSTGRES_CONTAINER"
-          until docker exec "$POSTGRES_CONTAINER" pg_isready -U gelabber -d gelabber; do sleep 1; done
-          test "$(docker exec "$POSTGRES_CONTAINER" psql -U gelabber -d gelabber -tAc 'SHOW max_connections')" = 600
       - name: Login to GHCR for pinned test MinIO
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -231,10 +220,9 @@ jobs:
           test -n "$MINIO_ROOT_USER"
           test -n "$MINIO_ROOT_PASSWORD"
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
-          # The 100 ms typing assertion runs alone in the next step. The tests
-          # wait on Postgres and timers, so more run at once than there are cores.
+          # The 100 ms typing assertion runs alone in the next step.
           sh backend/build/run-native-ci.sh nextest run --locked --workspace --all-targets --no-fail-fast \
-            --partition hash:${{ matrix.part }}/2 --test-threads 16 \
+            --partition hash:${{ matrix.part }}/2 \
             -E 'not test(typing_broadcasts_fast_and_clears_on_stop)'
 
       - name: Test typing latency in isolation
