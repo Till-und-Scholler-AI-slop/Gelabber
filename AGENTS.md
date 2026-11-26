@@ -39,17 +39,21 @@ The **shipped line** is the latest release tag on `main`.
 - **Each fix** gets its own PR before a release PR bundles it.
 - **Protection:** the rulesets `Main Protection` and `Version branches`
   (`refs/heads/v[0-9]*`) require a PR and a green `ci-ok`, and block force
-  pushes and deletion. `Version branches` also requires the merge queue:
-  a PR lands only after CI passed on it merged onto the branch's newest
-  state, one PR at a time. Nobody bypasses them, admins included. A new
-  version branch name must match that pattern, or gets the same protection
-  by hand before its first commit.
+  pushes and deletion. The ruleset `Merge queue (development line)` adds
+  the merge queue to the development line: a PR lands only after CI passed
+  on it merged onto the branch's newest state, one PR at a time. GitHub
+  allows no wildcard with a merge queue, so that ruleset names the branch
+  (`refs/heads/v0.14`); a new development line replaces it there before
+  its first PR. Nobody bypasses them, admins included. A new version
+  branch name must match that pattern, or gets the same protection by
+  hand before its first commit.
 - **Merge and review:** a maintainer (write access or more) merges their own
   PR once `ci-ok` is green; no approval from the other maintainer is
-  required. Into a version branch that means "Merge when ready", which
+  required. Into the development line that means "Merge when ready", which
   queues it (`gh pr merge <n> --merge`); a PR the queue removes, after a
-  failed or flaky check, is queued again once fixed. The maintainer reviews the change first, with AI if they like,
-  and an agent merges only when that maintainer says so. Others contribute
+  failed or flaky check, is queued again once fixed. The maintainer
+  reviews the change first, with AI if they like, and an agent merges
+  only when that maintainer says so. Others contribute
   through forks.
 
 ## Planning

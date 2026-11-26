@@ -67,5 +67,11 @@ is the order of the work; check each step's result before the next one.
    the next one, and write the next milestone's goal if it has none.
 9. **Sync** `main` into the development line: branch `sync/main-into-vX.Y`,
    PR to the development line, keeping the release commits.
+10. **New development line.** When the next version branch is created
+   (`vX.Y`, matching `Version branches`), it replaces the old one in the
+   ruleset `Merge queue (development line)` before its first PR: GitHub
+   allows no wildcard with a merge queue. Settings › Rules › Rulesets, or
+   `gh api -X PUT repos/{owner}/{repo}/rulesets/<id>` with the new
+   `refs/heads/vX.Y` in `conditions.ref_name.include`.
 
 Tell the person what operators have to do from the notes' upgrade section.
