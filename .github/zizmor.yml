@@ -1,0 +1,18 @@
+# zizmor (deploy job in ci.yml, GEL-361). Each exception says why it is safe.
+rules:
+  # `$/` is GitHub's newer spelling of `./`; test_workflow_tokens.py and
+  # third-party-notices.py read the calls as `./.github/workflows/...`.
+  self-repository:
+    disable: true
+  # Both run only for a successful push run of this repository's main
+  # (`head_repository` and `head_branch` are checked) and check out its SHA.
+  dangerous-triggers:
+    ignore:
+      - publish-images.yml
+      - release.yml
+      - cache-cleanup.yml
+  # The values written are this workflow's matrix constants, the version in
+  # backend/Cargo.toml and main's own head SHA, none from a pull request.
+  github-env:
+    ignore:
+      - publish-images.yml

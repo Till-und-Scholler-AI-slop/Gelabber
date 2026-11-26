@@ -55,7 +55,11 @@ jobs:
     with:
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
       prebuilt_run: ${{ needs.candidate.outputs.run }}
-    secrets: inherit
+    # Only the signing keys, not every secret of the repository.
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      ARCH_REPO_GPG_KEY: ${{ secrets.ARCH_REPO_GPG_KEY }}
 
   # As in ci.yml: a new libwebrtc package is stored by a job that runs none
   # of libwebrtc's build code.
