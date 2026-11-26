@@ -133,12 +133,37 @@ def download(repo, run_id, folder):
     return json.loads((Path(folder) / f'{ARTIFACT}.json').read_text())
 
 
-def find_queue(repo, sha, tree, before):
+def last_good(runs, repo, sha, ancestor):
+    """The head of the newest successful push run on this branch that is an
+    ancestor of `sha` (`ancestor(commit)`), or None."""
+    for run in sorted(runs, key=lambda run: run['run_started_at'], reverse=True):
+        if (run['path'] == WORKFLOW and run['event'] == 'push' and run['status'] == 'completed'
+                and run['conclusion'] == 'success' and run['repository']['full_name'] == repo
+                and run['head_sha'] != sha and ancestor(run['head_sha'])):
+            return run['head_sha']
+    return None
+
+
+def since(repo, branch, sha, before):
+    """Where a push's changes start: the last commit whose push run passed.
+    GitHub cancels a pending push run when a newer one queues (GEL-363), so
+    the previous head alone can leave a push's changes unchecked."""
+    runs = json.loads(gh('api', f'repos/{repo}/actions/workflows/ci.yml/runs?event=push&status=success'
+                               f'&branch={branch}&per_page=20'))['workflow_runs']
+
+    def ancestor(commit):
+        compare = json.loads(gh('api', f'repos/{repo}/compare/{commit}...{sha}'))
+        return compare['status'] in ('ahead', 'identical')
+    return last_good(runs, repo, sha, ancestor) or before
+
+
+def find_queue(repo, sha, tree, before, start=None):
     if not before or set(before) == {'0'}:
         print('no previous head', file=sys.stderr)
         return None
-    git('fetch', '--quiet', '--depth=1', 'origin', before)
-    paths = git('diff', '--no-renames', '--name-only', before, sha).splitlines()
+    start = start or before
+    git('fetch', '--quiet', '--depth=1', 'origin', start)
+    paths = git('diff', '--no-renames', '--name-only', start, sha).splitlines()
     if touches_cache_inputs(paths):
         print('the push changes a cache input: its areas run and save their caches', file=sys.stderr)
         return None
@@ -174,13 +199,23 @@ def main(argv):
     elif argv[:1] == ['find-queue']:
         try:
             run = find_queue(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'],
-                             git('rev-parse', 'HEAD^{tree}'), os.environ.get('BEFORE', ''))
+                             git('rev-parse', 'HEAD^{tree}'), os.environ.get('BEFORE', ''),
+                             os.environ.get('SINCE', ''))
         except Exception as error:  # noqa: BLE001 - any doubt runs the changed areas
             print(f'::warning::no reuse, running the changed areas: {error}', file=sys.stderr)
             run = None
         print(f'run={run or ""}')
+    elif argv[:1] == ['since']:
+        before = os.environ.get('BEFORE', '')
+        try:
+            start = since(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_REF_NAME'],
+                          os.environ['GITHUB_SHA'], before)
+        except Exception as error:  # noqa: BLE001 - the previous head as before GEL-363
+            print(f'::warning::no last successful push run found: {error}', file=sys.stderr)
+            start = before
+        print(f'since={start}')
     else:
-        sys.exit('usage: tested_tree.py record|find|find-queue')
+        sys.exit('usage: tested_tree.py record|find|find-queue|since')
 
 
 if __name__ == '__main__':
