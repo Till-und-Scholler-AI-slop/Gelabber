@@ -114,7 +114,7 @@ class Workflow(unittest.TestCase):
     def test_a_push_runs_the_areas_since_its_previous_head(self):
         # GEL-360: a merge into a version branch no longer runs every area.
         areas = self.ci.split('      - name: Areas\n', 1)[1].split('\n      - name:', 1)[0]
-        self.assertIn('BEFORE: ${{ github.event.before || github.event.merge_group.base_sha }}', areas)
+        self.assertIn('BEFORE: ${{ steps.reuse.outputs.since || github.event.before || github.event.merge_group.base_sha }}', areas)
         self.assertIn('diff --no-renames --name-only "$BEFORE" HEAD | python3 .github/workflows/scripts/changes.py', areas)
         self.assertIn('changes.py --all', areas)
 

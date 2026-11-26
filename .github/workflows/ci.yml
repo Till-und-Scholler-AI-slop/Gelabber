@@ -62,10 +62,14 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
+          # The push's changes start at the last commit whose push run passed
+          # (GEL-363): GitHub cancels a pending push run when a newer one queues.
+          since="$(python3 .github/workflows/scripts/tested_tree.py since | sed -n 's/^since=//p')"
+          echo "since=$since" | tee -a "$GITHUB_OUTPUT"
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             python3 .github/workflows/scripts/tested_tree.py find >> "$GITHUB_OUTPUT"
           else
-            python3 .github/workflows/scripts/tested_tree.py find-queue >> "$GITHUB_OUTPUT"
+            SINCE="$since" python3 .github/workflows/scripts/tested_tree.py find-queue >> "$GITHUB_OUTPUT"
           fi
 
       # A pull request checks out its merge commit; the first parent is the base.
@@ -77,7 +81,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REUSED_RUN: ${{ steps.reuse.outputs.run }}
-          BEFORE: ${{ github.event.before || github.event.merge_group.base_sha }}
+          BEFORE: ${{ steps.reuse.outputs.since || github.event.before || github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = pull_request ]; then
