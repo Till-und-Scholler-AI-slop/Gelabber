@@ -10,9 +10,9 @@ Claude Code loads this file when it works on a workflow; AGENTS.md points here f
 Keep CI lean. Pull requests check only what is needed to merge safely.
 
 - **Pull requests:** fmt, clippy/lint, tests, build, and one representative integration check per area. Aim for under 15 minutes per workflow with a warm cache.
-- **Areas:** each top-level folder is one area (`backend/`, `web/`, `desktop/`, `deploy/`). `ci.yml` runs only the areas a pull request touches; `.github/workflows/scripts/changes.py` maps paths to areas. `ci-ok` is the one required check; a new job joins its `needs`.
+- **Areas:** each top-level folder is one area (`backend/`, `web/`, `desktop/`, `deploy/`). `ci.yml` runs only the areas a pull request touches, and a push only those its commits touch since the previous head (GEL-360); `.github/workflows/scripts/changes.py` maps paths to areas. `ci-ok` is the one required check; a new job joins its `needs`.
 - **After merge (push to `main`/`v*`) and releases:** packaging, installers, package repositories, signing and uploads.
-- **A push to `main`** checks nothing again when the merged pull request's last green run passed the same tree with every area (`scripts/tested_tree.py`, GEL-357); otherwise it runs all. Pushes to `v*` always run all: they save the caches pull requests read.
+- **A push to `main`** checks nothing again when the merged pull request's last green run passed the same tree with every area (`scripts/tested_tree.py`, GEL-357); otherwise it runs all. Pushes to `v*` run the areas they touch and save those areas' caches; the others' keys did not change.
 - **Manual diagnostics** (fault matrices, soak and stability loops) go in their own workflow, started by hand or by a PR label, outside the PR gate (see `e2e-extended.yml`: label `e2e-extended`).
 - **Lists of scripts** go behind one entry point (e.g. `npm run test:checks`). CI and developers run the same command.
 - **New check:** say what it catches that existing checks miss. Add it to an existing job unless a parallel job saves wall time. Remove checks that a new one replaces.
