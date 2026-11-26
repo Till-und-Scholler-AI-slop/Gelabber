@@ -55,6 +55,9 @@ WORKFLOW = REPO / WORKFLOW_NAME
 RELEASE_WORKFLOW = REPO / ".github/workflows/desktop-release.yml"
 WINDOWS_JOB = "core-windows"
 WINDOWS_UPLOAD_JOB = "release-asset-windows"
+# Signs the installer that core-windows built in a release pull request's run
+# (desktop-native.yml `prebuilt_run`); it builds nothing itself.
+WINDOWS_SIGN_JOB = "prebuilt"
 # The application: the cargo package (also the Linux binary), the Windows
 # binary, the installer and the file's title.
 APP = {
@@ -427,7 +430,10 @@ def workflow_facts():
             and WINDOWS_INSTALLER in upload
             and not any(
                 WINDOWS_INSTALLER in job for name, job in [*jobs.items(), *release.items()]
-                if name not in (WINDOWS_JOB, WINDOWS_UPLOAD_JOB)
+                if name not in (WINDOWS_JOB, WINDOWS_UPLOAD_JOB, WINDOWS_SIGN_JOB)
+            )
+            and not any(
+                mark in jobs.get(WINDOWS_SIGN_JOB, "") for mark in ("cargo ", "makensis", "nsis")
             )
         ),
     }
