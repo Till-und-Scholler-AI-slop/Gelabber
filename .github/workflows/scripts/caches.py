@@ -47,8 +47,8 @@ def superseded(caches, development):
         ref, family = cache['ref'], kind(cache['key'])
         if family is None:
             continue
-        if ref.startswith('refs/pull/'):
-            doomed.append((cache, 'pull requests only read caches'))
+        if ref.startswith(('refs/pull/', 'refs/heads/gh-readonly-queue/')):
+            doomed.append((cache, 'pull requests and the merge queue only read caches'))
         elif VERSION_BRANCH.match(ref) and ref not in kept:
             doomed.append((cache, f'{ref} is older than the development line'))
         elif ref in kept:

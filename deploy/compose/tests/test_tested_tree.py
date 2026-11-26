@@ -98,15 +98,49 @@ class CandidateTest(unittest.TestCase):
                                                 TREE, candidate=True))
 
 
+class QueueTest(unittest.TestCase):
+    """A push to a version branch reuses the merge queue's run (GEL-362)."""
+
+    BEFORE = 'd' * 40
+
+    def test_the_same_tree_on_the_same_base(self):
+        tested = tested_tree.record({'web': 'true'}, SHA, TREE, base=self.BEFORE)
+        self.assertTrue(tested_tree.stands_for_push(tested, TREE, self.BEFORE))
+        self.assertFalse(tested_tree.stands_for_push(tested, TREE, 'e' * 40))
+        self.assertFalse(tested_tree.stands_for_push(tested, 'f' * 40, self.BEFORE))
+
+    def test_cache_inputs_need_a_push_run(self):
+        for path in ('backend/Cargo.lock', 'desktop/Cargo.toml', 'web/package-lock.json',
+                     'rust-toolchain.toml', 'backend/media/Dockerfile', 'desktop/native/libwebrtc.env',
+                     '.github/workflows/ci.yml'):
+            with self.subTest(path=path):
+                self.assertTrue(tested_tree.touches_cache_inputs(['web/src/main.tsx', path]))
+        self.assertFalse(tested_tree.touches_cache_inputs(['web/src/main.tsx', 'backend/api/src/lib.rs', '']))
+
+    def test_queue_runs_of_the_pushed_commit_come_first(self):
+        runs = [run(1, '2026-11-26T19:00:00Z', event='merge_group', head_sha='9' * 40),
+                run(2, '2026-11-26T18:00:00Z', event='merge_group', head_sha=SHA),
+                run(3, '2026-11-26T20:00:00Z', event='merge_group', head_sha='8' * 40),
+                run(4, '2026-11-26T21:00:00Z', event='pull_request', head_sha=SHA)]
+        self.assertEqual([found['id'] for found in tested_tree.queue_runs(runs, REPO, SHA)], [2, 3, 1])
+
+
 class WorkflowTest(unittest.TestCase):
     """ci.yml records the tree on pull requests and reuses it on main only."""
 
     def setUp(self):
         self.ci = (ROOT / '.github/workflows/ci.yml').read_text()
 
-    def test_reuse_only_on_pushes_to_main(self):
-        self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/main'", self.ci)
-        self.assertIn('tested_tree.py find', self.ci)
+    def test_reuse_only_on_pushes(self):
+        reuse = self.ci.split('      - name: Run that passed this tree\n', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn("if: github.event_name == 'push'\n", reuse)
+        self.assertIn('if [ "$GITHUB_REF" = refs/heads/main ]; then\n'
+                      '            python3 .github/workflows/scripts/tested_tree.py find >>', reuse)
+
+    def test_merge_queue_runs_are_checked_and_recorded(self):
+        self.assertIn('\n  merge_group:\n', self.ci)
+        self.assertIn("github.event_name == 'pull_request' || github.event_name == 'merge_group'", self.ci)
+        self.assertIn('tested_tree.py find-queue', self.ci)
 
     def test_pull_requests_record_their_tree(self):
         self.assertIn('tested_tree.py record', self.ci)
