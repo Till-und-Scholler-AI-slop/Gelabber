@@ -192,6 +192,20 @@ class PullRequestTokens(unittest.TestCase):
                     found.append(f'{name}: job {job} calls {call.group(1)}, which asks for a write')
         self.assertEqual(found, [])
 
+    def test_merge_queue_jobs_get_read_only_tokens(self):
+        # A merge queue run builds code that has not landed yet, as a pull request's does (GEL-362).
+        found = []
+        for name in pull_request_workflows():
+            text = read(name)
+            if not re.search(r'^  merge_group:', section(text, 'on', 0), re.M):
+                continue
+            for job, body in jobs(text).items():
+                if WRITE.search(section(body, 'permissions', 4)) and \
+                        "github.event_name != 'merge_group'" not in job_if(body):
+                    found.append(f'{name}: job {job}')
+        self.assertEqual(found, [], "grant writes only to jobs whose `if:` also has "
+                         "github.event_name != 'merge_group'")
+
     def test_checkouts_keep_no_credentials(self):
         found = [f'{name}:{number}' for name in pull_request_workflows()
                  for number, step in checkout_steps(read(name)).items()

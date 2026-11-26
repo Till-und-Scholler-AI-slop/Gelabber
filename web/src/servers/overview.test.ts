@@ -5,6 +5,7 @@ import type { Message } from "../messages/types.ts";
 import type { Channel } from "./types.ts";
 import {
   BUSY_UNREAD,
+  callRooms,
   CARDS_MAX,
   greetingKey,
   isPicture,
@@ -150,5 +151,70 @@ describe("mentions and files", () => {
     expect(isPicture("image/png")).toBe(true);
     expect(isPicture("image/svg+xml")).toBe(false);
     expect(isPicture("application/pdf")).toBe(false);
+  });
+});
+
+describe("who is in which call", () => {
+  const voice = (id: string) =>
+    ({ id, name: id, kind: "voice", server_id: "s" }) as Channel;
+  const order = [
+    text("allgemein"),
+    voice("sofa"),
+    voice("kino"),
+    voice("leer"),
+  ];
+  const seat = (channelId: string) => ({ channelId });
+
+  it("lists only voice channels with someone in them, fullest first", () => {
+    const rooms = callRooms(
+      order,
+      { a: seat("sofa"), b: seat("kino"), c: seat("kino") },
+      {},
+      null,
+    );
+    expect(rooms.map((r) => [r.channel.id, r.people])).toEqual([
+      ["kino", ["b", "c"]],
+      ["sofa", ["a"]],
+    ]);
+  });
+
+  it("puts the user's own call first, then keeps the sidebar's order", () => {
+    const rooms = callRooms(
+      order,
+      { a: seat("sofa"), b: seat("kino"), c: seat("kino"), d: seat("leer") },
+      {},
+      "leer",
+    );
+    expect(rooms.map((r) => [r.channel.id, r.mine])).toEqual([
+      ["leer", true],
+      ["kino", false],
+      ["sofa", false],
+    ]);
+    const even = callRooms(
+      order,
+      { a: seat("kino"), b: seat("sofa") },
+      {},
+      null,
+    );
+    expect(even.map((r) => r.channel.id)).toEqual(["sofa", "kino"]);
+  });
+
+  it("marks a channel where someone shares a screen", () => {
+    const rooms = callRooms(
+      order,
+      { a: seat("sofa"), b: seat("kino") },
+      { sofa: { a: { s: true } }, kino: { b: {} } },
+      null,
+    );
+    expect(rooms.map((r) => [r.channel.id, r.live])).toEqual([
+      ["sofa", true],
+      ["kino", false],
+    ]);
+  });
+
+  it("ignores seats in channels the server does not list or that hold text", () => {
+    expect(
+      callRooms(order, { a: seat("gone"), b: seat("allgemein") }, {}, null),
+    ).toEqual([]);
   });
 });

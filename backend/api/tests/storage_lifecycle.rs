@@ -104,6 +104,25 @@ async fn usage(state: &AppState, user: &str) -> (i64, i64) {
         .bind(Uuid::parse_str(user).unwrap()).fetch_one(&state.db).await.unwrap()
 }
 
+/// Runs the delete jobs until `key` is gone. `app()` starts the real
+/// cleanup worker next to the test: a job it holds is skipped by this
+/// pass, which then finds nothing to do while that worker is still on the
+/// way to the delete. Who deletes is not the point; that it is deleted is.
+async fn deleted(state: &AppState, key: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        cleanup::delete_pending(state, 32).await.unwrap();
+        if matches!(state.store.head(key).await, Err(StoreError::NotFound)) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{key} still stored after 10 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 async fn due(state: &AppState) {
     sqlx::query("UPDATE storage_cleanup SET next_attempt=now(), retain_until=now()-interval '1 second', claimed_until=now()-interval '1 second'")
         .execute(&state.db).await.unwrap();
@@ -200,12 +219,8 @@ async fn pending_expiry_refunds_missing_uploads_but_charges_uploaded_bytes(pool:
         .await;
     assert_eq!(invalid.status, StatusCode::UNPROCESSABLE_ENTITY);
     cleanup::expire_pending(&state, 32).await.unwrap();
-    cleanup::delete_pending(&state, 32).await.unwrap();
+    deleted(&state, &key).await;
     assert_eq!(usage(&state, client.user_id()).await, (0, 4));
-    assert!(matches!(
-        state.store.head(&key).await,
-        Err(StoreError::NotFound)
-    ));
     for signed in [absent, present] {
         let res = client
             .send(
@@ -263,11 +278,7 @@ async fn cascades_enqueue_objects_and_rollback_never_deletes_bytes(pool: PgPool)
         StatusCode::NO_CONTENT
     );
     due(&state).await;
-    cleanup::delete_pending(&state, 32).await.unwrap();
-    assert!(matches!(
-        state.store.head(&key).await,
-        Err(StoreError::NotFound)
-    ));
+    deleted(&state, &key).await;
     // A still-pending upload is also covered by the server cascade.
     let ch = client
         .send(
@@ -296,11 +307,7 @@ async fn cascades_enqueue_objects_and_rollback_never_deletes_bytes(pool: PgPool)
         StatusCode::NO_CONTENT
     );
     due(&state).await;
-    cleanup::delete_pending(&state, 32).await.unwrap();
-    assert!(matches!(
-        state.store.head(&key).await,
-        Err(StoreError::NotFound)
-    ));
+    deleted(&state, &key).await;
 }
 
 #[sqlx::test]
@@ -1451,12 +1458,8 @@ async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
     sqlx::query("UPDATE attachments SET expires_at=now()-interval '16 minutes',expiry_retry_at=now() WHERE id=$1")
   .bind(id).execute(&pool).await.unwrap();
     cleanup::expire_pending(&state, 32).await.unwrap();
-    cleanup::delete_pending(&state, 32).await.unwrap();
+    deleted(&state, &key).await;
     assert_eq!(usage(&state, client.user_id()).await, (0, 4));
-    assert!(matches!(
-        state.store.head(&key).await,
-        Err(StoreError::NotFound)
-    ));
 }
 
 #[sqlx::test]

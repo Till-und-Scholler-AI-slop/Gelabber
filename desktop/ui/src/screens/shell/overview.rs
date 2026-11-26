@@ -1,8 +1,8 @@
 //! The server's front door, `/s/{id}` (pages/CommunityOverview.tsx,
-//! overview.css, GEL-69): the "Übersicht" bar with "Springen zu …", a
-//! greeting, who is live, what was missed per text channel and what was
-//! shared. It shows only what the sidebar, the member panel and the voice
-//! page do not.
+//! overview.css, GEL-69, GEL-75): the "Übersicht" bar with "Springen zu …",
+//! a greeting, who is in which call with the way in, who is live, what was
+//! missed per text channel and what was shared. Who is online stays the
+//! member panel's.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -11,6 +11,7 @@ use chrono::{Local, Timelike, Utc};
 use egui::text::LayoutJob;
 use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2};
 use gelabber_call::VideoKey;
+use gelabber_client::store::collation_key;
 use gelabber_client::{
     Attachment, ChannelKind, HistoryQuery, Message, Permission, ServerDetail, SharedFile,
 };
@@ -22,6 +23,8 @@ use super::state::{self, Missed, SharedFiles};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::images::{Fit, ImageState, cover_uv};
+use crate::platform::notify::rules as notify_rules;
+use crate::screens::chat::markdown as chat_markdown;
 use crate::screens::chat::mentions::{Member, to_wire};
 use crate::screens::chat::{self, attachments, content, pictures, time};
 use crate::screens::voice;
@@ -30,18 +33,29 @@ use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 use crate::widgets::{Button, hairline_h};
 
-/// `.overview__body`: padding 32px 40px.
-const PAD_Y: f32 = 32.0;
-const PAD_X: f32 = 40.0;
-/// The "Geteilt" column and the gap between the columns and the blocks.
-const SIDE: f32 = 320.0;
-const GAP: f32 = 28.0;
+/// `.overview__body`: padding 24px 32px (GEL-75: compact).
+const PAD_Y: f32 = 24.0;
+const PAD_X: f32 = 32.0;
+/// The "Geteilt" column, two tiles wide, and the gap between the columns
+/// and the blocks.
+const SIDE: f32 = 332.0;
+const GAP: f32 = 24.0;
 /// From this page width on, "Geteilt" has its own column (`@container
 /// (min-width: 1000px)`); narrower, it follows "Verpasst".
 const TWO_COLUMNS: f32 = 1000.0;
-/// From this page width on, two Lives side by side; narrower, as many of
-/// at least 240 as fit.
-const TWO_STREAMS: f32 = 560.0;
+/// `.overview-stream`: a flat Live card, 334 wide, the picture 176 × 99 in
+/// 8 of padding; gap 12 between cards.
+const STREAM_W: f32 = 334.0;
+const STREAM_PIC: Vec2 = vec2(176.0, 99.0);
+const STREAM_GAP: f32 = 12.0;
+/// `.overview-shared__tile`: 160 × 100 for pictures and files, gap 14 12.
+const TILE: Vec2 = vec2(160.0, 100.0);
+const TILE_GAP_X: f32 = 12.0;
+const TILE_GAP_Y: f32 = 14.0;
+/// `.overview-call`: a row of "Im Call", at least 52 high; at most this
+/// many people per row, then "+n".
+const CALL_ROW_H: f32 = 52.0;
+const CALL_SHOWN: usize = 6;
 /// "Verpasst": at most this many cards.
 const MAX_CARDS: usize = 4;
 /// The messages fetched per card: the most one shows.
@@ -55,7 +69,7 @@ const RETRY_AFTER: Duration = Duration::from_secs(10);
 const CHIP: Color32 = Color32::from_rgba_premultiplied(12, 12, 13, 214);
 /// Text on those chips and on the streams' black.
 const ON_DARK: Color32 = Color32::from_rgb(0xf2, 0xf2, 0xf2);
-const H2: TextStyle = TextStyle::new(16.0, 600.0, 1.2);
+const H2: TextStyle = TextStyle::new(14.0, 600.0, 1.3);
 const NAME: TextStyle = TextStyle::new(14.0, 600.0, 1.3);
 const SMALL: TextStyle = TextStyle::new(13.0, 500.0, 1.3);
 
@@ -184,6 +198,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
         return;
     };
 
+    let rooms = calls(app, &detail);
     let streams = streams(app, &detail);
     // Before the read state is in, "Alles gelesen." would not be known.
     let read_loaded = app.client.with_state(|s| {
@@ -229,35 +244,30 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
             let shared = shared_shown(&files, &in_cards);
             let two = body.width() >= TWO_COLUMNS;
             let left_w = if two { width - SIDE - GAP } else { width };
-            let stream_cols = if body.width() >= TWO_STREAMS {
-                2
-            } else {
-                (((left_w + 20.0) / 260.0).floor() as usize).max(1)
-            };
 
-            let mut y = greet(ui, app, &theme, left, top, left_w);
+            // Nothing missed: "Alles gelesen" beside the greeting, no
+            // "Verpasst" box (GEL-75).
+            let all_read = read_loaded && cards.is_empty();
+            let mut y = greet(ui, app, &theme, &detail, (left, top, left_w), all_read);
+            if !rooms.is_empty() {
+                y = calls_block(ui, app, &theme, server, (left, y + GAP, left_w), &rooms);
+            }
             if !streams.is_empty() {
-                y = streams_block(
+                y = streams_block(ui, app, &theme, server, (left, y + GAP, left_w), &streams);
+            }
+            if !cards.is_empty() {
+                y = missed(
                     ui,
                     app,
                     &theme,
-                    server,
+                    &detail,
                     (left, y + GAP, left_w),
-                    stream_cols,
-                    &streams,
+                    &cards,
+                    &fetched,
+                    more_channels,
+                    single,
                 );
             }
-            y = missed(
-                ui,
-                app,
-                &theme,
-                &detail,
-                (left, y + GAP, left_w),
-                &cards,
-                &fetched,
-                more_channels,
-                (single, read_loaded),
-            );
             if two && !shared.is_empty() {
                 let side = shared_column(
                     ui,
@@ -408,19 +418,492 @@ fn kbd(ui: &Ui, painter: &egui::Painter, keys: &str, right: f32, cy: f32, theme:
     r
 }
 
-/// "Guten Abend, Rafi": 700 28px/1.15, -0.02em; returns its bottom.
-fn greet(ui: &Ui, app: &AppCtx, theme: &Theme, left: f32, top: f32, width: f32) -> f32 {
+/// "Guten Abend, Rafi": 600 20px/1.25, -0.01em, and beside it, when
+/// nothing was missed, the green "Alles gelesen" (`.overview-all-read`).
+/// Alone in the server, "Noch keine weiteren Mitglieder." with "Einladen"
+/// below. Returns the bottom.
+fn greet(
+    ui: &mut Ui,
+    app: &AppCtx,
+    theme: &Theme,
+    detail: &ServerDetail,
+    (left, top, width): (f32, f32, f32),
+    all_read: bool,
+) -> f32 {
+    let c = theme.c;
     let name = app
         .client
         .with_state(|s| s.me().map(|m| m.name.clone()))
         .unwrap_or_default();
     let words = greeting(&name, Local::now().hour());
-    let block = Block::wrapped(ui, &words, text::PAGE.tracking(-0.02), theme.c.text, width);
+    let style = text::TITLE.tracking(-0.01);
+    let block = Block::wrapped(ui, &words, style, c.text, width);
     block.paint(ui.painter(), pos2(left, top));
     let r = Rect::from_min_size(pos2(left, top), block.size());
     let response = ui.interact(r, Id::unique("overview-greeting"), egui::Sense::hover());
     crate::widgets::announce(&response, egui::Role::Label, &words);
-    top + block.height()
+    let mut bottom = top + block.height();
+    if !all_read {
+        return bottom;
+    }
+    // The tag: 24 high, padding 0 10 0 8, the check 14, gap 6, 600 12px.
+    let label = servers::overview_all_read();
+    let tag_text = Block::single(ui, label, TextStyle::new(12.0, 600.0, 1.0), c.online_text);
+    let tag_w = 8.0 + 14.0 + 6.0 + tag_text.width() + 10.0;
+    let one_line = block.height() <= style.size * 1.25 + 1.0;
+    let at = if one_line && left + block.width() + 12.0 + tag_w <= left + width {
+        pos2(
+            left + block.width() + 12.0,
+            top + block.height() / 2.0 - 12.0,
+        )
+    } else {
+        pos2(left, bottom + 8.0)
+    };
+    let tag = Rect::from_min_size(at, vec2(tag_w, 24.0));
+    ui.painter()
+        .rect_filled(tag, corner(12.0), mix(c.bg, c.online, 0.16));
+    icons::paint(
+        ui.painter(),
+        Icon::Check,
+        pos2(tag.left() + 8.0, tag.center().y - 7.0),
+        14.0,
+        c.online_text,
+    );
+    paint_mid(ui.painter(), &tag_text, tag.left() + 28.0, tag.center().y);
+    let mark = ui.interact(tag, Id::unique("overview-all-read"), egui::Sense::hover());
+    crate::widgets::announce(&mark, egui::Role::Label, label);
+    bottom = bottom.max(tag.bottom());
+    if detail.members.len() == 1 {
+        bottom = alone(ui, theme, detail, left, bottom + 10.0, width);
+    }
+    bottom
+}
+
+/// `.overview-alone`: "Noch keine weiteren Mitglieder." (muted 13px) and
+/// "Einladen", side by side where they fit. Returns the bottom.
+fn alone(
+    ui: &mut Ui,
+    theme: &Theme,
+    detail: &ServerDetail,
+    left: f32,
+    top: f32,
+    width: f32,
+) -> f32 {
+    let words = servers::overview_alone();
+    let block = Block::wrapped(
+        ui,
+        words,
+        TextStyle::new(13.0, 400.0, 1.45),
+        theme.c.muted,
+        width,
+    );
+    let button_w = Button::new(servers::overview_invite())
+        .small()
+        .natural_width(ui);
+    let beside = block.width() + 12.0 + button_w <= width;
+    let row_h = if beside {
+        32.0_f32.max(block.height())
+    } else {
+        block.height()
+    };
+    let text_at = pos2(left, top + (row_h - block.height()) / 2.0);
+    block.paint(ui.painter(), text_at);
+    let response = ui.interact(
+        Rect::from_min_size(text_at, block.size()),
+        Id::unique("overview-alone"),
+        egui::Sense::hover(),
+    );
+    crate::widgets::announce(&response, egui::Role::Label, words);
+    let button = if beside {
+        Rect::from_min_size(
+            pos2(left + block.width() + 12.0, top + row_h / 2.0 - 16.0),
+            vec2(button_w, 32.0),
+        )
+    } else {
+        Rect::from_min_size(pos2(left, top + row_h + 8.0), vec2(button_w, 32.0))
+    };
+    if ui
+        .put(button, Button::new(servers::overview_invite()).small())
+        .clicked()
+    {
+        super::dialogs::open_invite(ui.ctx(), detail.server.id, &detail.server.name);
+    }
+    button.bottom().max(top + row_h)
+}
+
+// --------------------------------------------------------------- im call
+
+/// A voice channel with someone in it, for "Im Call".
+struct CallRoom {
+    channel: Uuid,
+    name: String,
+    /// Who sits there (id, name, picture, the user), by name as the sidebar.
+    people: Vec<(Uuid, String, Option<String>, bool)>,
+    /// Someone there shares a screen.
+    live: bool,
+    /// The user's own call.
+    mine: bool,
+    /// The user is in another call: joining switches.
+    elsewhere: bool,
+    /// The user may join voice channels (`join_voice`).
+    allowed: bool,
+}
+
+/// "Im Call"'s order (`callRooms`, overview.ts): the user's own call first,
+/// then the fullest, then the sidebar's order. `rooms` holds per room in
+/// the sidebar's order whether it is the own call and how many sit there;
+/// returns their indices.
+pub fn call_order(rooms: &[(bool, usize)]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rooms.len()).collect();
+    order.sort_by(|&a, &b| {
+        rooms[b]
+            .0
+            .cmp(&rooms[a].0)
+            .then(rooms[b].1.cmp(&rooms[a].1))
+            .then(a.cmp(&b))
+    });
+    order
+}
+
+/// The server's voice channels with someone in them, as [`call_order`]
+/// sorts them.
+fn calls(app: &AppCtx, detail: &ServerDetail) -> Vec<CallRoom> {
+    let server = detail.server.id;
+    let call = app.call.state();
+    let voice_rooms: Vec<Uuid> = super::channel_sidebar::channel_order(detail)
+        .into_iter()
+        .filter(|id| {
+            detail
+                .channels
+                .iter()
+                .any(|c| c.id == *id && c.kind == ChannelKind::Voice)
+        })
+        .collect();
+    let rooms: Vec<CallRoom> = app.client.with_state(|s| {
+        voice_rooms
+            .into_iter()
+            .filter_map(|channel| {
+                let room = voice::session::build(s, &call, server, channel)?;
+                if room.occupants.is_empty() {
+                    return None;
+                }
+                let mut people: Vec<(Uuid, String, Option<String>, bool)> = room
+                    .occupants
+                    .iter()
+                    .map(|p| (p.id, p.name.clone(), p.avatar.clone(), p.me))
+                    .collect();
+                people.sort_by_cached_key(|(id, name, _, _)| (collation_key(name), *id));
+                Some(CallRoom {
+                    channel,
+                    name: room.channel_name.clone(),
+                    people,
+                    live: room.occupants.iter().any(|p| p.live),
+                    mine: room.here,
+                    elsewhere: room.elsewhere,
+                    allowed: room.allowed,
+                })
+            })
+            .collect()
+    });
+    let keys: Vec<(bool, usize)> = rooms.iter().map(|r| (r.mine, r.people.len())).collect();
+    let mut slots: Vec<Option<CallRoom>> = rooms.into_iter().map(Some).collect();
+    call_order(&keys)
+        .into_iter()
+        .filter_map(|i| slots[i].take())
+        .collect()
+}
+
+/// One row's parts, laid out before the card is painted.
+struct CallLayout {
+    name: Block,
+    live: Option<Block>,
+    count: Block,
+    /// Each person's avatar rect and name block, and "+n".
+    people: Vec<(Rect, Block)>,
+    more: Option<(Block, Rect)>,
+    actions: f32,
+    height: f32,
+}
+
+/// `.overview-calls` (GEL-75): "Im Call" and one card, a row per voice
+/// channel: the speaker and the channel (≤ 240 wide), LIVE, the count; who
+/// sits there (24 px avatars, at most [`CALL_SHOWN`], wrapping); on the
+/// right "Beitreten" ("Hierher wechseln" from another call), "Du bist hier"
+/// and "Öffnen" in the own call, only "Öffnen" without `join_voice`.
+/// Narrower than 560 the people go under the channel. Returns the bottom.
+fn calls_block(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    theme: &Theme,
+    server: Uuid,
+    at: (f32, f32, f32),
+    rooms: &[CallRoom],
+) -> f32 {
+    let c = theme.c;
+    let (left, top, width) = at;
+    let h2 = Block::single(ui, servers::overview_calls(), H2, c.text);
+    h2.paint(ui.painter(), pos2(left, top));
+    let card_top = top + h2.height() + 10.0;
+    let narrow = width <= 560.0;
+    let inner_l = left + 16.0;
+    let inner_r = left + width - 12.0;
+
+    // The way in on the right, per row: its width.
+    let action_w = |room: &CallRoom| -> f32 {
+        if room.mine {
+            let here = Block::single(
+                ui,
+                servers::overview_call_here(),
+                TextStyle::new(12.0, 400.0, 1.3),
+                c.muted,
+            );
+            here.width()
+                + 10.0
+                + Button::new(servers::overview_open())
+                    .small()
+                    .natural_width(ui)
+        } else if room.allowed {
+            Button::new(join_label(room))
+                .small()
+                .icon(Icon::Speaker)
+                .natural_width(ui)
+        } else {
+            Button::new(servers::overview_open())
+                .small()
+                .natural_width(ui)
+        }
+    };
+
+    let mut layouts = Vec::with_capacity(rooms.len());
+    let mut y = card_top;
+    for room in rooms {
+        let actions = action_w(room);
+        // The head: the channel's name up to 240 with its parts.
+        let count = Block::single(
+            ui,
+            &servers::overview_call_people(room.people.len() as u64),
+            TextStyle::new(12.0, 400.0, 1.3),
+            c.muted,
+        );
+        let live = room.live.then(|| {
+            Block::single(
+                ui,
+                "LIVE",
+                TextStyle::new(10.0, 700.0, 1.0).tracking(0.04),
+                c.on_live,
+            )
+        });
+        let extras = 8.0 + count.width() + live.as_ref().map_or(0.0, |b| 8.0 + b.width() + 12.0);
+        let name_max = (240.0 - 16.0 - 8.0 - extras)
+            .min(inner_r - actions - 16.0 - inner_l - 24.0 - extras)
+            .max(40.0);
+        let name = line(ui, &room.name, NAME, c.text, name_max);
+        let head_w = 16.0 + 8.0 + name.width() + extras;
+        // Who sits there: beside the head, or on its own line when narrow.
+        let (px0, px1) = if narrow {
+            (inner_l, inner_r)
+        } else {
+            (inner_l + head_w + 16.0, inner_r - actions - 16.0)
+        };
+        let shown = room.people.len().min(CALL_SHOWN);
+        let rest = room.people.len() - shown;
+        let mut chips: Vec<(f32, Block)> = room.people[..shown]
+            .iter()
+            .map(|(_, name, _, me)| {
+                let shown_name = if *me {
+                    servers::overview_you()
+                } else {
+                    name.as_str()
+                };
+                let block = line(ui, shown_name, SMALL, c.text, 140.0 - 30.0);
+                (24.0 + 6.0 + block.width(), block)
+            })
+            .collect();
+        let more = (rest > 0).then(|| {
+            Block::single(
+                ui,
+                &servers::overview_call_more(rest as u64),
+                TextStyle::new(12.0, 500.0, 1.3),
+                c.muted,
+            )
+        });
+        // Wrap the chips into lines of 24, 6 apart.
+        let mut placed: Vec<(f32, usize)> = Vec::new();
+        let (mut x, mut line_no) = (px0, 0usize);
+        let mut place = |w: f32| -> (f32, usize) {
+            if x > px0 && x + w > px1 {
+                x = px0;
+                line_no += 1;
+            }
+            let at = (x, line_no);
+            x += w + 12.0;
+            at
+        };
+        for (w, _) in &chips {
+            placed.push(place(*w));
+        }
+        let more_at = more.as_ref().map(|b| place(b.width()));
+        let lines = placed
+            .iter()
+            .map(|p| p.1)
+            .chain(more_at.map(|p| p.1))
+            .max()
+            .map_or(0, |l| l + 1) as f32;
+        let people_h = if lines > 0.0 {
+            lines * 24.0 + (lines - 1.0) * 6.0
+        } else {
+            0.0
+        };
+        let (height, people_top) = if narrow {
+            let h = 8.0 + 32.0 + 8.0 + people_h + 8.0;
+            (h.max(CALL_ROW_H), y + 8.0 + 32.0 + 8.0)
+        } else {
+            let h = (people_h.max(32.0) + 16.0).max(CALL_ROW_H);
+            (h, y + (h - people_h) / 2.0)
+        };
+        let people: Vec<(Rect, Block)> = chips
+            .drain(..)
+            .zip(placed)
+            .map(|((_, block), (x, l))| {
+                let rect =
+                    Rect::from_min_size(pos2(x, people_top + l as f32 * 30.0), Vec2::splat(24.0));
+                (rect, block)
+            })
+            .collect();
+        let more = more.zip(more_at).map(|(block, (x, l))| {
+            let rect = Rect::from_min_size(
+                pos2(x, people_top + l as f32 * 30.0),
+                vec2(block.width(), 24.0),
+            );
+            (block, rect)
+        });
+        layouts.push(CallLayout {
+            name,
+            live,
+            count,
+            people,
+            more,
+            actions,
+            height,
+        });
+        y += height;
+    }
+    let card = Rect::from_min_max(pos2(left, card_top), pos2(left + width, y));
+    ui.painter().rect(
+        card,
+        corner(theme.radius.lg),
+        c.surface,
+        Stroke::new(1.0, c.border),
+        StrokeKind::Inside,
+    );
+
+    let mut y = card_top;
+    for (i, (room, lay)) in rooms.iter().zip(&layouts).enumerate() {
+        let painter = ui.painter().clone();
+        if i > 0 {
+            hairline_h(&painter, theme, (left + 1.0)..=(left + width - 1.0), y);
+        }
+        let row = Rect::from_min_size(pos2(left, y), vec2(width, lay.height));
+        let head_cy = if narrow {
+            y + 8.0 + 16.0
+        } else {
+            row.center().y
+        };
+        let mut x = inner_l;
+        icons::paint(
+            &painter,
+            Icon::Speaker,
+            pos2(x, head_cy - 8.0),
+            16.0,
+            c.online_text,
+        );
+        x += 16.0 + 8.0;
+        let name = &lay.name;
+        paint_mid(&painter, name, x, head_cy);
+        let response = ui.interact(
+            Rect::from_min_size(pos2(x, head_cy - 10.0), vec2(name.width(), 20.0)),
+            Id::unique(("overview-call", room.channel)),
+            egui::Sense::hover(),
+        );
+        crate::widgets::announce(&response, egui::Role::Label, &room.name);
+        x += name.width() + 8.0;
+        if let Some(live) = &lay.live {
+            let tag = Rect::from_min_size(pos2(x, head_cy - 9.0), vec2(live.width() + 12.0, 18.0));
+            painter.rect_filled(tag, corner(4.0), c.live);
+            paint_mid(&painter, live, tag.left() + 6.0, head_cy);
+            x = tag.right() + 8.0;
+        }
+        paint_mid(&painter, &lay.count, x, head_cy);
+
+        for ((rect, block), person) in lay.people.iter().zip(&room.people) {
+            common::avatar(
+                ui,
+                app.images,
+                *rect,
+                &person.1,
+                person.2.as_deref(),
+                10.0,
+                1.0,
+                c.surface,
+            );
+            paint_mid(&painter, block, rect.right() + 6.0, rect.center().y);
+        }
+        if let Some((block, rect)) = &lay.more {
+            paint_mid(&painter, block, rect.left(), rect.center().y);
+        }
+
+        // The way in, right-aligned and centred on the head.
+        let mut ax = inner_r - lay.actions;
+        let button_at =
+            |x: f32, w: f32| Rect::from_min_size(pos2(x, head_cy - 16.0), vec2(w, 32.0));
+        let open = |app: &mut AppCtx| {
+            app.nav.navigate(&format!("/s/{server}/c/{}", room.channel));
+        };
+        if room.mine {
+            let here = Block::single(
+                ui,
+                servers::overview_call_here(),
+                TextStyle::new(12.0, 400.0, 1.3),
+                c.muted,
+            );
+            paint_mid(&painter, &here, ax, head_cy);
+            ax += here.width() + 10.0;
+            let button = Button::new(servers::overview_open()).small();
+            let w = button.natural_width(ui);
+            if ui.put(button_at(ax, w), button).clicked() {
+                open(app);
+            }
+        } else if room.allowed {
+            let button = Button::new(join_label(room))
+                .small()
+                .primary()
+                .icon(Icon::Speaker);
+            let w = button.natural_width(ui);
+            if ui.put(button_at(ax, w), button).clicked() {
+                // As "Beitreten" on the voice page: the page opens and the
+                // call starts.
+                open(app);
+                app.call.join(server, room.channel);
+            }
+        } else {
+            let button = Button::new(servers::overview_open()).small();
+            let w = button.natural_width(ui);
+            if ui.put(button_at(ax, w), button).clicked() {
+                open(app);
+            }
+        }
+        y += lay.height;
+    }
+    y
+}
+
+/// "Beitreten", or "Hierher wechseln" from another call (as the voice page).
+fn join_label(room: &CallRoom) -> &'static str {
+    if room.elsewhere {
+        gelabber_i18n::voice::room_switch_here()
+    } else {
+        servers::overview_join()
+    }
 }
 
 // --------------------------------------------------------------- streams
@@ -429,6 +912,8 @@ fn greet(ui: &Ui, app: &AppCtx, theme: &Theme, left: f32, top: f32, width: f32) 
 struct Stream {
     owner: Uuid,
     channel: Uuid,
+    /// The voice channel's name, under the person's.
+    channel_name: String,
     /// The member's name (initials, the picture's name).
     name: String,
     avatar: Option<String>,
@@ -461,6 +946,12 @@ fn streams(app: &AppCtx, detail: &ServerDetail) -> Vec<Stream> {
             let Some(room) = voice::session::build(s, &call, server, channel) else {
                 continue;
             };
+            let channel_name = detail
+                .channels
+                .iter()
+                .find(|c| c.id == channel)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
             for p in room.occupants.iter().filter(|p| p.live) {
                 let share = room.shares.iter().find(|pic| pic.id.user == p.id);
                 let key = share
@@ -469,6 +960,7 @@ fn streams(app: &AppCtx, detail: &ServerDetail) -> Vec<Stream> {
                 out.push(Stream {
                     owner: p.id,
                     channel,
+                    channel_name: channel_name.clone(),
                     name: p.name.clone(),
                     avatar: p.avatar.clone(),
                     own: p.me,
@@ -483,35 +975,35 @@ fn streams(app: &AppCtx, detail: &ServerDetail) -> Vec<Stream> {
     })
 }
 
-/// `.overview-streams`: `cols` per row, gap 20. Each the 16:9 picture
-/// (the video where the call has it, else the owner's avatar), LIVE and the
-/// viewers on it, the avatar and name under it. `at` is the column's left,
-/// top and width; returns the bottom.
+/// `.overview-streams` (GEL-75): flat cards of [`STREAM_W`], as many per
+/// row as fit, gap 12. Each the 16:9 picture on the left (the video where
+/// the call has it, else the owner's avatar) with LIVE and the viewers on
+/// it; beside it the avatar and name, the voice channel, and "Zuschauen"
+/// ("Öffnen" for the own). `at` is the column's left, top and width;
+/// returns the bottom.
 fn streams_block(
     ui: &mut Ui,
     app: &mut AppCtx,
     theme: &Theme,
     server: Uuid,
     at: (f32, f32, f32),
-    cols: usize,
     streams: &[Stream],
 ) -> f32 {
     let c = theme.c;
     let (left, top, width) = at;
-    let radius = theme.radius.lg;
-    let gaps = (cols - 1) as f32 * 20.0;
-    let item_w = ((width - gaps) / cols as f32).max(0.0);
-    let pic_h = (item_w * 9.0 / 16.0).round();
-    let item_h = pic_h + 10.0 + 28.0;
+    let cols = (((width + STREAM_GAP) / (STREAM_W + STREAM_GAP)).floor() as usize).max(1);
+    let card_w = STREAM_W.min(width);
+    let card_h = STREAM_PIC.y + 16.0;
+    let radius = theme.radius.md;
     for (i, st) in streams.iter().enumerate() {
         let at = pos2(
-            left + (i % cols) as f32 * (item_w + 20.0),
-            top + (i / cols) as f32 * (item_h + 20.0),
+            left + (i % cols) as f32 * (STREAM_W + STREAM_GAP),
+            top + (i / cols) as f32 * (card_h + STREAM_GAP),
         );
-        let item = Rect::from_min_size(at, vec2(item_w, item_h));
-        let pic = Rect::from_min_size(at, vec2(item_w, pic_h));
+        let card = Rect::from_min_size(at, vec2(card_w, card_h));
+        let pic = Rect::from_min_size(at + vec2(8.0, 8.0), STREAM_PIC);
         let id = Id::unique(("overview-stream", st.owner));
-        let response = common::click(ui, item, id);
+        let response = common::click(ui, card, id);
         let label = if st.own {
             servers::overview_own_screen().to_owned()
         } else {
@@ -519,6 +1011,20 @@ fn streams_block(
         };
         crate::widgets::announce(&response, egui::Role::Button, &label);
         let painter = ui.painter().clone();
+        painter.rect(
+            card,
+            corner(theme.radius.lg),
+            c.surface,
+            Stroke::new(
+                1.0,
+                if response.hovered() {
+                    c.border_strong
+                } else {
+                    c.border
+                },
+            ),
+            StrokeKind::Inside,
+        );
         // The picture only where the call already has it: the own screen,
         // or a Live watched in the call this client is in.
         let frame = st
@@ -533,88 +1039,135 @@ fn streams_block(
                 voice::video::paint(ui, id.with("video"), pic, frame, fit, false, radius);
             }
             None => {
-                // `.overview-stream__stand-in`: the large avatar on the panel.
+                // `.overview-stream__stand-in`: the avatar on the panel.
                 painter.rect_filled(pic, corner(radius), c.panel);
-                let avatar = Rect::from_center_size(pic.center(), Vec2::splat(64.0));
+                let avatar = Rect::from_center_size(pic.center(), Vec2::splat(48.0));
                 common::avatar(
                     ui,
                     app.images,
                     avatar,
                     &st.name,
                     st.avatar.as_deref(),
-                    20.0,
+                    16.0,
                     1.0,
                     c.panel,
                 );
             }
         }
-        painter.rect_stroke(
-            pic,
-            corner(radius),
-            Stroke::new(1.0, c.border),
-            StrokeKind::Inside,
-        );
-        // LIVE: the live fill, 700 11px, 24 high, radius 6.
+        // LIVE: the live fill, 700 10px, 18 high, radius 4.
         let live = Block::single(
             ui,
             "LIVE",
-            TextStyle::new(11.0, 700.0, 1.0).tracking(0.04),
+            TextStyle::new(10.0, 700.0, 1.0).tracking(0.04),
             c.on_live,
         );
         let tag = Rect::from_min_size(
-            pos2(pic.left() + 12.0, pic.top() + 12.0),
-            vec2(live.width() + 16.0, 24.0),
+            pos2(pic.left() + 6.0, pic.top() + 6.0),
+            vec2(live.width() + 12.0, 18.0),
         );
-        painter.rect_filled(tag, corner(6.0), c.live);
-        paint_mid(&painter, &live, tag.left() + 8.0, tag.center().y);
+        painter.rect_filled(tag, corner(4.0), c.live);
+        paint_mid(&painter, &live, tag.left() + 6.0, tag.center().y);
         // The viewers: the eye and the count on a dark chip.
         let count = Block::single(
             ui,
             &st.viewers.to_string(),
-            TextStyle::new(12.0, 600.0, 1.0),
+            TextStyle::new(11.0, 600.0, 1.0),
             ON_DARK,
         );
         let chip = Rect::from_min_max(
             pos2(
-                pic.right() - 12.0 - (8.0 + 14.0 + 5.0 + count.width() + 8.0),
-                pic.top() + 12.0,
+                pic.right() - 6.0 - (6.0 + 12.0 + 4.0 + count.width() + 6.0),
+                pic.top() + 6.0,
             ),
-            pos2(pic.right() - 12.0, pic.top() + 36.0),
+            pos2(pic.right() - 6.0, pic.top() + 24.0),
         );
-        painter.rect_filled(chip, corner(6.0), CHIP);
+        painter.rect_filled(chip, corner(4.0), CHIP);
         icons::paint(
             &painter,
             Icon::Eye,
-            pos2(chip.left() + 8.0, chip.center().y - 7.0),
-            14.0,
+            pos2(chip.left() + 6.0, chip.center().y - 6.0),
+            12.0,
             ON_DARK,
         );
-        paint_mid(&painter, &count, chip.left() + 27.0, chip.center().y);
+        paint_mid(&painter, &count, chip.left() + 22.0, chip.center().y);
         let viewers = servers::overview_viewers(st.viewers as u64);
         ui.interact(chip, id.with("viewers"), egui::Sense::hover())
             .on_hover_text(&viewers)
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &viewers));
-        // Under it: the avatar and the name ("Du" for the own).
-        let cy = pic.bottom() + 10.0 + 14.0;
-        let small = Rect::from_min_size(pos2(at.x, cy - 14.0), Vec2::splat(28.0));
+
+        // Beside it: the avatar 20 and the name ("Du" for the own), the
+        // voice channel, and the button at the bottom.
+        let x = pic.right() + 12.0;
+        let info_w = (card.right() - 8.0 - x).max(0.0);
+        let y0 = pic.top() + 2.0;
         common::avatar(
             ui,
             app.images,
-            small,
+            Rect::from_min_size(pos2(x, y0), Vec2::splat(20.0)),
             &st.name,
             st.avatar.as_deref(),
-            12.0,
+            9.0,
             1.0,
-            c.bg,
+            c.surface,
         );
         let shown = if st.own {
             servers::overview_you()
         } else {
             st.name.as_str()
         };
-        let name = line(ui, shown, NAME, c.text, item_w - 38.0);
-        paint_mid(&painter, &name, at.x + 38.0, cy);
-        common::focus_visible(ui, &response, pic, radius);
+        let name = line(
+            ui,
+            shown,
+            TextStyle::new(14.0, 600.0, 1.2),
+            c.text,
+            info_w - 27.0,
+        );
+        paint_mid(&painter, &name, x + 27.0, y0 + 10.0);
+        let cy = y0 + 20.0 + 5.0 + 8.0;
+        icons::paint(&painter, Icon::Speaker, pos2(x, cy - 6.5), 13.0, c.muted);
+        let room = line(
+            ui,
+            &st.channel_name,
+            TextStyle::new(12.0, 400.0, 1.3),
+            c.muted,
+            info_w - 18.0,
+        );
+        paint_mid(&painter, &room, x + 18.0, cy);
+        // `.overview-stream__go`: 30 high, padding 0 12, radius md; the
+        // accent for "Zuschauen", the panel with a strong hairline for
+        // "Öffnen".
+        let go_label = if st.own {
+            servers::overview_open()
+        } else {
+            servers::overview_watch_short()
+        };
+        let go_color = if st.own { c.text } else { c.accent_ink };
+        let go_text = Block::single(ui, go_label, TextStyle::new(13.0, 600.0, 1.0), go_color);
+        let icon_w = if st.own { 0.0 } else { 14.0 + 6.0 };
+        let go = Rect::from_min_size(
+            pos2(x, pic.bottom() - 2.0 - 30.0),
+            vec2(12.0 + icon_w + go_text.width() + 12.0, 30.0),
+        );
+        if st.own {
+            painter.rect(
+                go,
+                corner(radius),
+                c.panel,
+                Stroke::new(1.0, c.border_strong),
+                StrokeKind::Inside,
+            );
+        } else {
+            painter.rect_filled(go, corner(radius), c.accent);
+            icons::paint(
+                &painter,
+                Icon::Eye,
+                pos2(go.left() + 12.0, go.center().y - 7.0),
+                14.0,
+                go_color,
+            );
+        }
+        paint_mid(&painter, &go_text, go.left() + 12.0 + icon_w, go.center().y);
+        common::focus_visible(ui, &response, card, theme.radius.lg);
         if response.clicked() {
             // Outside a call this joins it with the Live watched from the
             // start; in another call only the page opens.
@@ -626,7 +1179,7 @@ fn streams_block(
         }
     }
     let rows = streams.len().div_ceil(cols) as f32;
-    top + rows * item_h + (rows - 1.0).max(0.0) * 20.0
+    top + rows * card_h + (rows - 1.0).max(0.0) * STREAM_GAP
 }
 
 // -------------------------------------------------------------- verpasst
@@ -725,8 +1278,9 @@ fn fetch_messages(app: &AppCtx, channel: Uuid) -> Pending<Option<Vec<Message>>> 
     })
 }
 
-/// "Verpasst": its heading, the cards (or "Alles gelesen."), and how many
-/// channels more are unread. `at` is the column's left, top and width;
+/// "Verpasst": its heading, the cards, and how many channels more are
+/// unread; only drawn with cards (nothing missed is "Alles gelesen" by the
+/// greeting). `at` is the column's left, top and width;
 /// returns the bottom.
 #[allow(clippy::too_many_arguments)]
 fn missed(
@@ -738,20 +1292,13 @@ fn missed(
     cards: &[Unread],
     fetched: &[Option<Vec<Message>>],
     more_channels: usize,
-    (single, read_loaded): (bool, bool),
+    single: bool,
 ) -> f32 {
     let c = theme.c;
     let (left, top, width) = at;
     let h2 = Block::single(ui, servers::overview_missed(), H2, c.text);
     h2.paint(ui.painter(), pos2(left, top));
-    let mut y = top + h2.height() + 12.0;
-    if cards.is_empty() {
-        return if read_loaded {
-            quiet_card(ui, theme, detail, left, y, width)
-        } else {
-            y
-        };
-    }
+    let mut y = top + h2.height() + 10.0;
     let names: HashMap<String, String> = detail
         .members
         .iter()
@@ -772,11 +1319,11 @@ fn missed(
             single,
             (&names, me),
         );
-        y += 14.0;
+        y += 8.0;
     }
-    y -= 14.0;
+    y -= 8.0;
     if more_channels > 0 {
-        y += 14.0;
+        y += 8.0;
         let words = Block::single(
             ui,
             &servers::overview_more_channels(more_channels as u64),
@@ -787,88 +1334,6 @@ fn missed(
         y += words.height();
     }
     y
-}
-
-/// `.overview-quiet`: "Alles gelesen.", and for a server of one "Noch
-/// keine weiteren Mitglieder." with "Einladen"; wrapping, gap 8 16, padding
-/// 18 20. Returns the bottom.
-fn quiet_card(
-    ui: &mut Ui,
-    theme: &Theme,
-    detail: &ServerDetail,
-    left: f32,
-    top: f32,
-    width: f32,
-) -> f32 {
-    let c = theme.c;
-    let style = TextStyle::new(14.0, 400.0, 1.45);
-    let alone = detail.members.len() == 1;
-    let fill = ui.painter().add(egui::Shape::Noop);
-    let inner = (left + 20.0, left + width - 20.0);
-    let mut words = vec![servers::overview_all_read()];
-    if alone {
-        words.push(servers::overview_alone());
-    }
-    // The pieces in rows, as `flex-wrap` lays them out.
-    let blocks: Vec<Block> = words
-        .iter()
-        .map(|text| Block::wrapped(ui, text, style, c.muted, inner.1 - inner.0))
-        .collect();
-    let mut sizes: Vec<Vec2> = blocks.iter().map(|b| b.size()).collect();
-    if alone {
-        let bw = Button::new(servers::overview_invite())
-            .small()
-            .natural_width(ui);
-        sizes.push(vec2(bw, 32.0));
-    }
-    let mut rects = Vec::new();
-    let (mut x, mut y, mut row_h) = (inner.0, top + 18.0, 0.0_f32);
-    for size in &sizes {
-        if x > inner.0 && x + size.x > inner.1 {
-            x = inner.0;
-            y += row_h + 8.0;
-            row_h = 0.0;
-        }
-        rects.push(Rect::from_min_size(pos2(x, y), *size));
-        x += size.x + 16.0;
-        row_h = row_h.max(size.y);
-    }
-    let bottom = y + row_h + 18.0;
-    for (n, block) in blocks.iter().enumerate() {
-        let r = rects[n];
-        // On the row's middle, as `align-items: center` puts it.
-        let at = pos2(
-            r.left(),
-            r.top() + (32.0_f32.min(row_h) - r.height()).max(0.0) / 2.0,
-        );
-        block.paint(ui.painter(), at);
-        let response = ui.interact(
-            Rect::from_min_size(at, r.size()),
-            Id::unique(("overview-quiet", n)),
-            egui::Sense::hover(),
-        );
-        crate::widgets::announce(&response, egui::Role::Label, words[n]);
-    }
-    if alone
-        && let Some(r) = rects.last()
-        && ui
-            .put(*r, Button::new(servers::overview_invite()).small())
-            .clicked()
-    {
-        super::dialogs::open_invite(ui.ctx(), detail.server.id, &detail.server.name);
-    }
-    let rect = Rect::from_min_max(pos2(left, top), pos2(left + width, bottom));
-    ui.painter().set(
-        fill,
-        egui::epaint::RectShape::new(
-            rect,
-            corner(theme.radius.lg),
-            c.surface,
-            Stroke::new(1.0, c.border),
-            StrokeKind::Inside,
-        ),
-    );
-    bottom
 }
 
 /// One card: the channel's head with "Gelesen" and "Öffnen", its newest
@@ -889,6 +1354,10 @@ fn missed_card(
     let c = theme.c;
     let (left, top, width) = at;
     let channel = card.channel;
+    let (count, dim) = card_look(card.unread, card.mentions, single);
+    if dim {
+        return missed_line(ui, app, theme, server, at, card, messages, people.0);
+    }
     // The fill goes under what follows; its height is known at the end.
     let fill = ui.painter().add(egui::Shape::Noop);
     let inner_left = left + 20.0;
@@ -898,41 +1367,7 @@ fn missed_card(
 
     // Head (42 high): "# name", "@", "x neu", then the actions.
     let cy = y + 21.0;
-    let open_label = servers::overview_open();
-    let read_label = servers::overview_mark_read();
-    let open_w = ghost_width(ui, open_label);
-    let open_r = Rect::from_min_size(pos2(inner_right - open_w, cy - 15.0), vec2(open_w, 30.0));
-    let read_w = ghost_width(ui, read_label);
-    let read_r = Rect::from_min_size(
-        pos2(open_r.left() - 2.0 - read_w, cy - 15.0),
-        vec2(read_w, 30.0),
-    );
-    if ghost(
-        ui,
-        theme,
-        read_r,
-        Id::unique(("overview-read", channel)),
-        read_label,
-        Icon::Check,
-        false,
-    )
-    .clicked()
-    {
-        app.client.mark_conversation_read(channel);
-    }
-    if ghost(
-        ui,
-        theme,
-        open_r,
-        Id::unique(("overview-open", channel)),
-        open_label,
-        Icon::ArrowRight,
-        true,
-    )
-    .clicked()
-    {
-        app.nav.navigate(&open);
-    }
+    let actions_left = card_actions(ui, app, theme, channel, &open, inner_right, cy);
     let new = Block::single(
         ui,
         &servers::overview_new(card.unread as u64),
@@ -942,27 +1377,8 @@ fn missed_card(
     let at_pill = (card.mentions > 0)
         .then(|| Block::single(ui, "@", TextStyle::new(11.0, 700.0, 1.0), c.accent_ink));
     let extras = 8.0 + new.width() + at_pill.as_ref().map_or(0.0, |b| 8.0 + b.width() + 14.0);
-    let name_max = (read_r.left() - 12.0 - extras - (inner_left + 24.0)).max(24.0);
-    let name = line(ui, &card.name, NAME, c.text, name_max);
-    let name_r = Rect::from_min_max(
-        pos2(inner_left - 4.0, cy - 15.0),
-        pos2(inner_left + 24.0 + name.width() + 4.0, cy + 15.0),
-    );
-    let name_response = common::click(ui, name_r, Id::unique(("overview-channel", channel)));
-    crate::widgets::announce(&name_response, egui::Role::Link, &format!("#{}", card.name));
-    icons::paint(
-        ui.painter(),
-        Icon::Hash,
-        pos2(inner_left, cy - 8.0),
-        16.0,
-        c.muted,
-    );
-    paint_mid(ui.painter(), &name, inner_left + 24.0, cy);
-    common::focus_visible(ui, &name_response, name_r, 6.0);
-    if name_response.clicked() {
-        app.nav.navigate(&open);
-    }
-    let mut x = name_r.right() - 4.0 + 8.0;
+    let name_max = (actions_left - 12.0 - extras - (inner_left + 24.0)).max(24.0);
+    let mut x = card_name(ui, app, theme, card, &open, (inner_left, cy), name_max) + 8.0;
     if let Some(pill) = &at_pill {
         let r = Rect::from_min_size(pos2(x, cy - 10.0), vec2(pill.width() + 14.0, 20.0));
         ui.painter().rect_filled(r, corner(10.0), c.accent);
@@ -979,7 +1395,6 @@ fn missed_card(
     y += 42.0;
 
     // The messages, as the chat draws them.
-    let (count, dim) = card_look(card.unread, card.mentions, single);
     let shown = messages.map_or(0, |m| m.len().min(count));
     if let Some(messages) = messages {
         for m in messages.iter().take(count) {
@@ -1073,6 +1488,152 @@ fn missed_card(
         ),
     );
     y
+}
+
+/// A card's "Gelesen" and "Öffnen" (ghosts, 30 high) ending at `right`,
+/// on `cy`; returns their left edge.
+fn card_actions(
+    ui: &Ui,
+    app: &mut AppCtx,
+    theme: &Theme,
+    channel: Uuid,
+    open: &str,
+    right: f32,
+    cy: f32,
+) -> f32 {
+    let open_label = servers::overview_open();
+    let read_label = servers::overview_mark_read();
+    let open_w = ghost_width(ui, open_label);
+    let open_r = Rect::from_min_size(pos2(right - open_w, cy - 15.0), vec2(open_w, 30.0));
+    let read_w = ghost_width(ui, read_label);
+    let read_r = Rect::from_min_size(
+        pos2(open_r.left() - 2.0 - read_w, cy - 15.0),
+        vec2(read_w, 30.0),
+    );
+    if ghost(
+        ui,
+        theme,
+        read_r,
+        Id::unique(("overview-read", channel)),
+        read_label,
+        Icon::Check,
+        false,
+    )
+    .clicked()
+    {
+        app.client.mark_conversation_read(channel);
+    }
+    if ghost(
+        ui,
+        theme,
+        open_r,
+        Id::unique(("overview-open", channel)),
+        open_label,
+        Icon::ArrowRight,
+        true,
+    )
+    .clicked()
+    {
+        app.nav.navigate(open);
+    }
+    read_r.left()
+}
+
+/// A card's "# name", a link to the channel, from `left` on `cy`, the name
+/// at most `max` wide; returns its right edge.
+fn card_name(
+    ui: &Ui,
+    app: &mut AppCtx,
+    theme: &Theme,
+    card: &Unread,
+    open: &str,
+    (left, cy): (f32, f32),
+    max: f32,
+) -> f32 {
+    let c = theme.c;
+    let name = line(ui, &card.name, NAME, c.text, max);
+    let name_r = Rect::from_min_max(
+        pos2(left - 4.0, cy - 15.0),
+        pos2(left + 24.0 + name.width() + 4.0, cy + 15.0),
+    );
+    let response = common::click(ui, name_r, Id::unique(("overview-channel", card.channel)));
+    crate::widgets::announce(&response, egui::Role::Link, &format!("#{}", card.name));
+    icons::paint(
+        ui.painter(),
+        Icon::Hash,
+        pos2(left, cy - 8.0),
+        16.0,
+        c.muted,
+    );
+    paint_mid(ui.painter(), &name, left + 24.0, cy);
+    common::focus_visible(ui, &response, name_r, 6.0);
+    if response.clicked() {
+        app.nav.navigate(open);
+    }
+    name_r.right() - 4.0
+}
+
+/// `.overview-card--line` (GEL-75): a busy channel without a mention in one
+/// 44-high line: "# name", "x neu", the newest message as plain text
+/// ("Gondolf: …", cut with an ellipsis), "Gelesen" and "Öffnen". Returns
+/// the bottom.
+#[allow(clippy::too_many_arguments)]
+fn missed_line(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    theme: &Theme,
+    server: Uuid,
+    (left, top, width): (f32, f32, f32),
+    card: &Unread,
+    messages: Option<&[Message]>,
+    names: &HashMap<String, String>,
+) -> f32 {
+    let c = theme.c;
+    let rect = Rect::from_min_size(pos2(left, top), vec2(width, 44.0));
+    ui.painter().rect(
+        rect,
+        corner(theme.radius.lg),
+        c.surface,
+        Stroke::new(1.0, c.border),
+        StrokeKind::Inside,
+    );
+    let inner_left = left + 20.0;
+    let inner_right = left + width - 20.0;
+    let cy = rect.center().y;
+    let open = format!("/s/{server}/c/{}", card.channel);
+    let actions_left = card_actions(ui, app, theme, card.channel, &open, inner_right, cy);
+    let new = Block::single(
+        ui,
+        &servers::overview_new(card.unread as u64),
+        SMALL,
+        c.muted,
+    );
+    // The name keeps up to half the room; the preview takes the rest.
+    let room = (actions_left - 8.0 - inner_left).max(0.0);
+    let name_max = (room / 2.0 - 24.0 - 8.0 - new.width()).max(24.0);
+    let x = card_name(ui, app, theme, card, &open, (inner_left, cy), name_max) + 8.0;
+    paint_mid(ui.painter(), &new, x, cy);
+    let x = x + new.width() + 8.0;
+    let preview_w = actions_left - 8.0 - x;
+    if let Some(last) = messages.and_then(<[Message]>::last)
+        && preview_w > 40.0
+    {
+        let text = system_text(last).unwrap_or_else(|| {
+            notify_rules::readable_mentions(&chat_markdown::plain_text(&last.content), names)
+        });
+        let preview =
+            notify_rules::preview_text(&text, !last.attachments.is_empty(), last.gif.is_some());
+        let style = TextStyle::new(13.0, 400.0, 1.3);
+        let author = format!("{}:", last.author.name);
+        let who = line(ui, &author, style.weight(500.0), c.text, preview_w);
+        paint_mid(ui.painter(), &who, x, cy);
+        let rest = preview_w - who.width() - 4.0;
+        if rest > 16.0 {
+            let words = line(ui, &preview, style, c.muted, rest);
+            paint_mid(ui.painter(), &words, x + who.width() + 4.0, cy);
+        }
+    }
+    rect.bottom()
 }
 
 /// A message as the chat has it, compact: avatar 32, name and time, the
@@ -1254,27 +1815,6 @@ fn picture(ui: &Ui, app: &AppCtx, theme: &Theme, att: &Attachment, rect: Rect, r
         Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
-}
-
-/// A file's icon (accent) and its two lines, inside `rect`'s 10 12 padding.
-fn file_lines(ui: &Ui, theme: &Theme, rect: Rect, name: &str, second: &str) {
-    let c = theme.c;
-    let painter = ui.painter();
-    let cy = rect.center().y;
-    icons::paint(
-        painter,
-        Icon::File,
-        pos2(rect.left() + 12.0, cy - 10.0),
-        20.0,
-        c.accent_text,
-    );
-    let x = rect.left() + 12.0 + 20.0 + 10.0;
-    let w = rect.right() - 12.0 - x;
-    let top = line(ui, name, TextStyle::new(13.0, 600.0, 1.3), c.text, w);
-    let bottom = line(ui, second, TextStyle::new(12.0, 400.0, 1.3), c.muted, w);
-    let y = cy - (top.height() + bottom.height()) / 2.0;
-    top.paint(painter, pos2(x, y));
-    bottom.paint(painter, pos2(x, y + top.height()));
 }
 
 /// "Antworten in #name" with "Enter": a single line whose Enter sends to
@@ -1465,9 +2005,12 @@ fn fetch_shared(app: &AppCtx, server: Uuid) -> Pending<Option<Vec<SharedFile>>> 
     })
 }
 
-/// "Geteilt": pictures as 16:9 thumbnails with the sender (and the
-/// channel, when the server has more than one text channel), other files
-/// as rows. A click opens the channel at the message. Returns the bottom.
+/// "Geteilt" (GEL-75): tiles of [`TILE`] for pictures and files alike,
+/// as many per row as fit (`repeat(auto-fill, 160px)`, gap 14 12), never
+/// stretched; under each the sender's avatar 18, name and time. A picture
+/// carries the channel top right when the server has more than one text
+/// channel; a file shows its icon, name and size. A click opens the
+/// channel at the message. Returns the bottom.
 #[allow(clippy::too_many_arguments)]
 fn shared_column(
     ui: &mut Ui,
@@ -1483,7 +2026,7 @@ fn shared_column(
     let server = detail.server.id;
     let h2 = Block::single(ui, servers::overview_shared(), H2, c.text);
     h2.paint(ui.painter(), pos2(left, top));
-    let mut y = top + h2.height() + 12.0;
+    let y = top + h2.height() + 10.0;
     let texts: Vec<(Uuid, &str)> = detail
         .channels
         .iter()
@@ -1492,11 +2035,22 @@ fn shared_column(
         .collect();
     let several = texts.len() > 1;
     let channel_name = |id: Uuid| texts.iter().find(|(c, _)| *c == id).map(|(_, n)| *n);
-    for f in files {
+    let cols = (((width + TILE_GAP_X) / (TILE.x + TILE_GAP_X)).floor() as usize).max(1);
+    // The tile and, 7 under it, the 18-high sender line.
+    let item_h = TILE.y + 7.0 + 18.0;
+    let radius = theme.radius.md;
+    let now = Utc::now();
+    for (n, f) in files.iter().enumerate() {
+        let at = pos2(
+            left + (n % cols) as f32 * (TILE.x + TILE_GAP_X),
+            y + (n / cols) as f32 * (item_h + TILE_GAP_Y),
+        );
+        let tile = Rect::from_min_size(at, TILE);
+        let item = Rect::from_min_size(at, vec2(TILE.x, item_h));
         let id = Id::unique(("overview-shared", f.attachment.id));
-        let rect = if is_picture(&f.attachment) {
-            let r = Rect::from_min_size(pos2(left, y), vec2(width, (width * 9.0 / 16.0).round()));
-            let response = common::click(ui, r, id);
+        let response = common::click(ui, item, id);
+        let hot = response.hovered();
+        if is_picture(&f.attachment) {
             crate::widgets::announce(
                 &response,
                 egui::Role::Button,
@@ -1505,34 +2059,7 @@ fn shared_column(
                     .clone()
                     .unwrap_or_else(|| servers::overview_picture_by(&f.author.name)),
             );
-            picture(ui, app, theme, &f.attachment, r, theme.radius.lg);
-            // The sender: avatar 20 and name on a dark chip, bottom left.
-            let name = line(
-                ui,
-                &f.author.name,
-                TextStyle::new(12.0, 600.0, 1.0),
-                ON_DARK,
-                width - 60.0,
-            );
-            let chip = Rect::from_min_max(
-                pos2(r.left() + 8.0, r.bottom() - 8.0 - 26.0),
-                pos2(
-                    r.left() + 8.0 + 3.0 + 20.0 + 6.0 + name.width() + 8.0,
-                    r.bottom() - 8.0,
-                ),
-            );
-            ui.painter().rect_filled(chip, corner(13.0), CHIP);
-            common::avatar(
-                ui,
-                app.images,
-                Rect::from_min_size(pos2(chip.left() + 3.0, chip.top() + 3.0), Vec2::splat(20.0)),
-                &f.author.name,
-                f.author.avatar_url.as_deref(),
-                9.0,
-                1.0,
-                CHIP,
-            );
-            paint_mid(ui.painter(), &name, chip.left() + 29.0, chip.center().y);
+            picture(ui, app, theme, &f.attachment, tile, radius);
             // The channel, top right, when there is more than one.
             if several && let Some(channel) = channel_name(f.channel_id) {
                 let tag = line(
@@ -1540,53 +2067,91 @@ fn shared_column(
                     &format!("#{channel}"),
                     TextStyle::new(11.0, 600.0, 1.0),
                     ON_DARK,
-                    width / 2.0,
+                    TILE.x - 24.0,
                 );
                 let t = Rect::from_min_max(
-                    pos2(r.right() - 8.0 - tag.width() - 14.0, r.top() + 8.0),
-                    pos2(r.right() - 8.0, r.top() + 8.0 + 18.0),
+                    pos2(tile.right() - 6.0 - tag.width() - 12.0, tile.top() + 6.0),
+                    pos2(tile.right() - 6.0, tile.top() + 6.0 + 17.0),
                 );
-                ui.painter().rect_filled(t, corner(6.0), CHIP);
-                paint_mid(ui.painter(), &tag, t.left() + 7.0, t.center().y);
+                ui.painter().rect_filled(t, corner(5.0), CHIP);
+                paint_mid(ui.painter(), &tag, t.left() + 6.0, t.center().y);
             }
-            common::focus_visible(ui, &response, r, theme.radius.lg);
-            if response.clicked() {
-                open_message(ui, app, server, f.channel_id, f.message_id);
-            }
-            r
         } else {
-            let r = Rect::from_min_size(pos2(left, y), vec2(width, 54.0));
-            let response = common::click(ui, r, id);
             crate::widgets::announce(&response, egui::Role::Button, &f.attachment.filename);
-            ui.painter().rect(
-                r,
-                corner(theme.radius.lg),
-                if response.hovered() {
-                    c.hover
-                } else {
-                    c.surface
-                },
-                Stroke::new(1.0, c.border),
-                StrokeKind::Inside,
+            ui.painter().rect_filled(tile, corner(radius), c.surface);
+            // `.overview-shared__file`: padding 12, the icon 22 at the top,
+            // name and size at the bottom.
+            icons::paint(
+                ui.painter(),
+                Icon::File,
+                pos2(tile.left() + 12.0, tile.top() + 12.0),
+                22.0,
+                c.accent_text,
             );
-            let second = match channel_name(f.channel_id).filter(|_| several) {
-                Some(channel) => format!("{} · #{channel}", f.author.name),
-                None => format!(
-                    "{} · {}",
-                    f.author.name,
-                    attachments::format_size(f.attachment.size)
-                ),
+            let size = attachments::format_size(f.attachment.size);
+            let meta = match channel_name(f.channel_id).filter(|_| several) {
+                Some(channel) => format!("#{channel} · {size}"),
+                None => size,
             };
-            file_lines(ui, theme, r, &f.attachment.filename, &second);
-            common::focus_visible(ui, &response, r, theme.radius.lg);
-            if response.clicked() {
-                open_message(ui, app, server, f.channel_id, f.message_id);
-            }
-            r
-        };
-        y = rect.bottom() + 10.0;
+            let w = TILE.x - 24.0;
+            let second = line(ui, &meta, TextStyle::new(12.0, 400.0, 1.4), c.muted, w);
+            let first = line(
+                ui,
+                &f.attachment.filename,
+                TextStyle::new(13.0, 600.0, 1.3),
+                c.text,
+                w,
+            );
+            let bottom = tile.bottom() - 12.0;
+            second.paint(
+                ui.painter(),
+                pos2(tile.left() + 12.0, bottom - second.height()),
+            );
+            first.paint(
+                ui.painter(),
+                pos2(
+                    tile.left() + 12.0,
+                    bottom - second.height() - first.height(),
+                ),
+            );
+        }
+        ui.painter().rect_stroke(
+            tile,
+            corner(radius),
+            Stroke::new(1.0, if hot { c.border_strong } else { c.border }),
+            StrokeKind::Inside,
+        );
+        // Under it: avatar 18, the name (600, text) and "· time" (muted).
+        let cy = tile.bottom() + 7.0 + 9.0;
+        common::avatar(
+            ui,
+            app.images,
+            Rect::from_min_size(pos2(at.x, cy - 9.0), Vec2::splat(18.0)),
+            &f.author.name,
+            f.author.avatar_url.as_deref(),
+            8.0,
+            1.0,
+            c.bg,
+        );
+        let style = TextStyle::new(12.0, 400.0, 1.0);
+        let when = format!("· {}", time::format_when(f.created_at, now));
+        let stamp = Block::single(ui, &when, style, c.muted);
+        let name = line(
+            ui,
+            &f.author.name,
+            style.weight(600.0),
+            c.text,
+            (TILE.x - 24.0 - 6.0 - stamp.width()).max(16.0),
+        );
+        paint_mid(ui.painter(), &name, at.x + 24.0, cy);
+        paint_mid(ui.painter(), &stamp, at.x + 24.0 + name.width() + 6.0, cy);
+        common::focus_visible(ui, &response, tile, radius);
+        if response.clicked() {
+            open_message(ui, app, server, f.channel_id, f.message_id);
+        }
     }
-    y - 10.0
+    let rows = files.len().div_ceil(cols) as f32;
+    y + rows * item_h + (rows - 1.0).max(0.0) * TILE_GAP_Y
 }
 
 /// The channel's page at `message`.
@@ -1683,6 +2248,17 @@ fn skeleton(ui: &Ui, rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calls_put_the_own_first_then_the_fullest_then_the_sidebar() {
+        // (own call, people) in the sidebar's order.
+        assert_eq!(
+            call_order(&[(false, 1), (false, 2), (true, 1)]),
+            vec![2, 1, 0]
+        );
+        assert_eq!(call_order(&[(false, 1), (false, 1)]), vec![0, 1]);
+        assert_eq!(call_order(&[]), Vec::<usize>::new());
+    }
 
     fn unread(n: u128, mentions: i64, latest: i64) -> Unread {
         Unread {

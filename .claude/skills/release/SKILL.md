@@ -48,7 +48,13 @@ is the order of the work; check each step's result before the next one.
    backup. Until the release is out, nothing else is merged into `main`.
 6. **After the merge** the chain runs by itself: CI (push) on `main`, then
    "Publish app images", then `release.yml`, which tags, publishes and starts
-   `desktop-native.yml` for the tag. Watch it with
+   `desktop-release.yml` for the tag. That run signs and attaches the apps
+   the release PR's CI packaged (its job "Packages of the release's pull
+   request" names the run); if `main` moved or the packages expired after 14
+   days, it builds them again, which takes about 16 minutes more. The release becomes "Latest" only
+   when that run's `mark-latest` job has attached the apps: until then the
+   installed apps and the web's download links keep the previous one. If the
+   desktop run fails, fix it and run it again for the tag. Watch it with
    `gh run list --branch main --limit 5`. If CI on the release commit was
    cancelled, re-run it on `main`'s head. `release.yml` by hand
    (`-f tag=vX.Y.Z -f image_run_id=<publish run>`) only repairs a release.

@@ -20,13 +20,46 @@ env:
   RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
 
 jobs:
+  # The release PR's CI run that packaged these apps from the tag's tree
+  # (tested_tree.py); without one, `build` builds them as before (GEL-358).
+  candidate:
+    name: Packages of the release's pull request
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.find.outputs.run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Find the candidate
+        id: find
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/workflows/scripts/tested_tree.py find --candidate >> "$GITHUB_OUTPUT"
+
   build:
+    needs: candidate
     # Other releases (the build-deps mirror) are no app version.
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
+    # read: the candidate run's packages.
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/desktop-native.yml
     with:
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
-    secrets: inherit
+      prebuilt_run: ${{ needs.candidate.outputs.run }}
+    # Only the signing keys, not every secret of the repository.
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      ARCH_REPO_GPG_KEY: ${{ secrets.ARCH_REPO_GPG_KEY }}
 
   # As in ci.yml: a new libwebrtc package is stored by a job that runs none
   # of libwebrtc's build code.
@@ -64,8 +97,8 @@ jobs:
         run: |
           gh release upload "$TAG" gelabber-native-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
 
-  # The installer, its checksum and signature, and the manifests the
-  # installed apps poll: latest-native.json (0.9 on), latest.json (Tauri 0.8).
+  # The installer, its checksum and signature, and latest-native.json, the
+  # manifest the installed apps poll.
   release-asset-windows:
     name: Attach the Windows app to the release
     needs: build
@@ -97,10 +130,37 @@ jobs:
             '{version: $version, pub_date: $date,
               platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > latest-native.json
           cat latest-native.json
-          # The Tauri apps' updater reads latest.json: the same, so they install the native app.
-          cp latest-native.json latest.json
-          gh release upload "$TAG" "$setup" "$setup.sha256" "$setup.sig" latest-native.json latest.json \
+          gh release upload "$TAG" "$setup" "$setup.sha256" "$setup.sig" latest-native.json \
             --clobber --repo "$GITHUB_REPOSITORY"
+
+  # image_set.py creates the release with --latest=false: the apps' updater and
+  # the web's download links read releases/latest/download, so it becomes
+  # Latest only now that both apps are attached.
+  mark-latest:
+    name: Make the release Latest
+    needs: [release-asset, release-asset-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Make the release Latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease -q '"\(.isDraft) \(.isPrerelease)"')"
+          if [ "$release" != "false false" ] || ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$TAG is a draft or a pre-release: it does not become Latest"; exit 0
+          fi
+          # A repeated build of an older release leaves the newer one Latest.
+          current="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)"
+          if [ "$(printf '%s\n%s\n' "$current" "$TAG" | sort -V | tail -n1)" != "$TAG" ]; then
+            echo "$current is newer than $TAG and stays Latest"; exit 0
+          fi
+          gh release edit "$TAG" --latest --repo "$GITHUB_REPOSITORY"
+          echo "$TAG is Latest (was $current)"
 
   # The site for GitHub Pages, uploaded a job ahead of the deployment: right
   # after an upload in the same job, deploy-pages often finds no artifact.

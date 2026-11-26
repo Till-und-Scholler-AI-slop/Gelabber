@@ -22,6 +22,7 @@ import {
   FileIcon,
   HashIcon,
   SearchIcon,
+  SpeakerIcon,
 } from "../components/Icons.tsx";
 import { InviteDialog } from "../components/InviteDialog.tsx";
 import { MemberPanel, MemberPanelToggle } from "../components/MemberPanel.tsx";
@@ -37,10 +38,18 @@ import { FieldShell } from "../components/ui/FieldShell.tsx";
 import { Input } from "../components/ui/Input.tsx";
 import { useT } from "../i18n/catalog.ts";
 import { servers } from "../i18n/catalogs/servers.ts";
+import { voice as voiceTexts } from "../i18n/catalogs/voice.ts";
+import { compareNames } from "../i18n/format.ts";
 import { useCurrentLocale } from "../i18n/locale.ts";
 import { attachmentUrl, listMessages, thumbnailUrl } from "../messages/api.ts";
 import { MessageContent } from "../messages/MessageContent.tsx";
-import { toWire, type MentionMember } from "../messages/mentions.ts";
+import { plainText } from "../messages/markdown.ts";
+import {
+  readableMentions,
+  toWire,
+  type MentionMember,
+} from "../messages/mentions.ts";
+import { previewText } from "../messages/notify.ts";
 import { requestMessageJump } from "../messages/messageJump.ts";
 import { useSendMessage } from "../messages/queries.ts";
 import { useMarkManyRead, useReadState } from "../messages/readState.ts";
@@ -49,6 +58,8 @@ import { asSystem, systemText } from "../messages/system.ts";
 import type { Message } from "../messages/types.ts";
 import { useBadges } from "../messages/useBadge.ts";
 import {
+  CALL_PEOPLE_SHOWN,
+  callRooms,
   greetingKey,
   isPicture,
   mentionsMe,
@@ -57,22 +68,28 @@ import {
   sharedShown,
   shownCount,
   unreadTail,
+  type CallRoom,
   type MissedCard,
 } from "../servers/overview.ts";
 import { can } from "../servers/permissions.ts";
+import { channelOrder } from "../servers/rows.ts";
 import { listSharedFiles, type SharedFile } from "../servers/sharedFiles.ts";
 import type { ServerDetail } from "../servers/types.ts";
-import { EMPTY_LIVE, useVoiceRoster } from "../voice/roster.ts";
-import { useVoice } from "../voice/session.ts";
+import {
+  EMPTY_LIVE,
+  EMPTY_OCCUPANCY,
+  useVoiceRoster,
+} from "../voice/roster.ts";
+import { joinVoice, useVoice } from "../voice/session.ts";
 import { useLiveWatchers } from "../voice/useLiveWatchers.ts";
-import { joinToWatch } from "../voice/watchLive.ts";
+import { currentCall, joinToWatch } from "../voice/watchLive.ts";
 import "./overview.css";
 
 /**
- * The server's front door (GEL-69): only what is shown nowhere else. The
- * sidebar has the channels and who is in a call, the member list who is
- * online, the call bar the call; here are the Lives, what was missed and
- * what was shared.
+ * The server's front door (GEL-69, GEL-75): the sidebar has the channels,
+ * the member list who is online, the call bar the call; here are who is in
+ * which call with the way in, the Lives, what was missed and what was
+ * shared.
  */
 export function CommunityOverview({ server }: { server: ServerDetail }) {
   const t = useT(servers);
@@ -90,9 +107,12 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
         </div>
         <div className="community-overview__body">
           <div className="overview-main">
-            <Greeting />
+            <Greeting server={server} missed={missed} />
+            <Calls server={server} />
             <Streams server={server} />
-            <Missed server={server} missed={missed} />
+            {missed.cards.length > 0 ? (
+              <Missed server={server} missed={missed} />
+            ) : null}
           </div>
           <Shared server={server} shownMessages={missed.shownMessages} />
         </div>
@@ -122,13 +142,191 @@ function JumpField() {
   );
 }
 
-function Greeting() {
+/** One line: the greeting, and "Alles gelesen" beside it once the read
+ * state says nothing was missed (GEL-75): no empty "Verpasst" box. */
+function Greeting({
+  server,
+  missed,
+}: {
+  server: ServerDetail;
+  missed: MissedState;
+}) {
   const t = useT(servers);
   const name = useSession((s) => s.user?.name ?? "");
   // The hour as the page was drawn; a new visit greets anew.
   const [hour] = useState(() => new Date().getHours());
+  const allRead = missed.loaded && missed.cards.length === 0;
   return (
-    <h1 className="overview-greeting">{t(greetingKey(hour), { name })}</h1>
+    <div className="overview-hello">
+      <div className="overview-hello__line">
+        <h1 className="overview-greeting">{t(greetingKey(hour), { name })}</h1>
+        {allRead ? (
+          <span className="overview-all-read">
+            <CheckIcon size={14} />
+            {t("overview.allRead")}
+          </span>
+        ) : null}
+      </div>
+      {allRead && server.members.length === 1 ? (
+        <Alone server={server} />
+      ) : null}
+    </div>
+  );
+}
+
+/** Alone in the server: a hint and the way to invite someone. */
+function Alone({ server }: { server: ServerDetail }) {
+  const t = useT(servers);
+  const [inviting, setInviting] = useState(false);
+  return (
+    <div className="overview-alone">
+      <p>{t("overview.alone")}</p>
+      <Button size="sm" onClick={() => setInviting(true)}>
+        {t("overview.invite")}
+      </Button>
+      <InviteDialog
+        server={server}
+        open={inviting}
+        onClose={() => setInviting(false)}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Im Call
+
+/** Who sits in which voice channel, one row each, with the way in. */
+function Calls({ server }: { server: ServerDetail }) {
+  const t = useT(servers);
+  const heading = useId();
+  const me = useUserId();
+  const occupancy = useVoiceRoster(
+    (s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY,
+  );
+  const live = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
+  const call = useVoice(currentCall);
+  const mine = call?.startsWith(`${server.id}/`)
+    ? call.slice(server.id.length + 1)
+    : null;
+  const rooms = useMemo(() => {
+    // My own seat counts at once, before the roster's echo is back.
+    const seats =
+      mine && me && occupancy[me]?.channelId !== mine
+        ? { ...occupancy, [me]: { channelId: mine } }
+        : occupancy;
+    return callRooms(channelOrder(server), seats, live, mine);
+  }, [server, occupancy, live, mine, me]);
+  if (rooms.length === 0) return null;
+  return (
+    <section className="overview-calls" aria-labelledby={heading}>
+      <h2 id={heading} className="overview-heading">
+        {t("overview.calls")}
+      </h2>
+      <ul className="overview-calls__list">
+        {rooms.map((room) => (
+          <CallRow
+            key={room.channel.id}
+            server={server}
+            room={room}
+            elsewhere={call !== null && !room.mine}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function CallRow({
+  server,
+  room,
+  elsewhere,
+}: {
+  server: ServerDetail;
+  room: CallRoom;
+  /** The user is in another call: joining switches, as on the voice page. */
+  elsewhere: boolean;
+}) {
+  const t = useT(servers);
+  const tv = useT(voiceTexts);
+  const navigate = useNavigate();
+  const me = useUserId();
+  const members = new Map(server.members.map((m) => [m.user_id, m]));
+  const people = room.people
+    .map((id) => ({
+      id,
+      name: members.get(id)?.name ?? tv("people.member"),
+      avatar: members.get(id)?.avatar_url ?? null,
+    }))
+    .sort((a, b) => compareNames(a.name, b.name));
+  const shown = people.slice(0, CALL_PEOPLE_SHOWN);
+  const rest = people.length - shown.length;
+  const channelId = room.channel.id;
+  const open = () =>
+    void navigate({
+      to: "/s/$serverId/c/$channelId",
+      params: { serverId: server.id, channelId },
+    });
+  // As "Beitreten" on the voice page: the page opens and the call starts.
+  const join = () => {
+    open();
+    joinVoice({
+      serverId: server.id,
+      channelId,
+      channelName: room.channel.name,
+    });
+  };
+  return (
+    <li className="overview-call">
+      <span className="overview-call__head">
+        <SpeakerIcon size={16} className="overview-call__icon" />
+        <span className="overview-call__name">{room.channel.name}</span>
+        {room.live ? (
+          <span className="overview-call__live">{t("overview.live")}</span>
+        ) : null}
+        <span className="overview-call__count">
+          {t("overview.callPeople", { count: people.length })}
+        </span>
+      </span>
+      <ul className="overview-call__people" aria-label={room.channel.name}>
+        {shown.map((person) => (
+          <li key={person.id} className="overview-call__person">
+            <Avatar name={person.name} url={person.avatar} decorative />
+            <span>{person.id === me ? t("overview.you") : person.name}</span>
+          </li>
+        ))}
+        {rest > 0 ? (
+          <li className="overview-call__more">
+            {t("overview.callMore", { count: rest })}
+          </li>
+        ) : null}
+      </ul>
+      <span className="overview-call__actions">
+        {room.mine ? (
+          <>
+            <span className="overview-call__here">
+              {t("overview.callHere")}
+            </span>
+            <Button size="sm" onClick={open}>
+              {t("overview.open")}
+            </Button>
+          </>
+        ) : can(server, "join_voice") ? (
+          <Button
+            size="sm"
+            variant="primary"
+            icon={<SpeakerIcon size={15} />}
+            onClick={join}
+          >
+            {elsewhere ? tv("room.switchHere") : t("overview.join")}
+          </Button>
+        ) : (
+          <Button size="sm" onClick={open}>
+            {t("overview.open")}
+          </Button>
+        )}
+      </span>
+    </li>
   );
 }
 
@@ -245,10 +443,28 @@ function StreamCard({ server, live }: { server: ServerDetail; live: Live }) {
           </span>
         </span>
       </span>
-      <span className="overview-stream__by">
-        <Avatar name={name} url={member?.avatar_url ?? null} decorative />
-        <span className="overview-stream__name">
-          {own ? t("overview.you") : name}
+      {/* Flat (GEL-75): the picture small on the left, who and where
+          beside it. The whole card stays one button. */}
+      <span className="overview-stream__info">
+        <span className="overview-stream__by">
+          <Avatar name={name} url={member?.avatar_url ?? null} decorative />
+          <span className="overview-stream__name">
+            {own ? t("overview.you") : name}
+          </span>
+        </span>
+        {channel ? (
+          <span className="overview-stream__channel">
+            <SpeakerIcon size={13} />
+            <span>{channel.name}</span>
+          </span>
+        ) : null}
+        <span
+          className="overview-stream__go"
+          data-own={own ? "" : undefined}
+          aria-hidden="true"
+        >
+          {own ? null : <EyeIcon size={14} />}
+          {own ? t("overview.open") : t("overview.watchShort")}
         </span>
       </span>
     </button>
@@ -364,69 +580,39 @@ function Missed({
       <h2 id={heading} className="overview-heading">
         {t("overview.missed")}
       </h2>
-      {missed.cards.length === 0 ? (
-        missed.loaded ? (
-          <AllRead server={server} />
-        ) : null
-      ) : (
-        <div className="overview-cards">
-          {missed.cards.map((card, n) => (
-            <MissedChannel
-              key={card.channel.id}
-              server={server}
-              card={card}
-              messages={missed.messages
-                .get(card.channel.id)
-                // As the chat folds them: whoever the user blocks is left
-                // out here, and counted in "x weitere".
-                ?.filter((message) => !blocked.has(message.author.id))}
-              alone={missed.alone}
-              reply={
-                n === 0
-                  ? {
-                      text: drafts.get(card.channel.id) ?? "",
-                      setText: (text) =>
-                        setDrafts((old) =>
-                          new Map(old).set(card.channel.id, text),
-                        ),
-                    }
-                  : null
-              }
-              members={members}
-            />
-          ))}
-          {missed.hidden > 0 ? (
-            <p className="overview-cards__hidden">
-              {t("overview.moreChannels", { count: missed.hidden })}
-            </p>
-          ) : null}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function AllRead({ server }: { server: ServerDetail }) {
-  const t = useT(servers);
-  const [inviting, setInviting] = useState(false);
-  const alone = server.members.length === 1;
-  return (
-    <div className="overview-quiet">
-      <p>{t("overview.allRead")}</p>
-      {alone ? (
-        <>
-          <p>{t("overview.alone")}</p>
-          <Button size="sm" onClick={() => setInviting(true)}>
-            {t("overview.invite")}
-          </Button>
-          <InviteDialog
+      <div className="overview-cards">
+        {missed.cards.map((card, n) => (
+          <MissedChannel
+            key={card.channel.id}
             server={server}
-            open={inviting}
-            onClose={() => setInviting(false)}
+            card={card}
+            messages={missed.messages
+              .get(card.channel.id)
+              // As the chat folds them: whoever the user blocks is left
+              // out here, and counted in "x weitere".
+              ?.filter((message) => !blocked.has(message.author.id))}
+            alone={missed.alone}
+            reply={
+              n === 0
+                ? {
+                    text: drafts.get(card.channel.id) ?? "",
+                    setText: (text) =>
+                      setDrafts((old) =>
+                        new Map(old).set(card.channel.id, text),
+                      ),
+                  }
+                : null
+            }
+            members={members}
           />
-        </>
-      ) : null}
-    </div>
+        ))}
+        {missed.hidden > 0 ? (
+          <p className="overview-cards__hidden">
+            {t("overview.moreChannels", { count: missed.hidden })}
+          </p>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -456,17 +642,68 @@ function MissedChannel({
   } as const;
   // Until the messages are there, how many more is not known yet.
   const more = messages ? Math.max(0, card.unread - messages.length) : 0;
+  const name = (
+    <Link {...to} id={heading} className="overview-card__name">
+      <HashIcon size={16} />
+      <span>{channel.name}</span>
+    </Link>
+  );
+  const count = (
+    <span className="overview-card__new">
+      {t("overview.new", { count: card.unread })}
+    </span>
+  );
+  const actions = (
+    <span className="overview-card__actions">
+      <button
+        type="button"
+        className="overview-card__action"
+        onClick={() =>
+          // Failed, the card stays: the chat's "Gelesen" does the same.
+          void markRead({ channel: channel.id }).catch(() => {})
+        }
+      >
+        <CheckIcon size={15} />
+        {t("overview.markRead")}
+      </button>
+      <Link {...to} className="overview-card__action">
+        {t("overview.open")}
+        <ArrowRightIcon size={15} />
+      </Link>
+    </span>
+  );
+  // A busy channel without a mention is one line (GEL-75): its name, the
+  // count, the newest message and the two actions.
+  if (card.busy && !alone) {
+    const last = messages?.at(-1);
+    return (
+      <section
+        className="overview-card overview-card--line"
+        data-busy=""
+        aria-labelledby={heading}
+      >
+        <div className="overview-card__head">
+          {name}
+          {count}
+          <span className="overview-card__preview">
+            {last ? (
+              <>
+                <span className="overview-card__preview-author">
+                  {last.author.name}:
+                </span>{" "}
+                {linePreview(last, members)}
+              </>
+            ) : null}
+          </span>
+          {actions}
+        </div>
+      </section>
+    );
+  }
   return (
-    <section
-      className="overview-card"
-      data-busy={card.busy && !alone ? "" : undefined}
-      aria-labelledby={heading}
-    >
+    <section className="overview-card" aria-labelledby={heading}>
       <div className="overview-card__head">
-        <Link {...to} id={heading} className="overview-card__name">
-          <HashIcon size={16} />
-          <span>{channel.name}</span>
-        </Link>
+        {name}
         {card.mentioned ? (
           <span
             className="overview-card__at"
@@ -476,26 +713,8 @@ function MissedChannel({
             @
           </span>
         ) : null}
-        <span className="overview-card__new">
-          {t("overview.new", { count: card.unread })}
-        </span>
-        <span className="overview-card__actions">
-          <button
-            type="button"
-            className="overview-card__action"
-            onClick={() =>
-              // Failed, the card stays: the chat's "Gelesen" does the same.
-              void markRead({ channel: channel.id }).catch(() => {})
-            }
-          >
-            <CheckIcon size={15} />
-            {t("overview.markRead")}
-          </button>
-          <Link {...to} className="overview-card__action">
-            {t("overview.open")}
-            <ArrowRightIcon size={15} />
-          </Link>
-        </span>
+        {count}
+        {actions}
       </div>
       {messages?.map((message) => (
         <OverviewMessage key={message.id} message={message} members={members} />
@@ -518,6 +737,20 @@ function MissedChannel({
         />
       ) : null}
     </section>
+  );
+}
+
+/** A message as one line of plain text, as a notification shows it. */
+function linePreview(
+  message: Message,
+  members: readonly MentionMember[],
+): string {
+  const system = asSystem(message.system);
+  if (system) return systemText(system, message.author.name);
+  return previewText(
+    readableMentions(plainText(message.content), members),
+    (message.attachments ?? []).length > 0,
+    Boolean(message.gif),
   );
 }
 
@@ -706,48 +939,57 @@ function SharedItem({
       params: { serverId: server.id, channelId: file.channel_id },
     });
   };
-  if (isPicture(file.content_type))
-    return (
-      <button
-        type="button"
-        className="overview-shared__picture"
-        onClick={open}
-        style={{ backgroundColor: placeholderColour(file) }}
-      >
-        <img
-          src={
-            file.thumbnail ? thumbnailUrl(file.id, 400) : attachmentUrl(file.id)
-          }
-          alt={
-            file.description ??
-            t("overview.pictureBy", { name: file.author.name })
-          }
-          loading="lazy"
-        />
-        {channel ? (
-          <span className="overview-shared__tag">#{channel}</span>
-        ) : null}
-        <span className="overview-shared__by">
-          <Avatar
-            name={file.author.name}
-            url={file.author.avatar_url}
-            decorative
-          />
-          {file.author.name}
-        </span>
-      </button>
-    );
+  // One size for pictures and files (GEL-75): 160 × 100, never stretched,
+  // who sent it and when below.
   return (
-    <button type="button" className="overview-shared__file" onClick={open}>
-      <FileIcon size={20} />
-      <span className="overview-shared__text">
-        <span className="overview-shared__filename">{file.filename}</span>
-        <span className="overview-shared__meta">
-          {t("overview.fileMeta", {
-            name: file.author.name,
-            detail: channel ? `#${channel}` : formatSize(file.size),
-          })}
+    <button type="button" className="overview-shared__tile" onClick={open}>
+      {isPicture(file.content_type) ? (
+        <span
+          className="overview-shared__picture"
+          style={{ backgroundColor: placeholderColour(file) }}
+        >
+          <img
+            src={
+              file.thumbnail
+                ? thumbnailUrl(file.id, 400)
+                : attachmentUrl(file.id)
+            }
+            alt={
+              file.description ??
+              t("overview.pictureBy", { name: file.author.name })
+            }
+            loading="lazy"
+          />
+          {channel ? (
+            <span className="overview-shared__tag">#{channel}</span>
+          ) : null}
         </span>
+      ) : (
+        <span className="overview-shared__file">
+          <FileIcon size={22} />
+          <span className="overview-shared__text">
+            <span className="overview-shared__filename">{file.filename}</span>
+            <span className="overview-shared__meta">
+              {channel
+                ? t("overview.fileMeta", {
+                    name: `#${channel}`,
+                    detail: formatSize(file.size),
+                  })
+                : formatSize(file.size)}
+            </span>
+          </span>
+        </span>
+      )}
+      <span className="overview-shared__by">
+        <Avatar
+          name={file.author.name}
+          url={file.author.avatar_url}
+          decorative
+        />
+        <span className="overview-shared__name">{file.author.name}</span>
+        <time dateTime={file.created_at} title={formatFull(file.created_at)}>
+          {formatWhen(file.created_at)}
+        </time>
       </span>
     </button>
   );

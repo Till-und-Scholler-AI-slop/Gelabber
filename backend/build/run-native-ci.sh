@@ -31,7 +31,7 @@ exec docker run --rm --init --network host \
   --env CARGO_HOME=/cargo \
   --env RUSTUP_HOME=/usr/local/rustup \
   --env CARGO_TARGET_DIR="$workspace/backend/target/native-debian" \
-  --env CARGO_TERM_COLOR \
+  --env CARGO_TERM_COLOR --env CARGO_PROFILE_DEV_DEBUG \
   --env DATABASE_URL --env REDIS_URL \
   --env MINIO_ENDPOINT --env MINIO_ROOT_USER --env MINIO_ROOT_PASSWORD \
   "$image" cargo "$@"

@@ -462,8 +462,10 @@ summary {
 /* The channel list's fold button and the sidebars' edges (GEL-34). Wide
    screens only: phones and narrow windows keep their drawers, and touch
    screens get the button but no edge to drag. The widths come from
-   SidebarEdge.tsx, fitted to the window. */
-.channel-list-toggle,
+   SidebarEdge.tsx, fitted to the window. The button also carries
+   .lr-header-icon, whose display: grid comes from chat.css, loaded later:
+   both selectors name both classes so this rule wins on phones. */
+.lr-header-icon.channel-list-toggle,
 .sidebar-edge {
   display: none;
 }
@@ -517,7 +519,7 @@ summary {
   user-select: none;
 }
 @media (min-width: 801px) {
-  .channel-list-toggle {
+  .lr-header-icon.channel-list-toggle {
     display: grid;
     position: absolute;
     top: calc((var(--lr-header-height) - 32px) / 2);
@@ -526,7 +528,8 @@ summary {
   }
   /* The header lines start after the button. */
   .workspace-main .lr-channel-header,
-  .workspace-main .community-overview__bar {
+  .workspace-main .community-overview__bar,
+  .workspace-main .friends-page__header {
     padding-left: 52px;
   }
   html[data-kino] .channel-list-toggle {
@@ -635,7 +638,7 @@ summary {
    read as the keyboard focus ring. A mention keeps its red count. The
    hidden pill is muted, not accent: it grows from and shrinks to that
    colour, so a pill that comes or goes would otherwise flash yellow. */
-:is(.server-tile, .server-home-link)::before {
+:is(.server-tile, .server-home-link, .server-discover-tile)::before {
   content: "";
   position: absolute;
   left: -10px;
@@ -656,7 +659,7 @@ summary {
 :is(.server-tile, .server-home-link):hover:not(.is-active)::before {
   height: 16px;
 }
-:is(.server-tile, .server-home-link).is-active::before {
+:is(.server-tile, .server-home-link, .server-discover-tile).is-active::before {
   height: 28px;
   background: var(--lr-text);
 }
@@ -813,35 +816,35 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   flex-shrink: 0;
   padding: 5px 0 max(16px, var(--lr-safe-bottom));
 }
-/* An empty place for one more server: dashed, with the green of "online". */
-.server-create-button {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border: 1px dashed var(--lr-border-strong);
-  border-radius: 50%;
-  background: transparent;
-  color: var(--lr-online-text);
-}
-.server-create-button:hover {
-  border-style: solid;
-  background: var(--lr-hover);
-}
-/* "Entdecken" (v0.10): a square tile, amber while the directory is open. */
+/* "Server hinzufügen" and "Entdecken" (GEL-74): tiles shaped like a server
+   without a picture, so the rail reads as one column. Round at rest with the
+   surface and a muted icon; on hover the theme's corner and the accent, as a
+   server tile answers it. */
+.server-create-button,
 .server-discover-tile {
+  position: relative;
   display: grid;
   place-items: center;
   width: 44px;
   height: 44px;
-  border-radius: var(--lr-radius);
+  flex-shrink: 0;
+  border-radius: calc(var(--lr-radius-lg) * 2.2);
+  background: var(--lr-surface);
   color: var(--lr-muted);
+  transition:
+    border-radius var(--lr-dur-fast) var(--lr-ease),
+    background-color var(--lr-dur-fast) var(--lr-ease),
+    color var(--lr-dur-fast) var(--lr-ease);
 }
+.server-create-button:hover,
 .server-discover-tile:hover {
+  border-radius: var(--lr-radius-lg);
   background: var(--lr-hover);
-  color: var(--lr-text);
+  color: var(--lr-accent-text);
 }
+/* The directory open: selected like an open server, with its edge pill. */
 .server-discover-tile.is-active {
+  border-radius: var(--lr-radius-lg);
   background: var(--lr-selected);
   color: var(--lr-accent-text);
 }

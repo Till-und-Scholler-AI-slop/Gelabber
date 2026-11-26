@@ -99,8 +99,13 @@ def promote():
         for name, item in entries.items()))
 
 
+def version_key(tag):
+    return tuple(int(part) for part in re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)', tag).groups())
+
+
 def latest():
-    """Refresh mutable aliases only from the latest published stable release."""
+    """Refresh mutable aliases from a published stable release no older than
+    GitHub's Latest."""
     repo = os.environ['GITHUB_REPOSITORY']
     manifest = json.loads(Path('image-set.json').read_text())
     sha, version = manifest['revision'], manifest['version']
@@ -108,10 +113,12 @@ def latest():
             or not re.fullmatch(r'v\d+\.\d+\.\d+', version)
             or not re.fullmatch(r'[0-9a-f]{40}', sha)):
         raise ValueError('Latest requires a promoted stable release image set')
-    published = api('releases/latest')
-    if (published['tag_name'] != version or published['draft']
-            or published['prerelease'] or not published.get('published_at')):
-        raise ValueError('Refusing to move latest to an older or unpublished release')
+    published = api(f'releases/tags/{version}')
+    if published['draft'] or published['prerelease'] or not published.get('published_at'):
+        raise ValueError('Refusing to move latest to an unpublished release')
+    # GitHub's Latest follows once desktop-release.yml has attached the apps.
+    if version_key(api('releases/latest')['tag_name']) > version_key(version):
+        raise ValueError('Refusing to move latest to an older release')
     # gh release create may have just created this tag on the remote.
     run('git', 'fetch', '--no-tags', 'origin', f'refs/tags/{version}:refs/tags/{version}')
     if tag_sha(version) != sha:
@@ -203,8 +210,11 @@ def release():
         return
     args = ['gh', 'release', 'create', version, 'image-set.json', 'image-set.env',
             '--target', sha, '--title', f'Gelabber {version}']
+    # Latest only once desktop-release.yml has attached the apps: the apps'
+    # updater and the web's download links read releases/latest/download.
+    args += ['--latest=false']
     if not stable:
-        args += ['--prerelease', '--latest=false']
+        args += ['--prerelease']
     notes = Path(f'.github/release-notes/{version}.md')
     args += ['--notes-file', str(notes)] if notes.exists() else ['--generate-notes']
     run(*args)
