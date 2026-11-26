@@ -39,12 +39,11 @@ The **shipped line** is the latest release tag on `main`.
 - **Each fix** gets its own PR before a release PR bundles it.
 - **Protection:** the rulesets `Main Protection` and `Version branches`
   (`refs/heads/v[0-9]*`) require a PR and a green `ci-ok`, and block force
-  pushes and deletion. The ruleset `Merge queue (development line)` adds
-  the merge queue to the development line: a PR lands only after CI passed
-  on it merged onto the branch's newest state, one PR at a time. GitHub
-  allows no wildcard with a merge queue, so that ruleset names the branch
-  (`refs/heads/v0.14`); a new development line replaces it there before
-  its first PR. Nobody bypasses them, admins included. A new version
+  pushes and deletion. The ruleset `Merge queue (version branches)` adds
+  the merge queue: a PR lands only after CI passed on it merged onto the
+  branch's newest state, one PR at a time. GitHub allows no wildcard with
+  a merge queue, so that ruleset lists every name from `v0.14` to `v2.99`
+  one by one; a new version branch has its queue without any change. Nobody bypasses them, admins included. A new version
   branch name must match that pattern, or gets the same protection by
   hand before its first commit.
 - **Merge and review:** a maintainer (write access or more) merges their own
