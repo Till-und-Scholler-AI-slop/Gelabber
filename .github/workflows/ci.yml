@@ -35,6 +35,7 @@ jobs:
       contents: read
     outputs:
       reused-run: ${{ steps.reuse.outputs.run }}
+      candidate: ${{ steps.candidate.outputs.candidate }}
       backend: ${{ steps.areas.outputs.backend }}
       web: ${{ steps.areas.outputs.web }}
       desktop: ${{ steps.areas.outputs.desktop }}
@@ -75,10 +76,28 @@ jobs:
             python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
           fi
 
+      # A release or hotfix pull request to main packages its apps as the
+      # release ships them; desktop-release.yml then only signs (GEL-358).
+      - name: Release candidate
+        id: candidate
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          candidate=false
+          if [ "$BASE_REF" = main ] && [ "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY" ]; then
+            case "$HEAD_REF" in release/v*|hotfix/v*) candidate=true ;; esac
+          fi
+          echo "candidate=$candidate" | tee -a "$GITHUB_OUTPUT"
+
       - name: Record the tested tree
         if: github.event_name == 'pull_request'
         env:
           AREAS: ${{ toJSON(steps.areas.outputs) }}
+          CANDIDATE: ${{ steps.candidate.outputs.candidate }}
         run: python3 .github/workflows/scripts/tested_tree.py record
 
       - name: Upload the tested tree
@@ -437,7 +456,13 @@ jobs:
     name: Desktop
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
+    # read: desktop-native.yml's prebuilt job asks for it; GitHub checks the grant even where it is skipped.
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/desktop-native.yml
+    with:
+      candidate: ${{ needs.changes.outputs.candidate == 'true' }}
 
   # A libwebrtc package that a push built goes into the libwebrtc-packages
   # release, from a job that runs none of libwebrtc's build code.

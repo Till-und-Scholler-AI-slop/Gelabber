@@ -90,9 +90,10 @@ class Gates(unittest.TestCase):
     def test_only_version_releases_start_the_desktop_build(self):
         # Publishing the build-deps mirror release once ran the whole desktop build.
         text = (ROOT / '.github/workflows/desktop-release.yml').read_text()
-        build = re.split(r'\n  \S', text.split('\n  build:\n', 1)[1], maxsplit=1)[0]
-        self.assertIn("    if: github.event_name != 'release' || "
-                      "startsWith(github.event.release.tag_name, 'v')\n", build)
+        for job in ('candidate', 'build'):
+            body = re.split(r'\n  \S', text.split(f'\n  {job}:\n', 1)[1], maxsplit=1)[0]
+            self.assertIn("    if: github.event_name != 'release' || "
+                          "startsWith(github.event.release.tag_name, 'v')\n", body)
 
 
 class Promotion(unittest.TestCase):

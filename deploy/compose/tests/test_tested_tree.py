@@ -84,6 +84,20 @@ class StandsForTest(unittest.TestCase):
         self.assertFalse(tested_tree.stands_for({'tree': TREE, 'areas': list(tested_tree.AREAS)}, TREE))
 
 
+class CandidateTest(unittest.TestCase):
+    """desktop-release.yml signs a release PR's packages only if it made them."""
+
+    def test_a_candidate_run_stands_for_the_tag(self):
+        tested = tested_tree.record(ALL, SHA, TREE, candidate=True)
+        self.assertTrue(tested_tree.stands_for(tested, TREE, candidate=True))
+        self.assertTrue(tested_tree.stands_for(tested, TREE))
+
+    def test_a_run_without_packages_does_not(self):
+        self.assertFalse(tested_tree.stands_for(tested_tree.record(ALL, SHA, TREE), TREE, candidate=True))
+        self.assertFalse(tested_tree.stands_for(tested_tree.record(ALL, SHA, 'f' * 40, candidate=True),
+                                                TREE, candidate=True))
+
+
 class WorkflowTest(unittest.TestCase):
     """ci.yml records the tree on pull requests and reuses it on main only."""
 
