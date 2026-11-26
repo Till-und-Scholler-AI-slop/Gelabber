@@ -125,6 +125,22 @@ class QueueTest(unittest.TestCase):
         self.assertEqual([found['id'] for found in tested_tree.queue_runs(runs, REPO, SHA)], [2, 3, 1])
 
 
+class LastGoodTest(unittest.TestCase):
+    """A push's changes start at the last commit whose push run passed (GEL-363)."""
+
+    def test_the_newest_passed_push_run_on_an_ancestor(self):
+        runs = [run(1, '2026-11-26T18:00:00Z', event='push', head_sha='1' * 40),
+                run(2, '2026-11-26T19:00:00Z', event='push', head_sha='2' * 40),
+                run(3, '2026-11-26T20:00:00Z', event='push', head_sha='3' * 40, conclusion='cancelled'),
+                run(4, '2026-11-26T21:00:00Z', event='push', head_sha='4' * 40)]
+        ancestors = {'1' * 40, '2' * 40, '3' * 40}
+        self.assertEqual(tested_tree.last_good(runs, REPO, SHA, ancestors.__contains__), '2' * 40)
+
+    def test_the_pushed_commit_itself_and_other_events_do_not_count(self):
+        runs = [run(1, event='push', head_sha=SHA), run(2, event='pull_request', head_sha='1' * 40)]
+        self.assertIsNone(tested_tree.last_good(runs, REPO, SHA, lambda commit: True))
+
+
 class WorkflowTest(unittest.TestCase):
     """ci.yml records the tree on pull requests and reuses it on main only."""
 
