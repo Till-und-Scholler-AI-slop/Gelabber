@@ -57,8 +57,9 @@ class SupersededTest(unittest.TestCase):
         key = 'v0-rust-1-core-windows-Windows_NT-x64-744a7afe-578b7d58'
         entries = [cache(1, key, ref='refs/heads/v0.13'),
                    cache(2, 'node-cache-Linux-x64-npm-5f98175b', ref='refs/pull/748/merge'),
+                   cache(4, 'node-cache-Linux-x64-npm-5f98175b', ref='refs/heads/gh-readonly-queue/v0.14/pr-1-abc'),
                    cache(3, key, ref='refs/heads/v0.14')]
-        self.assertEqual(deleted(entries), [1, 2])
+        self.assertEqual(deleted(entries), [1, 2, 4])
 
     def test_other_branches_and_families_stay(self):
         entries = [cache(1, 'index-media-1-f921bd05#28'), cache(2, 'index-media-1-f921bd05#29'),

@@ -1,5 +1,5 @@
-# PR gate: `changes` picks the areas a pull request or push touches and only
-# their jobs run; ci-ok is the one required check. Manual runs run all.
+# PR gate: `changes` picks the areas a pull request, merge queue entry or push
+# touches and only their jobs run; ci-ok is the one required check. Manual runs run all.
 name: CI
 
 on:
@@ -10,6 +10,9 @@ on:
         type: boolean
         default: false
   pull_request:
+  # The version branches' merge queue tests what will land (GEL-362); its runs
+  # are treated as a pull request's: read-only, no packages, no cache saved.
+  merge_group:
   push:
     branches: [main, "v[0-9]*"]
 
@@ -49,14 +52,21 @@ jobs:
           persist-credentials: false
           fetch-depth: 2
 
-      # A merged pull request's run already passed this exact tree (GEL-357):
-      # main then checks nothing again. Pushes to v* refresh the caches and run all.
-      - name: Pull request run that passed this tree
+      # A run that already passed this exact tree: on main the release PR's
+      # (GEL-357), on v* the merge queue's (GEL-362). Then nothing runs again.
+      - name: Run that passed this tree
         id: reuse
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/workflows/scripts/tested_tree.py find >> "$GITHUB_OUTPUT"
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            python3 .github/workflows/scripts/tested_tree.py find >> "$GITHUB_OUTPUT"
+          else
+            python3 .github/workflows/scripts/tested_tree.py find-queue >> "$GITHUB_OUTPUT"
+          fi
 
       # A pull request checks out its merge commit; the first parent is the base.
       # --no-renames lists a move's source too; quotePath=false leaves non-ASCII paths unquoted.
@@ -67,7 +77,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REUSED_RUN: ${{ steps.reuse.outputs.run }}
-          BEFORE: ${{ github.event.before }}
+          BEFORE: ${{ github.event.before || github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = pull_request ]; then
@@ -75,7 +85,7 @@ jobs:
           elif [ -n "$REUSED_RUN" ]; then
             echo "Run $REUSED_RUN passed this tree: no area runs again." | tee -a "$GITHUB_STEP_SUMMARY"
             python3 .github/workflows/scripts/changes.py < /dev/null >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT" = push ] && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+          elif { [ "$EVENT" = push ] || [ "$EVENT" = merge_group ]; } && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
               && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
             echo "Areas changed since $BEFORE." | tee -a "$GITHUB_STEP_SUMMARY"
             git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
@@ -101,14 +111,15 @@ jobs:
           echo "candidate=$candidate" | tee -a "$GITHUB_OUTPUT"
 
       - name: Record the tested tree
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           AREAS: ${{ toJSON(steps.areas.outputs) }}
           CANDIDATE: ${{ steps.candidate.outputs.candidate }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: python3 .github/workflows/scripts/tested_tree.py record
 
       - name: Upload the tested tree
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-tree
@@ -142,8 +153,7 @@ jobs:
           DOCS_RS: "1"
         run: cargo clippy --locked --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 
-  # Two runners take half of the tests each: the tests wait on Postgres and
-  # on timers more than they compute, so a second runner halves their time.
+  # Two runners take half of the tests each, which halves their time.
   rust:
     name: Rust tests (${{ matrix.part }}/2)
     needs: changes
@@ -419,7 +429,7 @@ jobs:
   images:
     name: Image ${{ matrix.name }}
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.images != '[]'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.images != '[]'
     runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
@@ -478,7 +488,7 @@ jobs:
   minio:
     name: MinIO images
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.minio == 'true'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.minio == 'true'
     uses: ./.github/workflows/minio-images.yml
 
   desktop:
@@ -499,7 +509,7 @@ jobs:
     name: Store libwebrtc packages
     needs: desktop
     if: >-
-      !cancelled() && github.event_name != 'pull_request' &&
+      !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' &&
       (needs.desktop.outputs.libwebrtc-linux-store != '' || needs.desktop.outputs.libwebrtc-windows-store != '')
     permissions:
       contents: write

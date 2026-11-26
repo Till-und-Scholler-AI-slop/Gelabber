@@ -152,7 +152,7 @@ jobs:
 
       - name: Is the package stored?
         id: asset
-        if: github.event_name != 'pull_request' && steps.stored.outputs.found != 'true'
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && steps.stored.outputs.found != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
@@ -297,7 +297,7 @@ jobs:
 
       - name: Is the package stored?
         id: asset
-        if: github.event_name != 'pull_request' && steps.stored.outputs.found != 'true'
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && steps.stored.outputs.found != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -504,14 +504,14 @@ jobs:
       # Packaging runs after merge (main/v*), for releases and their candidates.
       # The script also checks both files (C++ runtime, exports, rpath).
       - name: Package the native app
-        if: github.event_name != 'pull_request' || inputs.candidate
+        if: (github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate
         run: |
           set -euo pipefail
           lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
           desktop/packaging/native/tarball.sh "$lib"
 
       - name: Upload the native app
-        if: github.event_name != 'pull_request' || inputs.candidate
+        if: (github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gelabber-native-linux-x64
@@ -712,7 +712,7 @@ jobs:
       # for releases only (as the Linux packages); NSIS of the image.
       - name: Native installer
         id: native-installer
-        if: ${{ !cancelled() && (github.event_name != 'pull_request' || inputs.candidate) && steps.native.outcome == 'success' }}
+        if: ${{ !cancelled() && ((github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate) && steps.native.outcome == 'success' }}
         timeout-minutes: 15
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -1177,7 +1177,7 @@ jobs:
   arch-repo:
     name: Arch package and repository
     if: >-
-      !cancelled() && github.event_name != 'pull_request' &&
+      !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' &&
       (needs.core-linux.result == 'success' || needs.prebuilt.result == 'success')
     needs: [core-linux, prebuilt]
     runs-on: ubuntu-24.04

@@ -10,6 +10,11 @@ fewer areas checked, an error) prints nothing, and CI runs every check.
 `find --candidate` finds the same for a release tag, from a run that also
 packaged the apps as the release ships them (desktop-native.yml `candidate`):
 desktop-release.yml signs those instead of building again (GEL-358).
+
+`find-queue` does it for a push to a version branch, from the merge queue's
+run (GEL-362): the same tree, tested on the push's previous head, so the
+areas it checked are the push's. A push that changes a cache input
+(CACHE_INPUTS) runs its areas anyway, because only pushes save caches.
 """
 import json
 import os
@@ -22,6 +27,12 @@ ARTIFACT = 'tested-tree'
 WORKFLOW = '.github/workflows/ci.yml'
 # The areas a run must have checked to stand for a push, which checks all.
 AREAS = ('backend', 'web', 'desktop', 'deploy')
+# What the cache keys hash: lock files and manifests, the toolchain, the
+# backend's build image and the libwebrtc build (ci.yml, desktop-native.yml).
+CACHE_INPUTS = ('Cargo.lock', 'Cargo.toml', 'package-lock.json', 'rust-toolchain.toml')
+CACHE_INPUT_PREFIXES = ('backend/media/Dockerfile', 'backend/build/', 'desktop/native/libwebrtc',
+                        'desktop/native/scripts/build-libwebrtc', 'desktop/native/patches/', '.github/')
+QUEUE_RUNS = 30
 
 
 def git(*args):
@@ -32,10 +43,34 @@ def gh(*args):
     return subprocess.check_output(('gh', *args), text=True)
 
 
-def record(areas, sha, tree, candidate=False):
-    """What a pull request's run passed, as stored in the artifact."""
-    return {'schema': 1, 'sha': sha, 'tree': tree, 'candidate': candidate,
+def record(areas, sha, tree, candidate=False, base=None):
+    """What a pull request's or merge queue's run passed, as stored in the
+    artifact; `base` is the commit it was tested on."""
+    return {'schema': 1, 'sha': sha, 'tree': tree, 'candidate': candidate, 'base': base,
             'areas': sorted(area for area, touched in areas.items() if touched == 'true')}
+
+
+def touches_cache_inputs(paths):
+    """Whether a change alters what a cache key hashes."""
+    return any(path.rsplit('/', 1)[-1] in CACHE_INPUTS or path.startswith(CACHE_INPUT_PREFIXES)
+               for path in paths if path)
+
+
+def queue_runs(runs, repo, sha):
+    """Successful CI runs of the merge queue, the one of `sha` first."""
+    found = [run for run in runs
+             if run['path'] == WORKFLOW and run['event'] == 'merge_group'
+             and run['status'] == 'completed' and run['conclusion'] == 'success'
+             and run['head_repository']['full_name'] == repo
+             and run['repository']['full_name'] == repo]
+    found.sort(key=lambda run: run['run_started_at'], reverse=True)
+    return sorted(found, key=lambda run: run['head_sha'] != sha)
+
+
+def stands_for_push(tested, tree, before):
+    """Whether a queue run's record covers a push of `tree` on `before`."""
+    return (tested.get('schema') == 1 and tested.get('tree') == tree
+            and tested.get('base') == before)
 
 
 def merged_pull(pulls, sha, repo):
@@ -93,10 +128,39 @@ def find(repo, sha, tree, candidate=False):
     return None
 
 
+def download(repo, run_id, folder):
+    gh('run', 'download', str(run_id), '--repo', repo, '--name', ARTIFACT, '--dir', folder)
+    return json.loads((Path(folder) / f'{ARTIFACT}.json').read_text())
+
+
+def find_queue(repo, sha, tree, before):
+    if not before or set(before) == {'0'}:
+        print('no previous head', file=sys.stderr)
+        return None
+    git('fetch', '--quiet', '--depth=1', 'origin', before)
+    paths = git('diff', '--no-renames', '--name-only', before, sha).splitlines()
+    if touches_cache_inputs(paths):
+        print('the push changes a cache input: its areas run and save their caches', file=sys.stderr)
+        return None
+    runs = json.loads(gh('api', f'repos/{repo}/actions/runs?event=merge_group&status=success&per_page={QUEUE_RUNS}'))
+    for run in queue_runs(runs['workflow_runs'], repo, sha)[:QUEUE_RUNS]:
+        with tempfile.TemporaryDirectory() as folder:
+            try:
+                tested = download(repo, run['id'], folder)
+            except (subprocess.CalledProcessError, OSError, ValueError):
+                continue
+        if stands_for_push(tested, tree, before):
+            print(f'queue run {run["id"]} passed tree {tree} on {before}', file=sys.stderr)
+            return run['id']
+    print(f'no queue run passed tree {tree} on {before}', file=sys.stderr)
+    return None
+
+
 def main(argv):
     if argv[:1] == ['record']:
+        base = os.environ.get('BASE_SHA') or git('rev-parse', 'HEAD^1')
         record_ = record(json.loads(os.environ['AREAS']), os.environ['GITHUB_SHA'], git('rev-parse', 'HEAD^{tree}'),
-                         os.environ.get('CANDIDATE') == 'true')
+                         os.environ.get('CANDIDATE') == 'true', base)
         Path(f'{ARTIFACT}.json').write_text(json.dumps(record_, indent=2) + '\n')
         print(json.dumps(record_))
     elif argv[:1] == ['find']:
@@ -107,8 +171,16 @@ def main(argv):
             print(f'::warning::no reuse, running every check: {error}', file=sys.stderr)
             run = None
         print(f'run={run or ""}')
+    elif argv[:1] == ['find-queue']:
+        try:
+            run = find_queue(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'],
+                             git('rev-parse', 'HEAD^{tree}'), os.environ.get('BEFORE', ''))
+        except Exception as error:  # noqa: BLE001 - any doubt runs the changed areas
+            print(f'::warning::no reuse, running the changed areas: {error}', file=sys.stderr)
+            run = None
+        print(f'run={run or ""}')
     else:
-        sys.exit('usage: tested_tree.py record|find')
+        sys.exit('usage: tested_tree.py record|find|find-queue')
 
 
 if __name__ == '__main__':
