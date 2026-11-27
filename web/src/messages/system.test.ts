@@ -18,6 +18,9 @@ function msg(id: string, extra: Partial<Message> = {}): Message {
     content: id,
     created_at: "2026-10-22T12:00:00.000Z",
     edited_at: null,
+    reactions: [],
+    mentions: [],
+    mention_everyone: false,
     attachments: [],
     ...extra,
   };

@@ -193,6 +193,7 @@ function toListItem(detail: ServerDetail): Server {
     role,
     permissions,
     member_permissions,
+    blocked,
   } = detail;
   return {
     id,
@@ -203,6 +204,7 @@ function toListItem(detail: ServerDetail): Server {
     role,
     permissions,
     member_permissions,
+    blocked,
   };
 }
 

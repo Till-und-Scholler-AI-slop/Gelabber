@@ -386,7 +386,7 @@ async fn block(
     Body(body): Body<ReasonBody>,
 ) -> Result<Json<ServerAdmin>, ApiError> {
     let reason = reason(body.reason.as_deref(), true)?;
-    let mut tx = membership::lock_server_bounded(&state.db, id).await?;
+    let mut tx = membership::lock_server_bounded(&state.db, id, state.server_lock_wait).await?;
     let (_, blocked) = lock(&mut tx, id).await?.ok_or(ApiError::NotFound)?;
     let removal = if blocked {
         None

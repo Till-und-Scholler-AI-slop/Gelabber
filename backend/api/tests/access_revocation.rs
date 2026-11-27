@@ -802,12 +802,14 @@ async fn one_connection_pool_supports_concurrent_auth_join_ticket_and_cleanup(po
 
 #[sqlx::test]
 async fn idle_media_authority_stops_and_a_new_mint_restarts_it(pool: PgPool) {
-    let state = common::ws_state(pool);
+    let mut state = common::ws_state(pool);
+    // A ticket keeps the authority renewed for 1 s instead of 35 s.
+    state.media_demand = Duration::from_secs(1);
     let mut owner = register(&state, "owner").await;
     let (_, _, voice, _) = server(&mut owner, "Idle").await;
     let old = claim(&mut owner, voice).await;
     let key = session_authority_key(old["auth"]["session"].as_str().unwrap());
-    tokio::time::timeout(Duration::from_secs(40), async {
+    tokio::time::timeout(Duration::from_secs(15), async {
         while redis_get(key.clone()).await.is_some() {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }

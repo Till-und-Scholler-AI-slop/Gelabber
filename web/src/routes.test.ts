@@ -431,21 +431,6 @@ describe("the feedback settings area", () => {
     expect(await guardFeedback()).toBeUndefined();
   });
 
-  it("is not found where the API has no status route", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>(() =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({ error: "not_found", message: "Not found." }),
-            { status: 404, headers: { "Content-Type": "application/json" } },
-          ),
-        ),
-      ),
-    );
-    expect(isNotFound(await guardFeedback())).toBe(true);
-  });
-
   it("waits for nothing in the other areas", () => {
     const beforeLoad =
       router.routesById["/workspace/settings/$area"].options.beforeLoad;

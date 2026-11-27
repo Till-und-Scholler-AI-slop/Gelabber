@@ -63,6 +63,9 @@ pub(super) struct Inner {
     per_account: std::sync::Mutex<HashMap<Uuid, usize>>,
     /// Set once the process shuts down ([`Gateway::drain`]).
     shutdown: tokio::sync::watch::Sender<bool>,
+    /// How long a voice seat lives without a refresh, in ms
+    /// ([`super::leases::VOICE_LEASE_MS`]; [`Gateway::with_voice_lease`]).
+    pub(super) voice_lease_ms: AtomicU64,
 }
 
 /// One account's place among its sockets ([`Gateway::reserve_socket`]),
@@ -186,6 +189,7 @@ impl ConnTable {
                 media_sessions: Mutex::new(HashMap::new()),
                 per_account: std::sync::Mutex::new(HashMap::new()),
                 shutdown: tokio::sync::watch::channel(false).0,
+                voice_lease_ms: AtomicU64::new(super::leases::VOICE_LEASE_MS),
             }),
         }
     }
@@ -421,6 +425,18 @@ impl Gateway {
         }
     }
 
+    /// Tests: voice seats that run out after `lease` instead of
+    /// [`super::leases::VOICE_LEASE_MS`], so a test of a crashed process's
+    /// seat need not wait five seconds.
+    pub fn with_voice_lease(self, lease: Duration) -> Self {
+        let ms = u64::try_from(lease.as_millis()).unwrap_or(u64::MAX).max(1);
+        self.connections
+            .inner
+            .voice_lease_ms
+            .store(ms, Ordering::Relaxed);
+        self
+    }
+
     pub fn presence_ttl(&self) -> Duration {
         self.presence_ttl
     }
@@ -583,16 +599,20 @@ impl Gateway {
         sessions.insert(key.to_owned(), (generation, std::time::Instant::now()));
         Some(generation)
     }
-    pub async fn media_session_recent(&self, key: &str, generation: Uuid) -> bool {
+    /// The session's media worker `generation` minted within `demand`.
+    pub async fn media_session_recent(
+        &self,
+        key: &str,
+        generation: Uuid,
+        demand: Duration,
+    ) -> bool {
         self.connections
             .inner
             .media_sessions
             .lock()
             .await
             .get(key)
-            .is_some_and(|(owner, last)| {
-                *owner == generation && last.elapsed() < Duration::from_secs(35)
-            })
+            .is_some_and(|(owner, last)| *owner == generation && last.elapsed() < demand)
     }
     pub async fn untrack_media_session(&self, key: &str, generation: Uuid) {
         let mut sessions = self.connections.inner.media_sessions.lock().await;
