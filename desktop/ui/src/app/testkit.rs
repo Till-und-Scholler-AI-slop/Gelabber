@@ -115,6 +115,11 @@ pub struct Gateway {
     sequence: Mutex<std::collections::HashMap<(String, Option<String>), u64>>,
 }
 
+/// How often the stand-in gateway sends `h`, as the API's does: the client
+/// drops a socket that stays silent for its `dead` time (30 s) and
+/// reconnects, which would start a recovery round in a long test.
+const HEARTBEAT: Duration = Duration::from_secs(5);
+
 /// The `ep` of every topic of the stand-in gateway.
 pub const EPOCH: &str = "00000000-0000-4000-8000-0000000000e0";
 
@@ -168,7 +173,15 @@ impl Gateway {
             rx: Some(rx),
         };
         let rx = outbox.rx.as_ref().expect("receiver");
+        let mut beat = Instant::now();
         loop {
+            // Written here, not pushed: it is no work idle waits for.
+            if beat.elapsed() >= HEARTBEAT {
+                beat = Instant::now();
+                if socket.send(json!({"op": "h"}).to_string().into()).is_err() {
+                    return;
+                }
+            }
             while let Ok(frame) = rx.try_recv() {
                 let sent = socket.send(frame.to_string().into());
                 self.queued.fetch_sub(1, Ordering::SeqCst);
