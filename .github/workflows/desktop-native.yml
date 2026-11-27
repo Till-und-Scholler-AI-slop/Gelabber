@@ -588,10 +588,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s desktop/packaging/tests -v
 
-      # shellcheck and PSScriptAnalyzer, both on the runner image.
+      # shellcheck and PSScriptAnalyzer at the versions lint.sh pins (SHA-256), not the runner image's.
       - name: Lint the packaging scripts
         if: ${{ !cancelled() }}
-        run: desktop/packaging/lint.sh
+        run: desktop/packaging/lint.sh --install "$RUNNER_TEMP/lint-tools"
 
   # Windows in the release profile (the DLL that ships): core, app and checks;
   # after merge also the installer, installed, updated and removed.
