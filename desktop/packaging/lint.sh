@@ -30,9 +30,10 @@ if [ "${1:-}" = "--install" ]; then
   module="$tools/PSScriptAnalyzer/PSScriptAnalyzer.psd1"
 fi
 
-# The packaging scripts and desktop/native/scripts (libwebrtc, test desktop).
+# The packaging scripts, desktop/native/scripts (libwebrtc, test desktop) and
+# live-tests.sh (e2e-extended.yml).
 cd "$here/.."
-mapfile -t shell < <(find packaging native/scripts -name '*.sh' | sort)
+mapfile -t shell < <({ find packaging native/scripts -name '*.sh'; echo live-tests.sh; } | sort)
 "$shellcheck" --version | sed -n 2p
 "$shellcheck" --severity=warning "${shell[@]}"
 echo "shellcheck: ${#shell[@]} scripts"
