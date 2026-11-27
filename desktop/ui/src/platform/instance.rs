@@ -407,15 +407,23 @@ fn unguarded(e: std::io::Error) -> Claim {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
 
-    fn wait_for(instance: &Instance) -> bool {
-        for _ in 0..200 {
-            if instance.take_show() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        false
+    /// The wake-ups of `instance`, as the UI gets them.
+    fn wake_ups(instance: &Instance) -> mpsc::Receiver<()> {
+        let (woke, wake_ups) = mpsc::channel();
+        instance.set_wake(Arc::new(move || {
+            let _ = woke.send(());
+        }));
+        wake_ups
+    }
+
+    /// Waits for the wake-up a second start causes; the frame it asks for
+    /// must find `show` set, once (the UI shows the window then).
+    fn shown(instance: &Instance, wake_ups: &mpsc::Receiver<()>) {
+        wake_ups.recv().expect("the instance woke the UI");
+        assert!(instance.take_show(), "woken, but nothing to show");
+        assert!(!instance.take_show());
     }
 
     #[cfg(unix)]
@@ -428,13 +436,9 @@ mod tests {
         let Claim::First(first) = claim_at(&path) else {
             panic!("nothing runs yet");
         };
-        let woken = Arc::new(AtomicBool::new(false));
-        let flag = woken.clone();
-        first.set_wake(Arc::new(move || flag.store(true, Ordering::Release)));
+        let wake_ups = wake_ups(&first);
         assert!(matches!(claim_at(&path), Claim::Running));
-        assert!(wait_for(&first));
-        assert!(woken.load(Ordering::Acquire));
-        assert!(!first.take_show());
+        shown(&first, &wake_ups);
         drop(first);
         // A socket file left behind does not block the next start.
         std::fs::write(&path, b"").ok();
@@ -454,8 +458,9 @@ mod tests {
         let Claim::First(first) = claim_tcp(&file) else {
             panic!("nothing runs yet");
         };
+        let wake_ups = wake_ups(&first);
         assert!(matches!(claim_tcp(&file), Claim::Running));
-        assert!(wait_for(&first));
+        shown(&first, &wake_ups);
         // A wrong secret is not obeyed.
         let text = std::fs::read_to_string(&file).unwrap();
         let port: u16 = text.split(' ').next().unwrap().parse().unwrap();
@@ -463,8 +468,10 @@ mod tests {
         stream
             .set_read_timeout(Some(Duration::from_millis(500)))
             .unwrap();
+        // It ends once the app closed the connection, past its decision.
         assert!(!ask(stream, "show nope"));
         assert!(!first.take_show());
+        assert!(wake_ups.try_recv().is_err(), "a wrong secret woke the UI");
         let _ = std::fs::remove_file(&file);
     }
 
@@ -479,6 +486,7 @@ mod tests {
         let Claim::First(first) = claim_tcp(&file) else {
             panic!("nothing runs yet");
         };
+        let wake_ups = wake_ups(&first);
         let text = std::fs::read_to_string(&file).unwrap();
         let port: u16 = text.split(' ').next().unwrap().parse().unwrap();
         let done = Arc::new(AtomicBool::new(false));
@@ -496,31 +504,40 @@ mod tests {
         let start = std::time::Instant::now();
         assert!(matches!(claim_tcp(&file), Claim::Running));
         assert!(start.elapsed() < WAIT);
-        assert!(wait_for(&first));
+        shown(&first, &wake_ups);
         done.store(true, Ordering::Release);
         trickle.join().unwrap();
         let _ = std::fs::remove_file(&file);
     }
 
+    /// A client that sends a byte every 25 ms would hold a reader whose
+    /// timeout covered each read until the line limit ([`MAX_LINE`] bytes,
+    /// over 1.6 s); the deadline ends it long before.
     #[test]
     fn a_line_is_read_whole_before_the_deadline_or_not_at_all() {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
+        let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let done = Arc::new(AtomicBool::new(false));
+        let (count, stop) = (sent.clone(), done.clone());
         let writer = std::thread::spawn(move || {
             let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-            for _ in 0..40 {
-                if stream.write_all(b"x").is_err() {
-                    return;
-                }
+            while !stop.load(Ordering::Acquire) && stream.write_all(b"x").is_ok() {
+                count.fetch_add(1, Ordering::AcqRel);
+                // A slow client, not a synchronisation.
                 std::thread::sleep(Duration::from_millis(25));
             }
         });
         let (mut stream, _) = listener.accept().unwrap();
-        let start = std::time::Instant::now();
-        let deadline = start + Duration::from_millis(300);
+        let deadline = Instant::now() + Duration::from_millis(300);
         assert_eq!(read_line(&mut stream, deadline), None);
-        assert!(start.elapsed() < Duration::from_millis(600));
+        let sent_by_then = sent.load(Ordering::Acquire);
+        done.store(true, Ordering::Release);
         writer.join().unwrap();
+        assert!(
+            sent_by_then < MAX_LINE,
+            "the reader waited for {sent_by_then} bytes, past its deadline"
+        );
     }
 
     /// Another app holds the guard: asked again for a while; it may answer,
@@ -551,11 +568,21 @@ mod tests {
             pause,
         );
         assert_eq!(ends, Waited::Free);
-        let start = Instant::now();
-        let silent = wait_for_running(|| false, || false, soon(), pause);
+        // Silent only once the next pause would pass the deadline.
+        let deadline = soon();
+        let mut asked = 0;
+        let silent = wait_for_running(
+            || {
+                asked += 1;
+                false
+            },
+            || false,
+            deadline,
+            pause,
+        );
         assert_eq!(silent, Waited::Silent);
-        assert!(start.elapsed() >= Duration::from_millis(150));
-        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(Instant::now() + pause >= deadline, "gave up early");
+        assert!(asked > 1, "asked only once");
     }
 
     /// Only a socket nobody listens on is stale; one whose app is slow to
