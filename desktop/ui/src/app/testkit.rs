@@ -163,6 +163,11 @@ impl Gateway {
         let mut socket = tungstenite::WebSocket::from_raw_socket(stream, Role::Server, None);
         let (tx, rx) = std::sync::mpsc::channel();
         self.sockets.lock().push(tx);
+        let outbox = Outbox {
+            gateway: self,
+            rx: Some(rx),
+        };
+        let rx = outbox.rx.as_ref().expect("receiver");
         loop {
             while let Ok(frame) = rx.try_recv() {
                 let sent = socket.send(frame.to_string().into());
@@ -203,6 +208,25 @@ impl Gateway {
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                     ) => {}
                 Err(_) => return,
+            }
+        }
+    }
+}
+
+/// A socket's queue of pushed frames. When the socket ends, what is still
+/// queued is no longer counted, or idle would wait for it for good; under
+/// the sockets' lock, so no push lands in between.
+struct Outbox<'a> {
+    gateway: &'a Gateway,
+    rx: Option<std::sync::mpsc::Receiver<Value>>,
+}
+
+impl Drop for Outbox<'_> {
+    fn drop(&mut self) {
+        let _sockets = self.gateway.sockets.lock();
+        if let Some(rx) = self.rx.take() {
+            while rx.try_recv().is_ok() {
+                self.gateway.queued.fetch_sub(1, Ordering::SeqCst);
             }
         }
     }
@@ -923,4 +947,24 @@ pub fn open_account(harness: &mut Harness<'_, Launcher>, name: &str) {
         account_button(h, name).map(|n| n.accesskit_node().locate().0)
     });
     wait_for_label(harness, "Abmelden");
+}
+
+/// Frames pushed to a socket that ended before it sent them are no longer
+/// waited for: idle would otherwise never come again.
+#[test]
+fn frames_left_on_an_ended_socket_are_not_waited_for() {
+    let gateway = Gateway::default();
+    let (tx, rx) = std::sync::mpsc::channel();
+    gateway.sockets.lock().push(tx);
+    gateway.push(json!({"op": "h"}));
+    gateway.push(json!({"op": "h"}));
+    assert_eq!(gateway.queued.load(Ordering::SeqCst), 2);
+    drop(Outbox {
+        gateway: &gateway,
+        rx: Some(rx),
+    });
+    assert_eq!(gateway.queued.load(Ordering::SeqCst), 0);
+    // A push after the socket ended is not counted either.
+    gateway.push(json!({"op": "h"}));
+    assert_eq!(gateway.queued.load(Ordering::SeqCst), 0);
 }
