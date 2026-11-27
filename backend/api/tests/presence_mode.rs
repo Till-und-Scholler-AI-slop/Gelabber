@@ -31,6 +31,17 @@ fn state(pool: PgPool) -> AppState {
     state
 }
 
+/// Presence that lasts a minute without a heartbeat. The sockets a test
+/// does not read do not answer heartbeats, and with the usual 2 s a busy
+/// machine let such a member drop offline before an `@here` was resolved.
+fn ws_state(pool: PgPool) -> AppState {
+    common::ws_state_with(pool, &[("API_WS_PRESENCE_TTL_MS", "60000".into())])
+}
+
+async fn serve(pool: PgPool) -> std::net::SocketAddr {
+    common::serve_ws_state(ws_state(pool)).await
+}
+
 async fn setup(pool: PgPool) -> World {
     let mut owner = Client::from_state(state(pool.clone()));
     owner.bootstrap().await;
@@ -125,7 +136,7 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
         ..
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     let mut ada_ws = connect(addr, &owner).await;
     watch(&mut ada_ws, server).await;
     // Two of Bob's devices: both follow the account's mode.
@@ -202,7 +213,7 @@ async fn an_old_client_hears_do_not_disturb_as_online(pool: PgPool) {
         ..
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     let mut old = connect_to(addr, &owner, "/ws").await;
     watch(&mut old, server).await;
     let mut bob_ws = connect(addr, &member).await;
@@ -238,7 +249,7 @@ async fn invisible_typing_reaches_nobody(pool: PgPool) {
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
     let _ = &mut owner;
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     let mut ada_ws = connect(addr, &owner).await;
     send(&mut ada_ws, json!({ "op": "s", "s": server, "c": channel })).await;
     until_skipping(&mut ada_ws, |f| {
@@ -295,7 +306,7 @@ async fn a_mode_runs_out_and_is_announced(pool: PgPool) {
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
     let bob_id: Uuid = bob.parse().unwrap();
-    let mut state = common::ws_state(pool.clone());
+    let mut state = ws_state(pool.clone());
     state.workers.presence_modes = None;
     let addr = common::serve_ws_state(state.clone()).await;
     let mut ada_ws = connect(addr, &owner).await;
@@ -362,7 +373,7 @@ async fn an_invisible_account_leaves_without_a_word(pool: PgPool) {
         ..
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     let mut ada_ws = connect(addr, &owner).await;
     watch(&mut ada_ws, server).await;
     let mut bob_ws = connect(addr, &member).await;
@@ -412,7 +423,7 @@ async fn a_subscribe_after_a_redis_restart_restores_the_mode(pool: PgPool) {
         ..
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     let mut bob_ws = connect(addr, &member).await;
     watch(&mut bob_ws, server).await;
     set_mode(&mut member, json!({ "mode": "dnd" })).await;
@@ -444,7 +455,7 @@ async fn a_new_socket_restores_a_lost_mode(pool: PgPool) {
         ..
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     set_mode(&mut member, json!({ "mode": "dnd" })).await;
     del(&[
         format!("{REDIS_PREFIX}p:m:{bob}"),
@@ -474,7 +485,7 @@ async fn a_socket_does_not_skip_a_check_still_under_way(pool: PgPool) {
         ..
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     set_mode(&mut member, json!({ "mode": "dnd" })).await;
     del(&[format!("{REDIS_PREFIX}p:m:{bob}")]).await;
     // Another socket claimed the check and has not written the copy yet.
@@ -629,7 +640,7 @@ async fn here_reaches_an_invisible_member_without_showing_them(pool: PgPool) {
     let bob = member.user_id().to_owned();
     let mut cem = join(&pool, &mut owner, server).await;
     let cem_id = cem.user_id().to_owned();
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     let mut ada_ws = connect(addr, &owner).await;
     follow(&mut ada_ws, server, channel).await;
     let mut bob_ws = connect(addr, &member).await;
@@ -742,7 +753,7 @@ async fn an_invisible_member_is_shown_only_while_named(pool: PgPool) {
         channel,
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
-    let (addr, _state) = common::serve_ws(pool).await;
+    let addr = serve(pool).await;
     let mut ada_ws = connect(addr, &owner).await;
     follow(&mut ada_ws, server, channel).await;
     let mut bob_ws = connect(addr, &member).await;

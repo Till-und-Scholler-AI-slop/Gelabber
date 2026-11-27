@@ -23,14 +23,16 @@ const members = [
 
 describe("mentions", () => {
   it("knows whom the server said a message mentions", () => {
-    expect(mentionsMe({ mentions: [BOB] }, BOB)).toBe(true);
-    expect(mentionsMe({ mentions: [BOB] }, ADA)).toBe(false);
+    const none = { mention_everyone: false };
+    expect(mentionsMe({ ...none, mentions: [BOB] }, BOB)).toBe(true);
+    expect(mentionsMe({ ...none, mentions: [BOB] }, ADA)).toBe(false);
     expect(mentionsMe({ mentions: [], mention_everyone: true }, ADA)).toBe(
       true,
     );
-    // Older API snapshots carry neither.
-    expect(mentionsMe({}, ADA)).toBe(false);
-    expect(mentionsMe({ mention_everyone: true }, undefined)).toBe(false);
+    // Signed out: nobody is mentioned.
+    expect(
+      mentionsMe({ mentions: [], mention_everyone: true }, undefined),
+    ).toBe(false);
   });
 
   it("splits text into runs and mentions, leaving code alone", () => {

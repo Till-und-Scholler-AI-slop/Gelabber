@@ -71,6 +71,7 @@ const listItem: Server = {
   role: "member",
   permissions: ["moderate_members", "send_messages"],
   member_permissions: ["send_messages"],
+  blocked: false,
 };
 const detail: ServerDetail = {
   ...listItem,

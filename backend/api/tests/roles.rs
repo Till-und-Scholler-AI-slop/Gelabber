@@ -3,15 +3,11 @@
 
 mod common;
 
-use std::time::Duration;
-
 use axum::http::{Method, StatusCode};
-use futures_util::StreamExt;
 use gelabber_api::servers::access;
 use gelabber_api::servers::permissions::Permission;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
 use common::Client;
@@ -844,18 +840,7 @@ async fn role_and_assignment_changes_announce_an_access_change(pool: PgPool) {
 
     let mut ws = connect(addr, &member).await;
     send(&mut ws, json!({ "op": "s", "s": sid })).await;
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            if let Message::Text(raw) = ws.next().await.unwrap().unwrap() {
-                let frame: Value = serde_json::from_str(&raw).unwrap();
-                if frame["op"] == "ok" {
-                    break;
-                }
-            }
-        }
-    })
-    .await
-    .expect("subscribed");
+    until(&mut ws, |f| f["op"] == "ok").await;
 
     let res = create_role(
         &mut owner,

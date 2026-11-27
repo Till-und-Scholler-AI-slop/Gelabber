@@ -107,11 +107,20 @@ async function contextFor(
           email: "pwa@example.test",
           name: "PWA",
           avatar_url: null,
+          created_at: "2026-01-01T00:00:00Z",
+          bio: null,
+          pronouns: null,
+          status_text: null,
+          accent_color: null,
+          banner_color: null,
+          banner_url: null,
+          avatar_decoration: null,
+          locale: "de",
         }
       : null;
     const json =
       path === "/api/auth/session"
-        ? { user, csrf_token: "a".repeat(64) }
+        ? { user, csrf_token: "a".repeat(64), operator: false }
         : path === "/api/dms"
           ? dms
           : path === "/api/servers" ||
@@ -780,7 +789,12 @@ async function gatewayFor(context) {
           content,
           created_at: written.get(id),
           edited_at: null,
+          revision: 1,
+          created_order: n,
           attachments: [],
+          reactions: [],
+          mentions: [],
+          mention_everyone: false,
         },
       });
       for (const socket of sockets) socket.send(frame);

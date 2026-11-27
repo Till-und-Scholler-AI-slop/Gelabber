@@ -40,6 +40,7 @@ const server = (id: string, name: string): Server => ({
   role: "member",
   permissions: [],
   member_permissions: [],
+  blocked: false,
 });
 
 function client() {

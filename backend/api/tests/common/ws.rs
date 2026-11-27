@@ -3,7 +3,9 @@
 //! frame that never comes fails the test with what came instead, it does
 //! not hang it.
 
+use std::future::Future;
 use std::net::SocketAddr;
+use std::panic::Location;
 use std::time::Duration;
 
 use axum::http::StatusCode;
@@ -95,29 +97,56 @@ async fn next_before(ws: &mut Ws, deadline: Instant) -> Option<Value> {
 }
 
 /// The next text frame within [`WAIT`].
-pub async fn recv(ws: &mut Ws) -> Value {
-    next_before(ws, Instant::now() + WAIT)
-        .await
-        .unwrap_or_else(|| panic!("no frame within {WAIT:?}"))
+#[track_caller]
+pub fn recv(ws: &mut Ws) -> impl Future<Output = Value> + '_ {
+    let at = Location::caller();
+    async move {
+        next_before(ws, Instant::now() + WAIT)
+            .await
+            .unwrap_or_else(|| panic!("no frame within {WAIT:?} (waited at {at})"))
+    }
 }
 
 /// The first frame `want` accepts, within [`WAIT`] in all.
-pub async fn until(ws: &mut Ws, want: impl Fn(&Value) -> bool) -> Value {
-    until_skipping(ws, want).await.0
+#[track_caller]
+pub fn until<'a>(
+    ws: &'a mut Ws,
+    want: impl Fn(&Value) -> bool + 'a,
+) -> impl Future<Output = Value> + 'a {
+    let at = Location::caller();
+    async move { skipping(ws, want, at).await.0 }
 }
 
-/// [`until`], with the frames skipped on the way, to check what came first.
-pub async fn until_skipping(ws: &mut Ws, want: impl Fn(&Value) -> bool) -> (Value, Vec<Value>) {
+/// [`until`], with the frames other than heartbeats skipped on the way, to
+/// check what came first.
+#[track_caller]
+pub fn until_skipping<'a>(
+    ws: &'a mut Ws,
+    want: impl Fn(&Value) -> bool + 'a,
+) -> impl Future<Output = (Value, Vec<Value>)> + 'a {
+    let at = Location::caller();
+    skipping(ws, want, at)
+}
+
+async fn skipping(
+    ws: &mut Ws,
+    want: impl Fn(&Value) -> bool,
+    at: &'static Location<'static>,
+) -> (Value, Vec<Value>) {
     let deadline = Instant::now() + WAIT;
     let mut skipped = Vec::new();
+    let mut heartbeats = 0;
     loop {
         match next_before(ws, deadline).await {
             Some(frame) if want(&frame) => return (frame, skipped),
+            Some(frame) if frame["op"] == "h" => heartbeats += 1,
             Some(frame) => skipped.push(frame),
             None => {
                 let start = skipped.len().saturating_sub(SEEN);
                 panic!(
-                    "no matching frame within {WAIT:?}; the last ones were {:?}",
+                    "no matching frame within {WAIT:?} (waited at {at}); {heartbeats} \
+                     heartbeats and {} other frames came, the last ones {:?}",
+                    skipped.len(),
                     &skipped[start..]
                 )
             }
@@ -143,12 +172,20 @@ pub async fn within(ws: &mut Ws, wait: Duration, want: impl Fn(&Value) -> bool) 
 /// an error or the end of the stream) and returns the text frames that came
 /// before. Heartbeats are answered, so a socket that only went quiet does
 /// not count as closed.
-pub async fn closed(ws: &mut Ws) -> Vec<Value> {
+#[track_caller]
+pub fn closed(ws: &mut Ws) -> impl Future<Output = Vec<Value>> + '_ {
+    let at = Location::caller();
+    closed_at(ws, at)
+}
+
+async fn closed_at(ws: &mut Ws, at: &'static Location<'static>) -> Vec<Value> {
     let deadline = Instant::now() + WAIT;
     let mut before = Vec::new();
     loop {
         let message = match tokio::time::timeout_at(deadline, ws.next()).await {
-            Err(_) => panic!("the socket did not close within {WAIT:?}; it sent {before:?}"),
+            Err(_) => panic!(
+                "the socket did not close within {WAIT:?} (waited at {at}); it sent {before:?}"
+            ),
             Ok(None) | Ok(Some(Err(_))) | Ok(Some(Ok(Message::Close(_)))) => return before,
             Ok(Some(Ok(message))) => message,
         };
@@ -169,7 +206,11 @@ pub async fn closed(ws: &mut Ws) -> Vec<Value> {
 /// Answers a heartbeat and waits for the server's next one. A socket that
 /// has done this is registered with the gateway: frames published after it
 /// reach the socket.
-pub async fn registered(ws: &mut Ws) {
-    send(ws, json!({ "op": "h" })).await;
-    until(ws, |f| f["op"] == "h").await;
+#[track_caller]
+pub fn registered(ws: &mut Ws) -> impl Future<Output = ()> + '_ {
+    let at = Location::caller();
+    async move {
+        send(ws, json!({ "op": "h" })).await;
+        skipping(ws, |f| f["op"] == "h", at).await;
+    }
 }

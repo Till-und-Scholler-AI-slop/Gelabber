@@ -94,7 +94,11 @@ describe("read eligibility and recovery", () => {
       server_id: null,
       read_message_id: null,
       read_at: null,
+      read_order: null,
+      membership_at: "2026-10-01T00:00:00Z",
+      latest_order: null,
       unread_count,
+      mention_count: 0,
     });
     let resolve!: (r: Response) => void;
     response = () => json([row("a", 0), row("b", 0)]);

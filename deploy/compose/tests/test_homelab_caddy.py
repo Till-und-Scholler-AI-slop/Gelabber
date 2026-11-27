@@ -16,6 +16,8 @@ import unittest
 from pathlib import Path
 from typing import Any, Iterator
 
+from prerequisites import missing
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CADDYFILE = ROOT / "compose" / "Caddyfile.homelab"
@@ -29,12 +31,7 @@ def _find_caddy() -> str:
     env = os.environ.get("CADDY_BIN")
     if env and Path(env).is_file() and os.access(env, os.X_OK):
         return env
-    which = shutil.which("caddy")
-    if which:
-        return which
-    raise unittest.SkipTest(
-        "caddy binary required for adapt tests (install caddy or set CADDY_BIN)"
-    )
+    return shutil.which("caddy") or missing("caddy (for the adapt tests; or set CADDY_BIN)")
 
 
 def _adapt(

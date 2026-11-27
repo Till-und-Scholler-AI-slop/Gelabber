@@ -52,7 +52,12 @@ import {
 import { readKey, type ReadState } from "./readState.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
-import { asAttachmentList, asGif, asMentionList } from "./types.ts";
+import {
+  asAttachmentList,
+  asGif,
+  asMentionList,
+  asReactionList,
+} from "./types.ts";
 import { asSystem, systemText } from "./system.ts";
 
 function asCreated(delta: unknown): Message | null {
@@ -79,6 +84,7 @@ function asCreated(delta: unknown): Message | null {
     gif: asGif(value.gif),
     mentions: asMentionList(value.mentions),
     mention_everyone: value.mention_everyone === true,
+    reactions: asReactionList(value.reactions),
     system: asSystem(value.system),
   };
 }

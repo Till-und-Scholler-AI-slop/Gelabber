@@ -32,8 +32,8 @@ export type Server = {
   /** The mask every non-owner member holds. */
   member_permissions: Permission[];
   /** An operator blocked the server: it stays listed, but everything else
-   * answers `403 server_blocked`. Optional: older APIs lack it. */
-  blocked?: boolean;
+   * answers `403 server_blocked`. */
+  blocked: boolean;
 };
 
 export type Category = {

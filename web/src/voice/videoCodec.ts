@@ -70,16 +70,16 @@ export function publishableH264(codec: RtpCodecCapability): boolean {
 }
 
 /** The video codec to send: the best of the device's `codecs` that every
- * receiver decodes. `allowed` is null from a server that does not say;
- * then, and when nothing is allowed, the order is that of servers before. */
+ * receiver decodes. When no codec is allowed, the first the device has of
+ * VP8, H.264, VP9 and AV1. */
 export function chooseVideoCodec(
   codecs: readonly RtpCodecCapability[],
-  allowed: readonly string[] | null,
+  allowed: readonly string[],
   hardware: HardwareVideo,
 ): RtpCodecCapability | undefined {
   const find = (mime: string, usable: (c: RtpCodecCapability) => boolean) =>
     codecs.find((c) => c.mimeType.toLowerCase() === mime && usable(c));
-  if (allowed?.length) {
+  if (allowed.length) {
     const order = [
       ...(hardware.av1 ? [AV1] : []),
       ...(hardware.h264 ? [H264] : []),

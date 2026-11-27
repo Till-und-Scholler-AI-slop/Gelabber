@@ -227,13 +227,11 @@ async fn room_fanout_is_sig_not_chat(pool: PgPool) {
     assert_eq!(chat["t"], "c");
     assert_ne!(chat["op"], "sig");
 
-    let stray = tokio::time::timeout(Duration::from_millis(120), recv(&mut member_ws)).await;
-    if let Ok(frame) = stray {
-        assert_ne!(
-            frame["op"], "e",
-            "voice socket must not get chat events: {frame}"
-        );
-    }
+    let stray = ws::within(&mut member_ws, Duration::from_millis(120), |f| {
+        f["op"] == "e"
+    })
+    .await;
+    assert_eq!(stray, None, "voice socket must not get chat events");
 
     send(
         &mut member_ws,
@@ -491,14 +489,12 @@ async fn one_socket_leave_does_not_evict_another_seat(pool: PgPool) {
     until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
 
     tab_a.close(None).await.ok();
-    let stray = tokio::time::timeout(Duration::from_millis(200), recv(&mut member_ws)).await;
-    if let Ok(frame) = stray {
-        let ada = ada.to_string();
-        assert!(
-            !(frame["op"] == "sig" && frame["t"] == "l" && frame["u"] == ada),
-            "first tab must not broadcast leave: {frame}"
-        );
-    }
+    let ada_id = ada.to_string();
+    let stray = ws::within(&mut member_ws, Duration::from_millis(200), |f| {
+        f["op"] == "sig" && f["t"] == "l" && f["u"] == ada_id
+    })
+    .await;
+    assert_eq!(stray, None, "first tab must not broadcast leave");
 
     tab_b.close(None).await.ok();
     let left = until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "l").await;

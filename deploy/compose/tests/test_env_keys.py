@@ -6,6 +6,7 @@ import shutil
 import unittest
 
 from compose_config import config
+from prerequisites import requires
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT.parents[1] / 'backend/api/src/config.rs'
@@ -38,7 +39,7 @@ class EnvKeys(unittest.TestCase):
                     self.assertTrue(re.search(r'\$\{' + key + r'\b', text),
                                     f'{key} is set in {example} but no compose file reads it')
 
-    @unittest.skipUnless(shutil.which('docker'), 'Docker CLI is unavailable')
+    @requires(shutil.which('docker'), 'the Docker CLI')
     def test_every_api_setting_reaches_the_api(self):
         settings = set(re.findall(r'^pub const ([A-Z][A-Z0-9_]*): &str = "\1";',
                                   CONFIG.read_text(), re.M))
