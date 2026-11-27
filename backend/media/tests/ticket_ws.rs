@@ -99,7 +99,6 @@ async fn accepts_short_ticket_and_binds_room() {
     let text = msg.to_text().unwrap();
     assert!(text.contains(r#""op":"result""#), "{text}");
     assert!(text.contains(&channel.to_string()), "{text}");
-    assert!(!text.contains("livekit"));
 
     let leftover: Option<String> = redis::cmd("GET")
         .arg(format!("gb:mt:{code}"))

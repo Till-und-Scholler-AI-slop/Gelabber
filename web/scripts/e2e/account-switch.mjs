@@ -1,5 +1,13 @@
 /* global URL */
-import { api, check, click, navigate, observe, until } from "./harness.mjs";
+import {
+  api,
+  check,
+  click,
+  navigate,
+  observe,
+  responseTo,
+  until,
+} from "./harness.mjs";
 
 async function login(actor, email, password) {
   await actor.page.getByLabel("E-Mail-Adresse").fill(email);
@@ -56,13 +64,13 @@ export async function accountSwitchScenarios(h, f) {
             "old-account-patch-not-held",
           );
           // Same-document logout/login updates the app generation while A's request remains in flight.
-          const logoutResponse = f.owner.page.waitForResponse(
+          await responseTo(
+            f.owner.page,
             (r) =>
               new URL(r.url()).pathname === "/api/auth/logout" &&
               r.request().method() === "POST",
+            () => click(f.owner, "Abmelden"),
           );
-          await click(f.owner, "Abmelden");
-          await logoutResponse;
           await f.owner.page.waitForURL(/\/login/);
           await login(f.owner, f.member.email, f.member.password);
           // To B's profile inside the same document: the gear, then Profil.
@@ -114,13 +122,13 @@ export async function accountSwitchScenarios(h, f) {
           // Restore the fixture's original owner via the real UI, even if the assertion was red.
           const session = await api(f.owner, "/auth/session");
           if (session.body?.user) {
-            const response = f.owner.page.waitForResponse(
+            await responseTo(
+              f.owner.page,
               (r) =>
                 new URL(r.url()).pathname === "/api/auth/logout" &&
                 r.request().method() === "POST",
+              () => click(f.owner, "Abmelden"),
             );
-            await click(f.owner, "Abmelden");
-            await response;
           }
           await f.owner.page.waitForURL(/\/login/);
           await login(f.owner, f.owner.email, f.owner.password);

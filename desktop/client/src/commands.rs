@@ -122,6 +122,12 @@ impl Client {
         }
     }
 
+    /// Records the named operation as done, as its request does; for the
+    /// pages' tests, which settle writes in an order of their choosing.
+    pub fn finish_op(&self, key: &str) {
+        self.write(|s| s.ops.insert(key.to_owned(), OpState::Done));
+    }
+
     /// Records the named operation as failed, as its request does: the op
     /// state, and for an optimistic write the error toast's notice.
     pub fn fail_op(&self, key: &str, error: ApiError) {

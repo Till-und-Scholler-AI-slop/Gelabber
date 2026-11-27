@@ -94,7 +94,10 @@ Ports are bound exclusively and existing services are never stopped. A Redis
 reset deletes only four exact topic keys, never `FLUSH`. Proxies are restored
 and owned processes closed in `finally`. A startup or teardown failure makes
 the exit code nonzero and is written, redacted, beside the report as
-`$GELABBER_E2E_REPORT.startup.json` or `.teardown.json`.
+`$GELABBER_E2E_REPORT.startup.json` or `.teardown.json`. A promise that a
+scenario left behind and that rejects later fails as its own row,
+`stray-rejection`, with the case that was running; the run goes on to its
+report and teardown (GEL-453).
 
 ## Scenario contracts
 

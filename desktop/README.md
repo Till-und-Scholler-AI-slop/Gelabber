@@ -19,7 +19,7 @@ client dropped its Tauri code.
 |---|---|
 | `native/` | C++ media core: libmediasoupclient + libwebrtc behind a C ABI (`include/gelabber_media.h`), built as one shared library |
 | `native/libwebrtc.env` | Pins: libwebrtc M140 commit, libmediasoupclient commit, libsdptransform tag |
-| `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows); a test desktop session with a ScreenCast portal |
+| `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows), the check whether the `libwebrtc-packages` release holds a package (`libwebrtc-stored.sh`); a test desktop session with a ScreenCast portal |
 | `native/patches/` | Patches applied to libwebrtc; `libmediasoupclient/` to libmediasoupclient |
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `native/tests/pipewire_chunk_test.cc` | Application sound on Linux stays inside PipeWire's buffer whatever offset and size a chunk carries; plain C++, built and run by `core/tests/voice.rs` like the mix test |
@@ -35,7 +35,7 @@ client dropped its Tauri code.
 | `testing/` | Rust crate `gelabber-testing`, for tests only: `missing` skips a test whose tool or service the machine lacks, and fails it in CI (GEL-375) |
 | `client/`, `call/`, `ui/`, `gelabber/` | The app (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
 | `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the setup page (in the sign-in pages' frame), the Tauri app's update notice, its "Server wechseln …" in the user menu and the install offers it left out, the references of the scenes `setup*`, `update-*` and those with `desktop` |
-| `packaging/native/` | The packages: `tarball.sh` and `check-core.sh` (Linux), `windows/installer.nsi` (NSIS) and the scripts `desktop-native.yml` runs on Windows (`windows/*.ps1`: `updater-key.ps1`, `build-installer.ps1`, `sign-update.ps1`, `install-test.ps1`, `check-binaries.ps1`, `loopback-address.ps1`), `version.sh` (the app's version for them and `release.yml`), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
+| `packaging/native/` | The packages: `tarball.sh` and `check-core.sh` (Linux), `windows/installer.nsi` (NSIS) and the scripts `desktop-native.yml` runs on Windows (`windows/*.ps1`: `updater-key.ps1`, `build-installer.ps1`, `sign-update.ps1`, `install-test.ps1`, `check-binaries.ps1`, `loopback-address.ps1`, `smoke.ps1`), `version.sh` (the app's version for them and `release.yml`), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
 | `packaging/lint.sh` | shellcheck and PSScriptAnalyzer over the packaging scripts, as CI runs them (`--install <dir>` fetches the pinned versions) |
 | `packaging/arch/` | The pacman package `gelabber-desktop` (`arch/native/PKGBUILD`) and repository; see its README |
 | `packaging/icons/` | The app icon (`icon.png`, `icon.ico`) for the packages and the installer |
@@ -239,11 +239,11 @@ puts the tests' mediasoup on it; the CI job tries which one works.
 |---|---|---|
 | Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh`; on Windows `GELABBER_TEST_SCREEN_MONITOR=1` | CI, Linux and Windows (voice: Linux) |
 | App: starts, paints its setup screen and ends (`GELABBER_SMOKE`) | `packaging/native/smoke.sh <gelabber>`; on Windows the job starts `gelabber.exe` itself | CI, Linux (lavapipe under Xvfb, also the installed Arch package) and Windows |
-| Packages: names, files and arguments against the app and the Tauri app's installs | `python3 -m unittest discover -s desktop/packaging/tests` | CI |
+| Packages: names, files and arguments against the app and the Tauri app's installs | `python3 -m unittest discover -s desktop/packaging/tests`, with the pinned PyYAML as [AGENTS.md](../AGENTS.md#commands) installs it (`PYTHONPATH`) | CI |
 | Install, update and removal: Windows (the setup, then again as the updater runs it, then the uninstaller), Arch (`pacman -S`, a newer pkgrel with `-Syu`, `-Rns`, `install.sh`) | job `core-windows` (after merge), `packaging/arch/repo.sh test` | CI |
 | Native client calls (gelabber-call): a call on the seeded stack with Chromium people from `web/scripts/parity/call.mjs`, without devices (`GELABBER_FAKE_MEDIA=1`: dummy audio, test pattern camera and Live; speaking from the received bitrate, the own meter beeping like Chromium's fake microphone) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-call --features media --test live -- --ignored` | **only locally** |
 | Native client voice end to end (gelabber-ui): the real app in egui_kittest joins, mutes, deafens, turns the camera on, draws Jonas' camera, switches Raster/Fokus/Kino, fails Go Live without a portal (`GELABBER_FAKE_SCREEN=0`), watches a Live and sets a volume, checked in the Chromium people's pages (`ui/tests/voice_observer.mjs`) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-ui --features media --test voice_live -- --ignored` | **only locally** |
-| Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests`, `packaging/third-party-notices.py --check` | CI |
+| Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests` (with the pinned PyYAML, as above), `packaging/third-party-notices.py --check` | CI |
 
 ## Third-party notices
 
