@@ -4,8 +4,10 @@
 # the generated files renewed (.claude/skills/dependency-updates/SKILL.md).
 # Every update waits 7 days after its release, against freshly compromised
 # packages. Majors that need their own migration stay manual (below).
-# An ignore rule also stops security pull requests for what it matches
-# (alerts still show): rules below name versions where they can.
+# For grouped security updates GitHub's "Dependabot errors" page says: to
+# ignore a dependency, "Configure an `ignore` rule for the dependency", so a
+# rule may stop security pull requests too; the rules name versions where
+# they can.
 version: 2
 updates:
   # The workflows pin every action to a commit SHA with its version as a
@@ -43,7 +45,8 @@ updates:
       # The one SFU, moved with docs/v0.4-mediasoup-migration.md.
       - dependency-name: mediasoup*
       # DeepFilterNet's libDF, pinned to the commit the strong filter was
-      # measured with (GEL-28); moves by hand with that measurement.
+      # measured with (GEL-28); moves by hand with that measurement. Whether
+      # advisories match a git dependency at all is not documented.
       - dependency-name: deep_filter
       # libDF takes ndarray ^0.15 arrays (desktop/core/src/strong_filter.rs)
       # and builds on tract ^0.21.4. Go when deep_filter moves past them.
