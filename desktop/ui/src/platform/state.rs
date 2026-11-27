@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::screens::layout::Sidebars;
@@ -43,10 +42,6 @@ pub struct Account {
     pub dm: Option<Uuid>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub drafts: HashMap<Uuid, Draft>,
-    /// Per-person volumes as 0.9.0–0.9.2 kept (and applied) them here. Moved
-    /// into `user-volumes.json` at load, and kept here until that worked.
-    #[serde(default, rename = "volumes", skip_serializing_if = "Option::is_none")]
-    pub old_volumes: Option<Map<String, Value>>,
 }
 
 /// `Place` of lastPlace.ts, as it stores it.
@@ -113,10 +108,7 @@ pub fn load() -> Stored {
     let parsed =
         read.and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| (true, e.to_string())));
     match parsed {
-        Ok(mut stored) => {
-            move_old_volumes(&mut stored);
-            stored
-        }
+        Ok(stored) => stored,
         Err((there, e)) => {
             if there {
                 // Each one kept: an earlier rescued copy is not replaced.
@@ -134,98 +126,6 @@ pub fn load() -> Stored {
             }
             Stored::default()
         }
-    }
-}
-
-/// The volumes of [`Account::old_volumes`] into the sliders' store
-/// (screens/voice/volume.rs) for each person it has no level for, with its
-/// range and its mute; the old field goes once that file is written.
-fn move_old_volumes(stored: &mut Stored) {
-    use crate::screens::voice::volume;
-    if stored.accounts.values().all(|a| a.old_volumes.is_none()) {
-        return;
-    }
-    let Some(path) = super::paths::file(volume::FILE) else {
-        return;
-    };
-    let mut all = match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
-            Ok(Value::Object(all)) => all,
-            _ => {
-                tracing::warn!("state: {} does not read; volumes stay", path.display());
-                return;
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Map::new(),
-        Err(e) => {
-            tracing::warn!("state: {}: {e}; volumes stay", path.display());
-            return;
-        }
-    };
-    // Only these lose the old field: an account whose entry in the store is
-    // no object keeps it, nothing went over.
-    let mut moved = Vec::new();
-    for (id, account) in &stored.accounts {
-        let Some(old) = &account.old_volumes else {
-            continue;
-        };
-        let key = id.to_string();
-        let entry = all
-            .entry(key.clone())
-            .or_insert_with(|| Value::Object(Map::new()));
-        let Value::Object(people) = entry else {
-            continue;
-        };
-        for (person, level) in old {
-            if Uuid::parse_str(person).is_err() || people.contains_key(person) {
-                continue;
-            }
-            let volume = level
-                .get("volume")
-                .and_then(Value::as_f64)
-                .filter(|v| v.is_finite())
-                .unwrap_or(1.0)
-                .clamp(0.0, volume::MAX_PLAYBACK);
-            let muted = level.get("muted").and_then(Value::as_bool) == Some(true);
-            if (volume - 1.0).abs() > f64::EPSILON || muted {
-                people.insert(
-                    person.clone(),
-                    serde_json::json!({ "volume": volume, "muted": muted }),
-                );
-            }
-        }
-        if people.is_empty() {
-            all.remove(&key);
-        }
-        moved.push(*id);
-    }
-    let written = serde_json::to_vec_pretty(&Value::Object(all))
-        .map_err(std::io::Error::other)
-        .and_then(|bytes| super::paths::write_atomic(&path, &bytes, false));
-    match written {
-        Ok(()) => {
-            for id in &moved {
-                if let Some(account) = stored.accounts.get_mut(id) {
-                    account.old_volumes = None;
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("state: {}: {e}; volumes stay", path.display());
-            return;
-        }
-    }
-    // Written now, not with the next change: an old field left on disk would
-    // be moved again at the next start and undo a level reset since.
-    let state = super::paths::file(FILE);
-    let written = serde_json::to_vec_pretty(stored)
-        .map_err(std::io::Error::other)
-        .and_then(|bytes| match &state {
-            Some(state) => super::paths::write_atomic(state, &bytes, true),
-            None => Ok(()),
-        });
-    if let Err(e) = written {
-        tracing::warn!("state: {e}");
     }
 }
 
@@ -315,7 +215,6 @@ impl From<&Memory> for Account {
             channels: m.channels.clone(),
             dm: m.dm,
             drafts: HashMap::new(),
-            old_volumes: None,
         }
     }
 }
@@ -476,129 +375,6 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&aside).unwrap(), text);
         let second = config.dir.join(format!("{FILE}.unreadable-2"));
         assert_eq!(std::fs::read_to_string(second).unwrap(), "{halb");
-        drop(config);
-    }
-
-    /// 0.9.0–0.9.2 kept imported per-person volumes in this file and applied
-    /// them; they move once into the sliders' store, without replacing a
-    /// level set there, and only then leave this file.
-    #[test]
-    fn old_volumes_move_into_the_sliders_store_once() {
-        let config = super::super::paths::testing::TempConfig::new("state-old-volumes");
-        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        let (x, y, z) = (
-            Uuid::from_u128(11),
-            Uuid::from_u128(12),
-            Uuid::from_u128(13),
-        );
-        let old = serde_json::json!({"accounts": {
-            a.to_string(): {"dm": z, "volumes": {
-                x.to_string(): {"volume": 0.5, "muted": true},
-                y.to_string(): {"volume": 2.0},
-                z.to_string(): {"volume": 9.0},
-            }},
-            b.to_string(): {"volumes": {x.to_string(): {"volume": 1.5}}},
-        }});
-        std::fs::write(config.dir.join(FILE), old.to_string()).unwrap();
-        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
-        let own =
-            serde_json::json!({a.to_string(): {y.to_string(): {"volume": 3.0, "muted": false}}});
-        std::fs::write(&volumes, own.to_string()).unwrap();
-
-        let stored = load();
-        let moved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&volumes).unwrap()).unwrap();
-        assert_eq!(
-            moved,
-            serde_json::json!({
-                a.to_string(): {
-                    x.to_string(): {"volume": 0.5, "muted": true},
-                    y.to_string(): {"volume": 3.0, "muted": false},
-                    z.to_string(): {"volume": 4.0, "muted": false},
-                },
-                b.to_string(): {x.to_string(): {"volume": 1.5, "muted": false}},
-            })
-        );
-        assert_eq!(stored.accounts[&a].dm, Some(z));
-        // The next save leaves the old field out.
-        save(&stored);
-        assert!(super::super::paths::flush(std::time::Duration::from_secs(
-            5
-        )));
-        let text = std::fs::read_to_string(config.dir.join(FILE)).unwrap();
-        assert!(!text.contains("volumes"), "{text}");
-        drop(config);
-    }
-
-    /// A sliders' store that does not read is left alone, and so is the old
-    /// field: the move is tried again at the next start.
-    #[test]
-    fn old_volumes_stay_while_the_store_does_not_read() {
-        let config = super::super::paths::testing::TempConfig::new("state-old-volumes-kept");
-        let (a, x) = (Uuid::from_u128(1), Uuid::from_u128(11));
-        let old = serde_json::json!({"accounts": {a.to_string(): {"volumes": {
-            x.to_string(): {"volume": 0.5},
-        }}}});
-        std::fs::write(config.dir.join(FILE), old.to_string()).unwrap();
-        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
-        std::fs::write(&volumes, "{halb").unwrap();
-        let stored = load();
-        assert_eq!(std::fs::read_to_string(&volumes).unwrap(), "{halb");
-        save(&stored);
-        assert!(super::super::paths::flush(std::time::Duration::from_secs(
-            5
-        )));
-        let text = std::fs::read_to_string(config.dir.join(FILE)).unwrap();
-        assert!(text.contains("volumes"), "{text}");
-        drop(config);
-    }
-
-    /// The real start (load, no save of its own): the old field leaves the
-    /// file with the move, so a level reset afterwards does not come back.
-    #[test]
-    fn a_start_moves_the_old_volumes_and_the_next_one_moves_nothing() {
-        let config = super::super::paths::testing::TempConfig::new("state-old-volumes-start");
-        let (a, x) = (Uuid::from_u128(1), Uuid::from_u128(11));
-        let old = serde_json::json!({"accounts": {a.to_string(): {"dm": x, "volumes": {
-            x.to_string(): {"volume": 0.5},
-        }}}});
-        let state = config.dir.join(FILE);
-        std::fs::write(&state, old.to_string()).unwrap();
-        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
-        drop(super::super::Platform::new(None));
-        let text = std::fs::read_to_string(&state).unwrap();
-        assert!(!text.contains("volumes"), "{text}");
-        assert!(text.contains(&x.to_string()), "the rest stays: {text}");
-        let moved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&volumes).unwrap()).unwrap();
-        assert_eq!(moved[a.to_string()][x.to_string()]["volume"], 0.5);
-        // The user resets the level on the slider: the entry goes.
-        std::fs::write(&volumes, "{}").unwrap();
-        drop(super::super::Platform::new(None));
-        assert_eq!(std::fs::read_to_string(&volumes).unwrap(), "{}");
-        drop(config);
-    }
-
-    /// An account whose entry in the sliders' store is no object keeps its
-    /// old volumes: nothing is dropped that was not moved.
-    #[test]
-    fn old_volumes_that_could_not_move_stay() {
-        let config = super::super::paths::testing::TempConfig::new("state-old-volumes-odd");
-        let (a, b, x) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(11));
-        let old = serde_json::json!({"accounts": {
-            a.to_string(): {"volumes": {x.to_string(): {"volume": 0.5}}},
-            b.to_string(): {"volumes": {x.to_string(): {"volume": 1.5}}},
-        }});
-        std::fs::write(config.dir.join(FILE), old.to_string()).unwrap();
-        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
-        std::fs::write(&volumes, serde_json::json!({a.to_string(): 3}).to_string()).unwrap();
-        let stored = load();
-        assert!(stored.accounts[&a].old_volumes.is_some());
-        assert!(stored.accounts[&b].old_volumes.is_none());
-        let on_disk: Stored =
-            serde_json::from_slice(&std::fs::read(config.dir.join(FILE)).unwrap()).unwrap();
-        assert!(on_disk.accounts[&a].old_volumes.is_some());
-        assert!(on_disk.accounts[&b].old_volumes.is_none());
         drop(config);
     }
 }
