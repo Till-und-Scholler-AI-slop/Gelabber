@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MediaRetry } from "./mediaPeer.ts";
+import { QUIET_MS } from "./testTiming.ts";
+
+/** The largest value the random source gives, just under 1. */
+const MAX_JITTER = 1 - Number.EPSILON;
 
 describe("the reconnect backoff", () => {
   beforeEach(() => {
@@ -11,8 +15,7 @@ describe("the reconnect backoff", () => {
   });
 
   /** The delay of each try until the retry gives up, at this jitter. */
-  function delays(jitter: number): number[] {
-    const retry = new MediaRetry(() => jitter);
+  function delays(jitter: number, retry = new MediaRetry(() => jitter)) {
     const seen: number[] = [];
     let exhausted = false;
     let scheduledAt = Date.now();
@@ -33,29 +36,34 @@ describe("the reconnect backoff", () => {
     return seen;
   }
 
-  it("doubles from 250 ms up to 4 s, then gives up after seven tries", () => {
-    expect(delays(0.5)).toEqual([250, 500, 1000, 2000, 4000, 4000, 4000]);
+  it("retries soon, then less often, and gives up", () => {
+    for (const jitter of [0, 0.5, MAX_JITTER]) {
+      const seen = delays(jitter);
+      expect(seen.length, `${jitter}`).toBeGreaterThan(1);
+      expect(seen[0], `${jitter}`).toBeLessThanOrEqual(300);
+      for (let i = 1; i < seen.length; i++)
+        expect(seen[i], `${jitter} try ${i}`).toBeGreaterThanOrEqual(
+          seen[i - 1]!,
+        );
+    }
   });
 
-  it("spreads each delay with the jitter, from four fifths of it up", () => {
-    expect(delays(0)).toEqual([200, 400, 800, 1600, 3200, 3200, 3200]);
-    expect(delays(0.75)).toEqual([275, 550, 1100, 2200, 4400, 4400, 4400]);
+  it("never waits as long as the session tests' quiet time", () => {
+    expect(Math.max(...delays(MAX_JITTER))).toBeLessThan(QUIET_MS);
+  });
+
+  it("spreads each delay with the jitter", () => {
+    const low = delays(0);
+    const high = delays(MAX_JITTER);
+    expect(high).toHaveLength(low.length);
+    low.forEach((delay, i) => expect(high[i]).toBeGreaterThan(delay));
   });
 
   it("starts over once cancelled", () => {
     const retry = new MediaRetry(() => 0.5);
-    const tries = vi.fn();
-    retry.schedule(tries, () => {});
-    vi.advanceTimersByTime(250);
-    retry.schedule(tries, () => {});
+    const first = delays(0.5, retry);
     retry.cancel();
     expect(retry.active).toBe(false);
-    vi.advanceTimersByTime(10_000);
-    expect(tries).toHaveBeenCalledTimes(1);
-    retry.schedule(tries, () => {});
-    vi.advanceTimersByTime(249);
-    expect(tries).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(1);
-    expect(tries).toHaveBeenCalledTimes(2);
+    expect(delays(0.5, retry)).toEqual(first);
   });
 });

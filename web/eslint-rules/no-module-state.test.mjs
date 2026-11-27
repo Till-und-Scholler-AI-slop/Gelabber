@@ -55,6 +55,11 @@ tester.run("no-module-state", rule, {
       errors: [{ messageId: "instance", data: { name: "retry" } }],
     },
     {
+      // Without `allow`, the session's own name is module state too.
+      code: "export let voice = create();",
+      errors: [{ messageId: "variable", data: { name: "voice" } }],
+    },
+    {
       // `allow` names only its own variables.
       code: "export let voice = create(); let other = 1;",
       options: [{ allow: ["voice"] }],

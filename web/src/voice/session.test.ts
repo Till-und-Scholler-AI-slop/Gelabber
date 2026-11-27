@@ -45,6 +45,7 @@ import {
 } from "./diagnostics.ts";
 import { videoBitrateCeiling } from "./videoLimits.ts";
 import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
+import { QUIET_MS } from "./testTiming.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 import {
   resetMediaSettingsForTests,
@@ -651,18 +652,18 @@ afterEach(() => {
 
 /** Fake time between two checks of `until`. */
 const STEP_MS = 10;
-/** Fake time after which a test says nothing more happened: past the
- * reconnect backoff's longest delay (4 s). */
-const QUIET_MS = 5_000;
 
 /**
  * vi.waitFor on the fake clock: runs `check` until it passes, moving the
  * clock on by STEP_MS between tries and letting what that wakes run. Fails
  * with the check's own error once `within` ms of fake time have passed.
+ * The default stays below the session's 10 s deadlines (ICE recovery, media
+ * requests), so a wait cannot pass through a deadline's fallback instead of
+ * the path the test names; a test that waits for a deadline passes more.
  */
 async function until<T>(
   check: () => T | Promise<T>,
-  within = 10_000,
+  within = 3_000,
 ): Promise<T> {
   for (let waited = 0; ; waited += STEP_MS) {
     try {

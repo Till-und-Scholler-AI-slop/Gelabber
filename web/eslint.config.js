@@ -45,6 +45,10 @@ export default tseslint.config(
       "src/voice/videoLimits.ts",
     ],
     plugins: { voice: { rules: { "no-module-state": noModuleState } } },
+    rules: { "voice/no-module-state": "error" },
+  },
+  {
+    files: ["src/voice/sessionState.ts"],
     rules: { "voice/no-module-state": ["error", { allow: ["voice"] }] },
   },
   // Text fields come from components/ui (Input, Textarea, Select, with
