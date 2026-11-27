@@ -9,11 +9,12 @@ describe("call sound synth", () => {
     for (const name of names) {
       const cue = renderCue(name, 24000);
       expect(renderCue(name, 24000), name).toEqual(cue);
+      // One assertion per cue: an expect per sample (some 337,000) took
+      // seconds and ran this test into its timeout on a loaded machine.
+      const notFinite = cue.findIndex((value) => !Number.isFinite(value));
+      expect(notFinite, `${name}: first sample that is not finite`).toBe(-1);
       let peak = 0;
-      for (const value of cue) {
-        expect(Number.isFinite(value), name).toBe(true);
-        peak = Math.max(peak, Math.abs(value));
-      }
+      for (const value of cue) peak = Math.max(peak, Math.abs(value));
       // Float32 samples: the level to about seven digits.
       expect(peak, name).toBeCloseTo(CUE_LEVELS[name], 6);
     }
