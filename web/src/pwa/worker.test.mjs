@@ -371,10 +371,16 @@ describe("PWA push", () => {
     message: "m2",
     at: "2026-10-17T10:00:00.000002Z",
   };
+  // As the server sends it (backend/api/src/push, `Payload::encode`): a
+  // declarative push message, the fields under `notification.data`.
+  const declarative = ({ title, body, recall, ...data }) => ({
+    web_push: 8030,
+    notification: { title, body, data: recall ? { ...data, recall } : data },
+  });
 
   it("shows a pushed message like the page would, with the same tag", async () => {
     const w = worker();
-    await w.push(message);
+    await w.push(declarative(message));
     expect(w.showNotification).toHaveBeenCalledWith("Ada · #allgemein", {
       body: "@Bob schau mal",
       tag: "gelabber:u1:c1",
@@ -393,7 +399,7 @@ describe("PWA push", () => {
     const w = worker({
       windows: [appWindow("/d/c1", { visibilityState: "visible" })],
     });
-    await w.push(message);
+    await w.push(declarative(message));
     expect(w.showNotification).toHaveBeenCalledOnce();
   });
 
@@ -413,7 +419,7 @@ describe("PWA push", () => {
           },
         ],
       });
-      await w.push(message);
+      await w.push(declarative(message));
       expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
         "Ada · #allgemein",
         {
@@ -433,7 +439,7 @@ describe("PWA push", () => {
         },
       ],
     });
-    await older.push(message);
+    await older.push(declarative(message));
     expect(older.showNotification).toHaveBeenCalledOnce();
     expect(older.showNotification.mock.calls[0][1].renotify).toBe(true);
   });
@@ -450,7 +456,7 @@ describe("PWA push", () => {
         },
       ],
     });
-    await w.push(recall);
+    await w.push(declarative(recall));
     expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
       "Ada · #allgemein",
       {
@@ -476,14 +482,14 @@ describe("PWA push", () => {
       "https://updates.push.services.mozilla.com/wpush/v2/x",
     ]) {
       const w = worker({ endpoint });
-      await w.push(recall);
+      await w.push(declarative(recall));
       expect(w.showNotification).not.toHaveBeenCalled();
     }
     // Safari ends the subscription after a few: a quiet notification, and
     // the same where the endpoint cannot be read.
     for (const endpoint of ["https://web.push.apple.com/x", undefined]) {
       const w = worker({ endpoint });
-      await w.push(recall);
+      await w.push(declarative(recall));
       expect(w.showNotification).toHaveBeenCalledOnce();
       expect(w.showNotification.mock.calls[0][1]).toMatchObject({
         body: "Nachricht gelöscht",
@@ -505,7 +511,9 @@ describe("PWA push", () => {
         },
       ],
     });
-    await w.push({ ...message, body: "Nachricht gelöscht", recall: true });
+    await w.push(
+      declarative({ ...message, body: "Nachricht gelöscht", recall: true }),
+    );
     expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
       "Ada · #allgemein",
       {
@@ -562,8 +570,6 @@ describe("PWA push", () => {
 
   it("reads a declarative push message where the browser hands over its JSON", async () => {
     const w = worker();
-    // The top-level fields are for older workers; this one must not need
-    // them.
     await w.push({ web_push: 8030, notification: declared, mutable: true });
     expect(w.showNotification).toHaveBeenCalledWith(...shownAsBefore);
   });

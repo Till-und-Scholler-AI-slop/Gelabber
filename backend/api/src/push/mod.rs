@@ -299,7 +299,6 @@ async fn unsubscribe(
 
 /// What a push is about: the fields the page puts on its own notifications,
 /// so taps and dedupe work alike (`web/public/sw.js`).
-#[derive(Serialize)]
 struct Payload<'a> {
     title: &'a str,
     body: &'a str,
@@ -309,7 +308,6 @@ struct Payload<'a> {
     message: Uuid,
     at: chrono::DateTime<chrono::Utc>,
     /// The message was deleted: its notification goes, whatever it said.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     recall: bool,
 }
 
@@ -322,18 +320,14 @@ impl Payload<'_> {
     /// subscription is lost over a push that showed nothing. Every other
     /// browser hands the worker the JSON as before.
     ///
-    /// `navigate` is where a tap leads when no worker answers it. The fields
-    /// of the payload stand at the top level too: a worker installed before
-    /// v0.12 reads them there, and stays in charge until its app is opened
-    /// again.
+    /// `navigate` is where a tap leads when no worker answers it. The worker
+    /// reads the payload under `notification` as well.
     fn encode(&self, navigate: &str, locale: Locale) -> serde_json::Result<Vec<u8>> {
         #[derive(Serialize)]
         struct Message<'a> {
             web_push: u16,
             notification: Declared<'a>,
             mutable: bool,
-            #[serde(flatten)]
-            payload: &'a Payload<'a>,
         }
         #[derive(Serialize)]
         struct Declared<'a> {
@@ -379,7 +373,6 @@ impl Payload<'_> {
                 },
             },
             mutable: true,
-            payload: self,
         })
     }
 }

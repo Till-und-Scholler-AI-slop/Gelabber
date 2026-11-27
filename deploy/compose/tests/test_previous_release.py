@@ -13,6 +13,8 @@ import subprocess
 import tempfile
 import unittest
 
+import workflow_data
+
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / '.github/workflows/scripts/previous_release.sh'
 SCRIPT_PATH = '.github/workflows/scripts/previous_release.sh'
@@ -147,6 +149,61 @@ class PreviousRelease(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn('0001_step.sql', done.stderr)
 
+
+    def test_own_names_the_lines_newest_release_or_nothing(self):
+        cases = [('v0.14 has released v0.14.0', 'v0.14', 'v0.14.0 4'),
+                 ('v0.15 has no release yet', 'v0.15', '')]
+        for name, ref_name, expected in cases:
+            with self.subTest(name):
+                done = self.run_script(self.full, '--own', ref_name=ref_name)
+                self.assertEqual((done.returncode, done.stdout.strip()), (0, expected), done.stderr)
+        shallow = self.base / 'shallow-own'
+        git(self.base, 'clone', '-q', '--depth=1', '--no-tags', '--branch', 'v0.14',
+            f'file://{self.origin}', str(shallow))
+        fetched = self.run_script(shallow, '--own', '--fetch', ref_name='v0.14')
+        self.assertEqual((fetched.returncode, fetched.stdout.strip()), (0, 'v0.14.0 4'), fetched.stderr)
+
+    def ci_step(self, repo, ref_name):
+        """ci.yml's own step, run in `repo` for a push to `ref_name`."""
+        step = next(step for step in workflow_data.load('ci.yml')['jobs']['rust']['steps']
+                    if step.get('name') == 'Previous release for the upgrade test')
+        env = {**os.environ, 'BASE_REF': '', 'REF_NAME': ref_name,
+               'GITHUB_ENV': str(self.base / f'{repo.name}.env'), 'GITHUB_STEP_SUMMARY': os.devnull}
+        return subprocess.run(['bash', '--noprofile', '--norc', '-e', '-c', step['run']], cwd=repo,
+                              env=env, capture_output=True, text=True)
+
+    def test_ci_checks_the_migrations_against_the_lines_own_release(self):
+        """GEL-444: servers already run v0.14.0; its migration 4 is released."""
+        def fresh(name, branch):
+            repo = self.base / name
+            git(self.base, 'clone', '-q', str(self.origin), str(repo))
+            git(repo, 'switch', '-q', branch)
+            return repo
+
+        changes = {
+            'edited': lambda repo: (repo / MIGRATIONS / '0004_step.sql').write_text('-- edited\n'),
+            'deleted': lambda repo: (repo / MIGRATIONS / '0004_step.sql').unlink(),
+            'inserted below it': lambda repo: (repo / MIGRATIONS / '0004_inserted.sql').write_text('-- in\n'),
+        }
+        for name, change in changes.items():
+            with self.subTest(name):
+                repo = fresh(f'own-{name.replace(" ", "-")}', 'v0.14')
+                change(repo)
+                git(repo, 'add', '-A')
+                git(repo, 'commit', '-qm', name)
+                done = self.ci_step(repo, 'v0.14')
+                self.assertNotEqual(done.returncode, 0, done.stdout)
+                self.assertIn('since v0.14.0' if name != 'inserted below it' else "v0.14.0's 4", done.stderr)
+        with self.subTest('a new migration above it'):
+            repo = fresh('own-above', 'v0.14')
+            (repo / MIGRATIONS / '0005_new.sql').write_text('-- new\n')
+            git(repo, 'add', '-A')
+            git(repo, 'commit', '-qm', 'new')
+            done = self.ci_step(repo, 'v0.14')
+            self.assertEqual(done.returncode, 0, done.stderr)
+        with self.subTest('a line without a release of its own'):
+            done = self.ci_step(fresh('own-none', 'v0.15'), 'v0.15')
+            self.assertEqual(done.returncode, 0, done.stderr)
 
 if __name__ == '__main__':
     unittest.main()

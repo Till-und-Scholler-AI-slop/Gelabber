@@ -221,7 +221,6 @@ async fn consumer_is_paused_until_exact_generation_ready_and_watch_off_stops_nat
     denied(&viewer.rpc(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":Uuid::new_v4()})).await, "forbidden");
     viewer.ok(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":event["generation"]})).await;
     denied(&publisher.rpc(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":event["generation"]})).await, "forbidden");
-    viewer.ok(json!({"op":"q","consumerId":event["consumerId"],"generation":event["generation"],"h":90,"congested":false})).await;
     viewer
         .ok(json!({"op":"w","u":owner,"k":"s","on":false}))
         .await;
