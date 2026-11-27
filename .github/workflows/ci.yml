@@ -44,6 +44,7 @@ jobs:
       desktop: ${{ steps.areas.outputs.desktop }}
       deploy: ${{ steps.areas.outputs.deploy }}
       minio: ${{ steps.areas.outputs.minio }}
+      minio-build: ${{ steps.areas.outputs.minio-build }}
       images: ${{ steps.areas.outputs.images }}
     steps:
       - name: Checkout
@@ -511,13 +512,15 @@ jobs:
         if: matrix.name == 'media'
         run: python3 backend/build/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$GITHUB_SHA"
 
-  # Builds and checks the pinned MinIO and mc images; publish-minio.yml
-  # pushes them from main.
+  # Checks the pinned MinIO and mc images, built from source when their
+  # Dockerfiles change; publish-minio.yml pushes missing ones from main.
   minio:
     name: MinIO images
     needs: changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.minio == 'true'
     uses: ./.github/workflows/minio-images.yml
+    with:
+      build: ${{ needs.changes.outputs.minio-build == 'true' }}
 
   desktop:
     name: Desktop

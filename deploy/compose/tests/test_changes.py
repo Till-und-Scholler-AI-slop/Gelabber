@@ -129,6 +129,19 @@ class Outputs(unittest.TestCase):
     def test_no_images_is_an_empty_list(self):
         self.assertEqual(self.run_script(stdin='docs/x.md\n')['images'], '[]')
 
+    def test_minio_is_built_only_when_its_dockerfiles_change(self):
+        # GEL-392: otherwise the minio job checks the published pinned images.
+        for path, area, build in (('deploy/compose/minio/Dockerfile', 'true', 'true'),
+                                  ('deploy/compose/mc/Dockerfile', 'true', 'true'),
+                                  ('.github/workflows/minio-images.yml', 'true', 'true'),
+                                  ('deploy/compose/compose.yaml', 'true', 'false'),
+                                  ('deploy/compose/minio-init.sh', 'true', 'false'),
+                                  ('backend/Cargo.toml', 'false', 'false')):
+            with self.subTest(path=path):
+                out = self.run_script(stdin=path + '\n')
+                self.assertEqual((out['minio'], out['minio-build']), (area, build))
+        self.assertEqual(self.run_script('--all')['minio-build'], 'false')
+
     def test_all_runs_everything(self):
         out = self.run_script('--all')
         for area in changes.AREAS:

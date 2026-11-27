@@ -247,7 +247,7 @@ class PushPaths(unittest.TestCase):
         images, publish = jobs(text)['images'], jobs(text)['publish']
         self.assertIn('    uses: ./.github/workflows/minio-images.yml\n', images)
         self.assertIn("      keep: ${{ github.ref == 'refs/heads/main' }}\n", images)
-        self.assertIn("    if: github.ref == 'refs/heads/main'\n", publish)
+        self.assertIn("    if: github.ref == 'refs/heads/main' && needs.images.outputs.built == 'true'\n", publish)
         self.assertIn('      packages: write\n', section(publish, 'permissions', 4))
         self.assertIn('          name: minio-images\n', publish)
         self.assertIn('docker push "${GHCR_IMAGE}:${MINIO_RELEASE}"', publish)
