@@ -150,6 +150,17 @@ async fn serve_site() -> (Site, Policy) {
     (site, policy)
 }
 
+/// A request gives up after 1 s and a message's links after 1.5 s, instead
+/// of 5 s and 8 s: the first slow link times out on its own, a second runs
+/// into the end of the budget.
+fn quick(policy: Policy) -> Policy {
+    Policy {
+        request_timeout: Some(Duration::from_secs(1)),
+        job_budget: Some(Duration::from_millis(1500)),
+        ..policy
+    }
+}
+
 async fn signed_in(pool: PgPool, previews: Option<LinkPreviews>) -> (Client, String) {
     let mut state = common::state(pool);
     state.previews = previews;
@@ -505,6 +516,7 @@ async fn internal_targets_and_redirects_to_them_are_refused(pool: PgPool) {
 #[sqlx::test]
 async fn a_slow_page_does_not_hold_up_sending(pool: PgPool) {
     let (site, policy) = serve_site().await;
+    let policy = quick(policy);
     let (mut client, channel) =
         signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
     let start = Instant::now();
@@ -533,6 +545,7 @@ async fn a_slow_page_does_not_hold_up_sending(pool: PgPool) {
 #[sqlx::test]
 async fn a_timeout_holds_up_only_its_own_host(pool: PgPool) {
     let (site, policy) = serve_site().await;
+    let policy = quick(policy);
     let (mut client, channel) =
         signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
     let port = site.origin.rsplit(':').next().unwrap();
@@ -552,8 +565,15 @@ async fn a_timeout_holds_up_only_its_own_host(pool: PgPool) {
     )
     .await;
     wait_settled(&pool, 1).await;
-    // Past the budget (8 s) with some room for the worker to finish.
-    tokio::time::sleep(Duration::from_secs(9).saturating_sub(start.elapsed())).await;
+    // The message's budget ran out on the second link.
+    let spent = "gelabber_link_previews_total{outcome=\"budget\"} 1";
+    while !metrics(&mut client).await.contains(spent) {
+        assert!(
+            start.elapsed() < Duration::from_secs(15),
+            "budget not spent"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     let card = async |client: &mut Client, url: String| {
         let sent = post(client, &channel, &url).await;

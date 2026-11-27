@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use gelabber_api::{AppState, Config, app};
+use gelabber_api::{AppState, Config, Workers, app};
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tower::ServiceExt;
@@ -166,7 +166,9 @@ async fn counting_server() -> (
 async fn ready_probes_once_for_a_burst() {
     let (postgres, pg_accepted, pg_task) = counting_server().await;
     let (redis, redis_accepted, redis_task) = counting_server().await;
-    let state = AppState::from_config(&config(postgres, redis, 300)).unwrap();
+    let mut state = AppState::from_config(&config(postgres, redis, 300)).unwrap();
+    // Only `/ready` may connect: the workers would try the pool too.
+    state.workers = Workers::none();
     let app = app(state);
 
     let burst = (0..20).map(|_| {
@@ -182,14 +184,11 @@ async fn ready_probes_once_for_a_burst() {
         .unwrap();
     assert_eq!(again.status(), StatusCode::SERVICE_UNAVAILABLE);
 
-    // The app's background workers also try the pool and Redis, so allow a
-    // few more than the one probe; a probe per request would be 21 each.
+    // One probe for the burst and the request after it; a probe per
+    // request would be 21 each.
     let ordering = std::sync::atomic::Ordering::SeqCst;
     let (pg, redis) = (pg_accepted.load(ordering), redis_accepted.load(ordering));
-    assert!(
-        pg < 10 && redis < 10,
-        "postgres {pg}, redis {redis} connections"
-    );
+    assert_eq!((pg, redis), (1, 1), "postgres and redis connections");
     pg_task.abort();
     redis_task.abort();
 }

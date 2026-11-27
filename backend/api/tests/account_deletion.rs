@@ -99,22 +99,37 @@ async fn post(client: &mut Client, channel_id: &str, body: Value) -> Value {
     res.body
 }
 
-/// Runs purge passes until the account's row is gone (the app's own worker
-/// may get there first).
+/// The purge and storage cleanup workers are off: the tests run their
+/// passes by hand ([`purged`], `cleanup::delete_pending`), so an account
+/// stays as phase one left it, and a queued object stays queued, until then.
+fn state(pool: PgPool) -> AppState {
+    let mut state = common::state(pool);
+    state.workers.account_purge = None;
+    state.workers.storage_cleanup = None;
+    state
+}
+
+fn ws_state(pool: PgPool) -> AppState {
+    let mut state = common::ws_state(pool);
+    state.workers.account_purge = None;
+    state.workers.storage_cleanup = None;
+    state
+}
+
+async fn serve(pool: PgPool) -> (std::net::SocketAddr, AppState) {
+    let state = ws_state(pool);
+    (common::serve_ws_state(state.clone()).await, state)
+}
+
+/// One purge pass removes the account's row.
 async fn purged(state: &AppState, user_id: Uuid) {
-    for _ in 0..500 {
-        deletion::purge_pending(state).await.unwrap();
-        let left: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)")
-            .bind(user_id)
-            .fetch_one(&state.db)
-            .await
-            .unwrap();
-        if !left {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("account {user_id} was not purged");
+    deletion::purge_pending(state).await.unwrap();
+    let left: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert!(!left, "account {user_id} was not purged");
 }
 
 async fn count(pool: &PgPool, sql: &'static str, id: Uuid) -> i64 {
@@ -182,7 +197,7 @@ async fn closes(ws: &mut Ws) -> bool {
 
 #[sqlx::test]
 async fn an_owner_is_told_which_servers_to_hand_over_first(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
     let home = create_server(&mut ada, "Wohnzimmer").await;
@@ -221,7 +236,7 @@ async fn an_owner_is_told_which_servers_to_hand_over_first(pool: PgPool) {
 
 #[sqlx::test]
 async fn a_wrong_password_is_refused_and_counts_like_a_failed_login(pool: PgPool) {
-    let state = common::state(pool);
+    let state = state(pool);
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
 
     let res = delete_me(&mut ada, json!({})).await;
@@ -248,7 +263,7 @@ async fn a_wrong_password_is_refused_and_counts_like_a_failed_login(pool: PgPool
 
 #[sqlx::test]
 async fn deleting_ends_every_session_and_leaves_every_server_at_once(pool: PgPool) {
-    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let (addr, state) = serve(pool.clone()).await;
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let mut ada_phone = signed_in(&state, "ada@example.com").await;
     let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
@@ -319,7 +334,7 @@ async fn deleting_ends_every_session_and_leaves_every_server_at_once(pool: PgPoo
 #[sqlx::test]
 async fn the_purge_removes_messages_files_reactions_and_the_row(pool: PgPool) {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x40\0\0\0\x40\x08\x06\0\0\0\0\0\0\0";
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
     let mut cara = signed_up(&state, "cara@example.com", "Cara").await;
@@ -472,19 +487,17 @@ async fn the_purge_removes_messages_files_reactions_and_the_row(pool: PgPool) {
                 .unwrap();
         assert_eq!(reserved, Some(0), "{key}");
     }
-    // Every object is deleted by the storage worker.
+    // One pass of the storage worker deletes every object that is due.
+    gelabber_api::attachments::cleanup::delete_pending(&state, 32)
+        .await
+        .unwrap();
     let avatar_key = avatar_url.trim_start_matches("/api/").to_owned();
     let banner_key = banner_url.trim_start_matches("/api/").to_owned();
     for key in [format!("att/{sent_file}"), avatar_key, banner_key] {
-        let mut gone = false;
-        for _ in 0..250 {
-            if matches!(state.store.head(&key).await, Err(StoreError::NotFound)) {
-                gone = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        assert!(gone, "{key} is still stored");
+        assert!(
+            matches!(state.store.head(&key).await, Err(StoreError::NotFound)),
+            "{key} is still stored"
+        );
     }
 
     // Bob's own message stays, without her reaction.
@@ -525,7 +538,7 @@ async fn the_purge_removes_messages_files_reactions_and_the_row(pool: PgPool) {
 
 #[sqlx::test]
 async fn invites_go_at_once_and_the_address_is_free_after_the_purge(pool: PgPool) {
-    let state = common::state(pool);
+    let state = state(pool);
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
     let server = create_server(&mut bob, "Team").await;
@@ -558,7 +571,7 @@ async fn invites_go_at_once_and_the_address_is_free_after_the_purge(pool: PgPool
 
 #[sqlx::test]
 async fn a_dm_goes_on_both_sides_and_the_peer_is_told(pool: PgPool) {
-    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let (addr, state) = serve(pool.clone()).await;
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
     let ada_id = Uuid::parse_str(ada.user_id()).unwrap();
@@ -601,7 +614,7 @@ async fn a_dm_goes_on_both_sides_and_the_peer_is_told(pool: PgPool) {
 
 #[sqlx::test]
 async fn the_purge_mails_the_old_address_in_its_language(pool: PgPool) {
-    let mut state = common::state(pool.clone());
+    let mut state = state(pool.clone());
     let mailer = Mailer::memory(&url::Url::parse("https://chat.example.org/").unwrap());
     state.mail = Some(mailer.clone());
     // With mail on, a registration must be confirmed before it signs in.
@@ -639,7 +652,7 @@ async fn the_purge_mails_the_old_address_in_its_language(pool: PgPool) {
 
 #[sqlx::test]
 async fn an_account_without_a_password_confirms_with_its_address(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = Uuid::parse_str(ada.user_id()).unwrap();
     sqlx::query("UPDATE users SET password_hash = NULL WHERE id = $1")
@@ -682,7 +695,7 @@ async fn an_account_without_a_password_confirms_with_its_address(pool: PgPool) {
 async fn a_provider_sign_in_does_not_find_an_account_under_deletion(pool: PgPool) {
     use gelabber_api::auth::oidc::link::{self, Identity, SignIn};
 
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = Uuid::parse_str(ada.user_id()).unwrap();
     sqlx::query(
@@ -693,13 +706,6 @@ async fn a_provider_sign_in_does_not_find_an_account_under_deletion(pool: PgPool
     .execute(&pool)
     .await
     .unwrap();
-    // Keep the row from being purged while the lookups run.
-    let mut hold = pool.begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('account-purge'), hashtext($1::text))")
-        .bind(ada_id)
-        .execute(&mut *hold)
-        .await
-        .unwrap();
     let res = delete_me(&mut ada, json!({ "password": PASSWORD })).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     let marked = count(
@@ -719,14 +725,13 @@ async fn a_provider_sign_in_does_not_find_an_account_under_deletion(pool: PgPool
     };
     let found = link::sign_in(&mut conn, &identity).await.unwrap();
     assert_eq!(found, SignIn::New { takeover: None });
-    hold.rollback().await.unwrap();
 }
 
 /// A server created while the deletion runs is either seen by it (409) or
 /// refused, never left owned by a deleted account.
 #[sqlx::test]
 async fn a_server_created_during_the_deletion_is_never_left_behind(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = Uuid::parse_str(ada.user_id()).unwrap();
     let browser = |client: &Client| {
@@ -811,7 +816,7 @@ async fn a_server_created_during_the_deletion_is_never_left_behind(pool: PgPool)
 /// that waited for it then answers 409.
 #[sqlx::test]
 async fn a_deletion_waits_for_a_server_being_created(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = Uuid::parse_str(ada.user_id()).unwrap();
 
@@ -847,7 +852,7 @@ async fn a_deletion_waits_for_a_server_being_created(pool: PgPool) {
 async fn a_released_reservation_needs_no_ledger_row(pool: PgPool) {
     use gelabber_api::attachments::cleanup;
 
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let uploader = Uuid::new_v4();
     for key in ["att/orphan", "att/reserved"] {
         state
@@ -878,18 +883,18 @@ async fn a_released_reservation_needs_no_ledger_row(pool: PgPool) {
             .unwrap()
         }
     };
-    let mut deleted = false;
-    for _ in 0..100 {
-        cleanup::delete_pending(&state, 32).await.unwrap();
-        if !queued("att/orphan").await {
-            deleted = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(deleted, "the queued object was not deleted");
-    // Past its retry delay, the reserved one is still waiting.
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    cleanup::delete_pending(&state, 32).await.unwrap();
+    assert!(
+        !queued("att/orphan").await,
+        "the queued object was not deleted"
+    );
+    // Tried again once its retry delay is over, the reserved one still waits.
+    sqlx::query(
+        "UPDATE storage_cleanup SET next_attempt = now() WHERE object_key = 'att/reserved'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     cleanup::delete_pending(&state, 32).await.unwrap();
     assert!(queued("att/reserved").await);
     assert!(state.store.fetch("att/reserved").await.is_ok());
@@ -900,7 +905,7 @@ async fn a_released_reservation_needs_no_ledger_row(pool: PgPool) {
 /// the smaller count. A declined request stays until the purge.
 #[sqlx::test]
 async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
-    let mut state = common::ws_state(pool.clone());
+    let mut state = ws_state(pool.clone());
     state.directory = true;
     let addr = common::serve_ws_state(state.clone()).await;
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
@@ -949,13 +954,6 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
     let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
     assert_eq!(frame, json!({ "op": "jq", "s": keller, "n": 1 }));
 
-    // Keep the row from being purged while the checks before the purge run.
-    let mut hold = pool.begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('account-purge'), hashtext($1::text))")
-        .bind(lena_id)
-        .execute(&mut *hold)
-        .await
-        .unwrap();
     let res = delete_me(&mut lena, json!({ "password": PASSWORD })).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
@@ -980,7 +978,6 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
         left,
         vec![(Uuid::parse_str(&werkstatt).unwrap(), "declined".to_owned())]
     );
-    hold.rollback().await.unwrap();
 }
 
 /// Feedback outlives its sender's account (#542): the entry stays for the
@@ -988,7 +985,7 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
 /// account leaves its replies as operator replies without an author.
 #[sqlx::test]
 async fn feedback_stays_unlinked_and_its_image_is_queued(pool: PgPool) {
-    let mut state = common::state(pool.clone());
+    let mut state = state(pool.clone());
     state.operators = std::sync::Arc::new(std::collections::HashSet::from([
         "lena@example.com".to_owned(),
         "max@example.com".to_owned(),
