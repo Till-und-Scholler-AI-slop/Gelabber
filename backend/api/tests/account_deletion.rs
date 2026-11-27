@@ -121,6 +121,22 @@ async fn serve(pool: PgPool) -> (std::net::SocketAddr, AppState) {
     (common::serve_ws_state(state.clone()).await, state)
 }
 
+/// Waits until `mailer` has taken `count` mails, and returns them.
+async fn mails(mailer: &Mailer, count: usize) -> Vec<gelabber_api::mail::Sent> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while mailer.outbox().len() < count {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{:?}",
+            mailer.outbox()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let sent = mailer.outbox();
+    assert_eq!(sent.len(), count, "{sent:?}");
+    sent
+}
+
 /// One purge pass removes the account's row.
 async fn purged(state: &AppState, user_id: Uuid) {
     deletion::purge_pending(state).await.unwrap();
@@ -622,6 +638,8 @@ async fn the_purge_mails_the_old_address_in_its_language(pool: PgPool) {
     ada.bootstrap().await;
     let res = ada.register("ada@example.com", PASSWORD, "Ada").await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    // The confirmation mail goes out in the background; it is the first.
+    mails(&mailer, 1).await;
     sqlx::query(
         "UPDATE users SET email_verified_at = now(), registration_pending = false, locale = 'en' \
          WHERE email = 'ada@example.com'",
@@ -632,20 +650,12 @@ async fn the_purge_mails_the_old_address_in_its_language(pool: PgPool) {
     let res = ada.login("ada@example.com", PASSWORD).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     let ada_id = Uuid::parse_str(ada.user_id()).unwrap();
-    let before = mailer.outbox().len();
 
     let res = delete_me(&mut ada, json!({ "password": PASSWORD })).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     purged(&state, ada_id).await;
-    for _ in 0..200 {
-        if mailer.outbox().len() > before {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let sent = mailer.outbox();
+    let sent = mails(&mailer, 2).await;
     let last = sent.last().expect("a mail");
-    assert_eq!(sent.len(), before + 1, "{sent:?}");
     assert_eq!(last.to, "ada@example.com");
     assert_eq!(last.subject, "Your Gelabber account has been deleted");
 }
