@@ -599,7 +599,20 @@ export async function startHarness() {
     report.finishedAt = new Date().toISOString();
     for (const id of gate(report.results, selected, report.cleanup).absent)
       blocked(id, "selected-case-unknown-or-not-reached");
-    report.gate = gate(report.results, selected, report.cleanup);
+    const expected = JSON.parse(
+      process.env.GELABBER_E2E_EXPECTED_FAILURES || "{}",
+    );
+    report.gate = gate(report.results, selected, report.cleanup, expected);
+    for (const { id, issue, reason } of report.gate.expectedFailures)
+      console.log(`EXPECTED FAIL ${id} (${issue}): ${reason}`);
+    for (const { id, issue, reason, site } of report.gate.otherFailures)
+      console.log(
+        `FAIL of an expected failure for another reason: ${id} ${reason} at ${site} (listed under ${issue})`,
+      );
+    for (const { id, issue } of report.gate.nowPassing)
+      console.log(
+        `PASS of an expected failure: remove ${id} from its profile's list (${issue})`,
+      );
     const path =
       process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
     await mkdir(dirname(path), { recursive: true });
