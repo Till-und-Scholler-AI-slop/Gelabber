@@ -623,7 +623,9 @@ mod tests {
     use egui_kittest::kittest::{NodeT, Queryable};
     use serde_json::json;
 
-    use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for, workspace};
+    use crate::app::testkit::{
+        FakeApi, HOME, Reply, launcher, wait_for, wait_until_idle, workspace,
+    };
     use crate::platform::paths::testing::TempConfig;
 
     const JONAS: &str = "00000000-0000-4000-8000-000000000038";
@@ -657,15 +659,14 @@ mod tests {
         fn shown(h: &egui_kittest::Harness<'_, crate::setup::Launcher>, label: &str) -> bool {
             h.query_all_by_label(label).next().is_some()
         }
-        // Opened again until the server's members are in (it closes
-        // without them).
+        // Opened once the server's members are in: the dialog closes
+        // without them, and no member is on screen to open before then.
+        wait_until_idle(&mut harness);
+        super::super::open_member(&ctx, HOME.parse().unwrap(), JONAS.parse().unwrap());
         wait_for(&mut harness, "the dialog", |h| {
-            if !shown(h, "Nachricht senden") {
-                super::super::open_member(&ctx, HOME.parse().unwrap(), JONAS.parse().unwrap());
-            }
             shown(h, "Freund hinzufügen") && shown(h, "Blockieren")
         });
-        harness.run_steps(4);
+        wait_until_idle(&mut harness);
         let button = |label: &str| {
             harness
                 .query_all_by_label(label)

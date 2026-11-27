@@ -20,6 +20,7 @@ import {
 } from "../auth/scope.ts";
 import { useEffect } from "react";
 
+import { isMalformedAnswer } from "../api/wire.ts";
 import { notify } from "../components/toasts.ts";
 import { translate } from "../i18n/catalog.ts";
 import { discovery } from "../i18n/catalogs/discovery.ts";
@@ -174,8 +175,14 @@ export function useJoinListing() {
           : listing.member_count + 1,
       }));
     },
-    onError: (_error, _serverId, stamp) => {
-      if (stampHolds(stamp)) refreshDirectory(client, stamp);
+    onError: (error, _serverId, stamp) => {
+      if (!stampHolds(stamp)) return;
+      refreshDirectory(client, stamp);
+      // Joined although the answer was rejected: the list shows it.
+      if (isMalformedAnswer(error))
+        void client.invalidateQueries({
+          queryKey: serverKeys.list(stamp.userId, stamp.generation),
+        });
     },
   });
 }

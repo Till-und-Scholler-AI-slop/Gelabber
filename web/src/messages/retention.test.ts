@@ -22,6 +22,7 @@ const user = {
   id: "retention-user",
   name: "R",
   email: "r@example.test",
+  locale: "de",
   avatar_url: null,
   created_at: "2026-09-28T00:00:00Z",
 };

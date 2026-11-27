@@ -1923,6 +1923,7 @@ fn editor(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, blocked: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::testkit::click_role;
 
     #[test]
     fn presets_round_trip_and_ops() {
@@ -1947,7 +1948,7 @@ mod tests {
     fn failed_theme_saves_and_unknown_documents() {
         use crate::app::testkit::{FakeApi, Reply, launcher, wait_for_label};
         use egui::accesskit::Role;
-        use egui_kittest::kittest::Queryable;
+
         let _config = crate::platform::paths::testing::TempConfig::new("themes-failed");
         let garbage = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let serve = garbage.clone();
@@ -1960,16 +1961,12 @@ mod tests {
         });
         let mut harness = launcher(&api, "/settings/darstellung");
         wait_for_label(&mut harness, "Hell");
-        // The card takes the click once the account's document is loaded.
-        let start = std::time::Instant::now();
-        while Theme::of(&harness.ctx).is_dark() {
-            assert!(start.elapsed().as_secs() < 15, "the theme did not change");
-            harness
-                .get_by_role_and_label(Role::RadioButton, "Hell")
-                .click();
-            harness.run_steps(2);
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
+        // Once the account's document is loaded (the click waits for it),
+        // one click on the card applies the theme.
+        click_role(&mut harness, Role::RadioButton, "Hell");
+        crate::app::testkit::wait_for(&mut harness, "the light theme", |h| {
+            !Theme::of(&h.ctx).is_dark()
+        });
         let unsynced = "Noch nicht synchronisiert. Deine Änderung ist hier gespeichert.";
         wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
         // The Themes area holds the sync box with the account's state.
@@ -1982,9 +1979,7 @@ mod tests {
         // The local change shows meanwhile, as in the web.
         assert!(!Theme::of(&harness.ctx).is_dark());
         garbage.store(true, std::sync::atomic::Ordering::SeqCst);
-        harness
-            .get_by_role_and_label(Role::Button, "Erneut anwenden")
-            .click();
+        click_role(&mut harness, Role::Button, "Erneut anwenden");
         wait_for_label(&mut harness, "Unbekanntes Theme-Format vom Server.");
         // An operation that cannot apply says why, or the generic line.
         let doc = ThemeDocument::default();
@@ -2014,9 +2009,9 @@ mod tests {
         let mut harness = launcher(&api, "/settings/themes");
         wait_for_label(&mut harness, texts::error_load_failed());
         up.store(true, Ordering::SeqCst);
-        harness
-            .get_by_role_and_label(Role::Button, "Erneut versuchen")
-            .click();
+        // While the error shows: the app's own recovery of the workspace
+        // would load the themes too, once the server answers again.
+        crate::app::testkit::click_role_now(&mut harness, Role::Button, "Erneut versuchen");
         // The reloaded document is the account's now.
         wait_for(&mut harness, "the themes", |h| {
             sync(&h.ctx).lock().local.is_some()
@@ -2044,9 +2039,9 @@ mod tests {
         let mut harness = launcher(&api, "/settings/darstellung");
         wait_for_label(&mut harness, "Erneut versuchen");
         up.store(true, Ordering::SeqCst);
-        harness
-            .get_by_role_and_label(Role::Button, "Erneut versuchen")
-            .click();
+        // While the error shows: the app's own recovery of the workspace
+        // would load the themes too, once the server answers again.
+        crate::app::testkit::click_role_now(&mut harness, Role::Button, "Erneut versuchen");
         wait_for(&mut harness, "the themes", |h| {
             sync(&h.ctx).lock().local.is_some()
         });

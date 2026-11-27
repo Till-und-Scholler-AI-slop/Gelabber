@@ -1,3 +1,12 @@
+# Per-test time limit (GEL-370), for every profile: a hung test is ended
+# after three minutes and reported by name, instead of holding the job
+# until its 45 minutes run out. The slowest test in recent push runs,
+# access_revocation::idle_media_authority_stops_and_a_new_mint_restarts_it,
+# took 36.6 to 38.2 s, so 180 s leaves a 4.7-fold margin. With `retries = 1`
+# (profile ci) a hang costs twice that.
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 3 }
+
 # Profile `ci` (`cargo nextest run --profile ci`), as CI runs the tests.
 
 # Retry and report (GEL-389): a failed test runs once more; if it then
@@ -9,3 +18,9 @@ retries = 1
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# The upgrade test says how many migrations it applied after the previous
+# release (GEL-413), also when it passes.
+[[profile.ci.overrides]]
+filter = "binary(upgrade)"
+success-output = "final"

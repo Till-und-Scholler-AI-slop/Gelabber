@@ -19,6 +19,7 @@ const user = {
   id: "me",
   name: "Ada",
   email: "ada@test.invalid",
+  locale: "de",
   avatar_url: null,
   created_at: "2026-10-05T00:00:00Z",
 };
@@ -192,9 +193,17 @@ describe("separate reaction intent overlay", () => {
     await pending;
     expect(cached()).toEqual([]);
   });
-  it("normalizes Redis empty object votes and leaves a stable empty reaction bar", () => {
-    event("e", 15, { ...row(15), reactions: {} as Message["reactions"] });
-    expect(cached()?.[0]?.reactions).toEqual([]);
+  it("leaves out a frame with `reactions: {}`", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = cached()?.[0];
+    event("e", 15, {
+      ...row(15, "changed by a broken frame"),
+      reactions: {} as Message["reactions"],
+    });
+    expect(cached()?.[0]).toEqual(before);
+    expect(cached()?.[0]?.content).not.toBe("changed by a broken frame");
+  });
+  it("draws no reaction bar for something that is no list", () => {
     expect(displayedReactions({} as Message["reactions"], "me")).toEqual([]);
   });
   it("the next authoritative read carries reactions after reconnect", async () => {

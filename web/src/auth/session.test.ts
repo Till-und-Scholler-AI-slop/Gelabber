@@ -261,6 +261,35 @@ describe("session store", () => {
     });
   });
 
+  it("login with an account the client cannot read fails, not signs out", async () => {
+    const unreadable = { ...ada, locale: undefined };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: null, csrf_token: "c0" }),
+      "POST /api/auth/login": () =>
+        json(200, { user: unreadable, csrf_token: "c1" }),
+    });
+    await ensureSession();
+
+    await expect(login("ada@example.com", "password123")).rejects.toMatchObject(
+      { code: "internal" },
+    );
+    expect(useSession.getState().status).toBe("anonymous");
+  });
+
+  it("a bootstrap with an account the client cannot read retries, not signs out", async () => {
+    const unreadable = { ...ada, locale: undefined };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: unreadable, csrf_token: "c1" }),
+    });
+    await ensureSession();
+    expect(useSession.getState().status).toBe("unknown");
+    expect(useSessionProblems.getState().bootstrap).not.toBeNull();
+  });
+
   it("register signs in like login", async () => {
     fakeApi({
       "POST /api/auth/register": () =>

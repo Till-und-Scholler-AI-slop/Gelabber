@@ -12,6 +12,7 @@ import { useSession } from "../auth/store.ts";
 import { resetReplyTargets, useReplyTargets } from "../messages/replyTarget.ts";
 import type { Message } from "../messages/types.ts";
 import { resetEditDrafts } from "./editDrafts.ts";
+import { MentionContext } from "./mentionContext.ts";
 import { MessageRow } from "./MessageRow.tsx";
 
 const message: Message = {
@@ -139,5 +140,75 @@ describe("message menu", () => {
     await userEvent.click(menu.getByRole("menuitem", { name: "Löschen" }));
     await userEvent.keyboard("{/Shift}");
     expect(onDelete).toHaveBeenCalledExactlyOnceWith(true);
+  });
+});
+
+describe("a row that cannot be drawn", () => {
+  // A message that slipped past the checks without `mentions`: drawing it
+  // for another reader throws.
+  const broken = {
+    ...message,
+    id: "m2",
+    revision: 1,
+    author: { id: "u2", name: "Bea", avatar_url: null },
+    content: "Kaputt",
+    mentions: undefined,
+  } as unknown as Message;
+  const row = (shown: Message) => (
+    <MessageRow
+      key={shown.id}
+      message={shown}
+      continued={false}
+      mine={shown.author.id === "u1"}
+      canSend
+      canDelete={false}
+      onEdit={() => {}}
+      onDelete={() => {}}
+    />
+  );
+  const rows = (...shown: Message[]) => (
+    <QueryClientProvider client={new QueryClient()}>
+      <MentionContext.Provider
+        value={{ members: [], mentionable: [], me: "u1", keywords: false }}
+      >
+        {shown.map(row)}
+      </MentionContext.Provider>
+    </QueryClientProvider>
+  );
+  const notice = "Diese Nachricht kann nicht angezeigt werden.";
+
+  it("shows a notice in its place, and the row beside it stays", async () => {
+    const screen = await render(rows(message, broken));
+    await expect
+      .element(screen.getByText("Treffen wir uns um acht?"))
+      .toBeVisible();
+    const failed = screen.getByText(notice);
+    await expect.element(failed).toBeVisible();
+    // Who wrote it and when, as far as they are readable.
+    await expect.element(screen.getByText(/^Bea · \d/)).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Erneut versuchen" }))
+      .toBeVisible();
+    await expect.element(screen.getByText("Kaputt")).not.toBeInTheDocument();
+    // Focusable like a row, and not announced again each time it mounts.
+    const box = screen.container.querySelector(".lr-message-failed");
+    expect(box?.getAttribute("tabindex")).toBe("-1");
+    expect(box?.getAttribute("role")).toBeNull();
+  });
+
+  it("draws the message again once a newer revision of it arrives", async () => {
+    const screen = await render(rows(broken));
+    await expect.element(screen.getByText(notice)).toBeVisible();
+    await screen.rerender(
+      rows({
+        ...message,
+        id: "m2",
+        revision: 2,
+        author: { id: "u2", name: "Bea", avatar_url: null },
+        content: "Wieder da",
+      }),
+    );
+    await expect.element(screen.getByText("Wieder da")).toBeVisible();
+    await expect.element(screen.getByText(notice)).not.toBeInTheDocument();
   });
 });

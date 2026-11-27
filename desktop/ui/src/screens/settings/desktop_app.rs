@@ -175,6 +175,7 @@ fn window(ui: &mut Ui, s: &mut State) {
 mod tests {
     use super::description;
     use crate::app::testkit::{FakeApi, launcher, wait_for_label, workspace};
+    use crate::app::testkit::{click_node, click_role, id_of};
     use crate::platform::paths::testing::TempConfig;
     use crate::platform::update::{
         Notice, Offer, Phase, SetupAsk, SetupView, show_setup, take_ask,
@@ -219,19 +220,21 @@ mod tests {
         };
         show_setup(&harness.ctx, Some(latest.clone()));
         harness.run_steps(3);
-        harness.get_by_role_and_label(Role::Link, "App").click();
+        click_role(&mut harness, Role::Link, "App");
         wait_for_label(&mut harness, "Nach Updates suchen");
         assert_eq!(description(&harness.ctx), "Updates dieser App.");
         assert!(harness.query_by_label(TRAY).is_none());
         let status = harness.get_by_label("Installiert: 0.9.0. Das ist die neueste Version.");
         assert_eq!(status.accesskit_node().role(), Role::Status);
         assert!(harness.query_by_label("Jetzt installieren").is_none());
-        switch(&harness, AUTO).click();
+        click_node(&mut harness, AUTO, |h| {
+            h.get_all_by_role_and_label(Role::Switch, AUTO)
+                .next()
+                .map(id_of)
+        });
         harness.run_steps(3);
         assert_eq!(take_ask(&harness.ctx), Some(SetupAsk::AutoCheck(false)));
-        harness
-            .get_by_role_and_label(Role::Button, "Nach Updates suchen")
-            .click();
+        click_role(&mut harness, Role::Button, "Nach Updates suchen");
         harness.run_steps(3);
         assert_eq!(take_ask(&harness.ctx), Some(SetupAsk::CheckNow));
 
@@ -249,9 +252,7 @@ mod tests {
         harness.run_steps(3);
         harness.get_by_label("Installiert: 0.9.0. Verfügbar: 0.9.1.");
         harness.get_by_label("Zum Installieren startet die App neu.");
-        harness
-            .get_by_role_and_label(Role::Button, "Jetzt installieren")
-            .click();
+        click_role(&mut harness, Role::Button, "Jetzt installieren");
         harness.run_steps(3);
         assert_eq!(take_ask(&harness.ctx), Some(SetupAsk::Install));
 
