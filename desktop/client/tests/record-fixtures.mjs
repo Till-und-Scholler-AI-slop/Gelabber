@@ -490,6 +490,15 @@ if (check) {
     await rm(fresh, { recursive: true, force: true });
   }
 } else {
+  // Before the fixtures change: the recorder's own tree.
+  const describe = execFileSync(
+    "git",
+    ["describe", "--tags", "--always", "--dirty"],
+    {
+      cwd: here,
+      encoding: "utf8",
+    },
+  ).trim();
   const fresh = await mkdtemp(join(tmpdir(), "gelabber-fixtures-"));
   try {
     await record(fresh);
@@ -507,14 +516,6 @@ if (check) {
     .filter((f) => f.endsWith(".json"))
     .sort())
     files[file] = fnv1a(await readFile(join(committed, file)));
-  const describe = execFileSync(
-    "git",
-    ["describe", "--tags", "--always", "--dirty"],
-    {
-      cwd: here,
-      encoding: "utf8",
-    },
-  ).trim();
   // The tree of this script; the API's build is whatever served BASE.
   const manifest = { recorder_tree: describe, files };
   await writeFile(
