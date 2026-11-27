@@ -1,7 +1,5 @@
-# Checks the pinned MinIO CE server and mc images, built from source
-# (deploy/compose/minio, deploy/compose/mc) when asked or not yet published, with
-# a read-only token: the build runs fetched Go modules. ci.yml calls it for pull
-# requests, publish-minio.yml before it pushes missing images from main.
+# Checks the pinned MinIO CE server and mc images, built from source when asked or
+# not yet published; read-only, as the build runs fetched Go modules (GEL-392).
 name: MinIO CE images
 
 on:
@@ -83,6 +81,15 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # The label publish-minio.yml compares to decide what to replace (GEL-402).
+      - name: Source trees
+        id: trees
+        if: steps.published.outputs.found != 'true'
+        run: |
+          set -euo pipefail
+          echo "minio=$(git rev-parse HEAD:deploy/compose/minio)" >> "$GITHUB_OUTPUT"
+          echo "mc=$(git rev-parse HEAD:deploy/compose/mc)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Buildx
         if: steps.published.outputs.found != 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -97,6 +104,7 @@ jobs:
             MINIO_RELEASE=${{ env.MINIO_RELEASE }}
           load: true
           provenance: false
+          labels: org.gelabber.source-tree=${{ steps.trees.outputs.minio }}
           tags: gelabber/minio:${{ env.MINIO_RELEASE }}
 
       - name: Verify minio --version
@@ -117,6 +125,7 @@ jobs:
             MC_RELEASE=${{ env.MC_RELEASE }}
           load: true
           provenance: false
+          labels: org.gelabber.source-tree=${{ steps.trees.outputs.mc }}
           tags: gelabber/mc:${{ env.MC_RELEASE }}
 
       - name: Verify mc --version

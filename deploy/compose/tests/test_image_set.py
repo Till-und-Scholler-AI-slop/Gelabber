@@ -113,8 +113,17 @@ class Promotion(unittest.TestCase):
         self.env.start()
         self.api = patch.object(m, 'api', side_effect=lambda path: ci() if path.startswith('actions/') else {'object': {'sha': SHA}})
         self.api.start()
+        # The MinIO tag's build: test_minio_source.py tests the waiting itself.
+        self.waited = []
+        self.minio = [patch.object(m.minio_source, 'source_tree', side_effect=lambda name, rev='HEAD': f'{name}@{rev}'),
+                      patch.object(m.minio_source, 'wait_for',
+                                   side_effect=lambda ref, tree: self.waited.append((ref, tree)) or DIGEST)]
+        for patcher in self.minio:
+            patcher.start()
 
     def tearDown(self):
+        for patcher in self.minio:
+            patcher.stop()
         self.api.stop()
         self.env.stop()
         os.chdir(self.old)
@@ -300,6 +309,14 @@ class Promotion(unittest.TestCase):
                 calls = self.latest_run(api=api)
                 self.assertEqual(aliased(calls), every_image())
 
+    def test_promote_records_the_minio_build_of_the_release_commit(self):
+        # GEL-402: the tag may still be rebuilt from this commit's sources.
+        with patch.object(m, 'tag_sha', return_value=None), patch.object(m, 'registry_digest', return_value=DIGEST), \
+                patch.object(m, 'run'), patch.object(m.minio_source, 'wait_for', return_value=OTHER) as wait:
+            m.promote()
+        wait.assert_called_once_with(f'ghcr.io/{REPO}/minio:{m.MINIO_PIN}', f'minio@{SHA}')
+        self.assertEqual(json.loads(Path('image-set.json').read_text())['minio']['digest'], OTHER)
+
     def test_latest_keeps_the_released_minio_build_after_its_tag_was_rebuilt(self):
         # publish-minio.yml replaces the pinned tag when its build image changes (GEL-402).
         self.prepare_release()
@@ -310,11 +327,12 @@ class Promotion(unittest.TestCase):
 
     def test_latest_preflights_minio_and_all_app_digests_before_any_alias_write(self):
         self.prepare_release()
-        # MinIO's recorded build is checked by its digest (GEL-402).
-        for bad in ('media:v0.2.4', 'minio@' + DIGEST):
+        # MinIO's recorded build is checked by its digest (GEL-402); a build
+        # the registry no longer has ("manifest unknown", None) fails too.
+        for bad, answer in (('media:v0.2.4', OTHER), ('minio@' + DIGEST, OTHER), ('minio@' + DIGEST, None)):
             calls = []
-            with self.subTest(bad=bad), self.assertRaises(ValueError):
-                self.latest_run(digest=lambda ref: OTHER if ref.endswith(bad) else DIGEST,
+            with self.subTest(bad=bad, answer=answer), self.assertRaises(ValueError):
+                self.latest_run(digest=lambda ref: answer if ref.endswith(bad) else DIGEST,
                                 run=lambda *args: calls.append(args))
             self.assertFalse(any(c[0] == 'docker' for c in calls))
 

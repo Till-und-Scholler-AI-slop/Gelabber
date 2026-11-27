@@ -115,7 +115,8 @@ class PushPaths(unittest.TestCase):
         self.assertNotIn('uses', publish)
         self.assertFalse([step for step in publish['steps']
                           if step.get('uses', '').startswith('docker/build-push-action@')])
-        pushes = [script for _, _, script in scripts({'jobs': {'publish': publish}}) if 'docker push' in script]
+        pushes = [script for _, _, script in scripts({'jobs': {'publish': publish}})
+                  if 'minio_source.py publish' in script]
         self.assertTrue(pushes)
 
 
@@ -154,11 +155,18 @@ class PushWiring(unittest.TestCase):
                       if step.get('uses', '').startswith('actions/download-artifact@')]
         self.assertEqual(len(uploaded), 1)
         self.assertEqual(downloaded, uploaded)
-        # test_minio_images.py runs the push itself; here, both images go through it.
+        # test_minio_source.py runs plan and publish; here, the plan reaches the push.
+        plan = workflow['jobs']['plan']
+        self.assertIn('minio_source.py plan', next(step['run'] for step in plan['steps'] if step.get('id') == 'plan'))
+        self.assertEqual(images['with']['build'], "${{ needs.plan.outputs.build == 'true' }}")
         pushed = ' '.join(script for _, _, script in scripts({'jobs': {'publish': publish}}))
-        for image in ('GHCR_IMAGE', 'GHCR_MC_IMAGE'):
-            with self.subTest(image=image):
-                self.assertRegex(pushed, rf'(?m)^push "\${image}" ')
+        self.assertIn('minio_source.py publish "$MINIO_ACTION" "$MC_ACTION"', pushed)
+        for name in ('build', 'minio', 'mc'):
+            with self.subTest(output=name):
+                self.assertEqual(plan['outputs'][name], f'${{{{ steps.plan.outputs.{name} }}}}')
+        for name, env in (('minio', 'MINIO_ACTION'), ('mc', 'MC_ACTION')):
+            with self.subTest(env=env):
+                self.assertEqual(publish['env'][env], f'${{{{ needs.plan.outputs.{name} }}}}')
 
 
 class RunScripts(unittest.TestCase):

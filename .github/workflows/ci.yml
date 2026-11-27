@@ -570,7 +570,7 @@ jobs:
         run: python3 backend/build/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$GITHUB_SHA"
 
   # Checks the pinned MinIO and mc images, built from source when their
-  # Dockerfiles change; publish-minio.yml pushes missing ones from main.
+  # Dockerfiles change; publish-minio.yml publishes them from main.
   minio:
     name: MinIO images
     needs: changes

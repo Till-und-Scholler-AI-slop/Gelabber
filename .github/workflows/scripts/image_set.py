@@ -7,6 +7,9 @@ import subprocess
 import sys
 import tomllib
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import minio_source  # noqa: E402
+
 SERVICES = ('api', 'web', 'media')
 MINIO_PIN = 'RELEASE.2025-10-15T17-29-55Z'
 
@@ -74,9 +77,9 @@ def promote():
         if registry_digest(item['image'] + ':' + item['tag']) != item['digest']:
             raise ValueError('SHA image digest changed')
     minio = f'ghcr.io/{repo.lower()}/minio'
-    minio_digest = registry_digest(f'{minio}:{MINIO_PIN}')
-    if minio_digest is None:
-        raise ValueError('Pinned MinIO image is missing')
+    # publish-minio.yml may still be rebuilding the tag from this commit's
+    # sources (GEL-402); the set records that build, never an older one.
+    minio_digest = minio_source.wait_for(f'{minio}:{MINIO_PIN}', minio_source.source_tree('minio', sha))
     # Do not mutate the shipped version on an unchanged-version main commit.
     allowed = promotion_allowed(sha, api('git/ref/heads/main')['object']['sha'], tag_sha(version))
     if allowed:

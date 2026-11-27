@@ -1,7 +1,5 @@
-# Pushes the pinned MinIO CE server and mc images, built and checked by
-# minio-images.yml, to GHCR from main: a missing tag, or one whose Dockerfile
-# changed (GEL-402). New org packages start private; a maintainer sets them
-# Public once in the UI.
+# Pushes the pinned MinIO and mc images to GHCR from main: a missing tag, or one built
+# from other sources than this commit's (GEL-402). New org packages start private.
 name: Publish MinIO CE image
 
 on:
@@ -22,51 +20,41 @@ permissions:
   contents: read
 
 jobs:
-  # Which Dockerfile this push changed: that image is rebuilt and its tag
-  # replaced, so a new Go build image reaches operators (GEL-402).
-  changed:
-    name: Changed Dockerfiles
+  # Per image: push a missing tag, replace one whose source-tree label differs
+  # from this commit's folder, keep the rest (minio_source.py).
+  plan:
+    name: What to publish
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
-      minio: ${{ steps.diff.outputs.minio }}
-      mc: ${{ steps.diff.outputs.mc }}
+      build: ${{ steps.plan.outputs.build }}
+      minio: ${{ steps.plan.outputs.minio }}
+      mc: ${{ steps.plan.outputs.mc }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Diff since the previous head
-        id: diff
-        env:
-          EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          set -euo pipefail
-          minio=false
-          mc=false
-          if [ "$EVENT" = push ] && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
-              && git fetch --quiet --depth=1 origin "$BEFORE"; then
-            changed="$(git diff --no-renames --name-only "$BEFORE" HEAD)"
-            if grep -q '^deploy/compose/minio/' <<<"$changed"; then minio=true; fi
-            if grep -q '^deploy/compose/mc/' <<<"$changed"; then mc=true; fi
-          fi
-          echo "minio=$minio" | tee -a "$GITHUB_OUTPUT"
-          echo "mc=$mc" | tee -a "$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Plan
+        id: plan
+        run: python3 .github/workflows/scripts/minio_source.py plan | tee -a "$GITHUB_OUTPUT"
 
   images:
     name: MinIO images
-    needs: changed
+    needs: plan
     uses: ./.github/workflows/minio-images.yml
     with:
-      build: ${{ needs.changed.outputs.minio == 'true' || needs.changed.outputs.mc == 'true' }}
+      build: ${{ needs.plan.outputs.build == 'true' }}
       keep: ${{ github.ref == 'refs/heads/main' }}
 
   # Its own job: only this one holds the packages token, the build above ran
   # fetched Go modules. Push only from main (includes workflow_dispatch on main).
   publish:
-    needs: [changed, images]
+    needs: [plan, images]
     if: github.ref == 'refs/heads/main' && needs.images.outputs.built == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -76,17 +64,13 @@ jobs:
     env:
       MINIO_RELEASE: ${{ needs.images.outputs.minio-release }}
       MC_RELEASE: ${{ needs.images.outputs.mc-release }}
-      REPLACE_MINIO: ${{ needs.changed.outputs.minio }}
-      REPLACE_MC: ${{ needs.changed.outputs.mc }}
+      MINIO_ACTION: ${{ needs.plan.outputs.minio }}
+      MC_ACTION: ${{ needs.plan.outputs.mc }}
     steps:
-      - name: Image names
-        run: |
-          set -euo pipefail
-          repo="${GITHUB_REPOSITORY,,}"
-          echo "GHCR_IMAGE=ghcr.io/${repo}/minio" >> "$GITHUB_ENV"
-          echo "LOCAL_IMAGE=gelabber/minio" >> "$GITHUB_ENV"
-          echo "GHCR_MC_IMAGE=ghcr.io/${repo}/mc" >> "$GITHUB_ENV"
-          echo "LOCAL_MC_IMAGE=gelabber/mc" >> "$GITHUB_ENV"
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Download the images
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -97,9 +81,9 @@ jobs:
         run: |
           set -euo pipefail
           docker load -i minio-images.tar
-          docker image inspect "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${LOCAL_MC_IMAGE}:${MC_RELEASE}" > /dev/null
+          docker image inspect "gelabber/minio:${MINIO_RELEASE}" "gelabber/mc:${MC_RELEASE}" > /dev/null
 
-      # For `docker buildx imagetools inspect` below.
+      # For `docker buildx imagetools inspect` in minio_source.py.
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -110,28 +94,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # A tag is pushed when it is missing, or replaced when its Dockerfile
-      # changed; otherwise kept. Registry or auth errors fail closed.
       - name: Push to GHCR
-        run: |
-          set -euo pipefail
-          push() {  # remote local release replace name
-            if docker buildx imagetools inspect "$1:$3" > /dev/null 2> "$RUNNER_TEMP/inspect-error"; then
-              if [ "$4" != true ]; then
-                echo "Pinned $5 image already exists and its Dockerfile did not change; keeping it."
-                return
-              fi
-              echo "Its Dockerfile changed: replacing the pinned $5 image $1:$3."
-            elif ! grep -Fq 'manifest unknown' "$RUNNER_TEMP/inspect-error" \
-                && ! grep -Fxq "ERROR: $1:$3: not found" "$RUNNER_TEMP/inspect-error"; then
-              cat "$RUNNER_TEMP/inspect-error" >&2
-              exit 1
-            fi
-            docker tag "$2:$3" "$1:$3"
-            docker push "$1:$3"
-          }
-          push "$GHCR_IMAGE" "$LOCAL_IMAGE" "$MINIO_RELEASE" "$REPLACE_MINIO" MinIO
-          push "$GHCR_MC_IMAGE" "$LOCAL_MC_IMAGE" "$MC_RELEASE" "$REPLACE_MC" mc
+        run: python3 .github/workflows/scripts/minio_source.py publish "$MINIO_ACTION" "$MC_ACTION"
 
       - name: Make packages public
         env:

@@ -746,6 +746,8 @@ If an alias update was interrupted or was missing for an older release: start `R
 
 After acceptance, download the set from the released release and archive it permanently with the deployment. For the first migration, record the previous set **actually running**: capture `docker compose images` / container inspect and registry digests; do not assume that an old mutable tag matches the running container. Save this old set as `previous.env` (all four image variables). Credentials stay in `.env` only, not in the manifest.
 
+The set pins MinIO by the digest the release was built with, so a later rebuild of the MinIO tag (its build image changed) does not reach a server that follows the set. `minio-init`'s `mc` is not in the set: it comes from its pinned tag, which is rebuilt the same way, so every release gets the newest `mc` build.
+
 ```bash
 cd deploy/compose
 # Put the released image-set.env here as next.env.
