@@ -1,4 +1,4 @@
-/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame */
+/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame, WheelEvent */
 // Local browser integration for scoped search navigation; no physical-device claim.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -260,15 +260,23 @@ try {
     (state) => state.gap <= 1,
     "canonical-end-before-native-up",
   );
-  // The reader leaves the end: the list reads any scroll up as that intent
-  // (scrollEndIntent), and a scroll down that ends near the end as the
-  // reader coming back. A wheel moves 25 px here and 85 to 105 px on a CI
-  // runner, too far for this place, so the list is scrolled up directly,
-  // 40 px from its end, and read back once it holds.
-  const placed = await settleList(40);
-  assert.ok(
-    placed.gap > 16 && placed.gap < 64,
-    `the list does not hold 40 px above its end before the search: ${JSON.stringify(placed)}`,
+  // The reader leaves the end. A wheel moves 25 px here and 85 to 105 px on
+  // a CI runner, too far for this place, and a scrollbar-like jump keeps the
+  // list pinned when its height changed since its last recorded position
+  // (scrollEndIntent), so it is pulled back to the end. So the intent goes
+  // the way the list reads it, as an upward wheel that moves nothing, and
+  // the list is placed 40 px from its end and read back once it holds.
+  await until(
+    async () => {
+      await log.evaluate((el) =>
+        el.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: -1, bubbles: true }),
+        ),
+      );
+      return settleList(40);
+    },
+    (state) => state.gap > 16 && state.gap < 64,
+    "history-place-before-search",
   );
   const beforeUnread = (await channelState(member, channel)).unread_count;
   const search = async (value) => {
