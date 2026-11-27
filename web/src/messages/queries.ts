@@ -489,6 +489,7 @@ export async function sendMessageAttempt(
       // Unsent: nobody has reacted yet, and the server resolves mentions.
       reactions: [],
       mentions: [],
+      mention_everyone: false,
     });
   }
   requireAttempt(attempt);
@@ -1078,15 +1079,9 @@ export function applyChannelEvent(
       ...event.d,
       ...(event.r !== undefined ? { revision: event.r } : {}),
       attachments: asAttachmentList(event.d.attachments),
-      ...(event.d.mentions === undefined
-        ? {}
-        : {
-            mentions: asMentionList(event.d.mentions),
-            mention_everyone: event.d.mention_everyone === true,
-          }),
-      ...(event.d.reactions === undefined
-        ? {}
-        : { reactions: asReactionList(event.d.reactions) }),
+      mentions: asMentionList(event.d.mentions),
+      mention_everyone: event.d.mention_everyone === true,
+      reactions: asReactionList(event.d.reactions),
       ...(event.d.reply === undefined ? {} : { reply: asReply(event.d.reply) }),
       ...(event.d.previews === undefined
         ? {}

@@ -20,6 +20,7 @@ function msg(id: string, extra: Partial<Message> = {}): Message {
     edited_at: null,
     reactions: [],
     mentions: [],
+    mention_everyone: false,
     attachments: [],
     ...extra,
   };

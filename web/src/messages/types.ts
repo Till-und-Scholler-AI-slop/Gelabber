@@ -51,7 +51,7 @@ export type Message = {
   /** Users the message mentions, as the server resolved them (mentions.ts). */
   mentions: string[];
   /** `@everyone`: every member is mentioned. */
-  mention_everyone?: boolean;
+  mention_everyone: boolean;
   /** The message this one answers; absent when it answers none. */
   reply?: Reply | null;
   /** Link previews (#254), added by an edit event after sending. */

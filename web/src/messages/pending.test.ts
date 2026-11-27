@@ -19,6 +19,7 @@ function row(id: string, preview?: string): Message {
     edited_at: null,
     reactions: [],
     mentions: [],
+    mention_everyone: false,
     attachments: [
       {
         id: `${id}-file`,

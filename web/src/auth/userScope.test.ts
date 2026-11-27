@@ -75,6 +75,7 @@ function secretMessage(): Message {
     edited_at: null,
     reactions: [],
     mentions: [],
+    mention_everyone: false,
     attachments: [],
   };
 }

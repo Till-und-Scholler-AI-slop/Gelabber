@@ -23,8 +23,9 @@ const members = [
 
 describe("mentions", () => {
   it("knows whom the server said a message mentions", () => {
-    expect(mentionsMe({ mentions: [BOB] }, BOB)).toBe(true);
-    expect(mentionsMe({ mentions: [BOB] }, ADA)).toBe(false);
+    const none = { mention_everyone: false };
+    expect(mentionsMe({ ...none, mentions: [BOB] }, BOB)).toBe(true);
+    expect(mentionsMe({ ...none, mentions: [BOB] }, ADA)).toBe(false);
     expect(mentionsMe({ mentions: [], mention_everyone: true }, ADA)).toBe(
       true,
     );

@@ -14,6 +14,7 @@ function msg(id: string, channel = "c1"): Message {
     edited_at: null,
     reactions: [],
     mentions: [],
+    mention_everyone: false,
     attachments: [],
   };
 }

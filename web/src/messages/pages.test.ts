@@ -23,6 +23,7 @@ function msg(id: string, created = "2026-09-13T18:00:00.000Z"): Message {
     edited_at: null,
     reactions: [],
     mentions: [],
+    mention_everyone: false,
     attachments: [],
   };
 }
