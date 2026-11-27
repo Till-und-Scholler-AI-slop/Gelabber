@@ -6,7 +6,6 @@ import { useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { copyText } from "../servers/clipboard.ts";
-import { isTauriApp } from "../tauriApp.ts";
 import { parseMessage, type Block, type Inline } from "./markdown.ts";
 import { markMatches } from "./searchTerms.ts";
 
@@ -147,12 +146,11 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
   });
 }
 
-/** Web links open in a new tab. A mail link would leave an empty one in the
- * browser; the old Tauri app only hands links in new windows to the system. */
+/** Web links open in a new tab. A mail link would leave an empty one. */
 function newTab(href: string) {
   if (/^https?:/i.test(href))
     return { target: "_blank", rel: "noopener noreferrer nofollow" };
-  return isTauriApp() ? { target: "_blank", rel: "noopener noreferrer" } : {};
+  return {};
 }
 
 function Spoiler({

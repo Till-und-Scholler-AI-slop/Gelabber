@@ -243,16 +243,22 @@ describe("the dialogs of Anmeldung", () => {
 });
 
 describe("Sicherheit → Angemeldete Geräte", () => {
-  // Local noon, so the calendar day words do not depend on the hour.
-  const ago = (days: number) => {
-    const now = new Date();
-    return new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() - days,
+  // The page reads the clock: it stands at local noon on a fixed day, so the
+  // calendar day words depend neither on the hour nor on the date.
+  const NOW = new Date(2026, 10, 27, 12);
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"], now: NOW });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const ago = (days: number) =>
+    new Date(
+      NOW.getFullYear(),
+      NOW.getMonth(),
+      NOW.getDate() - days,
       12,
     ).toISOString();
-  };
   const SESSIONS: DeviceSession[] = [
     {
       id: "00000000-0000-0000-0000-0000000000a1",

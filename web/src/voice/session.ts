@@ -193,6 +193,7 @@ export function configureVoice(next: Partial<VoiceDeps>): void {
       next.fetchTicket ?? voice.deps?.fetchTicket ?? requestMediaTicket,
     openMedia: next.openMedia ?? voice.deps?.openMedia ?? openMediaSocket,
     onError: next.onError ?? voice.deps?.onError ?? notifyError,
+    random: next.random ?? voice.deps?.random ?? Math.random,
   };
   ensureBound();
 }
@@ -210,6 +211,7 @@ function ensureBound(): void {
       fetchTicket: requestMediaTicket,
       openMedia: openMediaSocket,
       onError: notifyError,
+      random: Math.random,
     };
   }
   gateway.onSig(onSig);

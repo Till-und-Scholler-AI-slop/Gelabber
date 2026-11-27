@@ -52,6 +52,8 @@ export type VoiceDeps = {
   }>;
   openMedia?: OpenMedia;
   onError?: (error: unknown) => void;
+  /** The jitter of the reconnect backoff, in [0, 1): Math.random. */
+  random?: () => number;
 };
 
 type MicGainInsert = MicProcessor;
@@ -191,7 +193,7 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
 
     seat: new MediaPeer(),
     seatRecoverySlot: new Map(),
-    seatRetry: new MediaRetry(),
+    seatRetry: new MediaRetry(() => (session.deps?.random ?? Math.random)()),
     seatRevocations: [],
     startedConnections: new WeakSet(),
     seatStarting: 0,

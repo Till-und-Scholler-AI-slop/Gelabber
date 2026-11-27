@@ -249,7 +249,7 @@ async function serving() {
     // The app runs under the fetch directives a Compose stack gets.
     assert.match(
       policy,
-      /; default-src 'self'; connect-src 'self' \S+ ipc: http:\/\/ipc\.localhost;/,
+      /; default-src 'self'; connect-src 'self' \S+;/,
       `${path}: no fetch directives; start the server with MINIO_PUBLIC_ENDPOINT and the entrypoint script (docs/v0.6-pwa.md)`,
     );
     secured(response, path);
