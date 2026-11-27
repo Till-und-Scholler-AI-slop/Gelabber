@@ -1,9 +1,10 @@
-//! Every shape in `models.rs` against the API's answers recorded from a
-//! running stack of this tree (fixtures/, written by record-fixtures.mjs from
-//! the parity seed plus a scratch server; fixtures/recorded.json names the
-//! version): decoding must succeed and encoding must give back the same
-//! JSON. e2e-extended.yml records again after merges and fails when the
-//! API's shapes moved away from these.
+//! Every shape in `models.rs` against the API's answers, recorded from a
+//! running parity stack (fixtures/, written by record-fixtures.mjs from the
+//! parity seed plus a scratch server; fixtures/recorded.json names the
+//! recorder's tree): decoding must succeed and encoding must give back the
+//! same JSON. A fixture that differs from its hash in recorded.json fails
+//! here, a guard against stray edits, not a lock. After merges,
+//! e2e-extended.yml records again and compares keys and types, not values.
 
 use gelabber_client::*;
 use serde::Serialize;
@@ -33,8 +34,8 @@ fn fnv1a(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-/// A fixture changes only by recording: each file is the one recorded, and
-/// every recorded file is here.
+/// Each fixture is as recorded, and every recorded file is here: a guard
+/// against stray edits (recorded.json's hashes could be edited too).
 #[test]
 fn the_fixtures_are_as_recorded() {
     let dir = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
@@ -58,8 +59,8 @@ fn the_fixtures_are_as_recorded() {
         assert_eq!(
             Some(fnv1a(&bytes).as_str()),
             hash.as_str(),
-            "{name} differs from its recording: record again with \
-             `node desktop/client/tests/record-fixtures.mjs`, never by hand"
+            "{name} differs from its recording: record the fixtures again with \
+             `node desktop/client/tests/record-fixtures.mjs` instead of editing them"
         );
     }
 }

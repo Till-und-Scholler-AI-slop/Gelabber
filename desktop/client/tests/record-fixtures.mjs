@@ -6,12 +6,18 @@
 //   node desktop/client/tests/record-fixtures.mjs [base-url]          records
 //   node desktop/client/tests/record-fixtures.mjs [base-url] --check  compares
 //
-// Recording writes fixtures/*.json and fixtures/recorded.json, which lists
-// each file's hash: models.rs fails on a fixture that differs from it, so a
-// fixture changes only by recording. --check records into a scratch folder
-// and fails when a fixture's shape (keys, value types) differs from what the
-// API sends now; e2e-extended.yml runs it after merges.
-/* global process, console, fetch, WebSocket, URL, setTimeout, clearTimeout */
+// Record on a freshly seeded stack (unread_seeded is what the stack went
+// through) whose API runs with the parity environment only: a GIF key,
+// mail, TURN or other operators change gifs, mail, ticket and session.
+//
+// Recording writes fixtures/*.json and fixtures/recorded.json, with the
+// recorder's tree and each file's hash: models.rs fails on a fixture that
+// differs from its hash, a guard against stray edits, not a lock. --check
+// records into a scratch folder and compares keys and value types, not
+// values: it fails when the API no longer sends a key or type a fixture
+// holds, and warns when it sends a new one. e2e-extended.yml runs it after
+// merges.
+/* global process, console, fetch, WebSocket, URL, AbortSignal, setTimeout, clearTimeout */
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -23,6 +29,18 @@ const committed = join(here, "fixtures");
 const args = process.argv.slice(2);
 const check = args.includes("--check");
 const BASE = args.find((a) => !a.startsWith("--")) ?? "http://127.0.0.1:5180";
+// What the stack does not answer within this ends the recording by name.
+const LIMIT_MS = 20_000;
+
+/** `promise`, or an error naming `what` after LIMIT_MS. */
+function within(what, promise) {
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer: ${what}`)), LIMIT_MS);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 const seeded = JSON.parse(
   await readFile(
     process.env.GELABBER_FIXTURE ??
@@ -48,6 +66,7 @@ class Person {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: "manual",
+      signal: AbortSignal.timeout(LIMIT_MS),
     });
     for (const line of res.headers.getSetCookie()) {
       const [pair] = line.split(";");
@@ -96,10 +115,13 @@ class Socket {
       this.frames.push(frame);
       this.waiters = this.waiters.filter((w) => !w(frame));
     });
-    this.opened = new Promise((resolve, reject) => {
-      this.ws.addEventListener("open", resolve, { once: true });
-      this.ws.addEventListener("error", reject, { once: true });
-    });
+    this.opened = within(
+      `${person.handle}'s gateway`,
+      new Promise((resolve, reject) => {
+        this.ws.addEventListener("open", resolve, { once: true });
+        this.ws.addEventListener("error", reject, { once: true });
+      }),
+    );
   }
 
   send(frame) {
@@ -127,7 +149,7 @@ class Socket {
               `no frame: ${what}; received ${JSON.stringify(this.frames)}`,
             ),
           ),
-        20_000,
+        LIMIT_MS,
       );
       this.waiters.push((frame) => {
         if (!match(frame)) return false;
@@ -139,8 +161,11 @@ class Socket {
   }
 
   close() {
-    const closed = new Promise((resolve) =>
-      this.ws.addEventListener("close", resolve, { once: true }),
+    const closed = within(
+      "the gateway's close",
+      new Promise((resolve) =>
+        this.ws.addEventListener("close", resolve, { once: true }),
+      ),
     );
     this.ws.close();
     return closed;
@@ -206,7 +231,11 @@ async function record(out) {
     const voice = created.channels.find((c) => c.kind === "voice").id;
     const invite = keep(
       "invite",
-      await lena.call("POST", `/servers/${scratch}/invites`, {}),
+      // With a limit and an expiry, so both round-trip as values.
+      await lena.call("POST", `/servers/${scratch}/invites`, {
+        max_uses: 5,
+        expires_in_hours: 24,
+      }),
     );
     keep("invites", await lena.call("GET", `/servers/${scratch}/invites`));
     keep("invite_preview", await jonas.call("GET", `/invites/${invite.code}`));
@@ -314,10 +343,6 @@ async function record(out) {
       { seen: true },
     );
     keep(
-      "messages_text",
-      await lena.call("GET", `/channels/${text}/messages?limit=50`),
-    );
-    keep(
       "search",
       await lena.call("GET", `/channels/${text}/messages/search?q=Nachricht`),
     );
@@ -388,7 +413,6 @@ async function record(out) {
       .catch((error) => console.error(String(error)));
   }
 
-  delete recorded.messages_text;
   for (const [name, value] of Object.entries(recorded))
     await writeFile(
       join(out, `${name}.json`),
@@ -440,13 +464,18 @@ if (check) {
       const [a, b] = [shape(then), shape(now)];
       const gone = [...a].filter((p) => !b.has(p));
       const added = [...b].filter((p) => !a.has(p));
-      if (gone.length || added.length) {
+      // A client that allows unknown keys reads an addition; a key or type
+      // gone (a type change is one gone and one added) breaks it.
+      if (gone.length) {
         differ.push(file);
         details.push(
-          `${file}: the API no longer sends ${JSON.stringify(gone.slice(0, 8))}, ` +
-            `sends new ${JSON.stringify(added.slice(0, 8))}`,
+          `${file}: the API no longer sends ${JSON.stringify(gone.slice(0, 8))}`,
         );
       }
+      if (added.length)
+        console.log(
+          `::warning::${file}: the API sends what the fixture lacks: ${JSON.stringify(added.slice(0, 8))}; record again`,
+        );
     }
     if (differ.length) {
       console.error(
@@ -478,16 +507,21 @@ if (check) {
     .filter((f) => f.endsWith(".json"))
     .sort())
     files[file] = fnv1a(await readFile(join(committed, file)));
-  const describe = execFileSync("git", ["describe", "--tags", "--always"], {
-    cwd: here,
-    encoding: "utf8",
-  }).trim();
-  const manifest = { recorded_from: describe, files };
+  const describe = execFileSync(
+    "git",
+    ["describe", "--tags", "--always", "--dirty"],
+    {
+      cwd: here,
+      encoding: "utf8",
+    },
+  ).trim();
+  // The tree of this script; the API's build is whatever served BASE.
+  const manifest = { recorder_tree: describe, files };
   await writeFile(
     join(committed, "recorded.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
   console.log(
-    `recorded ${Object.keys(files).length} fixtures from ${describe}`,
+    `recorded ${Object.keys(files).length} fixtures with the recorder of ${describe}`,
   );
 }
