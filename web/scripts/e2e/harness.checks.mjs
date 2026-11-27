@@ -234,6 +234,11 @@ test("a browser deadline names the Playwright call that ran out, nothing else", 
   assert.equal(timedOutAction(e), "page.goto");
   e.message = "locator.click: Timeout 12000ms exceeded.\nCall log: SECRET";
   assert.equal(timedOutAction(e), "locator.click");
+  // The API's class name can be camelCase.
+  e.message = "browserType.connect: Timeout 1ms exceeded.";
+  assert.equal(timedOutAction(e), "browserType.connect");
+  e.message = "browserContext.newPage: Timeout 12000ms exceeded.";
+  assert.equal(timedOutAction(e), "browserContext.newPage");
   e.message = "https://host/?token=SECRET: Timeout 1ms exceeded";
   assert.equal(timedOutAction(e), null);
   assert.equal(
@@ -247,9 +252,23 @@ test("a browser deadline names the Playwright call that ran out, nothing else", 
     "    at async fresh (file:///w/web/scripts/e2e/chat-faults.mjs:43:16)",
   ].join("\n");
   assert.equal(harnessSite(stack), "harness.mjs:297:7");
+  // A waiter's timeout starts in responseTo (GEL-453); its caller is the step.
+  const waiter = [
+    "TimeoutError: page.waitForResponse: Timeout 12000ms exceeded",
+    "    at responseTo (file:///w/web/scripts/e2e/harness.mjs:47:46)",
+    "    at async channel (file:///w/web/scripts/e2e/harness.mjs:331:24)",
+    "    at async fresh (file:///w/web/scripts/e2e/chat-faults.mjs:43:16)",
+  ].join("\n");
+  assert.equal(harnessSite(waiter), "harness.mjs:331:24");
+  assert.equal(
+    harnessSite(
+      "    at async step (file:///w/web/scripts/e2e/harness.mjs:105:14)",
+    ),
+    null,
+  );
   assert.equal(harnessSite(undefined), null);
 });
-test("a failed set-up row lists each step's time and the call that ran out", async (t) => {
+test("a failed step is listed with its time; its row names the call that ran out", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: 0 });
   const { steps, step } = stepLog();
   assert.equal(
@@ -265,7 +284,8 @@ test("a failed set-up row lists each step's time and the call that ran out", asy
   deadline.name = "TimeoutError";
   deadline.stack = [
     "TimeoutError: page.waitForURL: Timeout 12000ms exceeded.",
-    "    at step (file:///w/web/scripts/e2e/harness.mjs:150:22)",
+    "    at file:///w/web/scripts/e2e/harness.mjs:262:18",
+    "    at async step (file:///w/web/scripts/e2e/harness.mjs:105:14)",
     "    at async fixture (file:///w/web/scripts/e2e/harness.mjs:286:7)",
     "    at async file:///w/web/scripts/e2e/run.mjs:42:9",
   ].join("\n");
@@ -280,13 +300,11 @@ test("a failed set-up row lists each step's time and the call that ran out", asy
     { step: "Publisher-register-page", ms: 1_500 },
     { step: "server-create", ms: 12_100 },
   ]);
-  deadline.steps = steps;
   const evidence = failureEvidence(deadline);
   assert.deepEqual(evidence, {
     site: "run.mjs:42:9",
     action: "page.waitForURL",
-    harnessSite: "harness.mjs:150:22",
-    steps,
+    harnessSite: "harness.mjs:262:18",
   });
   assert.ok(!JSON.stringify(evidence).includes("SECRET"));
   // A check's own failure names no Playwright call.

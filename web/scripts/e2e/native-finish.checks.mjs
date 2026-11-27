@@ -273,3 +273,168 @@ test("actual harness pending close paths time out visibly and still write the re
     );
   assert.equal(r.reports[0].gate.passed, false);
 });
+
+// GEL-423: the actual harness, with a fake browser whose page.goto can run
+// out of time, writes each fixture's own steps and the call that ran out.
+async function fixtureProbe({ failRegisterOf } = {}) {
+  let index = 0;
+  const locator = {
+    fill: async () => {},
+    click: async () => {},
+    first() {
+      return this;
+    },
+    getByRole() {
+      return this;
+    },
+    getByLabel() {
+      return this;
+    },
+    getByText() {
+      return this;
+    },
+    inputValue: async () => "http://127.0.0.1:5174/invite/control",
+  };
+  const browser = {
+    version: () => "155.0",
+    newContext: async () => {
+      const actorIndex = index++;
+      const page = {
+        goto: async (url) => {
+          if (actorIndex === failRegisterOf && url.endsWith("/register")) {
+            const error = new Error(
+              `page.goto: Timeout 12000ms exceeded.\nCall log:\n  - navigating to "${url}?PRIVATE"`,
+            );
+            error.name = "TimeoutError";
+            throw error;
+          }
+        },
+        waitForURL: async () => {},
+        waitForFunction: async () => {},
+        url: () => "http://127.0.0.1:5174/s/server-control/c/text-control",
+        setDefaultTimeout() {},
+        isClosed: () => false,
+        getByRole: () => locator,
+        getByLabel: () => locator,
+        locator: () => locator,
+        waitForResponse: async () => ({
+          status: () => 200,
+          json: async () => ({ id: "voice-control" }),
+        }),
+        evaluate: async (_fn, arg) =>
+          arg?.path === "/servers/server-control"
+            ? {
+                status: 200,
+                body: { channels: [{ id: "text-control", kind: "text" }] },
+              }
+            : { status: 200, body: { user: { id: "owned-control" } } },
+        close: async () => {},
+      };
+      return {
+        addInitScript: async () => {},
+        newPage: async () => page,
+        close: async () => {},
+      };
+    },
+    close: async () => {},
+  };
+  const process = {
+    env: { GELABBER_E2E_REPORT: "/tmp/fixture-steps-control.json" },
+  };
+  const mocks = {
+    playwright: {
+      chromium: { launch: async () => browser },
+      firefox: { launch: async () => browser },
+    },
+    "./probe.mjs": { instrument() {}, sample() {} },
+    "./native-evaluate.mjs": native,
+    "./browser-options.mjs": options,
+    "node:child_process": {
+      execFileSync: (_cmd, args) =>
+        args.includes("rev-parse") ? "a".repeat(40) : "",
+    },
+    "node:fs/promises": {
+      readdir: async () => [],
+      readFile: async () => "",
+      mkdir: async () => {},
+      writeFile: async () => {},
+    },
+  };
+  const harnessUrl = new URL("./harness.mjs", import.meta.url);
+  const context = vm.createContext({ URL, process, console: { log() {} } });
+  const source = new vm.SourceTextModule(await readFile(harnessUrl, "utf8"), {
+    context,
+    // Stack frames name harness.mjs, as in a real run.
+    identifier: harnessUrl.href,
+    initializeImportMeta: (meta) => {
+      meta.url = harnessUrl.href;
+    },
+  });
+  await source.link(async (name) => {
+    const exports = mocks[name] ?? (await import(name));
+    return new vm.SyntheticModule(
+      Object.keys(exports),
+      function () {
+        for (const [k, v] of Object.entries(exports)) this.setExport(k, v);
+      },
+      { context },
+    );
+  });
+  await source.evaluate();
+  return source.namespace.startHarness();
+}
+const fixtureSteps = [
+  "Publisher-register-page",
+  "Publisher-register-submit",
+  "server-create",
+  "invite-link",
+  "text-channel-open",
+  "voice-channel-a",
+  "voice-channel-b",
+  "Member-register-page",
+  "Member-register-submit",
+  "Watch-register-page",
+  "Watch-register-submit",
+  "Member-join",
+  "Watch-join",
+  "Publisher-voice-open",
+];
+test("a fixture that runs out of time lists its steps and the call that ran out", async () => {
+  const h = await fixtureProbe({ failRegisterOf: 1 });
+  const row = await h.setup("isolated-app-fixture", [], () => h.fixture());
+  assert.equal(row.status, "FAIL");
+  assert.equal(row.reason, "browser-deadline");
+  assert.deepEqual(
+    Array.from(row.metrics.steps, (s) => s.step),
+    fixtureSteps.slice(0, fixtureSteps.indexOf("Member-register-page") + 1),
+  );
+  for (const s of row.metrics.steps) assert.ok(s.ms >= 0, s.step);
+  assert.equal(row.action, "page.goto");
+  // The line in actor() that opens /register.
+  const source = (
+    await readFile(new URL("./harness.mjs", import.meta.url), "utf8")
+  ).split("\n");
+  const line =
+    source.findIndex((text) =>
+      text.includes("await page.goto(`${base}/register`);"),
+    ) + 1;
+  assert.match(row.harnessSite, new RegExp(`^harness\\.mjs:${line}:\\d+$`));
+  assert.ok(!JSON.stringify(row).includes("PRIVATE"));
+});
+test("each fixture's row holds only its own steps", async () => {
+  const h = await fixtureProbe();
+  let first;
+  const row = await h.setup("isolated-app-fixture", [], async () => {
+    first = await h.fixture();
+    return { steps: first.steps };
+  });
+  assert.equal(row.status, "PASS");
+  // A scenario registers another actor and builds a second fixture.
+  await h.actor("RaceCandidate");
+  const second = await h.fixture();
+  for (const steps of [row.metrics.steps, second.steps])
+    assert.deepEqual(
+      Array.from(steps, (s) => s.step),
+      fixtureSteps,
+    );
+});

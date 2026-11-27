@@ -83,13 +83,20 @@ export function failureSite(stack = "") {
   );
 }
 // The harness line too: the same scenario line can call several of its steps.
+// Helpers that only pass a call through name no step; their caller does.
+const passThrough = /^\s+at (?:async )?(?:step|responseTo) /;
 export function harnessSite(stack = "") {
-  return stack.match(/scripts\/e2e\/(harness\.mjs:\d+:\d+)/)?.[1] ?? null;
+  for (const line of stack.split("\n")) {
+    if (passThrough.test(line)) continue;
+    const site = /scripts\/e2e\/(harness\.mjs:\d+:\d+)/.exec(line)?.[1];
+    if (site) return site;
+  }
+  return null;
 }
 // Only Playwright's method name ("page.goto"), never the rest of its message.
 export function timedOutAction(error) {
   return error?.name === "TimeoutError"
-    ? (/^([a-z]+\.[a-zA-Z]+): Timeout \d+ms exceeded/.exec(
+    ? (/^([a-z][a-zA-Z]*\.[a-zA-Z]+): Timeout \d+ms exceeded/.exec(
         error.message,
       )?.[1] ?? null)
     : null;
@@ -109,13 +116,12 @@ export function stepLog() {
 }
 // Where a failure happened, for its report row: the scenario's own line, not
 // the harness helper that threw; for a Playwright timeout also the call that
-// ran out and the harness line; and the steps an error carries.
+// ran out and the harness line.
 export function failureEvidence(error) {
   const action = timedOutAction(error);
   return {
     site: failureSite(error?.stack),
     ...(action ? { action, harnessSite: harnessSite(error.stack) } : {}),
-    ...(Array.isArray(error?.steps) ? { steps: error.steps } : {}),
   };
 }
 export function safeError(error) {
@@ -267,12 +273,15 @@ export async function startHarness() {
     result.id = session.body.user.id;
     return result;
   }
+  // Only this fixture's steps: scenarios register more actors, and build
+  // more fixtures, through the same log.
   async function fixture() {
+    const from = fixtureSteps.length;
     try {
-      // A copy: scenarios register more actors through the same steps later.
-      return { ...(await buildFixture()), steps: [...fixtureSteps] };
+      return { ...(await buildFixture()), steps: fixtureSteps.slice(from) };
     } catch (error) {
-      if (error instanceof Error) error.steps = [...fixtureSteps];
+      if (error && typeof error === "object")
+        error.fixtureSteps = fixtureSteps.slice(from);
       throw error;
     }
   }
@@ -454,6 +463,9 @@ export async function startHarness() {
           ? { metrics: error.metrics }
           : {}),
       };
+      // A failed fixture's step times sit where its PASS row has them.
+      if (Array.isArray(error?.fixtureSteps))
+        row.metrics = { ...row.metrics, steps: error.fixtureSteps };
     }
     if (isolation && !nativeInterfaceBlocked) {
       try {
