@@ -36,9 +36,7 @@ describe("what the production build starts in a browser", () => {
   it("registers the worker and sends a notification tap through the router", () => {
     vi.stubEnv("PROD", true);
     const { register, navigate, tap } = browser();
-    expect(startPwa({ desktop: false, user: () => "user-1", navigate })).toBe(
-      true,
-    );
+    expect(startPwa({ user: () => "user-1", navigate })).toBe(true);
     expect(register).toHaveBeenCalledExactlyOnceWith("/sw.js", {
       scope: "/",
       updateViaCache: "none",
@@ -50,20 +48,7 @@ describe("what the production build starts in a browser", () => {
   it("starts neither under Vite's dev server", () => {
     vi.stubEnv("PROD", false);
     const { register, navigate, tap } = browser();
-    expect(startPwa({ desktop: false, user: () => "user-1", navigate })).toBe(
-      false,
-    );
-    tap();
-    expect(register).not.toHaveBeenCalled();
-    expect(navigate).not.toHaveBeenCalled();
-  });
-
-  it("starts neither in the desktop app", () => {
-    vi.stubEnv("PROD", true);
-    const { register, navigate, tap } = browser();
-    expect(startPwa({ desktop: true, user: () => "user-1", navigate })).toBe(
-      false,
-    );
+    expect(startPwa({ user: () => "user-1", navigate })).toBe(false);
     tap();
     expect(register).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();

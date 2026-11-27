@@ -63,8 +63,7 @@ export function NotificationPermissionStatus({ id }: { id?: string }) {
     <div className="settings-row-note">
       <p id={id} role="status">
         {notificationPermissionText(state, {
-          // The Tauri app is not bound by the browser's HTTPS rule.
-          secure: device.secure || device.native,
+          secure: device.secure,
           ios: device.ios,
           standalone: device.standalone,
         })}
