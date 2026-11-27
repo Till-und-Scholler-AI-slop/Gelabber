@@ -18,3 +18,9 @@ retries = 1
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# The upgrade test says how many migrations it applied after the previous
+# release (GEL-413), also when it passes.
+[[profile.ci.overrides]]
+filter = "binary(upgrade)"
+success-output = "final"
