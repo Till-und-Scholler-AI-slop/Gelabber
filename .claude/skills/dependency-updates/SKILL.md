@@ -109,8 +109,9 @@ A group that carries such an update still carries its others.
 
 When two pull requests update the same dependency in the same directory,
 the higher `to` is carried. A pull request whose every update is below or
-equal to another's is skipped and counts as carried; a group is never
-skipped because of one of its dependencies.
+equal to another's is skipped: it is not picked, and step 9 comments on it
+which pull request covers it. A group is never skipped because of one of
+its dependencies.
 
 Order: group pull requests by number, then the others by number.
 
@@ -145,8 +146,9 @@ A pick either applies cleanly or it does not:
   on `main`."
 
 A pull request whose every update is left out up front is not picked; an
-update left out up front inside a group gets a leave-out commit (section
-"Leaving an update out up front").
+update left out up front inside a group gets a leave-out commit right after
+its group's pick, here in step 4 and without an issue id, so that the checks
+below see it (section "Leaving an update out up front").
 
 After the picks and leave-outs, check that the tree is consistent, without
 repairing it:
@@ -287,7 +289,8 @@ gh pr close <n> --comment "<base> has these versions already."
 
 and comment `Picked into <URL>.` on each carried one, leaving it open: the
 draft may be red and is not merged yet; a later run closes it once the
-development line has its versions.
+development line has its versions. A skipped duplicate (step 3) gets
+`Covered by #<m>, picked into <URL>.` and stays open as well.
 
 Comment the report on the week's issue (on a stop, also remove its
 assignee): the pull request's URL and state,
@@ -300,12 +303,20 @@ state.
 
 ## Leaving an update out up front
 
-One commit per update inside a group, `chore(deps): leave out <name> <to>
-(GEL-<n>)`, after its group's pick:
+One commit per update inside a group, `chore(deps): leave out <name> <to>`
+(no issue id: step 4 runs before the week's issue exists), right after its
+group's pick:
 
 - Cargo: restore the version requirement in each `Cargo.toml` that the
   update changed (`git diff "origin/$base" -- <dir>`), then
   `cargo update --manifest-path <dir>/Cargo.toml -p <name>@<to> --precise <from>`;
-- npm: `(cd web && npm install --package-lock-only --ignore-scripts --save-exact <name>@<from>)`;
+  `cargo update -p` takes any crate of the lock file, so this holds for a
+  transitive crate too (it has no requirement to restore);
+- npm, only for a dependency that `web/package.json` names:
+  `(cd web && npm install --package-lock-only --ignore-scripts --save-exact <name>@<from>)`.
+  For one it does not name (an indirect dependency, moved in the lock only)
+  that command would add it to `package.json`; such an update cannot be
+  left out inside a group, so the whole pull request is not picked this
+  week, and the report lists it as left out with that reason;
 - Docker, Compose, Actions, pip: set the lines naming it back to their text
   in `origin/$base` (`git diff "origin/$base" -- <file>`).
