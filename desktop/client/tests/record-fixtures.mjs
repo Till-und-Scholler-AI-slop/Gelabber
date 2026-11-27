@@ -499,7 +499,11 @@ async function normalize(dir) {
     const key = instant(time).join(".");
     if (key !== last) rank += 1;
     last = key;
-    at.set(time, new Date(base + rank * 1000).toISOString());
+    // Whole seconds, as the client writes them back.
+    at.set(
+      time,
+      new Date(base + rank * 1000).toISOString().replace(".000Z", "Z"),
+    );
   }
   for (const name of names)
     await writeFile(

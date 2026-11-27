@@ -1,9 +1,9 @@
 {
-  "id": "abc17d0a-f188-49da-bd2f-1c429850b85a",
+  "id": "00000000-0000-4000-8000-000000000007",
   "name": "Aufnahme",
-  "owner_id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
+  "owner_id": "00000000-0000-4000-8000-000000000004",
   "icon_url": null,
-  "created_at": "2026-11-27T18:47:56.376097Z",
+  "created_at": "2030-01-01T00:00:33.000Z",
   "role": "owner",
   "permissions": [
     "manage_server",
@@ -25,46 +25,46 @@
   "blocked": false,
   "categories": [
     {
-      "id": "49554e65-56e5-4f21-8234-12a79930b5a6",
-      "server_id": "abc17d0a-f188-49da-bd2f-1c429850b85a",
+      "id": "00000000-0000-4000-8000-000000000029",
+      "server_id": "00000000-0000-4000-8000-000000000007",
       "name": "Textkanäle",
-      "created_at": "2026-11-27T18:47:56.386304Z"
+      "created_at": "2030-01-01T00:00:34.000Z"
     },
     {
-      "id": "236f621c-2ff4-45ab-a518-6cc27ead30a7",
-      "server_id": "abc17d0a-f188-49da-bd2f-1c429850b85a",
+      "id": "00000000-0000-4000-8000-000000000030",
+      "server_id": "00000000-0000-4000-8000-000000000007",
       "name": "Sprachkanäle",
-      "created_at": "2026-11-27T18:47:56.390078Z"
+      "created_at": "2030-01-01T00:00:36.000Z"
     }
   ],
   "channels": [
     {
-      "id": "b4730f18-b56b-4f27-818f-a809aa9e6ff6",
-      "server_id": "abc17d0a-f188-49da-bd2f-1c429850b85a",
-      "category_id": "49554e65-56e5-4f21-8234-12a79930b5a6",
+      "id": "00000000-0000-4000-8000-000000000003",
+      "server_id": "00000000-0000-4000-8000-000000000007",
+      "category_id": "00000000-0000-4000-8000-000000000029",
       "name": "allgemein",
       "kind": "text",
-      "created_at": "2026-11-27T18:47:56.389471Z",
+      "created_at": "2030-01-01T00:00:35.000Z",
       "limited": false,
       "role_ids": []
     },
     {
-      "id": "9e9d8921-d9ab-48f4-bd4d-72d31f5de1dc",
-      "server_id": "abc17d0a-f188-49da-bd2f-1c429850b85a",
-      "category_id": "236f621c-2ff4-45ab-a518-6cc27ead30a7",
+      "id": "00000000-0000-4000-8000-000000000010",
+      "server_id": "00000000-0000-4000-8000-000000000007",
+      "category_id": "00000000-0000-4000-8000-000000000030",
       "name": "Wohnzimmer",
       "kind": "voice",
-      "created_at": "2026-11-27T18:47:56.391817Z",
+      "created_at": "2030-01-01T00:00:37.000Z",
       "limited": false,
       "role_ids": []
     }
   ],
   "members": [
     {
-      "user_id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
+      "user_id": "00000000-0000-4000-8000-000000000004",
       "name": "Lena",
       "avatar_url": null,
-      "joined_at": "2026-11-27T18:47:56.376097Z",
+      "joined_at": "2030-01-01T00:00:33.000Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,
@@ -72,10 +72,10 @@
       "role": "owner"
     },
     {
-      "user_id": "cf6336df-54a8-467e-a622-9eb772100bd3",
+      "user_id": "00000000-0000-4000-8000-000000000005",
       "name": "Jonas",
       "avatar_url": null,
-      "joined_at": "2026-11-27T18:47:56.493536Z",
+      "joined_at": "2030-01-01T00:00:39.000Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,

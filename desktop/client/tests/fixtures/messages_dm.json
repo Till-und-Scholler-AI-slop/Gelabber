@@ -1,15 +1,15 @@
 {
   "messages": [
     {
-      "id": "d7fa8511-ae29-40d7-8d20-1ffcfecdcf3c",
-      "channel_id": "a8e6c5be-1432-4705-9f68-d4723d9bca24",
+      "id": "00000000-0000-4000-8000-000000000026",
+      "channel_id": "00000000-0000-4000-8000-000000000006",
       "author": {
-        "id": "cf6336df-54a8-467e-a622-9eb772100bd3",
+        "id": "00000000-0000-4000-8000-000000000005",
         "name": "Jonas",
         "avatar_url": null
       },
       "content": "Hey Lena, hast du die Fotos vom Wochenende noch?",
-      "created_at": "2026-11-27T18:44:24.119711Z",
+      "created_at": "2030-01-01T00:00:29.000Z",
       "edited_at": null,
       "revision": 18,
       "created_order": 14,
@@ -19,15 +19,15 @@
       "mention_everyone": false
     },
     {
-      "id": "1b4fb9d4-77f8-4ece-bf94-ca27534ecb51",
-      "channel_id": "a8e6c5be-1432-4705-9f68-d4723d9bca24",
+      "id": "00000000-0000-4000-8000-000000000027",
+      "channel_id": "00000000-0000-4000-8000-000000000006",
       "author": {
-        "id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
+        "id": "00000000-0000-4000-8000-000000000004",
         "name": "Lena",
         "avatar_url": null
       },
       "content": "Ja, ich schicke sie dir heute Abend.",
-      "created_at": "2026-11-27T18:44:24.187289Z",
+      "created_at": "2030-01-01T00:00:30.000Z",
       "edited_at": null,
       "revision": 21,
       "created_order": 15,
