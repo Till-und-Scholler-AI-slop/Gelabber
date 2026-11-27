@@ -31,7 +31,7 @@ describe("link previews from the wire", () => {
     ]);
   });
 
-  it("reads cjson's {} as no previews", () => {
+  it("reads anything but a list as no previews", () => {
     expect(asPreviewList({})).toEqual([]);
     expect(asPreviewList(undefined)).toEqual([]);
   });

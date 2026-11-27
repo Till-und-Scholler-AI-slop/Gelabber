@@ -37,6 +37,7 @@ function row(channel: string, n: number): Message {
     reactions: [],
     mentions: [],
     mention_everyone: false,
+    revision: 1,
     attachments: [],
   };
 }

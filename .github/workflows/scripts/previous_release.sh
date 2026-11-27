@@ -14,6 +14,14 @@
 #     - any other branch belongs to the development line, the newest vX.Y
 #       branch on origin: v0.15 is developed while Cargo still says 0.14.x.
 #     --fetch first fetches the previous minor's tags (CI checks out none).
+#     A line whose previous minor has no release yet fails here, on
+#     purpose: skipping would also skip --check, and servers still run that
+#     minor's predecessor. Cut a version branch after the release before it.
+#
+#   previous_release.sh --own [--fetch]
+#     The newest release of the line itself, as "TAG NUMBER", or nothing
+#     when the line has none yet. Servers run it too, so CI checks the
+#     migrations against it as well (GEL-444).
 #
 #   previous_release.sh --check TAG NUMBER
 #     Fails when a migration TAG shipped was edited, deleted or renamed
@@ -66,13 +74,39 @@ check() {
   fi
 }
 
+own=false
+fetch=false
 case "${1:-}" in
   --check)
     check "$2" "$3"
     exit 0 ;;
-  --fetch | '') ;;
+  --own) own=true; [ "${2:-}" = --fetch ] && fetch=true ;;
+  --fetch) fetch=true ;;
+  '') ;;
   *) echo "unknown argument: $1" >&2; exit 2 ;;
 esac
+
+# The newest tag vSERIES.*, fetched first with --fetch; empty without one.
+newest_tag() {
+  if [ "$fetch" = true ]; then
+    if [ -z "$(git -C "$root" ls-remote --tags origin "refs/tags/v$1.*")" ]; then
+      return 0
+    fi
+    git -C "$root" fetch --quiet --depth=1 --no-tags origin "+refs/tags/v$1.*:refs/tags/v$1.*"
+  fi
+  git -C "$root" tag --list "v$1.*" --sort=-version:refname | head -1
+}
+
+# "TAG NUMBER": the tag and the highest migration it shipped.
+boundary() {
+  last=$(git -C "$root" ls-tree --name-only "$1" "$migrations/" \
+    | sed -n 's#.*/0*\([0-9][0-9]*\)_[^/]*\.sql$#\1#p' | sort -n | tail -1)
+  if [ -z "$last" ]; then
+    echo "$1 has no migrations" >&2
+    exit 1
+  fi
+  echo "$1 $last"
+}
 
 line=$(version_line)
 major=$(echo "$line" | sed -n 's/^v\([0-9]*\)\.[0-9]*$/\1/p')
@@ -81,23 +115,19 @@ if [ -z "$major" ] || [ -z "$minor" ]; then
   echo "no version line found (BASE_REF='${BASE_REF:-}', REF_NAME='${REF_NAME:-}')" >&2
   exit 1
 fi
-previous="$major.$((minor - 1))"
-if [ "${1:-}" = --fetch ]; then
-  if [ -z "$(git -C "$root" ls-remote --tags origin "refs/tags/v$previous.*")" ]; then
-    echo "$line follows v$previous, which has no release yet (no tag v$previous.* on origin)" >&2
-    exit 1
-  fi
-  git -C "$root" fetch --quiet --depth=1 --no-tags origin "+refs/tags/v$previous.*:refs/tags/v$previous.*"
+if [ "$own" = true ]; then
+  tag=$(newest_tag "$major.$minor")
+  if [ -n "$tag" ]; then boundary "$tag"; fi
+  exit 0
 fi
-tag=$(git -C "$root" tag --list "v$previous.*" --sort=-version:refname | head -1)
+previous="$major.$((minor - 1))"
+tag=$(newest_tag "$previous")
+if [ -z "$tag" ] && [ "$fetch" = true ]; then
+  echo "$line follows v$previous, which has no release yet (no tag v$previous.* on origin)" >&2
+  exit 1
+fi
 if [ -z "$tag" ]; then
   echo "no tag v$previous.* in this checkout; fetch the tags or run with --fetch" >&2
   exit 1
 fi
-last=$(git -C "$root" ls-tree --name-only "$tag" "$migrations/" \
-  | sed -n 's#.*/0*\([0-9][0-9]*\)_[^/]*\.sql$#\1#p' | sort -n | tail -1)
-if [ -z "$last" ]; then
-  echo "$tag has no migrations" >&2
-  exit 1
-fi
-echo "$tag $last"
+boundary "$tag"

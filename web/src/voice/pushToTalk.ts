@@ -45,8 +45,8 @@ export function pushToTalkKeyLabel(code: string): string {
 }
 
 /** The label kept for a key: only a single printed character. Named keys
- * keep none, so `pushToTalkKeyLabel` names them in the current language;
- * this also drops the German names saved before v0.10. */
+ * keep none, so `pushToTalkKeyLabel` names them in the current language,
+ * whatever label was stored for them. */
 export function keptKeyLabel(label: unknown): string {
   return typeof label === "string" && [...label].length === 1 ? label : "";
 }
