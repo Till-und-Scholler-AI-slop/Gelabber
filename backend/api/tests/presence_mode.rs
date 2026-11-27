@@ -7,20 +7,14 @@ mod common;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
 use gelabber_api::AppState;
 use gelabber_api::gateway::protocol::REDIS_PREFIX;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::COOKIE;
 use uuid::Uuid;
 
+use common::ws::{self, Ws, send, until_skipping};
 use common::{Client, SESSION};
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 struct World {
     owner: Client,
@@ -90,50 +84,7 @@ async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
 }
 
 async fn connect_to(addr: std::net::SocketAddr, client: &Client, path: &str) -> Ws {
-    let cookie = client.jar.get(SESSION).cloned().expect("session cookie");
-    let mut request = format!("ws://{addr}{path}").into_client_request().unwrap();
-    request
-        .headers_mut()
-        .insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
-    let (ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
-    ws
-}
-
-async fn send_json(ws: &mut Ws, value: Value) {
-    ws.send(Message::Text(value.to_string().into()))
-        .await
-        .expect("ws send");
-}
-
-async fn recv_json(ws: &mut Ws) -> Value {
-    let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
-        .await
-        .expect("ws recv timeout")
-        .expect("ws closed")
-        .expect("ws error");
-    match msg {
-        Message::Text(text) => {
-            let frame: Value = serde_json::from_str(text.as_str()).unwrap();
-            if frame["op"] == "h" {
-                send_json(ws, json!({ "op": "h" })).await;
-            }
-            frame
-        }
-        other => panic!("expected text frame, got {other:?}"),
-    }
-}
-
-/// The first frame `pred` accepts; every frame skipped on the way is
-/// returned too, to check nothing else came first.
-async fn recv_until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> (Value, Vec<Value>) {
-    let mut skipped = Vec::new();
-    loop {
-        let frame = recv_json(ws).await;
-        if pred(&frame) {
-            return (frame, skipped);
-        }
-        skipped.push(frame);
-    }
+    ws::connect_to(addr, path, Some(&client.jar[SESSION]), None).await
 }
 
 async fn set_mode(client: &mut Client, body: Value) -> Value {
@@ -150,8 +101,8 @@ fn presence_of<'a>(user: &'a str) -> impl Fn(&Value) -> bool + 'a {
 
 /// Subscribes and returns the server's snapshot.
 async fn watch(ws: &mut Ws, server: Uuid) -> Value {
-    send_json(ws, json!({ "op": "s", "s": server })).await;
-    recv_until(ws, |f| f["op"] == "p" && f.get("snap").is_some())
+    send(ws, json!({ "op": "s", "s": server })).await;
+    until_skipping(ws, |f| f["op"] == "p" && f.get("snap").is_some())
         .await
         .0
 }
@@ -182,15 +133,15 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
     let mut bob_phone = connect(addr, &member).await;
     watch(&mut bob_ws, server).await;
     watch(&mut bob_phone, server).await;
-    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
 
     let saved = set_mode(&mut member, json!({ "mode": "dnd", "duration": "8h" })).await;
     assert_eq!(saved["mode"], "dnd");
     let until = saved["until"].as_str().expect("an end").to_owned();
-    let (frame, _) = recv_until(&mut ada_ws, presence_of(&bob)).await;
+    let (frame, _) = until_skipping(&mut ada_ws, presence_of(&bob)).await;
     assert_eq!(frame["st"], "d", "{frame}");
     for ws in [&mut bob_ws, &mut bob_phone] {
-        let (frame, _) = recv_until(ws, |f| f["op"] == "pm").await;
+        let (frame, _) = until_skipping(ws, |f| f["op"] == "pm").await;
         assert_eq!(frame, json!({ "op": "pm", "m": "dnd", "u": until }));
     }
     let res = member.send(Method::GET, "/api/me/presence", None).await;
@@ -200,7 +151,7 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
     assert_eq!(res.body, json!({ "mode": "auto", "until": null }));
 
     // A socket going idle does not change what others see.
-    send_json(&mut bob_ws, json!({ "op": "p", "st": "i" })).await;
+    send(&mut bob_ws, json!({ "op": "p", "st": "i" })).await;
     let mut late = connect(addr, &owner).await;
     assert_eq!(
         listed(&watch(&mut late, server).await, &bob).as_deref(),
@@ -208,15 +159,15 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
     );
 
     set_mode(&mut member, json!({ "mode": "idle", "duration": "1h" })).await;
-    let (frame, _) = recv_until(&mut ada_ws, presence_of(&bob)).await;
+    let (frame, _) = until_skipping(&mut ada_ws, presence_of(&bob)).await;
     assert_eq!(frame["st"], "i", "{frame}");
     // Away by hand stays away while used.
-    send_json(&mut bob_ws, json!({ "op": "p", "st": "o" })).await;
-    send_json(&mut bob_phone, json!({ "op": "p", "st": "o" })).await;
+    send(&mut bob_ws, json!({ "op": "p", "st": "o" })).await;
+    send(&mut bob_phone, json!({ "op": "p", "st": "o" })).await;
 
     let saved = set_mode(&mut member, json!({ "mode": "invisible" })).await;
     assert_eq!(saved, json!({ "mode": "invisible", "until": null }));
-    let (frame, skipped) = recv_until(&mut ada_ws, presence_of(&bob)).await;
+    let (frame, skipped) = until_skipping(&mut ada_ws, presence_of(&bob)).await;
     assert_eq!(frame["st"], "x", "{frame}");
     assert!(
         skipped.iter().all(|f| !presence_of(&bob)(f)),
@@ -228,12 +179,12 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
     bob_phone.close(None).await.ok();
 
     set_mode(&mut member, json!({ "mode": "auto" })).await;
-    let (frame, _) = recv_until(&mut ada_ws, presence_of(&bob)).await;
+    let (frame, _) = until_skipping(&mut ada_ws, presence_of(&bob)).await;
     assert_eq!(frame["st"], "o", "{frame}");
     // Bob's own socket heard every change, in order.
     let mut modes = Vec::new();
     while modes.last().map(String::as_str) != Some("auto") {
-        let (frame, _) = recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
+        let (frame, _) = until_skipping(&mut bob_ws, |f| f["op"] == "pm").await;
         assert_eq!(frame.get("u").is_some(), frame["m"] == "idle", "{frame}");
         modes.push(frame["m"].as_str().unwrap().to_owned());
     }
@@ -256,12 +207,12 @@ async fn an_old_client_hears_do_not_disturb_as_online(pool: PgPool) {
     watch(&mut old, server).await;
     let mut bob_ws = connect(addr, &member).await;
     watch(&mut bob_ws, server).await;
-    recv_until(&mut old, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    until_skipping(&mut old, |f| presence_of(&bob)(f) && f["st"] == "o").await;
 
     // Each change reaches the old client, Do not disturb as online.
     for (mode, heard) in [("dnd", "o"), ("idle", "i"), ("dnd", "o")] {
         set_mode(&mut member, json!({ "mode": mode })).await;
-        let (frame, _) = recv_until(&mut old, presence_of(&bob)).await;
+        let (frame, _) = until_skipping(&mut old, presence_of(&bob)).await;
         assert_eq!(frame["st"], heard, "{mode}: {frame}");
     }
     let mut late = connect_to(addr, &owner, "/ws").await;
@@ -289,14 +240,14 @@ async fn invisible_typing_reaches_nobody(pool: PgPool) {
     let _ = &mut owner;
     let (addr, _state) = common::serve_ws(pool).await;
     let mut ada_ws = connect(addr, &owner).await;
-    send_json(&mut ada_ws, json!({ "op": "s", "s": server, "c": channel })).await;
-    recv_until(&mut ada_ws, |f| {
+    send(&mut ada_ws, json!({ "op": "s", "s": server, "c": channel })).await;
+    until_skipping(&mut ada_ws, |f| {
         f["op"] == "ok" && f["c"] == channel.to_string()
     })
     .await;
     let mut bob_ws = connect(addr, &member).await;
-    send_json(&mut bob_ws, json!({ "op": "s", "s": server, "c": channel })).await;
-    recv_until(&mut bob_ws, |f| {
+    send(&mut bob_ws, json!({ "op": "s", "s": server, "c": channel })).await;
+    until_skipping(&mut bob_ws, |f| {
         f["op"] == "ok" && f["c"] == channel.to_string()
     })
     .await;
@@ -306,25 +257,25 @@ async fn invisible_typing_reaches_nobody(pool: PgPool) {
         json!({ "mode": "invisible", "duration": "1h" }),
     )
     .await;
-    recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
-    send_json(
+    until_skipping(&mut bob_ws, |f| f["op"] == "pm").await;
+    send(
         &mut bob_ws,
         json!({ "op": "y", "s": server, "c": channel, "on": true }),
     )
     .await;
     // Frames of one socket are handled in order: once this subscribe is
     // answered, the typing frame was handled.
-    send_json(&mut bob_ws, json!({ "op": "s", "s": server })).await;
-    recv_until(&mut bob_ws, |f| f["op"] == "ok" && f.get("c").is_none()).await;
+    send(&mut bob_ws, json!({ "op": "s", "s": server })).await;
+    until_skipping(&mut bob_ws, |f| f["op"] == "ok" && f.get("c").is_none()).await;
 
     set_mode(&mut member, json!({ "mode": "auto" })).await;
-    recv_until(&mut bob_ws, |f| f["op"] == "pm" && f["m"] == "auto").await;
-    send_json(
+    until_skipping(&mut bob_ws, |f| f["op"] == "pm" && f["m"] == "auto").await;
+    send(
         &mut bob_ws,
         json!({ "op": "y", "s": server, "c": channel, "on": true }),
     )
     .await;
-    let (frame, skipped) = recv_until(&mut ada_ws, |f| f["op"] == "y").await;
+    let (frame, skipped) = until_skipping(&mut ada_ws, |f| f["op"] == "y").await;
     assert_eq!(frame["u"], bob);
     // The typing above came first had it gone out; the frames before this
     // one are presence only.
@@ -351,11 +302,11 @@ async fn a_mode_runs_out_and_is_announced(pool: PgPool) {
     watch(&mut ada_ws, server).await;
     let mut bob_ws = connect(addr, &member).await;
     watch(&mut bob_ws, server).await;
-    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
 
     set_mode(&mut member, json!({ "mode": "dnd", "duration": "24h" })).await;
-    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "d").await;
-    recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "d").await;
+    until_skipping(&mut bob_ws, |f| f["op"] == "pm").await;
 
     // The end passes: the record reads automatic at once ...
     sqlx::query("UPDATE users SET presence_mode_until = now() - interval '1 second' WHERE id = $1")
@@ -377,9 +328,9 @@ async fn a_mode_runs_out_and_is_announced(pool: PgPool) {
             .await
             .unwrap();
     assert_eq!((mode.as_str(), until), ("auto", None));
-    let (frame, _) = recv_until(&mut ada_ws, presence_of(&bob)).await;
+    let (frame, _) = until_skipping(&mut ada_ws, presence_of(&bob)).await;
     assert_eq!(frame["st"], "o", "{frame}");
-    let (frame, _) = recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
+    let (frame, _) = until_skipping(&mut bob_ws, |f| f["op"] == "pm").await;
     assert_eq!(frame, json!({ "op": "pm", "m": "auto" }));
     let _ = &mut owner;
 }
@@ -416,9 +367,9 @@ async fn an_invisible_account_leaves_without_a_word(pool: PgPool) {
     watch(&mut ada_ws, server).await;
     let mut bob_ws = connect(addr, &member).await;
     watch(&mut bob_ws, server).await;
-    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
     set_mode(&mut member, json!({ "mode": "invisible" })).await;
-    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "x").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "x").await;
 
     bob_ws.close(None).await.ok();
     drop(bob_ws);
@@ -443,7 +394,7 @@ async fn an_invisible_account_leaves_without_a_word(pool: PgPool) {
     }
     // Ada's own change comes after anything Bob's leaving sent.
     set_mode(&mut owner, json!({ "mode": "dnd" })).await;
-    let (_, skipped) = recv_until(&mut ada_ws, |f| f["op"] == "pm").await;
+    let (_, skipped) = until_skipping(&mut ada_ws, |f| f["op"] == "pm").await;
     assert!(
         skipped.iter().all(|f| !presence_of(&bob)(f)),
         "Bob's leaving was announced: {skipped:?}"
@@ -465,7 +416,7 @@ async fn a_subscribe_after_a_redis_restart_restores_the_mode(pool: PgPool) {
     let mut bob_ws = connect(addr, &member).await;
     watch(&mut bob_ws, server).await;
     set_mode(&mut member, json!({ "mode": "dnd" })).await;
-    recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
+    until_skipping(&mut bob_ws, |f| f["op"] == "pm").await;
     // What a restart loses: the copy and its check marker.
     del(&[
         format!("{REDIS_PREFIX}p:m:{bob}"),
@@ -609,8 +560,8 @@ async fn join(pool: &PgPool, owner: &mut Client, server: Uuid) -> Client {
 }
 
 async fn follow(ws: &mut Ws, server: Uuid, channel: Uuid) {
-    send_json(ws, json!({ "op": "s", "s": server, "c": channel })).await;
-    recv_until(ws, |f| f["op"] == "ok" && f["c"] == channel.to_string()).await;
+    send(ws, json!({ "op": "s", "s": server, "c": channel })).await;
+    until_skipping(ws, |f| f["op"] == "ok" && f["c"] == channel.to_string()).await;
 }
 
 async fn post(client: &mut Client, channel: Uuid, content: &str) -> Value {
@@ -658,7 +609,7 @@ async fn listed_mentions(client: &mut Client, channel: Uuid, id: &str) -> Value 
 
 /// The delta of the `t` event of message `id` as this socket hears it.
 async fn heard(ws: &mut Ws, t: &str, id: &str) -> Value {
-    recv_until(ws, |f| f["op"] == "e" && f["t"] == t && f["i"] == id)
+    until_skipping(ws, |f| f["op"] == "e" && f["t"] == t && f["i"] == id)
         .await
         .0["d"]
         .clone()
@@ -685,11 +636,11 @@ async fn here_reaches_an_invisible_member_without_showing_them(pool: PgPool) {
     follow(&mut bob_ws, server, channel).await;
     let mut cem_ws = connect(addr, &cem).await;
     follow(&mut cem_ws, server, channel).await;
-    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
-    recv_until(&mut ada_ws, |f| presence_of(&cem_id)(f) && f["st"] == "o").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&cem_id)(f) && f["st"] == "o").await;
     set_mode(&mut member, json!({ "mode": "invisible" })).await;
-    recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
-    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "x").await;
+    until_skipping(&mut bob_ws, |f| f["op"] == "pm").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "x").await;
 
     let shown = json!([cem_id]);
     let mut own = vec![bob.clone(), cem_id.clone()];
@@ -760,12 +711,12 @@ async fn here_reaches_an_invisible_member_without_showing_them(pool: PgPool) {
 
     // A socket that resumes from the start replays the same.
     let mut late = connect(addr, &owner).await;
-    send_json(
+    send(
         &mut late,
         json!({ "op": "s", "s": server, "c": channel, "n": 0 }),
     )
     .await;
-    let (_, replayed) = recv_until(&mut late, |f| f["op"] == "ok").await;
+    let (_, replayed) = until_skipping(&mut late, |f| f["op"] == "ok").await;
     let events: Vec<&Value> = replayed
         .iter()
         .filter(|f| f["op"] == "e" && f["i"] == id.as_str())
@@ -796,9 +747,9 @@ async fn an_invisible_member_is_shown_only_while_named(pool: PgPool) {
     follow(&mut ada_ws, server, channel).await;
     let mut bob_ws = connect(addr, &member).await;
     follow(&mut bob_ws, server, channel).await;
-    recv_until(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
+    until_skipping(&mut ada_ws, |f| presence_of(&bob)(f) && f["st"] == "o").await;
     set_mode(&mut member, json!({ "mode": "invisible" })).await;
-    recv_until(&mut bob_ws, |f| f["op"] == "pm").await;
+    until_skipping(&mut bob_ws, |f| f["op"] == "pm").await;
 
     let named = format!("@here <@{bob}> kurz?");
     let sent = post(&mut owner, channel, &named).await;

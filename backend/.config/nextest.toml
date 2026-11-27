@@ -6,6 +6,10 @@
 # flaky test in the job summary and record it in its issue.
 [profile.ci]
 retries = 1
+# Per-test time limit (GEL-370): a hung test is ended after three minutes
+# and reported by name, instead of holding the job until its 45 minutes run
+# out. The slowest test takes well under a minute.
+slow-timeout = { period = "60s", terminate-after = 3 }
 
 [profile.ci.junit]
 path = "junit.xml"

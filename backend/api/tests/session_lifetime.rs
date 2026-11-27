@@ -33,7 +33,7 @@ fn lifetime_state(pool: PgPool, ttl_hours: &str, idle_hours: &str) -> AppState {
         "API_SESSION_TTL_HOURS" => Some(ttl_hours.to_owned()),
         "API_SESSION_IDLE_HOURS" => Some(idle_hours.to_owned()),
         "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
-        "API_WS_DEAD_MS" => Some("5000".to_owned()),
+        "API_WS_DEAD_MS" => Some(common::WS_DEAD_MS.to_string()),
         _ => None,
     })
     .expect("lifetime test config");

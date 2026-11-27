@@ -6,18 +6,16 @@ mod common;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use gelabber_api::servers::access;
 use gelabber_api::servers::permissions::Permission;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
-use common::{Client, SESSION};
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+use common::Client;
+use common::ws::{Ws, connect, send, until};
 
 async fn user(pool: &PgPool, email: &str, name: &str) -> Client {
     let mut client = Client::new(pool.clone());
@@ -843,49 +841,13 @@ async fn holders_are_the_owner_and_members_granted_the_flag(pool: PgPool) {
     assert_eq!(held, vec![ada]);
 }
 
-async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{SESSION}={}", client.jar[SESSION])
-            .parse()
-            .unwrap(),
-    );
-    tokio_tungstenite::connect_async(req)
-        .await
-        .expect("connect")
-        .0
-}
-
-async fn send(ws: &mut Ws, frame: Value) {
-    ws.send(Message::Text(frame.to_string().into()))
-        .await
-        .unwrap();
-}
-
 /// The next `{"k": "a"}` server event, answering heartbeats on the way.
 async fn access_changed(ws: &mut Ws, server: Uuid) -> Value {
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            match ws.next().await.expect("open socket").expect("frame") {
-                Message::Text(raw) => {
-                    let frame: Value = serde_json::from_str(&raw).unwrap();
-                    if frame["op"] == "h" {
-                        send(ws, json!({ "op": "h" })).await;
-                    }
-                    if frame["op"] == "e" && frame["d"]["k"] == "a" {
-                        assert_eq!(frame["t"], "e", "{frame}");
-                        assert_eq!(frame["s"], server.to_string(), "{frame}");
-                        assert!(frame.get("c").is_none_or(Value::is_null), "{frame}");
-                        return frame;
-                    }
-                }
-                other => panic!("unexpected {other:?}"),
-            }
-        }
-    })
-    .await
-    .expect("access change event")
+    let frame = until(ws, |f| f["op"] == "e" && f["d"]["k"] == "a").await;
+    assert_eq!(frame["t"], "e", "{frame}");
+    assert_eq!(frame["s"], server.to_string(), "{frame}");
+    assert!(frame.get("c").is_none_or(Value::is_null), "{frame}");
+    frame
 }
 
 #[sqlx::test]

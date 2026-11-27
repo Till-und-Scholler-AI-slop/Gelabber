@@ -16,10 +16,8 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::{COOKIE, HOST, ORIGIN};
 use uuid::Uuid;
 
+use common::ws::{self, Ws, recv, send, until};
 use common::{Client, SESSION};
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn two_users(pool: PgPool) -> (Client, Client) {
     let mut owner = Client::new(pool.clone());
@@ -74,25 +72,7 @@ fn session_cookie(client: &Client) -> String {
 }
 
 async fn connect(addr: std::net::SocketAddr, cookie: &str, origin: Option<&str>) -> Ws {
-    let mut request = format!("ws://{addr}/ws")
-        .into_client_request()
-        .expect("ws request");
-    request.headers_mut().insert(
-        COOKIE,
-        format!("{SESSION}={cookie}")
-            .parse()
-            .expect("cookie header"),
-    );
-    if let Some(origin) = origin {
-        request
-            .headers_mut()
-            .insert(ORIGIN, origin.parse().expect("origin"));
-    }
-    let (ws, response) = tokio_tungstenite::connect_async(request)
-        .await
-        .unwrap_or_else(|err| panic!("ws connect failed: {err}"));
-    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
-    ws
+    ws::connect_to(addr, "/ws", Some(cookie), origin).await
 }
 
 /// [`connect`] with a small receive buffer, so the server's writes block
@@ -116,48 +96,6 @@ async fn connect_reading_slowly(addr: std::net::SocketAddr, cookie: &str) -> Ws 
             .unwrap_or_else(|err| panic!("ws connect failed: {err}"));
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
     ws
-}
-
-async fn recv_json(ws: &mut Ws) -> Value {
-    let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
-        .await
-        .expect("ws recv timeout")
-        .expect("ws closed")
-        .expect("ws error");
-    match msg {
-        Message::Text(text) => {
-            let frame: Value = serde_json::from_str(text.as_str()).expect("json frame");
-            if frame["op"] == "h" {
-                // A real client acknowledges server heartbeats even while it
-                // waits for a different event. Liveness does not mark activity.
-                send_json(ws, json!({ "op": "h" })).await;
-            }
-            frame
-        }
-        other => panic!("expected text frame, got {other:?}"),
-    }
-}
-
-async fn recv_until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
-    loop {
-        let frame = recv_json(ws).await;
-        if pred(&frame) {
-            return frame;
-        }
-    }
-}
-
-/// [`recv_until`] that fails instead of waiting through heartbeats forever.
-async fn recv_within(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
-    tokio::time::timeout(Duration::from_secs(5), recv_until(ws, pred))
-        .await
-        .expect("expected frame within 5 s")
-}
-
-async fn send_json(ws: &mut Ws, value: Value) {
-    ws.send(Message::Text(value.to_string().into()))
-        .await
-        .expect("ws send");
 }
 
 fn ids(server: &Value) -> (Uuid, Uuid) {
@@ -190,6 +128,24 @@ async fn publish(
     .await
     .expect("publish");
     event.n
+}
+
+/// Publishes a marker on the server topic, which `ws` follows, and returns
+/// the frames that reached `ws` before it. Events go out in the order they
+/// were published, so one published earlier for this socket is among them.
+async fn before_marker(state: &AppState, ws: &mut Ws, server_id: Uuid) -> Vec<Value> {
+    publish_server(
+        state,
+        server_id,
+        EventKind::C,
+        None,
+        Some(json!({ "marker": true })),
+    )
+    .await
+    .unwrap();
+    ws::until_skipping(ws, |f| f["op"] == "e" && f["d"]["marker"] == true)
+        .await
+        .1
 }
 
 #[sqlx::test]
@@ -387,25 +343,25 @@ async fn events_only_reach_matching_subscribers(pool: PgPool) {
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
 
-    let owner_ok = recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
-    let member_ok = recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+    let owner_ok = until(&mut owner_ws, |f| f["op"] == "ok").await;
+    let member_ok = until(&mut member_ws, |f| f["op"] == "ok").await;
     assert_eq!(owner_ok["n"], 0);
     assert_eq!(member_ok["c"], channel_id.to_string());
 
     let n = publish(&state, server_id, channel_id, EventKind::C, "hello").await;
-    let owner_event = recv_until(&mut owner_ws, |f| f["op"] == "e").await;
-    let member_event = recv_until(&mut member_ws, |f| f["op"] == "e").await;
+    let owner_event = until(&mut owner_ws, |f| f["op"] == "e").await;
+    let member_event = until(&mut member_ws, |f| f["op"] == "e").await;
     assert_eq!(owner_event["t"], "c");
     assert_eq!(owner_event["n"], n);
     assert_eq!(owner_event["d"]["b"], "hello");
@@ -417,28 +373,32 @@ async fn events_only_reach_matching_subscribers(pool: PgPool) {
     );
 
     // Event on another channel must not arrive.
+    send(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut owner_ws, |f| f["op"] == "ok").await;
     publish(&state, other_server, other_channel, EventKind::C, "nope").await;
-    let stray = tokio::time::timeout(Duration::from_millis(150), recv_json(&mut owner_ws)).await;
-    if let Ok(frame) = stray {
-        assert_ne!(frame["c"], other_channel.to_string(), "{frame}");
-        assert_ne!(frame["op"], "e");
-    }
+    let before = before_marker(&state, &mut owner_ws, server_id).await;
+    assert!(
+        before.iter().all(|f| f["c"] != other_channel.to_string()),
+        "{before:?}"
+    );
 
-    // Unsubscribe: further events on this channel stop.
-    send_json(
+    // Unsubscribe: further events on this channel stop. Frames are handled
+    // in order, so the answer to the next one says the unsubscribe is done.
+    send(
         &mut member_ws,
         json!({ "op": "u", "s": server_id, "c": channel_id }),
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    send(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut member_ws, |f| f["op"] == "ok").await;
     publish(&state, server_id, channel_id, EventKind::E, "edit").await;
-    let owner_edit = recv_until(&mut owner_ws, |f| f["op"] == "e" && f["t"] == "e").await;
+    let owner_edit = until(&mut owner_ws, |f| f["op"] == "e" && f["t"] == "e").await;
     assert_eq!(owner_edit["d"]["b"], "edit");
-    let member_stray =
-        tokio::time::timeout(Duration::from_millis(150), recv_json(&mut member_ws)).await;
-    if let Ok(frame) = member_stray {
-        assert_ne!(frame["t"], "e", "{frame}");
-    }
+    let before = before_marker(&state, &mut member_ws, server_id).await;
+    assert!(
+        before.iter().all(|f| f["c"] != channel_id.to_string()),
+        "{before:?}"
+    );
 }
 
 /// A subscribe that fails names its scope, and a presence or voice snapshot
@@ -465,12 +425,12 @@ async fn subscribe_failures_name_the_scope_and_spare_a_live_subscription(pool: P
         .query_async::<()>(&mut redis)
         .await
         .unwrap();
-    send_json(
+    send(
         &mut ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    let err = recv_within(&mut ws, |f| f["op"] == "err").await;
+    let err = until(&mut ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "internal", "{err}");
     assert_eq!(err["s"], server_id.to_string(), "{err}");
     assert_eq!(err["c"], channel_id.to_string(), "{err}");
@@ -487,14 +447,14 @@ async fn subscribe_failures_name_the_scope_and_spare_a_live_subscription(pool: P
         .query_async::<()>(&mut redis)
         .await
         .unwrap();
-    send_json(
+    send(
         &mut ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    recv_within(&mut ws, |f| f["op"] == "ok").await;
+    until(&mut ws, |f| f["op"] == "ok").await;
     let n = publish(&state, server_id, channel_id, EventKind::C, "still here").await;
-    let event = recv_within(&mut ws, |f| f["op"] == "e" || f["op"] == "err").await;
+    let event = until(&mut ws, |f| f["op"] == "e" || f["op"] == "err").await;
     assert_eq!(event["op"], "e", "{event}");
     assert_eq!(event["n"], n);
 }
@@ -507,22 +467,22 @@ async fn subscribe_is_membership_scoped(pool: PgPool) {
     let (addr, _) = common::serve_ws(pool).await;
 
     let mut stranger = connect(addr, &session_cookie(&member), None).await;
-    send_json(
+    send(
         &mut stranger,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    let err = recv_until(&mut stranger, |f| f["op"] == "err").await;
+    let err = until(&mut stranger, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "not_found");
 
     // Channel that does not belong to the server: also not_found.
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "s", "s": server_id, "c": Uuid::from_u128(99) }),
     )
     .await;
-    let err = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    let err = until(&mut owner_ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "not_found");
 }
 
@@ -535,24 +495,24 @@ async fn reconnect_replays_the_gap_without_duplicates(pool: PgPool) {
     let (addr, state) = common::serve_ws(pool).await;
 
     let mut ws = connect(addr, &cookie, None).await;
-    send_json(
+    send(
         &mut ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    until(&mut ws, |f| f["op"] == "ok").await;
 
     let first = publish(&state, server_id, channel_id, EventKind::C, "one").await;
     let second = publish(&state, server_id, channel_id, EventKind::C, "two").await;
-    recv_until(&mut ws, |f| f["n"] == first).await;
-    recv_until(&mut ws, |f| f["n"] == second).await;
+    until(&mut ws, |f| f["n"] == first).await;
+    until(&mut ws, |f| f["n"] == second).await;
     ws.close(None).await.ok();
 
     let third = publish(&state, server_id, channel_id, EventKind::C, "three").await;
     let fourth = publish(&state, server_id, channel_id, EventKind::D, "gone").await;
 
     let mut ws = connect(addr, &cookie, None).await;
-    send_json(
+    send(
         &mut ws,
         json!({ "op": "s", "s": server_id, "c": channel_id, "n": second }),
     )
@@ -562,7 +522,7 @@ async fn reconnect_replays_the_gap_without_duplicates(pool: PgPool) {
         let mut out = Vec::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         while tokio::time::Instant::now() < deadline {
-            let frame = recv_json(&mut ws).await;
+            let frame = recv(&mut ws).await;
             let op = frame["op"].as_str().unwrap_or_default().to_owned();
             if op == "e" {
                 out.push(frame);
@@ -598,14 +558,14 @@ async fn reconnect_signals_gap_when_the_buffer_cannot_fill_it(pool: PgPool) {
     }
 
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(
+    send(
         &mut ws,
         json!({ "op": "s", "s": server_id, "c": channel_id, "n": 1 }),
     )
     .await;
-    let gap = recv_until(&mut ws, |f| f["op"] == "gap" || f["op"] == "ok").await;
+    let gap = until(&mut ws, |f| f["op"] == "gap" || f["op"] == "ok").await;
     assert_eq!(gap["op"], "gap", "{gap}");
-    let ok = recv_until(&mut ws, |f| f["op"] == "ok").await;
+    let ok = until(&mut ws, |f| f["op"] == "ok").await;
     assert_eq!(ok["n"], 10);
 }
 
@@ -618,8 +578,8 @@ async fn shutdown_closes_sockets_with_service_restart_and_cleans_up(pool: PgPool
     let (server_id, _) = ids(&server);
     let (addr, state) = common::serve_ws(pool).await;
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(&mut ws, json!({ "op": "s", "s": server_id })).await;
-    recv_within(&mut ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send(&mut ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
     let mut redis = state
         .redis
         .get_multiplexed_async_connection()
@@ -732,7 +692,7 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
         publish(&state, s, c, EventKind::C, &big).await;
     }
     let mut ws = connect_reading_slowly(addr, &session_cookie(&owner)).await;
-    send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    send(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
     // Read nothing until the server has given up on the socket. A fixed sleep
     // raced the subscribe's own checks, which run before the replay write
     // starts and take longer under load. The socket attaches after the
@@ -806,27 +766,31 @@ async fn a_stalled_subscribe_does_not_hold_off_a_kick(pool: PgPool) {
     let (s, c) = ids(&server);
     join_member(&mut owner, &mut member, &s.to_string()).await;
     let mut state = common::ws_state_with_dead(pool, 60_000);
-    // Longer than kick's 5 s lock wait.
-    state.ws_replay_deadline = Duration::from_secs(8);
+    // A write that held the lock would hold it for a minute, and the kick
+    // would wait as long for it.
+    state.ws_replay_deadline = Duration::from_secs(60);
+    state.server_lock_wait = Duration::from_secs(60);
     let addr = common::serve_ws_state(state.clone()).await;
+    owner.app = gelabber_api::app(state.clone());
     let big = "x".repeat(1024 * 1024);
     for _ in 0..6 {
         publish(&state, s, c, EventKind::C, &big).await;
     }
     let mut ws = connect_reading_slowly(addr, &session_cookie(&member)).await;
-    send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    send(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
     // The replay write is blocked by now.
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let started = std::time::Instant::now();
-    let kicked = owner
-        .send(
+    let kicked = tokio::time::timeout(
+        ws::WAIT,
+        owner.send(
             Method::POST,
             &format!("/api/servers/{s}/kick"),
             Some(json!({ "user_id": member.user_id() })),
-        )
-        .await;
-    let waited = started.elapsed();
+        ),
+    )
+    .await
+    .expect("the kick does not wait for the stalled socket's write");
 
     let topic = gelabber_api::gateway::Topic::Channel(c);
     let mut redis = state
@@ -842,12 +806,8 @@ async fn a_stalled_subscribe_does_not_hold_off_a_kick(pool: PgPool) {
         .query_async::<i32>(&mut redis)
         .await
         .unwrap();
-    assert_eq!(kicked.status, StatusCode::NO_CONTENT, "{}", kicked.body);
     // The subscribe's checks hold the lock briefly; its write must not.
-    assert!(
-        waited < Duration::from_secs(4),
-        "kick waited {waited:?} for the stalled socket"
-    );
+    assert_eq!(kicked.status, StatusCode::NO_CONTENT, "{}", kicked.body);
     drop(ws);
 }
 
@@ -878,33 +838,33 @@ async fn an_oversized_client_frame_closes_the_socket(pool: PgPool) {
 #[sqlx::test]
 async fn heartbeat_keeps_the_socket_and_silence_closes_it(pool: PgPool) {
     let (owner, _) = two_users(pool.clone()).await;
-    let (addr, _) = common::serve_ws_with_dead(pool, 180).await;
+    // A heartbeat every second, and a socket silent for 1.5 s is dead.
+    let state = common::ws_state_with(
+        pool,
+        &[
+            ("API_WS_HEARTBEAT_MS", "1000".into()),
+            ("API_WS_DEAD_MS", "1500".into()),
+        ],
+    );
+    let addr = common::serve_ws_state(state).await;
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
 
-    let beat = recv_until(&mut ws, |f| f["op"] == "h").await;
+    // `until` answers the heartbeat, as a client does.
+    let beat = until(&mut ws, |f| f["op"] == "h").await;
     assert_eq!(beat, json!({ "op": "h" }));
-    send_json(&mut ws, json!({ "op": "h" })).await;
 
     // Inbound `h` is liveness only — must not echo, or the browser client
-    // (which replies to every server `h`) would ping-pong.
-    let echoed = tokio::time::timeout(Duration::from_millis(20), recv_json(&mut ws)).await;
-    assert!(
-        echoed.is_err(),
-        "server must not reply to a client heartbeat: {:?}",
-        echoed.ok()
-    );
+    // (which replies to every server `h`) would ping-pong. The server's
+    // next heartbeat is a second away.
+    let echoed = ws::within(&mut ws, Duration::from_millis(500), |_| true).await;
+    assert_eq!(echoed, None, "server must not reply to a client heartbeat");
 
     // Still alive after another server-initiated heartbeat cycle.
-    let beat = tokio::time::timeout(
-        Duration::from_millis(400),
-        recv_until(&mut ws, |f| f["op"] == "h"),
-    )
-    .await
-    .expect("second heartbeat");
+    let beat = until(&mut ws, |f| f["op"] == "h").await;
     assert_eq!(beat["op"], "h");
 
-    // Stop talking. Silent death is 180ms in the test config.
-    let closed = tokio::time::timeout(Duration::from_millis(600), async {
+    // Stop talking: the server closes the silent socket.
+    let closed = tokio::time::timeout(ws::WAIT, async {
         loop {
             match ws.next().await {
                 Some(Ok(Message::Close(_))) | None => return,
@@ -926,8 +886,8 @@ async fn server_topic_is_separate_from_channel_events(pool: PgPool) {
     let (addr, state) = common::serve_ws(pool).await;
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
 
-    send_json(&mut ws, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    send(&mut ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut ws, |f| f["op"] == "ok").await;
 
     publish_server(
         &state,
@@ -938,15 +898,16 @@ async fn server_topic_is_separate_from_channel_events(pool: PgPool) {
     )
     .await
     .unwrap();
-    let event = recv_until(&mut ws, |f| f["op"] == "e").await;
+    let event = until(&mut ws, |f| f["op"] == "e").await;
     assert_eq!(event["s"], server_id.to_string());
     assert!(event.get("c").is_none(), "{event}");
 
     publish(&state, server_id, channel_id, EventKind::C, "chat").await;
-    let stray = tokio::time::timeout(Duration::from_millis(150), recv_json(&mut ws)).await;
-    if let Ok(frame) = stray {
-        assert_ne!(frame["c"], channel_id.to_string());
-    }
+    let before = before_marker(&state, &mut ws, server_id).await;
+    assert!(
+        before.iter().all(|f| f["c"] != channel_id.to_string()),
+        "{before:?}"
+    );
 }
 
 #[sqlx::test]
@@ -1020,12 +981,12 @@ async fn concurrent_publish_keeps_seq_and_arrival_ordered(pool: PgPool) {
     let (server_id, channel_id) = ids(&server);
     let (addr, state) = common::serve_ws(pool).await;
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(
+    send(
         &mut ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    until(&mut ws, |f| f["op"] == "ok").await;
 
     let mut tasks = Vec::new();
     for i in 0..16 {
@@ -1050,7 +1011,7 @@ async fn concurrent_publish_keeps_seq_and_arrival_ordered(pool: PgPool) {
 
     let mut arrived = Vec::new();
     while arrived.len() < 16 {
-        let frame = recv_until(&mut ws, |f| f["op"] == "e").await;
+        let frame = until(&mut ws, |f| f["op"] == "e").await;
         arrived.push(frame["n"].as_u64().unwrap());
     }
     assert_eq!(
@@ -1070,38 +1031,38 @@ async fn presence_online_idle_offline_without_bumping_chat_seq(pool: PgPool) {
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
 
-    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
-    let owner_ok = recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    send(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    let owner_ok = until(&mut owner_ws, |f| f["op"] == "ok").await;
     // The member's join is the topic's one event so far (#621).
     assert_eq!(owner_ok["n"], 1);
-    let snap = recv_until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    let snap = until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
     assert_eq!(snap["s"], server_id.to_string());
     assert!(snap.get("n").is_none(), "{snap}");
 
-    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
-    let member_online = recv_until(&mut owner_ws, |f| {
+    send(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut member_ws, |f| f["op"] == "ok").await;
+    let member_online = until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
     })
     .await;
     assert!(member_online.get("n").is_none(), "{member_online}");
 
-    send_json(&mut member_ws, json!({ "op": "p", "st": "i" })).await;
-    let idle = recv_until(&mut owner_ws, |f| {
+    send(&mut member_ws, json!({ "op": "p", "st": "i" })).await;
+    let idle = until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "i"
     })
     .await;
     assert_eq!(idle["s"], server_id.to_string());
 
-    send_json(&mut member_ws, json!({ "op": "p" })).await;
-    recv_until(&mut owner_ws, |f| {
+    send(&mut member_ws, json!({ "op": "p" })).await;
+    until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
     })
     .await;
 
     // Server-side per-client idle: no activity frames, heartbeat still flows.
     let auto_idle = tokio::time::timeout(Duration::from_millis(400), async {
-        recv_until(&mut owner_ws, |f| {
+        until(&mut owner_ws, |f| {
             f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "i"
         })
         .await
@@ -1111,7 +1072,7 @@ async fn presence_online_idle_offline_without_bumping_chat_seq(pool: PgPool) {
     assert_eq!(auto_idle["st"], "i");
 
     member_ws.close(None).await.ok();
-    let offline = recv_until(&mut owner_ws, |f| {
+    let offline = until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "x"
     })
     .await;
@@ -1131,28 +1092,28 @@ async fn coming_online_publishes_one_presence_frame(pool: PgPool) {
     let (addr, _state) = common::serve_ws(pool).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
-    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
 
-    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
-    send_json(
+    send(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    send(
         &mut member_ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    recv_until(&mut member_ws, |f| {
+    until(&mut member_ws, |f| {
         f["op"] == "ok" && f["c"] == channel_id.to_string()
     })
     .await;
-    recv_until(&mut member_ws, |f| {
+    until(&mut member_ws, |f| {
         f["op"] == "p" && f.get("snap").is_some()
     })
     .await;
-    send_json(&mut member_ws, json!({ "op": "p", "st": "i" })).await;
+    send(&mut member_ws, json!({ "op": "p", "st": "i" })).await;
 
     let mut online = 0;
     loop {
-        let frame = recv_json(&mut owner_ws).await;
+        let frame = recv(&mut owner_ws).await;
         if frame["op"] != "p" || frame["u"] != member.user_id() {
             continue;
         }
@@ -1191,8 +1152,8 @@ async fn presence_snapshot_lists_only_members_with_a_status(pool: PgPool) {
     let mut online = Vec::new();
     for client in [&owner, &bob, &cem] {
         let mut ws = connect(addr, &session_cookie(client), None).await;
-        send_json(&mut ws, json!({ "op": "s", "s": server_id })).await;
-        recv_until(&mut ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+        send(&mut ws, json!({ "op": "s", "s": server_id })).await;
+        until(&mut ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
         online.push(ws);
     }
 
@@ -1228,8 +1189,8 @@ async fn presence_snapshot_lists_only_members_with_a_status(pool: PgPool) {
         .unwrap();
 
     let mut dora_ws = connect(addr, &session_cookie(&dora), None).await;
-    send_json(&mut dora_ws, json!({ "op": "s", "s": server_id })).await;
-    let snap = recv_until(&mut dora_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send(&mut dora_ws, json!({ "op": "s", "s": server_id })).await;
+    let snap = until(&mut dora_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
     let entries = snap["snap"].as_array().unwrap();
     let mut listed: Vec<&str> = entries.iter().map(|e| e["u"].as_str().unwrap()).collect();
     listed.sort_unstable();
@@ -1288,15 +1249,15 @@ async fn two_clients_keep_user_online_until_the_last_goes_idle(pool: PgPool) {
 
     let mut a = connect(addr, &cookie, None).await;
     let mut b = connect(addr, &cookie, None).await;
-    send_json(&mut a, json!({ "op": "s", "s": server_id })).await;
-    send_json(&mut b, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut a, |f| f["op"] == "ok").await;
-    recv_until(&mut b, |f| f["op"] == "ok").await;
+    send(&mut a, json!({ "op": "s", "s": server_id })).await;
+    send(&mut b, json!({ "op": "s", "s": server_id })).await;
+    until(&mut a, |f| f["op"] == "ok").await;
+    until(&mut b, |f| f["op"] == "ok").await;
 
-    send_json(&mut a, json!({ "op": "p", "st": "i" })).await;
+    send(&mut a, json!({ "op": "p", "st": "i" })).await;
     // The other tab is still online — aggregate must stay online.
     let flipped = tokio::time::timeout(Duration::from_millis(150), async {
-        recv_until(&mut b, |f| f["op"] == "p" && f["st"] == "i").await
+        until(&mut b, |f| f["op"] == "p" && f["st"] == "i").await
     })
     .await;
     assert!(
@@ -1305,8 +1266,8 @@ async fn two_clients_keep_user_online_until_the_last_goes_idle(pool: PgPool) {
         flipped.ok()
     );
 
-    send_json(&mut b, json!({ "op": "p", "st": "i" })).await;
-    let idle = recv_until(&mut a, |f| f["op"] == "p" && f["st"] == "i").await;
+    send(&mut b, json!({ "op": "p", "st": "i" })).await;
+    let idle = until(&mut a, |f| f["op"] == "p" && f["st"] == "i").await;
     assert_eq!(idle["st"], "i");
 }
 
@@ -1320,18 +1281,18 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
     let (addr, state) = common::serve_ws(pool).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
-    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+    until(&mut owner_ws, |f| f["op"] == "ok").await;
+    until(&mut member_ws, |f| f["op"] == "ok").await;
 
     // `ok` precedes presence and voice initialization in subscribe(). The final
     // voice snapshots mark completed subscriptions; measure typing delivery only
@@ -1339,7 +1300,7 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
     for ws in [&mut owner_ws, &mut member_ws] {
         tokio::time::timeout(
             Duration::from_secs(2),
-            recv_until(ws, |f| {
+            until(ws, |f| {
                 f["op"] == "sig" && f["t"] == "r" && f.get("snap").is_some()
             }),
         )
@@ -1348,12 +1309,12 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
     }
 
     let start = std::time::Instant::now();
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "y", "s": server_id, "c": channel_id, "on": true }),
     )
     .await;
-    let seen = recv_until(&mut owner_ws, |f| {
+    let seen = until(&mut owner_ws, |f| {
         f["op"] == "y" && f["on"] == true && f["u"] == member.user_id()
     })
     .await;
@@ -1378,12 +1339,12 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
         .unwrap();
     assert!(keys.is_empty(), "{keys:?}");
 
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "y", "s": server_id, "c": channel_id, "on": false }),
     )
     .await;
-    let stop = recv_until(&mut owner_ws, |f| {
+    let stop = until(&mut owner_ws, |f| {
         f["op"] == "y" && f["on"] == false && f["u"] == member.user_id()
     })
     .await;
@@ -1410,20 +1371,20 @@ async fn last_close_and_idle_reach_every_server_the_user_is_on(pool: PgPool) {
     let mut watch_s1 = connect(addr, &session_cookie(&watcher), None).await;
     let mut watch_s2 = connect(addr, &session_cookie(&watcher), None).await;
 
-    send_json(&mut tab_a, json!({ "op": "s", "s": s1 })).await;
-    send_json(&mut tab_b, json!({ "op": "s", "s": s2 })).await;
-    recv_until(&mut tab_a, |f| f["op"] == "ok").await;
-    recv_until(&mut tab_b, |f| f["op"] == "ok").await;
+    send(&mut tab_a, json!({ "op": "s", "s": s1 })).await;
+    send(&mut tab_b, json!({ "op": "s", "s": s2 })).await;
+    until(&mut tab_a, |f| f["op"] == "ok").await;
+    until(&mut tab_b, |f| f["op"] == "ok").await;
     // `ok` is sent before the gateway stores presence. Wait for each
     // owner's snapshot before asking observers for theirs.
-    recv_until(&mut tab_a, |f| f["op"] == "p" && f.get("snap").is_some()).await;
-    recv_until(&mut tab_b, |f| f["op"] == "p" && f.get("snap").is_some()).await;
-    send_json(&mut watch_s1, json!({ "op": "s", "s": s1 })).await;
-    send_json(&mut watch_s2, json!({ "op": "s", "s": s2 })).await;
-    recv_until(&mut watch_s1, |f| f["op"] == "ok").await;
-    recv_until(&mut watch_s2, |f| f["op"] == "ok").await;
-    let snap1 = recv_until(&mut watch_s1, |f| f["op"] == "p" && f.get("snap").is_some()).await;
-    let snap2 = recv_until(&mut watch_s2, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    until(&mut tab_a, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    until(&mut tab_b, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send(&mut watch_s1, json!({ "op": "s", "s": s1 })).await;
+    send(&mut watch_s2, json!({ "op": "s", "s": s2 })).await;
+    until(&mut watch_s1, |f| f["op"] == "ok").await;
+    until(&mut watch_s2, |f| f["op"] == "ok").await;
+    let snap1 = until(&mut watch_s1, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    let snap2 = until(&mut watch_s2, |f| f["op"] == "p" && f.get("snap").is_some()).await;
     assert!(
         snap1["snap"]
             .as_array()
@@ -1441,9 +1402,9 @@ async fn last_close_and_idle_reach_every_server_the_user_is_on(pool: PgPool) {
         "{snap2}"
     );
 
-    send_json(&mut tab_a, json!({ "op": "p", "st": "i" })).await;
+    send(&mut tab_a, json!({ "op": "p", "st": "i" })).await;
     let no_idle = tokio::time::timeout(Duration::from_millis(120), async {
-        recv_until(&mut watch_s2, |f| f["op"] == "p" && f["st"] == "i").await
+        until(&mut watch_s2, |f| f["op"] == "p" && f["st"] == "i").await
     })
     .await;
     assert!(
@@ -1452,12 +1413,12 @@ async fn last_close_and_idle_reach_every_server_the_user_is_on(pool: PgPool) {
         no_idle.ok()
     );
 
-    send_json(&mut tab_b, json!({ "op": "p", "st": "i" })).await;
-    let idle_s1 = recv_until(&mut watch_s1, |f| {
+    send(&mut tab_b, json!({ "op": "p", "st": "i" })).await;
+    let idle_s1 = until(&mut watch_s1, |f| {
         f["op"] == "p" && f["u"] == owner.user_id() && f["st"] == "i"
     })
     .await;
-    let idle_s2 = recv_until(&mut watch_s2, |f| {
+    let idle_s2 = until(&mut watch_s2, |f| {
         f["op"] == "p" && f["u"] == owner.user_id() && f["st"] == "i"
     })
     .await;
@@ -1466,11 +1427,11 @@ async fn last_close_and_idle_reach_every_server_the_user_is_on(pool: PgPool) {
 
     tab_a.close(None).await.ok();
     tab_b.close(None).await.ok();
-    let off_s1 = recv_until(&mut watch_s1, |f| {
+    let off_s1 = until(&mut watch_s1, |f| {
         f["op"] == "p" && f["u"] == owner.user_id() && f["st"] == "x"
     })
     .await;
-    let off_s2 = recv_until(&mut watch_s2, |f| {
+    let off_s2 = until(&mut watch_s2, |f| {
         f["op"] == "p" && f["u"] == owner.user_id() && f["st"] == "x"
     })
     .await;
@@ -1485,44 +1446,41 @@ async fn disconnect_stops_typing_immediately(pool: PgPool) {
     let (server_id, channel_id) = ids(&server);
     join_member(&mut owner, &mut member, &server_id.to_string()).await;
 
-    let (addr, _) = common::serve_ws(pool).await;
+    // Typing would run out after a minute: a stop within the wait comes
+    // from the detach.
+    let state = common::ws_state_with(pool, &[("API_WS_TYPING_TTL_MS", "60000".into())]);
+    let addr = common::serve_ws_state(state).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "s", "s": server_id, "c": channel_id }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
-    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
+    until(&mut owner_ws, |f| f["op"] == "ok").await;
+    until(&mut member_ws, |f| f["op"] == "ok").await;
 
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "y", "s": server_id, "c": channel_id, "on": true }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| {
+    until(&mut owner_ws, |f| {
         f["op"] == "y" && f["on"] == true && f["u"] == member.user_id()
     })
     .await;
 
-    let start = std::time::Instant::now();
     member_ws.close(None).await.ok();
-    let stop = recv_until(&mut owner_ws, |f| {
+    let stop = until(&mut owner_ws, |f| {
         f["op"] == "y" && f["on"] == false && f["u"] == member.user_id()
     })
     .await;
     assert_eq!(stop["c"], channel_id.to_string());
-    assert!(
-        start.elapsed() < Duration::from_millis(200),
-        "typing must stop on detach, not wait for TTL, took {:?}",
-        start.elapsed()
-    );
 }
 
 #[sqlx::test]
@@ -1555,18 +1513,18 @@ async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
 
     let mut ada_ws = connect(addr, &session_cookie(&ada), None).await;
     let mut bob_ws = connect(addr, &session_cookie(&bob), None).await;
-    send_json(
+    send(
         &mut ada_ws,
         json!({ "op": "s", "s": channel_id, "c": channel_id }),
     )
     .await;
-    send_json(
+    send(
         &mut bob_ws,
         json!({ "op": "s", "s": channel_id, "c": channel_id }),
     )
     .await;
-    recv_until(&mut ada_ws, |f| f["op"] == "ok" && f["c"] == channel_id).await;
-    recv_until(&mut bob_ws, |f| f["op"] == "ok" && f["c"] == channel_id).await;
+    until(&mut ada_ws, |f| f["op"] == "ok" && f["c"] == channel_id).await;
+    until(&mut bob_ws, |f| f["op"] == "ok" && f["c"] == channel_id).await;
 
     let posted = ada
         .send(
@@ -1577,7 +1535,7 @@ async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
         .await;
     assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
 
-    let event = recv_until(&mut bob_ws, |f| {
+    let event = until(&mut bob_ws, |f| {
         f["op"] == "e" && f["t"] == "c" && f["c"] == channel_id
     })
     .await;
@@ -1585,12 +1543,12 @@ async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
     assert_eq!(event["i"], posted.body["id"]);
     assert_eq!(event["d"]["content"], "dm ping");
 
-    send_json(
+    send(
         &mut ada_ws,
         json!({ "op": "y", "s": channel_id, "c": channel_id, "on": true }),
     )
     .await;
-    let typing = recv_until(&mut bob_ws, |f| {
+    let typing = until(&mut bob_ws, |f| {
         f["op"] == "y" && f["on"] == true && f["u"] == ada.user_id()
     })
     .await;
@@ -1604,12 +1562,12 @@ async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
     let mut cara_ws = connect(addr, &session_cookie(&cara), None).await;
-    send_json(
+    send(
         &mut cara_ws,
         json!({ "op": "s", "s": channel_id, "c": channel_id }),
     )
     .await;
-    let err = recv_until(&mut cara_ws, |f| f["op"] == "err").await;
+    let err = until(&mut cara_ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "not_found");
 }
 
@@ -1642,18 +1600,18 @@ async fn dm_presence_arrives_live(pool: PgPool) {
     let dm = opened.body["id"].as_str().unwrap().to_owned();
 
     let mut ada_ws = connect(addr, &session_cookie(&ada), None).await;
-    send_json(&mut ada_ws, json!({ "op": "s", "s": dm, "c": dm })).await;
-    recv_until(&mut ada_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send(&mut ada_ws, json!({ "op": "s", "s": dm, "c": dm })).await;
+    until(&mut ada_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
 
     let mut bob_ws = connect(addr, &session_cookie(&bob), None).await;
-    send_json(&mut bob_ws, json!({ "op": "s", "s": dm, "c": dm })).await;
-    recv_until(&mut bob_ws, |f| f["op"] == "ok").await;
-    let online = recv_within(&mut ada_ws, |f| f["op"] == "p" && f["u"] == bob.user_id()).await;
+    send(&mut bob_ws, json!({ "op": "s", "s": dm, "c": dm })).await;
+    until(&mut bob_ws, |f| f["op"] == "ok").await;
+    let online = until(&mut ada_ws, |f| f["op"] == "p" && f["u"] == bob.user_id()).await;
     assert_eq!(online["s"], dm, "{online}");
     assert_eq!(online["st"], "o", "{online}");
 
-    send_json(&mut bob_ws, json!({ "op": "p", "st": "i" })).await;
-    let idle = recv_within(&mut ada_ws, |f| f["op"] == "p" && f["u"] == bob.user_id()).await;
+    send(&mut bob_ws, json!({ "op": "p", "st": "i" })).await;
+    let idle = until(&mut ada_ws, |f| f["op"] == "p" && f["u"] == bob.user_id()).await;
     assert_eq!(idle["st"], "i", "{idle}");
 }
 
@@ -1664,12 +1622,12 @@ async fn redis_topic_reset_changes_epoch_and_old_cursor_gets_gap(pool: PgPool) {
     let (s, c) = ids(&server);
     let (addr, state) = common::serve_ws(pool).await;
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(&mut ws, json!({"op":"s","s":s,"c":c})).await;
-    let old = recv_until(&mut ws, |f| f["op"] == "ok").await;
+    send(&mut ws, json!({"op":"s","s":s,"c":c})).await;
+    let old = until(&mut ws, |f| f["op"] == "ok").await;
     let epoch = old["ep"].clone();
     for _ in 0..3 {
         publish(&state, s, c, EventKind::C, "before").await;
-        recv_until(&mut ws, |f| f["op"] == "e").await;
+        until(&mut ws, |f| f["op"] == "e").await;
     }
     let topic = gelabber_api::gateway::Topic::Channel(c);
     let mut redis = state
@@ -1685,20 +1643,20 @@ async fn redis_topic_reset_changes_epoch_and_old_cursor_gets_gap(pool: PgPool) {
         .query_async::<i32>(&mut redis)
         .await
         .unwrap();
-    send_json(&mut ws, json!({"op":"s","s":s,"c":c,"n":3,"ep":epoch})).await;
-    let gap = recv_until(&mut ws, |f| f["op"] == "gap").await;
+    send(&mut ws, json!({"op":"s","s":s,"c":c,"n":3,"ep":epoch})).await;
+    let gap = until(&mut ws, |f| f["op"] == "gap").await;
     assert_ne!(gap["ep"], epoch);
-    let reset = recv_until(&mut ws, |f| f["op"] == "ok").await;
+    let reset = until(&mut ws, |f| f["op"] == "ok").await;
     assert_eq!(reset["n"], 0);
     assert_eq!(reset["ep"], gap["ep"]);
     publish(&state, s, c, EventKind::C, "after").await;
-    let event = recv_until(&mut ws, |f| f["op"] == "e").await;
+    let event = until(&mut ws, |f| f["op"] == "e").await;
     assert_eq!(event["n"], 1);
     assert_eq!(event["ep"], reset["ep"]);
     // Epoch mismatch matters even when the numeric cursor happens to match.
-    send_json(&mut ws, json!({"op":"s","s":s,"c":c,"n":1,"ep":epoch})).await;
-    recv_until(&mut ws, |f| f["op"] == "gap").await;
-    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    send(&mut ws, json!({"op":"s","s":s,"c":c,"n":1,"ep":epoch})).await;
+    until(&mut ws, |f| f["op"] == "gap").await;
+    until(&mut ws, |f| f["op"] == "ok").await;
 }
 
 /// The real `PUBLISH_LUA`: a delta that carries the placeholder text itself
@@ -1730,10 +1688,10 @@ async fn publish_substitutes_only_the_envelope_placeholders(pool: PgPool) {
 
 /// Subscribe with cursor 0 and collect the replayed `(n, t, body)` up to `ok`.
 async fn replay_from_zero(ws: &mut Ws, s: Uuid, c: Uuid) -> Vec<(u64, String, Option<String>)> {
-    send_json(ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    send(ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
     let mut out = Vec::new();
     loop {
-        let frame = recv_within(ws, |f| f["op"] == "e" || f["op"] == "ok").await;
+        let frame = until(ws, |f| f["op"] == "e" || f["op"] == "ok").await;
         if frame["op"] == "ok" {
             return out;
         }
@@ -1798,7 +1756,8 @@ async fn a_deleted_channel_keeps_no_realtime_keys(pool: PgPool) {
         )
         .await;
     assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
-    let _ = delivery::deliver_pending(&state, 32).await;
+    // Delivered by now, by this pass or an app's worker.
+    delivery::deliver_pending(&state, 32).await.unwrap();
     let topic = Topic::Channel(c);
     let mut redis = state
         .redis
@@ -1953,10 +1912,14 @@ async fn committed_message_retries_after_redis_failure_and_ack_retry_is_deduplic
     let (mut owner, _) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Outbox").await;
     let (s, c) = ids(&server);
-    let (addr, state) = common::serve_ws(pool.clone()).await;
+    // Only the test's own passes deliver: no app's worker takes the row.
+    let mut state = common::ws_state(pool.clone());
+    state.workers.delivery = None;
+    let addr = common::serve_ws_state(state.clone()).await;
+    owner.app = gelabber_api::app(state.clone());
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(&mut ws, json!({"op":"s","s":s,"c":c})).await;
-    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    send(&mut ws, json!({"op":"s","s":s,"c":c})).await;
+    until(&mut ws, |f| f["op"] == "ok").await;
     let mut redis = state
         .redis
         .get_multiplexed_async_connection()
@@ -1979,6 +1942,11 @@ async fn committed_message_retries_after_redis_failure_and_ack_retry_is_deduplic
     assert_eq!(created.status, StatusCode::CREATED);
     let revision = created.body["revision"].as_i64().unwrap();
     assert!(revision > 0);
+    let recovery = common::ws_state(pool.clone());
+    assert!(
+        delivery::deliver_pending(&recovery, 32).await.is_err(),
+        "the publish fails"
+    );
     let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM gateway_outbox WHERE id=$1")
         .bind(revision)
         .fetch_one(&pool)
@@ -1995,16 +1963,20 @@ async fn committed_message_retries_after_redis_failure_and_ack_retry_is_deduplic
         .execute(&pool)
         .await
         .unwrap();
-    let recovery = common::ws_state(pool.clone());
-    let _ = delivery::deliver_pending(&recovery, 32).await;
-    let event = recv_until(&mut ws, |f| f["op"] == "e").await;
+    assert_eq!(delivery::deliver_pending(&recovery, 32).await.unwrap(), 1);
+    let event = until(&mut ws, |f| f["op"] == "e").await;
     assert_eq!(event["r"], revision);
     assert_eq!(event["d"], created.body);
     let head = state.gateway.current_seq(topic).await.unwrap();
     // Simulate process death after Redis publication but before DB acknowledgement.
     sqlx::query("INSERT INTO gateway_outbox(id,channel_id,server_id,kind,entity_id,delta) VALUES($1,$2,$3,'c',$4,$5) ON CONFLICT(id) DO UPDATE SET next_attempt=now()")
         .bind(revision).bind(c).bind(s).bind(created.body["id"].as_str().unwrap().parse::<Uuid>().unwrap()).bind(created.body.clone()).execute(&pool).await.unwrap();
-    let _ = delivery::deliver_pending(&recovery, 32).await;
+    assert_eq!(delivery::deliver_pending(&recovery, 32).await.unwrap(), 1);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM gateway_outbox")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "the replayed row is acknowledged");
     assert_eq!(state.gateway.current_seq(topic).await.unwrap(), head);
     assert_eq!(state.gateway.load_log(topic).await.unwrap().len(), 1);
 }
@@ -2042,15 +2014,15 @@ async fn dm_discovery_reaches_already_connected_recipient_and_no_other_user(pool
         )
         .await;
     assert_eq!(first.status, StatusCode::CREATED);
-    let discovery = recv_until(&mut bob, |f| f["op"] == "dm").await;
+    let discovery = until(&mut bob, |f| f["op"] == "dm").await;
     assert_eq!(discovery["c"], c);
-    send_json(&mut bob, json!({"op":"s","s":c,"c":c,"n":0})).await;
-    let event = recv_until(&mut bob, |f| f["op"] == "e").await;
+    send(&mut bob, json!({"op":"s","s":c,"c":c,"n":0})).await;
+    let event = until(&mut bob, |f| f["op"] == "e").await;
     assert_eq!(event["d"]["id"], first.body["id"]);
     assert!(
         tokio::time::timeout(Duration::from_millis(150), async {
             loop {
-                let f = recv_json(&mut cara).await;
+                let f = recv(&mut cara).await;
                 assert_ne!(f["op"], "dm", "foreign discovery leak");
             }
         })
@@ -2068,8 +2040,8 @@ async fn parallel_message_edits_deliver_in_database_revision_order(pool: PgPool)
     let (s, c) = ids(&server);
     let (addr, _) = common::serve_ws(pool).await;
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(&mut ws, json!({"op":"s","s":s,"c":c})).await;
-    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    send(&mut ws, json!({"op":"s","s":s,"c":c})).await;
+    until(&mut ws, |f| f["op"] == "ok").await;
     let created = owner
         .send(
             Method::POST,
@@ -2077,7 +2049,7 @@ async fn parallel_message_edits_deliver_in_database_revision_order(pool: PgPool)
             Some(json!({"content":"initial"})),
         )
         .await;
-    recv_until(&mut ws, |f| f["op"] == "e").await;
+    until(&mut ws, |f| f["op"] == "e").await;
     let path = format!("/api/messages/{}", created.body["id"].as_str().unwrap());
     let mut tab = Client {
         app: owner.app.clone(),
@@ -2092,8 +2064,8 @@ async fn parallel_message_edits_deliver_in_database_revision_order(pool: PgPool)
         tab.send(Method::PATCH, &path, Some(json!({"content":"B"})))
     );
     assert_eq!((a.status, b.status), (StatusCode::OK, StatusCode::OK));
-    let one = recv_until(&mut ws, |f| f["op"] == "e").await;
-    let two = recv_until(&mut ws, |f| f["op"] == "e").await;
+    let one = until(&mut ws, |f| f["op"] == "e").await;
+    let two = until(&mut ws, |f| f["op"] == "e").await;
     assert!(one["r"].as_i64().unwrap() < two["r"].as_i64().unwrap());
     let latest = owner
         .send(Method::GET, &format!("/api/channels/{c}/messages"), None)
@@ -2186,8 +2158,8 @@ async fn pubsub_outage_preserves_open_socket_and_requests_rest_resync(pool: PgPo
     });
     gateway.wait_ready(Duration::from_secs(2)).await.unwrap();
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(&mut ws, json!({"op":"s","s":s,"c":c})).await;
-    let previous = recv_until(&mut ws, |f| f["op"] == "ok").await;
+    send(&mut ws, json!({"op":"s","s":s,"c":c})).await;
+    let previous = until(&mut ws, |f| f["op"] == "ok").await;
     paused.send_replace(true);
     tokio::time::timeout(Duration::from_secs(1), async {
         while gateway.is_ready() {
@@ -2205,20 +2177,20 @@ async fn pubsub_outage_preserves_open_socket_and_requests_rest_resync(pool: PgPo
         .await;
     assert_eq!(missed.status, StatusCode::CREATED);
     paused.send_replace(false);
-    recv_until(&mut ws, |f| f["op"] == "resync").await;
+    until(&mut ws, |f| f["op"] == "resync").await;
     let rest = owner
         .send(Method::GET, &format!("/api/channels/{c}/messages"), None)
         .await;
     assert_eq!(rest.body["messages"][0]["id"], missed.body["id"]);
     // Same socket is still authorized; catching up converges without reconnect.
-    send_json(
+    send(
         &mut ws,
         json!({"op":"s","s":s,"c":c,"n":previous["n"],"ep":previous["ep"]}),
     )
     .await;
-    let recovered = recv_until(&mut ws, |f| f["op"] == "e").await;
+    let recovered = until(&mut ws, |f| f["op"] == "e").await;
     assert_eq!(recovered["d"]["id"], missed.body["id"]);
-    recv_until(&mut ws, |f| f["op"] == "ok").await;
+    until(&mut ws, |f| f["op"] == "ok").await;
 }
 
 /// A settings change reaches every socket of the account, also ones that
@@ -2235,8 +2207,8 @@ async fn notification_settings_go_to_the_own_sockets_only(pool: PgPool) {
     let mut other = connect(addr, &session_cookie(&member), None).await;
     // Every socket is registered once it answers a heartbeat.
     for ws in [&mut first, &mut second, &mut other] {
-        send_json(ws, json!({"op":"h"})).await;
-        recv_until(ws, |f| f["op"] == "h").await;
+        send(ws, json!({"op":"h"})).await;
+        until(ws, |f| f["op"] == "h").await;
     }
     let res = owner
         .send(
@@ -2246,12 +2218,12 @@ async fn notification_settings_go_to_the_own_sockets_only(pool: PgPool) {
         )
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    recv_until(&mut first, |f| f["op"] == "ns").await;
-    recv_until(&mut second, |f| f["op"] == "ns").await;
+    until(&mut first, |f| f["op"] == "ns").await;
+    until(&mut second, |f| f["op"] == "ns").await;
     assert!(
         tokio::time::timeout(Duration::from_millis(200), async {
             loop {
-                let f = recv_json(&mut other).await;
+                let f = recv(&mut other).await;
                 assert_ne!(f["op"], "ns", "settings of another account");
             }
         })
@@ -2287,14 +2259,14 @@ async fn a_read_position_reaches_the_readers_other_sockets_only(pool: PgPool) {
     let mut phone = connect(addr, &session_cookie(&member), None).await;
     let mut other = connect(addr, &session_cookie(&owner), None).await;
     for ws in [&mut phone, &mut other] {
-        send_json(ws, json!({"op":"h"})).await;
-        recv_until(ws, |f| f["op"] == "h").await;
+        send(ws, json!({"op":"h"})).await;
+        until(ws, |f| f["op"] == "h").await;
     }
     let path = format!("/api/channels/{c}/read");
     let mark = json!({"message_id": posted.body["id"]});
     let res = member.send(Method::PUT, &path, Some(mark.clone())).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    let frame = recv_until(&mut phone, |f| f["op"] == "rd").await;
+    let frame = until(&mut phone, |f| f["op"] == "rd").await;
     assert_eq!(frame["d"][0]["channel_id"], c.as_str());
     assert_eq!(frame["d"][0]["read_message_id"], posted.body["id"]);
     assert_eq!(frame["d"][0]["unread_count"], 0);
@@ -2305,7 +2277,7 @@ async fn a_read_position_reaches_the_readers_other_sockets_only(pool: PgPool) {
         assert!(
             tokio::time::timeout(Duration::from_millis(200), async {
                 loop {
-                    let f = recv_json(ws).await;
+                    let f = recv(ws).await;
                     assert_ne!(f["op"], "rd", "an unmoved or foreign read position");
                 }
             })
@@ -2325,12 +2297,12 @@ async fn an_edit_keeping_here_keeps_whom_it_reached(pool: PgPool) {
     join_member(&mut owner, &mut member, &server_id.to_string()).await;
     let (addr, _) = common::serve_ws(pool).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    send(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut owner_ws, |f| f["op"] == "ok").await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
-    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
-    recv_until(&mut owner_ws, |f| {
+    send(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut member_ws, |f| f["op"] == "ok").await;
+    until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
     })
     .await;
@@ -2348,7 +2320,7 @@ async fn an_edit_keeping_here_keeps_whom_it_reached(pool: PgPool) {
     // The member goes offline; the kept `@here` still names them, and the
     // edit takes no new presence snapshot.
     member_ws.close(None).await.ok();
-    recv_until(&mut owner_ws, |f| {
+    until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "x"
     })
     .await;
@@ -2374,12 +2346,12 @@ async fn an_edit_dropping_a_token_keeps_whom_here_reached(pool: PgPool) {
     join_member(&mut owner, &mut member, &server_id.to_string()).await;
     let (addr, _) = common::serve_ws(pool).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
-    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    send(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut owner_ws, |f| f["op"] == "ok").await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
-    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
-    recv_until(&mut owner_ws, |f| {
+    send(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut member_ws, |f| f["op"] == "ok").await;
+    until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
     })
     .await;
@@ -2406,7 +2378,7 @@ async fn an_edit_dropping_a_token_keeps_whom_here_reached(pool: PgPool) {
 
     // Offline at the send: `@here` reached nobody, only the token did.
     member_ws.close(None).await.ok();
-    recv_until(&mut owner_ws, |f| {
+    until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "x"
     })
     .await;
@@ -2421,9 +2393,9 @@ async fn an_edit_dropping_a_token_keeps_whom_here_reached(pool: PgPool) {
     assert_eq!(sent.body["mentions"], json!([member.user_id()]));
     // Back online: the edit does not take a new snapshot either.
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
-    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_until(&mut member_ws, |f| f["op"] == "ok").await;
-    recv_until(&mut owner_ws, |f| {
+    send(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut member_ws, |f| f["op"] == "ok").await;
+    until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
     })
     .await;
@@ -2468,30 +2440,30 @@ async fn a_typing_flood_reaches_others_only_within_the_budget(pool: PgPool) {
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
     for ws in [&mut owner_ws, &mut member_ws] {
-        send_json(ws, json!({ "op": "s", "s": server_id, "c": channel_id })).await;
-        recv_within(ws, |f| {
+        send(ws, json!({ "op": "s", "s": server_id, "c": channel_id })).await;
+        until(ws, |f| {
             f["op"] == "sig" && f["t"] == "r" && f.get("snap").is_some()
         })
         .await;
     }
 
     for _ in 0..40 {
-        send_json(
+        send(
             &mut member_ws,
             json!({ "op": "y", "s": server_id, "c": channel_id, "on": true }),
         )
         .await;
     }
     // The flooding socket still answers: a subscribe after the flood.
-    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_within(&mut member_ws, |f| {
+    send(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut member_ws, |f| {
         f["op"] == "ok" && f["s"] == server_id.to_string() && f.get("c").is_none()
     })
     .await;
 
     let mut seen = 0;
     let window = tokio::time::Instant::now() + Duration::from_millis(500);
-    while let Ok(frame) = tokio::time::timeout_at(window, recv_json(&mut owner_ws)).await {
+    while let Ok(frame) = tokio::time::timeout_at(window, recv(&mut owner_ws)).await {
         if frame["op"] == "y" && frame["u"] == member.user_id() {
             seen += 1;
         }
@@ -2523,10 +2495,10 @@ async fn a_presence_flood_reaches_others_only_within_the_budget(pool: PgPool) {
     let addr = common::serve_ws_state(state.clone()).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner), None).await;
     let mut member_ws = connect(addr, &session_cookie(&member), None).await;
-    send_json(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_within(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
-    send_json(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
-    recv_within(&mut owner_ws, |f| {
+    send(&mut owner_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut owner_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    send(&mut member_ws, json!({ "op": "s", "s": server_id })).await;
+    until(&mut owner_ws, |f| {
         f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "o"
     })
     .await;
@@ -2537,12 +2509,12 @@ async fn a_presence_flood_reaches_others_only_within_the_budget(pool: PgPool) {
         } else {
             json!({ "op": "p" })
         };
-        send_json(&mut member_ws, frame).await;
+        send(&mut member_ws, frame).await;
     }
 
     let mut seen = 0;
     let window = tokio::time::Instant::now() + Duration::from_millis(500);
-    while let Ok(frame) = tokio::time::timeout_at(window, recv_json(&mut owner_ws)).await {
+    while let Ok(frame) = tokio::time::timeout_at(window, recv(&mut owner_ws)).await {
         if frame["op"] == "p" && frame["u"] == member.user_id() && frame.get("snap").is_none() {
             seen += 1;
         }
@@ -2561,23 +2533,24 @@ async fn a_presence_flood_reaches_others_only_within_the_budget(pool: PgPool) {
 async fn frames_over_the_budget_wait_and_none_is_lost(pool: PgPool) {
     let (owner, _) = two_users(pool.clone()).await;
     let mut state = common::ws_state(pool);
-    // Two at once, then one every half second.
+    // Two at once, then one every five seconds: far apart enough that a
+    // slow machine does not blur the burst and the wait.
     state.limits.ws_frames = FrameRate {
-        per_min: 120,
+        per_min: 12,
         burst: 2,
     };
     let addr = common::serve_ws_state(state.clone()).await;
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
 
     let start = std::time::Instant::now();
-    for _ in 0..5 {
-        send_json(&mut ws, json!({ "op": "nope" })).await;
+    for _ in 0..3 {
+        send(&mut ws, json!({ "op": "nope" })).await;
     }
     // Read without answering the server's heartbeats: each answer would
     // spend the budget too.
     let mut answered = Vec::new();
-    while answered.len() < 5 {
-        let msg = tokio::time::timeout(Duration::from_secs(4), ws.next())
+    while answered.len() < 3 {
+        let msg = tokio::time::timeout(Duration::from_secs(10), ws.next())
             .await
             .expect("answer within the budget")
             .expect("ws open")
@@ -2588,7 +2561,7 @@ async fn frames_over_the_budget_wait_and_none_is_lost(pool: PgPool) {
             answered.push(start.elapsed());
         }
     }
-    assert!(answered[1] < Duration::from_millis(400), "{answered:?}");
-    assert!(answered[4] >= Duration::from_millis(1200), "{answered:?}");
-    assert!(rate_limited(&state, "ws_frames") >= 3);
+    assert!(answered[1] < Duration::from_millis(2500), "{answered:?}");
+    assert!(answered[2] >= Duration::from_secs(5), "{answered:?}");
+    assert!(rate_limited(&state, "ws_frames") >= 1);
 }

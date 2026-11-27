@@ -6,28 +6,20 @@
 
 mod common;
 
-use std::time::Duration;
-
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
 use gelabber_api::AppState;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::COOKIE;
 use uuid::Uuid;
 
-use common::{Client, SESSION};
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+use common::Client;
+use common::ws::{self, Ws, until};
 
 const PASSWORD: &str = "correct horse";
 
 /// A served state with the directory on, as joins through it need.
 async fn serve(pool: PgPool) -> (std::net::SocketAddr, AppState) {
-    let mut state = common::ws_state_with_dead(pool, 5_000);
+    let mut state = common::ws_state(pool);
     state.directory = true;
     (common::serve_ws_state(state.clone()).await, state)
 }
@@ -89,47 +81,15 @@ async fn list_with(owner: &mut Client, server: Uuid, join_mode: &str) {
 
 /// The owner's socket, subscribed to the server's topic.
 async fn watch(addr: std::net::SocketAddr, owner: &Client, server: Uuid) -> Ws {
-    let cookie = owner.jar.get(SESSION).cloned().expect("session");
-    let mut request = format!("ws://{addr}/ws")
-        .into_client_request()
-        .expect("ws request");
-    request.headers_mut().insert(
-        COOKIE,
-        format!("{SESSION}={cookie}")
-            .parse()
-            .expect("cookie header"),
-    );
-    let (mut ws, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .expect("ws connect");
-    ws.send(Message::Text(
-        json!({ "op": "s", "s": server }).to_string().into(),
-    ))
-    .await
-    .expect("ws send");
-    next_where(&mut ws, |f| f["op"] == "ok").await;
+    let mut ws = ws::connect(addr, owner).await;
+    ws::send(&mut ws, json!({ "op": "s", "s": server })).await;
+    until(&mut ws, |f| f["op"] == "ok").await;
     ws
-}
-
-async fn next_where(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
-    loop {
-        let msg = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .expect("ws recv timeout")
-            .expect("ws closed")
-            .expect("ws error");
-        if let Message::Text(text) = msg {
-            let frame: Value = serde_json::from_str(text.as_str()).expect("json frame");
-            if pred(&frame) {
-                return frame;
-            }
-        }
-    }
 }
 
 /// The next event on the server topic itself (not a channel's).
 async fn next_server_event(ws: &mut Ws) -> Value {
-    next_where(ws, |f| f["op"] == "e" && f.get("c").is_none()).await
+    until(ws, |f| f["op"] == "e" && f.get("c").is_none()).await
 }
 
 fn assert_joined(event: &Value, server: Uuid, user: &str, name: &str) {
