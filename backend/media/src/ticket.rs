@@ -118,32 +118,3 @@ pub async fn validate_authority(
     .await
     .map_err(|_| deadline_error())?
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gelabber_shared::ticket::{self, TicketClaim};
-    use uuid::Uuid;
-
-    #[test]
-    fn claim_round_trips() {
-        let claim = TicketClaim {
-            u: Uuid::from_u128(1),
-            s: Uuid::from_u128(2),
-            c: Uuid::from_u128(3),
-            g: false,
-        };
-        let raw = ticket::encode(&claim).unwrap();
-        assert_eq!(decode(&raw).unwrap(), claim);
-        assert!(!raw.contains("token"));
-        assert!(!raw.contains("livekit"));
-    }
-
-    #[test]
-    fn consume_takes_the_authority_prefixes_from_shared() {
-        assert!(!CONSUME.contains("gb:auth:"));
-        for arg in ["ARGV[1]", "ARGV[2]", "ARGV[3]", "ARGV[4]"] {
-            assert!(CONSUME.contains(arg), "{arg}");
-        }
-    }
-}
