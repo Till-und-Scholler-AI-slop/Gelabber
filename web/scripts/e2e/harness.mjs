@@ -39,6 +39,14 @@ export async function pollPause(deadline) {
   while (Date.now() < wakeAt) await pause(Math.max(1, wakeAt - Date.now()));
   return another && Date.now() + probeBudgetMin <= deadline;
 }
+/** Runs `action` and returns the response `match` picks on `page`. A
+ * waiter started before an action that then throws rejects later with
+ * nobody listening, and that ends the whole runner before its teardown
+ * (GEL-453); waiting on both at once keeps its rejection handled. */
+export async function responseTo(page, match, action) {
+  const [response] = await Promise.all([page.waitForResponse(match), action()]);
+  return response;
+}
 export async function until(probe, accept, code, timeout = 10_000) {
   const deadline = Date.now() + timeout;
   let last;
@@ -235,6 +243,43 @@ export async function startHarness() {
   };
   // How long each fixture step took, in the fixture's row (GEL-423).
   const { steps: fixtureSteps, step } = stepLog();
+  const reportPath =
+    process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
+  let lastFinished = null;
+  const lateStrays = [];
+  // A promise a scenario left behind can reject after its row is written.
+  // Node would end the run on it, before the report and the runner's
+  // teardown, and every later profile would find the ports taken (GEL-453).
+  // It fails by name instead, and the run goes on.
+  process.on("unhandledRejection", (error) => {
+    const reason = safeError(error);
+    process.exitCode = 1;
+    const row = {
+      id: "stray-rejection",
+      status: "FAIL",
+      reason,
+      classification: "test-error",
+      // Where it came from; `during` and `after` only say when it arrived.
+      site: failureSite(error?.stack),
+      harnessSite: harnessSite(error?.stack),
+      during: report.checkpoint?.case ?? null,
+      after: lastFinished,
+      at: new Date().toISOString(),
+    };
+    console.log(`FAIL stray-rejection (${reason})`);
+    if (!report.finishedAt) {
+      report.results.push(row);
+      return;
+    }
+    // The report is written: such a row goes beside it, as .startup.json
+    // and .teardown.json do.
+    lateStrays.push(row);
+    writeFile(
+      `${reportPath}.stray.json`,
+      `${JSON.stringify({ status: "FAIL", results: lateStrays }, null, 2)}\n`,
+      { mode: 0o600 },
+    ).catch(() => console.log("FAIL stray-rejection-report-write-error"));
+  });
   async function actor(label) {
     // The scenarios find controls by their German names, and the
     // app follows the browser's language (src/i18n/locale.ts), English on CI.
@@ -346,15 +391,16 @@ export async function startHarness() {
       dialog = owner.page.getByRole("dialog", { name: "Kanal erstellen" });
       await dialog.getByText(kind, { exact: true }).click();
       await dialog.getByLabel("Name", { exact: true }).fill(name);
-      const createdResponse = owner.page.waitForResponse(
+      const response = await responseTo(
+        owner.page,
         (r) =>
           new URL(r.url()).pathname === `/api/servers/${serverId}/channels` &&
           r.request().method() === "POST",
+        () =>
+          dialog
+            .getByRole("button", { name: "Erstellen", exact: true })
+            .click(),
       );
-      await dialog
-        .getByRole("button", { name: "Erstellen", exact: true })
-        .click();
-      const response = await createdResponse;
       check(
         [200, 201].includes(response.status()),
         "channel-fixture-create-rejected",
@@ -479,6 +525,7 @@ export async function startHarness() {
     row.durationMs = Date.now() - start;
     row.predecessors = predecessors;
     report.results.push(row);
+    lastFinished = id;
     console.log(`${row.status} ${id}${row.reason ? ` (${row.reason})` : ""}`);
     return row;
   }
@@ -578,16 +625,16 @@ export async function startHarness() {
         await page.goto(`${base}/login`);
         await page.getByLabel("E-Mail-Adresse").fill(owner.email);
         await page.getByLabel("Passwort", { exact: true }).fill(password);
-        const login = page.waitForResponse(
+        stage = "submit-login";
+        const login = await responseTo(
+          page,
           (r) =>
             new URL(r.url()).pathname === "/api/auth/login" &&
             r.request().method() === "POST",
+          () =>
+            page.getByRole("button", { name: "Anmelden", exact: true }).click(),
         );
-        stage = "submit-login";
-        await page
-          .getByRole("button", { name: "Anmelden", exact: true })
-          .click();
-        statuses.login = (await login).status();
+        statuses.login = login.status();
         stage = "wait-login-redirect";
         await page.waitForURL((url) => !url.pathname.includes("login"));
         stage = "delete-owned-server";
@@ -646,14 +693,14 @@ export async function startHarness() {
         reason: "cleanup-browser-close-failed",
       });
     });
+    // No await between finishedAt, the gate and serialising the report: a
+    // stray rejection lands either in both or in .stray.json.
+    await mkdir(dirname(reportPath), { recursive: true });
     report.finishedAt = new Date().toISOString();
     for (const id of gate(report.results, selected, report.cleanup).absent)
       blocked(id, "selected-case-unknown-or-not-reached");
     report.gate = gate(report.results, selected, report.cleanup);
-    const path =
-      process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, {
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, {
       mode: 0o600,
     });
     if (!report.gate.passed) process.exitCode = 1;

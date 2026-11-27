@@ -70,8 +70,8 @@ export function isLocalFilter(mode: AudioProcessingMode): boolean {
   return mode === "enhanced" || mode === "strong";
 }
 
-/** Sound for a share: the user's own choice, or "auto" while he has made
- * none. Up to v0.5 this was a boolean, off by default. */
+/** Sound for a share: the user's own choice, or "auto" while they have made
+ * none. */
 export type SourceAudioShare = "auto" | "on" | "off";
 export function asSourceAudioShare(value: unknown): SourceAudioShare {
   return value === "on" || value === "off" ? value : "auto";
@@ -281,14 +281,11 @@ function mediaStorage() {
 }
 
 const SETTINGS_KEY = "gelabber.media";
-/** Stored settings from v0.5 and earlier have the stream-sound choice as the
- * boolean `shareSourceAudio`. */
-type StoredMediaSettings = MediaSettings & { shareSourceAudio?: unknown };
-
 const settingsStorage = createJSONStorage<MediaSettings>(mediaStorage)!;
 
 // v0.6 to v0.14 kept the stream-sound choice in an entry of its own as well,
-// for a rollback to v0.5. Nothing reads it any more.
+// for a rollback to v0.5. Nothing reads it any more; a browser that last ran
+// v0.14 still has it. Remove in v0.16, when v0.14 leaves the support window.
 try {
   mediaStorage().removeItem("gelabber.media.source-audio-share");
 } catch {
@@ -538,10 +535,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
       partialize: (state): MediaSettings => snapshot(state),
       merge: (persisted, current) => {
         if (!persisted || typeof persisted !== "object") return current;
-        // `shareSourceAudio` is the boolean of v0.5 and earlier, not part of
-        // the settings here.
-        const { shareSourceAudio: sharedBefore, ...stored } =
-          persisted as Partial<StoredMediaSettings>;
+        const stored = persisted as Partial<MediaSettings>;
         const text = (value: unknown, fallback: string) =>
           typeof value === "string" ? value : fallback;
         const flag = (value: unknown, fallback: boolean) =>
@@ -606,14 +600,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
           ),
           screenMode: asScreenMode(stored.screenMode),
           videoUploadLimit: clampVideoUploadLimit(stored.videoUploadLimit),
-          // Up to v0.5 a false was the default as well as a choice, so it is
-          // none; a true was one.
-          sourceAudioShare:
-            "sourceAudioShare" in stored
-              ? asSourceAudioShare(stored.sourceAudioShare)
-              : sharedBefore === true
-                ? "on"
-                : "auto",
+          sourceAudioShare: asSourceAudioShare(stored.sourceAudioShare),
           sourceAudioApp:
             typeof stored.sourceAudioApp === "string"
               ? stored.sourceAudioApp

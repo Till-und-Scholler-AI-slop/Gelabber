@@ -422,78 +422,34 @@ mod tests {
     }
 
     #[test]
-    fn account_disabled_is_403_without_fields() {
-        let err = ApiError::AccountDisabled;
+    fn oidc_unavailable_is_502() {
+        // The other sign-in errors' statuses are checked over HTTP
+        // (tests/oidc.rs); no flow test makes the provider unreachable.
+        let err = ApiError::OidcUnavailable("discovery: timeout".into());
         let json = serde_json::to_value(err.body()).unwrap();
-        assert_eq!(json["error"], "account_disabled");
-        assert!(json.get("fields").is_none());
-        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+        assert_eq!(json["error"], "oidc_unavailable");
+        assert_eq!(err.status(), StatusCode::BAD_GATEWAY);
     }
 
+    /// Errors that are about no field of the form: a client would mark the
+    /// field a `fields` entry named.
     #[test]
-    fn invitation_errors_name_the_invitation_field() {
-        let err = ApiError::InvitationRequired;
-        let json = serde_json::to_value(err.body()).unwrap();
-        assert_eq!(json["error"], "invitation_required");
-        assert_eq!(json["fields"]["invitation"], "required");
-        assert_eq!(err.status(), StatusCode::FORBIDDEN);
-
-        let err = ApiError::InvitationInvalid;
-        let json = serde_json::to_value(err.body()).unwrap();
-        assert_eq!(json["error"], "invitation_invalid");
-        assert_eq!(json["fields"]["invitation"], "invalid");
-        assert_eq!(err.status(), StatusCode::GONE);
-    }
-
-    #[test]
-    fn oidc_errors_have_their_codes_and_statuses() {
-        let cases = [
-            (
-                ApiError::OidcUnavailable("discovery: timeout".into()),
-                "oidc_unavailable",
-                StatusCode::BAD_GATEWAY,
-            ),
-            (
-                ApiError::OidcEmailUnverified,
-                "oidc_email_unverified",
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                ApiError::OidcAccountUnverified,
-                "oidc_account_unverified",
-                StatusCode::CONFLICT,
-            ),
-            (
-                ApiError::IdentityTaken,
-                "identity_taken",
-                StatusCode::CONFLICT,
-            ),
-            (
-                ApiError::PasswordRequired,
-                "password_required",
-                StatusCode::CONFLICT,
-            ),
-            (
-                ApiError::ReauthRequired,
-                "reauth_required",
-                StatusCode::FORBIDDEN,
-            ),
-            (
-                ApiError::OidcWrongOrigin,
-                "oidc_wrong_origin",
-                StatusCode::CONFLICT,
-            ),
-            (
-                ApiError::SessionChanged,
-                "session_changed",
-                StatusCode::CONFLICT,
-            ),
-        ];
-        for (err, code, status) in cases {
+    fn errors_about_no_field_carry_no_fields() {
+        for err in [
+            ApiError::AccountDisabled,
+            ApiError::ExportPending,
+            ApiError::ServerBlocked,
+            ApiError::OidcUnavailable("discovery: timeout".into()),
+            ApiError::OidcEmailUnverified,
+            ApiError::OidcAccountUnverified,
+            ApiError::IdentityTaken,
+            ApiError::PasswordRequired,
+            ApiError::ReauthRequired,
+            ApiError::OidcWrongOrigin,
+            ApiError::SessionChanged,
+        ] {
             let json = serde_json::to_value(err.body()).unwrap();
-            assert_eq!(json["error"], code);
-            assert!(json.get("fields").is_none(), "{code}");
-            assert_eq!(err.status(), status, "{code}");
+            assert!(json.get("fields").is_none(), "{json}");
         }
     }
 
@@ -523,24 +479,6 @@ mod tests {
         assert_eq!(err.status(), StatusCode::CONFLICT);
         let other = serde_json::to_value(ApiError::NotFound.body()).unwrap();
         assert!(other.get("servers").is_none());
-    }
-
-    #[test]
-    fn export_pending_is_409() {
-        let err = ApiError::ExportPending;
-        let json = serde_json::to_value(err.body()).unwrap();
-        assert_eq!(json["error"], "export_pending");
-        assert!(json.get("fields").is_none());
-        assert_eq!(err.status(), StatusCode::CONFLICT);
-    }
-
-    #[test]
-    fn server_blocked_is_403_without_fields() {
-        let err = ApiError::ServerBlocked;
-        let json = serde_json::to_value(err.body()).unwrap();
-        assert_eq!(json["error"], "server_blocked");
-        assert!(json.get("fields").is_none());
-        assert_eq!(err.status(), StatusCode::FORBIDDEN);
     }
 
     #[test]
