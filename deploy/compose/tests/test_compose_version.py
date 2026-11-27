@@ -9,9 +9,9 @@ from pathlib import Path
 import re
 import tomllib
 import unittest
+from test_changes import changes
 
 ROOT = Path(__file__).resolve().parents[3]
-IMAGES = ('api', 'media', 'web')
 
 
 def pinned_tags(compose):
@@ -28,7 +28,7 @@ class ComposeVersion(unittest.TestCase):
     def test_compose_pins_the_app_images_of_the_backend_version(self):
         version = tomllib.loads((ROOT / 'backend/Cargo.toml').read_text())['workspace']['package']['version']
         tags = pinned_tags((ROOT / 'deploy/compose/compose.yaml').read_text())
-        for image in IMAGES:
+        for image in (image['name'] for image in changes.IMAGES):
             with self.subTest(image=image):
                 self.assertEqual(tags.get(image), {f'v{version}'},
                                  f'compose.yaml must start {image}:v{version}, the backend\'s version')

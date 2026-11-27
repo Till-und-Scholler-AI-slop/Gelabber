@@ -119,7 +119,7 @@ class Outputs(unittest.TestCase):
         out = self.run_script(stdin='backend/media/src/main.rs\n')
         self.assertEqual(out['backend'], 'true')
         self.assertEqual(out['web'], 'false')
-        self.assertEqual([image['name'] for image in json.loads(out['images'])], ['api', 'media'])
+        self.assertEqual([image['name'] for image in json.loads(out['images'])], ['media'])
 
     def test_only_the_web_image_for_a_web_change(self):
         out = self.run_script(stdin='web/src/main.tsx\n')
@@ -135,12 +135,71 @@ class Outputs(unittest.TestCase):
             self.assertEqual(out[area], 'true')
         self.assertEqual(len(json.loads(out['images'])), 3)
 
+
+def copied(dockerfile, context):
+    """What a Dockerfile's COPY and ADD lines take from the build context, as
+    repository paths; a folder ends in '/'."""
+    text = re.sub(r'\\\n', ' ', (ROOT / dockerfile).read_text())
+    found = set()
+    for line in text.splitlines():
+        words = line.split()
+        if not words or words[0].upper() not in ('COPY', 'ADD'):
+            continue
+        args = words[1:]
+        if any(arg.startswith('--from=') for arg in args):
+            continue
+        sources = [arg for arg in args if not arg.startswith('--')][:-1]
+        for source in sources:
+            path = (ROOT / context / source).resolve().relative_to(ROOT).as_posix()
+            found.add(path + '/' if (ROOT / path).is_dir() else path)
+    return found
+
+
+def outermost(paths):
+    """The paths without those inside a folder that is listed too."""
+    return {path for path in paths
+            if not any(other != path and other.endswith('/') and path.startswith(other)
+                       for other in paths)}
+
+
+class Images(unittest.TestCase):
+    """An image builds when, and only when, something it is built from changes."""
+
     def test_every_image_dockerfile_exists(self):
-        for built in changes.IMAGES.values():
-            for image in built:
-                with self.subTest(image=image['name']):
-                    self.assertTrue((ROOT / image['file']).is_file())
-                    self.assertTrue((ROOT / image['context']).is_dir())
+        for image in changes.IMAGES:
+            with self.subTest(image=image['name']):
+                self.assertTrue((ROOT / image['file']).is_file())
+                self.assertTrue((ROOT / image['context']).is_dir())
+
+    def test_the_inputs_are_what_the_dockerfile_copies(self):
+        # Beyond the COPY lines: the Dockerfile, the context's .dockerignore,
+        # ci.yml's images job, and the check run on the media image.
+        checks = {'media': {'backend/build/check-media-image.py'}}
+        for image in changes.IMAGES:
+            with self.subTest(image=image['name']):
+                sources = copied(image['file'], image['context'])
+                self.assertTrue(sources)
+                context = '' if image['context'] == '.' else image['context'] + '/'
+                ignore = context + '.dockerignore'
+                if sources == {context}:
+                    # COPY . . takes the whole context, its .dockerignore with it.
+                    ignore = context
+                self.assertEqual(set(image['inputs']),
+                                 outermost(sources | {image['file'], ignore, changes.CI}
+                                           | checks.get(image['name'], set())))
+
+    def test_an_api_change_builds_only_the_api_image(self):
+        self.assertEqual(changes.images(['backend/api/src/main.rs']), {'api'})
+        self.assertEqual(changes.images(['backend/media/src/main.rs']), {'media'})
+        self.assertEqual(changes.images(['backend/shared/src/lib.rs', 'backend/Cargo.lock']),
+                         {'api', 'media'})
+        self.assertEqual(changes.images(['backend/shared/data/emoji-18.0.json']), {'api', 'media'})
+        self.assertEqual(changes.images(['backend/build/check-media-image.py']), {'media'})
+        self.assertEqual(changes.images(['.github/workflows/ci.yml']), {'api', 'media', 'web'})
+        self.assertEqual(changes.images(['backend/api/README.md', 'deploy/backup.sh']), {'api'})
+
+    def test_a_backend_change_outside_the_images_builds_none(self):
+        self.assertEqual(changes.images(['backend/build/run-native-ci.sh']), set())
 
 
 class Workflow(unittest.TestCase):
