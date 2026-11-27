@@ -289,6 +289,9 @@ impl SigKind {
 /// Microphone / camera / screen and the screen's source audio on pub/unpub.
 /// Camera (`v`) and screen (`s`) are in-channel (issue 13); a screen is a
 /// Live. The old one-per-channel Go Live (`l`/`la`) is gone (#353).
+/// Voice seats in Redis store these: an API that reads a kind it does not
+/// know fails the whole room read, so a new kind needs older APIs that
+/// share the Redis during an upgrade to skip unknown kinds first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
