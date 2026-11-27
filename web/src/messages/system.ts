@@ -12,7 +12,8 @@ export type SystemMessage = {
   params: Record<string, unknown>;
 };
 
-/** Redis cjson re-encoding may hand back anything; keep a usable shape. */
+/** The system part, whole or left out: the shape checks of `api/wire.ts` take
+ *  a message without looking at its optional parts. */
 export function asSystem(value: unknown): SystemMessage | null {
   if (value === null || typeof value !== "object") return null;
   const system = value as Partial<SystemMessage>;

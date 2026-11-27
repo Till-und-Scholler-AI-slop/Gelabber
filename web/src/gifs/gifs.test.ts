@@ -134,6 +134,7 @@ describe("sending a GIF", () => {
             reactions: [],
             mentions: [],
             mention_everyone: false,
+            revision: 1,
             gif,
           })
         : json(404, { error: "not_found" }),
@@ -179,6 +180,7 @@ describe("sending a GIF", () => {
         reactions: [],
         mentions: [],
         mention_everyone: false,
+        revision: 1,
         gif,
       });
     });
