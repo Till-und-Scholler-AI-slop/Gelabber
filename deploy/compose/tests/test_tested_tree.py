@@ -78,7 +78,7 @@ class StandsForTest(unittest.TestCase):
     def test_same_tree_with_every_area(self):
         self.assertTrue(tested_tree.stands_for(tested_tree.record(ALL, SHA, TREE), TREE))
 
-    def test_another_tree_or_fewer_areas_run_everything(self):
+    def test_another_tree_or_fewer_areas_are_no_reuse(self):
         self.assertFalse(tested_tree.stands_for(tested_tree.record(ALL, SHA, TREE), 'f' * 40))
         self.assertFalse(tested_tree.stands_for(tested_tree.record({**ALL, 'desktop': 'false'}, SHA, TREE), TREE))
         self.assertFalse(tested_tree.stands_for({'tree': TREE, 'areas': list(tested_tree.AREAS)}, TREE))

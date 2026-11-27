@@ -37,7 +37,6 @@ jobs:
       actions: read
       contents: read
     outputs:
-      reused-run: ${{ steps.reuse.outputs.run }}
       candidate: ${{ steps.candidate.outputs.candidate }}
       backend: ${{ steps.areas.outputs.backend }}
       web: ${{ steps.areas.outputs.web }}
@@ -93,7 +92,7 @@ jobs:
       # A pull request checks out its merge commit; the first parent is the base.
       # --no-renames lists a move's source too; quotePath=false leaves non-ASCII paths unquoted.
       # A push runs the areas its commits touch, as a pull request does (GEL-360);
-      # the caches of the others stay valid. Without the previous head: all.
+      # the caches of the others stay valid. Without a starting point: all.
       - name: Areas
         id: areas
         env:
@@ -266,9 +265,7 @@ jobs:
           load: true
           provenance: false
           tags: gelabber-native-ci-toolchain:local
-          cache-from: |
-            type=registry,ref=ghcr.io/till-und-scholler-ai-slop/gelabber/media:buildcache
-            type=gha,scope=media
+          cache-from: type=registry,ref=ghcr.io/till-und-scholler-ai-slop/gelabber/media:buildcache
 
       # zizmor's cache-poisoning: the image above is only loaded for the tests, never published.
       - name: Cache cargo
@@ -428,11 +425,25 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26.13.1
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+
+      # Pull requests only read the npm cache; pushes save it (setup-node's
+      # cache saved per-PR copies, which cache-cleanup.yml then deleted).
+      - name: Restore the npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: node-cache-Linux-x64-npm-${{ hashFiles('web/package-lock.json') }}
 
       - name: Install
         run: npm ci
+
+      - name: Save the npm cache
+        if: github.event_name == 'push' && steps.npm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
 
       - name: Verify pinned emoji data
         run: python3 scripts/generate-emoji-data.py --check
@@ -509,11 +520,8 @@ jobs:
             OCI_VERSION=${{ env.GELABBER_VERSION }}
             OCI_CREATED=${{ env.OCI_CREATED }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
-          # Pull requests read the layer cache; main writes it. The Actions
-          # cache is read until the first publish has filled the registry's.
-          cache-from: |
-            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
-            type=gha,scope=${{ matrix.name }}
+          # Pull requests read the layer cache; main writes it.
+          cache-from: type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
 
       - name: Verify actual media image readiness and normal shutdown
         if: matrix.name == 'media'
