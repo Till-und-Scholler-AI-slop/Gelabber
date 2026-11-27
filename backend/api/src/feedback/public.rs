@@ -41,7 +41,7 @@ use crate::limits::{
     FEEDBACK_PUBLIC_PER_HOUR, HOUR, MailBudget,
 };
 use crate::mail::Mail;
-use crate::state::AppState;
+use crate::state::{AppState, Worker};
 use crate::token;
 
 /// Largest form body. Browsers percent-encode every byte of a non-ASCII
@@ -343,8 +343,9 @@ pub fn start(state: AppState) {
             if state.db.is_closed() {
                 break;
             }
-            if let Err(err) = sweep(&state).await {
-                warn!(error = ?err, "feedback sweep failed");
+            match sweep(&state).await {
+                Ok(_) => state.worker_passes.finished(Worker::FeedbackSweep),
+                Err(err) => warn!(error = ?err, "feedback sweep failed"),
             }
         }
     });
