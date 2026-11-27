@@ -18,6 +18,8 @@ use common::Client;
 
 fn state(pool: PgPool, quota: u64) -> AppState {
     let mut state = common::state(pool);
+    // Tests drive every cleanup and expiry step by hand.
+    state.workers.storage_cleanup = None;
     state.limits.upload_bytes_per_day = quota;
     state.limits.upload_per_hour = 0;
     state.limits.api_per_min = 0;
@@ -104,23 +106,14 @@ async fn usage(state: &AppState, user: &str) -> (i64, i64) {
         .bind(Uuid::parse_str(user).unwrap()).fetch_one(&state.db).await.unwrap()
 }
 
-/// Runs the delete jobs until `key` is gone. `app()` starts the real
-/// cleanup worker next to the test: a job it holds is skipped by this
-/// pass, which then finds nothing to do while that worker is still on the
-/// way to the delete. Who deletes is not the point; that it is deleted is.
+/// One pass of the delete jobs removes `key` (the app's own cleanup worker
+/// is off in these tests, see [`state`]).
 async fn deleted(state: &AppState, key: &str) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        cleanup::delete_pending(state, 32).await.unwrap();
-        if matches!(state.store.head(key).await, Err(StoreError::NotFound)) {
-            return;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "{key} still stored after 10 s"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    cleanup::delete_pending(state, 32).await.unwrap();
+    assert!(
+        matches!(state.store.head(key).await, Err(StoreError::NotFound)),
+        "{key} still stored"
+    );
 }
 
 async fn due(state: &AppState) {
@@ -241,6 +234,46 @@ async fn pending_expiry_refunds_missing_uploads_but_charges_uploaded_bytes(pool:
     presign(&mut client, &channel).await; // released missing-object reservation is reusable
 }
 
+/// The app's own cleanup worker, as a server runs it (the other tests here
+/// switch it off and run its passes by hand): a deleted message's file is
+/// gone from the store without anything else asking for it.
+#[sqlx::test]
+async fn the_running_cleanup_worker_deletes_a_queued_object(pool: PgPool) {
+    let mut state = common::state(pool.clone());
+    // As on a server, only sooner.
+    state.workers.storage_cleanup = state
+        .workers
+        .storage_cleanup
+        .map(|_| Duration::from_millis(50));
+    let (mut client, _, channel) = owner(&state).await;
+    let signed = presign(&mut client, &channel).await;
+    let id = signed["id"].as_str().unwrap();
+    let key = format!("att/{id}");
+    state
+        .store
+        .put(&key, "text/plain", vec![1, 2, 3, 4])
+        .await
+        .unwrap();
+    let msg = message(&mut client, &channel, id).await;
+    let deleted = client
+        .send(
+            Method::DELETE,
+            &format!("/api/messages/{}", msg["id"].as_str().unwrap()),
+            None,
+        )
+        .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+    // Past the time the upload link could still be replayed.
+    due(&state).await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !matches!(state.store.head(&key).await, Err(StoreError::NotFound)) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the cleanup worker deletes the queued object");
+}
+
 #[sqlx::test]
 async fn cascades_enqueue_objects_and_rollback_never_deletes_bytes(pool: PgPool) {
     let state = state(pool.clone(), 0);
@@ -337,13 +370,7 @@ async fn valid_and_foreign_pending_objects_survive_failed_attachment_bind(pool: 
         .await;
     assert_eq!(failed.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(state.store.head(&goodkey).await.unwrap().size, 4);
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while !matches!(state.store.head(&badkey).await, Err(StoreError::NotFound)) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
+    deleted(&state, &badkey).await;
     message(&mut client, &channel, good["id"].as_str().unwrap()).await;
     let mut other = Client::from_state(state.clone());
     other.bootstrap().await;
@@ -512,13 +539,9 @@ async fn real_minio_failed_delete_retains_job_and_later_retry_removes_only_its_o
         )
         .await;
     assert_eq!(deleted.status, StatusCode::NO_CONTENT);
-    tokio::time::timeout(Duration::from_secs(3), async {
-        while proxy.deletes.load(Ordering::SeqCst) == 0 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
+    // The job's first try fails at the store.
+    cleanup::delete_pending(&state, 32).await.unwrap();
+    assert_eq!(proxy.deletes.load(Ordering::SeqCst), 1);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM attachments")
             .fetch_one(&state.db)
@@ -1445,14 +1468,8 @@ async fn inflight_put_after_expiry_is_not_lost_from_daily_usage(pool: PgPool) {
         StatusCode::TOO_MANY_REQUESTS,
         "completed first upload must still consume the 4-byte daily cap"
     );
-    // The real background worker can observe the completed PUT after its
-    // earlier in-flight HEAD. Both ledger states keep the entire daily cap;
-    // demanding only the reserved intermediate state races valid settlement.
-    let ledger = usage(&state, client.user_id()).await;
-    assert!(
-        matches!(ledger, (4, 0) | (0, 4)),
-        "quota was lost: {ledger:?}"
-    );
+    // Still reserved: nothing has looked at the upload since its expiry.
+    assert_eq!(usage(&state, client.user_id()).await, (4, 0));
     // Advance only the test's DB deadline; settle the actual late-completed PUT
     // once and verify final object cleanup without refunding its consumed bytes.
     sqlx::query("UPDATE attachments SET expires_at=now()-interval '16 minutes',expiry_retry_at=now() WHERE id=$1")

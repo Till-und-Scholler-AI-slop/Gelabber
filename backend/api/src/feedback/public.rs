@@ -51,7 +51,7 @@ const BODY_MAX: usize = 64 * 1024;
 /// How long a confirmation link holds.
 const CONFIRM_HOURS: i32 = 24;
 /// How often the sweeper runs.
-const SWEEP_EVERY: Duration = Duration::from_secs(10 * 60);
+pub(crate) const SWEEP_EVERY: Duration = Duration::from_secs(10 * 60);
 
 const SEC_FETCH_SITE: HeaderName = HeaderName::from_static("sec-fetch-site");
 
@@ -331,12 +331,15 @@ async fn confirm(
 /// either way, and a sweep racing the first requests made tests that expire
 /// an entry by hand flaky.
 pub fn start(state: AppState) {
+    let Some(every) = state.workers.feedback_sweep else {
+        return;
+    };
     if state.feedback_worker_started.swap(true, Ordering::AcqRel) {
         return;
     }
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(SWEEP_EVERY).await;
+            tokio::time::sleep(every).await;
             if state.db.is_closed() {
                 break;
             }

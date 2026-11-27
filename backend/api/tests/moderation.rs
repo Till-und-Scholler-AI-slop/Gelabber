@@ -310,6 +310,10 @@ async fn a_held_server_row_cannot_stall_a_ban(pool: PgPool) {
     let server = server_with_member(&mut owner, &mut member).await;
     let server_id = server["id"].as_str().unwrap().to_owned();
     let member_id = me_id(&mut member).await;
+    // The owner's requests give up after 200 ms instead of 5 s.
+    let mut quick = common::state(pool.clone());
+    quick.server_lock_wait = Duration::from_millis(200);
+    owner.app = gelabber_api::app(quick);
 
     // A reader that keeps its share lock, as a member's socket could.
     let mut reader = pool.begin().await.unwrap();
