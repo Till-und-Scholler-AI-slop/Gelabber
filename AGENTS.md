@@ -125,7 +125,9 @@ PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compo
 `deploy/tools/tests` runs the same way.
 
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
-`npm test`, `npm run test:checks`, `npm run build`.
+`npm test`, `npm run test:checks`, `npm run build`. `npm test` mounts the
+components of `*.browser.test.tsx` in Chromium; install it once with
+`npx playwright install chromium-headless-shell`.
 
 Desktop (`desktop/`) is its own Cargo workspace and needs a prebuilt libwebrtc
 package; see `desktop/README.md` ("Native app" for the native egui app's build,
