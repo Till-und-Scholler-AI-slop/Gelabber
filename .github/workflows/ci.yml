@@ -93,7 +93,7 @@ jobs:
       # A pull request checks out its merge commit; the first parent is the base.
       # --no-renames lists a move's source too; quotePath=false leaves non-ASCII paths unquoted.
       # A push runs the areas its commits touch, as a pull request does (GEL-360);
-      # the caches of the others stay valid. Without the previous head: all.
+      # the caches of the others stay valid. Without the previous head, or on main: all.
       - name: Areas
         id: areas
         env:
@@ -111,6 +111,9 @@ jobs:
           elif [ -n "$REUSED_RUN" ]; then
             echo "Run $REUSED_RUN passed this tree: no area runs again." | tee -a "$GITHUB_STEP_SUMMARY"
             python3 .github/workflows/scripts/changes.py < /dev/null >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+            echo "A push to main that reuses no run checks every area." | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
           elif { [ "$EVENT" = push ] || [ "$EVENT" = merge_group ]; } && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
               && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
             echo "Areas changed since $BEFORE." | tee -a "$GITHUB_STEP_SUMMARY"

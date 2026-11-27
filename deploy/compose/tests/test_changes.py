@@ -10,6 +10,8 @@ import tempfile
 import textwrap
 import unittest
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / '.github/workflows/scripts/changes.py'
 
@@ -68,6 +70,7 @@ class Areas(unittest.TestCase):
                 ('.github/workflows/minio-images.yml', {'minio', 'deploy'}),
                 ('.github/workflows/publish-minio.yml', {'minio', 'deploy'}),
                 ('.github/workflows/cache-cleanup.yml', {'deploy'}),
+                ('.github/workflows/e2e-extended.yml', {'web', 'deploy'}),
                 ('.github/workflows/scripts/caches.py', {'deploy'}),
                 ('.github/dependabot.yml', {'deploy'}),
                 ('.github/ISSUE_TEMPLATE/bug_report.yml', set()),
@@ -82,21 +85,35 @@ class Areas(unittest.TestCase):
                     self.assertIn('deploy', changes.areas([path.relative_to(ROOT).as_posix()]))
 
     def test_a_called_workflow_starts_the_area_of_the_job_that_calls_it(self):
-        ci = (ROOT / '.github/workflows/ci.yml').read_text()
-        called = re.findall(r"if: .*needs\.changes\.outputs\.(\w+) == 'true'\n"
-                            r"(?:    .*\n)*?    uses: \./(\.github/workflows/[\w.-]+)", ci)
-        self.assertEqual({area for area, _ in called}, {'desktop', 'minio'})
-        for area, workflow in called:
-            with self.subTest(workflow=workflow):
-                self.assertIn(area, changes.areas([workflow]))
+        jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
+        # Gated on another job rather than an area: libwebrtc-store needs desktop.
+        not_by_area = {'libwebrtc-store': 'desktop'}
+        called = set()
+        for job_id, job in jobs.items():
+            uses = [job.get('uses', '')] + [step.get('uses', '') for step in job.get('steps', [])]
+            for local in (use for use in uses if use.startswith('./')):
+                with self.subTest(job=job_id, uses=local):
+                    match = re.fullmatch(r'\./(\.github/workflows/[\w.-]+\.yml)', local)
+                    self.assertTrue(match, f'{job_id} uses {local}: map it in changes.py and here')
+                    gates = re.findall(r"needs\.changes\.outputs\.(\w+) == 'true'", str(job.get('if', '')))
+                    if job_id in not_by_area:
+                        self.assertEqual(gates, [])
+                        self.assertIn(not_by_area[job_id], changes.areas([match.group(1)]))
+                        continue
+                    self.assertEqual(len(gates), 1, f'{job_id}: no area gate this test understands')
+                    self.assertIn(gates[0], changes.areas([match.group(1)]))
+                    called.add(gates[0])
+        self.assertEqual(called, {'desktop', 'minio'})
 
     def test_files_other_areas_read_start_them(self):
         # The checks that read them: test_public_pages.py, test_update_signature.py,
-        # this file (legacy.rs), generate-emoji-data.py --check, landingImage.test.mjs.
+        # this file (legacy.rs), generate-emoji-data.py --check, landingImage.test.mjs,
+        # ci-fault-loop.checks.mjs (a step of e2e-extended.yml).
         for path, area in (('web/docker-entrypoint.d/50-gelabber-public-pages.sh', 'deploy'),
                            ('desktop/packaging/updater.pub', 'deploy'),
                            ('desktop/ui/src/platform/legacy.rs', 'deploy'),
                            ('desktop/ui/assets/emoji/emoji-data.json', 'web'),
+                           ('.github/workflows/e2e-extended.yml', 'web'),
                            ('docs/design/v0.10/landing-preview-en.png', 'web')):
             with self.subTest(path=path):
                 self.assertTrue((ROOT / path).is_file())
@@ -149,22 +166,33 @@ class Outputs(unittest.TestCase):
         self.assertEqual(len(json.loads(out['images'])), 3)
 
 
-def copied(dockerfile, context):
-    """What a Dockerfile's COPY and ADD lines take from the build context, as
-    repository paths; a folder ends in '/'."""
-    text = re.sub(r'\\\n', ' ', (ROOT / dockerfile).read_text())
+def copied(dockerfile, context, text=None):
+    """What a Dockerfile's COPY and ADD lines and RUN bind mounts take from
+    the build context, as repository paths; a folder ends in '/'."""
+    text = re.sub(r'\\\n', ' ', text if text is not None else (ROOT / dockerfile).read_text())
     found = set()
+
+    def add(source):
+        path = (ROOT / context / source).resolve().relative_to(ROOT).as_posix()
+        found.add(path + '/' if (ROOT / path).is_dir() else path)
+
     for line in text.splitlines():
         words = line.split()
-        if not words or words[0].upper() not in ('COPY', 'ADD'):
+        if not words:
+            continue
+        if words[0].upper() == 'RUN':
+            for mount in re.findall(r'--mount=(\S+)', line):
+                options = dict(option.partition('=')[::2] for option in mount.split(','))
+                if options.get('type') == 'bind' and 'from' not in options:
+                    add(options.get('source', '.'))
+            continue
+        if words[0].upper() not in ('COPY', 'ADD'):
             continue
         args = words[1:]
         if any(arg.startswith('--from=') for arg in args):
             continue
-        sources = [arg for arg in args if not arg.startswith('--')][:-1]
-        for source in sources:
-            path = (ROOT / context / source).resolve().relative_to(ROOT).as_posix()
-            found.add(path + '/' if (ROOT / path).is_dir() else path)
+        for source in [arg for arg in args if not arg.startswith('--')][:-1]:
+            add(source)
     return found
 
 
@@ -200,6 +228,11 @@ class Images(unittest.TestCase):
                 self.assertEqual(set(image['inputs']),
                                  outermost(sources | {image['file'], ignore, changes.CI}
                                            | checks.get(image['name'], set())))
+
+    def test_a_bind_mount_is_an_input(self):
+        found = copied('backend/api/Dockerfile', '.', 'RUN --mount=type=bind,source=backend/build,target=/b \\\n'
+                       '    --mount=type=cache,target=/c --mount=type=bind,from=x,source=/y,target=/z true\n')
+        self.assertEqual(found, {'backend/build/'})
 
     def test_an_api_change_builds_only_the_api_image(self):
         self.assertEqual(changes.images(['backend/api/src/main.rs']), {'api'})
@@ -277,6 +310,25 @@ class Workflow(unittest.TestCase):
                 self.assertEqual(ran, expected)
                 if candidate == 'true':
                     self.assertTrue(reuse.stands_for({'schema': 1, 'tree': 't', 'areas': sorted(ran)}, 't'))
+
+    def test_a_push_to_main_that_reuses_no_run_checks_every_area(self):
+        """Release merges ran every area only because of their release notes;
+        main must check all of them whenever it cannot reuse a run."""
+        step = self.ci.split('      - name: Areas\n', 1)[1].split('\n\n', 1)[0]
+        script = textwrap.dedent(step.split('        run: |\n', 1)[1])
+        for ref, expected in (('refs/heads/main', set(changes.AREAS)), ('refs/heads/v0.14', {'web'})):
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / 'output'
+                git = Path(tmp) / 'git'
+                git.write_text('#!/bin/sh\ncase "$*" in *" diff "*) echo web/src/main.tsx ;; esac\n')
+                git.chmod(0o755)
+                env = {**os.environ, 'EVENT': 'push', 'GITHUB_REF': ref, 'BEFORE': 'a' * 40,
+                       'REUSED_RUN': '', 'CANDIDATE': '', 'GITHUB_OUTPUT': str(output),
+                       'GITHUB_STEP_SUMMARY': os.devnull,
+                       'PATH': f'{tmp}{os.pathsep}{os.environ["PATH"]}'}
+                subprocess.run(['bash', '-c', script], cwd=ROOT, env=env, check=True, capture_output=True)
+                out = dict(line.split('=', 1) for line in output.read_text().splitlines())
+                self.assertEqual({area for area in changes.AREAS if out[area] == 'true'}, expected)
 
     def test_moved_and_non_ascii_paths_start_their_areas(self):
         """The pull request's diff command, run on a scratch repository: a

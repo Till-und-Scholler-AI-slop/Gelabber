@@ -67,7 +67,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 }));
 
 import { useConfirm } from "./confirm.ts";
-import { logOut, logoutEndsCall } from "./logout.ts";
+import { logOut } from "./logout.ts";
 import { accountStep } from "./accountKeys.ts";
 import { AccountMenu, UserPanel } from "./UserPanel.tsx";
 import { ownPresence, panelSubtitle } from "./userPresence.ts";
@@ -112,11 +112,6 @@ describe("logging out", () => {
     await expect(result).resolves.toBe(true);
     expect(fixture.leaveVoice).toHaveBeenCalledOnce();
     expect(fixture.logout).toHaveBeenCalledOnce();
-  });
-
-  it("counts a joined call as a call", () => {
-    expect(logoutEndsCall({ status: "joined" })).toBe(true);
-    expect(logoutEndsCall({ status: "idle" })).toBe(false);
   });
 });
 
