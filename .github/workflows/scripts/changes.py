@@ -1,31 +1,44 @@
 """Which CI areas a pull request touches.
 
 ci.yml pipes the pull request's changed files into this script and starts
-only the jobs of the areas it prints. A change under .github/ starts every
-area; `--all` (pushes, manual runs) does the same. The prefixes are the one
-list of what belongs to an area, so the deployment tests ask this script too.
+only the jobs of the areas it prints. `--all` (release pull requests, manual
+runs, pushes without a known starting point) starts every area. The prefixes
+are the one list of what belongs to an area, so the deployment tests ask this
+script too.
 """
 import json
 import sys
 
+CI = '.github/workflows/ci.yml'
 AREAS = {
-    'backend': ('backend/', 'rust-toolchain.toml', '.dockerignore'),
-    # The emoji data is generated into both the backend and the web client.
-    'web': ('web/', 'backend/shared/data/'),
+    'backend': ('backend/', 'rust-toolchain.toml', '.dockerignore', CI),
+    # The emoji data is generated into the backend, the web client and the
+    # desktop app, and checked in the web job; landingImage.test.mjs reads the
+    # drawn preview the landing page must not show.
+    'web': ('web/', 'backend/shared/data/', 'desktop/ui/assets/emoji/',
+            'docs/design/v0.10/landing-preview-en.png', CI),
     # The legacy import's test reads the web client's storage keys (legacy.rs).
     'desktop': ('desktop/', 'rust-toolchain.toml', 'web/src/voice/settings.ts',
                 'web/src/interface/preferences.ts', 'web/src/voice/userVolume.ts',
                 'web/src/messages/drafts.ts',
                 # theme.rs checks its tokens against the web's (#561).
-                'web/src/theme/tokens.fixture.json'),
-    # The deployment tests also read the backend's build, both versions and
-    # the workflows. They test the Claude Code hooks too, so .claude/ is here.
+                'web/src/theme/tokens.fixture.json',
+                # The workflows that build, store and release the desktop app.
+                CI, '.github/workflows/desktop-native.yml', '.github/workflows/desktop-release.yml',
+                '.github/workflows/libwebrtc-store.yml', '.github/workflows/scripts/apt-install.sh'),
+    # The deployment tests also read the backend's build, both versions, the
+    # web image's start script, the updater key, legacy.rs and the workflows,
+    # which zizmor and actionlint check here. They test the Claude Code hooks
+    # too, so .claude/ is here.
     'deploy': ('deploy/', 'backend/', 'desktop/Cargo.toml', 'rust-toolchain.toml', '.dockerignore',
-               '.claude/'),
+               '.claude/', '.github/', 'web/docker-entrypoint.d/50-gelabber-public-pages.sh',
+               'desktop/packaging/updater.pub', 'desktop/ui/src/platform/legacy.rs'),
     'minio': ('deploy/compose/minio/', 'deploy/compose/mc/', 'deploy/compose/minio-init.sh',
-              'deploy/compose/compose.yaml', 'backend/Cargo.toml'),
+              'deploy/compose/compose.yaml', 'backend/Cargo.toml',
+              CI, '.github/workflows/minio-images.yml', '.github/workflows/publish-minio.yml'),
 }
-EVERY_AREA = ('.github/',)
+# Read by no check: a change here alone starts nothing.
+NO_AREA = ('.github/ISSUE_TEMPLATE/', '.github/release-notes/')
 # The app images a pull request builds (without pushing), by area.
 IMAGES = {
     'backend': ({'name': 'api', 'context': '.', 'file': 'backend/api/Dockerfile'},
@@ -41,9 +54,7 @@ def touches(path, prefixes):
 
 def areas(paths):
     """The set of areas the changed paths touch."""
-    paths = [path for path in paths if path]
-    if any(touches(path, EVERY_AREA) for path in paths):
-        return set(AREAS)
+    paths = [path for path in paths if path and not touches(path, NO_AREA)]
     return {area for area, prefixes in AREAS.items()
             if any(touches(path, prefixes) for path in paths)}
 

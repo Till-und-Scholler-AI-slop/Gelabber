@@ -78,10 +78,13 @@ class Gates(unittest.TestCase):
         # Ask the script ci.yml runs, not a duplicate list pretending to execute Actions.
         for path in ('backend/shared/src/lib.rs', 'backend/api/src/main.rs', 'backend/media/src/main.rs',
                      'backend/build/run-native-ci.sh', '.dockerignore', 'backend/Cargo.toml',
-                     'backend/Cargo.lock', 'rust-toolchain.toml', '.github/workflows/scripts/image_set.py',
-                     '.github/workflows/publish-images.yml'):
+                     'backend/Cargo.lock', 'rust-toolchain.toml'):
             with self.subTest(path=path):
                 self.assertIn('backend', changed_areas(path))
+        # They run after the merge; their tests are here.
+        for path in ('.github/workflows/scripts/image_set.py', '.github/workflows/publish-images.yml'):
+            with self.subTest(path=path):
+                self.assertIn('deploy', changed_areas(path))
         self.assertIn('web', changed_areas('web/Dockerfile'))
         self.assertIn('deploy', changed_areas('deploy/compose/compose.yaml'))
         text = (ROOT / '.github/workflows/ci.yml').read_text()
