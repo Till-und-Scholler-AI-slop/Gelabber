@@ -199,6 +199,18 @@ function answer(path, method, unread) {
   return {};
 }
 
+/** Until the list has stopped scrolling: its position held for 5 frames. */
+const settled = (page) =>
+  page.locator('[role="log"]').evaluate(async (log) => {
+    let still = 0;
+    let last = log.scrollTop;
+    while (still < 5) {
+      await new Promise(requestAnimationFrame);
+      still = log.scrollTop === last ? still + 1 : 0;
+      last = log.scrollTop;
+    }
+  });
+
 const frames = (page, count = 4) =>
   page.evaluate(async (left) => {
     while (left-- > 0) await new Promise(requestAnimationFrame);
@@ -419,7 +431,7 @@ async function scrollsAway({ page, send }, name, label) {
     await page.mouse.wheel(0, -120);
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
-  await frames(page, 8);
+  await settled(page);
   const moved = await rowTop(page, name);
   send(edited(97));
   await frames(page, 12);
@@ -462,7 +474,7 @@ async function olderPage(
   );
 
   // Stopped: let the last scroll settle, then note the top row.
-  await frames(page, 6);
+  await settled(page);
   const before = await firstVisible(page);
   assert.ok(before.top !== null, `${label}: no row at the top of the list`);
   await whileWaiting?.(opened);
@@ -655,7 +667,7 @@ try {
       await page.mouse.wheel(0, -240);
       await new Promise((resolve) => setTimeout(resolve, 40));
     }
-    await frames(page, 8);
+    await settled(page);
     const before = await firstVisible(page);
     const top = Number(before.name.split(" ")[1]);
     const shown = await visibleNames(page);

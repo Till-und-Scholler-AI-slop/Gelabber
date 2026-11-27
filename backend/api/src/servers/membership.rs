@@ -357,6 +357,18 @@ mod tests {
     }
 
     #[test]
+    fn a_flag_both_the_base_role_and_a_role_grant_stays_held() {
+        let mut m = membership(uid(1), uid(2), Permissions::DEFAULT_MEMBER);
+        m.role_ids = vec![uid(10)];
+        m.role_permissions = Permissions::NONE.with(Permission::SendMessages);
+        assert!(
+            m.require(Permission::SendMessages).is_ok(),
+            "send_messages lost: {}",
+            m.permissions()
+        );
+    }
+
+    #[test]
     fn sees_unlimited_channels_and_those_of_a_held_role() {
         let (owner, user) = (uid(1), uid(2));
         let (role, other) = (uid(10), uid(11));

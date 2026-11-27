@@ -3,17 +3,13 @@
 
 mod common;
 
-use std::time::Duration;
-
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
 use gelabber_api::AppState;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
+use common::ws::{self, connect, until};
 use common::{Client, Response};
 
 const PASSWORD: &str = "password123";
@@ -866,57 +862,23 @@ async fn account_deletion_removes_friends_requests_and_code(pool: PgPool) {
 
 // ---- Live events ----------------------------------------------------------
 
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn socket(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{}={}", common::SESSION, client.jar[common::SESSION])
-            .parse()
-            .unwrap(),
-    );
-    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
-    ws
-}
-
-async fn next_frame(ws: &mut Ws, want: impl Fn(&Value) -> bool) -> Value {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if let Message::Text(raw) = ws.next().await.expect("open socket").expect("frame") {
-                let frame: Value = serde_json::from_str(&raw).unwrap();
-                if frame["op"] == "h" {
-                    ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
-                        .await
-                        .unwrap();
-                }
-                if want(&frame) {
-                    return frame;
-                }
-            }
-        }
-    })
-    .await
-    .expect("frame")
-}
-
 #[sqlx::test]
 async fn friend_and_request_changes_reach_every_socket(pool: PgPool) {
     let state = common::ws_state(pool);
     let addr = common::serve_ws_state(state.clone()).await;
     let mut w = world_with(state).await;
-    let mut bob_ws = socket(addr, &w.bob).await;
-    let mut ada_ws = socket(addr, &w.ada).await;
-    // Let both sockets settle before the writes.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut bob_ws = connect(addr, &w.bob).await;
+    let mut ada_ws = connect(addr, &w.ada).await;
+    // Both sockets are registered before the writes.
+    ws::registered(&mut bob_ws).await;
+    ws::registered(&mut ada_ws).await;
 
     let bob = w.bob.user_id().to_owned();
     ask(&mut w.ada, json!({ "user_id": bob })).await;
-    next_frame(&mut bob_ws, |f| f["op"] == "fr").await;
-    next_frame(&mut ada_ws, |f| f["op"] == "fr").await;
+    until(&mut bob_ws, |f| f["op"] == "fr").await;
+    until(&mut ada_ws, |f| f["op"] == "fr").await;
 
     let dm = request_dm(&mut w).await;
     text(&mut w.ada, &dm, "hello").await;
-    next_frame(&mut bob_ws, |f| f["op"] == "mr").await;
+    until(&mut bob_ws, |f| f["op"] == "mr").await;
 }

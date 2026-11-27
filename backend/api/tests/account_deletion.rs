@@ -5,7 +5,7 @@ mod common;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::SinkExt;
 use gelabber_api::AppState;
 use gelabber_api::account::deletion;
 use gelabber_api::mail::Mailer;
@@ -13,15 +13,12 @@ use gelabber_api::storage::StoreError;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
 use common::Client;
+use common::ws::{self, connect, until};
 
 const PASSWORD: &str = "password123";
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn signed_up(state: &AppState, email: &str, name: &str) -> Client {
     let mut client = Client::from_state(state.clone());
@@ -154,61 +151,6 @@ async fn count(pool: &PgPool, sql: &'static str, id: Uuid) -> i64 {
         .unwrap()
 }
 
-async fn socket(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{}={}", common::SESSION, client.jar[common::SESSION])
-            .parse()
-            .unwrap(),
-    );
-    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
-    ws
-}
-
-/// The next frame `want` accepts, answering heartbeats on the way.
-async fn next_frame(ws: &mut Ws, want: impl Fn(&Value) -> bool) -> Value {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if let Message::Text(raw) = ws.next().await.expect("open socket").expect("frame") {
-                let frame: Value = serde_json::from_str(&raw).unwrap();
-                if frame["op"] == "h" {
-                    ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
-                        .await
-                        .unwrap();
-                }
-                if want(&frame) {
-                    return frame;
-                }
-            }
-        }
-    })
-    .await
-    .expect("frame")
-}
-
-/// Whether the socket ends (or errors) within a few seconds.
-async fn closes(ws: &mut Ws) -> bool {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            match ws.next().await {
-                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return true,
-                Some(Ok(Message::Text(raw))) => {
-                    let frame: Value = serde_json::from_str(&raw).unwrap();
-                    if frame["op"] == "h" {
-                        let _ = ws
-                            .send(Message::Text(json!({ "op": "h" }).to_string().into()))
-                            .await;
-                    }
-                }
-                Some(Ok(_)) => {}
-            }
-        }
-    })
-    .await
-    .unwrap_or(false)
-}
-
 #[sqlx::test]
 async fn an_owner_is_told_which_servers_to_hand_over_first(pool: PgPool) {
     let state = state(pool.clone());
@@ -287,16 +229,16 @@ async fn deleting_ends_every_session_and_leaves_every_server_at_once(pool: PgPoo
     join(&mut ada, &code).await;
     let ada_id = ada.user_id().to_owned();
 
-    let mut bob_ws = socket(addr, &bob).await;
+    let mut bob_ws = connect(addr, &bob).await;
     bob_ws
         .send(Message::Text(
             json!({ "op": "s", "s": server_id }).to_string().into(),
         ))
         .await
         .unwrap();
-    next_frame(&mut bob_ws, |f| f["op"] == "ok").await;
-    let mut phone_ws = socket(addr, &ada_phone).await;
-    next_frame(&mut phone_ws, |f| f["op"] == "h" || f["op"] == "hello").await;
+    until(&mut bob_ws, |f| f["op"] == "ok").await;
+    let mut phone_ws = connect(addr, &ada_phone).await;
+    until(&mut phone_ws, |f| f["op"] == "h" || f["op"] == "hello").await;
 
     let res = delete_me(&mut ada, json!({ "password": PASSWORD })).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
@@ -310,7 +252,7 @@ async fn deleting_ends_every_session_and_leaves_every_server_at_once(pool: PgPoo
     assert!(!ada.jar.contains_key(common::SESSION));
 
     // Members see the person leave.
-    let frame = next_frame(&mut bob_ws, |f| f["op"] == "e" && f["d"]["k"] == "x").await;
+    let frame = until(&mut bob_ws, |f| f["op"] == "e" && f["d"]["k"] == "x").await;
     assert_eq!(frame["t"], "d", "{frame}");
     assert_eq!(frame["s"], server_id.as_str(), "{frame}");
     assert_eq!(frame["i"], ada_id.as_str(), "{frame}");
@@ -326,7 +268,7 @@ async fn deleting_ends_every_session_and_leaves_every_server_at_once(pool: PgPoo
     assert!(!members.contains(&ada_id.as_str()), "{members:?}");
 
     // The other device is signed out and its socket closed.
-    assert!(closes(&mut phone_ws).await, "the phone's socket stays open");
+    ws::closed(&mut phone_ws).await;
     let res = ada_phone.send(Method::GET, "/api/me", None).await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
     // Nobody can sign in, read the card or open a DM any more.
@@ -602,15 +544,15 @@ async fn a_dm_goes_on_both_sides_and_the_peer_is_told(pool: PgPool) {
     post(&mut ada, &dm, json!({ "content": "hi" })).await;
     post(&mut bob, &dm, json!({ "content": "hey" })).await;
 
-    let mut bob_ws = socket(addr, &bob).await;
-    next_frame(&mut bob_ws, |f| f["op"] == "h" || f["op"] == "hello").await;
+    let mut bob_ws = connect(addr, &bob).await;
+    until(&mut bob_ws, |f| f["op"] == "h" || f["op"] == "hello").await;
 
     let res = delete_me(&mut ada, json!({ "password": PASSWORD })).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     purged(&state, ada_id).await;
 
     // Delivered although Bob can no longer read the channel.
-    let frame = next_frame(&mut bob_ws, |f| f["op"] == "dm").await;
+    let frame = until(&mut bob_ws, |f| f["op"] == "dm").await;
     assert_eq!(frame["c"], dm.as_str(), "{frame}");
     let list = bob.send(Method::GET, "/api/dms", None).await;
     assert_eq!(list.status, StatusCode::OK);
@@ -945,12 +887,12 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
     .await
     .unwrap();
 
-    let mut ada_ws = socket(addr, &ada).await;
+    let mut ada_ws = connect(addr, &ada).await;
     ada_ws
         .send(Message::Text(json!({ "op": "h" }).to_string().into()))
         .await
         .unwrap();
-    next_frame(&mut ada_ws, |f| f["op"] == "h").await;
+    until(&mut ada_ws, |f| f["op"] == "h").await;
     let res = lena
         .send(
             Method::POST,
@@ -959,12 +901,12 @@ async fn pending_join_requests_go_at_once_and_the_queue_hears_it(pool: PgPool) {
         )
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
-    let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
+    let frame = until(&mut ada_ws, |f| f["op"] == "jq").await;
     assert_eq!(frame, json!({ "op": "jq", "s": keller, "n": 1 }));
 
     let res = delete_me(&mut lena, json!({ "password": PASSWORD })).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
-    let frame = next_frame(&mut ada_ws, |f| f["op"] == "jq").await;
+    let frame = until(&mut ada_ws, |f| f["op"] == "jq").await;
     assert_eq!(frame, json!({ "op": "jq", "s": keller, "n": 0 }));
     let res = ada
         .send(

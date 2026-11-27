@@ -2,19 +2,16 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
+use common::ws::{self, Ws, connect, send, until};
 use common::{Client, SESSION};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use gelabber_api::auth::session;
 use gelabber_api::{AppState, EventKind, publish_channel};
 use gelabber_shared::ticket::{channel_authority_key, member_authority_key, session_authority_key};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::time::Duration;
-use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 use uuid::Uuid;
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn register(state: &AppState, name: &str) -> Client {
     let mut client = Client::with_state(state.clone());
@@ -75,44 +72,6 @@ async fn join(client: &mut Client, code: &str) {
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 }
-async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{SESSION}={}", client.jar[SESSION])
-            .parse()
-            .unwrap(),
-    );
-    tokio_tungstenite::connect_async(req)
-        .await
-        .expect("connect")
-        .0
-}
-async fn send(ws: &mut Ws, frame: Value) {
-    ws.send(Message::Text(frame.to_string().into()))
-        .await
-        .unwrap();
-}
-async fn until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            match ws.next().await.expect("open socket").expect("frame") {
-                Message::Text(raw) => {
-                    let frame: Value = serde_json::from_str(&raw).unwrap();
-                    if frame["op"] == "h" {
-                        send(ws, json!({"op":"h"})).await;
-                    }
-                    if pred(&frame) {
-                        return frame;
-                    }
-                }
-                other => panic!("unexpected {other:?}"),
-            }
-        }
-    })
-    .await
-    .expect("matching frame")
-}
 async fn subscribe(ws: &mut Ws, sid: Uuid, cid: Uuid) {
     send(ws, json!({"op":"s", "s":sid, "c":cid})).await;
     until(ws, |f| f["op"] == "ok" && f["c"] == cid.to_string()).await;
@@ -122,20 +81,11 @@ async fn voice_join(ws: &mut Ws, sid: Uuid, cid: Uuid) {
     until(ws, |f| f["op"] == "sig" && f["t"] == "j").await;
 }
 async fn closed_without_events(ws: &mut Ws) {
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while let Some(frame) = ws.next().await {
-            match frame {
-                Ok(Message::Close(_)) | Err(_) => return,
-                Ok(Message::Text(raw)) => {
-                    let frame: Value = serde_json::from_str(&raw).unwrap();
-                    assert_ne!(frame["op"], "e", "data after revoke: {frame}");
-                }
-                _ => {}
-            }
-        }
-    })
-    .await
-    .expect("session socket closed promptly");
+    let before = ws::closed(ws).await;
+    assert!(
+        before.iter().all(|frame| frame["op"] != "e"),
+        "data after revoke: {before:?}"
+    );
 }
 async fn claim(client: &mut Client, cid: Uuid) -> Value {
     let res = client
@@ -216,13 +166,12 @@ async fn session_expiry_closes_open_socket_without_client_action(pool: PgPool) {
     let (addr, state) = common::serve_ws(pool.clone()).await;
     let mut owner = register(&state, "owner").await;
     let (sid, text, _, _) = server(&mut owner, "Expiry").await;
-    // At its absolute end (TTL 2 h in the test config), so neither the
-    // upgrade nor the subscribe frame can slide the expiry (#195).
-    sqlx::query("UPDATE sessions SET created_at = now() - interval '2 hours' + interval '400 milliseconds', expires_at = now() + interval '400 milliseconds' WHERE token_hash = $1")
-        .bind(gelabber_api::token::hash(&owner.jar[SESSION])).execute(&pool).await.unwrap();
     let mut ws = connect(addr, &owner).await;
     subscribe(&mut ws, sid, text).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Past its absolute end (TTL 2 h in the test config), which nothing the
+    // socket does can slide (#195).
+    sqlx::query("UPDATE sessions SET created_at = now() - interval '2 hours 1 second', expires_at = now() - interval '1 second' WHERE token_hash = $1")
+        .bind(gelabber_api::token::hash(&owner.jar[SESSION])).execute(&pool).await.unwrap();
     publish(&state, sid, text).await;
     closed_without_events(&mut ws).await;
 }
@@ -1026,10 +975,12 @@ async fn go_live_with_one_pool_connection_keeps_bootstrap_responsive(pool: PgPoo
         f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
-    let bootstrap = tokio::time::timeout(Duration::from_millis(250), owner.bootstrap())
+    // A nested acquire on the one connection would wait out the pool's
+    // 500 ms acquire timeout and fail the request.
+    let bootstrap = tokio::time::timeout(ws::WAIT, owner.bootstrap())
         .await
-        .expect("no nested pool acquire");
-    assert_eq!(bootstrap.status, StatusCode::OK);
+        .expect("bootstrap answers");
+    assert_eq!(bootstrap.status, StatusCode::OK, "{}", bootstrap.body);
 }
 
 /// A socket process whose own periodic checks are far apart: a 15 s

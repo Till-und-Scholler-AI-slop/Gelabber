@@ -6,19 +6,13 @@ mod common;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
 use gelabber_api::EventKind;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::COOKIE;
 use uuid::Uuid;
 
+use common::ws::{self, Ws, recv, send, until};
 use common::{Client, SESSION};
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn two_users(pool: PgPool) -> (Client, Client) {
     let mut owner = Client::new(pool.clone());
@@ -85,47 +79,7 @@ fn session_cookie(client: &Client) -> String {
 }
 
 async fn connect(addr: std::net::SocketAddr, cookie: &str) -> Ws {
-    let mut request = format!("ws://{addr}/ws")
-        .into_client_request()
-        .expect("ws request");
-    request.headers_mut().insert(
-        COOKIE,
-        format!("{SESSION}={cookie}")
-            .parse()
-            .expect("cookie header"),
-    );
-    let (ws, response) = tokio_tungstenite::connect_async(request)
-        .await
-        .unwrap_or_else(|err| panic!("ws connect failed: {err}"));
-    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
-    ws
-}
-
-async fn recv_json(ws: &mut Ws) -> Value {
-    let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
-        .await
-        .expect("ws recv timeout")
-        .expect("ws closed")
-        .expect("ws error");
-    match msg {
-        Message::Text(text) => serde_json::from_str(text.as_str()).expect("json frame"),
-        other => panic!("expected text frame, got {other:?}"),
-    }
-}
-
-async fn recv_until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
-    loop {
-        let frame = recv_json(ws).await;
-        if pred(&frame) {
-            return frame;
-        }
-    }
-}
-
-async fn send_json(ws: &mut Ws, value: Value) {
-    ws.send(Message::Text(value.to_string().into()))
-        .await
-        .expect("ws send");
+    ws::connect_to(addr, "/ws", Some(cookie), None).await
 }
 
 fn ids(server: &Value) -> (Uuid, Uuid) {
@@ -162,22 +116,22 @@ async fn join_requires_voice_channel_and_join_voice(pool: PgPool) {
     let (addr, _) = common::serve_ws(pool).await;
     let mut member_ws = connect(addr, &session_cookie(&member)).await;
 
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    let err = recv_until(&mut member_ws, |f| f["op"] == "err").await;
+    let err = until(&mut member_ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "forbidden");
     assert_eq!(err["c"], voice_id.to_string());
 
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": text_id }),
     )
     .await;
-    let err = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    let err = until(&mut owner_ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "bad_request");
 }
 
@@ -190,12 +144,12 @@ async fn join_unknown_or_foreign_is_not_found(pool: PgPool) {
     let (addr, _) = common::serve_ws(pool).await;
 
     let mut stranger = connect(addr, &session_cookie(&member)).await;
-    send_json(
+    send(
         &mut stranger,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    let err = recv_until(&mut stranger, |f| f["op"] == "err").await;
+    let err = until(&mut stranger, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "not_found");
 }
 
@@ -212,37 +166,37 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
     let mut member_ws = connect(addr, &session_cookie(&member)).await;
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "s", "s": server_id, "c": text_id }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "ok").await;
+    until(&mut owner_ws, |f| f["op"] == "ok").await;
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    let owner_join = recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    let owner_join = until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
     assert_eq!(owner_join["u"], ada.to_string());
     assert!(owner_join.get("n").is_none(), "{owner_join}");
 
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    let member_seen = recv_until(&mut owner_ws, |f| {
+    let member_seen = until(&mut owner_ws, |f| {
         f["op"] == "sig" && f["t"] == "j" && f["u"] != ada.to_string()
     })
     .await;
     assert_eq!(member_seen["c"], voice_id.to_string());
 
-    let snapshot = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    let snapshot = until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
     assert_eq!(snapshot["u"], ada.to_string());
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({
             "op": "sig",
@@ -253,10 +207,10 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
         }),
     )
     .await;
-    let rejected = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    let rejected = until(&mut owner_ws, |f| f["op"] == "err").await;
     assert_eq!(rejected["e"], "bad_request");
 
-    send_json(
+    send(
         &mut member_ws,
         json!({
             "op": "sig",
@@ -267,10 +221,10 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
         }),
     )
     .await;
-    let rejected = recv_until(&mut member_ws, |f| f["op"] == "err").await;
+    let rejected = until(&mut member_ws, |f| f["op"] == "err").await;
     assert_eq!(rejected["e"], "bad_request");
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({
             "op": "sig",
@@ -282,23 +236,23 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
         }),
     )
     .await;
-    let rejected = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    let rejected = until(&mut owner_ws, |f| f["op"] == "err").await;
     assert_eq!(rejected["e"], "bad_request");
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "a" }),
     )
     .await;
-    let pubd = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "p").await;
+    let pubd = until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "p").await;
     assert_eq!(pubd["k"], "a");
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "u", "s": server_id, "c": voice_id, "k": "a" }),
     )
     .await;
-    let unpub = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "u").await;
+    let unpub = until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "u").await;
     assert_eq!(unpub["k"], "a");
 
     // Chat events stay on `op: e` and do not appear as sig.
@@ -312,24 +266,22 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
     )
     .await
     .unwrap();
-    let chat = recv_until(&mut owner_ws, |f| f["op"] == "e").await;
+    let chat = until(&mut owner_ws, |f| f["op"] == "e").await;
     assert_eq!(chat["t"], "c");
     assert_ne!(chat["op"], "sig");
 
-    let stray = tokio::time::timeout(Duration::from_millis(120), recv_json(&mut member_ws)).await;
-    if let Ok(frame) = stray {
-        assert_ne!(
-            frame["op"], "e",
-            "voice socket must not get chat events: {frame}"
-        );
-    }
+    let stray = ws::within(&mut member_ws, Duration::from_millis(120), |f| {
+        f["op"] == "e"
+    })
+    .await;
+    assert_eq!(stray, None, "voice socket must not get chat events");
 
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "l", "s": server_id, "c": voice_id }),
     )
     .await;
-    let left = recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "l").await;
+    let left = until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "l").await;
     assert_eq!(left["c"], voice_id.to_string());
 }
 
@@ -344,7 +296,7 @@ async fn offer_before_join_is_rejected_and_disconnect_leaves(pool: PgPool) {
 
     let (addr, _) = common::serve_ws(pool).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({
             "op": "sig",
@@ -355,26 +307,26 @@ async fn offer_before_join_is_rejected_and_disconnect_leaves(pool: PgPool) {
         }),
     )
     .await;
-    let err = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    let err = until(&mut owner_ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "bad_request");
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
 
     let mut member_ws = connect(addr, &session_cookie(&member)).await;
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
 
     owner_ws.close(None).await.ok();
-    let left = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "l").await;
+    let left = until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "l").await;
     assert_eq!(left["u"], ada.to_string());
 }
 
@@ -396,39 +348,39 @@ async fn camera_without_go_live_but_live_needs_it(pool: PgPool) {
 
     let (addr, _) = common::serve_ws(pool).await;
     let mut member_ws = connect(addr, &session_cookie(&member)).await;
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
 
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "v" }),
     )
     .await;
-    let camera = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "p").await;
+    let camera = until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "p").await;
     assert_eq!(camera["k"], "v");
 
     // Live is the screen: it and its sound need `go_live` to start.
     for kind in ["s", "sa"] {
-        send_json(
+        send(
             &mut member_ws,
             json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": kind }),
         )
         .await;
-        let denied = recv_until(&mut member_ws, |f| f["op"] == "err").await;
+        let denied = until(&mut member_ws, |f| f["op"] == "err").await;
         assert_eq!(denied["e"], "forbidden", "{kind}");
         assert_eq!(denied["c"], voice_id.to_string());
     }
     // Stopping needs nothing.
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "u", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
-    let stopped = recv_until(&mut member_ws, |f| {
+    let stopped = until(&mut member_ws, |f| {
         f["op"] == "err" || (f["op"] == "sig" && f["t"] == "u")
     })
     .await;
@@ -444,12 +396,12 @@ async fn camera_without_go_live_but_live_needs_it(pool: PgPool) {
         )
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
-    let screen = recv_until(&mut member_ws, |f| {
+    let screen = until(&mut member_ws, |f| {
         f["op"] == "err" || (f["op"] == "sig" && f["t"] == "p" && f["k"] == "s")
     })
     .await;
@@ -459,12 +411,12 @@ async fn camera_without_go_live_but_live_needs_it(pool: PgPool) {
 /// The socket handles frames in order and finishes each before it reads the
 /// next one: once a mute is echoed, every frame before it is done.
 async fn settle(ws: &mut Ws, server_id: Uuid, voice_id: Uuid, on: bool) {
-    send_json(
+    send(
         ws,
         json!({ "op": "sig", "t": "m", "s": server_id, "c": voice_id, "on": on }),
     )
     .await;
-    recv_until(ws, |f| f["op"] == "sig" && f["t"] == "m" && f["on"] == on).await;
+    until(ws, |f| f["op"] == "sig" && f["t"] == "m" && f["on"] == on).await;
 }
 
 /// Going live shows in the voice room and roster only: nothing in the chat.
@@ -478,35 +430,35 @@ async fn going_live_posts_nothing_in_the_chat(pool: PgPool) {
 
     let (addr, _) = common::serve_ws(pool.clone()).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
     let screen = |t: &str| json!({ "op": "sig", "t": t, "s": server_id, "c": voice_id, "k": "s" });
-    send_json(&mut owner_ws, screen("p")).await;
-    recv_until(&mut owner_ws, |f| {
+    send(&mut owner_ws, screen("p")).await;
+    until(&mut owner_ws, |f| {
         f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
     // Off and on again, then a re-announcement.
-    send_json(&mut owner_ws, screen("u")).await;
-    send_json(&mut owner_ws, screen("p")).await;
-    send_json(&mut owner_ws, screen("p")).await;
+    send(&mut owner_ws, screen("u")).await;
+    send(&mut owner_ws, screen("p")).await;
+    send(&mut owner_ws, screen("p")).await;
     settle(&mut owner_ws, server_id, voice_id, true).await;
 
     let mut member_ws = connect(addr, &session_cookie(&member)).await;
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut member_ws, |f| {
+    until(&mut member_ws, |f| {
         f["op"] == "sig" && f["t"] == "j" && f["u"] != owner_id(&server).to_string()
     })
     .await;
-    send_json(&mut member_ws, screen("p")).await;
+    send(&mut member_ws, screen("p")).await;
     settle(&mut member_ws, server_id, voice_id, true).await;
 
     let messages: i64 = sqlx::query_scalar("SELECT count(*) FROM messages")
@@ -527,31 +479,31 @@ async fn screen_live_shows_in_occupancy_snapshot(pool: PgPool) {
 
     let (addr, _) = common::serve_ws(pool).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
-    send_json(
+    until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| {
+    until(&mut owner_ws, |f| {
         f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
 
     // Someone outside the room sees who is live from the snapshot alone.
     let mut watcher = connect(addr, &session_cookie(&member)).await;
-    send_json(
+    send(
         &mut watcher,
         json!({ "op": "s", "s": server_id, "c": text_id }),
     )
     .await;
-    recv_until(&mut watcher, |f| f["op"] == "ok").await;
-    let roster = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "r").await;
+    until(&mut watcher, |f| f["op"] == "ok").await;
+    let roster = until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "r").await;
     let snap = roster["snap"].as_array().expect("snap");
     assert_eq!(snap.len(), 1, "{roster}");
     assert_eq!(snap[0]["u"], ada.to_string());
@@ -574,37 +526,35 @@ async fn one_socket_leave_does_not_evict_another_seat(pool: PgPool) {
     let mut tab_b = connect(addr, &cookie).await;
     let mut member_ws = connect(addr, &session_cookie(&member)).await;
 
-    send_json(
+    send(
         &mut tab_a,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut tab_a, |f| f["op"] == "sig" && f["t"] == "j").await;
-    send_json(
+    until(&mut tab_a, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send(
         &mut tab_b,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut tab_b, |f| f["op"] == "sig" && f["t"] == "j").await;
-    send_json(
+    until(&mut tab_b, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
 
     tab_a.close(None).await.ok();
-    let stray = tokio::time::timeout(Duration::from_millis(200), recv_json(&mut member_ws)).await;
-    if let Ok(frame) = stray {
-        let ada = ada.to_string();
-        assert!(
-            !(frame["op"] == "sig" && frame["t"] == "l" && frame["u"] == ada),
-            "first tab must not broadcast leave: {frame}"
-        );
-    }
+    let ada_id = ada.to_string();
+    let stray = ws::within(&mut member_ws, Duration::from_millis(200), |f| {
+        f["op"] == "sig" && f["t"] == "l" && f["u"] == ada_id
+    })
+    .await;
+    assert_eq!(stray, None, "first tab must not broadcast leave");
 
     tab_b.close(None).await.ok();
-    let left = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "l").await;
+    let left = until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "l").await;
     assert_eq!(left["u"], ada.to_string());
 }
 
@@ -621,43 +571,43 @@ async fn join_mute_deafen_reach_server_watchers_not_in_the_room(pool: PgPool) {
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
     let mut watcher = connect(addr, &session_cookie(&member)).await;
 
-    send_json(
+    send(
         &mut watcher,
         json!({ "op": "s", "s": server_id, "c": text_id }),
     )
     .await;
-    recv_until(&mut watcher, |f| f["op"] == "ok").await;
-    let roster = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "r").await;
+    until(&mut watcher, |f| f["op"] == "ok").await;
+    let roster = until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "r").await;
     assert_eq!(roster["s"], server_id.to_string());
     assert_eq!(roster["snap"].as_array().unwrap().len(), 0);
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    let joined = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "j").await;
+    let joined = until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "j").await;
     assert_eq!(joined["u"], ada.to_string());
     assert_eq!(joined["c"], voice_id.to_string());
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "m", "s": server_id, "c": voice_id, "on": true }),
     )
     .await;
-    let muted = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "m").await;
+    let muted = until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "m").await;
     assert_eq!(muted["on"], true);
     assert_eq!(muted["u"], ada.to_string());
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "d", "s": server_id, "c": voice_id, "on": true }),
     )
     .await;
-    let deafened = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "d").await;
+    let deafened = until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "d").await;
     assert_eq!(deafened["on"], true);
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({
             "op": "sig",
@@ -668,20 +618,20 @@ async fn join_mute_deafen_reach_server_watchers_not_in_the_room(pool: PgPool) {
         }),
     )
     .await;
-    let rejected = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+    let rejected = until(&mut owner_ws, |f| f["op"] == "err").await;
     assert_eq!(rejected["e"], "bad_request");
-    let stray = tokio::time::timeout(Duration::from_millis(150), recv_json(&mut watcher)).await;
-    if let Ok(frame) = stray {
-        assert_ne!(frame["t"], "o", "watchers must not get SDP: {frame}");
-        assert_ne!(frame["t"], "i", "watchers must not get ICE: {frame}");
-    }
+    let stray = ws::within(&mut watcher, Duration::from_millis(150), |f| {
+        f["t"] == "o" || f["t"] == "i"
+    })
+    .await;
+    assert_eq!(stray, None, "watchers must not get SDP or ICE");
 
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "l", "s": server_id, "c": voice_id }),
     )
     .await;
-    let left = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "l").await;
+    let left = until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "l").await;
     assert_eq!(left["u"], ada.to_string());
 }
 
@@ -696,39 +646,39 @@ async fn subscribe_replaces_voice_occupancy_and_mute_needs_a_seat(pool: PgPool) 
 
     let (addr, _) = common::serve_ws(pool).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
-    send_json(
+    until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "m", "s": server_id, "c": voice_id, "on": true }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "m").await;
+    until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "m").await;
 
     let mut watcher = connect(addr, &session_cookie(&member)).await;
-    send_json(
+    send(
         &mut watcher,
         json!({ "op": "s", "s": server_id, "c": text_id }),
     )
     .await;
-    recv_until(&mut watcher, |f| f["op"] == "ok").await;
-    let roster = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "r").await;
+    until(&mut watcher, |f| f["op"] == "ok").await;
+    let roster = until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "r").await;
     let snap = roster["snap"].as_array().expect("snap");
     assert_eq!(snap.len(), 1, "{roster}");
     assert_eq!(snap[0]["u"], ada.to_string());
     assert_eq!(snap[0]["c"], voice_id.to_string());
     assert_eq!(snap[0]["m"], true);
 
-    send_json(
+    send(
         &mut watcher,
         json!({ "op": "sig", "t": "m", "s": server_id, "c": voice_id, "on": true }),
     )
     .await;
-    let err = recv_until(&mut watcher, |f| f["op"] == "err").await;
+    let err = until(&mut watcher, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "bad_request");
 }
 
@@ -752,27 +702,27 @@ async fn live_needs_permission_and_is_several_per_channel(pool: PgPool) {
 
     let (addr, _) = common::serve_ws(pool).await;
     let mut member_ws = connect(addr, &session_cookie(&member)).await;
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
-    send_json(
+    until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
-    let denied = recv_until(&mut member_ws, |f| f["op"] == "err").await;
+    let denied = until(&mut member_ws, |f| f["op"] == "err").await;
     assert_eq!(denied["e"], "forbidden");
 
-    send_json(
+    send(
         &mut member_ws,
         json!({"op":"sig","t":"p","s":server_id,"c":voice_id,"k":"sa"}),
     )
     .await;
     assert_eq!(
-        recv_until(&mut member_ws, |f| f["op"] == "err").await["e"],
+        until(&mut member_ws, |f| f["op"] == "err").await["e"],
         "forbidden"
     );
 
@@ -788,18 +738,18 @@ async fn live_needs_permission_and_is_several_per_channel(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
-    send_json(
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
-    send_json(
+    until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
-    let live = recv_until(&mut owner_ws, |f| {
+    let live = until(&mut owner_ws, |f| {
         f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
@@ -809,22 +759,22 @@ async fn live_needs_permission_and_is_several_per_channel(pool: PgPool) {
 
     // The old Go Live of clients before v0.8 is gone (#353).
     for kind in ["l", "la"] {
-        send_json(
+        send(
             &mut owner_ws,
             json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": kind }),
         )
         .await;
-        let refused = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+        let refused = until(&mut owner_ws, |f| f["op"] == "err").await;
         assert_eq!(refused["e"], "bad_request");
     }
 
     // Several can be live in one channel.
-    send_json(
+    send(
         &mut member_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
-    let second = recv_until(&mut member_ws, |f| {
+    let second = until(&mut member_ws, |f| {
         f["op"] == "err"
             || (f["op"] == "sig" && f["t"] == "p" && f["k"] == "s" && f["u"] != ada.to_string())
     })
@@ -843,44 +793,44 @@ async fn source_audio_requires_its_same_socket_parent_and_parent_stop_cleans_it(
     let mut publisher = connect(addr, &session_cookie(&owner)).await;
     let mut other_tab = connect(addr, &session_cookie(&owner)).await;
     for ws in [&mut publisher, &mut other_tab] {
-        send_json(ws, json!({"op":"sig","t":"j","s":server_id,"c":channel})).await;
-        recv_until(ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+        send(ws, json!({"op":"sig","t":"j","s":server_id,"c":channel})).await;
+        until(ws, |f| f["op"] == "sig" && f["t"] == "j").await;
     }
-    send_json(
+    send(
         &mut publisher,
         json!({"op":"sig","t":"p","k":"sa","s":server_id,"c":channel}),
     )
     .await;
-    let rejected = recv_until(&mut publisher, |f| f["op"] == "err").await;
+    let rejected = until(&mut publisher, |f| f["op"] == "err").await;
     assert_eq!(rejected["e"], "bad_request");
     for kind in ["a", "s", "sa"] {
-        send_json(
+        send(
             &mut publisher,
             json!({"op":"sig","t":"p","k":kind,"s":server_id,"c":channel}),
         )
         .await;
-        recv_until(&mut publisher, |f| {
+        until(&mut publisher, |f| {
             f["op"] == "sig" && f["t"] == "p" && f["k"] == kind
         })
         .await;
     }
-    send_json(
+    send(
         &mut other_tab,
         json!({"op":"sig","t":"p","k":"sa","s":server_id,"c":channel}),
     )
     .await;
     assert_eq!(
-        recv_until(&mut other_tab, |f| f["op"] == "err").await["e"],
+        until(&mut other_tab, |f| f["op"] == "err").await["e"],
         "bad_request"
     );
-    send_json(
+    send(
         &mut publisher,
         json!({"op":"sig","t":"u","k":"s","s":server_id,"c":channel}),
     )
     .await;
     let mut removed = std::collections::HashSet::new();
     while removed.len() < 2 {
-        let frame = recv_until(&mut publisher, |f| f["op"] == "sig" && f["t"] == "u").await;
+        let frame = until(&mut publisher, |f| f["op"] == "sig" && f["t"] == "u").await;
         removed.insert(frame["k"].as_str().unwrap().to_owned());
     }
     assert_eq!(
@@ -888,14 +838,14 @@ async fn source_audio_requires_its_same_socket_parent_and_parent_stop_cleans_it(
         std::collections::HashSet::from(["s".into(), "sa".into()])
     );
     let mut viewer = connect(addr, &session_cookie(&member)).await;
-    send_json(
+    send(
         &mut viewer,
         json!({"op":"sig","t":"j","s":server_id,"c":channel}),
     )
     .await;
     let mut snapshot = std::collections::HashSet::new();
     loop {
-        let frame = recv_json(&mut viewer).await;
+        let frame = recv(&mut viewer).await;
         if frame["op"] == "sig" && frame["t"] == "p" {
             snapshot.insert(frame["k"].as_str().unwrap().to_owned());
         }
@@ -920,12 +870,12 @@ async fn another_user(pool: PgPool, owner: &mut Client, server_id: Uuid, name: &
 
 async fn seat(addr: std::net::SocketAddr, client: &Client, server_id: Uuid, voice_id: Uuid) -> Ws {
     let mut ws = connect(addr, &session_cookie(client)).await;
-    send_json(
+    send(
         &mut ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut ws, |f| {
+    until(&mut ws, |f| {
         f["op"] == "sig" && f["t"] == "j" && f["u"] == client.user_id()
     })
     .await;
@@ -937,7 +887,7 @@ fn watch(server_id: Uuid, channel_id: Uuid, owner: &str, on: bool) -> Value {
 }
 
 async fn watch_set(ws: &mut Ws, watcher: &str) -> Value {
-    recv_until(ws, |f| {
+    until(ws, |f| {
         f["op"] == "sig" && f["t"] == "w" && f["u"] == watcher
     })
     .await
@@ -961,12 +911,12 @@ async fn watching_a_live_reaches_the_room_and_late_joiners(pool: PgPool) {
     let mut ada_ws = seat(addr, &owner, server_id, voice_id).await;
     let mut bob_ws = seat(addr, &member, server_id, voice_id).await;
     let mut cara_ws = seat(addr, &cara, server_id, voice_id).await;
-    send_json(
+    send(
         &mut ada_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
-    send_json(&mut bob_ws, watch(server_id, voice_id, &ada, true)).await;
+    send(&mut bob_ws, watch(server_id, voice_id, &ada, true)).await;
     for ws in [&mut ada_ws, &mut bob_ws, &mut cara_ws] {
         let set = watch_set(ws, &bob).await;
         assert_eq!(set["w"], json!([ada]), "{set}");
@@ -977,14 +927,14 @@ async fn watching_a_live_reaches_the_room_and_late_joiners(pool: PgPool) {
 
     // Dan joins late: one replayed set per occupant, also the empty ones.
     let mut dan_ws = connect(addr, &session_cookie(&dan)).await;
-    send_json(
+    send(
         &mut dan_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
     let mut sets = std::collections::HashMap::new();
     while sets.len() < 3 {
-        let frame = recv_until(&mut dan_ws, |f| f["op"] == "sig" && f["t"] == "w").await;
+        let frame = until(&mut dan_ws, |f| f["op"] == "sig" && f["t"] == "w").await;
         assert_eq!(frame["replay"], true, "{frame}");
         sets.insert(frame["u"].as_str().unwrap().to_owned(), frame["w"].clone());
     }
@@ -993,30 +943,30 @@ async fn watching_a_live_reaches_the_room_and_late_joiners(pool: PgPool) {
     assert_eq!(sets[cara.user_id()], json!([]));
 
     // Bob leaves: the room hears `l`, and Bob's rejoin starts with nothing.
-    send_json(
+    send(
         &mut bob_ws,
         json!({ "op": "sig", "t": "l", "s": server_id, "c": voice_id }),
     )
     .await;
-    let left = recv_until(&mut cara_ws, |f| f["op"] == "sig" && f["u"] == bob).await;
+    let left = until(&mut cara_ws, |f| f["op"] == "sig" && f["u"] == bob).await;
     assert_eq!(left["t"], "l", "{left}");
-    send_json(
+    send(
         &mut bob_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    recv_until(&mut cara_ws, |f| {
+    until(&mut cara_ws, |f| {
         f["op"] == "sig" && f["t"] == "j" && f["u"] == bob
     })
     .await;
     drop(dan_ws);
     let mut dan_ws = connect(addr, &session_cookie(&dan)).await;
-    send_json(
+    send(
         &mut dan_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
     )
     .await;
-    let again = recv_until(&mut dan_ws, |f| {
+    let again = until(&mut dan_ws, |f| {
         f["op"] == "sig" && f["t"] == "w" && f["u"] == bob
     })
     .await;
@@ -1025,7 +975,7 @@ async fn watching_a_live_reaches_the_room_and_late_joiners(pool: PgPool) {
 }
 
 async fn refused(ws: &mut Ws) -> Value {
-    recv_until(ws, |f| f["op"] == "err").await["e"].clone()
+    until(ws, |f| f["op"] == "err").await["e"].clone()
 }
 
 #[sqlx::test]
@@ -1041,10 +991,10 @@ async fn watch_needs_a_seat_another_owner_and_join_voice(pool: PgPool) {
 
     // No seat in the room yet.
     let mut bob_ws = connect(addr, &session_cookie(&member)).await;
-    send_json(&mut bob_ws, watch(server_id, voice_id, &ada, true)).await;
+    send(&mut bob_ws, watch(server_id, voice_id, &ada, true)).await;
     assert_eq!(refused(&mut bob_ws).await, "bad_request");
     // A text channel is no voice room.
-    send_json(&mut bob_ws, watch(server_id, text_id, &ada, true)).await;
+    send(&mut bob_ws, watch(server_id, text_id, &ada, true)).await;
     assert_eq!(refused(&mut bob_ws).await, "bad_request");
 
     drop(bob_ws);
@@ -1056,16 +1006,16 @@ async fn watch_needs_a_seat_another_owner_and_join_voice(pool: PgPool) {
         json!({ "op": "sig", "t": "w", "s": server_id, "c": voice_id, "o": ada, "k": "s" }),
         json!({ "op": "sig", "t": "w", "s": server_id, "c": voice_id, "o": ada, "k": "v", "on": true }),
     ] {
-        send_json(&mut bob_ws, frame.clone()).await;
+        send(&mut bob_ws, frame.clone()).await;
         assert_eq!(refused(&mut bob_ws).await, "bad_request", "{frame}");
     }
     // Without `k` it is the screen; the owner need not be in the room.
-    send_json(
+    send(
         &mut bob_ws,
         json!({ "op": "sig", "t": "w", "s": server_id, "c": voice_id, "o": ada, "on": true }),
     )
     .await;
-    let set = recv_until(&mut bob_ws, |f| {
+    let set = until(&mut bob_ws, |f| {
         f["op"] == "err" || (f["op"] == "sig" && f["t"] == "w")
     })
     .await;
@@ -1080,6 +1030,6 @@ async fn watch_needs_a_seat_another_owner_and_join_voice(pool: PgPool) {
         )
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    send_json(&mut bob_ws, watch(server_id, voice_id, &ada, false)).await;
+    send(&mut bob_ws, watch(server_id, voice_id, &ada, false)).await;
     assert_eq!(refused(&mut bob_ws).await, "forbidden");
 }

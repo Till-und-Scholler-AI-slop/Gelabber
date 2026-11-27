@@ -93,16 +93,16 @@ class NativeWiring(unittest.TestCase):
         self.release = WORKFLOW.read_text()
         self.build = BUILD.read_text()
 
-    def test_the_build_makes_the_native_artifacts_outside_pull_requests(self):
+    def test_the_build_makes_the_native_artifacts(self):
         linux, windows = job_text(self.build, 'core-linux'), job_text(self.build, 'core-windows')
         self.assertIn('name: gelabber-native-linux-x64\n', linux)
         self.assertIn('desktop/packaging/native/tarball.sh', linux)
         self.assertIn('name: gelabber-native-windows-x64\n', windows)
-        self.assertIn('desktop\\packaging\\native\\windows\\installer.nsi', windows)
-        for job, step in ((linux, 'Package the native app'), (windows, 'Native installer')):
-            with self.subTest(step=step):
-                block = job.split(f'- name: {step}\n', 1)[1].split('\n      - name:', 1)[0]
-                self.assertIn("github.event_name != 'pull_request'", block)
+        self.assertIn('run: ./desktop/packaging/native/windows/build-installer.ps1\n', windows)
+        installer = (BUILD.parents[2] / 'desktop/packaging/native/windows/build-installer.ps1').read_text()
+        self.assertIn('desktop\\packaging\\native\\windows\\installer.nsi', installer)
+        # In which modes they are made (never for a pull request but a
+        # release candidate): deploy/compose/tests/test_desktop_native_modes.py.
 
     def test_pull_requests_build_and_start_the_native_app(self):
         linux, windows = job_text(self.build, 'core-linux'), job_text(self.build, 'core-windows')

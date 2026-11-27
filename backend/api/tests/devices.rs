@@ -5,21 +5,15 @@
 
 mod common;
 
-use std::time::Duration;
-
 use axum::http::request::Builder;
 use axum::http::{Method, StatusCode};
 use chrono::{DateTime, Utc};
+use common::ws::{self, Ws};
 use common::{Client, SESSION};
-use futures_util::StreamExt;
 use gelabber_api::{AppState, Config};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 use uuid::Uuid;
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 const FIREFOX_WINDOWS: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0";
@@ -208,29 +202,7 @@ async fn the_list_needs_a_session(pool: PgPool) {
 }
 
 async fn connect(addr: std::net::SocketAddr, device: &Device) -> Ws {
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{SESSION}={}", device.client.jar[SESSION])
-            .parse()
-            .unwrap(),
-    );
-    tokio_tungstenite::connect_async(req)
-        .await
-        .expect("connect")
-        .0
-}
-
-async fn closed(ws: &mut Ws) {
-    tokio::time::timeout(Duration::from_secs(3), async {
-        while let Some(frame) = ws.next().await {
-            if matches!(frame, Ok(Message::Close(_)) | Err(_)) {
-                return;
-            }
-        }
-    })
-    .await
-    .expect("socket closed promptly");
+    ws::connect(addr, &device.client).await
 }
 
 #[sqlx::test]
@@ -250,7 +222,7 @@ async fn signing_out_another_device_ends_it_and_closes_its_socket(pool: PgPool) 
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     assert!(res.set_cookie(SESSION).is_none());
 
-    closed(&mut socket).await;
+    ws::closed(&mut socket).await;
     let res = desktop.send(Method::GET, "/api/me", None).await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
     // This device stays signed in.

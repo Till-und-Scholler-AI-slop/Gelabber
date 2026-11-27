@@ -290,7 +290,7 @@ async fn send_echoes_its_nonce_on_response_and_event(pool: PgPool) {
     let state = common::state(pool.clone());
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let _ = delivery::deliver_pending(&state, 32).await;
+            delivery::deliver_pending(&state, 32).await.unwrap();
             let queued: i64 =
                 sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id = $1")
                     .bind(channel)
@@ -595,7 +595,7 @@ async fn preview_removal_publishes_an_edit_that_landed_before_its_lock(pool: PgP
     let state = common::state(pool.clone());
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let _ = delivery::deliver_pending(&state, 32).await;
+            delivery::deliver_pending(&state, 32).await.unwrap();
             let queued: i64 =
                 sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id = $1")
                     .bind(channel)
@@ -908,7 +908,7 @@ async fn concurrent_deletes_publish_one_delete_event(pool: PgPool) {
     let state = common::state(pool.clone());
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let _ = delivery::deliver_pending(&state, 32).await;
+            delivery::deliver_pending(&state, 32).await.unwrap();
             let queued: i64 =
                 sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id = $1")
                     .bind(channel)
