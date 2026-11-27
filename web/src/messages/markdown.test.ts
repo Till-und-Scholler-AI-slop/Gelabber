@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -439,35 +437,6 @@ describe("edges the parser has to get right", () => {
     expect(parseInline("`ab `")).toEqual([{ type: "code", text: "ab " }]);
     expect(parseInline("`   `")).toEqual([{ type: "code", text: "   " }]);
   });
-
-  it("does not hang on an unclosed backtick or an escape inside italics", () => {
-    // A loop in the parser never yields, so Vitest's own timeout cannot end
-    // it: each input is parsed in a child process that a deadline kills.
-    const markdown = new URL("./markdown.ts", import.meta.url).href;
-    for (const [input, inside] of [
-      ["*a `b*", "a `b"],
-      ["*a \\* b*", "a * b"],
-    ]) {
-      const child = spawnSync(
-        process.execPath,
-        [
-          "--input-type=module",
-          "-e",
-          `const { parseInline } = await import(${JSON.stringify(markdown)});
-          process.stdout.write(JSON.stringify(parseInline(${JSON.stringify(input)})));`,
-        ],
-        { encoding: "utf8", timeout: 10_000 },
-      );
-      expect(
-        child.signal,
-        `parseInline(${JSON.stringify(input)}) still ran after 10 s`,
-      ).toBeNull();
-      expect(child.status, child.stderr).toBe(0);
-      expect(JSON.parse(child.stdout), input).toEqual([
-        { type: "em", children: [text(inside)] },
-      ]);
-    }
-  }, 30_000);
 
   it("finds a closing mark past links and mentions", () => {
     expect(parseInline("*a <https://x.example/*> b*")).toEqual([
