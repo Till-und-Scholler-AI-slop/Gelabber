@@ -181,8 +181,8 @@ pwsh desktop\native\scripts\build-libwebrtc-windows.ps1 -Work C:\webrtc -Package
 $env:GELABBER_LIBWEBRTC_DIR = 'C:\libwebrtc-package'
 # MSVC's tools stop at 260 characters; the CMake and Meson trees are deep.
 $env:CARGO_TARGET_DIR = 'C:\t'
-# The C runtime linked statically, as in the release: without it the app
-# needs the Visual C++ redistributable.
+# The C runtime linked statically, as in the release (desktop/native/windows-build.env):
+# without it the app needs the Visual C++ redistributable.
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber-media-core
 cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber
@@ -205,6 +205,13 @@ The installer, from what was just built, with NSIS (`makensis`): stage
 ```powershell
 makensis /DVERSION=<version> /DFILEVERSION=<x.y.z.0> /DSOURCE=<folder> /DOUTFILE=gelabber-native-windows-x64-setup.exe desktop\packaging\native\windows\installer.nsi
 ```
+
+`desktop\packaging\native\windows\build-installer.ps1` does both, as CI
+does, with `CARGO_TARGET_DIR`, `RUNNER_TEMP` (the staging folder's parent),
+`GITHUB_STEP_SUMMARY` and `DESKTOP_VERSION`
+(`desktop/packaging/native/version.sh`) set. The other scripts there are
+CI's checks of what was built: `check-binaries.ps1` (dumpbin), and
+`install-test.ps1`, which installs into the account it runs in.
 
 `<version>` is the one of `desktop/Cargo.toml`. CI builds a release only
 when its tag is that version (`v<version>`). The smoke test starts
