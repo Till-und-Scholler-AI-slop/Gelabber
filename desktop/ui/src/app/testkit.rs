@@ -404,7 +404,12 @@ pub fn launcher_with(
     let route = route.to_owned();
     Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
-        .with_max_steps(10_000)
+        // Building runs the app until it stops asking for frames, at most
+        // this many. A spinner never stops, and these steps do not wait:
+        // 10,000 of them took 7 to 10 s, so a request held at the stand-in
+        // ran into the client's 10 s timeout before the test saw the app
+        // (GEL-425). The waits below step it from here on.
+        .with_max_steps(4)
         .with_step_dt(1.0 / 60.0)
         .build_eframe(move |cc| Launcher::with_app(cc, client.clone(), Some(route.clone())))
 }
