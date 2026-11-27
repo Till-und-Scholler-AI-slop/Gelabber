@@ -284,6 +284,7 @@ FunctionEnd
 ; it without delete sharing, and a Delete in that moment fails quietly and
 ; leaves the link behind (GEL-374). Tries again for up to 5 s.
 !macro DELETE_LINK lnk
+  Push $0
   StrCpy $0 0
   ${Do}
     Delete "${lnk}"
@@ -294,6 +295,7 @@ FunctionEnd
     IntOp $0 $0 + 1
     Sleep 250
   ${Loop}
+  Pop $0
 !macroend
 
 Function un.onInit
