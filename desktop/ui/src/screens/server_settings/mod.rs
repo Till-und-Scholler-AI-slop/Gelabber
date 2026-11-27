@@ -1896,6 +1896,15 @@ mod tests {
         wait_for(&mut harness, "the first answer", |_| api.answering() == 1);
         release.store(true, Ordering::SeqCst);
         wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+        // Both answers taken, in whichever order the client did.
+        crate::app::testkit::wait_until_idle(&mut harness);
+        // The newer write sends the whole list, the older change too: what
+        // the panel's order tests in roles.rs take for granted.
+        let refused = logged(&log, "PATCH", &path)
+            .into_iter()
+            .find(|body| body.contains("manage_channels"))
+            .expect("the second write");
+        assert!(refused.contains("manage_server"), "{refused}");
         // The refused switch shows the server's value again.
         use egui_kittest::kittest::NodeT;
         let channels = harness
