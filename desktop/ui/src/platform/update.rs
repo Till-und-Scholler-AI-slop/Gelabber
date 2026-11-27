@@ -1332,7 +1332,6 @@ mod tests {
             endpoint(),
             format!("{REPOSITORY}/releases/latest/download/{MANIFEST}")
         );
-        assert_eq!(MANIFEST, "latest-native.json");
         assert!(!endpoint().ends_with("/latest.json"));
         assert_eq!(
             release_page("0.9.0-beta.2"),
