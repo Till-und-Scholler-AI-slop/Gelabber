@@ -571,7 +571,9 @@ async fn preview_removal_publishes_an_edit_that_landed_before_its_lock(pool: PgP
     })
     .await
     .expect("the removal waits on the channel lock");
-    // The author's edit from another device commits first.
+    // The author's edit from another device, made under the lock the
+    // removal waits for: it commits with the lock's release, before the
+    // removal runs.
     sqlx::query(
         "UPDATE messages SET content='https://example.org/ neu', edited_at=now() WHERE id=$1",
     )

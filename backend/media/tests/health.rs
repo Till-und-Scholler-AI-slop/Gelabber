@@ -29,7 +29,6 @@ async fn health_is_ok_without_redis() {
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["service"], "media");
         assert_eq!(body["status"], "ok");
-        assert_ne!(body["status"], "stub");
     }
 }
 

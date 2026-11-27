@@ -1244,7 +1244,6 @@ mod tests {
         .unwrap();
         assert!(json.starts_with(r#"{"op":"y""#));
         assert!(!json.contains("\"n\""));
-        assert!(!json.contains("seq"));
     }
 
     #[test]

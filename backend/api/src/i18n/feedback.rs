@@ -212,7 +212,9 @@ mod tests {
     use super::*;
 
     const BASE: &str = "https://chat.example.org";
-    const INSTANCE: &str = "chat.example.org";
+    /// Not part of [`BASE`]: a body holds it only where its text names
+    /// the instance, not by way of a link.
+    const INSTANCE: &str = "gelabber.example.net";
 
     fn links(body: &str) -> Vec<&str> {
         body.split_whitespace()

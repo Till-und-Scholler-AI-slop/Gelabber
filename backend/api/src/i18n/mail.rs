@@ -182,7 +182,9 @@ mod tests {
     use super::*;
 
     const BASE: &str = "https://chat.example.org";
-    const INSTANCE: &str = "chat.example.org";
+    /// Not part of [`BASE`]: a body holds it only where its text names
+    /// the instance, not by way of a link.
+    const INSTANCE: &str = "gelabber.example.net";
 
     fn mails() -> [Mail; 9] {
         [
@@ -242,7 +244,7 @@ mod tests {
         let (subject, body) = render(Locale::De, &mails()[0], BASE, INSTANCE);
         assert_eq!(subject, "Bestätige deine E-Mail-Adresse für Gelabber");
         assert!(body.starts_with(
-            "Hallo,\n\nmit dieser Adresse wurde auf chat.example.org ein Gelabber-Konto angelegt. "
+            "Hallo,\n\nmit dieser Adresse wurde auf gelabber.example.net ein Gelabber-Konto angelegt. "
         ));
         assert!(body.contains("\n\nhttps://chat.example.org/verify-email#token=abc\n\n"));
     }

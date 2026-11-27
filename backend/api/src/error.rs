@@ -422,14 +422,35 @@ mod tests {
     }
 
     #[test]
-    fn oidc_unavailable_is_502_without_fields() {
-        // The other sign-in errors are checked over HTTP (tests/oidc.rs);
-        // no test there can make the provider unreachable.
+    fn oidc_unavailable_is_502() {
+        // The other sign-in errors' statuses are checked over HTTP
+        // (tests/oidc.rs); no flow test makes the provider unreachable.
         let err = ApiError::OidcUnavailable("discovery: timeout".into());
         let json = serde_json::to_value(err.body()).unwrap();
         assert_eq!(json["error"], "oidc_unavailable");
-        assert!(json.get("fields").is_none());
         assert_eq!(err.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    /// Errors that are about no field of the form: a client would mark the
+    /// field a `fields` entry named.
+    #[test]
+    fn errors_about_no_field_carry_no_fields() {
+        for err in [
+            ApiError::AccountDisabled,
+            ApiError::ExportPending,
+            ApiError::ServerBlocked,
+            ApiError::OidcUnavailable("discovery: timeout".into()),
+            ApiError::OidcEmailUnverified,
+            ApiError::OidcAccountUnverified,
+            ApiError::IdentityTaken,
+            ApiError::PasswordRequired,
+            ApiError::ReauthRequired,
+            ApiError::OidcWrongOrigin,
+            ApiError::SessionChanged,
+        ] {
+            let json = serde_json::to_value(err.body()).unwrap();
+            assert!(json.get("fields").is_none(), "{json}");
+        }
     }
 
     #[test]
