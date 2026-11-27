@@ -102,7 +102,8 @@ jobs:
   promote:
     needs: publish
     runs-on: ubuntu-26.04
-    timeout-minutes: 20
+    # Up to 15 of them waiting for publish-minio.yml (minio_source.wait_for).
+    timeout-minutes: 30
     permissions:
       actions: read
       contents: read

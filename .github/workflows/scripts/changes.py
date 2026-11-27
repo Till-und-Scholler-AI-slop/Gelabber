@@ -21,6 +21,8 @@ AREAS = {
     'desktop': ('desktop/', 'rust-toolchain.toml',
                 # theme.rs checks its tokens against the web's (#561).
                 'web/src/theme/tokens.fixture.json',
+                # The packaging tests skip or fail through it (GEL-375).
+                'deploy/compose/tests/prerequisites.py',
                 # The workflows that build, store and release the desktop app.
                 CI, '.github/workflows/desktop-native.yml', '.github/workflows/desktop-release.yml',
                 '.github/workflows/libwebrtc-store.yml', '.github/workflows/scripts/apt-install.sh'),

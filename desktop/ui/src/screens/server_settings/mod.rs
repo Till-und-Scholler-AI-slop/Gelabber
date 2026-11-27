@@ -1681,7 +1681,7 @@ mod tests {
                     if !is_banned {
                         let jonas = json!({
                             "user_id": JONAS, "name": "Jonas", "avatar_url": null,
-                            "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
+                            "role_ids": [], "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
                             "accent_color": null, "avatar_decoration": null, "role": "member"
                         });
                         if let Some(members) = reply.body["members"].as_array_mut() {
@@ -1989,7 +1989,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({
                 "id": Uuid::nil(), "name": "W", "owner_id": Uuid::nil(), "icon_url": null,
                 "created_at": "2026-01-01T00:00:00Z", "role": role,
-                "permissions": perms, "member_permissions": []
+                "permissions": perms, "blocked": false, "member_permissions": []
             }))
             .unwrap()
         };

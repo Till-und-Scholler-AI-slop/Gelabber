@@ -1,0 +1,10 @@
+[package]
+name = "gelabber-testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gelabber desktop tests: what a test does when the machine lacks something it needs"
+publish = false
+
+[dependencies]

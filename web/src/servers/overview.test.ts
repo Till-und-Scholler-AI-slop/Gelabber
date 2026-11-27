@@ -130,8 +130,9 @@ describe("unread messages of a card", () => {
 
 describe("mentions and files", () => {
   it("knows a message that reaches me", () => {
-    expect(mentionsMe({ mentions: ["me"] }, "me")).toBe(true);
-    expect(mentionsMe({ mentions: ["mia"] }, "me")).toBe(false);
+    const none = { mention_everyone: false };
+    expect(mentionsMe({ ...none, mentions: ["me"] }, "me")).toBe(true);
+    expect(mentionsMe({ ...none, mentions: ["mia"] }, "me")).toBe(false);
     expect(mentionsMe({ mentions: [], mention_everyone: true }, "me")).toBe(
       true,
     );

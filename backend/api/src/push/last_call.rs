@@ -24,7 +24,7 @@ use crate::{error::ApiError, i18n, state::AppState};
 const AHEAD: Duration = Duration::from_secs(48 * 3600);
 
 /// How often sessions about to end are looked for.
-const SWEEP_EVERY: Duration = Duration::from_secs(15 * 60);
+pub(crate) const SWEEP_EVERY: Duration = Duration::from_secs(15 * 60);
 
 /// Subscriptions told per sweep step; the next step takes the rest.
 const SWEEP_BATCH: i64 = 200;
@@ -151,6 +151,9 @@ pub async fn sweep(state: &AppState) -> Result<usize, ApiError> {
 }
 
 pub fn start(state: AppState) {
+    let Some(every) = state.workers.last_call else {
+        return;
+    };
     let Some(push) = state.push.as_ref() else {
         return;
     };
@@ -163,8 +166,8 @@ pub fn start(state: AppState) {
     tokio::spawn(async move {
         // The first sweep waits a round: a starting process should not add to
         // the boot rush on the pool, and nothing here is urgent.
-        let first = tokio::time::Instant::now() + SWEEP_EVERY;
-        let mut tick = tokio::time::interval_at(first, SWEEP_EVERY);
+        let first = tokio::time::Instant::now() + every;
+        let mut tick = tokio::time::interval_at(first, every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;

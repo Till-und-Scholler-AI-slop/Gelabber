@@ -101,6 +101,7 @@ const server: ServerDetail = {
   role: "owner",
   permissions: ALL_PERMISSIONS,
   member_permissions: ["send_messages", "send_files", "join_voice", "go_live"],
+  blocked: false,
   categories: [],
   channels: [],
   // Out of position order on purpose: helpers sort by position.

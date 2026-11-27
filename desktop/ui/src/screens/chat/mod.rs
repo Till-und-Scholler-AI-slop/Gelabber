@@ -1004,13 +1004,10 @@ fn row_action(
                 name,
                 text,
             } => {
-                let content =
-                    client.with_state(|s| s.find_message(message).map(|m| m.content.clone()));
                 pane.alt = Some(alt_text::AltDialog::new(
                     alt_text::AltTarget::Sent {
                         message,
                         attachment,
-                        content,
                     },
                     &name,
                     text.as_deref(),
@@ -1437,11 +1434,10 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                 if let alt_text::AltTarget::Sent {
                     message,
                     attachment,
-                    content,
                 } = &dialog.target
                 {
                     let text = alt_text::normalised(&text).unwrap_or_default();
-                    client.edit_alt_text(*message, *attachment, content.as_deref(), &text);
+                    client.edit_alt_text(*message, *attachment, &text);
                     dialog.saving = true;
                 } else {
                     pane.alt = None;
@@ -2083,6 +2079,9 @@ mod page_tests {
         let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
         let _config = TempConfig::new("chat-english");
         let api = FakeApi::start(true, |method, path, _| {
+            if let Some(account) = crate::app::testkit::english_account(method, path) {
+                return Some(account);
+            }
             let mut reply = workspace(method, path)?;
             if let Some(list) = reply
                 .body

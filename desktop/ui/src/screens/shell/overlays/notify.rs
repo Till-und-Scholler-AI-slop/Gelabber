@@ -704,7 +704,7 @@ mod tests {
         let api = FakeApi::start(true, |method, path, _| match (method, path) {
             ("GET", "/notification-settings") => Some(Reply::json(serde_json::json!([{
                 "scope": "channel", "id": ALLGEMEIN, "level": "digest",
-                "muted": false, "muted_until": null
+                "muted": false, "muted_until": null, "voice": false
             }]))),
             _ => workspace(method, path),
         });

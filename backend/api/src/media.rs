@@ -81,6 +81,7 @@ async fn issue_ticket(
         &session,
         state.media_ticket_ttl,
         state.session_ttl,
+        state.media_demand,
     )
     .await?;
 
@@ -118,12 +119,17 @@ fn session_end(session: &CurrentSession, session_ttl: Duration) -> i64 {
         .timestamp()
 }
 
+/// How long one ticket keeps the session's media authority renewed: media
+/// asks for a ticket again well before, while the call goes on.
+pub const MEDIA_DEMAND: Duration = Duration::from_secs(35);
+
 async fn mint(
     redis: &redis::Client,
     claim: TicketClaim,
     session: &CurrentSession,
     ttl: Duration,
     session_ttl: Duration,
+    demand: Duration,
 ) -> Result<(String, u64), ApiError> {
     let mut conn = redis
         .get_multiplexed_async_connection()
@@ -159,6 +165,7 @@ async fn mint(
             .arg(session.key())
             .arg(ends_at)
             .arg(claim.u.to_string())
+            .arg(u64::try_from(demand.as_millis()).unwrap_or(u64::MAX).max(1))
             .invoke_async(&mut conn)
             .await
             .map_err(|err| ApiError::Internal(format!("redis: {err}")))?;
@@ -184,7 +191,7 @@ local now = redis.call('TIME')
 local remaining = tonumber(ARGV[6]) * 1000 - (tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000))
 if remaining <= 0 then return nil end
 redis.call('SET', KEYS[4], ARGV[7], 'PX', math.min(3000, remaining))
-redis.call('SET', KEYS[5], '1', 'EX', 35)
+redis.call('SET', KEYS[5], '1', 'PX', ARGV[8])
 local claim = cjson.decode(ARGV[1])
 claim.auth = {session = ARGV[5], expires_at = tonumber(ARGV[6]),
   member = redis.call('GET', KEYS[2]), channel = redis.call('GET', KEYS[3])}
@@ -346,7 +353,10 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
                 }
                 Ok(Ok(status))
                     if status == "idle"
-                        && state.gateway.media_session_recent(&key, generation).await =>
+                        && state
+                            .gateway
+                            .media_session_recent(&key, generation, state.media_demand)
+                            .await =>
                 {
                     pause = Duration::from_secs(1);
                 }
@@ -550,6 +560,7 @@ mod tests {
             &session,
             state.media_ticket_ttl,
             state.session_ttl,
+            state.media_demand,
         )
         .await
         .unwrap();

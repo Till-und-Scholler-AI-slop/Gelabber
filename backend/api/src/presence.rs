@@ -44,7 +44,7 @@ macro_rules! dnd_active {
 }
 
 /// How often modes that ran out are cleared and announced.
-const SWEEP_EVERY: Duration = Duration::from_secs(15);
+pub(crate) const SWEEP_EVERY: Duration = Duration::from_secs(15);
 
 /// Modes cleared per sweep step; the next step takes the rest.
 const SWEEP_BATCH: i64 = 200;
@@ -293,6 +293,9 @@ pub async fn sweep(state: &AppState) -> Result<usize, ApiError> {
 }
 
 pub fn start(state: AppState) {
+    let Some(every) = state.workers.presence_modes else {
+        return;
+    };
     if state
         .presence_worker_started
         .swap(true, std::sync::atomic::Ordering::AcqRel)
@@ -303,8 +306,8 @@ pub fn start(state: AppState) {
         // The first sweep waits a round: a mode that ran out already reads as
         // automatic, and a starting process should not add to the boot rush
         // on the pool.
-        let first = tokio::time::Instant::now() + SWEEP_EVERY;
-        let mut tick = tokio::time::interval_at(first, SWEEP_EVERY);
+        let first = tokio::time::Instant::now() + every;
+        let mut tick = tokio::time::interval_at(first, every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;

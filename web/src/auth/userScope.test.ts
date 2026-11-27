@@ -62,6 +62,7 @@ const secretServer: Server = {
   role: "owner",
   permissions: [],
   member_permissions: [],
+  blocked: false,
 };
 
 function secretMessage(): Message {
@@ -72,6 +73,9 @@ function secretMessage(): Message {
     content: "secret-from-a",
     created_at: "2026-09-13T00:00:00Z",
     edited_at: null,
+    reactions: [],
+    mentions: [],
+    mention_everyone: false,
     attachments: [],
   };
 }

@@ -258,6 +258,8 @@ function fixture(
           iceCandidates: [],
           dtlsParameters: { fingerprints: [] },
         };
+      if (method === "capabilities")
+        return { codecs: { video: ["video/vp8"], revision: 0 } };
       if (method === "produce")
         return { producerId: "producer-" + ++producerNumber };
       if (method === "restartIce")
@@ -1454,27 +1456,15 @@ describe("public mediasoup connection lifecycle", () => {
     ]);
   });
 
-  it("says nothing for a smooth Live and survives a server without screen modes", async () => {
+  it("says nothing for a smooth Live", async () => {
     const f = fixture();
     await f.start();
     await f.connection.setScreenMode(false);
     await f.connection.publish(publication("s", new Capture("live", "video")));
     expect(f.calls("screenMode")).toEqual([]);
-    // A server without GEL-32 cannot parse the frame and answers bad_request.
-    f.intercept((method) =>
-      method === "screenMode"
-        ? Promise.reject(new MediaError("bad_request"))
-        : undefined,
-    );
-    await expect(f.connection.setScreenMode(true)).resolves.toBeUndefined();
-    expect(f.connection.sender("s")).toBeDefined();
-    expect(f.onError).not.toHaveBeenCalled();
-    // The Live works as before: the refusal counts as told, no retries.
-    await f.connection.setScreenMode(true);
-    expect(f.calls("screenMode")).toHaveLength(1);
   });
 
-  it.each(["request_timeout", "connection_closed"])(
+  it.each(["request_timeout", "connection_closed", "bad_request"])(
     "tells a sharp Live's mode again after a %s",
     async (code) => {
       const f = fixture();
@@ -1488,6 +1478,9 @@ describe("public mediasoup connection lifecycle", () => {
           : undefined,
       );
       await expect(f.connection.setScreenMode(true)).resolves.toBeUndefined();
+      // The Live goes on as it was; the refusal is no error of the call.
+      expect(f.connection.sender("s")).toBeDefined();
+      expect(f.onError).not.toHaveBeenCalled();
       f.intercept(undefined);
       await f.connection.setScreenMode(true);
       await f.connection.setScreenMode(true);
@@ -1704,10 +1697,13 @@ describe("public mediasoup connection lifecycle", () => {
   });
 
   it("rejects a late SDK resolution by elapsed time even before its timer executes", async () => {
-    const f = fixture("voice", 20);
-    await f.start();
+    // The test's clock from the start: on real time, a loaded machine ran
+    // out the 20 ms SDK budget while the connection was still starting.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let elapsed = 0;
     vi.spyOn(performance, "now").mockImplementation(() => elapsed);
+    const f = fixture("voice", 20);
+    await f.start();
     const consumer = new NativeConsumer("consumer-1");
     f.device.transports[0].consume.mockImplementationOnce(async () => {
       elapsed = 21;
@@ -1823,10 +1819,19 @@ describe("public mediasoup connection lifecycle", () => {
   it("accepts more than 64 announced consumers without interrupting existing media", async () => {
     const f = fixture();
     await f.start();
+    // Waits for the last consumer's ready report, not a time limit.
+    let ready = 0;
+    const allReady = new Promise<void>((resolve) =>
+      f.intercept((method) => {
+        if (method === "consumerReady" && ++ready === 100) resolve();
+        return undefined;
+      }),
+    );
     for (let count = 0; count < 100; count++) {
       f.connection.handleEvent(announcement({ consumerId: "many-" + count }));
     }
-    await vi.waitFor(() => expect(f.connection.consumers()).toHaveLength(100));
+    await allReady;
+    expect(f.connection.consumers()).toHaveLength(100);
     expect(f.calls("consumerReady")).toHaveLength(100);
     expect(f.onError).not.toHaveBeenCalled();
     expect(f.device.transports).toHaveLength(1);
@@ -1925,12 +1930,15 @@ describe("the browser SDK's chunk", () => {
   });
 
   it("waits for a slow download outside the SDK operations' budget", async () => {
+    // The test's clock: on real time, a loaded machine could run out the
+    // 20 ms SDK budget after the download, while the device loads.
+    vi.useFakeTimers();
     const f = browser({ sdkTimeoutMs: 20 });
     const chunk = deferred<Sdk>();
     setBrowserSdkImportForTests(() => chunk.promise);
     const started = f.start();
     // Longer than the SDK budget; the chunk then arrives.
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await vi.advanceTimersByTimeAsync(60);
     chunk.resolve(f.sdk);
     await expect(started).resolves.toBeUndefined();
     expect(f.device.load).toHaveBeenCalledOnce();
@@ -1940,10 +1948,13 @@ describe("the browser SDK's chunk", () => {
     const chunk = deferred<Sdk>();
     const load = vi.fn(() => chunk.promise);
     setBrowserSdkImportForTests(load);
+    vi.useFakeTimers();
     const slow = browser({ sdkLoadTimeoutMs: 10 });
-    await expect(slow.start()).rejects.toMatchObject({
+    const gaveUp = expect(slow.start()).rejects.toMatchObject({
       code: "sdk_load_timeout",
     });
+    await vi.advanceTimersByTimeAsync(10);
+    await gaveUp;
     const next = browser();
     chunk.resolve(next.sdk);
     await expect(next.start()).resolves.toBeUndefined();
@@ -2028,14 +2039,15 @@ describe("video codec negotiation", () => {
       .flatMap((transport) => transport.produce.mock.calls)
       .map(([options]) => options);
 
-  it("keeps VP8 when the server does not name codecs", async () => {
-    const f = fixture("voice", undefined, {
-      hardwareVideo: async () => ({ av1: true, h264: true, vp9Svc: false }),
+  it("fails to start when the server names no codecs", async () => {
+    const f = fixture();
+    f.intercept((method) =>
+      method === "capabilities" ? Promise.resolve({}) : undefined,
+    );
+    await expect(f.start()).rejects.toMatchObject({
+      code: "negotiation_failed",
     });
-    f.device.sendRtpCapabilities = withH264;
-    await f.start();
-    await f.connection.publish(publication("v", new Capture("cam", "video")));
-    expect(sent(f)[0].codec?.mimeType).toBe("video/VP8");
+    expect(f.calls("transport")).toEqual([]);
   });
 
   it("sends Constrained Baseline H.264 in three layers with hardware, else VP8", async () => {
@@ -2163,12 +2175,16 @@ describe("video codec negotiation", () => {
     await f.start();
     await f.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(f)[0].codec?.mimeType).toBe("video/AV1");
+    const republished = new Promise<void>((resolve) =>
+      f.onRepublished.mockImplementation(() => resolve()),
+    );
     f.connection.handleEvent({
       op: "codecs",
       video: ["video/vp8", "video/h264"],
       revision: 2,
     });
-    await vi.waitFor(() => expect(f.onRepublished).toHaveBeenCalledTimes(1));
+    await republished;
+    expect(f.onRepublished).toHaveBeenCalledTimes(1);
     expect(sent(f).at(-1)!.codec).toEqual(h264("42e01f"));
     expect(sent(f).at(-1)!.encodings).toHaveLength(3);
     expect(f.onError).not.toHaveBeenCalled();
@@ -2218,13 +2234,17 @@ describe("video codec negotiation", () => {
       publication("sa", sound, { parent: video.producerId }),
     );
     expect(sent(f)[1].codec?.mimeType).toBe("video/H264");
+    const republished = new Promise<void>((resolve) =>
+      f.onRepublished.mockImplementation(() => resolve()),
+    );
     // Someone joins who decodes VP8 only.
     f.connection.handleEvent({
       op: "codecs",
       video: ["video/vp8"],
       revision: 2,
     });
-    await vi.waitFor(() => expect(f.onRepublished).toHaveBeenCalledTimes(1));
+    await republished;
+    expect(f.onRepublished).toHaveBeenCalledTimes(1);
     const again = sent(f).slice(3);
     expect(again.map((options) => options.track)).toEqual([
       screen.native(),

@@ -1290,9 +1290,9 @@ mod drawn {
                     {"id": HOME, "name": "Wohnzimmer", "member_count": 5}
                 ]}),
             )),
-            ("GET", "/auth/session") if flag.load(Ordering::SeqCst) => {
-                Some(Reply::json(json!({"user": null, "csrf_token": "n"})))
-            }
+            ("GET", "/auth/session") if flag.load(Ordering::SeqCst) => Some(Reply::json(
+                json!({"user": null, "csrf_token": "n", "operator": false}),
+            )),
             _ => page(method, path),
         });
         let mut h = launcher(&api, "/settings/konto");
