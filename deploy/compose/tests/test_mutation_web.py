@@ -324,9 +324,11 @@ class Decide(unittest.TestCase):
 
 
 class FakeGitHub:
-    """`gh` for issue(): issues and the earlier scheduled runs' states;
-    `gh issue list` honours --limit and returns the newest first, as
-    `sort:created-desc` asks."""
+    """`gh` for issue(): issues and the earlier scheduled runs' states.
+    `gh issue list` honours --limit and `author:` and returns the newest
+    first, as `sort:created-desc` asks; an issue without `author` is the
+    workflow's. A view is a state, or (state, title). A state that is a
+    string is written as it is (malformed JSON)."""
 
     def __init__(self, issues=(), states=(), views=None):
         self.issues, self.states, self.views, self.calls = list(issues), dict(states), views, []
@@ -337,19 +339,27 @@ class FakeGitHub:
         if args[:3] == ('gh', 'issue', 'list'):
             newest = sorted(self.issues, key=lambda i: -i['number'])
             hits = [i for i in newest if mutation_web.TITLE.lower() in i['title'].lower()]
-            return json.dumps(hits[:int(value('--limit'))])
+            if 'author:app/github-actions' in value('--search'):
+                hits = [i for i in hits if i.get('author', 'app/github-actions') == 'app/github-actions']
+            return json.dumps([{k: v for k, v in i.items() if k != 'author'} for i in hits[:int(value('--limit'))]])
         if args[:3] == ('gh', 'issue', 'view'):
             if self.views is None or int(args[3]) not in self.views:
                 raise subprocess.CalledProcessError(1, args, stderr='Could not resolve to an issue')
-            return json.dumps({'number': int(args[3]), 'state': self.views[int(args[3])]})
+            view = self.views[int(args[3])]
+            state, title = view if isinstance(view, tuple) else (view, mutation_web.TITLE)
+            return json.dumps({'number': int(args[3]), 'state': state, 'title': title})
         if args[:3] == ('gh', 'run', 'list'):
+            # Only this workflow's scheduled runs that passed may hand on a state.
+            assert (value('--workflow'), value('--event'), value('--status')) == \
+                ('mutation-web.yml', 'schedule', 'success'), args
             return json.dumps([{'databaseId': run_id} for run_id in sorted(self.states, reverse=True)])
         if args[:3] == ('gh', 'run', 'download'):
             state = self.states.get(int(args[3]))
             if state is None:
                 raise subprocess.CalledProcessError(1, args, stderr='no valid artifacts found to download')
             Path(value('--dir')).mkdir(parents=True, exist_ok=True)
-            Path(value('--dir'), mutation_web.STATE_FILE).write_text(json.dumps(state))
+            Path(value('--dir'), mutation_web.STATE_FILE).write_text(state if isinstance(state, str)
+                                                                    else json.dumps(state))
             return ''
         if args[:3] == ('gh', 'issue', 'create'):
             return 'https://github.com/o/r/issues/9\n'
@@ -424,6 +434,49 @@ class Issue(unittest.TestCase):
         state, _ = self.run_issue(fake, over)
         self.assertEqual(fake.writes(), [])
         self.assertEqual(state, {'issue': 7, 'keys': KEYS})
+
+    def test_a_lost_state_stays_lost_across_a_run_over_the_limits(self):
+        mine = {'number': 8, 'title': mutation_web.TITLE, 'state': 'OPEN'}
+        over = {**INFO, 'count': 0, 'survived': 0, 'unreached': 0, 'keys': [], 'files': 0, 'skipped': 1}
+        fake = FakeGitHub(issues=[mine])
+        state, _ = self.run_issue(fake, over)
+        self.assertEqual((fake.writes(), state), ([], {'issue': 8, 'keys': None}))
+        # The next normal run: the state is still lost, so it updates the list and pings nobody.
+        fake = FakeGitHub(issues=[mine], states={99: state}, views={8: 'OPEN'})
+        state, out = self.run_issue(fake)
+        self.assertEqual(fake.writes(), [('gh', 'issue', 'edit', '8')])
+        self.assertIn('last state: none', out)
+        self.assertEqual(state, {'issue': 8, 'keys': KEYS})
+
+    def test_a_bad_newest_state_is_a_lost_state_not_an_older_one(self):
+        mine = {'number': 7, 'title': mutation_web.TITLE, 'state': 'CLOSED'}
+        older = {'issue': 7, 'keys': []}
+        for newest in ({'issue': '7', 'keys': KEYS[:2]}, {'issue': 7, 'keys': 'x'}, {'issue': 7, 'keys': [1]},
+                       {'issue': True, 'keys': KEYS[:2]}, '{"issue": 7, "keys": [', None):
+            with self.subTest(newest=newest):
+                fake = FakeGitHub(issues=[mine], states={99: newest, 98: older}, views={7: 'CLOSED'})
+                state, out = self.run_issue(fake)
+                self.assertEqual(fake.writes(), [])
+                self.assertIn('#7 (closed); last state: none', out)
+                self.assertEqual(state, {'issue': 7, 'keys': KEYS})
+                self.assertNotIn(('gh', 'run', 'download', '98'), [args[:4] for args, _ in fake.calls])
+
+    def test_only_this_workflows_issue_is_taken(self):
+        # A number that now names another issue (transferred, or wrong): the title search decides.
+        fake = FakeGitHub(issues=[{'number': 5, 'title': mutation_web.TITLE, 'state': 'OPEN'}],
+                          states={99: {'issue': 7, 'keys': KEYS}}, views={7: ('OPEN', 'Something else')})
+        state, out = self.run_issue(fake)
+        self.assertEqual(fake.writes(), [])
+        self.assertIn('#5 (open); last state: 3 mutant keys', out)
+        self.assertEqual(state['issue'], 5)
+        self.assertIn('author:app/github-actions', [args[args.index('--search') + 1] for args, _ in fake.calls
+                                                    if args[:3] == ('gh', 'issue', 'list')][0])
+        # A stranger's newer issue with the same title is not adopted.
+        stranger = {'number': 12, 'title': mutation_web.TITLE, 'state': 'OPEN', 'author': 'someone'}
+        fake = FakeGitHub(issues=[stranger, {'number': 4, 'title': mutation_web.TITLE, 'state': 'CLOSED'}])
+        _, out = self.run_issue(fake)
+        self.assertIn('#4 (closed)', out)
+        self.assertEqual(fake.writes(), [])
 
     def test_a_dry_run_only_reads(self):
         fake = FakeGitHub(states={99: {'issue': 7, 'keys': KEYS[:2]}}, views={7: 'CLOSED'})

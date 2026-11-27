@@ -26,10 +26,12 @@ the artifact of the newest earlier scheduled run, not in the issue body,
 which the Linear sync may rewrite; STATE_OUT is this run's. Mutants not in
 the last state are new. It opens the issue, reopens a closed one only for
 new mutants, comments only on new ones and updates the list silently when
-mutants only went away, and closes it when none is left. Without a state
-(none kept, or expired) it finds the issue by its title and counts every
-mutant as known, so a lost state cannot reopen or ping. When every changed
-file was over the limits it does nothing and keeps the last state.
+mutants only went away, and closes it when none is left. Only the newest
+earlier scheduled run's state counts. Without one (none kept, expired or
+malformed) it takes the newest issue with TITLE that this workflow opened
+and counts every mutant as known, so a lost state cannot reopen or ping.
+When every changed file was over the limits it does nothing and passes the
+last state on as it was, lost included.
 `--dry-run` reads and prints what it would do instead.
 """
 from collections import Counter
@@ -431,46 +433,50 @@ def decide(existing, info, known, run_url):
 
 
 def find_issue(repo):
-    """The newest issue titled TITLE, open or closed."""
+    """The newest issue titled TITLE that this workflow opened, open or
+    closed: in a public repository anyone can open one with that title."""
     found = json.loads(run('gh', 'issue', 'list', '--repo', repo, '--state', 'all', '--limit', '20',
-                           '--search', f'in:title "{TITLE}" sort:created-desc', '--json', 'number,title,state'))
+                           '--search', f'in:title "{TITLE}" author:app/github-actions sort:created-desc',
+                           '--json', 'number,title,state'))
     match = [item for item in found if item['title'] == TITLE]
     return max(match, key=lambda item: item['number']) if match else None
 
 
 def issue_state(repo, number):
-    """The issue the last state names, or None when it cannot be read."""
+    """The issue the last state names, or None when it cannot be read or
+    is not this workflow's (a wrong or transferred number)."""
     try:
-        data = json.loads(run('gh', 'issue', 'view', str(number), '--repo', repo, '--json', 'number,state'))
+        data = json.loads(run('gh', 'issue', 'view', str(number), '--repo', repo, '--json', 'number,state,title'))
     except subprocess.CalledProcessError:
         return None
-    return data if data.get('number') == number else None
+    return data if data.get('number') == number and data.get('title') == TITLE else None
 
 
 def previous_state(repo, run_id, work):
-    """{issue, keys} that the newest earlier scheduled run kept in its
-    artifact STATE_ARTIFACT, or None (none kept, or expired after
-    STATE_DAYS)."""
+    """{issue, keys} that the newest earlier successful scheduled run kept in
+    its artifact STATE_ARTIFACT, or None: none kept, expired after
+    STATE_DAYS, unreadable, or a lost state passed on (`keys` null). Only that
+    run counts: an older state would make mutants new that are not."""
     try:
         runs = json.loads(run('gh', 'run', 'list', '--repo', repo, '--workflow', 'mutation-web.yml',
                               '--event', 'schedule', '--status', 'success', '--limit', '5',
                               '--json', 'databaseId'))
     except subprocess.CalledProcessError:
         return None
-    for item in runs:
-        if str(item['databaseId']) == str(run_id):
-            continue
-        folder = Path(work) / str(item['databaseId'])
-        try:
-            run('gh', 'run', 'download', str(item['databaseId']), '--repo', repo, '--name', STATE_ARTIFACT,
-                '--dir', str(folder))
-            state = json.loads((folder / STATE_FILE).read_text(encoding='utf-8'))
-        except (subprocess.CalledProcessError, OSError, ValueError):
-            continue
-        if (isinstance(state, dict) and isinstance(state.get('keys'), list)
-                and all(isinstance(key, str) for key in state['keys'])
-                and (state.get('issue') is None or isinstance(state['issue'], int))):
-            return state
+    earlier = [item['databaseId'] for item in runs if str(item['databaseId']) != str(run_id)]
+    if not earlier:
+        return None
+    folder = Path(work) / str(earlier[0])
+    try:
+        run('gh', 'run', 'download', str(earlier[0]), '--repo', repo, '--name', STATE_ARTIFACT,
+            '--dir', str(folder))
+        state = json.loads((folder / STATE_FILE).read_text(encoding='utf-8'))
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        return None
+    if (isinstance(state, dict) and isinstance(state.get('keys'), list)
+            and all(isinstance(key, str) for key in state['keys'])
+            and (state.get('issue') is None or type(state['issue']) is int)):
+        return state
     return None
 
 
@@ -505,8 +511,9 @@ def issue(info_path, dry_run, state_out):
         else:
             run('gh', 'issue', action, str(target_number), '--repo', repo)
             print(f'#{target_number}: {action}')
-    # Every changed file over the limits measured nothing: keep the last list.
-    keys = known if info['files'] == 0 and info['skipped'] and known is not None else info['keys']
+    # Every changed file over the limits measured nothing: keep the last list,
+    # or pass a lost state on as lost (null), so the next run pings nobody.
+    keys = known if info['files'] == 0 and info['skipped'] else info['keys']
     Path(state_out).parent.mkdir(parents=True, exist_ok=True)
     Path(state_out).write_text(json.dumps({'issue': number, 'keys': keys}) + '\n', encoding='utf-8')
 
