@@ -1148,6 +1148,22 @@ mod tests {
         assert!(count_guess(&limiter, &no_ceiling, "ada@example.com", other).is_err());
     }
 
+    /// The count of failed guesses runs for its whole window: an address
+    /// that used up its guesses is still refused minutes later, not after a
+    /// pause of a few seconds.
+    #[test]
+    fn a_guesser_out_of_guesses_stays_refused_for_minutes() {
+        let limiter = Limiter::new();
+        let limits = login_limits(2, 0);
+        let guesser = Guesser::Address("203.0.113.9");
+        let own = count_guess(&limiter, &limits, "ada@example.com", guesser)
+            .unwrap()
+            .own;
+        let _ = count_guess(&limiter, &limits, "ada@example.com", guesser).unwrap();
+        let later = Instant::now() + 10 * MINUTE;
+        assert!(limiter.blocked_at("login", &own, 2, later).is_some());
+    }
+
     /// One delegated /56 is one guesser; another /56 is not.
     #[test]
     fn login_guessers_group_ipv6_per_56() {

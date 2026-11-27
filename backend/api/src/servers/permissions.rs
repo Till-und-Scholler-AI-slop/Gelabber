@@ -204,6 +204,22 @@ mod tests {
     }
 
     #[test]
+    fn a_flag_granted_twice_stays_granted() {
+        // The base role and a member's role may both grant a flag, and a
+        // role body may name one twice: the member keeps it either way.
+        let role = Permissions::NONE
+            .with(Permission::SendMessages)
+            .with(Permission::ModerateMembers);
+        let member = Permissions::DEFAULT_MEMBER.union(role);
+        assert!(member.contains(Permission::SendMessages));
+        assert!(member.contains(Permission::ModerateMembers));
+        assert_eq!(
+            Permissions::from_names(&["send_messages", "send_messages"]),
+            Ok(Permissions::NONE.with(Permission::SendMessages))
+        );
+    }
+
+    #[test]
     fn serialises_as_name_array_and_masks_unknown_bits() {
         let json = serde_json::to_value(Permissions::from(1 | 4 | 1024)).unwrap();
         assert_eq!(json, serde_json::json!(["manage_server", "send_messages"]));
