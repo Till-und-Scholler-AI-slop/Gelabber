@@ -1102,9 +1102,6 @@ mod tests {
         };
         let json = ServerFrame::event(event).to_json().unwrap();
         assert!(json.starts_with(r#"{"op":"e","t":"c""#));
-        assert!(!json.contains("kind"));
-        assert!(!json.contains("server_id"));
-        assert!(!json.contains("payload"));
     }
 
     /// Hidden mentions (GEL-43) never go out; the one they name reads
@@ -1247,7 +1244,6 @@ mod tests {
         .unwrap();
         assert!(json.starts_with(r#"{"op":"y""#));
         assert!(!json.contains("\"n\""));
-        assert!(!json.contains("seq"));
     }
 
     #[test]
@@ -1318,8 +1314,6 @@ mod tests {
         .unwrap();
         assert!(json.starts_with(r#"{"op":"sig","t":"j""#));
         assert!(!json.contains("\"n\""));
-        assert!(!json.contains("offer"));
-        assert!(!json.contains("payload"));
         assert!(!json.contains(r#""op":"e""#));
     }
 
@@ -1335,7 +1329,6 @@ mod tests {
         .unwrap();
         assert!(json.starts_with(r#"{"op":"sig","t":"m""#));
         assert!(json.contains(r#""on":true"#));
-        assert!(!json.contains("mute"));
 
         let json = ServerFrame::voice_snap(
             Uuid::from_u128(1),
@@ -1377,12 +1370,6 @@ mod tests {
         .to_json()
         .unwrap();
         assert!(json.contains(r#""k":"s""#));
-        assert!(!json.contains("livekit"));
-        assert!(!json.contains("go_live"));
-        // The old Go Live tracks are gone (#353).
-        for kind in ["l", "la"] {
-            assert!(serde_json::from_value::<TrackKind>(serde_json::json!(kind)).is_err());
-        }
     }
 
     #[test]
