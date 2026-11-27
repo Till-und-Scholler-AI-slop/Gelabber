@@ -25,6 +25,9 @@ enum Command {
     Show(Notice),
     Close(String, bool),
     Clear(mpsc::Sender<()>),
+    /// Answered once the commands before it are done.
+    #[cfg(test)]
+    Settled(mpsc::Sender<()>),
 }
 
 #[derive(Default)]
@@ -320,6 +323,10 @@ fn work(
                 }
                 let _ = done.send(());
             }
+            #[cfg(test)]
+            Command::Settled(done) => {
+                let _ = done.send(());
+            }
         }
     }
 }
@@ -438,10 +445,20 @@ mod tests {
         }
     }
 
-    /// The user clicks notification 7, after another app's notification 3.
-    fn click(service: &Connection) {
-        // After the answer to Notify, as a real click comes.
-        std::thread::sleep(Duration::from_millis(200));
+    /// Waits until the backend's worker has done the commands sent before.
+    fn settled(backend: &Backend, what: &str) {
+        let (done, settled) = mpsc::channel();
+        backend.send(Command::Settled(done));
+        settled
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap_or_else(|e| panic!("timed out waiting for {what}: {e}"));
+    }
+
+    /// The user clicks notification 7, after another app's notification 3,
+    /// once the backend has taken the answer to Notify, as a real click
+    /// comes after the notification is shown.
+    fn click(backend: &Backend, service: &Connection) {
+        settled(backend, "the backend to take the answer to Notify");
         let emit = |member: &str, id: u32, text: &str| {
             service
                 .emit_signal(None::<&str>, PATH, SERVICE, member, &(id, text))
@@ -512,12 +529,14 @@ mod tests {
             panic!("not a notification");
         };
         assert_eq!(replaces, 7);
-        click(&service);
+        click(&backend, &service);
         assert_eq!(
             reported.recv_timeout(wait).unwrap(),
             ("gelabber:u1:c1".to_owned(), Some("token-1".to_owned()))
         );
-        assert!(reported.recv_timeout(Duration::from_millis(300)).is_err());
+        // One listener thread handles the signals in order and reports at
+        // once: a second report would already be here.
+        assert!(reported.try_recv().is_err());
         // Clicked means gone; a close of the account takes the next one down.
         backend.show(notice("Anna", "noch was")).unwrap();
         let Call::Notify { replaces, .. } = called.recv_timeout(wait).unwrap() else {
@@ -528,7 +547,10 @@ mod tests {
         backend.close("gelabber:u1:", true);
         assert_eq!(called.recv_timeout(wait).unwrap(), Call::Close(7));
         backend.clear();
-        assert!(called.recv_timeout(Duration::from_millis(300)).is_err());
+        // The worker's closes are calls the service has answered once the
+        // commands before Settled are done.
+        settled(&backend, "the backend to finish clearing");
+        assert!(called.try_recv().is_err());
     }
 
     #[test]
