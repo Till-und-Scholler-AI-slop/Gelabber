@@ -119,6 +119,13 @@ jobs:
             python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
           fi
 
+      # Deleted or loosened assertions, skips, raised limits, sleeps and
+      # retries, for the reviewer (GEL-387); a report, never a gate.
+      - name: Test edits to look at
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: python3 .github/workflows/scripts/test_edits.py HEAD^1 HEAD
+
       - name: Record the tested tree
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
