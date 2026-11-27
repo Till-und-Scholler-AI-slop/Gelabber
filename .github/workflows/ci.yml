@@ -122,6 +122,20 @@ jobs:
             python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
           fi
 
+      # Deleted or loosened assertions, skips, raised limits, sleeps and retries (GEL-387);
+      # the base branch's copy, so a pull request cannot switch its own report off.
+      - name: Test edits to look at
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 1
+        run: |
+          script=.github/workflows/scripts/edited_tests.py
+          if git cat-file -e "HEAD^1:$script" 2>/dev/null; then
+            git show "HEAD^1:$script" | python3 - HEAD^1 HEAD
+          else
+            python3 "$script" HEAD^1 HEAD
+          fi
+
       - name: Record the tested tree
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
