@@ -10,9 +10,11 @@ and `media-faults` in Chromium and Firefox, the profiles `core`, `media` and
 version branch that touch `backend/` or `web/`, on release and hotfix pull
 requests to `main`, and by hand. After a push run the issue "Extended E2E
 fails on <branch>" is opened or updated when the run is red and closed when it
-is green again (GEL-378). The same workflow runs `chat-workflows.mjs` and
-`../smoke-pwa.mjs`. The rest of this file records how the scenarios came
-about.
+is green again (GEL-378). The same workflow runs the browser checks against a
+running app (`server-checks.mjs`: `chat-workflows.mjs`, `search-context.mjs`,
+`webapp-accessibility.mjs` and four smokes) and `../smoke-pwa.mjs`;
+`../README.md` lists every script. The rest of this file records how the
+scenarios came about.
 
 A profile can list scenarios known to fail (`expectedFailures`: id ->
 `{ issue, reason, site? }`). Such a scenario that fails with that reason (and
