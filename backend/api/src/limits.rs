@@ -1006,6 +1006,7 @@ mod tests {
             (Method::PUT, "/api/feedback/images"),
             (Method::POST, "/api/feedback/x/messages"),
             (Method::POST, "/api/me/avatar"),
+            (Method::PUT, "/api/servers/x/read"),
         ] {
             assert!(!is_upload(&method, path), "{method} {path}");
         }
