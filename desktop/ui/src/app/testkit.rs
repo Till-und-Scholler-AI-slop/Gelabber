@@ -7,7 +7,16 @@
 //! checks where it lands ([`click`], [`click_node`]). With
 //! `GELABBER_TEST_API_DELAY_MS` set, every answer comes that much later: a
 //! test that clicks too early then fails every time instead of once in a
-//! while.
+//! while. Run the whole-app tests so:
+//!
+//! `GELABBER_TEST_API_DELAY_MS=400 cargo test --manifest-path desktop/Cargo.toml -p gelabber-ui --lib`
+//!
+//! Idle ([`wait_until_idle`]) knows the stand-in's requests, the client's
+//! requests and its timers for later work (`Client::scheduled`: retries,
+//! the unread debounce), and the images loading. It does not know the
+//! client's 400 ms ticker (typing, idle) or a page's own delay before it
+//! asks (`request_repaint_after`: the chat search, the GIF picker, the
+//! directory's search). A test of those waits for what it expects to see.
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -86,18 +95,44 @@ fn answer_delay() -> Option<Duration> {
     (ms > 0).then(|| Duration::from_millis(ms))
 }
 
+/// The stand-in API of the app this test thread launched last
+/// ([`launcher`], [`FakeApi::watch`]): its requests in flight and its log.
+struct Watched {
+    answering: Arc<AtomicUsize>,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
 thread_local! {
-    /// The requests in flight at the stand-in API of the app this test
-    /// thread launched last ([`launcher`], [`FakeApi::watch`]).
-    static ANSWERING: RefCell<Option<Arc<AtomicUsize>>> = const { RefCell::new(None) };
+    static WATCHED: RefCell<Option<Watched>> = const { RefCell::new(None) };
 }
 
 fn answering() -> usize {
-    ANSWERING.with(|a| {
-        a.borrow()
+    WATCHED.with(|w| {
+        w.borrow()
             .as_ref()
-            .map_or(0, |count| count.load(Ordering::SeqCst))
+            .map_or(0, |w| w.answering.load(Ordering::SeqCst))
     })
+}
+
+/// The last requests the stand-in saw, for a failure's message.
+fn last_seen() -> String {
+    WATCHED.with(|w| {
+        w.borrow().as_ref().map_or_else(String::new, |w| {
+            let seen = w.seen.lock();
+            let from = seen.len().saturating_sub(12);
+            format!("; the stand-in saw last: {:?}", &seen[from..])
+        })
+    })
+}
+
+/// Work on its way that the next frames depend on: requests, the client's
+/// timers and images.
+fn pending(harness: &mut Harness<'_, Launcher>) -> bool {
+    let scheduled = harness
+        .state_mut()
+        .app()
+        .is_some_and(|app| app.client().scheduled() > 0);
+    answering() > 0 || scheduled || harness.state().busy()
 }
 
 /// Counts a request as in flight until it is answered or the connection ends.
@@ -145,7 +180,12 @@ impl FakeApi {
     /// Makes [`wait_until_idle`] on this thread wait for this API's answers;
     /// [`launcher`] does it, a harness built by hand calls it.
     pub fn watch(&self) {
-        ANSWERING.with(|a| *a.borrow_mut() = Some(self.answering.clone()));
+        WATCHED.with(|w| {
+            *w.borrow_mut() = Some(Watched {
+                answering: self.answering.clone(),
+                seen: self.seen.clone(),
+            })
+        });
     }
 
     pub fn saw(&self, request: &str) -> bool {
@@ -381,9 +421,18 @@ fn step_until<'h>(
             Ok(()) => return,
             Err(why) => why,
         };
-        assert!(start.elapsed() < PATIENCE, "timed out waiting for {why}");
+        assert!(
+            start.elapsed() < PATIENCE,
+            "timed out waiting for {why}{}",
+            last_seen()
+        );
         harness.step();
-        std::thread::sleep(Duration::from_millis(10));
+        // Real time only for work on other threads; frames alone need none.
+        if pending(harness) {
+            std::thread::sleep(Duration::from_millis(10));
+        } else {
+            std::thread::yield_now();
+        }
     }
 }
 
@@ -452,7 +501,7 @@ pub fn wait_until_idle(harness: &mut Harness<'_, Launcher>) {
     step_until(harness, |h| {
         let print = fingerprint(h);
         let answering = answering();
-        let busy = h.state().busy();
+        let busy = pending(h);
         // Frames count as still only once nothing is on its way: an answer
         // that just came in changes the tree on a later frame.
         still = if answering == 0 && !busy && last.replace(print) == Some(print) {
@@ -466,7 +515,7 @@ pub fn wait_until_idle(harness: &mut Harness<'_, Launcher>) {
                 "the app to settle: {answering} requests at the stand-in API"
             ))
         } else if busy {
-            Err("the app to settle: the client is busy".into())
+            Err("the app to settle: the client is busy or has a timer set".into())
         } else if still < STILL_FRAMES {
             Err("the app to settle: the tree keeps changing".into())
         } else {
@@ -549,25 +598,40 @@ pub fn click_now(
         .unwrap_or_else(|| panic!("{what} at {rect:?} went away under the pointer"));
     assert_eq!(node.rect(), rect, "{what} moved under the pointer");
     let around = with_ancestors(&node);
+    let disabled = node.accesskit_node().is_disabled();
+    let inside: Vec<egui::accesskit::NodeId> = harness
+        .query_all(By::new())
+        .filter(|n| with_ancestors(n)[1..].contains(&id))
+        .map(id_of)
+        .collect();
+    // Whether the node takes a click itself, in the frame the press is
+    // checked against.
+    let clickable = harness.ctx.viewport(|v| {
+        v.prev_pass.widgets.layers().any(|(_, widgets)| {
+            widgets
+                .iter()
+                .any(|w| w.id.accesskit_id() == id && w.sense.senses_click())
+        })
+    });
+    node.click();
+    harness.step();
+    // What egui gave the press: the node or one in it; one it lies in only
+    // when the node takes no click itself (a label in a row, a disabled
+    // button).
     let hit = harness
         .ctx
         .viewport(|v| v.hits.click.map(|w| w.id.accesskit_id()));
+    let lands = hit.is_some_and(|hit| {
+        hit == id || inside.contains(&hit) || ((!clickable || disabled) && around.contains(&hit))
+    });
     let hit_node = hit.and_then(|hit| node_by_id(harness, hit));
-    // A disabled control takes no click: the one under it does, and it must
-    // be one the control lies in, not a neighbour.
-    let lands = hit.is_some_and(|hit| around.contains(&hit))
-        || hit_node.is_some_and(|n| with_ancestors(&n).contains(&id))
-        || (node.accesskit_node().is_disabled()
-            && hit_node.is_some_and(|n| n.rect().contains_rect(rect)));
     if !lands {
         let other = hit_node.map(|n| format!("{:?} at {:?}", n.accesskit_node().label(), n.rect()));
         panic!(
-            "a click on {what} at {rect:?} would land on {}",
+            "the click on {what} at {rect:?} landed on {}",
             other.unwrap_or_else(|| format!("{hit:?}"))
         );
     }
-    node.click();
-    harness.step();
 }
 
 /// The accesskit id of `node`, for a [`click_node`] pick.
