@@ -56,8 +56,10 @@ const SETTLE_SECS: f64 = 3.0;
 enum Write {
     /// "Neue Rolle", with the name it sent.
     Create(String),
-    /// Colour or permissions.
-    Role(Uuid, u64),
+    /// A role's permissions; each write sends the whole list.
+    Permissions(Uuid, u64),
+    /// A role's colour, sent alone.
+    Color(Uuid, u64),
     Rename(Uuid, u64),
     Delete(Uuid),
     /// A member's roles, by user.
@@ -71,7 +73,9 @@ impl Write {
     fn key(&self, server: Uuid) -> String {
         match self {
             Self::Create(_) => format!("create_role:{server}"),
-            Self::Role(id, seq) | Self::Rename(id, seq) => format!("role:{id}:{seq}"),
+            Self::Permissions(id, seq) | Self::Color(id, seq) | Self::Rename(id, seq) => {
+                format!("role:{id}:{seq}")
+            }
             Self::Delete(id) => format!("delete_role:{id}"),
             Self::Member(user, seq) => format!("member_roles:{user}:{seq}"),
             Self::Base(seq) => format!("server_update:{server}:{seq}"),
@@ -81,9 +85,11 @@ impl Write {
     /// The number of a quick write.
     fn seq(&self) -> Option<u64> {
         match self {
-            Self::Role(_, seq) | Self::Rename(_, seq) | Self::Member(_, seq) | Self::Base(seq) => {
-                Some(*seq)
-            }
+            Self::Permissions(_, seq)
+            | Self::Color(_, seq)
+            | Self::Rename(_, seq)
+            | Self::Member(_, seq)
+            | Self::Base(seq) => Some(*seq),
             Self::Create(_) | Self::Delete(_) => None,
         }
     }
@@ -91,9 +97,9 @@ impl Write {
     /// Whether `other` writes the same value ahead of the server.
     fn same_value(&self, other: &Write) -> bool {
         match (self, other) {
-            (Self::Role(a, _), Self::Role(b, _)) | (Self::Member(a, _), Self::Member(b, _)) => {
-                a == b
-            }
+            (Self::Permissions(a, _), Self::Permissions(b, _))
+            | (Self::Color(a, _), Self::Color(b, _))
+            | (Self::Member(a, _), Self::Member(b, _)) => a == b,
             (Self::Base(_), Self::Base(_)) => true,
             _ => false,
         }
@@ -130,6 +136,9 @@ pub(super) struct Roles {
     /// Refused writes that only older writes of the same value were still
     /// waiting on: an older one's success afterwards is not theirs.
     refused: Vec<Write>,
+    /// The newest accepted write of a value while older ones of it are
+    /// still on their way: the server holds its value, with their changes.
+    accepted: Vec<Write>,
     /// The member whose picker is open.
     pub(super) picker: Option<Uuid>,
 }
@@ -346,23 +355,33 @@ fn settle(
     // change too: the value stays ahead until the last one answers.
     let last = !r.writes.iter().any(|w| w.same_value(&write));
     // Answers can come in out of order (GEL-408). Each write sends the whole
-    // value, so a newer write carries the changes of the older ones. A
-    // refusal that only older writes are still waiting on is kept: their
-    // success afterwards does not say "Gespeichert" or keep the value. A
-    // newer write's success carries the refused change again.
+    // value, so a newer write carries the changes of the older ones:
+    // - a refusal that only older writes are still waiting on is kept, and
+    //   their success afterwards does not say "Gespeichert" or keep it; a
+    //   newer write's success carries the refused change again;
+    // - the refusal of a write older than one the server took is moot: it
+    //   settles as that success did.
     let same = |w: &&Write| w.same_value(&write);
     let newer = |w: &&Write| w.seq() > write.seq();
     let pending_newer = r.writes.iter().filter(same).any(|w| newer(&w));
+    let moot = outcome.is_err() && r.accepted.iter().filter(same).any(|w| newer(&w));
     if outcome.is_ok() {
         r.refused
             .retain(|w| !(w.same_value(&write) && w.seq() < write.seq()));
-    } else if !last && !pending_newer {
+        if !last && !r.accepted.iter().filter(same).any(|w| newer(&w)) {
+            r.accepted.retain(|w| !w.same_value(&write));
+            r.accepted.push(write.clone());
+        }
+    } else if !moot && !last && !pending_newer {
         r.refused.push(write.clone());
     }
     let refused = r.refused.iter().filter(same).any(|w| newer(&w));
     if last {
         r.refused.retain(|w| !w.same_value(&write));
+        r.accepted.retain(|w| !w.same_value(&write));
     }
+    let ok = Ok(());
+    let outcome = if moot { &ok } else { outcome };
     let saved = last && !refused;
     match (write, outcome) {
         (Write::Create(name), Ok(())) => {
@@ -380,25 +399,38 @@ fn settle(
             app.toasts
                 .failure(servers::error_role_not_created(), None, e)
         }
-        (Write::Role(id, _), Ok(())) if last && refused => {
+        (Write::Permissions(id, _), Ok(())) if last && refused => {
             r.permissions.remove(&id);
+        }
+        (Write::Color(id, _), Ok(())) if last && refused => {
             r.colors.remove(&id);
         }
-        (Write::Role(id, _), Ok(())) => {
+        (Write::Permissions(id, _), Ok(())) => {
             if saved {
                 r.status.success(ui, common::saved());
                 if let Some(a) = r.permissions.get_mut(&id) {
                     a.settled = Some(now);
                 }
+            }
+        }
+        (Write::Color(id, _), Ok(())) => {
+            if saved {
+                r.status.success(ui, common::saved());
                 if let Some(a) = r.colors.get_mut(&id) {
                     a.settled = Some(now);
                 }
             }
         }
         (Write::Rename(..), Ok(())) => r.status.success(ui, common::saved()),
-        (Write::Role(id, _), Err(e)) => {
+        (Write::Permissions(id, _), Err(e)) => {
             if last {
                 r.permissions.remove(&id);
+            }
+            r.status.error(ui, common::not_saved());
+            app.toasts.failure(servers::error_role_not_saved(), None, e);
+        }
+        (Write::Color(id, _), Err(e)) => {
+            if last {
                 r.colors.remove(&id);
             }
             r.status.error(ui, common::not_saved());
@@ -850,7 +882,7 @@ fn custom_panel(
         r.status.clear();
         r.colors.insert(role.id, Ahead::new(color));
         let seq = r.next();
-        r.track(app, server, Write::Role(role.id, seq));
+        r.track(app, server, Write::Color(role.id, seq));
         app.client.update_role(
             server,
             role.id,
@@ -876,7 +908,7 @@ fn custom_panel(
         r.status.clear();
         r.permissions.insert(role.id, Ahead::new(next.clone()));
         let seq = r.next();
-        r.track(app, server, Write::Role(role.id, seq));
+        r.track(app, server, Write::Permissions(role.id, seq));
         app.client.update_role(
             server,
             role.id,

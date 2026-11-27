@@ -14,6 +14,7 @@ import {
   synchronizeSharedSession,
   type SessionSinkOptions,
 } from "../api/client.ts";
+import { isUser, whole } from "../api/wire.ts";
 import { translate } from "../i18n/catalog.ts";
 import { auth } from "../i18n/catalogs/auth.ts";
 import { currentLocale } from "../i18n/locale.ts";
@@ -170,19 +171,6 @@ function applySession(
   if (force || previousId !== nextId) {
     releaseUserScope(nextId);
   }
-}
-
-function isUser(value: unknown): value is User {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "id" in value &&
-    typeof value.id === "string" &&
-    "email" in value &&
-    typeof value.email === "string" &&
-    "name" in value &&
-    typeof value.name === "string"
-  );
 }
 
 // Anything the API client learns about the session on the side (a 401, a
@@ -628,7 +616,10 @@ export async function updateProfile(patch: ProfilePatch): Promise<User> {
     });
   }
   try {
-    const user = await api<User>("/me", { method: "PATCH", body: patch });
+    const user = await api<unknown>("/me", {
+      method: "PATCH",
+      body: patch,
+    }).then((value) => whole(value, isUser, "account"));
     if (stampHolds(stamp)) {
       if (user.id === stamp.userId) {
         useSession.setState({ status: "authenticated", user });
@@ -663,7 +654,9 @@ export async function uploadBanner(image: Blob): Promise<User> {
 
 async function uploadProfileImage(path: string, image: Blob): Promise<User> {
   const stamp = takeStamp();
-  const user = await api<User>(path, { method: "PUT", body: image });
+  const user = await api<unknown>(path, { method: "PUT", body: image }).then(
+    (value) => whole(value, isUser, "account"),
+  );
   if (stampHolds(stamp)) {
     if (user.id === stamp.userId) {
       useSession.setState({ status: "authenticated", user });

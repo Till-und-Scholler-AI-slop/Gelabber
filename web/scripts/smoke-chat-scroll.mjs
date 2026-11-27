@@ -199,6 +199,18 @@ function answer(path, method, unread) {
   return {};
 }
 
+/** Until the list has stopped scrolling: its position held for 5 frames. */
+const settled = (page) =>
+  page.locator('[role="log"]').evaluate(async (log) => {
+    let still = 0;
+    let last = log.scrollTop;
+    while (still < 5) {
+      await new Promise(requestAnimationFrame);
+      still = log.scrollTop === last ? still + 1 : 0;
+      last = log.scrollTop;
+    }
+  });
+
 const frames = (page, count = 4) =>
   page.evaluate(async (left) => {
     while (left-- > 0) await new Promise(requestAnimationFrame);
@@ -265,7 +277,11 @@ const visibleNames = (page) =>
  * A fresh page on the channel. The older page waits until `releaseOlder()`;
  * `send()` pushes a chat event for the channel through the gateway.
  */
-async function open({ unread, shown = "Nachricht 99." } = {}) {
+async function open({
+  unread,
+  shown = "Nachricht 99.",
+  history = newest,
+} = {}) {
   const context = await browser.newContext({
     viewport: { width: 1100, height: 760 },
     locale: "de-DE",
@@ -295,7 +311,7 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
       if (!url.searchParams.has("before"))
         return route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify({ messages: newest, has_more: true }),
+          body: JSON.stringify({ messages: history, has_more: true }),
         });
       olderAsked(Date.now());
       await held;
@@ -419,7 +435,7 @@ async function scrollsAway({ page, send }, name, label) {
     await page.mouse.wheel(0, -120);
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
-  await frames(page, 8);
+  await settled(page);
   const moved = await rowTop(page, name);
   send(edited(97));
   await frames(page, 12);
@@ -462,7 +478,7 @@ async function olderPage(
   );
 
   // Stopped: let the last scroll settle, then note the top row.
-  await frames(page, 6);
+  await settled(page);
   const before = await firstVisible(page);
   assert.ok(before.top !== null, `${label}: no row at the top of the list`);
   await whileWaiting?.(opened);
@@ -655,7 +671,7 @@ try {
       await page.mouse.wheel(0, -240);
       await new Promise((resolve) => setTimeout(resolve, 40));
     }
-    await frames(page, 8);
+    await settled(page);
     const before = await firstVisible(page);
     const top = Number(before.name.split(" ")[1]);
     const shown = await visibleNames(page);
@@ -962,6 +978,90 @@ try {
     );
     console.log(
       `PASS: ${label}: the list gives ${after.listBottom - placed.listBottom}px to a toast, keeps the newest message's actions reachable, and takes the room back`,
+    );
+    await opened.close();
+  }
+
+  {
+    // A server bug, a cut answer or a broken frame (GEL-420): Jonas's
+    // message without `mentions`, once in the history and once live. The
+    // list leaves it out and keeps everything else, with no error page.
+    const label = "malformed message";
+    const broken = (n) => {
+      const row = { ...message(n), content: `Nachricht ${n}. Kaputt.` };
+      delete row.mentions;
+      return row;
+    };
+    const history = newest.map((row) =>
+      row.id === all[97].id ? broken(97) : row,
+    );
+    const opened = await open({ history, shown: "Nachricht 99." });
+    const { page, send } = opened;
+    const failed = page.getByRole("heading", {
+      name: "Etwas ist schiefgelaufen",
+    });
+    // The row's own notice, if a broken message got through the checks.
+    const notice = page.getByText(
+      "Diese Nachricht kann nicht angezeigt werden.",
+    );
+    /** The rows the list has drawn between `from` and `to`, top to bottom. */
+    const between = async (from, to) => {
+      const names = await page.evaluate(() =>
+        [...document.querySelectorAll('[role="log"] [data-index]')]
+          .map((row) => ({ row, top: row.getBoundingClientRect().top }))
+          .sort((a, b) => a.top - b.top)
+          .map(
+            ({ row }) =>
+              (row.querySelector(".lr-message-text")?.textContent ?? "").split(
+                ".",
+              )[0],
+          ),
+      );
+      const start = names.indexOf(from);
+      const end = names.indexOf(to);
+      assert.ok(
+        start >= 0 && end > start,
+        `${label}: ${from} and ${to} are not drawn in order: ${JSON.stringify(names)}`,
+      );
+      return names.slice(start + 1, end);
+    };
+    const nothingShown = async (part) => {
+      assert.equal(
+        await failed.count(),
+        0,
+        `${label}: the chat shows its error`,
+      );
+      assert.equal(
+        await notice.count(),
+        0,
+        `${label}: the malformed row from ${part} reached the list`,
+      );
+    };
+    await page.getByText("Nachricht 96.").waitFor();
+    await frames(page, 8);
+    assert.deepEqual(
+      await between("Nachricht 96", "Nachricht 98"),
+      [],
+      `${label}: a row stands where the malformed message from the history was`,
+    );
+    await nothingShown("the history");
+    // As on a server, a later read of the history has them too.
+    history.push(broken(100), message(101));
+    send({ t: "c", d: broken(100) });
+    send({ t: "c", d: message(101) });
+    // The row in the list, not the toast that announces it.
+    await page
+      .locator('[role="log"] [data-index]', { hasText: "Nachricht 101." })
+      .waitFor();
+    await frames(page, 8);
+    assert.deepEqual(
+      await between("Nachricht 99", "Nachricht 101"),
+      [],
+      `${label}: a row stands where the malformed message from the gateway was`,
+    );
+    await nothingShown("the gateway");
+    console.log(
+      `PASS: ${label}: a message without \`mentions\` is left out, from the history and from the gateway; the other messages stay`,
     );
     await opened.close();
   }

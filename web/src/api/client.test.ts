@@ -185,7 +185,17 @@ describe("api client", () => {
       if (call.url.endsWith("/auth/session")) {
         return jsonResponse(200, { user: null, csrf_token: "fresh" });
       }
-      return jsonResponse(200, { user: { id: "u1" }, csrf_token: "rotated" });
+      return jsonResponse(200, {
+        user: {
+          id: "u1",
+          email: "u1@example.test",
+          name: "U1",
+          avatar_url: null,
+          created_at: "2026-01-01T00:00:00Z",
+          locale: "de",
+        },
+        csrf_token: "rotated",
+      });
     });
 
     const result = await api<{ csrf_token: string }>("/auth/login", {

@@ -80,18 +80,17 @@ class Installer(unittest.TestCase):
             with self.subTest(option=option):
                 self.assertIn(f'${{GetOptions}} $R0 "{option}" $R1', self.text)
 
-    def test_it_installs_what_the_workflow_stages(self):
-        workflow = (DESKTOP.parent / '.github/workflows/desktop-native.yml').read_text()
+    def test_it_installs_what_the_build_script_stages(self):
         files = re.findall(r'^\s+File "\$\{SOURCE\}\\([^"]+)"', self.text, re.M)
         files = [f.replace('${MAINBINARY}', self.defined['MAINBINARY']) for f in files]
         self.assertEqual(sorted(files), sorted([
             'gelabber.exe', 'gelabber_media.dll', 'icon.png', 'icon.ico', 'README.txt',
             'THIRD-PARTY-NOTICES.txt']))
-        step = workflow.split('- name: Native installer\n', 1)[1].split('\n      - name:', 1)[0]
+        script = (NATIVE / 'windows/build-installer.ps1').read_text()
         for staged in ("'gelabber.exe'", "'gelabber_media.dll'", 'icon.ico', 'icon.png',
                        'THIRD-PARTY-NOTICES.txt', "'README.txt'"):
             with self.subTest(staged=staged):
-                self.assertIn(staged, step)
+                self.assertIn(staged, script)
         for removed in files + ['uninstall.exe', '${TAURIBINARY}']:
             name = removed if removed != self.defined['MAINBINARY'] else '${MAINBINARY}'
             with self.subTest(removed=removed):
@@ -186,18 +185,95 @@ class ArchInstallScript(unittest.TestCase):
 
 
 class Scripts(unittest.TestCase):
-    def test_the_shell_scripts_parse(self):
-        for script in ('packaging/native/tarball.sh', 'packaging/native/smoke.sh',
-                       'packaging/arch/repo.sh', 'packaging/arch/update-pkgbuild.sh'):
-            with self.subTest(script=script):
-                subprocess.run(['bash', '-n', DESKTOP / script], check=True)
-
+    # That each shell script parses is shellcheck's (lint.sh, notices job).
     def test_the_tarball_refuses_a_missing_core(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(['bash', NATIVE / 'tarball.sh', Path(tmp) / 'nothing.so', tmp],
                                     capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('no media core', result.stderr)
+
+
+
+class CoreCheck(unittest.TestCase):
+    """check-core.sh, which the Linux job runs on the core of every build and
+    tarball.sh on the core it packages, on small libraries built here."""
+
+    def library(self, source):
+        compiler = shutil.which('cc')
+        if not compiler or not shutil.which('nm') or not shutil.which('readelf'):
+            prerequisites.missing('cc, nm or readelf')
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        # libc's puts, so that the library has a dependency to list, as the core has.
+        (Path(tmp.name) / 'core.c').write_text('#include <stdio.h>\nint gm_log(void) { return puts("x"); }\n' + source)
+        lib = Path(tmp.name) / 'libgelabber_media.so'
+        subprocess.run([compiler, '-shared', '-fPIC', '-o', lib, Path(tmp.name) / 'core.c'], check=True)
+        return lib
+
+    def check(self, lib, *options):
+        return subprocess.run(['bash', NATIVE / 'check-core.sh', *options, lib], capture_output=True, text=True)
+
+    def test_a_core_that_exports_gm_only_passes_and_is_measured(self):
+        lib = self.library('int gm_version(void) { return 1; }\n')
+        with tempfile.NamedTemporaryFile('r') as summary:
+            result = self.check(lib, '--summary', summary.name)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('| libgelabber_media.so (stripped) |', summary.read())
+        self.assertIn('gm_version', result.stdout)
+
+    def test_another_export_fails(self):
+        result = self.check(self.library('int gm_version(void) { return 1; }\nint other(void) { return 2; }\n'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('only gm_* symbols may be exported', result.stdout)
+
+    def test_a_name_of_h264_code_fails(self):
+        source = 'int gm_version(void) { return 1; }\n__attribute__((visibility("hidden"))) int WelsInitEncoderExt(void) { return 0; }\n'
+        result = self.check(self.library(source))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('the core carries H264 code of OpenH264 or FFmpeg', result.stdout)
+
+
+
+class VersionScript(unittest.TestCase):
+    """version.sh, from which the workflows and the Windows scripts take the
+    app's version (desktop-native.yml, release.yml)."""
+    SCRIPT = NATIVE / 'version.sh'
+
+    def version(self):
+        text = (DESKTOP / 'Cargo.toml').read_text()
+        return re.search(r'^\[workspace\.package\]\n(?:.*\n)*?version = "([^"]+)"', text, re.M).group(1)
+
+    def run_script(self, *arguments):
+        return subprocess.run(['bash', self.SCRIPT, *map(str, arguments)], capture_output=True, text=True)
+
+    def test_it_reads_the_workspace_version(self):
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, self.version() + '\n')
+
+    def test_a_windows_checkout_reads_the_same(self):
+        text = (DESKTOP / 'Cargo.toml').read_text()
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / 'Cargo.toml'
+            manifest.write_bytes(text.replace('\n', '\r\n').encode())
+            self.assertEqual(self.run_script(manifest).stdout, self.version() + '\n')
+
+    def test_a_release_must_carry_its_tag(self):
+        version = self.version()
+        self.assertEqual(self.run_script('--tag', f'v{version}').returncode, 0)
+        self.assertEqual(self.run_script('--tag', '').returncode, 0)
+        for tag in (version, f'v{version}.1', 'v0.0.1'):
+            with self.subTest(tag=tag):
+                result = self.run_script('--tag', tag)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f'release {tag}: desktop/Cargo.toml, and with it the app, says {version}',
+                              result.stderr)
+
+    def test_the_windows_scripts_take_it_from_the_workflow(self):
+        for path in sorted((NATIVE / 'windows').glob('*.ps1')):
+            with self.subTest(script=path.name):
+                self.assertNotRegex(path.read_text(), r'Cargo\.toml')
 
 
 if __name__ == '__main__':

@@ -97,8 +97,18 @@ impl Client {
         key: &str,
         work: impl Future<Output = Result<T, ApiError>>,
     ) -> Option<T> {
-        let epoch = self.epoch();
-        self.write(|s| s.ops.insert(key.to_owned(), OpState::Pending));
+        self.op_in(self.epoch(), key, work).await
+    }
+
+    /// [`Self::op`] for the account of `epoch`: once it signed out, `work`
+    /// does not start and nothing is recorded.
+    pub(crate) async fn op_in<T>(
+        &self,
+        epoch: u64,
+        key: &str,
+        work: impl Future<Output = Result<T, ApiError>>,
+    ) -> Option<T> {
+        self.write_in(epoch, |s| s.ops.insert(key.to_owned(), OpState::Pending))?;
         match work.await {
             Ok(value) => self
                 .write_in(epoch, |s| s.ops.insert(key.to_owned(), OpState::Done))
@@ -523,14 +533,19 @@ impl Client {
         if !needed || !self.inner.opening.lock().insert(view) {
             return;
         }
+        // The account the view is opened for: a sign-out meanwhile drops it.
+        let epoch = self.epoch();
         let this = self.clone();
         self.spawn(async move {
-            this.change_view(view);
+            if !this.change_view(view, epoch) {
+                this.inner.opening.lock().remove(&view);
+                return;
+            }
             // Nor when only the view changed: the shell and a page that
             // both open it would take turns forever.
             if !this.with_state(|s| s.server_details.contains_key(&id) || s.op(&key).is_some()) {
                 let work = this.reload_server(id);
-                this.op(&key, work).await;
+                this.op_in(epoch, &key, work).await;
             }
             this.inner.opening.lock().remove(&view);
         });
@@ -583,7 +598,8 @@ impl Client {
     /// error, or a jump back to the present).
     pub fn reload_channel(&self, channel: Uuid) {
         let this = self.clone();
-        self.spawn(async move { this.load_latest(channel).await });
+        let epoch = self.epoch();
+        self.spawn(async move { this.load_latest(channel, epoch).await });
     }
 
     /// Opens a text channel or DM: history (first page) once. Marking it
@@ -683,9 +699,14 @@ impl Client {
         if !needed || !self.inner.opening.lock().insert(view) {
             return;
         }
+        // The account the view is opened for: a sign-out meanwhile drops it.
+        let epoch = self.epoch();
         let this = self.clone();
         self.spawn(async move {
-            this.change_view(view);
+            if !this.change_view(view, epoch) {
+                this.inner.opening.lock().remove(&view);
+                return;
+            }
             if let Some(id) = server
                 && !this.with_state(|s| {
                     s.server_details.contains_key(&id) || s.op(&format!("server:{id}")).is_some()
@@ -693,7 +714,7 @@ impl Client {
             {
                 let key = format!("server:{id}");
                 let work = this.reload_server(id);
-                this.op(&key, work).await;
+                this.op_in(epoch, &key, work).await;
             }
             let fetch = this.with_state(|s| {
                 s.channels
@@ -701,42 +722,56 @@ impl Client {
                     .is_none_or(|h| !h.loading && h.error.is_none() && (!h.loaded || h.stale))
             });
             if fetch {
-                this.load_latest(channel).await;
+                this.load_latest(channel, epoch).await;
             }
             this.inner.opening.lock().remove(&view);
         });
     }
 
-    fn change_view(&self, view: View) {
-        let previous = self.with_state(|s| s.view);
+    /// False when the account of `epoch` signed out meanwhile.
+    fn change_view(&self, view: View, epoch: u64) -> bool {
+        let previous = self.with_state(|s| (s.epoch == epoch).then_some(s.view));
+        let Some(previous) = previous else {
+            return false;
+        };
         if previous == view {
-            return;
+            return true;
         }
         if previous.channel != view.channel {
             self.stop_typing();
         }
-        self.write(|s| {
+        let changed = self.write_in(epoch, |s| {
             s.view = view;
             if view.server.is_some() {
                 s.last_server = view.server;
             }
         });
-        self.sync_topics();
+        if changed.is_some() {
+            self.sync_topics();
+        }
+        changed.is_some()
     }
 
     /// Leaves every view (the DM list, settings without a server).
     pub fn close_view(&self) {
         let this = self.clone();
-        self.spawn(async move { this.change_view(View::default()) });
+        let epoch = self.epoch();
+        self.spawn(async move {
+            this.change_view(View::default(), epoch);
+        });
     }
 
-    async fn load_latest(&self, channel: Uuid) {
-        let epoch = self.epoch();
-        self.write(|s| {
+    /// The newest page, for the account of `epoch`: nothing once it
+    /// signed out, also when that happened before this started.
+    async fn load_latest(&self, channel: Uuid, epoch: u64) {
+        let started = self.write_in(epoch, |s| {
             let h = s.channel_mut(channel);
             h.loading = true;
             h.error = None;
         });
+        if started.is_none() {
+            return;
+        }
         let result = self
             .http()
             .messages(channel, &HistoryQuery::latest(PAGE_SIZE))
@@ -1027,7 +1062,7 @@ impl Client {
                         if gone {
                             this.write_in(epoch, |s| s.apply_delete(channel, id));
                         }
-                        this.load_latest(channel).await;
+                        this.load_latest(channel, epoch).await;
                     }
                 }
             }
@@ -3432,5 +3467,114 @@ mod tests {
                 (SigKind::W, Some(late))
             ]
         );
+    }
+
+    /// A conversation opened just before a sign-out leaves nothing in the
+    /// next account's state: its history is not fetched for it, and no
+    /// answer of the first account lands there (GEL-376). The server's
+    /// detail is held until the sign-out; the history would come after it.
+    #[test]
+    fn a_conversation_still_opening_at_sign_out_stays_out_of_the_next_account() {
+        use std::io::{Read, Write};
+        let server = Uuid::from_u128(7);
+        let channel = Uuid::from_u128(8);
+        let detail = format!("GET /api/servers/{server} ");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+        let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = Arc::new(parking_lot::Mutex::new(release_rx));
+        {
+            let seen = seen.clone();
+            let detail = detail.clone();
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { return };
+                    let (seen, detail) = (seen.clone(), detail.clone());
+                    let (held_tx, release_rx) = (held_tx.clone(), release_rx.clone());
+                    std::thread::spawn(move || {
+                        let mut buf = [0u8; 4096];
+                        let n = stream.read(&mut buf).unwrap_or(0);
+                        let line = String::from_utf8_lossy(&buf[..n])
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .to_owned();
+                        seen.lock().push(line.clone());
+                        if line.starts_with(&detail) {
+                            let _ = held_tx.send(());
+                            let _ = release_rx.lock().recv();
+                        }
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    });
+                }
+            });
+        }
+        let client = Client::new(&format!("http://{addr}")).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.open_server_channel(server, channel);
+        held_rx.recv().unwrap();
+        client.write(|s| {
+            s.reset_account();
+            s.session = Session::Anonymous;
+        });
+        release_tx.send(()).unwrap();
+        // The opening ends with the conversation's task.
+        while !client.inner.opening.lock().is_empty() {
+            std::thread::yield_now();
+        }
+        let history = format!("GET /api/channels/{channel}/messages");
+        assert!(
+            !seen.lock().iter().any(|line| line.starts_with(&history)),
+            "history fetched for the next account: {:?}",
+            seen.lock()
+        );
+        client.with_state(|s| {
+            assert!(s.messages(channel).is_none(), "{:?}", s.messages(channel));
+            assert_eq!(s.view, View::default());
+        });
+    }
+
+    /// A view opened for an account that signed out before the view's task
+    /// ran stays out of the next account's state (GEL-376).
+    #[test]
+    fn a_view_queued_before_sign_out_is_not_shown_to_the_next_account() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let epoch = client.epoch();
+        client.write(|s| {
+            s.reset_account();
+            s.session = Session::Anonymous;
+        });
+        let view = View {
+            server: Some(Uuid::from_u128(7)),
+            channel: Some(Uuid::from_u128(8)),
+        };
+        let shown = client.change_view(view, epoch);
+        client.with_state(|s| {
+            assert_eq!(s.view, View::default());
+            assert!(s.last_server.is_none());
+        });
+        assert!(!shown);
+    }
+
+    /// A server's detail asked for by an account that signed out meanwhile
+    /// is neither requested nor recorded for the next one (GEL-376).
+    #[test]
+    fn an_op_of_a_signed_out_account_neither_runs_nor_records() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        let epoch = client.epoch();
+        client.write(|s| s.reset_account());
+        let id = Uuid::from_u128(7);
+        let key = format!("server:{id}");
+        let answer = client.block_on(client.op_in(epoch, &key, client.reload_server(id)));
+        assert!(answer.is_none());
+        assert!(client.with_state(|s| s.op(&key).is_none()));
+        assert!(seen.lock().is_empty(), "{:?}", seen.lock());
     }
 }

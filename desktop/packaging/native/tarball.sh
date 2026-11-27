@@ -4,9 +4,9 @@
 #   tarball.sh [--binary <gelabber>] <libgelabber_media.so> [<out-dir>]
 #
 # Builds desktop/gelabber in release against the given media core (unless
-# --binary names a built one), strips both, checks them (no shared C++
-# runtime, only gm_* exported, the core found next to the binary, no
-# WebKitGTK, libsoup or GTK) and writes
+# --binary names a built one), checks the core with check-core.sh, strips
+# both, checks the binary (no shared C++ runtime, the core found next to it,
+# no WebKitGTK, libsoup or GTK) and writes
 # <out-dir>/gelabber-native-linux-x64.tar.gz (default: the current directory).
 # Respects CARGO_TARGET_DIR and CARGO_BUILD_JOBS.
 set -euo pipefail
@@ -22,6 +22,7 @@ fi
 lib="$(realpath "${1:?usage: tarball.sh [--binary <gelabber>] <libgelabber_media.so> [<out-dir>]}")"
 out="${2:-.}"
 test -f "$lib" || { echo "no media core at $lib" >&2; exit 1; }
+"$here/check-core.sh" "$lib"
 notices="$here/THIRD-PARTY-NOTICES.txt"
 test -f "$notices" || {
   echo "$notices is missing: run desktop/packaging/third-party-notices.py" >&2
@@ -55,15 +56,11 @@ needed() {
   readelf -d "$1" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'
 }
 
-# Chromium's libc++ is linked into the core and hidden; neither file may
-# bring the system's C++ runtime in.
-for file in "$pkg/gelabber" "$pkg/libgelabber_media.so"; do
-  if needed "$file" | grep -E '^lib(stdc|c)\+\+'; then
-    fail "$(basename "$file") depends on a shared C++ runtime"
-  fi
-done
-foreign="$(nm -D --defined-only "$pkg/libgelabber_media.so" | awk '{print $3}' | grep -v '^gm_' || true)"
-[ -z "$foreign" ] || fail "libgelabber_media.so exports more than gm_*: $foreign"
+# The core's own checks ran above (check-core.sh); the binary may not bring
+# the system's C++ runtime in either.
+if needed "$pkg/gelabber" | grep -E '^lib(stdc|c)\+\+'; then
+  fail "gelabber depends on a shared C++ runtime"
+fi
 if needed "$pkg/gelabber" | grep -E '^lib(webkit2gtk|javascriptcoregtk|soup|gtk|gdk)-'; then
   fail "gelabber depends on WebKitGTK, libsoup or GTK"
 fi

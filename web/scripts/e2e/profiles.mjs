@@ -26,6 +26,7 @@ export const profiles = {
       "account-session-reload-login",
       "channel-chat-create-edit-delete-converges",
       "new-dm-connected-recipient-discovers-without-refetch",
+      "new-message-request-connected-recipient-discovers-without-refetch",
       "channel-jpeg-png-webp-bind-reload-byte-equal",
       "dm-jpeg-png-webp-bind-reload-byte-equal",
       "background-event-before-first-open-55-history-paging",

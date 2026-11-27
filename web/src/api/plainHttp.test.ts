@@ -10,6 +10,7 @@ const ada = {
   name: "A",
   avatar_url: null,
   created_at: "2026-09-28T09:00:00Z",
+  locale: "de",
 };
 
 function json(body: unknown, status = 200): Response {
