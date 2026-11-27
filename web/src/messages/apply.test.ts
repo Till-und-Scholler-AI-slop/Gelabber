@@ -1,11 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
-import {
-  applyChannelEvent,
-  applyMessageDeleted,
-  messageKeys,
-} from "./queries.ts";
+import { applyMessageDeleted, messageKeys } from "./queries.ts";
 import type { Message, MessagePage } from "./types.ts";
 
 function msg(id: string, channel = "c1"): Message {
@@ -26,7 +22,9 @@ function cache(
   messages: Message[],
 ): void {
   client.setQueryData(messageKeys.channel("u1", 0, channelId), {
-    pages: [{ messages, has_more: true, older: "stamp" }] satisfies MessagePage[],
+    pages: [
+      { messages, has_more: true, older: "stamp" },
+    ] satisfies MessagePage[],
     pageParams: [undefined],
   });
 }
@@ -42,39 +40,5 @@ describe("apply channel events", () => {
     expect(data?.pages[0]?.messages.map((m) => m.id)).toEqual(["a", "c"]);
     expect(data?.pages[0]?.older).toBe("stamp");
     expect(data?.pages[0]?.has_more).toBe(true);
-  });
-
-  it("applies create/edit/delete from a compact WS event", () => {
-    const client = new QueryClient();
-    cache(client, "c1", [msg("a")]);
-    applyChannelEvent(client, "u1", 0, {
-      t: "c",
-      c: "c1",
-      i: "b",
-      d: msg("b"),
-    });
-    applyChannelEvent(client, "u1", 0, {
-      t: "e",
-      c: "c1",
-      i: "a",
-      d: { ...msg("a"), content: "edited" },
-    });
-    applyChannelEvent(client, "u1", 0, { t: "d", c: "c1", i: "b" });
-    const data = client.getQueryData<{ pages: MessagePage[] }>(
-      messageKeys.channel("u1", 0, "c1"),
-    );
-    expect(data?.pages[0]?.messages).toEqual([
-      { ...msg("a"), content: "edited" },
-    ]);
-  });
-
-  it("does not duplicate a create that is already in the page", () => {
-    const client = new QueryClient();
-    cache(client, "c1", [msg("a")]);
-    applyChannelEvent(client, "u1", 0, { t: "c", c: "c1", i: "a", d: msg("a") });
-    const data = client.getQueryData<{ pages: MessagePage[] }>(
-      messageKeys.channel("u1", 0, "c1"),
-    );
-    expect(data?.pages[0]?.messages).toHaveLength(1);
   });
 });

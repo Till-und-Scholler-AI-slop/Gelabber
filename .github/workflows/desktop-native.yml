@@ -1068,6 +1068,15 @@ jobs:
           cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --test mediasoup_loopback --test screen_capture -- --nocapture --test-threads=1
           exit 0
 
+      # The UI's platform tests (tray, toasts, push-to-talk hook, paths) on the
+      # system they are written for; no GPU, no core. Without `media`, the call
+      # crate's test of a call without the core compiles here, and nowhere else.
+      - name: Platform tests of the app
+        if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
+        timeout-minutes: 30
+        run: |
+          cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-ui -p gelabber-call --lib -- platform:: tests::without_the_core_a_call_says_why --test-threads=1
+
       # The core alone, as above: a call with the app would unify other
       # features and rebuild the worker. The empty core directory keeps Clippy's
       # build scripts from compiling the C++ again.
