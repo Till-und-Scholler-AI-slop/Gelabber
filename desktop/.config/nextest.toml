@@ -1,0 +1,18 @@
+# Profile `ci` (`cargo nextest run --profile ci`), as CI runs the tests.
+
+# Retry and report (GEL-389): a failed test runs once more; if it then
+# passes, it is FLAKY and passes the run, so a flake costs no re-run. The
+# JUnit report lets .github/workflows/scripts/flaky_tests.py list every
+# flaky test in the job summary and record it in its issue.
+[profile.ci]
+retries = 1
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# The media core's tests (loopback calls through mediasoup, devices) and the
+# call crate's run one at a time in profile ci-media, the others side by side
+# in ci (GEL-393; desktop-native.yml). Its own profile, for its own JUnit.
+[profile.ci-media]
+inherits = "ci"
+test-threads = 1

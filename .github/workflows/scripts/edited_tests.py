@@ -15,6 +15,7 @@ sound change; it says where to look. It never fails the run.
 Usage: edited_tests.py BASE HEAD
 """
 import difflib
+import html
 import os
 import re
 import subprocess
@@ -32,6 +33,10 @@ RUNNER_CONFIG = re.compile(
     r'|(?:^|/)pytest\.ini$|(?:^|/)setup\.cfg$|(?:^|/)tox\.ini$')
 # A package.json line that names a test script or a test runner.
 RUNNER_SCRIPT = re.compile(r'"test"\s*:')
+# This report and the ci.yml step that runs it: a pull request that changes
+# them changes what is reported about it.
+REPORT = '.github/workflows/scripts/edited_tests.py'
+REPORT_STEP = re.compile(r'edited_tests\.py|Test edits to look at')
 
 ASSERTION = {
     'rs': re.compile(r'\b(?:debug_)?assert(?:_eq|_ne|_matches)?!\s*\(|\.expect_err\(|\bassert_\w+\('),
@@ -91,7 +96,10 @@ TEST_NAME = {
     'py': re.compile(r'^\s*(?:async\s+)?def\s+(test_\w+)'),
     'js': re.compile(r'^\s*(?:it|test)(?:\.\w+(?:\([^)]*\))?)*\s*\(\s*([\'"`])(.*?)\1'),
 }
-LIMIT = 50
+# GitHub shows at most 10 warnings of a step on the pull request.
+LIMIT = 10
+# More deleted tests of one file than this are one row.
+GROUP = 3
 
 
 @dataclass
@@ -122,21 +130,37 @@ class Finding:
     detail: str
 
 
+def unquote(path):
+    """A path as git prints it in a diff header, without its C-style quotes."""
+    if not (path.startswith('"') and path.endswith('"')):
+        return path
+    raw = path[1:-1].encode('latin-1', 'backslashreplace').decode('unicode_escape')
+    return raw.encode('latin-1', 'replace').decode('utf-8', 'replace')
+
+
+def header_path(raw):
+    """The path of a `--- a/...` or `+++ b/...` line, or /dev/null."""
+    value = unquote(raw[4:].rstrip('\t'))
+    return value if value == '/dev/null' else value[2:]
+
+
 def parse(diff):
     """The files of a unified diff (git diff --no-renames), with their hunks."""
     files, current, old, new = [], None, 0, 0
-    for raw in diff.splitlines():
+    for raw in diff.split('\n'):
         if raw.startswith('diff --git '):
             current = File('', '')
             files.append(current)
         elif current is None:
             continue
-        elif raw.startswith('--- '):
-            current.old_path = raw[4:].removeprefix('a/')
-        elif raw.startswith('+++ '):
-            current.new_path = raw[4:].removeprefix('b/')
+        elif raw.startswith('--- ') and not current.hunks:
+            current.old_path = header_path(raw)
+        elif raw.startswith('+++ ') and not current.hunks:
+            current.new_path = header_path(raw)
         elif raw.startswith('@@'):
             match = re.match(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@', raw)
+            if not match:
+                continue
             old, new = int(match.group(1)), int(match.group(2))
             current.hunks.append([])
         elif current.hunks and raw[:1] in ('-', '+', ' '):
@@ -166,10 +190,15 @@ def language(path):
 
 
 def test_start(text):
-    """The first line of a Rust file's test module, or None."""
-    for number, line in enumerate(text.splitlines(), 1):
+    """The first line of a Rust file's test module, or None. A #[cfg(test)]
+    on a single function or import does not start it."""
+    lines = text.split('\n')
+    for index, line in enumerate(lines):
         if re.match(r'\s*#\[cfg\(test\)\]', line):
-            return number
+            following = next((other for other in lines[index + 1:]
+                              if other.strip() and not other.strip().startswith('#[')), '')
+            if re.match(r'\s*(?:pub(?:\([\w ]+\))?\s+)?mod\s', following):
+                return index + 1
     return None
 
 
@@ -251,7 +280,10 @@ def check_file(file, read, removed_names, added_names):
     found = []
     scripts = {sign: {line.text.strip().rstrip(',') for line in file.lines
                       if line.sign == sign and RUNNER_SCRIPT.search(line.text)} for sign in '-+'}
-    if RUNNER_CONFIG.search(path) or (path.endswith('package.json') and scripts['-'] != scripts['+']):
+    report_step = path == '.github/workflows/ci.yml' and any(
+        REPORT_STEP.search(line.text) for line in file.lines if line.sign != ' ')
+    if (RUNNER_CONFIG.search(path) or path == REPORT or report_step
+            or (path.endswith('package.json') and scripts['-'] != scripts['+'])):
         first = next((line for line in file.lines if line.sign != ' '), None)
         found.append(Finding(path, first.new or first.old if first else 1, 'runner configuration',
                              'the test runner\'s configuration changed'))
@@ -286,12 +318,15 @@ def check_file(file, read, removed_names, added_names):
                 found.append(Finding(path, line.new, 'timeout added', line.text.strip()))
         if created or deleted:
             continue
-        for gone, came in blocks([line for line in hunk if line.sign == ' ' or line in test_lines]):
-            found += check_block(path, lang, gone, came, removed_names)
+        tested = {id(line) for line in test_lines}
+        # An assertion moved within a hunk is no removal, whichever run git put it in.
+        hunk_asserts = [text for _, text in statements(added) if ASSERTION[lang].search(text)]
+        for gone, came in blocks([line for line in hunk if line.sign == ' ' or id(line) in tested]):
+            found += check_block(path, lang, gone, came, removed_names, hunk_asserts)
     return found
 
 
-def check_block(path, lang, gone, came, removed_names):
+def check_block(path, lang, gone, came, removed_names, hunk_asserts=()):
     """Loosened or removed assertions and raised limits in one run of
     removed and added lines."""
     found = []
@@ -318,7 +353,8 @@ def check_block(path, lang, gone, came, removed_names):
     # Removed: an assertion with no similar one in its place, in a test that stays.
     if not inside_deleted_test and len(gone) <= 200:
         for line, text in old_asserts:
-            if text in loosened or any(similar(text, other) >= 0.6 for _, other in new_asserts):
+            if text in loosened or any(similar(text, other) >= 0.6
+                                       for other in [other for _, other in new_asserts] + list(hunk_asserts)):
                 continue
             found.append(Finding(path, line.old, 'assertion removed', text[:160]))
     # Raised: a line that differs only in a number, which went up.
@@ -361,8 +397,9 @@ def check(diff, read):
             gone = [(line, name) for line, name in test_names(
                 [line for line in file.lines if line.sign == '-' and in_test(file, line, read)], lang)
                 if name in deleted]
-            if gone and file.new_path == '/dev/null':
-                found.append(Finding(file.path, 1, 'test file deleted',
+            if gone and (file.new_path == '/dev/null' or len(gone) > GROUP):
+                kind = 'test file deleted' if file.new_path == '/dev/null' else 'tests deleted'
+                found.append(Finding(file.path, 1 if kind == 'test file deleted' else gone[0][0].old, kind,
                                      f'{len(gone)} tests: ' + ', '.join(name for _, name in gone)[:300]))
             else:
                 found += [Finding(file.path, line.old, 'test deleted', name) for line, name in gone]
@@ -378,7 +415,7 @@ def git_reader(base, head):
         if key not in cache:
             try:
                 text = subprocess.run(['git', 'show', f'{base if side == "-" else head}:{path}'],
-                                      capture_output=True, text=True, check=True).stdout
+                                      capture_output=True, check=True).stdout.decode('utf-8', 'replace')
             except subprocess.CalledProcessError:
                 text = ''
             cache[key] = test_start(text)
@@ -387,41 +424,63 @@ def git_reader(base, head):
 
 
 def escape(text):
+    """A workflow command's message."""
     return text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+
+
+def escape_property(text):
+    """A workflow command's property value (file=, title=)."""
+    return escape(text).replace(':', '%3A').replace(',', '%2C')
+
+
+def cell(text):
+    """Text as code in a Markdown table cell: no HTML, no column break."""
+    return '<code>' + html.escape(text).replace('|', '&#124;').replace('\n', ' ') + '</code>'
 
 
 def report(found):
     """Annotations for stdout and the job summary's Markdown."""
-    annotations = [f'::warning file={f.path},line={max(f.line, 1)},title=Test change: {f.kind}::'
-                   f'{escape(f.detail)}' for f in found[:LIMIT]]
+    annotations = [f'::warning file={escape_property(f.path)},line={max(f.line, 1)},'
+                   f'title={escape_property("Test change: " + f.kind)}::{escape(f.detail)}'
+                   for f in found[:LIMIT]]
     if not found:
         return annotations, 'No test edits to look at: no deleted or loosened assertions, skips, ' \
                             'raised limits, sleeps, retries or runner changes.\n'
-    rows = '\n'.join('| `{}:{}` | {} | `{}` |'.format(f.path, f.line, f.kind, f.detail[:200].replace('|', '\\|'))
+    rows = '\n'.join(f'| {cell(f"{f.path}:{f.line}")} | {html.escape(f.kind)} | {cell(f.detail[:200])} |'
                      for f in found)
-    return annotations, ('### Test edits to look at\n\n'
+    shown = (f'The pull request shows the first {LIMIT} as warnings; all {len(found)} are here.\n\n'
+             if len(found) > LIMIT else '')
+    return annotations, (f'### Test edits to look at ({len(found)})\n\n'
                          'These edits can make a failing test pass. Check that each one is meant; '
-                         'this list does not fail the run.\n\n'
+                         'this list does not fail the run.\n\n' + shown +
                          '| Where | What | Line |\n|---|---|---|\n' + rows + '\n')
 
 
 def main(argv):
     base, head = argv
+    # Whitespace-blind: a re-indented test file is no rewrite of its assertions.
+    # Bytes, not text=True: universal newlines would turn a lone \r into a line break.
     diff = subprocess.run(['git', '-c', 'core.quotePath=false', 'diff', '--no-renames', '--no-color',
-                           '-U3', base, head], capture_output=True, text=True, check=True).stdout
+                           '--ignore-all-space', '-U3', base, head],
+                          capture_output=True, check=True).stdout.decode('utf-8', 'replace')
     found = check(diff, git_reader(base, head))
     annotations, summary = report(found)
     print('\n'.join(annotations))
+    write_summary(summary)
+
+
+def write_summary(text):
     summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary_path:
         with open(summary_path, 'a', encoding='utf-8') as out:
-            out.write(summary)
+            out.write(text)
     else:
-        print(summary)
+        print(text)
 
 
 if __name__ == '__main__':
     try:
         main(sys.argv[1:])
     except Exception as error:  # noqa: BLE001 - a report, never a gate
-        print(f'::warning title=Test edits::the report failed: {error}')
+        print(f'::warning title=Test edits::{escape(f"the report failed: {error}")}')
+        write_summary(f'### Test edits to look at\n\nThe report failed: {cell(str(error))}\n')

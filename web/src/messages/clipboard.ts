@@ -34,28 +34,12 @@ export function pastedFiles(
   return files.map((file) => named(file, now));
 }
 
-/** The first pasted file, or null when the paste carries text. */
-export function pastedFile(
-  data: ClipboardFiles | null | undefined,
-  now = new Date(),
-): File | null {
-  return pastedFiles(data, now)[0] ?? null;
-}
-
 /** The dropped files; a drag of text or links carries none. */
 export function droppedFiles(
   data: ClipboardFiles | null | undefined,
   now = new Date(),
 ): File[] {
   return Array.from(data?.files ?? []).map((file) => named(file, now));
-}
-
-/** The first dropped file. */
-export function droppedFile(
-  data: ClipboardFiles | null | undefined,
-  now = new Date(),
-): File | null {
-  return droppedFiles(data, now)[0] ?? null;
 }
 
 /** Whether a drag carries files, readable before the drop. */

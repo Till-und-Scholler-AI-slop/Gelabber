@@ -48,7 +48,8 @@ def record(areas, sha, tree, candidate=False, base=None):
     """What a pull request's or merge queue's run passed, as stored in the
     artifact; `base` is the commit it was tested on."""
     return {'schema': 1, 'sha': sha, 'tree': tree, 'candidate': candidate, 'base': base,
-            'areas': sorted(area for area, touched in areas.items() if touched == 'true')}
+            'areas': sorted(area for area, touched in areas.items()
+                            if touched == 'true' and area != 'minio-build')}
 
 
 def touches_cache_inputs(paths):
