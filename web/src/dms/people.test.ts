@@ -15,6 +15,7 @@ const server = (id: string, name: string, members: Member[]): ServerDetail => ({
   role: "member",
   permissions: [],
   member_permissions: [],
+  blocked: false,
   categories: [],
   channels: [],
   members,

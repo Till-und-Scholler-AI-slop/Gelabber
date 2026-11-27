@@ -10,7 +10,7 @@ import {
   type QueryState,
 } from "@tanstack/react-query";
 
-import { api, ApiError } from "../api/client.ts";
+import { api } from "../api/client.ts";
 import { closeMessageNotifications } from "../pwa/notifications.ts";
 import {
   scopeGeneration,
@@ -43,14 +43,8 @@ export function useNotificationPrivacy() {
     queryFn: ({ signal }) => getNotificationPrivacy(signal),
     enabled: Boolean(userId),
     staleTime: 60_000,
-    // A server without the switch stays that way; asking again won't help.
-    retry: (failures, error) => !unsupported(error) && failures < 3,
   });
 }
-
-/** A server from before the switch (the desktop app may talk to one). */
-const unsupported = (error: unknown) =>
-  error instanceof ApiError && error.status === 404;
 
 export function useChangeNotificationPrivacy() {
   const client = useQueryClient();
@@ -85,17 +79,16 @@ export async function refreshNotificationPrivacy(
  * Whether a notification must leave the message out, from what the query
  * knows. Unknown counts as hidden: not loaded yet (a phone app resuming in the
  * background), the last fetch failed, or another device changed it and the
- * answer is still on its way. Only a server from before the switch
- * shows the message without asking, as it always did. A page notification
- * that showed too much would also replace the server's hidden push for the
- * same message (`showPushed` in public/sw.js).
+ * answer is still on its way. A page notification that showed too much would
+ * also replace the server's hidden push for the same message (`showPushed` in
+ * public/sw.js).
  */
 export function hidesContent(
   state:
     | Pick<QueryState<NotificationPrivacy>, "data" | "error" | "isInvalidated">
     | undefined,
 ): boolean {
-  if (state?.error) return !unsupported(state.error);
+  if (state?.error) return true;
   if (state?.isInvalidated) return true;
   return state?.data?.hide_content ?? true;
 }

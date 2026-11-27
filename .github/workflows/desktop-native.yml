@@ -656,7 +656,10 @@ jobs:
       # mediasoup-sys's PYTHONPATH loses its drive letter (cargo registry on C:,
       # target on D:), so invoke is installed here.
       - name: Python packages for the mediasoup worker
-        run: python -m pip install invoke==3.0.3
+        run: |
+          $requirements = Join-Path $env:RUNNER_TEMP invoke-requirements.txt
+          'invoke==3.0.3 --hash=sha256:f11327165e5cbb89b2ad1d88d3292b5113332c43b8553b494da435d6ec6f5053' | Set-Content $requirements
+          python -m pip install --require-hashes --only-binary=:all: -r $requirements
 
       - name: Rust toolchain
         id: toolchain
@@ -1069,7 +1072,7 @@ jobs:
       # The Linux job's call through an in-process mediasoup worker. H264 only
       # where Media Foundation has codecs, so no GELABBER_EXPECT_H264.
       # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
-      # picker; the test skips where Windows cannot capture. A release build
+      # picker; where Windows cannot capture, the test fails in CI. A release build
       # makes the call alone, without the tests that measure frame rates.
       - name: Loopback call against mediasoup 0.33
         id: tests

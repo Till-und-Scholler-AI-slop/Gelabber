@@ -66,7 +66,8 @@ async fn kick_member(
     Id(server_id): Id,
     Body(body): Body<TargetBody>,
 ) -> Result<StatusCode, ApiError> {
-    let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
+    let mut tx =
+        membership::lock_server_bounded(&state.db, server_id, state.server_lock_wait).await?;
     let actor = membership::load(&mut *tx, server_id, user.id).await?;
     actor.require(Permission::ModerateMembers)?;
     let target_id = parse_target(&body.user_id)?;
@@ -98,7 +99,8 @@ async fn ban_member(
     Id(server_id): Id,
     Body(body): Body<TargetBody>,
 ) -> Result<StatusCode, ApiError> {
-    let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
+    let mut tx =
+        membership::lock_server_bounded(&state.db, server_id, state.server_lock_wait).await?;
     let actor = membership::load(&mut *tx, server_id, user.id).await?;
     actor.require(Permission::ModerateMembers)?;
     let target_id = parse_target(&body.user_id)?;

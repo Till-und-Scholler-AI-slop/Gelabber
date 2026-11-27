@@ -117,7 +117,6 @@ crate::strings! {
     alt_title = "Bild beschreiben" | "Describe this picture";
     alt_hint = "Für alle, die das Bild nicht sehen können, etwa mit Screenreader." | "For everyone who can’t see the picture, for example with a screen reader.";
     alt_save_failed = "Alt-Text nicht gespeichert." | "Alt text not saved.";
-    alt_message_unloaded = "Die Nachricht ist nicht mehr geladen. Scroll zu ihr und versuch es noch mal." | "The message is no longer loaded. Scroll to it and try again.";
     composer_filter_pictures = "Bilder" | "Pictures";
     composer_filter_all = "Alle Dateien" | "All files";
     /// The desktop app decodes pictures itself and leaves out huge ones.

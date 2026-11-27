@@ -18,11 +18,15 @@ use uuid::Uuid;
 use common::Client;
 
 const PASSWORD: &str = "password123";
-/// Columns of an export the app's own worker may have built meanwhile, as
-/// they are before it is built (the trigger queues a replaced archive).
-const UNBUILT: &str = "claim = NULL, claimed_until = NULL, finished_at = NULL, \
-                       expires_at = NULL, object_key = NULL, size_bytes = NULL";
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x40\0\0\0\x40\x08\x06\0\0\0\0\0\0\0";
+
+/// The export worker is off: the tests build with `export::run_once`, so
+/// an export stays as a test left it until then.
+fn without_worker(pool: PgPool) -> AppState {
+    let mut state = common::state(pool);
+    state.workers.account_export = None;
+    state
+}
 
 async fn signed_up(state: &AppState, email: &str, name: &str) -> Client {
     let mut client = Client::from_state(state.clone());
@@ -62,23 +66,25 @@ async fn post(client: &mut Client, channel_id: &str, body: Value) -> Value {
     res.body
 }
 
-/// Runs the worker until the account's export has left `pending` and
-/// `running` (the app's own worker may get there first).
+/// Runs the worker's passes until none finds work, then returns the state
+/// the account's export ended in.
 async fn built(state: &AppState, user_id: Uuid) -> String {
-    for _ in 0..500 {
-        export::run_once(state).await.unwrap();
-        let current: String =
-            sqlx::query_scalar("SELECT state FROM account_exports WHERE user_id = $1")
-                .bind(user_id)
-                .fetch_one(&state.db)
-                .await
-                .unwrap();
-        if current != "pending" && current != "running" {
-            return current;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    let mut passes = 0;
+    while export::run_once(state).await.unwrap() {
+        passes += 1;
+        assert!(passes < 10, "the export worker keeps finding work");
     }
-    panic!("the export of {user_id} was not built");
+    let current: String =
+        sqlx::query_scalar("SELECT state FROM account_exports WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert!(
+        current != "pending" && current != "running",
+        "the export of {user_id} was not built: {current}"
+    );
+    current
 }
 
 /// The archive through the download route, entry by entry.
@@ -117,7 +123,7 @@ fn json_entry(entries: &BTreeMap<String, Vec<u8>>, name: &str) -> Value {
 
 #[sqlx::test]
 async fn a_request_is_queued_once_and_needs_a_session(pool: PgPool) {
-    let state = common::state(pool);
+    let state = without_worker(pool);
     let mut anon = Client::from_state(state.clone());
     anon.bootstrap().await;
     let res = anon.send(Method::GET, "/api/me/export", None).await;
@@ -151,19 +157,17 @@ async fn a_request_is_queued_once_and_needs_a_session(pool: PgPool) {
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     assert_eq!(res.body["error"], "export_pending");
     // While it is built, too.
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "UPDATE account_exports SET state = 'running', {UNBUILT}"
-    )))
-    .execute(&state.db)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE account_exports SET state = 'running'")
+        .execute(&state.db)
+        .await
+        .unwrap();
     let res = request(&mut ada).await;
     assert_eq!(res.body["error"], "export_pending");
 }
 
 #[sqlx::test]
 async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = without_worker(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
     let ada_id = uuid(ada.user_id());
@@ -385,7 +389,7 @@ async fn the_archive_holds_what_the_person_wrote_and_nothing_of_others(pool: PgP
 
 #[sqlx::test]
 async fn a_ready_export_waits_a_day_and_a_failed_one_does_not(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = without_worker(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = uuid(ada.user_id());
     let res = request(&mut ada).await;
@@ -432,7 +436,7 @@ async fn a_ready_export_waits_a_day_and_a_failed_one_does_not(pool: PgPool) {
 
 #[sqlx::test]
 async fn an_expired_export_is_swept_and_its_archive_queued(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = without_worker(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = uuid(ada.user_id());
     request(&mut ada).await;
@@ -472,7 +476,7 @@ async fn an_expired_export_is_swept_and_its_archive_queued(pool: PgPool) {
 
 #[sqlx::test]
 async fn the_retention_setting_decides_how_long_it_stays(pool: PgPool) {
-    let mut state = common::state(pool.clone());
+    let mut state = without_worker(pool.clone());
     state.export_retention = Duration::from_secs(3 * 3600);
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = uuid(ada.user_id());
@@ -527,7 +531,7 @@ async fn attempts(pool: &PgPool) -> i32 {
 /// than being tried again: the files' sizes are summed before the build.
 #[sqlx::test]
 async fn files_past_the_size_limit_fail_the_export_at_once(pool: PgPool) {
-    let mut state = common::state(pool.clone());
+    let mut state = without_worker(pool.clone());
     state.export_max_bytes = 100_000;
     let (mut ada, ada_id, message_id, channel_id) = wrote_once(&state).await;
     sqlx::query(
@@ -551,7 +555,7 @@ async fn files_past_the_size_limit_fail_the_export_at_once(pool: PgPool) {
 /// as much as for files.
 #[sqlx::test]
 async fn an_archive_growing_past_the_size_limit_fails_at_once(pool: PgPool) {
-    let mut state = common::state(pool.clone());
+    let mut state = without_worker(pool.clone());
     state.export_max_bytes = 2000;
     let (mut ada, ada_id, _, _) = wrote_once(&state).await;
     request(&mut ada).await;
@@ -567,13 +571,13 @@ async fn an_archive_growing_past_the_size_limit_fails_at_once(pool: PgPool) {
 #[sqlx::test]
 async fn the_ready_mail_goes_out_only_with_mail_on(pool: PgPool) {
     // Mail off: nothing to send, and the page polls instead.
-    let state = common::state(pool.clone());
+    let state = without_worker(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     request(&mut ada).await;
     assert_eq!(built(&state, uuid(ada.user_id())).await, "ready");
     assert!(state.mail.is_none());
 
-    let mut state = common::state(pool.clone());
+    let mut state = without_worker(pool.clone());
     let mailer = Mailer::memory(&url::Url::parse("https://chat.example.org/").unwrap());
     state.mail = Some(mailer.clone());
     let mut bob = Client::from_state(state.clone());
@@ -615,7 +619,7 @@ async fn the_ready_mail_goes_out_only_with_mail_on(pool: PgPool) {
 
 #[sqlx::test]
 async fn an_account_under_deletion_is_not_built(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = without_worker(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = uuid(ada.user_id());
     let res = request(&mut ada).await;
@@ -634,14 +638,6 @@ async fn an_account_under_deletion_is_not_built(pool: PgPool) {
         .execute(&pool)
         .await
         .unwrap();
-    // The app's own worker may have claimed it before the mark; reset that.
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "UPDATE account_exports SET state = 'pending', {UNBUILT}"
-    )))
-    .execute(&pool)
-    .await
-    .unwrap();
-
     assert!(!export::run_once(&state).await.unwrap());
     let current: String =
         sqlx::query_scalar("SELECT state FROM account_exports WHERE user_id = $1")
@@ -659,18 +655,16 @@ async fn an_account_under_deletion_is_not_built(pool: PgPool) {
 
 #[sqlx::test]
 async fn an_export_claimed_too_often_fails(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = without_worker(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = uuid(ada.user_id());
     request(&mut ada).await;
     // Three claims ran out without a result (a process died each time).
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "UPDATE account_exports SET state = 'running', attempts = $1, {UNBUILT}"
-    )))
-    .bind(export::ATTEMPTS)
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE account_exports SET state = 'running', attempts = $1")
+        .bind(export::ATTEMPTS)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE account_exports SET claimed_until = now() - interval '1 second'")
         .execute(&pool)
         .await
@@ -704,7 +698,7 @@ async fn feedback_entry(pool: &PgPool, user: Uuid, text: &str, image: Option<(&s
 
 #[sqlx::test]
 async fn the_archive_holds_the_persons_feedback_with_its_replies(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = without_worker(pool.clone());
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let lena = signed_up(&state, "lena@example.com", "Lena").await;
     let ada_id = uuid(ada.user_id());
@@ -797,7 +791,7 @@ async fn the_archive_holds_the_persons_feedback_with_its_replies(pool: PgPool) {
 /// Feedback images count toward the size check before the build.
 #[sqlx::test]
 async fn feedback_images_count_toward_the_size_limit(pool: PgPool) {
-    let mut state = common::state(pool.clone());
+    let mut state = without_worker(pool.clone());
     state.export_max_bytes = 100_000;
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let ada_id = uuid(ada.user_id());
@@ -812,7 +806,7 @@ async fn feedback_images_count_toward_the_size_limit(pool: PgPool) {
 /// author reads it.
 #[sqlx::test]
 async fn the_archive_holds_an_edit_kept_for_oneself(pool: PgPool) {
-    let state = common::state(pool);
+    let state = without_worker(pool);
     let mut ada = signed_up(&state, "ada@example.com", "Ada").await;
     let mut bob = signed_up(&state, "bob@example.com", "Bob").await;
     let bob_id = uuid(bob.user_id());
