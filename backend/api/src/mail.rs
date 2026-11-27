@@ -217,7 +217,9 @@ impl Mailer {
     }
 
     /// Waits until every task spawned so far has ended, including those
-    /// they spawned: a mail not sent by then is not sent at all.
+    /// they spawned: a mail not sent by then is not sent at all. It covers
+    /// only tasks already spawned: the deletion and export mails are spawned
+    /// by their workers, so a test waits for the worker's pass first.
     pub async fn settled(&self) {
         let mut running = self.running.subscribe();
         // The sender lives in `self`, so the wait cannot end without zero.
