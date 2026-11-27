@@ -37,13 +37,28 @@ AREAS = {
 }
 # Read by no check: a change here alone starts nothing.
 NO_AREA = ('.github/ISSUE_TEMPLATE/', '.github/release-notes/')
-# The app images a pull request builds (without pushing), by area.
-IMAGES = {
-    'backend': ({'name': 'api', 'context': '.', 'file': 'backend/api/Dockerfile'},
-                {'name': 'media', 'context': '.', 'file': 'backend/media/Dockerfile'}),
-    'web': ({'name': 'web', 'context': 'web', 'file': 'web/Dockerfile'},),
-}
-
+# The app images a pull request builds (without pushing). Each builds when
+# one of its inputs changes: its Dockerfile, what that copies from the
+# context (test_changes.py reads the COPY lines), the context's
+# .dockerignore, the job that builds it, and the checks run on the image.
+IMAGES = (
+    {'name': 'api', 'context': '.', 'file': 'backend/api/Dockerfile',
+     'inputs': ('.dockerignore', CI, 'rust-toolchain.toml',
+                'backend/Cargo.toml', 'backend/Cargo.lock', 'backend/api/', 'backend/shared/',
+                'backend/media/Cargo.toml', 'backend/build/debian-snapshot.sources',
+                'backend/build/rust-build-ca.sh', 'backend/build/rust-deps-recipe.sh')},
+    {'name': 'media', 'context': '.', 'file': 'backend/media/Dockerfile',
+     'inputs': ('.dockerignore', CI, 'rust-toolchain.toml',
+                'backend/Cargo.toml', 'backend/Cargo.lock', 'backend/media/', 'backend/shared/',
+                'backend/api/Cargo.toml', 'backend/build/debian-snapshot.sources',
+                'backend/build/rust-build-ca.sh', 'backend/build/rust-deps-recipe.sh',
+                'backend/build/mediasoup-build-tools.py', 'backend/build/mediasoup-build-tools.lock.json',
+                'backend/build/mediasoup-debian-build-tools.lock.tsv',
+                'backend/build/install-mediasoup-debian-build-tools.sh',
+                'backend/build/check-media-image.py')},
+    {'name': 'web', 'context': 'web', 'file': 'web/Dockerfile',
+     'inputs': ('web/', CI)},
+)
 
 def touches(path, prefixes):
     return any(path == prefix or (prefix.endswith('/') and path.startswith(prefix))
@@ -57,18 +72,30 @@ def areas(paths):
             if any(touches(path, prefixes) for path in paths)}
 
 
-def outputs(touched):
-    """`name=value` lines for $GITHUB_OUTPUT."""
+def images(paths):
+    """The names of the images whose inputs the changed paths touch."""
+    return {image['name'] for image in IMAGES
+            if any(touches(path, image['inputs']) for path in paths if path)}
+
+
+def outputs(touched, built):
+    """`name=value` lines for $GITHUB_OUTPUT; `images` is the build matrix."""
     lines = [f'{area}={"true" if area in touched else "false"}' for area in AREAS]
-    images = [image for area, built in IMAGES.items() if area in touched for image in built]
-    lines.append('images=' + json.dumps(images, separators=(',', ':')))
+    matrix = [{key: image[key] for key in ('name', 'context', 'file')}
+              for image in IMAGES if image['name'] in built]
+    lines.append('images=' + json.dumps(matrix, separators=(',', ':')))
     return lines
 
 
 def main(argv):
-    touched = set(AREAS) if '--all' in argv else areas(sys.stdin.read().splitlines())
-    print('\n'.join(outputs(touched)))
-    print('areas: ' + (', '.join(sorted(touched)) or 'none'), file=sys.stderr)
+    if '--all' in argv:
+        touched, built = set(AREAS), {image['name'] for image in IMAGES}
+    else:
+        paths = sys.stdin.read().splitlines()
+        touched, built = areas(paths), images(paths)
+    print('\n'.join(outputs(touched, built)))
+    print('areas: ' + (', '.join(sorted(touched)) or 'none')
+          + '; images: ' + (', '.join(sorted(built)) or 'none'), file=sys.stderr)
 
 
 if __name__ == '__main__':
