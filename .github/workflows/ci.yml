@@ -431,8 +431,17 @@ jobs:
           "$tools/shellcheck" --version
           "$tools/actionlint" -shellcheck "$tools/shellcheck" -pyflakes=
 
+      # The deployment tests read the workflows with this PyYAML (GEL-403);
+      # --target leaves the runner's own Python packages alone.
+      - name: Install the deployment tests' PyYAML
+        run: |
+          python3 -m pip install --quiet --require-hashes --only-binary=:all: \
+            --target "$RUNNER_TEMP/python" -r deploy/compose/tests/requirements.txt
+
       # Also checks that every workflow action is pinned to a commit SHA.
       - name: Test deployment config
+        env:
+          PYTHONPATH: ${{ runner.temp }}/python
         run: python3 -m unittest discover -s deploy/compose/tests -v
 
       # The restore drill runs by hand; its own unit tests run here.
@@ -483,6 +492,10 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      # npm test mounts components in it (*.browser.test.tsx, GEL-385).
+      - name: Chromium
+        run: npx playwright install --with-deps chromium-headless-shell
 
       - name: Test
         run: npm test
