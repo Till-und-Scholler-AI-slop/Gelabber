@@ -329,6 +329,22 @@ export async function realtimeFaultScenarios(h, f, runtime) {
           "fixture-private-dm-control-subscription-missing",
         );
         const recipient = await h.actor("PrivateDMRecipient");
+        // No shared server: only friends may open a DM (#563). The owner
+        // asks by the recipient's friend code, the recipient accepts.
+        const code = await api(recipient, "/me/friend-code");
+        const asked = await api(f.owner, "/friends/requests", "POST", {
+          code: code.body?.code,
+        });
+        const accepted = await api(
+          recipient,
+          `/friends/requests/${f.owner.id}/accept`,
+          "POST",
+        );
+        check(
+          [200, 201, 204].includes(accepted.status),
+          "fixture-private-dm-friends-failed",
+          { asked: asked.status, accepted: accepted.status },
+        );
         const dm = await api(f.owner, "/dms", "POST", {
           user_id: recipient.id,
         });

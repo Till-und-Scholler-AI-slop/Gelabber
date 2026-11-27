@@ -1,5 +1,18 @@
 # Actual-app acceptance scenarios
 
+## Where it runs
+
+`.github/workflows/e2e-extended.yml` runs these scenarios against its own API,
+SFU, Postgres, Redis and MinIO (`ci-fault-prepare.mjs`, then `fault-run.mjs`
+per browser and profile from `profiles.mjs`): the fault profiles `core-faults`
+and `media-faults` in Chromium and Firefox, the profiles `core` and `access`
+in Chromium (`media` once its scenarios pass). It runs after pushes to a
+version branch that touch `backend/` or `web/`, on release and hotfix pull
+requests to `main`, and by hand; a red push run opens or updates the issue
+"Extended E2E fails on <branch>" (GEL-378). The same workflow runs
+`chat-workflows.mjs` and `../smoke-pwa.mjs`. The rest of this file records how
+the scenarios came about.
+
 Gelabber uses mediasoup 0.33 through the official Rust binding
 and public mediasoup-client 3.26.0, with Gelabber's own v4 WebSocket/authority
 contract. A publishing voice connection uses separate SDK send and receive PCs

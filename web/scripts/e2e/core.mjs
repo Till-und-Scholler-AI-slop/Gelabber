@@ -1,4 +1,4 @@
-/* global document, URL */
+/* global URL */
 import { readFile } from "node:fs/promises";
 import {
   api,
@@ -137,6 +137,25 @@ export async function coreScenarios(h, f) {
       };
     },
   );
+  // A first DM between people who are not friends is a message request
+  // (#563), which takes no files. These scenarios are about an ordinary DM.
+  if (
+    h.wants("new-dm-connected-recipient-discovers-without-refetch") ||
+    h.wants("dm-jpeg-png-webp-bind-reload-byte-equal")
+  )
+    await h.setup("dm-friends-fixture", [], async () => {
+      const asked = await api(f.owner, "/friends/requests", "POST", {
+        user_id: f.member.id,
+      });
+      const answered = await api(f.member, "/friends/requests", "POST", {
+        user_id: f.owner.id,
+      });
+      check(answered.body?.status === "friends", "dm-friends-fixture-failed", {
+        asked: asked.status,
+        answered: answered.status,
+      });
+      return { friends: true };
+    });
   await h.run(
     "new-dm-connected-recipient-discovers-without-refetch",
     ["05a", "06b"],
@@ -256,13 +275,27 @@ export async function coreScenarios(h, f) {
               15_000,
             );
             await f.member.page.reload();
-            await f.member.page.waitForFunction(
-              (name) =>
-                [...document.images].some(
-                  (i) => i.alt === name && i.complete && i.naturalWidth === 8,
+            // A picture loads once it is in view (loading="lazy"), and a
+            // failed first try mounts a new <img>, so it is looked up afresh
+            // each time. Its width says nothing here: with a thumbnail's
+            // srcset (#574) the 8 px fixture reports 8 * 8 / 400 = 0 px.
+            // decode() settles once the picture is decoded or broken; the
+            // bytes are compared below.
+            const picture = f.member.page
+              .locator(`img[alt="${filename}"]`)
+              .last();
+            await picture.scrollIntoViewIfNeeded({ timeout: 15_000 });
+            await until(
+              () =>
+                picture.evaluate((img) =>
+                  img.decode().then(
+                    () => true,
+                    () => false,
+                  ),
                 ),
-              filename,
-              { timeout: 15_000 },
+              Boolean,
+              "attachment-not-rendered-after-reload",
+              15_000,
             );
             const src = await f.member.page
               .locator(`img[alt="${filename}"]`)

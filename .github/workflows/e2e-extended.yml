@@ -1,14 +1,20 @@
-# Fault diagnostics on demand: the real app against Postgres, Redis and MinIO
-# in Chromium and Firefox, with API/Redis and SFU faults, then the chat
-# workflows acceptance in Chromium (GEL-31). Not a PR gate. Runs
-# when a pull request gets the label e2e-extended (also before this file is
-# on main, which workflow_dispatch needs) or by hand.
+# The real app against Postgres, Redis, MinIO and the SFU: the fault matrix in
+# Chromium and Firefox, the core and access scenarios in Chromium, the
+# chat workflows (GEL-31) and the PWA smoke. Not a PR gate (GEL-378): it runs
+# after pushes to a version branch that touch the app, on release and hotfix
+# pull requests to main, and by hand. A red push run opens or updates an issue.
 name: Extended E2E
 
 on:
   workflow_dispatch:
+  push:
+    branches: ['v[0-9]*']
+    paths:
+      - 'backend/**'
+      - 'web/**'
+      - '.github/workflows/e2e-extended.yml'
   pull_request:
-    types: [labeled]
+    branches: [main]
 
 permissions:
   contents: read
@@ -23,7 +29,11 @@ env:
 jobs:
   faults:
     name: Fault acceptance (Chromium, Firefox)
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'e2e-extended'
+    # Of the pull requests to main, only a release or hotfix (Dependabot's go there too).
+    if: >-
+      github.event_name != 'pull_request' ||
+      startsWith(github.head_ref, 'release/') ||
+      startsWith(github.head_ref, 'hotfix/')
     runs-on: ubuntu-26.04
     timeout-minutes: 120
     permissions:
@@ -141,25 +151,41 @@ jobs:
           .github/workflows/scripts/apt-install.sh postgresql-client
           npm ci --prefix web
           cd web
-          npx playwright install --with-deps chromium firefox
+          # The browsers' system packages through apt-install.sh, which reads only
+          # Ubuntu's sources; --with-deps would read every source (GEL-404).
+          mapfile -t deps < <(npx playwright install-deps --dry-run chromium firefox \
+            | sed -n 's/^  \([^ ]\+\)$/\1/p')
+          if [ "${#deps[@]}" -gt 0 ]; then
+            ../.github/workflows/scripts/apt-install.sh "${deps[@]}"
+          fi
+          npx playwright install-deps --dry-run chromium firefox
+          npx playwright install chromium firefox
 
       - name: Prepare dedicated fault database, bucket and immutable API/SFU copies
         env:
           GELABBER_E2E_PREPARE_MEDIA: "true"
         run: node web/scripts/e2e/ci-fault-prepare.mjs
 
-      - name: Real app core and API/Redis Live-lease faults in both browsers
+      # The faults in both browsers, the scenarios without faults in Chromium.
+      # The media profile joins once its scenarios pass (GEL-378).
+      - name: Real app scenarios and faults in both browsers
         run: |
           set -euo pipefail
           failed=0
           for engine in chromium firefox; do
-            for profile in core-faults media-faults; do
+            profiles=(core-faults media-faults)
+            if [ "$engine" = chromium ]; then
+              profiles+=(core access)
+            fi
+            for profile in "${profiles[@]}"; do
               owned_media_env="$GELABBER_E2E_MEDIA_FAULT_ENV"
               owned_media_manifest="$GELABBER_E2E_MEDIA_MANIFEST"
-              if [ "$profile" = core-faults ]; then
-                owned_media_env=
-                owned_media_manifest=
-              fi
+              case "$profile" in
+                core | core-faults)
+                  owned_media_env=
+                  owned_media_manifest=
+                  ;;
+              esac
               if ! GELABBER_E2E_MEDIA_FAULT_ENV="$owned_media_env" \
                 GELABBER_E2E_MEDIA_MANIFEST="$owned_media_manifest" \
                 GELABBER_E2E_BROWSER="$engine" GELABBER_E2E_PROFILE="$profile" \
@@ -218,6 +244,30 @@ jobs:
           path: /tmp/gelabber-chat-workflows/
           if-no-files-found: warn
 
+      # The service worker, manifest and install flow against the production
+      # nginx with the built client, as docs/v0.6-pwa.md describes.
+      - name: PWA smoke against the production nginx (Chromium)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          npm run --prefix web build
+          image="$(sed -n 's/^FROM \(nginx:[^ ]*\).*/\1/p' web/Dockerfile)"
+          docker run -d --name gelabber-pwa-test -p 127.0.0.1:4173:80 \
+            -e MINIO_PUBLIC_ENDPOINT=http://localhost:9000 \
+            -v "$PWD/web/dist:/usr/share/nginx/html:ro" \
+            -v "$PWD/web/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            -v "$PWD/web/docker-entrypoint.d/40-gelabber-storage-origin.sh:/docker-entrypoint.d/40-gelabber-storage-origin.sh:ro" \
+            "$image"
+          deadline=$((SECONDS + 60))
+          until curl -fsS http://127.0.0.1:4173/ >/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              docker logs gelabber-pwa-test
+              exit 1
+            fi
+            sleep 1
+          done
+          npm run --prefix web test:pwa-smoke
+
       - name: Dump test MinIO logs
         if: failure()
         run: docker logs gelabber-rust-minio
@@ -225,6 +275,36 @@ jobs:
       - name: Stop owned test MinIO
         if: always()
         run: |
-          if docker container inspect gelabber-rust-minio >/dev/null 2>&1; then
-            docker rm -f gelabber-rust-minio
+          for name in gelabber-rust-minio gelabber-pwa-test; do
+            if docker container inspect "$name" >/dev/null 2>&1; then
+              docker rm -f "$name"
+            fi
+          done
+
+  # Who looks at a red run: an open issue per branch, which the Linear sync
+  # brings to the team. Pull requests show their red run on the PR instead.
+  report:
+    name: Issue for a red run
+    needs: faults
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          export GH_REPO="$GITHUB_REPOSITORY"
+          title="Extended E2E fails on ${GITHUB_REF_NAME}"
+          body="Run ${RUN_URL} failed at ${GITHUB_SHA}. Its reports are the run's artifacts."
+          number="$(gh issue list --state open --search "in:title \"${title}\"" --json number,title \
+            | jq -r --arg title "$title" 'map(select(.title == $title))[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
           fi
