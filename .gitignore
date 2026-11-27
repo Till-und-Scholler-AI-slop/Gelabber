@@ -40,3 +40,7 @@ web/field-gallery-out/
 # Impeccable design skill: review screenshots and roll records stay local.
 .impeccable/review/
 .impeccable/questions/
+
+# web/stryker.config.mjs: Stryker's reports and sandbox (GEL-388).
+web/reports/mutation/
+web/.stryker-tmp/
