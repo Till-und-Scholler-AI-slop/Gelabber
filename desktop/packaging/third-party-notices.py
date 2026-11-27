@@ -48,16 +48,16 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 NATIVE = REPO / "desktop/native"
 OUTPUT = REPO / "desktop/packaging/native/THIRD-PARTY-NOTICES.txt"
-# The workflow that builds the packages, and its job for the Windows one.
+# The workflow that builds the packages, and its job for the Windows one, as
+# part 1 names them. That the job loads WINDOWS_BUILD, runs WINDOWS_CHECK on
+# every build and is where a release's installer comes from is
+# deploy/compose/tests/test_desktop_native_modes.py's to hold.
 WORKFLOW_NAME = ".github/workflows/desktop-native.yml"
-WORKFLOW = REPO / WORKFLOW_NAME
-# Runs WORKFLOW as a job (`uses:`) and attaches the apps to a release.
-RELEASE_WORKFLOW = REPO / ".github/workflows/desktop-release.yml"
 WINDOWS_JOB = "core-windows"
-WINDOWS_UPLOAD_JOB = "release-asset-windows"
-# Signs the installer that core-windows built in a release pull request's run
-# (desktop-native.yml `prebuilt_run`); it builds nothing itself.
-WINDOWS_SIGN_JOB = "prebuilt"
+# The settings the Windows build runs with (KEY=value lines).
+WINDOWS_BUILD = NATIVE / "windows-build.env"
+# The script that job runs on what ships (exports, H264 names, dependencies).
+WINDOWS_CHECK = REPO / "desktop/packaging/native/windows/check-binaries.ps1"
 # The application: the cargo package (also the Linux binary), the Windows
 # binary, the installer and the file's title.
 APP = {
@@ -66,7 +66,6 @@ APP = {
     "installer": "gelabber-native-windows-x64-setup.exe",
     "title": "Gelabber native desktop app",
 }
-WINDOWS_INSTALLER = APP["installer"]
 # What the native app embeds besides its crates (desktop/ui/assets): name,
 # file in the repository, where it comes from, licence text.
 NATIVE_ASSETS = (
@@ -109,13 +108,12 @@ EXPECTED_FACTS = {
     "the core does not define WEBRTC_USE_H264": True,
     "the core links the static MSVC runtime on Windows": True,
 }
-# The same for the sentences of part 1 on what the workflow does when it
-# builds the Windows package. Kept apart: part 2 says nothing that depends on
-# them, so they are not among its inputs.
-EXPECTED_WORKFLOW_FACTS = {
-    "the Windows job builds the app with RUSTFLAGS -C target-feature=+crt-static": True,
-    "the Windows job fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": True,
-    "a release takes the Windows installer from that job only": True,
+# The same for the sentences of part 1 on how the Windows package is built and
+# checked. Kept apart: part 2 says nothing that depends on them, so they are
+# not among its inputs.
+EXPECTED_PACKAGE_FACTS = {
+    "the Windows build links the app with RUSTFLAGS -C target-feature=+crt-static": True,
+    "the Windows check fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": True,
 }
 
 LICENCE_NAME = re.compile(r"(licen[sc]e|copying|copyright|notice|unlicense|patents)", re.I)
@@ -379,54 +377,31 @@ def build_facts():
     }
 
 
-def workflow_jobs(text):
-    """The jobs of a workflow file: id -> its lines, comment lines left out.
-    Read as text: the script needs nothing beyond Python's own library."""
-    found = {}
-    for block in re.split(r"^(?=  [\w-]+:[ \t]*$)", text.partition("\njobs:\n")[2], flags=re.M):
-        head = re.match(r"  ([\w-]+):[ \t]*\n", block)
-        if head:
-            found[head[1]] = "".join(
-                f"{line}\n" for line in block[head.end():].splitlines()
-                if not line.lstrip().startswith("#")
-            )
-    return found
+def code_lines(path):
+    """A PowerShell file's lines without comment lines."""
+    return [line for line in read(path).splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 
-def workflow_facts():
-    jobs = workflow_jobs(read(WORKFLOW))
-    release = workflow_jobs(read(RELEASE_WORKFLOW)) if RELEASE_WORKFLOW != WORKFLOW else {}
-    windows, upload = jobs.get(WINDOWS_JOB, ""), {**jobs, **release}.get(WINDOWS_UPLOAD_JOB, "")
-    # The job itself, or the release workflow's job that runs this workflow.
-    builders = {WINDOWS_JOB} | {
-        name for name, job in release.items()
-        if re.search(rf"^    uses: \./{re.escape(WORKFLOW_NAME)}\s*$", job, re.M)
-    }
-    # The job's own environment: a step could set the variable again.
-    environment = re.search(r"^    env:\n((?:      \S.*\n)+)", windows, re.M)
-    variables = dict(re.findall(r"^      (\w+): (.*)$", environment[1] if environment else "", re.M))
-    needs = re.search(r"^    needs: (.*)$", upload, re.M)
+def build_settings(path):
+    """(name, value) of the lines desktop-native.yml writes to GITHUB_ENV from
+    a settings file: carriage returns dropped, lines that are empty or start
+    with # left out, split at the first =, nothing stripped or unquoted."""
+    lines = read(path).replace("\r", "").split("\n")
+    return [line.partition("=")[::2] for line in lines if line and not line.startswith("#")]
+
+
+def package_facts():
+    # Cargo splits RUSTFLAGS at whitespace and passes quotes on to rustc.
+    rustflags = [value for name, value in build_settings(WINDOWS_BUILD) if name == "RUSTFLAGS"]
+    check = "\n".join(code_lines(WINDOWS_CHECK)) if WINDOWS_CHECK.is_file() else ""
     return {
-        "the Windows job builds the app with RUSTFLAGS -C target-feature=+crt-static": (
-            variables.get("RUSTFLAGS", "").strip("\"'").split() == ["-C", "target-feature=+crt-static"]
-            and windows.count("RUSTFLAGS") == 1
+        "the Windows build links the app with RUSTFLAGS -C target-feature=+crt-static": (
+            len(rustflags) == 1 and rustflags[0].split() == ["-C", "target-feature=+crt-static"]
         ),
-        # The step "Check and measure the binaries".
-        "the Windows job fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": all(
-            mark in windows for mark in (
+        "the Windows check fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": all(
+            mark in check for mark in (
                 "'WelsInitEncoderExt'", "'avcodec_open2'", "$content.Contains($_)",
                 'if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg',
-            )
-        ),
-        "a release takes the Windows installer from that job only": (
-            bool(needs) and bool(builders & set(re.findall(r"[\w-]+", needs[1])))
-            and WINDOWS_INSTALLER in upload
-            and not any(
-                WINDOWS_INSTALLER in job for name, job in [*jobs.items(), *release.items()]
-                if name not in (WINDOWS_JOB, WINDOWS_UPLOAD_JOB, WINDOWS_SIGN_JOB)
-            )
-            and not any(
-                mark in jobs.get(WINDOWS_SIGN_JOB, "") for mark in ("cargo ", "makensis", "nsis")
             )
         ),
     }
@@ -1424,7 +1399,7 @@ def std_part(toolchain):
 
 def scope_part():
     expected(build_facts(), EXPECTED_FACTS, "parts 1 and 2 describe")
-    expected(workflow_facts(), EXPECTED_WORKFLOW_FACTS, "part 1 describes")
+    expected(package_facts(), EXPECTED_PACKAGE_FACTS, "part 1 describes")
     pin = pins()
     out = "What is covered\n"
     out += para("The programs of the packages and what is linked statically into them:", 2)
