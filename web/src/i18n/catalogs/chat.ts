@@ -67,6 +67,7 @@ export const chat = defineCatalog(
     "row.replyLabel": "Antwort auf {name}: {summary}. Zur Nachricht springen",
     "system.liveStarted": "{author} ist live in {voice}.",
     "system.unknown": "Systemnachricht von {author}",
+    "row.failed": "Diese Nachricht kann nicht angezeigt werden.",
 
     // The message menu (right click, "Mehr", long press).
     "menu.label": "Nachricht von {name}",
@@ -163,7 +164,8 @@ export const chat = defineCatalog(
     "altText.edit": "Alt-Text bearbeiten",
     "altText.title": "Bild beschreiben",
     "altText.label": "Alt-Text für {name}",
-    "altText.hint": "Für alle, die das Bild nicht sehen können, etwa mit Screenreader.",
+    "altText.hint":
+      "Für alle, die das Bild nicht sehen können, etwa mit Screenreader.",
     "altText.count": "{count} / {max}",
     "altText.tooLong": "Höchstens {max} Zeichen.",
     "altText.saving": "Wird gespeichert …",
@@ -340,6 +342,7 @@ export const chat = defineCatalog(
     "row.replyLabel": "Reply to {name}: {summary}. Jump to message",
     "system.liveStarted": "{author} is live in {voice}.",
     "system.unknown": "System message from {author}",
+    "row.failed": "This message cannot be shown.",
 
     "menu.label": "Message from {name}",
     "menu.react": "React",
@@ -427,7 +430,8 @@ export const chat = defineCatalog(
     "altText.edit": "Edit alt text",
     "altText.title": "Describe this picture",
     "altText.label": "Alt text for {name}",
-    "altText.hint": "For everyone who can’t see the picture, for example with a screen reader.",
+    "altText.hint":
+      "For everyone who can’t see the picture, for example with a screen reader.",
     "altText.count": "{count} / {max}",
     "altText.tooLong": "At most {max} characters.",
     "altText.saving": "Saving …",

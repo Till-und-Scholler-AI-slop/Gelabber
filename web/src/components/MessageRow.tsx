@@ -2,6 +2,10 @@
 // state of a send that is still on its way or did not arrive.
 
 import {
+  CatchBoundary,
+  type ErrorComponentProps,
+} from "@tanstack/react-router";
+import {
   useContext,
   useLayoutEffect,
   useMemo,
@@ -21,7 +25,7 @@ import { discardAttempt, type SendAttempt } from "../messages/pending.ts";
 import { isPendingId } from "../messages/queries.ts";
 import { validateContent } from "../messages/rules.ts";
 import type { Gif, Message, Reply } from "../messages/types.ts";
-import { asGif, asReactionList, asReply } from "../messages/types.ts";
+import { asGif, asReply } from "../messages/types.ts";
 import { asSystem, systemText } from "../messages/system.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
 import { GifMessageButton } from "./GifPicker.tsx";
@@ -64,17 +68,7 @@ import { translate, useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { common } from "../i18n/catalogs/common.ts";
 
-export function MessageRow({
-  message,
-  continued,
-  arrival,
-  mine,
-  canSend,
-  canDelete,
-  attempt,
-  onEdit,
-  onDelete,
-}: {
+type MessageRowProps = {
   message: Message;
   continued: boolean;
   /** Just came in live: fades in once, as it mounts. */
@@ -88,7 +82,71 @@ export function MessageRow({
   onEdit: (content: string, failed: () => void) => void;
   /** `skipConfirm` with Shift held. */
   onDelete: (skipConfirm: boolean) => void;
+};
+
+/** One message in the list. A row that throws while it draws shows a notice
+ *  in its place with "Erneut versuchen"; the other rows stay (GEL-420). */
+export function MessageRow(props: MessageRowProps) {
+  const { message } = props;
+  return (
+    <CatchBoundary
+      getResetKey={() => `${message.id}:${message.revision ?? ""}`}
+      errorComponent={({ reset }: ErrorComponentProps) => (
+        <MessageRowFailed message={message} reset={reset} />
+      )}
+    >
+      <MessageRowContent {...props} />
+    </CatchBoundary>
+  );
+}
+
+/** In the list's place of the row: focusable like a row (the list moves
+ *  focus to rows), and quiet, as the list itself announces new rows. The
+ *  author and the time show when they are readable. */
+function MessageRowFailed({
+  message,
+  reset,
+}: {
+  message: Message;
+  reset: () => void;
 }) {
+  const t = useT(chat);
+  const tc = useT(common);
+  const author: unknown = (message as { author?: { name?: unknown } }).author
+    ?.name;
+  const time =
+    typeof message.created_at === "string"
+      ? formatClock(message.created_at)
+      : "";
+  return (
+    <div tabIndex={-1} className="lr-message-row lr-message-failed">
+      <p>
+        {typeof author === "string" && author ? (
+          <span className="lr-message-failed-meta">
+            {author}
+            {time ? ` · ${time}` : ""}
+          </span>
+        ) : null}
+        <span>{t("row.failed")}</span>
+      </p>
+      <Button size="sm" variant="ghost" onClick={reset}>
+        {tc("tryAgain")}
+      </Button>
+    </div>
+  );
+}
+
+function MessageRowContent({
+  message,
+  continued,
+  arrival,
+  mine,
+  canSend,
+  canDelete,
+  attempt,
+  onEdit,
+  onDelete,
+}: MessageRowProps) {
   const t = useT(chat);
   const tc = useT(common);
   const pending = isPendingId(message.id);
@@ -232,7 +290,7 @@ export function MessageRow({
       showEdit ||
       showDelete ||
       Boolean(message.content));
-  const myReactions = asReactionList(message.reactions)
+  const myReactions = message.reactions
     .filter((entry) => entry.user_ids.includes(reaction.userId))
     .map((entry) => entry.emoji);
 

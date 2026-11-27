@@ -1613,6 +1613,7 @@ mod tests {
 
 #[cfg(test)]
 mod page_tests {
+    use crate::app::testkit::{click, click_role};
     use egui_kittest::kittest::Queryable;
     use serde_json::json;
 
@@ -1822,10 +1823,7 @@ mod page_tests {
         // while the window is in the background.
         let read = format!("PUT /channels/{ALLGEMEIN}/read");
         let marks = || api.seen.lock().iter().filter(|r| **r == read).count();
-        for _ in 0..20 {
-            harness.step();
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        crate::app::testkit::wait_until_idle(&mut harness);
         let before = marks();
         assert_eq!(before, 0);
         harness.input_mut().focused = true;
@@ -1874,7 +1872,7 @@ mod page_tests {
         harness.run_steps(4);
         // ↑ in the empty composer edits my last message.
         wait_for_label(&mut harness, "Nachricht an #allgemein");
-        harness.get_by_label("Nachricht an #allgemein").click();
+        click(&mut harness, "Nachricht an #allgemein");
         harness.run_steps(2);
         harness.key_press(egui::Key::ArrowUp);
         wait_for_label(&mut harness, "Speichern");
@@ -2017,9 +2015,7 @@ mod page_tests {
             "Zur Nachricht von Jonas: Film oder Spiel heute?",
         );
         harness.run_steps(2);
-        harness
-            .get_by_role_and_label(Role::Label, "Film oder Spiel heute?")
-            .click();
+        click_role(&mut harness, Role::Label, "Film oder Spiel heute?");
         let context = format!("GET /channels/{ALLGEMEIN}/messages/{hit}/context");
         wait_for(&mut harness, "the hit in its context", |_| {
             api.saw(&context)
@@ -2055,10 +2051,10 @@ mod page_tests {
         let home = crate::app::testkit::HOME;
         let mut harness = launcher(&api, &format!("/s/{home}/c/{spiele}"));
         wait_for_label(&mut harness, "Nachricht an #spiele");
-        harness.get_by_label("allgemein").click();
+        click(&mut harness, "allgemein");
         wait_for_label(&mut harness, "Nachricht an #allgemein");
         harness.run_steps(4);
-        harness.get_by_label("Emoji einfügen").click();
+        click(&mut harness, "Emoji einfügen");
         wait_for(&mut harness, "the picker", |h| {
             h.query_all_by_label("Emoji einfügen").count() > 1
         });
@@ -2103,7 +2099,7 @@ mod page_tests {
         harness.get_by_label("Search");
         assert!(harness.query_by_label("Nachricht an #allgemein").is_none());
         harness.run_steps(4);
-        harness.get_by_label("Insert emoji").click();
+        click(&mut harness, "Insert emoji");
         // The picker's title is the button's label.
         wait_for(&mut harness, "the picker", |h| {
             h.query_all_by_label("Insert emoji").count() > 1

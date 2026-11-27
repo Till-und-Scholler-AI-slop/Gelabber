@@ -6,7 +6,8 @@ description: Use for the weekly dependency update, when asked to carry this week
 # Dependency updates
 
 Dependabot (`.github/dependabot.yml`) opens one grouped pull request per
-ecosystem every Monday and a single pull request per security update at any
+ecosystem and directory every Monday (for npm: `web/` and
+`web/scripts/mutation/`) and a single pull request per security update at any
 time. They target `main` and are never merged. This procedure carries their
 commits onto the development line in one draft pull request, renews the files
 they make stale, and waits for CI. Green: the pull request is marked ready
@@ -156,6 +157,7 @@ repairing it:
 ```sh
 cargo metadata --locked --format-version 1 --manifest-path <dir>/Cargo.toml > /dev/null   # each of backend, desktop whose Cargo.lock the picks changed
 (cd web && npm install --package-lock-only --ignore-scripts) && git diff --exit-code -- web/package-lock.json   # when the picks changed web/
+(cd web/scripts/mutation && npm install --package-lock-only --ignore-scripts) && git diff --exit-code -- web/scripts/mutation/package-lock.json   # Stryker's own folder (GEL-388), when the picks changed it
 ```
 
 Either fails: `git checkout -- .`, `git switch -`, report the output, and
@@ -192,7 +194,6 @@ git switch -c chore/gel-<n>-dependency-updates
 sh .claude/skills/dependency-updates/renew.sh
 git status --short   # changes: git commit -am "chore(deps): renew the generated files (GEL-<n>)"
 python3 desktop/packaging/third-party-notices.py --check
-python3 -m unittest discover -s desktop/packaging/tests
 ```
 
 Unless the branch changes `deploy/compose/tests/requirements.txt` (then CI
@@ -201,6 +202,7 @@ runs them with the new PyYAML), with a `python3` that has pip:
 ```sh
 python3 -m pip install --quiet --require-hashes --only-binary :all: --target <work>/pyyaml -r deploy/compose/tests/requirements.txt
 PYTHONPATH=<work>/pyyaml python3 -m unittest discover -s deploy/compose/tests
+PYTHONPATH=<work>/pyyaml python3 -m unittest discover -s desktop/packaging/tests
 ```
 
 A failure here is not an update's: push nothing, comment the failing output
@@ -318,5 +320,7 @@ group's pick:
   that command would add it to `package.json`; such an update cannot be
   left out inside a group, so the whole pull request is not picked this
   week, and the report lists it as left out with that reason;
+  an update in `web/scripts/mutation/` cannot be left out singly either:
+  its pull request is not picked this week, with that reason;
 - Docker, Compose, Actions, pip: set the lines naming it back to their text
   in `origin/$base` (`git diff "origin/$base" -- <file>`).

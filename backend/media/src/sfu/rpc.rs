@@ -295,8 +295,6 @@ impl Sfu {
                 self.set_watch(channel, &room, &peer, u, k, on).await?;
                 Ok(json!({}))
             }
-            // Older clients still send tile sizes; consumers start on the top
-            // layer and mediasoup's estimate steps down, so they are ignored.
             ClientFrame::ScreenMode {
                 producer_id, sharp, ..
             } => {
@@ -326,7 +324,6 @@ impl Sfu {
                 }
                 Ok(json!({}))
             }
-            ClientFrame::ViewerLayer { .. } => Ok(json!({})),
             ClientFrame::Leave { .. } => {
                 self.leave(id, channel).await;
                 Ok(json!({}))

@@ -71,8 +71,7 @@ pub struct SettingBody {
     /// With `muted`: minutes from now; absent mutes until turned back on.
     #[serde(default)]
     mute_minutes: Option<i64>,
-    /// A server's only. Absent leaves it as it is, so a client from before
-    /// it existed does not turn it off with its next change.
+    /// A server's only. Absent leaves it as it is.
     #[serde(default)]
     voice: Option<bool>,
 }

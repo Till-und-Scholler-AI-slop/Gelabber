@@ -31,6 +31,7 @@ const user = {
   id: "a",
   name: "Ada",
   email: "a@example.test",
+  locale: "de",
   avatar_url: null,
   created_at: "2026-09-28T00:00:00Z",
 };
@@ -43,6 +44,7 @@ const row = (id: string, content = id): Message => ({
   reactions: [],
   mentions: [],
   mention_everyone: false,
+  revision: 1,
   attachments: [],
   created_at: "2026-09-28T00:00:00Z",
   edited_at: null,

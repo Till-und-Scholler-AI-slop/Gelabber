@@ -114,7 +114,9 @@ pub struct RegisterBody {
     #[serde(default)]
     pub name: String,
     /// `de` or `en`; without it the `Accept-Language` header decides, and
-    /// without that German (clients older than v0.10).
+    /// without that German: the API's default, as for the OIDC sign-up. The
+    /// web client and the app always send it; scripts and the tests' own
+    /// client leave it out.
     #[serde(default)]
     pub locale: Option<String>,
     /// A beta invitation's code (`operator::admission`); only an

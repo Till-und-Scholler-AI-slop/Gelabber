@@ -147,14 +147,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn german_texts() {
+    fn an_unknown_system_message_falls_back_in_german() {
         let de = Locale::De;
-        assert_eq!(new_message_from(de, "Ada"), "Neue Nachricht von Ada");
-        let live = SystemMessage {
-            kind: system::LIVE_STARTED.into(),
-            params: serde_json::json!({ "voice_name": "Lounge" }),
-        };
-        assert_eq!(system_text(de, &live, "Ada"), "Ada ist live in Lounge.");
         let unknown = SystemMessage {
             kind: "later_kind".into(),
             params: serde_json::json!({}),

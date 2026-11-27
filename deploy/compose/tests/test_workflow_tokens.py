@@ -43,7 +43,8 @@ def pull_request_workflows(event='pull_request'):
 class PullRequestTokens(unittest.TestCase):
     def test_the_walk_finds_ci_and_what_it_calls(self):
         self.assertEqual(set(pull_request_workflows()),
-                         {'ci.yml', 'e2e-extended.yml', 'desktop-native.yml', 'minio-images.yml'})
+                         {'ci.yml', 'e2e-extended.yml', 'desktop-native.yml', 'minio-images.yml',
+                          'mutation-web.yml'})
         self.assertEqual(set(pull_request_workflows('merge_group')),
                          {'ci.yml', 'desktop-native.yml', 'minio-images.yml'})
 

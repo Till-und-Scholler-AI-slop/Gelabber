@@ -241,43 +241,48 @@ function opens(src: string, i: number, mark: string): boolean {
 function findCloser(src: string, from: number, mark: string): number {
   const single = mark.length === 1;
   let j = from;
+  // Every step moves at least one character on, whatever a branch adds, so
+  // the search ends on every input.
+  const step = (to: number) => {
+    j = Math.max(to, j + 1);
+  };
   while (j < src.length) {
     const c = src[j];
     if (c === "\\") {
-      j += 2;
+      step(j + 2);
       continue;
     }
     if (c === "`") {
       const run = runLength(src, j, "`");
       const end = codeSpanEnd(src, j, run);
-      j = end === -1 ? j + run : end;
+      step(end === -1 ? j + run : end);
       continue;
     }
     if (c === "<") {
       const tag = MENTION.exec(src.slice(j)) ?? ANGLE_LINK.exec(src.slice(j));
       if (tag) {
-        j += tag[0].length;
+        step(j + tag[0].length);
         continue;
       }
     }
     const url = bareUrlAt(src, j);
     if (url) {
-      j += url.text.length;
+      step(j + url.text.length);
       continue;
     }
     if (src.startsWith(mark, j)) {
       if (single) {
         // A double mark inside an italic is a nested bold or underline.
         if (src[j + 1] === mark) {
-          j += runLength(src, j, mark);
+          step(j + runLength(src, j, mark));
           continue;
         }
         if (mark === "*" && SPACE.test(src[j - 1])) {
-          j++;
+          step(j + 1);
           continue;
         }
         if (mark === "_" && j + 1 < src.length && WORD.test(src[j + 1])) {
-          j++;
+          step(j + 1);
           continue;
         }
         return j;
@@ -288,7 +293,7 @@ function findCloser(src: string, from: number, mark: string): number {
       }
       return j;
     }
-    j++;
+    step(j + 1);
   }
   return -1;
 }

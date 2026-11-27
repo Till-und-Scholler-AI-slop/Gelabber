@@ -36,6 +36,8 @@ export const auth = defineCatalog(
     "error.network": "Keine Verbindung zum Server.",
     "error.internal":
       "Da ist etwas schiefgelaufen. Bitte noch einmal versuchen.",
+    "error.malformedAnswer":
+      "Die Antwort des Servers war unvollständig. Es kann trotzdem geklappt haben.",
     "error.invitationRequired": "Zum Registrieren brauchst du eine Einladung.",
     "error.invitationInvalid":
       "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
@@ -337,6 +339,8 @@ export const auth = defineCatalog(
     "error.timeout": "The server isn’t responding. Please try again.",
     "error.network": "No connection to the server.",
     "error.internal": "Something went wrong. Please try again.",
+    "error.malformedAnswer":
+      "The server's answer was incomplete. It may have worked anyway.",
     "error.invitationRequired": "You need an invitation to register.",
     "error.invitationInvalid":
       "This invitation is unknown, expired or already used.",

@@ -454,13 +454,7 @@ mod tests {
         });
         let client = gelabber_client::Client::new(&api.origin).expect("client");
         let state = client.clone();
-        let mut h = egui_kittest::Harness::builder()
-            .with_size(egui::vec2(1280.0, 800.0))
-            .with_max_steps(10_000)
-            .with_step_dt(1.0 / 60.0)
-            .build_eframe(move |cc| {
-                crate::Launcher::with_app(cc, client.clone(), Some("/d".into()))
-            });
+        let mut h = crate::app::testkit::launcher_with(&api, client, "/d");
         wait_for(&mut h, "the request", |_| {
             state.with_state(|s| s.dm_requests.as_ref().is_some_and(|r| r.len() == 1))
         });

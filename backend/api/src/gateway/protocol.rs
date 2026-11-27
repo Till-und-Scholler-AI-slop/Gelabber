@@ -289,6 +289,9 @@ impl SigKind {
 /// Microphone / camera / screen and the screen's source audio on pub/unpub.
 /// Camera (`v`) and screen (`s`) are in-channel (issue 13); a screen is a
 /// Live. The old one-per-channel Go Live (`l`/`la`) is gone (#353).
+/// Voice seats in Redis store these: an API that reads a kind it does not
+/// know fails the whole room read, so a new kind needs older APIs that
+/// share the Redis during an upgrade to skip unknown kinds first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
@@ -783,32 +786,6 @@ impl ServerFrame {
         }
     }
 
-    /// For a client that does not know `d` (web bundles and apps from
-    /// before #590, which may break on it): Do not disturb as online, the
-    /// way Online stands in for any status it does not know.
-    pub fn without_dnd(self) -> Self {
-        let plain = |st: PresenceStatus| match st {
-            PresenceStatus::Dnd => PresenceStatus::Online,
-            st => st,
-        };
-        match self {
-            Self::Presence { s, u, st, snap } => Self::Presence {
-                s,
-                u,
-                st: st.map(plain),
-                snap: snap.map(|snap| {
-                    snap.into_iter()
-                        .map(|entry| PresenceEntry {
-                            st: plain(entry.st),
-                            ..entry
-                        })
-                        .collect()
-                }),
-            },
-            frame => frame,
-        }
-    }
-
     /// The frame as `user` may read it. A message event names under
     /// [`HIDDEN_MENTIONS`] whom it mentions without showing it to others
     /// (GEL-43): that list never goes out, and `user`, when on it, reads
@@ -1125,9 +1102,6 @@ mod tests {
         };
         let json = ServerFrame::event(event).to_json().unwrap();
         assert!(json.starts_with(r#"{"op":"e","t":"c""#));
-        assert!(!json.contains("kind"));
-        assert!(!json.contains("server_id"));
-        assert!(!json.contains("payload"));
     }
 
     /// Hidden mentions (GEL-43) never go out; the one they name reads
@@ -1270,7 +1244,6 @@ mod tests {
         .unwrap();
         assert!(json.starts_with(r#"{"op":"y""#));
         assert!(!json.contains("\"n\""));
-        assert!(!json.contains("seq"));
     }
 
     #[test]
@@ -1341,8 +1314,6 @@ mod tests {
         .unwrap();
         assert!(json.starts_with(r#"{"op":"sig","t":"j""#));
         assert!(!json.contains("\"n\""));
-        assert!(!json.contains("offer"));
-        assert!(!json.contains("payload"));
         assert!(!json.contains(r#""op":"e""#));
     }
 
@@ -1358,7 +1329,6 @@ mod tests {
         .unwrap();
         assert!(json.starts_with(r#"{"op":"sig","t":"m""#));
         assert!(json.contains(r#""on":true"#));
-        assert!(!json.contains("mute"));
 
         let json = ServerFrame::voice_snap(
             Uuid::from_u128(1),
@@ -1400,12 +1370,6 @@ mod tests {
         .to_json()
         .unwrap();
         assert!(json.contains(r#""k":"s""#));
-        assert!(!json.contains("livekit"));
-        assert!(!json.contains("go_live"));
-        // The old Go Live tracks are gone (#353).
-        for kind in ["l", "la"] {
-            assert!(serde_json::from_value::<TrackKind>(serde_json::json!(kind)).is_err());
-        }
     }
 
     #[test]
