@@ -186,8 +186,10 @@ before you change a workflow.
   separate source lifetimes.
 - **Audio processing** runs in the client with pinned, self-hosted RNNoise
   and DeepFilterNet3 assets, never a cloud audio service.
-- **Pins:** keep the locked versions; a change updates only the dependencies it
-  needs.
+- **Pins:** keep the locked versions. Dependency updates come only through
+  the weekly batch (skill `dependency-updates`), never for mediasoup,
+  DeepFilterNet or libwebrtc; any other change updates only the dependencies
+  it needs.
 - **Performance claims** state only what was measured. A recorded result,
   FAIL and BLOCKED included, is never edited afterwards. A record that is no
   longer needed is deleted whole; the git history keeps it.
