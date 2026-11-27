@@ -80,6 +80,7 @@ const server: ServerDetail = {
   role: "member",
   permissions: [],
   member_permissions: [],
+  blocked: false,
   categories: [{ id: "cat", server_id: "s1", name: "Planung", created_at }],
   // In the list: allgemein, "Sprachkanäle", wohnzimmer, "Planung", termine.
   channels: [

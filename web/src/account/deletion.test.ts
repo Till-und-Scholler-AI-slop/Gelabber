@@ -29,6 +29,7 @@ const server = (id: string, role: Server["role"]): Server => ({
   role,
   permissions: [],
   member_permissions: [],
+  blocked: false,
 });
 
 describe("the servers in the way of a deletion", () => {

@@ -19,22 +19,14 @@ import type {
   UpdateServerInput,
 } from "./types.ts";
 
-/** `roles` came with v0.10; a detail without it has no custom roles. */
-const withRoles = (detail: ServerDetail): ServerDetail => ({
-  ...detail,
-  roles: detail.roles ?? [],
-});
-
 export const listServers = (signal?: AbortSignal) =>
   api<Server[]>("/servers", { signal });
 
 export const getServer = (id: string, signal?: AbortSignal) =>
-  api<ServerDetail>(`/servers/${id}`, { signal }).then(withRoles);
+  api<ServerDetail>(`/servers/${id}`, { signal });
 
 export const createServer = (name: string) =>
-  api<ServerDetail>("/servers", { method: "POST", body: { name } }).then(
-    withRoles,
-  );
+  api<ServerDetail>("/servers", { method: "POST", body: { name } });
 
 export const updateServer = (id: string, patch: UpdateServerInput) =>
   api<Server>(`/servers/${id}`, { method: "PATCH", body: patch });

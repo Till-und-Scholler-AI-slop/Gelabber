@@ -7,13 +7,13 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("exact CI fault loop attempts both browsers and both profiles after first failure, retains nonzero, and omits SFU only for core", async () => {
+test("exact CI loop attempts every profile after the first failure, the faults in both browsers and the scenarios in Chromium, retains nonzero, and omits the SFU only for core", async () => {
   const workflow = await readFile(
     new URL("../../../.github/workflows/e2e-extended.yml", import.meta.url),
     "utf8",
   );
   const match =
-    / {6}- name: Real app core and API\/Redis Live-lease faults in both browsers\n(?: {8}if: [^\n]+\n)? {8}run: \|\n([\s\S]*?)(?=\n {6}- name:)/.exec(
+    / {6}- name: Real app scenarios and faults in both browsers\n(?: {8}if: [^\n]+\n)? {8}run: \|\n([\s\S]*?)(?=\n {6}- name:)/.exec(
       workflow,
     );
   assert.ok(match, "Actual workflow loop required");
@@ -43,21 +43,17 @@ test("exact CI fault loop attempts both browsers and both profiles after first f
       .trim()
       .split("\n")
       .map((line) => line.split("|"));
+    const sfu = [
+      "/tmp/private-media-control.env",
+      "/tmp/media-control-manifest.json",
+    ];
     assert.deepEqual(calls, [
       ["chromium", "core-faults", "", ""],
-      [
-        "chromium",
-        "media-faults",
-        "/tmp/private-media-control.env",
-        "/tmp/media-control-manifest.json",
-      ],
+      ["chromium", "media-faults", ...sfu],
+      ["chromium", "core", "", ""],
+      ["chromium", "access", ...sfu],
       ["firefox", "core-faults", "", ""],
-      [
-        "firefox",
-        "media-faults",
-        "/tmp/private-media-control.env",
-        "/tmp/media-control-manifest.json",
-      ],
+      ["firefox", "media-faults", ...sfu],
     ]);
   } finally {
     await rm(dir, { recursive: true, force: true });
