@@ -14,7 +14,7 @@ use std::sync::{Mutex, OnceLock};
 
 use eframe::egui;
 use gelabber_ui::Launcher;
-use gelabber_ui::platform::{self, Platform, aumid, instance, legacy, settings, state, update};
+use gelabber_ui::platform::{self, Platform, aumid, instance, settings, state, update};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
@@ -164,14 +164,6 @@ fn main() -> eframe::Result {
         instance::Claim::First(instance) => instance,
         instance::Claim::Running => return Ok(()),
     };
-    // Before anything reads the settings: the Tauri app's, on the first start.
-    match legacy::import() {
-        Ok(Some(imported)) => note(&format!("gelabber: took over {imported}")), // i18n-ok
-        Ok(None) => {}
-        Err(e) => note(&format!(
-            "gelabber: taking over the Tauri app's settings: {e}" // i18n-ok
-        )),
-    }
     // The language before any window: this device's, the system's or English.
     gelabber_ui::setup::start_locale();
     let smoke = smoke::Smoke::from_env(std::env::var("GELABBER_SMOKE").ok().as_deref());

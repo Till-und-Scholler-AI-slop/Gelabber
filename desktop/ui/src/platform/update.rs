@@ -12,9 +12,9 @@
 //! does with `installMode: passive`. The tarball links the release page; the
 //! pacman package says that pacman updates it.
 //!
-//! The manifest is this app's own, `latest-native.json`. desktop-release.yml
-//! writes the same into `latest.json`, which installed Tauri apps read, so
-//! they install this app; 0.8 releases' `latest.json` names their installer.
+//! The manifest is this app's own, `latest-native.json`, which
+//! desktop-release.yml attaches to each release. Releases since 0.14 carry no
+//! `latest.json` for the Tauri app any more.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
