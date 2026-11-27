@@ -5,7 +5,7 @@ import { stampHolds, takeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
 import { reactionMutationOptions } from "../messages/reactions.ts";
-import { asReactionList, type Message } from "../messages/types.ts";
+import type { Message } from "../messages/types.ts";
 
 /** The viewer's reaction to one message, shared by its chips, the toolbar
  *  and the action sheet, so each shows the same pending vote. */
@@ -37,7 +37,7 @@ export function useReaction(message: Message, canSend: boolean) {
     react(
       emoji,
       !(
-        asReactionList(message.reactions)
+        message.reactions
           .find((reaction) => reaction.emoji === emoji)
           ?.user_ids.includes(userId) ?? false
       ),

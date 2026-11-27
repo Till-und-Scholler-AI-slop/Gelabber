@@ -244,6 +244,33 @@ jobs:
             git diff -z --no-renames --name-only HEAD^1 HEAD
           fi | python3 .github/workflows/scripts/rust_tests.py --event "$EVENT" --base "$BASE_REF" | tee -a "$GITHUB_OUTPUT"
 
+      # The upgrade test starts from the previous release's schema (GEL-413);
+      # the script picks the version line from the event's refs.
+      - name: Previous release for the upgrade test
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          script=.github/workflows/scripts/previous_release.sh
+          read -r tag migration < <(sh "$script" --fetch)
+          echo "UPGRADE_FROM=$tag" >> "$GITHUB_ENV"
+          echo "UPGRADE_FROM_MIGRATION=$migration" >> "$GITHUB_ENV"
+          # Servers refuse a changed released migration and run an inserted one out of order;
+          # they run the line's own newest release too, once it has one (GEL-444).
+          sh "$script" --check "$tag" "$migration"
+          own=$(sh "$script" --own --fetch)
+          if [ -n "$own" ]; then
+            read -r own_tag own_migration <<<"$own"
+            sh "$script" --check "$own_tag" "$own_migration"
+          fi
+          newest=$(find backend/api/migrations -name '*.sql' | sed -n 's#.*/0*\([0-9][0-9]*\)_[^/]*\.sql$#\1#p' | sort -n | tail -1)
+          if [ "$newest" -eq "$migration" ]; then
+            note="$tag ends at migration $migration like this tree; no migration to upgrade across"
+            echo "::notice title=Upgrade test::$note"
+            echo "$note" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Login to GHCR for pinned test MinIO
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:

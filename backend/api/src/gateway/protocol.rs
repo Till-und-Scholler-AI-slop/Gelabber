@@ -289,6 +289,9 @@ impl SigKind {
 /// Microphone / camera / screen and the screen's source audio on pub/unpub.
 /// Camera (`v`) and screen (`s`) are in-channel (issue 13); a screen is a
 /// Live. The old one-per-channel Go Live (`l`/`la`) is gone (#353).
+/// Voice seats in Redis store these: an API that reads a kind it does not
+/// know fails the whole room read, so a new kind needs older APIs that
+/// share the Redis during an upgrade to skip unknown kinds first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
@@ -780,32 +783,6 @@ impl ServerFrame {
             u: Some(user_id),
             st: Some(status),
             snap: None,
-        }
-    }
-
-    /// For a client that does not know `d` (web bundles and apps from
-    /// before #590, which may break on it): Do not disturb as online, the
-    /// way Online stands in for any status it does not know.
-    pub fn without_dnd(self) -> Self {
-        let plain = |st: PresenceStatus| match st {
-            PresenceStatus::Dnd => PresenceStatus::Online,
-            st => st,
-        };
-        match self {
-            Self::Presence { s, u, st, snap } => Self::Presence {
-                s,
-                u,
-                st: st.map(plain),
-                snap: snap.map(|snap| {
-                    snap.into_iter()
-                        .map(|entry| PresenceEntry {
-                            st: plain(entry.st),
-                            ..entry
-                        })
-                        .collect()
-                }),
-            },
-            frame => frame,
         }
     }
 
