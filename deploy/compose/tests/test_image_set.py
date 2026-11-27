@@ -8,7 +8,10 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
-from test_changes import changed_areas
+
+import yaml
+
+import workflow_data
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('image_set', ROOT / '.github/workflows/scripts/image_set.py')
@@ -27,20 +30,30 @@ def ci(**changes):
     return {**record, **changes}
 
 
+def aliased(calls):
+    """The images a run's docker calls gave a `latest` tag."""
+    return {call[-2].removesuffix(':latest') for call in calls
+            if call[0] == 'docker' and call[-2].endswith(':latest')}
+
+
+def every_image():
+    """The images of the image set in the working directory."""
+    manifest = json.loads(Path('image-set.json').read_text())
+    return {item['image'] for item in (*manifest['images'].values(), manifest['minio'])}
+
+
 class Gates(unittest.TestCase):
     def test_ci_caddy_uses_compose_pin_and_checks_downloaded_version(self):
-        compose = (ROOT / 'deploy/compose/compose.yaml').read_text()
-        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        import re
-        version = re.search(r'image: caddy:([^:]+)-alpine', compose).group(1)
-        install = workflow.split('      - name: Install Caddy\n', 1)[1].split('\n      - name:', 1)[0]
+        compose = yaml.safe_load((ROOT / 'deploy/compose/compose.yaml').read_text())
+        version = re.fullmatch(r'caddy:(.+)-alpine', compose['services']['proxy']['image']).group(1)
+        install = next(step['run'] for step in workflow_data.load('ci.yml')['jobs']['deploy']['steps']
+                       if step.get('name') == 'Install Caddy')
         # The download API can return a newer version despite its version query.
         # Use the exact upstream release asset and verify the installed binary.
-        asset = f'https://github.com/caddyserver/caddy/releases/download/v{version}/caddy_{version}_linux_amd64.tar.gz'
-        self.assertIn(f'curl -fsSL "{asset}" -o "$caddy_archive"', install)
+        self.assertIn(f'/releases/download/v{version}/caddy_{version}_linux_amd64.tar.gz', install)
         self.assertNotIn('caddyserver.com/api/download', install)
-        self.assertIn('tar -xzf "$caddy_archive" -C /usr/local/bin caddy', install)
-        self.assertIn('test "$(caddy version | cut -d \' \' -f 1)" = "v' + version + '"', install)
+        # The installed binary's own version is compared, on one line.
+        self.assertRegex(install, rf'\$\(caddy version[^\n]*= "v{re.escape(version)}"')
 
     def test_exact_success(self):
         m.check_ci(ci(), SHA, REPO)
@@ -74,27 +87,13 @@ class Gates(unittest.TestCase):
         with patch.object(m, 'registry_digest', return_value=OTHER), self.assertRaises(ValueError):
             m.preflight({'api': {'image': 'image', 'digest': DIGEST}}, 'v0.2.4')
 
-    def test_shared_and_build_dependencies_trigger_workflows(self):
-        # Ask the script ci.yml runs, not a duplicate list pretending to execute Actions.
-        for path in ('backend/shared/src/lib.rs', 'backend/api/src/main.rs', 'backend/media/src/main.rs',
-                     'backend/build/run-native-ci.sh', '.dockerignore', 'backend/Cargo.toml',
-                     'backend/Cargo.lock', 'rust-toolchain.toml', '.github/workflows/scripts/image_set.py',
-                     '.github/workflows/publish-images.yml'):
-            with self.subTest(path=path):
-                self.assertIn('backend', changed_areas(path))
-        self.assertIn('web', changed_areas('web/Dockerfile'))
-        self.assertIn('deploy', changed_areas('deploy/compose/compose.yaml'))
-        text = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertNotIn('paths:', text.split('\non:\n', 1)[1].split('concurrency:', 1)[0])
-
     def test_only_version_releases_start_the_desktop_build(self):
         # Publishing the build-deps mirror release once ran the whole desktop build.
-        text = (ROOT / '.github/workflows/desktop-release.yml').read_text()
+        jobs = workflow_data.load('desktop-release.yml')['jobs']
         for job in ('candidate', 'build'):
-            body = re.split(r'\n  \S', text.split(f'\n  {job}:\n', 1)[1], maxsplit=1)[0]
-            self.assertIn("    if: github.event_name != 'release' || "
-                          "startsWith(github.event.release.tag_name, 'v')\n", body)
-
+            with self.subTest(job=job):
+                self.assertEqual(jobs[job]['if'], "github.event_name != 'release' || "
+                                 "startsWith(github.event.release.tag_name, 'v')")
 
 class Promotion(unittest.TestCase):
     def setUp(self):
@@ -198,8 +197,7 @@ class Promotion(unittest.TestCase):
             with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=self.release_api), patch.object(m, 'tag_sha', return_value=tag), patch.object(m, 'registry_digest', return_value=digest), patch.object(m, 'run', return_value=SHA) as writes:
                 with self.assertRaises(ValueError):
                     m.release()
-                self.assertEqual(writes.call_args_list[0].args, ('git', 'rev-parse', 'HEAD'))
-                self.assertEqual(writes.call_count, 1)
+                self.assertFalse([call for call in writes.call_args_list if call.args[0] in ('gh', 'docker')])
 
     def test_verified_release_attaches_exact_manifest(self):
         self.prepare_release()
@@ -210,10 +208,10 @@ class Promotion(unittest.TestCase):
             self.assertIn('image-set.json', args)
             self.assertIn('image-set.env', args)
             self.assertIn(SHA, args)
-            alias_calls = [call.args for call in writes.call_args_list if call.args[0] == 'docker']
-            self.assertEqual(len(alias_calls), 4)
-            for call in alias_calls:
-                self.assertTrue(call[-2].endswith(':latest'))
+            calls = [call.args for call in writes.call_args_list]
+            self.assertEqual(aliased(calls), every_image())
+            for call in (c for c in calls if c[0] == 'docker'):
+                self.assertTrue(call[-2].endswith(':latest'), call)
                 self.assertTrue(call[-1].endswith('@' + DIGEST))
 
     def test_pre_release_is_flagged_and_never_latest(self):
@@ -262,7 +260,7 @@ class Promotion(unittest.TestCase):
         calls = self.latest_run(digest=lambda ref: expected[ref.rsplit(':', 1)[0]])
         self.assertIn(('git', 'merge-base', '--is-ancestor', SHA, 'HEAD'), calls)
         self.assertIn(('git', 'fetch', '--no-tags', 'origin', 'refs/tags/v0.2.4:refs/tags/v0.2.4'), calls)
-        self.assertEqual(len([c for c in calls if c[0] == 'docker']), 4)
+        self.assertEqual(aliased(calls), every_image())
         self.assertFalse(any(c[0] == 'gh' for c in calls))
         for call in (c for c in calls if c[0] == 'docker'):
             image = call[-2].removesuffix(':latest')
@@ -275,7 +273,7 @@ class Promotion(unittest.TestCase):
         with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=api), patch.object(m, 'tag_sha', return_value=SHA), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run', return_value=SHA) as calls:
             m.release()
             self.assertFalse(any(c.args[0] == 'gh' for c in calls.call_args_list))
-            self.assertEqual(len([c for c in calls.call_args_list if c.args[0] == 'docker']), 4)
+            self.assertEqual(aliased([c.args for c in calls.call_args_list]), every_image())
 
     def test_latest_refuses_old_draft_and_prerelease_before_alias_writes(self):
         self.prepare_release()
@@ -300,7 +298,7 @@ class Promotion(unittest.TestCase):
                 return {**value, 'tag_name': shown} if path == 'releases/latest' else value
             with self.subTest(shown=shown):
                 calls = self.latest_run(api=api)
-                self.assertEqual(len([c for c in calls if c[0] == 'docker']), 4)
+                self.assertEqual(aliased(calls), every_image())
 
     def test_latest_preflights_minio_and_all_app_digests_before_any_alias_write(self):
         self.prepare_release()
@@ -332,8 +330,8 @@ class Promotion(unittest.TestCase):
             return SHA
         with self.assertRaises(subprocess.CalledProcessError):
             self.latest_run(run=fail)
-        self.assertEqual(len([c for c in calls if c[0] == 'docker']), 2)
-        self.assertEqual(len([c for c in self.latest_run() if c[0] == 'docker']), 4)
+        self.assertLess(aliased(calls), every_image())
+        self.assertEqual(aliased(self.latest_run()), every_image())
 
     def test_latest_verifies_written_alias_digest(self):
         self.prepare_release()

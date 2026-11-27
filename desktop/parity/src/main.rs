@@ -60,7 +60,8 @@ struct Scene {
     /// The system's colour scheme, "light" (Playwright's default) or "dark".
     scheme: Option<String>,
     user: Option<String>,
-    /// The web shot runs as the desktop app (shots.mjs); this one always is it.
+    /// The web shot shows the web client as the Tauri app did (shots.mjs);
+    /// this one always is the desktop app.
     #[serde(default, rename = "desktop")]
     _desktop: bool,
     /// `channel people` for call.mjs: people kept in a voice channel.
