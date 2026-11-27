@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useLocale } from "../i18n/locale.ts";
 
@@ -433,6 +433,29 @@ describe("stream sound: the stored choice", () => {
     expect(await reloadWith({ sourceAudioShare: "yes" })).toBe("auto");
     useMediaSettings.getState().patch({ sourceAudioShare: "loud" as never });
     expect(useMediaSettings.getState().sourceAudioShare).toBe("auto");
+  });
+});
+
+describe("stream sound: the entry of v0.6 to v0.14", () => {
+  it("is removed when the settings load", async () => {
+    const KEY = "gelabber.media.source-audio-share";
+    const stored = new Map([
+      [KEY, "off"],
+      ["gelabber.other", "kept"],
+    ]);
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => void stored.set(key, value),
+      removeItem: (key: string) => void stored.delete(key),
+    });
+    try {
+      vi.resetModules();
+      await import("./settings.ts");
+      expect([...stored.keys()]).toEqual(["gelabber.other"]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
   });
 });
 

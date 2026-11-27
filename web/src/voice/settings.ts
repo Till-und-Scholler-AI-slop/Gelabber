@@ -287,6 +287,14 @@ type StoredMediaSettings = MediaSettings & { shareSourceAudio?: unknown };
 
 const settingsStorage = createJSONStorage<MediaSettings>(mediaStorage)!;
 
+// v0.6 to v0.14 kept the stream-sound choice in an entry of its own as well,
+// for a rollback to v0.5. Nothing reads it any more.
+try {
+  mediaStorage().removeItem("gelabber.media.source-audio-share");
+} catch {
+  // Storage that refuses it keeps a copy nobody reads.
+}
+
 /** Session registers this so a slider change hits the live peer without reload. */
 export function onMediaSettingsChange(
   fn: ((prev: MediaSettings, next: MediaSettings) => void) | null,
