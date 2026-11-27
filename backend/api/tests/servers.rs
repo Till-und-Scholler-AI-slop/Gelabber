@@ -4,12 +4,11 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
 use common::Client;
+use common::ws::{self, until};
 
 /// Two browsers on one database: the owner and a second account.
 async fn two_users(pool: PgPool) -> (Client, Client) {
@@ -1167,30 +1166,6 @@ async fn a_transfer_waits_for_a_running_disable(pool: PgPool) {
     assert_eq!(still, ada);
 }
 
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-/// The next frame `want` accepts, answering heartbeats on the way.
-async fn next_frame(ws: &mut Ws, want: impl Fn(&Value) -> bool) -> Value {
-    tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        loop {
-            if let Message::Text(raw) = ws.next().await.expect("open socket").expect("frame") {
-                let frame: Value = serde_json::from_str(&raw).unwrap();
-                if frame["op"] == "h" {
-                    ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
-                        .await
-                        .unwrap();
-                }
-                if want(&frame) {
-                    return frame;
-                }
-            }
-        }
-    })
-    .await
-    .expect("frame")
-}
-
 /// Members subscribed to the server get `{"k": "o", "owner_id": …}`.
 #[sqlx::test]
 async fn a_transfer_publishes_the_ownership_event(pool: PgPool) {
@@ -1211,20 +1186,9 @@ async fn a_transfer_publishes_the_ownership_event(pool: PgPool) {
     let id = id_of(&server);
     let bob = member.user_id().to_owned();
 
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{}={}", common::SESSION, member.jar[common::SESSION])
-            .parse()
-            .unwrap(),
-    );
-    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
-    ws.send(Message::Text(
-        json!({ "op": "s", "s": id }).to_string().into(),
-    ))
-    .await
-    .unwrap();
-    next_frame(&mut ws, |f| f["op"] == "ok").await;
+    let mut ws = ws::connect(addr, &member).await;
+    ws::send(&mut ws, json!({ "op": "s", "s": id })).await;
+    until(&mut ws, |f| f["op"] == "ok").await;
 
     let res = owner
         .send(
@@ -1234,7 +1198,7 @@ async fn a_transfer_publishes_the_ownership_event(pool: PgPool) {
         )
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    let frame = next_frame(&mut ws, |f| f["op"] == "e" && f["d"]["k"] == "o").await;
+    let frame = until(&mut ws, |f| f["op"] == "e" && f["d"]["k"] == "o").await;
     assert_eq!(frame["t"], "e", "{frame}");
     assert_eq!(frame["s"], id.as_str(), "{frame}");
     assert_eq!(frame["d"]["owner_id"], bob.as_str(), "{frame}");

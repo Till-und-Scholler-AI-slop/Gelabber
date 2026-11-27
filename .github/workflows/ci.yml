@@ -320,7 +320,7 @@ jobs:
           test -n "$MINIO_ROOT_PASSWORD"
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           # The 100 ms typing assertion runs alone in the next step.
-          # Profile ci retries a failed test once and writes JUnit (backend/.config/nextest.toml).
+          # Profile ci retries a failed test once, ends a hung one and writes JUnit (backend/.config/nextest.toml).
           sh backend/build/run-native-ci.sh nextest run --profile ci --locked --workspace --all-targets --no-fail-fast \
             --partition hash:${{ matrix.part }}/2 \
             -E "($SELECTED) and not test(typing_broadcasts_fast_and_clears_on_stop)"
