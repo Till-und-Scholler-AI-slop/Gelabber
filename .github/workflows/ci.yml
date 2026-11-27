@@ -572,11 +572,25 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
+      # An area output that is neither true nor false (a typo actionlint
+      # cannot see, GEL-397) skips that area's jobs, and a skip counts as passed.
       - name: Every job that ran passed
         env:
           RESULTS: ${{ toJSON(needs.*.result) }}
+          AREAS: >-
+            backend=${{ needs.changes.outputs.backend }}
+            web=${{ needs.changes.outputs.web }}
+            desktop=${{ needs.changes.outputs.desktop }}
+            deploy=${{ needs.changes.outputs.deploy }}
+            minio=${{ needs.changes.outputs.minio }}
         run: |
           echo "$RESULTS"
           if printf '%s' "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
             exit 1
           fi
+          for area in $AREAS; do
+            case "${area#*=}" in
+              true|false) ;;
+              *) echo "::error::The changes job's output ${area%%=*} is '${area#*=}', not true or false."; exit 1 ;;
+            esac
+          done
