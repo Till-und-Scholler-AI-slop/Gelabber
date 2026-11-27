@@ -486,6 +486,9 @@ export async function sendMessageAttempt(
       })),
       gif: input.gif?.gif ?? null,
       reply: attempt.reply ?? null,
+      // Unsent: nobody has reacted yet, and the server resolves mentions.
+      reactions: [],
+      mentions: [],
     });
   }
   requireAttempt(attempt);

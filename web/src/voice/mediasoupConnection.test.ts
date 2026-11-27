@@ -1464,7 +1464,7 @@ describe("public mediasoup connection lifecycle", () => {
     expect(f.calls("screenMode")).toEqual([]);
   });
 
-  it.each(["request_timeout", "connection_closed"])(
+  it.each(["request_timeout", "connection_closed", "bad_request"])(
     "tells a sharp Live's mode again after a %s",
     async (code) => {
       const f = fixture();
@@ -1478,6 +1478,9 @@ describe("public mediasoup connection lifecycle", () => {
           : undefined,
       );
       await expect(f.connection.setScreenMode(true)).resolves.toBeUndefined();
+      // The Live goes on as it was; the refusal is no error of the call.
+      expect(f.connection.sender("s")).toBeDefined();
+      expect(f.onError).not.toHaveBeenCalled();
       f.intercept(undefined);
       await f.connection.setScreenMode(true);
       await f.connection.setScreenMode(true);

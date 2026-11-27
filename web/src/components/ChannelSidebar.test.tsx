@@ -87,6 +87,7 @@ const server: ServerDetail = {
   role: "owner",
   permissions: ["manage_channels"],
   member_permissions: [],
+  blocked: false,
   categories: [category("cat", "Planung")],
   channels: [
     channel("allgemein", null),

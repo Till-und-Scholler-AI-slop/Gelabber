@@ -27,6 +27,7 @@ const server: ServerDetail = {
   role: "member",
   permissions: ["join_voice", "send_messages"],
   member_permissions: ["join_voice", "send_messages"],
+  blocked: false,
   categories: [],
   channels: [
     {

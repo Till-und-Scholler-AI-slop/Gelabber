@@ -17,6 +17,8 @@ function row(id: string, preview?: string): Message {
     content: id,
     created_at: "2026-09-28T00:00:00Z",
     edited_at: null,
+    reactions: [],
+    mentions: [],
     attachments: [
       {
         id: `${id}-file`,

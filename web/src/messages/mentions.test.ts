@@ -28,9 +28,10 @@ describe("mentions", () => {
     expect(mentionsMe({ mentions: [], mention_everyone: true }, ADA)).toBe(
       true,
     );
-    // Older API snapshots carry neither.
-    expect(mentionsMe({}, ADA)).toBe(false);
-    expect(mentionsMe({ mention_everyone: true }, undefined)).toBe(false);
+    // Signed out: nobody is mentioned.
+    expect(
+      mentionsMe({ mentions: [], mention_everyone: true }, undefined),
+    ).toBe(false);
   });
 
   it("splits text into runs and mentions, leaving code alone", () => {

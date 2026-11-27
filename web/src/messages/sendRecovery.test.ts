@@ -40,6 +40,8 @@ const row = (id: string, content = id): Message => ({
   content,
   channel_id: "c",
   author,
+  reactions: [],
+  mentions: [],
   attachments: [],
   created_at: "2026-09-28T00:00:00Z",
   edited_at: null,
