@@ -116,6 +116,8 @@ async function runnerProbe({
             listen: async () => {
               if (startup) throw new Error(secret);
             },
+            warmupRequest: async () => {},
+            waitForRequestsIdle: async () => {},
             close: () => action("web.close"),
           };
         },

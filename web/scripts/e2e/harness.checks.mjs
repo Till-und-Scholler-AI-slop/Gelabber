@@ -5,6 +5,7 @@ import {
   CheckFailure,
   check,
   failureSite,
+  failureStep,
   revision,
   safeError,
   safeTarget,
@@ -62,6 +63,17 @@ test("a failure names the scenario's line, not the harness helper", () => {
     "harness.mjs:286:10",
   );
   assert.equal(failureSite(undefined), null);
+});
+test("a failed fixture step names its own line, past the caller", () => {
+  const stack = [
+    "TimeoutError: x",
+    "    at fixture (file:///w/web/scripts/e2e/harness.mjs:262:9)",
+    "    at async file:///w/web/scripts/e2e/run.mjs:42:9",
+    "    at async run (file:///w/web/scripts/e2e/harness.mjs:354:18)",
+  ].join("\n");
+  assert.equal(failureSite(stack), "run.mjs:42:9");
+  assert.equal(failureStep(stack), "harness.mjs:262:9");
+  assert.equal(failureStep(undefined), null);
 });
 test("evidence errors discard Playwright URLs, secrets and call logs", () => {
   const e = new Error(

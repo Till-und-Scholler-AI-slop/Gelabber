@@ -113,6 +113,11 @@ try {
     logLevel: "silent",
   });
   await web.listen();
+  // A fresh dev server compiles the app when the first page asks for it,
+  // which on a busy runner took much of the fixture's first 12 s step
+  // (GEL-423). Compile what the entry imports before any page opens.
+  await web.warmupRequest("/src/main.tsx");
+  await web.waitForRequestsIdle();
   process.env.GELABBER_SMOKE_URL = "http://127.0.0.1:15186";
   process.env.GELABBER_E2E_API_SHA = runtime.manifest.sourceSha;
   await import("./run.mjs");
