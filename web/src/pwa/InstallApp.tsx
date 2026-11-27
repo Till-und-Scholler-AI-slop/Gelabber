@@ -26,7 +26,6 @@ export function InstallDisclosure() {
 
 export function InstallDisclosurePanel({ state }: { state: InstallState }) {
   const t = useT(pwa);
-  if (state.native) return null;
   return (
     <details className="pwa-install-disclosure">
       <summary>
@@ -40,7 +39,6 @@ export function InstallDisclosurePanel({ state }: { state: InstallState }) {
 
 export function InstallPanel({ state }: { state: InstallState }) {
   const t = useT(pwa);
-  if (state.native) return null;
   const offered = state.available || state.pending;
   return (
     <section className="pwa-install" aria-label={t("install.label")}>

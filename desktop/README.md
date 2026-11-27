@@ -36,7 +36,7 @@ app that still loads it only gets the notice to update
 | `core/tests/voice.rs` | Microphone modes, RNNoise, DeepFilterNet3, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 | `i18n/` | Rust crate `gelabber-i18n`: the interface text in German and English, one catalog per namespace, and the check that no text is left outside them (docs/i18n.md) |
 | `client/`, `call/`, `ui/`, `gelabber/` | The app (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
-| `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the setup page (in the sign-in pages' frame), the Tauri app's update notice and its "Server wechseln …" in the user menu, the references of the scenes `setup*`, `update-*` and those with `desktop` |
+| `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the setup page (in the sign-in pages' frame), the Tauri app's update notice, its "Server wechseln …" in the user menu and the install offers it left out, the references of the scenes `setup*`, `update-*` and those with `desktop` |
 | `packaging/native/` | The packages: `tarball.sh` (Linux), `windows/installer.nsi` (NSIS), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
 | `packaging/arch/` | The pacman package `gelabber-desktop` (`arch/native/PKGBUILD`) and repository; see its README |
 | `packaging/icons/` | The app icon (`icon.png`, `icon.ico`) for the packages and the installer |
