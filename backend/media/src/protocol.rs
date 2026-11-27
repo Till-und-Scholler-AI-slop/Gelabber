@@ -168,15 +168,6 @@ pub enum ClientFrame {
         #[serde(default)]
         sharp: Option<bool>,
     },
-    #[serde(rename = "q")]
-    ViewerLayer {
-        id: u32,
-        #[serde(rename = "consumerId")]
-        consumer_id: String,
-        generation: Uuid,
-        h: u16,
-        congested: bool,
-    },
     #[serde(rename = "l")]
     Leave { id: u32 },
 }
@@ -198,7 +189,6 @@ impl ClientFrame {
             | Self::Watch { id, .. }
             | Self::ScreenMode { id, .. }
             | Self::ViewMode { id, .. }
-            | Self::ViewerLayer { id, .. }
             | Self::Leave { id } => *id,
         }
     }

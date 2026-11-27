@@ -70,7 +70,7 @@ async fn registration_takes_the_field_then_the_header_then_german(pool: PgPool) 
     let (_, res) = register(&pool, "d@example.com", None, Some("fr-FR")).await;
     assert_eq!(res.body["user"]["locale"], "en");
 
-    // Clients older than v0.10 send neither.
+    // Neither, as from a script: the API's default.
     let (mut client, res) = register(&pool, "e@example.com", None, None).await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
     assert_eq!(res.body["user"]["locale"], "de");
