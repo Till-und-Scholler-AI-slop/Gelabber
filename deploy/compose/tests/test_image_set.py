@@ -257,7 +257,7 @@ class Promotion(unittest.TestCase):
             item['digest'] = 'sha256:' + str(index) * 64
             expected[item['image']] = item['digest']
         Path('image-set.json').write_text(json.dumps(manifest))
-        calls = self.latest_run(digest=lambda ref: expected[ref.rsplit(':', 1)[0]])
+        calls = self.latest_run(digest=lambda ref: expected[ref.split('@')[0].rsplit(':', 1)[0]])
         self.assertIn(('git', 'merge-base', '--is-ancestor', SHA, 'HEAD'), calls)
         self.assertIn(('git', 'fetch', '--no-tags', 'origin', 'refs/tags/v0.2.4:refs/tags/v0.2.4'), calls)
         self.assertEqual(aliased(calls), every_image())
@@ -300,9 +300,18 @@ class Promotion(unittest.TestCase):
                 calls = self.latest_run(api=api)
                 self.assertEqual(aliased(calls), every_image())
 
+    def test_latest_keeps_the_released_minio_build_after_its_tag_was_rebuilt(self):
+        # publish-minio.yml replaces the pinned tag when its build image changes (GEL-402).
+        self.prepare_release()
+        calls = self.latest_run(digest=lambda ref: OTHER if ref.endswith(':' + m.MINIO_PIN) else DIGEST)
+        minio = [c for c in calls if c[0] == 'docker' and '/minio:latest' in c[-2]]
+        self.assertEqual(len(minio), 1)
+        self.assertTrue(minio[0][-1].endswith('/minio@' + DIGEST))
+
     def test_latest_preflights_minio_and_all_app_digests_before_any_alias_write(self):
         self.prepare_release()
-        for bad in ('media:v0.2.4', 'minio:' + m.MINIO_PIN):
+        # MinIO's recorded build is checked by its digest (GEL-402).
+        for bad in ('media:v0.2.4', 'minio@' + DIGEST):
             calls = []
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.latest_run(digest=lambda ref: OTHER if ref.endswith(bad) else DIGEST,

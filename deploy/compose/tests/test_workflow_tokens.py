@@ -154,10 +154,11 @@ class PushWiring(unittest.TestCase):
                       if step.get('uses', '').startswith('actions/download-artifact@')]
         self.assertEqual(len(uploaded), 1)
         self.assertEqual(downloaded, uploaded)
+        # test_minio_images.py runs the push itself; here, both images go through it.
         pushed = ' '.join(script for _, _, script in scripts({'jobs': {'publish': publish}}))
-        for image, tag in (('GHCR_IMAGE', 'MINIO_RELEASE'), ('GHCR_MC_IMAGE', 'MC_RELEASE')):
+        for image in ('GHCR_IMAGE', 'GHCR_MC_IMAGE'):
             with self.subTest(image=image):
-                self.assertIn(f'docker push "${{{image}}}:${{{tag}}}"', pushed)
+                self.assertRegex(pushed, rf'(?m)^push "\${image}" ')
 
 
 class RunScripts(unittest.TestCase):

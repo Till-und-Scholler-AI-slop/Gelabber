@@ -1,6 +1,7 @@
 # Pushes the pinned MinIO CE server and mc images, built and checked by
-# minio-images.yml, to GHCR from main when a tag is missing. New org packages
-# start private; a maintainer sets them Public once in the UI.
+# minio-images.yml, to GHCR from main: a missing tag, or one whose Dockerfile
+# changed (GEL-402). New org packages start private; a maintainer sets them
+# Public once in the UI.
 name: Publish MinIO CE image
 
 on:
@@ -21,16 +22,51 @@ permissions:
   contents: read
 
 jobs:
+  # Which Dockerfile this push changed: that image is rebuilt and its tag
+  # replaced, so a new Go build image reaches operators (GEL-402).
+  changed:
+    name: Changed Dockerfiles
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      minio: ${{ steps.diff.outputs.minio }}
+      mc: ${{ steps.diff.outputs.mc }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Diff since the previous head
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          minio=false
+          mc=false
+          if [ "$EVENT" = push ] && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+              && git fetch --quiet --depth=1 origin "$BEFORE"; then
+            changed="$(git diff --no-renames --name-only "$BEFORE" HEAD)"
+            if grep -q '^deploy/compose/minio/' <<<"$changed"; then minio=true; fi
+            if grep -q '^deploy/compose/mc/' <<<"$changed"; then mc=true; fi
+          fi
+          echo "minio=$minio" | tee -a "$GITHUB_OUTPUT"
+          echo "mc=$mc" | tee -a "$GITHUB_OUTPUT"
+
   images:
     name: MinIO images
+    needs: changed
     uses: ./.github/workflows/minio-images.yml
     with:
+      build: ${{ needs.changed.outputs.minio == 'true' || needs.changed.outputs.mc == 'true' }}
       keep: ${{ github.ref == 'refs/heads/main' }}
 
   # Its own job: only this one holds the packages token, the build above ran
   # fetched Go modules. Push only from main (includes workflow_dispatch on main).
   publish:
-    needs: images
+    needs: [changed, images]
     if: github.ref == 'refs/heads/main' && needs.images.outputs.built == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -40,6 +76,8 @@ jobs:
     env:
       MINIO_RELEASE: ${{ needs.images.outputs.minio-release }}
       MC_RELEASE: ${{ needs.images.outputs.mc-release }}
+      REPLACE_MINIO: ${{ needs.changed.outputs.minio }}
+      REPLACE_MC: ${{ needs.changed.outputs.mc }}
     steps:
       - name: Image names
         run: |
@@ -72,28 +110,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A tag is pushed when it is missing, or replaced when its Dockerfile
+      # changed; otherwise kept. Registry or auth errors fail closed.
       - name: Push to GHCR
         run: |
           set -euo pipefail
-          # Never replace the pinned source build. Registry/auth errors fail closed.
-          if docker buildx imagetools inspect "${GHCR_IMAGE}:${MINIO_RELEASE}" > /tmp/minio-existing 2>/tmp/minio-error; then
-            echo "Pinned MinIO image already exists; preserving it."
-          elif grep -Fq 'manifest unknown' /tmp/minio-error || grep -Fxq "ERROR: ${GHCR_IMAGE}:${MINIO_RELEASE}: not found" /tmp/minio-error; then
-            docker tag "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${GHCR_IMAGE}:${MINIO_RELEASE}"
-            docker push "${GHCR_IMAGE}:${MINIO_RELEASE}"
-          else
-            cat /tmp/minio-error >&2
-            exit 1
-          fi
-          if docker buildx imagetools inspect "${GHCR_MC_IMAGE}:${MC_RELEASE}" > /tmp/mc-existing 2>/tmp/mc-error; then
-            echo "Pinned mc image already exists; preserving it."
-          elif grep -Fq 'manifest unknown' /tmp/mc-error || grep -Fxq "ERROR: ${GHCR_MC_IMAGE}:${MC_RELEASE}: not found" /tmp/mc-error; then
-            docker tag "${LOCAL_MC_IMAGE}:${MC_RELEASE}" "${GHCR_MC_IMAGE}:${MC_RELEASE}"
-            docker push "${GHCR_MC_IMAGE}:${MC_RELEASE}"
-          else
-            cat /tmp/mc-error >&2
-            exit 1
-          fi
+          push() {  # remote local release replace name
+            if docker buildx imagetools inspect "$1:$3" > /dev/null 2> "$RUNNER_TEMP/inspect-error"; then
+              if [ "$4" != true ]; then
+                echo "Pinned $5 image already exists and its Dockerfile did not change; keeping it."
+                return
+              fi
+              echo "Its Dockerfile changed: replacing the pinned $5 image $1:$3."
+            elif ! grep -Fq 'manifest unknown' "$RUNNER_TEMP/inspect-error" \
+                && ! grep -Fxq "ERROR: $1:$3: not found" "$RUNNER_TEMP/inspect-error"; then
+              cat "$RUNNER_TEMP/inspect-error" >&2
+              exit 1
+            fi
+            docker tag "$2:$3" "$1:$3"
+            docker push "$1:$3"
+          }
+          push "$GHCR_IMAGE" "$LOCAL_IMAGE" "$MINIO_RELEASE" "$REPLACE_MINIO" MinIO
+          push "$GHCR_MC_IMAGE" "$LOCAL_MC_IMAGE" "$MC_RELEASE" "$REPLACE_MC" mc
 
       - name: Make packages public
         env:

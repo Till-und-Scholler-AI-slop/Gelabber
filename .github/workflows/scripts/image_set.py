@@ -145,11 +145,14 @@ def latest():
     if minio['source_pin'] != MINIO_PIN:
         raise ValueError('Unexpected MinIO pin')
     refs['minio'] = (minio, MINIO_PIN)
-    # Validate the complete set before changing any mutable alias.
+    # Validate the complete set before changing any mutable alias. The MinIO
+    # tag is rebuilt in place when its build image changes (GEL-402); the
+    # release's own build is the digest it recorded, which stays.
     for name, (item, tag) in refs.items():
+        ref = f'{item["image"]}@{item["digest"]}' if name == 'minio' else f'{item["image"]}:{tag}'
         if (item['image'] != f'ghcr.io/{repo.lower()}/{name}'
                 or not re.fullmatch(r'sha256:[0-9a-f]{64}', item['digest'])
-                or registry_digest(f'{item["image"]}:{tag}') != item['digest']):
+                or registry_digest(ref) != item['digest']):
             raise ValueError('Release image digest or repository mismatch')
     for item, _ in refs.values():
         run('docker', 'buildx', 'imagetools', 'create', '--prefer-index=false',
