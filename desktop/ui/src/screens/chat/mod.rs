@@ -1671,7 +1671,9 @@ mod page_tests {
         FakeApi::with_gateway(true, move |method, path, body| match (method, path) {
             ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
                 let messages = kept.lock().clone();
-                Some(Reply::json(json!({"messages": messages, "has_more": false})))
+                Some(Reply::json(
+                    json!({"messages": messages, "has_more": false}),
+                ))
             }
             ("POST", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
                 let body: serde_json::Value = serde_json::from_str(body).ok()?;
@@ -1709,17 +1711,21 @@ mod page_tests {
     fn open_live(api: &FakeApi) -> egui_kittest::Harness<'static, crate::setup::Launcher> {
         use crate::app::testkit::{ALLGEMEIN, HOME, wait_until_idle};
         let mut harness = launcher(api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
-        wait_for(&mut harness, "the subscription and the recovery round", |_| {
-            let seen = api.seen.lock();
-            let after = seen
-                .iter()
-                .position(|r| r == "GET /ws")
-                .map_or(&seen[..0], |at| &seen[at..]);
-            api.gateway.subscribed(HOME, Some(ALLGEMEIN))
-                && ["GET /servers", "GET /dms", "GET /messages/unread"]
+        wait_for(
+            &mut harness,
+            "the subscription and the recovery round",
+            |_| {
+                let seen = api.seen.lock();
+                let after = seen
                     .iter()
-                    .all(|r| after.iter().any(|s| s == r))
-        });
+                    .position(|r| r == "GET /ws")
+                    .map_or(&seen[..0], |at| &seen[at..]);
+                api.gateway.subscribed(HOME, Some(ALLGEMEIN))
+                    && ["GET /servers", "GET /dms", "GET /messages/unread"]
+                        .iter()
+                        .all(|r| after.iter().any(|s| s == r))
+            },
+        );
         wait_until_idle(&mut harness);
         harness
     }
