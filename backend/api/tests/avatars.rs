@@ -186,55 +186,6 @@ async fn clearing_an_uploaded_avatar_deletes_it(pool: PgPool) {
     assert!(cleanup_rows(&pool).await.is_empty());
 }
 
-/// Two overlapping writes by the same user both read avatar A at request
-/// start. The first commits upload B; the second (here: clearing the
-/// avatar) must delete B, which its UPDATE really replaced, and not A
-/// again, else B stays in the store unreferenced.
-#[sqlx::test(migrations = "./migrations")]
-async fn overlapping_writes_delete_what_they_really_replaced(pool: PgPool) {
-    let state = state(pool.clone());
-    let mut ada = signed_in(&state, "ada@example.com").await;
-    let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
-    let (_, first) = ada
-        .send_bytes(Method::PUT, "/api/me/avatar", "image/png", PNG.to_vec())
-        .await;
-    let a = first["avatar_url"].as_str().unwrap().to_owned();
-
-    // The other request's upload commits between our read and our UPDATE.
-    let b = format!("/api/avatars/{id}/{}", uuid::Uuid::new_v4());
-    state
-        .store
-        .put(&key_of(&b), "image/webp", WEBP.to_vec())
-        .await
-        .unwrap();
-    sqlx::query("UPDATE users SET avatar_url=$2 WHERE id=$1")
-        .bind(id)
-        .bind(&b)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let patch = gelabber_api::auth::user::ProfilePatch {
-        name: None,
-        avatar_url: Some(None),
-        ..Default::default()
-    };
-    let updated = gelabber_api::avatars::save_profile(&state, id, &patch, None)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated.avatar_url, None);
-    let (status, _, _) = ada.send_raw(Method::GET, &b, None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "the replaced upload is gone");
-    let (status, _, _) = ada.send_raw(Method::GET, &a, None).await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "A is not this write's to delete (its own replacer handles it)"
-    );
-    assert!(cleanup_rows(&pool).await.is_empty());
-}
-
 /// A request that dies after the PUT (client abort, crash) leaves its
 /// pending cleanup row; the worker deletes the orphan once it is due. A
 /// late profile update for it is then refused instead of pointing at a

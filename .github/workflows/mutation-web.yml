@@ -1,0 +1,169 @@
+# Stryker on the web source lines changed since the latest release (GEL-388).
+# It informs and gates nothing: not part of ci-ok, no pull request waits for
+# it. Weekly on the development line (the schedule runs from main's copy of
+# this file), by hand on any branch, and on pull requests that change it.
+name: Web mutation testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch to test (empty for the development line)
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 3 * * 1'
+  pull_request:
+    paths:
+      - '.github/workflows/mutation-web.yml'
+      - '.github/workflows/scripts/mutation_web.py'
+      - 'web/scripts/mutation/**'
+      - 'web/vitest.config.ts'
+      - 'web/vitest.mutation.config.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-web-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  mutate:
+    name: Mutate the changed web lines
+    runs-on: ubuntu-26.04
+    # The plan caps the changed lines (mutation_web.py MAX_LINES).
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # The pull request's dry run reads the open issues.
+      issues: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Find what to test
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.ref }}
+        run: python3 .github/workflows/scripts/mutation_web.py target
+
+      # The scripts above and below stay this workflow's own; only the web
+      # client and its Stryker set-up come from what is tested.
+      - name: Check out what to test
+        env:
+          SHA: ${{ steps.target.outputs.sha }}
+        run: git worktree add --detach target "$SHA"
+
+      - name: Plan
+        id: plan
+        env:
+          BASE: ${{ steps.target.outputs.base }}
+          SHA: ${{ steps.target.outputs.sha }}
+          LABEL: ${{ steps.target.outputs.label }}
+        run: python3 .github/workflows/scripts/mutation_web.py plan "$BASE" "$SHA"
+
+      - name: Node
+        if: steps.plan.outputs.files != '0'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      # The web job's cache, saved by pushes; this workflow only reads it.
+      # Stryker's own packages (web/scripts/mutation) come from the registry.
+      - name: Restore the npm cache
+        if: steps.plan.outputs.files != '0'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: node-cache-Linux-x64-npm-${{ hashFiles('target/web/package-lock.json') }}
+
+      - name: Install
+        if: steps.plan.outputs.files != '0'
+        working-directory: target/web
+        env:
+          LABEL: ${{ steps.target.outputs.label }}
+        run: |
+          if [ ! -f scripts/mutation/stryker.config.mjs ]; then
+            echo "::error::${LABEL} has no web/scripts/mutation/stryker.config.mjs (GEL-388) yet."
+            exit 1
+          fi
+          npm ci
+          (cd scripts/mutation && npm ci)
+
+      # A mutant that loops for ever ends by Stryker's timeoutMS (5 s over
+      # the test's own time) and counts as detected.
+      - name: Mutate
+        id: mutate
+        if: steps.plan.outputs.files != '0'
+        working-directory: target/web
+        env:
+          MUTATE: ${{ steps.plan.outputs.mutate }}
+        run: scripts/mutation/node_modules/.bin/stryker run scripts/mutation/stryker.config.mjs --mutate "$MUTATE"
+
+      - name: Summary
+        id: summary
+        if: steps.plan.outputs.files == '0' || steps.mutate.outcome == 'success'
+        run: python3 .github/workflows/scripts/mutation_web.py summary target/web/reports/mutation/mutation.json plan.json target/web
+
+      - name: Upload the report
+        if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-web
+          path: |
+            plan.json
+            issue.json
+            target/web/reports/mutation/
+          if-no-files-found: warn
+
+      # What the scheduled run's report job would do, without writing.
+      - name: The issue a scheduled run would update (dry run)
+        if: github.event_name == 'pull_request' && steps.summary.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/workflows/scripts/mutation_web.py issue issue.json state/mutation-state.json --dry-run
+
+  # Only a scheduled run writes the issue, from a job that runs none of the
+  # tested code; a manual run writes only its summary.
+  report:
+    name: Issue for the scheduled run's survivors
+    needs: mutate
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      # The last scheduled run's state artifact.
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: mutation-web
+          path: report
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/workflows/scripts/mutation_web.py issue report/issue.json state/mutation-state.json
+
+      # The issue's number and the mutants' keys for the next run: an artifact,
+      # because the Linear sync may rewrite the issue body.
+      - name: Keep the issue's state
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-web-state
+          path: state/mutation-state.json
+          retention-days: 90
+          if-no-files-found: error
