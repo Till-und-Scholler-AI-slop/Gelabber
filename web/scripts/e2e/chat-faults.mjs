@@ -7,6 +7,7 @@ import {
   confirmDialog,
   navigate,
   observe,
+  responseTo,
   snapshot,
   until,
 } from "./harness.mjs";
@@ -693,13 +694,14 @@ export async function chatFaultScenarios(h, f) {
           Boolean,
           "fixture-upload-not-committed-before-scope-switch",
         );
-        const logout = f.owner.page.waitForResponse(
+        const logout = await responseTo(
+          f.owner.page,
           (r) =>
             new URL(r.url()).pathname === "/api/auth/logout" &&
             r.request().method() === "POST",
+          () => click(f.owner, "Abmelden"),
         );
-        await click(f.owner, "Abmelden");
-        check((await logout).status() === 200, "fixture-logout-failed");
+        check(logout.status() === 200, "fixture-logout-failed");
         await f.owner.page.waitForURL(/\/login/);
         await f.owner.page.getByLabel("E-Mail-Adresse").fill(f.member.email);
         await f.owner.page

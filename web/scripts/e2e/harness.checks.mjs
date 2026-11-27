@@ -1,10 +1,11 @@
-/* global URL */
+/* global URL, process, setImmediate */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CheckFailure,
   check,
   failureSite,
+  responseTo,
   revision,
   safeError,
   safeTarget,
@@ -63,6 +64,36 @@ test("a failure names the scenario's line, not the harness helper", () => {
     "harness.mjs:286:10",
   );
   assert.equal(failureSite(undefined), null);
+});
+test("a response waiter whose action failed never rejects unheard", async () => {
+  const unheard = [];
+  const listen = (reason) => unheard.push(reason);
+  process.on("unhandledRejection", listen);
+  try {
+    let expire;
+    const page = {
+      waitForResponse: () =>
+        new Promise((_, reject) => {
+          expire = reject;
+        }),
+    };
+    await assert.rejects(
+      responseTo(
+        page,
+        () => true,
+        async () => {
+          throw new Error("click-failed");
+        },
+      ),
+      /click-failed/,
+    );
+    // The waiter's own deadline passes after the scenario already failed.
+    expire(new Error("waitForResponse timed out"));
+    await new Promise((done) => setImmediate(done));
+  } finally {
+    process.off("unhandledRejection", listen);
+  }
+  assert.deepEqual(unheard, []);
 });
 test("evidence errors discard Playwright URLs, secrets and call logs", () => {
   const e = new Error(
