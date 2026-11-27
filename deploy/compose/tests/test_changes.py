@@ -48,14 +48,6 @@ class Areas(unittest.TestCase):
     def test_the_toolchain_concerns_both_rust_workspaces(self):
         self.assertTrue({'backend', 'desktop'} <= changes.areas(['rust-toolchain.toml']))
 
-    def test_the_storage_keys_the_desktop_test_reads_concern_it_too(self):
-        legacy = (ROOT / 'desktop/ui/src/platform/legacy.rs').read_text(encoding='utf-8')
-        read = set(re.findall(r'include_str!\("(?:\.\./)+(web/[^"]+)"\)', legacy))
-        self.assertTrue(read)
-        for path in read:
-            with self.subTest(path=path):
-                self.assertEqual(changes.areas([path]), {'web', 'desktop'})
-
     def test_emoji_data_concerns_web_too(self):
         self.assertIn('web', changes.areas(['backend/shared/data/emoji-18.0.json']))
 
@@ -107,11 +99,10 @@ class Areas(unittest.TestCase):
 
     def test_files_other_areas_read_start_them(self):
         # The checks that read them: test_public_pages.py, test_update_signature.py,
-        # this file (legacy.rs), generate-emoji-data.py --check, landingImage.test.mjs,
+        # generate-emoji-data.py --check, landingImage.test.mjs and
         # ci-fault-loop.checks.mjs (a step of e2e-extended.yml).
         for path, area in (('web/docker-entrypoint.d/50-gelabber-public-pages.sh', 'deploy'),
                            ('desktop/packaging/updater.pub', 'deploy'),
-                           ('desktop/ui/src/platform/legacy.rs', 'deploy'),
                            ('desktop/ui/assets/emoji/emoji-data.json', 'web'),
                            ('.github/workflows/e2e-extended.yml', 'web'),
                            ('docs/design/v0.10/landing-preview-en.png', 'web')):
