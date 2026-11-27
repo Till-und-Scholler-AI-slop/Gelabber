@@ -29,7 +29,9 @@ Run from the repository root. A pull request passes when
     changed package has a plain version, an `integrity`, and a `resolved`
     URL that is the npm registry's tarball of that package and version; a
     package kept at its version keeps both; the root entry changes only the
-    versions of dependencies the commit message names.
+    versions of dependencies the commit message names. A package bundled in
+    its parent (`inBundle`, with neither `resolved` nor `integrity`, as npm
+    writes it) passes when its parent is in the lock and not bundled itself.
 
 Not checked, so CI's read-only build decides: which other packages a lock
 file moves (Dependabot moves transitive dependencies with the named ones),
@@ -38,8 +40,12 @@ this procedure never runs npm's scripts locally).
 
 Prints one JSON object per pull request: number, head, ecosystem, commits,
 files, updates [{name, from, to, type, update_type, group, security}] and
-security (any update whose `from` version has a GitHub advisory, from the
-public advisory database). Exit status 1, with every reason on stderr, when
+security. `from` comes from the commit message, else from the removed side
+of the change. An update's `security` lists the GitHub advisories (public
+advisory database) that affect its `from` version, or is null when `from`
+is unknown; Docker and Compose images have no advisory database, so theirs
+is always empty. The pull request's `security` is true when an update has an
+advisory, "unknown" when one cannot be looked up, else false. Exit status 1, with every reason on stderr, when
 any pull request fails; then nothing of the run is carried or closed. The
 commits are fetched into a temporary ref that is deleted at the end; the
 objects stay for the cherry-picks.
@@ -167,6 +173,21 @@ def line_key(kind, text, names):
     return None
 
 
+def line_name_version(kind, text):
+    """(name, version) of a version line accepted by line_key."""
+    if kind in ("dockerfile", "compose"):
+        ref = text.split("image:", 1)[1] if kind == "compose" else re.sub(r"^FROM\s+(--platform=\S+\s+)?", "", text.strip()).split()[0]
+        m = IMAGE.fullmatch(ref.strip())
+        return (m.group(1), m.group(2) or m.group(3)) if m else (None, None)
+    if kind == "workflow":
+        m = re.fullmatch(r"\s*(?:-\s+)?uses:\s+([\w.-]+/[\w.-]+)[\w./-]*@(\S+)(?:\s+#\s*v?(\S+))?.*", text)
+        return (m.group(1), m.group(3) or m.group(2)) if m else (None, None)
+    if kind == "pip":
+        m = re.fullmatch(r"([A-Za-z0-9_.-]+)==(\S+?)\s*\\?\s*", text)
+        return (pip_name(m.group(1)), m.group(2)) if m else (None, None)
+    return (None, None)
+
+
 def show(sha, path):
     try:
         return run("git", "show", f"{sha}:{path}")
@@ -177,7 +198,7 @@ def show(sha, path):
 DEP_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 
 
-def check_cargo_manifest(old, new, names, say):
+def check_cargo_manifest(old, new, names, say, froms):
     """Only the version of a named dependency changes."""
     def walk(a, b, path):
         if a == b:
@@ -193,10 +214,12 @@ def check_cargo_manifest(old, new, names, say):
             len(path) >= 3 and path[-3] in DEP_TABLES and path[-2] in names and path[-1] == "version")
         if not (named and isinstance(a, str) and isinstance(b, str)):
             say(f"Cargo.toml: {'.'.join(path)} changed")
+        else:
+            froms.setdefault(path[-2] if path[-1] == "version" and path[-2] in names else path[-1], a)
     walk(tomllib.loads(old), tomllib.loads(new), ())
 
 
-def check_npm_manifest(old, new, names, say):
+def check_npm_manifest(old, new, names, say, froms):
     """Only the version of a named dependency changes."""
     old, new = json.loads(old), json.loads(new)
     sections = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
@@ -210,12 +233,17 @@ def check_npm_manifest(old, new, names, say):
         for dep in set(a) | set(b):
             if a.get(dep) != b.get(dep) and (dep not in names or dep not in a or dep not in b):
                 say(f"package.json: {field}.{dep} changed")
+            elif a.get(dep) != b.get(dep):
+                froms.setdefault(dep, a[dep])
 
 
-def check_cargo_lock(old, new, say):
+def check_cargo_lock(old, new, say, froms):
     def packages(text):
         return {(p["name"], p["version"]): p for p in tomllib.loads(text).get("package", [])}
     before, after = packages(old), packages(new)
+    for name, version in before:
+        if (name, version) not in after:
+            froms.setdefault(name, version)
     for key, p in after.items():
         if key in before:
             for field in ("source", "checksum"):
@@ -228,7 +256,7 @@ def check_cargo_lock(old, new, say):
                 say(f"Cargo.lock: new {key[0]} has version {p['version']}")
 
 
-def check_npm_lock(old, new, names, say):
+def check_npm_lock(old, new, names, say, froms):
     old, new = json.loads(old), json.loads(new)
     if {k: v for k, v in old.items() if k != "packages"} != {k: v for k, v in new.items() if k != "packages"}:
         say("package-lock.json: changes outside packages")
@@ -250,6 +278,11 @@ def check_npm_lock(old, new, names, say):
         if entry.get("link"):
             say(f"package-lock.json: {key} became a link")
             continue
+        if entry.get("inBundle") and "resolved" not in entry and "integrity" not in entry:
+            parent = key.rsplit("/node_modules/", 1)[0]
+            if parent == key or parent not in after or after[parent].get("inBundle"):
+                say(f"package-lock.json: {key} is bundled without a parent that ships it")
+            continue
         name = key.rsplit("node_modules/", 1)[-1]
         version = entry.get("version", "")
         if not SEMVER.fullmatch(version):
@@ -261,11 +294,13 @@ def check_npm_lock(old, new, names, say):
         if not entry.get("integrity"):
             say(f"package-lock.json: {key} has no integrity")
         previous = before.get(key)
+        if previous and previous.get("version") and previous.get("version") != version:
+            froms.setdefault(name, previous["version"])
         if previous and previous.get("version") == version and previous.get("integrity") != entry.get("integrity"):
             say(f"package-lock.json: {key} {version} changed its integrity")
 
 
-def check_commit(sha, names, say):
+def check_commit(sha, names, say, froms):
     files = set()
     diff = run("git", "show", "--format=", "-U0", "--no-color", "--no-ext-diff", "--no-renames", sha)
     removed, added, path, kind, header = {}, {}, None, None, False
@@ -293,6 +328,10 @@ def check_commit(sha, names, say):
                 say(f"commit {sha[:10]} {path}: not a version line: {line[:120]}")
                 continue
             (added if line[0] == "+" else removed).setdefault(path, []).append(key)
+            if line[0] == "-":
+                name, version = line_name_version(kind, text)
+                if name:
+                    froms.setdefault(name, version)
     for p in set(removed) | set(added):
         if sorted(removed.get(p, [])) != sorted(added.get(p, [])):
             say(f"commit {sha[:10]} {p}: lines added or removed beyond a version change")
@@ -305,21 +344,19 @@ def check_commit(sha, names, say):
             report = lambda m, p=p: say(f"commit {sha[:10]} {p}: {m}")
             try:
                 if kind == "cargo-lock":
-                    check_cargo_lock(old, new, report)
+                    check_cargo_lock(old, new, report, froms)
                 elif kind == "npm-lock":
-                    check_npm_lock(old, new, names, report)
+                    check_npm_lock(old, new, names, report, froms)
                 elif kind == "cargo-manifest":
-                    check_cargo_manifest(old, new, names, report)
+                    check_cargo_manifest(old, new, names, report, froms)
                 else:
-                    check_npm_manifest(old, new, names, report)
+                    check_npm_manifest(old, new, names, report, froms)
             except (ValueError, KeyError, TypeError) as e:
                 say(f"commit {sha[:10]} {p}: unreadable ({e})")
     return files
 
 
 def advisories(ecosystem, name, version):
-    if not ecosystem or not version:
-        return []
     found = gh_json("api", "-X", "GET", "/advisories", "-f", f"ecosystem={ecosystem}",
                     "-f", f"affects={name}@{version}")
     return [a.get("ghsa_id") for a in found]
@@ -368,19 +405,30 @@ def vet(number, problems, ref):
         if unsafe or any(u["to"] is None for u in listed):
             say(f"commit {sha[:10]} names unsafe or missing values: {unsafe!r}")
             continue
+        froms = {}
+        files |= check_commit(sha, {u["name"] for u in listed}, say, froms)
+        for u in listed:
+            if u["from"] is None:
+                found = froms.get(u["name"], froms.get(pip_name(u["name"])))
+                u["from"] = found if found and SAFE.fullmatch(found) else None
         updates.extend(listed)
-        files |= check_commit(sha, {u["name"] for u in listed}, say)
     if not commits:
         say("has no commits")
-    if not problems or not any(p.startswith(f"#{number}:") for p in problems):
+    if not any(p.startswith(f"#{number}:") for p in problems):
         for u in updates:
-            u["security"] = advisories(ECOSYSTEMS.get(ecosystem), u["name"], u["from"])
+            if ECOSYSTEMS.get(ecosystem) is None:
+                u["security"] = []
+            elif u["from"] is None:
+                u["security"] = None
+            else:
+                u["security"] = advisories(ECOSYSTEMS[ecosystem], u["name"], u["from"])
+    marks = [u.get("security", []) for u in updates]
     return {
         "number": number,
         "head": head,
         "ecosystem": ecosystem,
         "commits": commits,
-        "security": any(u.get("security") for u in updates),
+        "security": True if any(marks) else "unknown" if None in marks else False,
         "files": sorted(files),
         "updates": updates,
     }

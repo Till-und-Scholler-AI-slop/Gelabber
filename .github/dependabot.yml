@@ -2,8 +2,9 @@
 # its updates (one group, majors included). These PRs go to main and are never
 # merged: an agent turns them into one PR against the development line with
 # the generated files renewed (.claude/skills/dependency-updates/SKILL.md).
-# Every update waits 7 days after its release, against freshly compromised
-# packages. Majors that need their own migration stay manual (below).
+# Every version update waits 7 days after its release, against freshly
+# compromised packages; security updates do not wait (the cooldown skips
+# them). Majors that need their own migration stay manual (below).
 # For grouped security updates GitHub's "Dependabot errors" page says: to
 # ignore a dependency, "Configure an `ignore` rule for the dependency", so a
 # rule may stop security pull requests too; the rules name versions where

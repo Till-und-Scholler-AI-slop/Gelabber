@@ -1,5 +1,5 @@
-"""The gate and the renewal of the weekly dependency update
-(.claude/skills/dependency-updates: vet.py, renew.sh, pip_hashes.py).
+"""The scripts of the weekly dependency update
+(.claude/skills/dependency-updates: vet.py, resolve.py, renew.sh, pip_hashes.py).
 
 vet.py runs in a clone of a local repository whose refs/pull/<n>/head hold
 crafted commits, with a fake `gh` on PATH that answers from a JSON file."""
@@ -112,6 +112,13 @@ BASE = {
                 'version': '4.3.4', 'dev': True,
                 'resolved': 'https://registry.npmjs.org/@tailwindcss/vite/-/vite-4.3.4.tgz',
                 'integrity': 'sha512-vite1'},
+            # As in #549: npm writes neither resolved nor integrity for a bundled package.
+            'node_modules/@tailwindcss/oxide-wasm32-wasi': {
+                'version': '4.3.4', 'dev': True, 'optional': True, 'bundleDependencies': ['tslib'],
+                'resolved': 'https://registry.npmjs.org/@tailwindcss/oxide-wasm32-wasi/-/oxide-wasm32-wasi-4.3.4.tgz',
+                'integrity': 'sha512-oxide1'},
+            'node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/tslib': {
+                'version': '2.8.0', 'dev': True, 'optional': True, 'inBundle': True, 'license': '0BSD'},
         }}, indent=2) + '\n',
     'web/Dockerfile': 'FROM node:26.13.0-trixie AS build\nRUN npm ci\nFROM nginx:1.31.9-alpine\n',
     'deploy/compose/compose.yaml': 'services:\n  caddy:\n    image: caddy:2.11.8-alpine\n',
@@ -122,9 +129,10 @@ BASE = {
 
 
 def message(*updates, group='g', title='chore(deps): bump'):
-    """A Dependabot commit message for (name, from, to) updates."""
+    """A Dependabot commit message for (name, from, to) updates; from None
+    leaves out its `Updates` line."""
     lines = [title, '']
-    lines += [f'Updates `{n}` from {a} to {b}' for n, a, b in updates]
+    lines += [f'Updates `{n}` from {a} to {b}' for n, a, b in updates if a is not None]
     lines += ['', '---', 'updated-dependencies:']
     for n, _, b in updates:
         lines += [f'- dependency-name: {n}', f'  dependency-version: {b}',
@@ -156,6 +164,14 @@ def npm_manifest(edit):
 def vite_bump(packages):
     packages['']['devDependencies']['@tailwindcss/vite'] = '4.3.5'
     packages['node_modules/@tailwindcss/vite'] = dict(lock_entry('@tailwindcss/vite', '4.3.5', 'sha512-vite2'), dev=True)
+
+
+def oxide_bump(packages):
+    vite_bump(packages)
+    packages['node_modules/@tailwindcss/oxide-wasm32-wasi'].update(
+        version='4.3.5', integrity='sha512-oxide2',
+        resolved='https://registry.npmjs.org/@tailwindcss/oxide-wasm32-wasi/-/oxide-wasm32-wasi-4.3.5.tgz')
+    packages['node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/tslib']['version'] = '2.8.1'
 
 
 def replace(path, old, new):
@@ -216,6 +232,20 @@ CASES = {
         {'web/package.json': npm_manifest(lambda m: m['devDependencies'].update({'@tailwindcss/vite': '4.3.5'})),
          'web/package-lock.json': npm_lock(vite_bump)},
         [('@tailwindcss/vite', '4.3.4', '4.3.5')], None, {'branch': 'dependabot/npm_and_yarn/web/npm-1'}),
+    'npm bundled entries move (#549)': (
+        {'web/package.json': npm_manifest(lambda m: m['devDependencies'].update({'@tailwindcss/vite': '4.3.5'})),
+         'web/package-lock.json': npm_lock(oxide_bump)},
+        [('@tailwindcss/vite', '4.3.4', '4.3.5')], None, {'branch': 'dependabot/npm_and_yarn/web/npm-2'}),
+    'from read off the change': (SERDE, [('serde', None, '1.0.201')], None, {}),
+    'unknown from': (
+        {'backend/Cargo.lock': BASE['backend/Cargo.lock'] + textwrap.dedent(f'''
+            [[package]]
+            name = "itoa"
+            version = "1.0.15"
+            source = "registry+https://github.com/rust-lang/crates.io-index"
+            checksum = "{"7" * 64}"
+            ''')},
+        [('itoa', None, '1.0.15')], None, {}),
     'docker tag': (replace('web/Dockerfile', 'node:26.13.0-trixie', 'node:26.13.1-trixie'),
                    [('node', '26.13.0-trixie', '26.13.1-trixie')], None, {'branch': 'dependabot/docker/web/docker-1'}),
     'docker digest': (replace('web/Dockerfile', 'nginx:1.31.9-alpine', 'nginx:1.31.9-alpine@sha256:' + '8' * 64),
@@ -296,6 +326,12 @@ CASES = {
         {'web/package.json': npm_manifest(lambda m: m['devDependencies'].update({'@tailwindcss/vite': '4.3.5'})),
          'web/package-lock.json': npm_lock(lambda p: (vite_bump(p), p['node_modules/@tailwindcss/vite'].pop('resolved')))},
         [('@tailwindcss/vite', '4.3.4', '4.3.5')], 'resolves to None', {}),
+    'npm bundled without its parent': (
+        {'web/package-lock.json': npm_lock(lambda p: p.update({'node_modules/stray/node_modules/evil': {
+            'version': '1.0.0', 'inBundle': True}}))},
+        [('evil', '0.0.0', '1.0.0')], 'bundled without a parent', {}),
+    'fetched head is not the API head': (SERDE, [('serde', '1.0.200', '1.0.201')], "is not the pull request's head",
+                                         {'pr': {'headRefOid': 'c' * 40}}),
     'pip package added': (
         replace('deploy/compose/tests/requirements.txt', 'PyYAML==6.0.2', f'evil==1.0 \\\n    --hash=sha256:{H[2]}\nPyYAML==6.0.2'),
         [('evil', '0.9', '1.0')], 'beyond a version change', {}),
@@ -414,6 +450,21 @@ class Vet(unittest.TestCase):
         _, out, _ = self.vet(self.numbers['#1050 ndarray'])
         self.assertEqual([(u['name'], u['from'], u['to']) for u in out[0]['updates']], [('ndarray', '0.15.6', '0.17.2')])
         self.assertEqual(out[0]['ecosystem'], 'cargo')
+        # Ungrouped is not security: only an advisory for the from version is.
+        self.assertIs(out[0]['security'], False)
+        self.assertEqual(out[0]['updates'][0]['security'], [])
+
+    def test_from_comes_from_the_change_when_the_message_lacks_it(self):
+        _, out, _ = self.vet(self.numbers['from read off the change'],
+                             advisories={'rust/serde@1.0.200': [{'ghsa_id': 'GHSA-yyyy'}]})
+        self.assertEqual(out[0]['updates'][0]['from'], '1.0.200')
+        self.assertIs(out[0]['security'], True)
+
+    def test_an_unknown_from_is_unknown_not_safe(self):
+        code, out, err = self.vet(self.numbers['unknown from'])
+        self.assertEqual((code, err), (0, ''))
+        self.assertIsNone(out[0]['updates'][0]['security'])
+        self.assertEqual(out[0]['security'], 'unknown')
 
     def test_the_475_shape_is_rejected_for_each_foreign_commit(self):
         code, _, err = self.vet(475)
@@ -492,6 +543,112 @@ class Renew(unittest.TestCase):
         code, ci, err = self.renew('node', dockerfile='FROM node:latest\n')
         self.assertNotEqual(code, 0)
         self.assertIn('no Node version', err)
+
+
+COMPOSE = ('services:\n  prometheus:\n    image: prom/prometheus:{p}\n    command:\n      - --a\n'
+           '  proxy:\n    image: caddy:{c}-alpine\n    ports:\n      - "80:80"\n')
+
+
+class Resolve(unittest.TestCase):
+    """resolve.py on a cherry-pick of a Dependabot commit built on main onto a
+    development line that carried an earlier week's update of the same lines."""
+
+    def pick(self, base, ours, theirs, names):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / 'repo'
+            git(Path(tmp), 'init', '-q', str(repo))
+            def commit(files, msg):
+                for path, text in files.items():
+                    (repo / path).parent.mkdir(parents=True, exist_ok=True)
+                    (repo / path).write_text(text)
+                git(repo, 'add', '-A')
+                git(repo, 'commit', '-q', '-m', msg)
+                return git(repo, 'rev-parse', 'HEAD')
+            first = commit(base, 'base')
+            commit(ours, 'week 1 on the development line')
+            git(repo, 'checkout', '-q', '--detach', first)
+            dependabot = commit(theirs, 'week 2 from Dependabot')
+            git(repo, 'checkout', '-q', '-')
+            picked = subprocess.run(['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@t',
+                                     '-c', 'rerere.enabled=false', 'cherry-pick', dependabot],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(picked.returncode, 0, 'the pick should conflict')
+            (Path(tmp) / 'vet.jsonl').write_text(json.dumps({'number': 7, 'updates': [{'name': n} for n in names]}) + '\n')
+            result = subprocess.run([sys.executable, '-I', str(SKILL / 'resolve.py'), str(Path(tmp) / 'vet.jsonl'), '7'],
+                                    cwd=repo, capture_output=True, text=True)
+            unmerged = git(repo, 'diff', '--name-only', '--diff-filter=U')
+            files = {path: (repo / path).read_text() for path in {**base, **theirs}}
+            return result.returncode, result.stdout, result.stderr, unmerged, files
+
+    def test_443_then_546_takes_the_higher_versions(self):
+        code, out, _, unmerged, files = self.pick(
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.14.0', c='2.11.4')},
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.15.1', c='2.11.7')},
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.16.0', c='2.11.8')},
+            ['prom/prometheus', 'caddy'])
+        self.assertEqual((code, unmerged), (0, ''))
+        self.assertEqual(files['deploy/compose/compose.yaml'], COMPOSE.format(p='v3.16.0', c='2.11.8'))
+        self.assertIn('resolved deploy/compose/compose.yaml', out)
+
+    def test_a_higher_version_on_the_development_line_stays(self):
+        code, _, _, _, files = self.pick(
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.14.0', c='2.11.4')},
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.17.0', c='2.11.7')},
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.16.0', c='2.11.8')},
+            ['prom/prometheus', 'caddy'])
+        self.assertEqual(code, 0)
+        self.assertEqual(files['deploy/compose/compose.yaml'], COMPOSE.format(p='v3.17.0', c='2.11.8'))
+
+    def test_another_change_in_the_hunk_is_not_resolved(self):
+        ours = COMPOSE.format(p='v3.15.1', c='2.11.4').replace('    command:\n', '    command: []\n    restart: always\n')
+        code, _, err, unmerged, _ = self.pick(
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.14.0', c='2.11.4')},
+            {'deploy/compose/compose.yaml': ours},
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.16.0', c='2.11.4')},
+            ['prom/prometheus'])
+        self.assertEqual(code, 1)
+        self.assertIn('deploy/compose/compose.yaml', err)
+        self.assertEqual(unmerged, 'deploy/compose/compose.yaml')
+
+    def test_a_dependency_the_pull_request_does_not_name_is_not_resolved(self):
+        code, _, err, _, _ = self.pick(
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.14.0', c='2.11.4')},
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.15.1', c='2.11.4')},
+            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.16.0', c='2.11.4')},
+            ['caddy'])
+        self.assertEqual(code, 1)
+        self.assertIn('not the same dependency', err)
+
+    def test_cargo_manifest_and_lock(self):
+        base = {'backend/Cargo.toml': BASE['backend/Cargo.toml'], 'backend/Cargo.lock': BASE['backend/Cargo.lock']}
+        ours = {'backend/Cargo.toml': BASE['backend/Cargo.toml'].replace('1.0.200', '1.0.202'),
+                'backend/Cargo.lock': BASE['backend/Cargo.lock'].replace('1.0.200', '1.0.202')}
+        theirs = {'backend/Cargo.toml': BASE['backend/Cargo.toml'].replace('1.0.200', '1.0.201'),
+                  'backend/Cargo.lock': BASE['backend/Cargo.lock'].replace('1.0.200', '1.0.201')}
+        code, out, _, unmerged, files = self.pick(base, ours, theirs, ['serde'])
+        self.assertEqual(code, 0)
+        self.assertIn('serde = "1.0.202"', files['backend/Cargo.toml'])
+        self.assertIn('lock backend/Cargo.lock', out)
+        self.assertEqual(unmerged, 'backend/Cargo.lock')
+
+    def test_a_pin_keeps_its_hashes(self):
+        req = 'PyYAML=={v} \\\n' + ''.join('    --hash=sha256:{h} \\\n'.replace('{h}', h) for h in H[:2]) + '    --hash=sha256:' + '9' * 64 + '\n'
+        theirs_text = f'PyYAML==6.0.4 \\\n    --hash=sha256:{"8" * 64}\n'
+        code, _, _, _, files = self.pick(
+            {'deploy/compose/tests/requirements.txt': req.replace('{v}', '6.0.2')},
+            {'deploy/compose/tests/requirements.txt': req.replace('{v}', '6.0.3')},
+            {'deploy/compose/tests/requirements.txt': theirs_text},
+            ['pyyaml'])
+        self.assertEqual(code, 0)
+        self.assertEqual(files['deploy/compose/tests/requirements.txt'], theirs_text)
+
+    def test_a_tie_takes_the_pull_requests_digest(self):
+        line = 'FROM nginx:1.31.9-alpine@sha256:{d}\n'
+        code, _, _, _, files = self.pick({'web/Dockerfile': line.format(d='1' * 64)},
+                                         {'web/Dockerfile': line.format(d='2' * 64)},
+                                         {'web/Dockerfile': line.format(d='3' * 64)}, ['nginx'])
+        self.assertEqual(code, 0)
+        self.assertEqual(files['web/Dockerfile'], line.format(d='3' * 64))
 
 
 def load_pip_hashes():
