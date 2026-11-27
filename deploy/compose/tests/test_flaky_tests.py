@@ -254,15 +254,20 @@ class Workflows(unittest.TestCase):
         # when CARGO_TARGET_DIR points elsewhere (run-native-ci.sh).
         cases = (('backend', '.github/workflows/ci.yml'), ('desktop', '.github/workflows/desktop-native.yml'))
         for workspace, workflow in cases:
-            with self.subTest(workspace=workspace):
-                profile = tomllib.loads((ROOT / workspace / '.config/nextest.toml').read_text())['profile']['ci']
-                self.assertGreaterEqual(profile['retries'], 1)
-                self.assertNotEqual(profile.get('flaky-result'), 'fail')
-                text = (ROOT / workflow).read_text()
-                self.assertRegex(text, r'nextest run --profile ci ')
-                report = f'{workspace}/target/nextest/ci/{profile["junit"]["path"]}'
-                self.assertIn(f'flaky_tests.py summary {report}\n', text)
-                self.assertIn(f'path: {report}\n', text)
+            profiles = tomllib.loads((ROOT / workspace / '.config/nextest.toml').read_text())['profile']
+            text = (ROOT / workflow).read_text()
+            summary = re.search(r'flaky_tests\.py summary (.*)\n', text).group(1).split()
+            upload = text.split('- name: Upload the test report\n', 1)[1].split('\n      - name:', 1)[0]
+            used = sorted(set(re.findall(r'nextest run --profile (\S+) ', text)))
+            self.assertIn('ci', used)
+            for name in used:
+                with self.subTest(workspace=workspace, profile=name):
+                    profile = dict(profiles['ci'], **profiles[name])
+                    self.assertGreaterEqual(profile['retries'], 1)
+                    self.assertNotEqual(profile.get('flaky-result'), 'fail')
+                    report = f'{workspace}/target/nextest/{name}/{profile["junit"]["path"]}'
+                    self.assertIn(report, summary)
+                    self.assertIn(report, upload)
 
     def test_push_runs_record_the_reports_of_both_workspaces(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
