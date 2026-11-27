@@ -1,0 +1,21 @@
+# Known flaky tests (GEL-389). CI runs a failed test once more and passes it
+# when that passes; a push run then adds the flake to the issue named here,
+# or, for a test not listed, to an issue "Flaky test: <test>" of its own.
+# Every entry names its GitHub issue. At most five entries
+# (.github/workflows/scripts/flaky_tests.py check): fix one before adding one.
+# `id` is nextest's "<binary-id> <test name>", as the job summary shows it.
+
+[[test]]
+# Races the outbox worker that app() starts; flaked on 17 and 26 November.
+id = "gelabber-api::outbox_fairness a_wake_delivers_without_waiting_for_the_poll"
+issue = 1058
+
+[[test]]
+# Named in #1058; flaked on 14, 15 and 22 November.
+id = "gelabber-api::feedback_public wrong_malformed_or_expired_tokens_land_on_expired"
+issue = 1058
+
+[[test]]
+# Named in #1058; flaked on 13 and 19 November.
+id = "gelabber-api::feedback_public the_daily_ceiling_refuses_until_the_oldest_post_is_a_day_old"
+issue = 1058
