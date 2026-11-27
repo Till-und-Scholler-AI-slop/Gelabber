@@ -115,7 +115,7 @@ pub const NAMESPACES: &[(&str, Entries)] = &[
 /// A language of the interface.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Locale {
-    /// German, the language of every account before v0.10.
+    /// German, the default.
     #[default]
     De,
     /// British English ("Colour scheme").

@@ -24,22 +24,10 @@ Run deterministic boundary checks with the pinned toolchain:
 node --test web/scripts/smoke-netem.checks.mjs
 ```
 
-A separate kernel control creates a disposable user/network namespace. It must
-never run against a shared/host namespace; the script checks the launching
-namespace ID before changing `lo`:
-
-```sh
-GELABBER_NETEM_HOST_NS="$(readlink /proc/self/ns/net)" unshare -Urn sh -c \
-  'ip link set lo up; node web/scripts/smoke-netem.namespace.mjs'
-```
-
-Observed local control: 1000 UDP sends, 910 receives, 90 owned-child drops;
-100/100 TCP echoes on the same numerical source port, maximum 1 ms (<500 ms).
 Focused checks and lint PASS. The existing local browser smoke on control
 Web5175/API8082/SFU8081 PASS, including native selected-port extraction, forced
 relay audio, camera/screen and uploads. Its packet-loss segment remains explicitly
 unexecuted because no Compose media container PID is available locally.
 
 **BLOCKED:** complete SFU/coturn/browser packet-loss and recovery acceptance in
-CI with this commit. No remote push/run is authorized. The namespace control
-proves the kernel fault boundary, not audible speech quality or SFU acceptance.
+CI with this commit. No remote push/run is authorized.

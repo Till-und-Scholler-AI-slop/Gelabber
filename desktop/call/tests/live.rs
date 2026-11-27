@@ -81,12 +81,10 @@ fn signed_in(base: &str, email: &str, password: &str, server: Uuid) -> Client {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER) and call.mjs"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER) and call.mjs; GEL-376 decides where it runs"]
 fn lena_joins_sofa_with_jonas_and_mira() {
-    let Ok(base) = std::env::var("GELABBER_TEST_SERVER") else {
-        eprintln!("GELABBER_TEST_SERVER is not set");
-        return;
-    };
+    let base =
+        std::env::var("GELABBER_TEST_SERVER").expect("GELABBER_TEST_SERVER, the seeded stack");
     // SAFETY: set before any thread of this test reads the environment.
     unsafe { std::env::set_var("GELABBER_FAKE_MEDIA", "1") };
     let fixture: Value =

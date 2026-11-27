@@ -125,8 +125,6 @@ python3 -m pip install --require-hashes --target ~/.cache/gelabber-pyyaml -r dep
 PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests
 ```
 
-`deploy/tools/tests` runs the same way.
-
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
 `npm test`, `npm run test:checks`, `npm run build`. `npm test` mounts the
 components of `*.browser.test.tsx` in Chromium; install it once with
