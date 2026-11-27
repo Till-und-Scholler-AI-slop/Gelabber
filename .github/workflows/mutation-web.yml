@@ -126,7 +126,7 @@ jobs:
         if: github.event_name == 'pull_request' && steps.summary.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/workflows/scripts/mutation_web.py issue issue.json --dry-run
+        run: python3 .github/workflows/scripts/mutation_web.py issue issue.json state/mutation-state.json --dry-run
 
   # Only a scheduled run writes the issue, from a job that runs none of the
   # tested code; a manual run writes only its summary.
@@ -137,6 +137,8 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
+      # The last scheduled run's state artifact.
+      actions: read
       contents: read
       issues: write
     steps:
@@ -154,4 +156,14 @@ jobs:
       - name: Open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/workflows/scripts/mutation_web.py issue report/issue.json
+        run: python3 .github/workflows/scripts/mutation_web.py issue report/issue.json state/mutation-state.json
+
+      # The issue's number and the mutants' keys for the next run: an artifact,
+      # because the Linear sync may rewrite the issue body.
+      - name: Keep the issue's state
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-web-state
+          path: state/mutation-state.json
+          retention-days: 90
+          if-no-files-found: error

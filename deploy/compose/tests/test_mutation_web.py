@@ -6,6 +6,7 @@ The Stryker report below has the shape Stryker 10.1.1 writes
 (`reports/mutation/mutation.json`, schema 1.0).
 """
 import contextlib
+import html
 import importlib.util
 import io
 import json
@@ -177,8 +178,31 @@ class Summary(unittest.TestCase):
         for limit in ('equivalent mutants', 'pins today', 'gates nothing', 'timeout', '59 of 94'):
             self.assertIn(limit, text)
 
+    def test_a_long_snippet_shows_where_original_and_mutant_differ(self):
+        before = 'typeof value.first === "string" && typeof value.second === "string" && value.third'
+        after = 'typeof value.first === "string" && typeof value.second === "string" || value.third'
+        shown = mutation_web.snippets(before, after)
+        self.assertNotEqual(shown[0], shown[1])
+        self.assertIn('&amp;&amp; value.third', shown[0])
+        self.assertIn('&#124;&#124; value.third', shown[1])
+        for cell in shown:
+            self.assertLessEqual(len(html.unescape(cell.removeprefix('<code>').removesuffix('</code>'))),
+                                 mutation_web.SNIPPET)
+        self.assertEqual(mutation_web.snippets('a', 'b'), ('<code>a</code>', '<code>b</code>'))
+
+    def test_the_open_list_follows_the_file_table_and_shows_a_few_per_file(self):
+        report = {'files': {'src/big.ts': many(20)['files']['src/a.ts'], 'src/small.ts': many(3)['files']['src/a.ts']}}
+        counts, found = mutation_web.undetected(report)
+        text = mutation_web.report_text(PLAN, counts, found, 100000, '.')
+        shown, folded = text[text.index('### By line'):].split('<details>')
+        self.assertEqual(shown.count('`web/src/big.ts`'), mutation_web.PER_FILE)
+        self.assertEqual(shown.count('`web/src/small.ts`'), 3)
+        self.assertLess(shown.index('`web/src/big.ts`'), shown.index('`web/src/small.ts`'))
+        self.assertIn('<summary>15 more mutants</summary>', folded)
+
     def test_a_long_list_shows_fifty_then_folds_then_points_to_the_artifact(self):
-        counts, found = mutation_web.undetected(many(200))
+        report = {'files': {f'src/f{n:02}.ts': many(10)['files']['src/a.ts'] for n in range(20)}}
+        counts, found = mutation_web.undetected(report)
         text = mutation_web.report_text(PLAN, counts, found, 100000, '.')
         shown, folded = text.split('<details>')
         self.assertEqual(shown.count('| survived |'), mutation_web.SHOWN)
@@ -200,111 +224,213 @@ class Summary(unittest.TestCase):
             self.assertIn('### 3 mutants no test detected, by file', Path('summary.md').read_text())
             self.assertEqual(Path('output').read_text(), 'undetected=3\n')
             info = json.loads(Path('issue.json').read_text())
-            self.assertEqual({k: info[k] for k in ('count', 'survived', 'unreached', 'files', 'base', 'sha')},
-                             {'count': 3, 'survived': 2, 'unreached': 1, 'files': 2, 'base': 'v0.14.0', 'sha': SHA})
-            self.assertEqual(info['fingerprint'], mutation_web.fingerprint(mutation_web.undetected(REPORT)[1]))
+            self.assertEqual({k: info[k] for k in ('count', 'survived', 'unreached', 'files', 'skipped', 'base', 'sha')},
+                             {'count': 3, 'survived': 2, 'unreached': 1, 'files': 2, 'skipped': 0,
+                              'base': 'v0.14.0', 'sha': SHA})
+            self.assertEqual(info['keys'], ['src/a.ts\x1fConditionalExpression\x1fsecon\x1ffalse',
+                                            'src/a.ts\x1fStringLiteral\x1fthird\x1f""',
+                                            'src/b.ts\x1fLogicalOperator\x1fa | b\x1fa & b'])
             # 3000 long rows: the summary takes them, the issue body stays under GitHub's 65536.
             Path('big.json').write_text(json.dumps(many(3000, 'y' * 80)))
             with mock.patch.dict(os.environ, env):
                 mutation_web.summary('big.json', 'plan.json', tmp)
             info = json.loads(Path('issue.json').read_text())
-            body = mutation_web.decide(None, info, 'https://github.com/o/r/actions/runs/1')[0][2]
+            body = mutation_web.decide(None, info, None, RUN)[0][2]
             self.assertLess(len(body), 65536)
             self.assertIn('more are in the run\'s artifact', body)
-            # Nothing changed since the release: no report, and the summary says so.
+            # Nothing mutable changed since the release: no report, and the summary says so.
             Path('empty.json').write_text(json.dumps({**PLAN, 'files': [], 'lines': 0}))
             with mock.patch.dict(os.environ, env):
                 mutation_web.summary('missing.json', 'empty.json', tmp)
             info = json.loads(Path('issue.json').read_text())
-            self.assertEqual((info['count'], info['files']), (0, 0))
-            self.assertIn('No `web/src` lines changed since v0.14.0: nothing to mutate.', info['body'])
+            self.assertEqual((info['count'], info['files'], info['skipped']), (0, 0, 0))
+            self.assertIn('No mutable `web/src` lines changed since v0.14.0.', info['body'])
+            # Every changed file over the limits: nothing mutated, and not "nothing changed".
+            over = {**PLAN, 'files': [], 'lines': 0,
+                    'skipped': [{'path': 'web/src/big.ts', 'lines': 1600, 'reason': 'over the limit'}]}
+            Path('over.json').write_text(json.dumps(over))
+            with mock.patch.dict(os.environ, env):
+                mutation_web.summary('missing.json', 'over.json', tmp)
+            info = json.loads(Path('issue.json').read_text())
+            self.assertEqual(info['skipped'], 1)
+            self.assertIn('Every changed file was over the limits; nothing was mutated.', info['body'])
+            self.assertNotIn('No mutable', info['body'])
             # Lines to mutate but no report: Stryker did not finish.
             with mock.patch.dict(os.environ, env), self.assertRaises(FileNotFoundError):
                 mutation_web.summary('missing.json', 'plan.json', tmp)
 
 
-INFO = {'count': 3, 'survived': 2, 'unreached': 1, 'files': 2, 'base': 'v0.14.0',
-        'fingerprint': 'f' * 64, 'sha': SHA, 'body': 'the list'}
+KEYS = ['src/a.ts\x1fConditionalExpression\x1fx\x1ffalse', 'src/a.ts\x1fStringLiteral\x1f"a"\x1f""',
+        'src/a.ts\x1fStringLiteral\x1f"a"\x1f""']
+INFO = {'count': 3, 'survived': 2, 'unreached': 1, 'files': 2, 'skipped': 0, 'base': 'v0.14.0',
+        'sha': SHA, 'keys': KEYS, 'body': 'the list'}
 RUN = 'https://github.com/o/r/actions/runs/1'
+OPEN, CLOSED = {'number': 7, 'state': 'OPEN'}, {'number': 7, 'state': 'CLOSED'}
 
 
-def issue_with(state, fingerprint='f' * 64):
-    return {'number': 7, 'state': state, 'body': f'old\n<!-- mutation-web: {fingerprint} -->\n'}
+class Decide(unittest.TestCase):
+    def test_a_shifted_line_is_not_new(self):
+        moved = {'files': {name: {**data, 'source': '\n' + data['source'],
+                                  'mutants': [{**m, 'location': {k: {**v, 'line': v['line'] + 1}
+                                                                 for k, v in m['location'].items()}}
+                                              for m in data['mutants']]}
+                           for name, data in REPORT['files'].items()}}
+        keys = [mutation_web.mutant_key(item) for item in mutation_web.undetected(REPORT)[1]]
+        moved_keys = [mutation_web.mutant_key(item) for item in mutation_web.undetected(moved)[1]]
+        self.assertEqual(moved_keys, keys)
+        self.assertEqual(mutation_web.decide(OPEN, {**INFO, 'keys': moved_keys}, keys, RUN), [])
 
+    def test_a_subset_after_a_close_stays_closed(self):
+        self.assertEqual(mutation_web.decide(CLOSED, {**INFO, 'count': 1, 'keys': KEYS[:1]}, KEYS, RUN), [])
+        self.assertEqual(mutation_web.decide(CLOSED, INFO, KEYS, RUN), [])
 
-class Issue(unittest.TestCase):
-    def test_one_issue_is_opened_reopened_updated_or_closed(self):
-        decide = mutation_web.decide
-        nothing_changed = {**INFO, 'count': 0, 'survived': 0, 'unreached': 0, 'files': 0}
-        all_detected = {**INFO, 'count': 0, 'survived': 0, 'unreached': 0}
-        self.assertEqual(decide(None, nothing_changed, RUN), [])
-        self.assertEqual(decide(issue_with('CLOSED'), all_detected, RUN), [])
-        self.assertEqual(decide(issue_with('OPEN'), nothing_changed, RUN), [
-            ('comment', 7, f'No `web/src` lines changed since v0.14.0 at {SHA[:12]}, so nothing was mutated: {RUN}'),
-            ('close', 7, None)])
-        self.assertEqual(decide(issue_with('OPEN'), all_detected, RUN), [
-            ('comment', 7, f'A test detects every mutant of the changed lines at {SHA[:12]}: {RUN}'),
-            ('close', 7, None)])
-        [(action, number, body)] = decide(None, INFO, RUN)
+    def test_one_new_mutant_reopens_and_says_one_new(self):
+        # A second copy of a known key is new too: the keys are a multiset.
+        for extra in ('src/b.ts\x1fBooleanLiteral\x1ftrue\x1ffalse', KEYS[0]):
+            with self.subTest(extra=extra):
+                info = {**INFO, 'count': 4, 'keys': KEYS + [extra]}
+                actions = mutation_web.decide(CLOSED, info, KEYS, RUN)
+                self.assertEqual([(a, n) for a, n, _ in actions], [('reopen', 7), ('edit', 7), ('comment', 7)])
+                self.assertIn('1 new mutant no test detects', actions[2][2])
+                self.assertIn('(4 in all: 2 survived, 1 unreached)', actions[2][2])
+        actions = mutation_web.decide(OPEN, {**INFO, 'count': 4, 'keys': KEYS + [KEYS[0]]}, KEYS, RUN)
+        self.assertEqual([(a, n) for a, n, _ in actions], [('edit', 7), ('comment', 7)])
+
+    def test_fewer_mutants_update_the_list_without_a_comment(self):
+        actions = mutation_web.decide(OPEN, {**INFO, 'count': 1, 'keys': KEYS[:1]}, KEYS, RUN)
+        self.assertEqual([(a, n) for a, n, _ in actions], [('edit', 7)])
+        self.assertEqual(mutation_web.decide(OPEN, INFO, list(reversed(KEYS)), RUN), [])
+
+    def test_a_lost_state_counts_every_mutant_as_known(self):
+        self.assertEqual(mutation_web.decide(CLOSED, INFO, None, RUN), [])
+        self.assertEqual([(a, n) for a, n, _ in mutation_web.decide(OPEN, INFO, None, RUN)], [('edit', 7)])
+        [(action, number, body)] = mutation_web.decide(None, INFO, None, RUN)
         self.assertEqual((action, number), ('create', None))
         self.assertIn('the list', body)
         self.assertIn('Linear', body)
-        self.assertIn(f'<!-- mutation-web: {"f" * 64} -->', body)
-        # The same list: an open issue stays as it is, a closed one stays closed.
-        self.assertEqual(decide(issue_with('OPEN'), INFO, RUN), [])
-        self.assertEqual(decide(issue_with('CLOSED'), INFO, RUN), [])
-        changed = decide(issue_with('OPEN', 'e' * 64), INFO, RUN)
-        self.assertEqual([(a, n) for a, n, _ in changed], [('edit', 7), ('comment', 7)])
-        self.assertIn('f' * 64, changed[0][2])
-        self.assertIn('3 mutants no test detects', changed[1][2])
-        self.assertIn('(2 survived, 1 unreached)', changed[1][2])
-        back = decide(issue_with('CLOSED', 'e' * 64), INFO, RUN)
-        self.assertEqual([(a, n) for a, n, _ in back], [('reopen', 7), ('edit', 7), ('comment', 7)])
+        self.assertNotIn('<!--', body)
 
-    def run_issue(self, issues, dry_run):
-        calls = []
+    def test_nothing_left_closes_but_a_cut_run_changes_nothing(self):
+        nothing = {**INFO, 'count': 0, 'survived': 0, 'unreached': 0, 'keys': [], 'files': 0}
+        self.assertEqual(mutation_web.decide(OPEN, nothing, KEYS, RUN), [
+            ('comment', 7, f'No mutable `web/src` lines changed since v0.14.0 at {SHA[:12]}, so nothing was '
+                           f'mutated: {RUN}'), ('close', 7, None)])
+        self.assertEqual(mutation_web.decide(OPEN, {**nothing, 'files': 2}, KEYS, RUN), [
+            ('comment', 7, f'A test detects every mutant of the changed lines at {SHA[:12]}: {RUN}'),
+            ('close', 7, None)])
+        self.assertEqual(mutation_web.decide(OPEN, {**nothing, 'skipped': 1}, KEYS, RUN), [])
+        self.assertEqual(mutation_web.decide(CLOSED, {**nothing, 'files': 2}, KEYS, RUN), [])
+        self.assertEqual(mutation_web.decide(None, nothing, None, RUN), [])
 
-        def fake_run(*args, stdin=None):
-            calls.append((args, stdin))
-            if args[:3] == ('gh', 'issue', 'list'):
-                query = args[args.index('--search') + 1]
-                hits = [i for i in issues if ('in:title' in query and mutation_web.TITLE in i['title'])
-                        or ('in:body' in query and 'mutation-web' in i['body'])]
-                return json.dumps(hits)
+
+class FakeGitHub:
+    """`gh` for issue(): issues and the earlier scheduled runs' states;
+    `gh issue list` honours --limit and returns the newest first, as
+    `sort:created-desc` asks."""
+
+    def __init__(self, issues=(), states=(), views=None):
+        self.issues, self.states, self.views, self.calls = list(issues), dict(states), views, []
+
+    def __call__(self, *args, stdin=None):
+        self.calls.append((args, stdin))
+        value = lambda flag: args[args.index(flag) + 1]
+        if args[:3] == ('gh', 'issue', 'list'):
+            newest = sorted(self.issues, key=lambda i: -i['number'])
+            hits = [i for i in newest if mutation_web.TITLE.lower() in i['title'].lower()]
+            return json.dumps(hits[:int(value('--limit'))])
+        if args[:3] == ('gh', 'issue', 'view'):
+            if self.views is None or int(args[3]) not in self.views:
+                raise subprocess.CalledProcessError(1, args, stderr='Could not resolve to an issue')
+            return json.dumps({'number': int(args[3]), 'state': self.views[int(args[3])]})
+        if args[:3] == ('gh', 'run', 'list'):
+            return json.dumps([{'databaseId': run_id} for run_id in sorted(self.states, reverse=True)])
+        if args[:3] == ('gh', 'run', 'download'):
+            state = self.states.get(int(args[3]))
+            if state is None:
+                raise subprocess.CalledProcessError(1, args, stderr='no valid artifacts found to download')
+            Path(value('--dir')).mkdir(parents=True, exist_ok=True)
+            Path(value('--dir'), mutation_web.STATE_FILE).write_text(json.dumps(state))
+            return ''
+        if args[:3] == ('gh', 'issue', 'create'):
             return 'https://github.com/o/r/issues/9\n'
-        env = {'GITHUB_REPOSITORY': 'o/r', 'GITHUB_SERVER_URL': 'https://github.com', 'GITHUB_RUN_ID': '1'}
-        with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, 'issue.json').write_text(json.dumps(INFO))
-            out = io.StringIO()
-            with mock.patch.object(mutation_web, 'run', fake_run), mock.patch.dict(os.environ, env), \
-                    contextlib.redirect_stdout(out):
-                mutation_web.issue(f'{tmp}/issue.json', dry_run)
-        return calls, out.getvalue()
+        return ''
 
-    def test_a_scheduled_run_finds_its_issue_open_or_closed_and_writes_through_gh(self):
-        similar = {'number': 2, 'title': f'{mutation_web.TITLE} (old)', 'body': '', 'state': 'OPEN'}
-        calls, _ = self.run_issue([similar], dry_run=False)
-        lists = [args for args, _ in calls if args[:3] == ('gh', 'issue', 'list')]
-        self.assertEqual(len(lists), 2)
-        for args in lists:
-            self.assertEqual(args[args.index('--state') + 1], 'all')
-        [(args, stdin)] = [c for c in calls if c[0][:3] != ('gh', 'issue', 'list')]
-        self.assertEqual(args, ('gh', 'issue', 'create', '--repo', 'o/r', '--title', mutation_web.TITLE,
-                                '--body-file', '-'))
-        self.assertIn('the list', stdin)
-        # The newest: closed after a release, renamed by hand, found by its marker.
-        renamed = {'number': 5, 'title': 'Untested web lines', 'state': 'CLOSED',
-                   'body': f'<!-- mutation-web: {"e" * 64} -->'}
-        older = {'number': 3, 'title': mutation_web.TITLE, 'body': '', 'state': 'OPEN'}
-        calls, _ = self.run_issue([similar, older, renamed], dry_run=False)
-        self.assertEqual([args[:4] for args, _ in calls if args[:3] != ('gh', 'issue', 'list')],
-                         [('gh', 'issue', 'reopen', '5'), ('gh', 'issue', 'edit', '5'), ('gh', 'issue', 'comment', '5')])
+    def writes(self):
+        return [args[:4] for args, _ in self.calls if args[:2] == ('gh', 'issue') and args[2] not in ('list', 'view')]
+
+
+class Issue(unittest.TestCase):
+    def run_issue(self, fake, info=INFO, dry_run=False):
+        env = {'GITHUB_REPOSITORY': 'o/r', 'GITHUB_SERVER_URL': 'https://github.com', 'GITHUB_RUN_ID': '100'}
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, 'issue.json').write_text(json.dumps(info))
+            out = io.StringIO()
+            with mock.patch.object(mutation_web, 'run', fake), mock.patch.dict(os.environ, env), \
+                    contextlib.redirect_stdout(out):
+                mutation_web.issue(f'{tmp}/issue.json', dry_run, f'{tmp}/state/mutation-state.json')
+            return json.loads(Path(tmp, 'state/mutation-state.json').read_text()), out.getvalue()
+
+    def test_the_first_run_opens_the_issue_and_keeps_its_number(self):
+        fake = FakeGitHub()
+        state, _ = self.run_issue(fake)
+        self.assertEqual(fake.writes(), [('gh', 'issue', 'create', '--repo')])
+        create = [c for c in fake.calls if c[0][:3] == ('gh', 'issue', 'create')][0]
+        self.assertEqual(create[0], ('gh', 'issue', 'create', '--repo', 'o/r', '--title', mutation_web.TITLE,
+                                     '--body-file', '-'))
+        self.assertIn('the list', create[1])
+        self.assertEqual(state, {'issue': 9, 'keys': KEYS})
+
+    def test_the_last_state_names_the_issue_and_what_is_known(self):
+        # Run 99 is this workflow's last scheduled run; 98's state is older.
+        fake = FakeGitHub(states={99: {'issue': 7, 'keys': KEYS[:2]}, 98: {'issue': 3, 'keys': []}},
+                          views={7: 'CLOSED'})
+        state, out = self.run_issue(fake)
+        self.assertEqual(fake.writes(), [('gh', 'issue', 'reopen', '7'), ('gh', 'issue', 'edit', '7'),
+                                         ('gh', 'issue', 'comment', '7')])
+        comment = [stdin for args, stdin in fake.calls if args[:3] == ('gh', 'issue', 'comment')][0]
+        self.assertIn('1 new mutant', comment)
+        self.assertEqual(state, {'issue': 7, 'keys': KEYS})
+        self.assertIn('last state: 2 mutant keys', out)
+        # The same keys again: nothing.
+        fake = FakeGitHub(states={99: {'issue': 7, 'keys': KEYS}}, views={7: 'OPEN'})
+        self.run_issue(fake)
+        self.assertEqual(fake.writes(), [])
+        # This run's own state is not the last one.
+        fake = FakeGitHub(states={100: {'issue': 7, 'keys': []}, 99: {'issue': 7, 'keys': KEYS}}, views={7: 'OPEN'})
+        self.run_issue(fake)
+        self.assertEqual(fake.writes(), [])
+
+    def test_no_earlier_artifact_finds_the_newest_issue_by_title_and_pings_nobody(self):
+        similar = {'number': 12, 'title': f'Not quite: {mutation_web.TITLE}', 'state': 'OPEN'}
+        older = {'number': 4, 'title': mutation_web.TITLE, 'state': 'OPEN'}
+        newest = {'number': 8, 'title': mutation_web.TITLE, 'state': 'CLOSED'}
+        # Expired: the run is listed, its artifact is gone.
+        fake = FakeGitHub(issues=[similar, older, newest], states={99: None})
+        state, out = self.run_issue(fake)
+        self.assertEqual(fake.writes(), [])
+        self.assertIn('Issue "Mutation testing: web mutants survive": #8 (closed); last state: none', out)
+        self.assertEqual(state, {'issue': 8, 'keys': KEYS})
+        for args, _ in fake.calls:
+            if args[:3] == ('gh', 'issue', 'list'):
+                self.assertEqual(args[args.index('--state') + 1], 'all')
+                self.assertIn('sort:created-desc', args[args.index('--search') + 1])
+        fake = FakeGitHub(issues=[similar, older], states={})
+        self.run_issue(fake)
+        self.assertEqual(fake.writes(), [('gh', 'issue', 'edit', '4')])
+
+    def test_a_run_over_the_limits_keeps_the_last_state(self):
+        over = {**INFO, 'count': 0, 'survived': 0, 'unreached': 0, 'keys': [], 'files': 0, 'skipped': 1}
+        fake = FakeGitHub(states={99: {'issue': 7, 'keys': KEYS}}, views={7: 'OPEN'})
+        state, _ = self.run_issue(fake, over)
+        self.assertEqual(fake.writes(), [])
+        self.assertEqual(state, {'issue': 7, 'keys': KEYS})
 
     def test_a_dry_run_only_reads(self):
-        calls, out = self.run_issue([], dry_run=True)
-        self.assertEqual({args[:3] for args, _ in calls}, {('gh', 'issue', 'list')})
-        self.assertIn('Would create an issue:', out)
-        self.assertIn('the list', out)
+        fake = FakeGitHub(states={99: {'issue': 7, 'keys': KEYS[:2]}}, views={7: 'CLOSED'})
+        _, out = self.run_issue(fake, dry_run=True)
+        self.assertEqual(fake.writes(), [])
+        self.assertIn('Would reopen #7', out)
+        self.assertIn('Would comment #7:\n1 new mutant', out)
 
 
 class Workflow(unittest.TestCase):
@@ -315,6 +441,14 @@ class Workflow(unittest.TestCase):
         self.assertEqual({job_id for job_id, job in jobs.items() if writes(job.get('permissions'))}, {'report'})
         self.assertEqual(writes(jobs['report']['permissions']), {'issues'})
         self.assertEqual(jobs['report']['if'], "github.event_name == 'schedule'")
+        # The next scheduled run reads this run's state from the artifact the report job keeps.
+        self.assertEqual(jobs['report']['permissions'], {'actions': 'read', 'contents': 'read', 'issues': 'write'})
+        [keep] = [step for step in jobs['report']['steps'] if step.get('uses', '').startswith('actions/upload-artifact@')]
+        self.assertEqual(keep['with']['name'], mutation_web.STATE_ARTIFACT)
+        self.assertEqual(keep['with']['retention-days'], mutation_web.STATE_DAYS)
+        [write] = [step for step in jobs['report']['steps'] if 'mutation_web.py issue' in step.get('run', '')]
+        self.assertTrue(write['run'].endswith(' ' + keep['with']['path']))
+        self.assertEqual(Path(keep['with']['path']).name, mutation_web.STATE_FILE)
         self.assertEqual(set(workflow['on']), {'workflow_dispatch', 'schedule', 'pull_request'})
 
     def test_a_change_to_the_workflow_or_its_files_tests_it_again(self):

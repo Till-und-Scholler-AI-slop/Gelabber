@@ -6,7 +6,8 @@ description: Use for the weekly dependency update, when asked to carry this week
 # Dependency updates
 
 Dependabot (`.github/dependabot.yml`) opens one grouped pull request per
-ecosystem every Monday and a single pull request per security update at any
+ecosystem and directory every Monday (for npm: `web/` and
+`web/scripts/mutation/`) and a single pull request per security update at any
 time. They target `main` and are never merged. This procedure carries their
 commits onto the development line in one draft pull request, renews the files
 they make stale, and waits for CI. Green: the pull request is marked ready
@@ -319,5 +320,7 @@ group's pick:
   that command would add it to `package.json`; such an update cannot be
   left out inside a group, so the whole pull request is not picked this
   week, and the report lists it as left out with that reason;
+  an update in `web/scripts/mutation/` cannot be left out singly either:
+  its pull request is not picked this week, with that reason;
 - Docker, Compose, Actions, pip: set the lines naming it back to their text
   in `origin/$base` (`git diff "origin/$base" -- <file>`).

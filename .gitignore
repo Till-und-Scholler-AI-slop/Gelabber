@@ -41,6 +41,6 @@ web/field-gallery-out/
 .impeccable/review/
 .impeccable/questions/
 
-# web/stryker.config.mjs: Stryker's reports and sandbox (GEL-388).
+# web/scripts/mutation/stryker.config.mjs: Stryker's reports and sandbox (GEL-388).
 web/reports/mutation/
 web/.stryker-tmp/
