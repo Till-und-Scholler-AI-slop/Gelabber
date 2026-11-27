@@ -7,9 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { takeStamp } from "../auth/scope.ts";
 import { login, resetSessionForTests } from "../auth/session.ts";
+import { clearToasts, useToasts } from "../components/toasts.ts";
 import {
   applyMemberJoined,
   banMemberOptions,
+  createChannelOptions,
+  createServerOptions,
   deleteCategoryOptions,
   deleteChannelOptions,
   deleteServerOptions,
@@ -33,6 +36,7 @@ const me = {
   id: "jonas",
   name: "Jonas",
   email: "jonas@test.invalid",
+  locale: "de",
   avatar_url: null,
   created_at,
 };
@@ -491,5 +495,38 @@ describe.each([
     expect(ids(cachedList())).toEqual(["s2"]);
     expect(client.getQueryData(keys().detail)).toBeUndefined();
     expect(client.getQueryState(keys().list)?.isInvalidated).toBe(false);
+  });
+});
+
+describe("a create whose answer is rejected", () => {
+  // The server may have created it: what the screen shows is read again, so
+  // that a second click does not create a second one (GEL-420).
+  const incomplete = () => json({ id: "new" }, 201);
+
+  it("reads the server list again after a server create", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    respond = incomplete;
+    const create = new MutationObserver(client, createServerOptions(client));
+    await expect(create.mutate("Neu")).rejects.toMatchObject({
+      code: "malformed_answer",
+    });
+    expect(client.getQueryState(keys().list)?.isInvalidated).toBe(true);
+  });
+
+  it("reads the server again after a channel create and says it may exist", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    clearToasts();
+    respond = incomplete;
+    const create = new MutationObserver(
+      client,
+      createChannelOptions(client, "s1"),
+    );
+    await expect(
+      create.mutate({ name: "neu", kind: "text", category_id: null }),
+    ).rejects.toMatchObject({ code: "malformed_answer" });
+    expect(client.getQueryState(keys().detail)?.isInvalidated).toBe(true);
+    expect(useToasts.getState().toasts.map((toast) => toast.message)).toEqual([
+      "Die Antwort des Servers war unvollständig. Es kann trotzdem geklappt haben.",
+    ]);
   });
 });

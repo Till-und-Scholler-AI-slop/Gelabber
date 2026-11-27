@@ -52,41 +52,15 @@ import {
 import { readKey, type ReadState } from "./readState.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
-import {
-  asAttachmentList,
-  asGif,
-  asMentionList,
-  asReactionList,
-} from "./types.ts";
+import { isMessage } from "../api/wire.ts";
+import { asGif } from "./types.ts";
 import { asSystem, systemText } from "./system.ts";
 
+/** The new message of a create event; the message cache reports a malformed
+ *  one, and no toast shows for it. */
 function asCreated(delta: unknown): Message | null {
-  if (delta === null || typeof delta !== "object") return null;
-  const value = delta as Partial<Message>;
-  if (
-    typeof value.id !== "string" ||
-    typeof value.channel_id !== "string" ||
-    typeof value.content !== "string" ||
-    !value.author ||
-    typeof value.author.id !== "string" ||
-    typeof value.author.name !== "string"
-  ) {
-    return null;
-  }
-  return {
-    id: value.id,
-    channel_id: value.channel_id,
-    author: value.author,
-    content: value.content,
-    created_at: value.created_at ?? new Date().toISOString(),
-    edited_at: value.edited_at ?? null,
-    attachments: asAttachmentList(value.attachments),
-    gif: asGif(value.gif),
-    mentions: asMentionList(value.mentions),
-    mention_everyone: value.mention_everyone === true,
-    reactions: asReactionList(value.reactions),
-    system: asSystem(value.system),
-  };
+  if (!isMessage(delta)) return null;
+  return { ...delta, gif: asGif(delta.gif), system: asSystem(delta.system) };
 }
 
 /** Where a toast says the message landed. */
@@ -231,7 +205,7 @@ export function useMessageToastsBridge(): void {
               plainText(message.content),
               conversationMembers(client, userId, generation, event, dm),
             ),
-        asAttachmentList(message.attachments).length > 0,
+        message.attachments.length > 0,
         Boolean(message.gif),
       );
       if (decision.toast)
