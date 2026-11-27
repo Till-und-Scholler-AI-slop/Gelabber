@@ -846,6 +846,7 @@ jobs:
             }
           }
           function Removed {
+            $started = (Get-Date).ToUniversalTime()
             Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
             $left = {
               @($install, $lnk, $desktop, $uninstallKey, "HKCU:\Software\Classes\AppUserModelId\$id") |
@@ -854,6 +855,12 @@ jobs:
             $deadline = (Get-Date).AddMinutes(3)
             while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
             $rest = @(& $left)
+            # A write after the uninstaller's start means written again; else it could not delete the file, still held or held then (GEL-374).
+            foreach ($file in @($rest | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+              $item = Get-Item -LiteralPath $file
+              "${file}: written $($item.LastWriteTimeUtc.ToString('o')), uninstaller started $($started.ToString('o'))"
+              try { Remove-Item -LiteralPath $file -ErrorAction Stop; "${file}: deletes now" } catch { "${file}: does not delete now: $($_.Exception.Message)" }
+            }
             if ($rest) { throw "left behind by the uninstaller: $($rest -join ', ')" }
             if (-not (Test-Path -LiteralPath 'HKCU:\Software\Gelabber\Gelabber')) {
               throw "the uninstaller removed the installer's note of the folder without being asked"
