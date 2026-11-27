@@ -96,8 +96,9 @@ def outputs(touched, built, minio_build=False):
 
 def main(argv):
     if '--all' in argv:
-        # The MinIO images are built only when missing from the registry.
-        touched, built, minio_build = set(AREAS), {image['name'] for image in IMAGES}, False
+        # Release candidates build MinIO from source too: operators fall back
+        # to that build, and nobody waits on it beside the desktop jobs.
+        touched, built, minio_build = set(AREAS), {image['name'] for image in IMAGES}, True
     else:
         paths = sys.stdin.read().splitlines()
         touched, built = areas(paths), images(paths)

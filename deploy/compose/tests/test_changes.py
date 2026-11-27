@@ -157,7 +157,8 @@ class Outputs(unittest.TestCase):
             with self.subTest(path=path):
                 out = self.run_script(stdin=path + '\n')
                 self.assertEqual((out['minio'], out['minio-build']), (area, build))
-        self.assertEqual(self.run_script('--all')['minio-build'], 'false')
+        # A release candidate (--all) builds from source: operators fall back to it.
+        self.assertEqual(self.run_script('--all')['minio-build'], 'true')
 
     def test_all_runs_everything(self):
         out = self.run_script('--all')
