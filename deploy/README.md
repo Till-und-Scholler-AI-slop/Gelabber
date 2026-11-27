@@ -66,16 +66,16 @@ If the proxy in front instead writes a port into `Host` that the browser does no
 Since v0.8 it also limits where the app may load from and connect to, once the web container knows the MinIO origin. `compose.yaml` hands it `MINIO_PUBLIC_ENDPOINT`, the same value the API signs upload and attachment links with, and the policy then adds:
 
 - `default-src 'self'`
-- `connect-src 'self' <MinIO origin> ipc: http://ipc.localhost`: the API, the gateway and media WebSockets, presigned uploads, and the desktop app's native part (`ipc:` on Linux, `http://ipc.localhost` on Windows)
+- `connect-src 'self' <MinIO origin>`: the API, the gateway and media WebSockets, presigned uploads
 - `img-src 'self' data: blob: https: <MinIO origin>`: attachments, upload previews, and link avatars, which may sit on any https host
 - `media-src 'self' data: blob: <MinIO origin>`: video and audio attachments, call sounds, microphone test clips
 - `style-src 'self' 'unsafe-inline'`
 
-With `ATTACHMENT_DELIVERY=proxy` (see "Attachments through the API") the web container gets the same setting and the policy names no MinIO origin at all: `connect-src 'self' ipc: http://ipc.localhost`, `img-src 'self' data: blob: https:`, `media-src 'self' data: blob:`.
+With `ATTACHMENT_DELIVERY=proxy` (see "Attachments through the API") the web container gets the same setting and the policy names no MinIO origin at all: `connect-src 'self'`, `img-src 'self' data: blob: https:`, `media-src 'self' data: blob:`.
 
 The origin is scheme, host and port of `MINIO_PUBLIC_ENDPOINT`; the web container's log names it at startup. Without the variable, with a value no policy can name (an IPv6 address, a host with `_`) or with a web container from a `compose.yaml` before v0.8 (an update of the images alone), the policy keeps these directives out, as in v0.7.1, and the log says so. Set `MINIO_PUBLIC_ENDPOINT` in `.env`, not in the `api` service: a value only the API has breaks uploads and attachments in the browser with a Content-Security-Policy error in its console. After changing it, recreate `web` together with `api` (`docker compose up -d api web`).
 
-A policy you set for the app host on your own proxy is enforced in addition to this one: a request has to pass both. If it sets `connect-src` or `default-src`, it must let the desktop app reach its native part: add `ipc:` (Linux) and `http://ipc.localhost` (Windows) to `connect-src`, for example `connect-src 'self' ipc: http://ipc.localhost`. Without `connect-src`, `default-src` applies. Without these sources the app falls back to a slow path: it keeps working, but video in its tiles stays at 320×180 with 15 frames per second, and the tile reports "Geringe Bildqualität" (low picture quality) with the Content-Security-Policy as the reason. Browsers and the installed PWA are not affected. To drop the stack's policy, remove the header on your proxy: Caddy `header -Content-Security-Policy` in the app's site block, Nginx `proxy_hide_header Content-Security-Policy;`.
+A policy you set for the app host on your own proxy is enforced in addition to this one: a request has to pass both. The native desktop app (since 0.9) does not load the web client, so no policy affects it. To drop the stack's policy, remove the header on your proxy: Caddy `header -Content-Security-Policy` in the app's site block, Nginx `proxy_hide_header Content-Security-Policy;`.
 
 **Without the Compose Caddy:** the overlay publishes web/api/media (and MinIO) on loopback. Template: `deploy/compose/Caddyfile.homelab` (two active site blocks: app + MinIO).
 

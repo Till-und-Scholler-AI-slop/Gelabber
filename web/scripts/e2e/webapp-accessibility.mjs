@@ -17,6 +17,8 @@ const output =
 await mkdir(output, { recursive: true });
 const engine = process.env.GELABBER_A11Y_BROWSER ?? "chromium";
 assert.ok(["chromium", "firefox"].includes(engine));
+// Chromium plays a touch screen, Firefox a mouse.
+const touch = engine === "chromium";
 const browser = await { chromium, firefox }[engine].launch(
   browserLaunchOptions(engine),
 );
@@ -33,7 +35,7 @@ let owner, member, server;
 async function actor(label) {
   // The labels below are German; the app follows the browser's language.
   const context = await browser.newContext({
-    hasTouch: engine === "chromium",
+    hasTouch: touch,
     locale: "de-DE",
   });
   contexts.push(context);
@@ -799,9 +801,9 @@ try {
       });
       await account.waitFor();
       const field = account.locator("#user-status-text");
-      if (!(await focused(field))) {
-        // A touch screen (Chromium here has one) gets the bottom sheet,
-        // which starts on its title; Tab leads into the status field.
+      if (touch) {
+        // A touch screen gets the bottom sheet, which starts on its title;
+        // Tab leads into the status field. Elsewhere it is the popover.
         assert.ok(
           await focused(
             account.getByRole("heading", {

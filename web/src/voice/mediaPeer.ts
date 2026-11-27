@@ -17,6 +17,9 @@ export class MediaRetry {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempts = 0;
 
+  /** `random` spreads the delays, in [0, 1). */
+  constructor(private readonly random: () => number = Math.random) {}
+
   get active(): boolean {
     return this.attempts > 0;
   }
@@ -34,7 +37,7 @@ export class MediaRetry {
       return;
     }
     const base = Math.min(250 * 2 ** this.attempts++, 4000);
-    const delay = base * (0.8 + Math.random() * 0.4);
+    const delay = base * (0.8 + this.random() * 0.4);
     this.timer = setTimeout(() => {
       this.timer = null;
       retry();

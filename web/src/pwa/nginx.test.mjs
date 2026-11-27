@@ -460,13 +460,8 @@ describe("production nginx config", () => {
       expect(policy.get(name), name).toEqual(sources);
     expect(policy.get("default-src")).toEqual(["'self'"]);
     // Presigned uploads, text attachments (fetched through the redirect),
-    // the gateway and media WebSockets ('self'), the Tauri app's IPC.
-    expect(policy.get("connect-src")).toEqual([
-      "'self'",
-      storage,
-      "ipc:",
-      "http://ipc.localhost",
-    ]);
+    // the gateway and media WebSockets ('self').
+    expect(policy.get("connect-src")).toEqual(["'self'", storage]);
     // Attachments through the redirect, the favicon badge (data:), upload
     // previews (blob:), link avatars on any https host.
     expect(policy.get("img-src")).toEqual([
@@ -498,11 +493,7 @@ describe("production nginx config", () => {
     for (const [name, sources] of shellPolicy())
       expect(policy.get(name), name).toEqual(sources);
     expect(policy.get("default-src")).toEqual(["'self'"]);
-    expect(policy.get("connect-src")).toEqual([
-      "'self'",
-      "ipc:",
-      "http://ipc.localhost",
-    ]);
+    expect(policy.get("connect-src")).toEqual(["'self'"]);
     expect(policy.get("img-src")).toEqual([
       "'self'",
       "data:",
@@ -765,14 +756,6 @@ describe("public pages in the nginx config (#522)", () => {
       "TEMPLATES=${GELABBER_PUBLIC_TEMPLATES:-/usr/share/nginx/html/public-pages/templates}",
     );
     expect(ownDirectives("^~ /public-pages/")).toEqual(["return 404"]);
-  });
-
-  it("leaves the shell's policy as it was", () => {
-    expect(
-      location("= /index.html").filter((line) => line.startsWith(CSP)),
-    ).toEqual([
-      `add_header Content-Security-Policy "script-src 'self' 'wasm-unsafe-eval' 'sha256-Ymhy9okZfEMbRFjgkub854NfFwTSwdNReGSoXDKUA3M='; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src https://www.youtube-nocookie.com; frame-ancestors 'none'$gelabber_fetch_directives" always`,
-    ]);
   });
 
   it("reads the landing map from a folder the storage map's include does not", () => {

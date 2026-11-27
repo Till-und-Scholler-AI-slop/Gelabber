@@ -1,6 +1,6 @@
 # Pushes the pinned MinIO CE server and mc images, built and checked by
-# minio-images.yml, to GHCR from main. New org packages start private; a
-# maintainer sets them Public once in the UI.
+# minio-images.yml, to GHCR from main when a tag is missing. New org packages
+# start private; a maintainer sets them Public once in the UI.
 name: Publish MinIO CE image
 
 on:
@@ -9,9 +9,6 @@ on:
     paths:
       - deploy/compose/minio/**
       - deploy/compose/mc/**
-      - deploy/compose/minio-init.sh
-      - deploy/compose/compose.yaml
-      - backend/Cargo.toml
       - .github/workflows/publish-minio.yml
       - .github/workflows/minio-images.yml
   workflow_dispatch:
@@ -34,7 +31,7 @@ jobs:
   # fetched Go modules. Push only from main (includes workflow_dispatch on main).
   publish:
     needs: images
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.images.outputs.built == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
