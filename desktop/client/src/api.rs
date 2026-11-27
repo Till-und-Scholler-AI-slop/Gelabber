@@ -295,7 +295,7 @@ impl Http {
         self.send(Method::PATCH, "/me", patch).await
     }
 
-    /// The account's language, `de` or `en` (v0.10 servers).
+    /// Saves the account's language, `de` or `en`.
     pub async fn set_locale(&self, locale: &str) -> Result<LocaleBody> {
         let body = LocaleBody {
             locale: locale.to_owned(),
@@ -1437,11 +1437,16 @@ mod tests {
                     r#"[{"user_id":"00000000-0000-0000-0000-000000000003","name":"Kai","avatar_url":null,"message":"","created_at":"2026-11-10T10:00:00Z"}]"#
                         .to_owned(),
                 ),
+                ["PATCH", path] if path.starts_with("/api/messages/") => (
+                    "200 OK",
+                    include_str!("../tests/fixtures/edit.json").to_owned(),
+                ),
                 _ => ("204 No Content", String::new()),
             }
         });
         let http = Http::new(&base).unwrap();
         let (server, kai) = (Uuid::from_u128(1), Uuid::from_u128(3));
+        let (message, picture) = (Uuid::from_u128(6), Uuid::from_u128(5));
         runtime.block_on(async {
             assert_eq!(http.join_listing(server).await.unwrap().id, server);
             let answer = http.request_join(server, "Hallo!").await.unwrap();
@@ -1467,9 +1472,15 @@ mod tests {
             assert_eq!(http.join_requests(server).await.unwrap()[0].user_id, kai);
             http.accept_join_request(server, kai).await.unwrap();
             http.decline_join_request(server, kai).await.unwrap();
+            // An alt text alone: the message's text is not sent and stays.
+            http.edit_alt_text(message, picture, "Ein Hund.")
+                .await
+                .unwrap();
+            http.edit_alt_text(message, picture, "").await.unwrap();
         });
         let s = "00000000-0000-0000-0000-000000000001";
         let u = "00000000-0000-0000-0000-000000000003";
+        let m = "00000000-0000-0000-0000-000000000006";
         let expected = [
             (format!("POST /api/directory/listings/{s}/join"), ""),
             (
@@ -1494,6 +1505,14 @@ mod tests {
             (
                 format!("POST /api/servers/{s}/join-requests/{u}/decline"),
                 "",
+            ),
+            (
+                format!("PATCH /api/messages/{m}"),
+                r#"{"attachment_descriptions":{"00000000-0000-0000-0000-000000000005":"Ein Hund."}}"#,
+            ),
+            (
+                format!("PATCH /api/messages/{m}"),
+                r#"{"attachment_descriptions":{"00000000-0000-0000-0000-000000000005":null}}"#,
             ),
         ];
         let seen = seen.lock();
