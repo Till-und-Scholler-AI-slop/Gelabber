@@ -60,7 +60,7 @@ use crate::avatars::ImageKind;
 use crate::error::ApiError;
 use crate::i18n::{self, Locale};
 use crate::mail::Mail;
-use crate::state::AppState;
+use crate::state::{AppState, Worker};
 use crate::storage::{ObjectStore, StoreError};
 
 /// How often the worker looks for work without being woken.
@@ -94,12 +94,21 @@ pub fn start(state: AppState) {
     }
     tokio::spawn(async move {
         while !state.db.is_closed() {
-            if let Err(err) = sweep(&state).await {
-                warn!(error = ?err, "export retention sweep failed");
-            }
+            let swept = match sweep(&state).await {
+                Ok(_) => true,
+                Err(err) => {
+                    warn!(error = ?err, "export retention sweep failed");
+                    false
+                }
+            };
             // One export at a time; after one, look for the next at once.
             let busy = match run_once(&state).await {
-                Ok(worked) => worked,
+                Ok(worked) => {
+                    if swept {
+                        state.worker_passes.finished(Worker::AccountExport);
+                    }
+                    worked
+                }
                 Err(err) => {
                     warn!(error = ?err, "export pass failed");
                     false
