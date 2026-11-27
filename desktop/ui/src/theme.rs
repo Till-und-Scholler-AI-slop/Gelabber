@@ -842,51 +842,11 @@ mod tests {
         }
     }
 
-    // The values themeVariables() produces for both defaults
-    // (spec ui-tokens-shell §1.2).
+    // The button hovers themeVariables() derives for the dark default
+    // (spec ui-tokens-shell §1.2); tokens_match_the_web has no hovers.
     #[test]
-    fn dark_matches_web() {
+    fn dark_hovers_match_web() {
         let t = Theme::dark();
-        let c = t.c;
-        let got = [
-            c.bg,
-            c.panel,
-            c.surface,
-            c.rail,
-            c.elevated,
-            c.text,
-            c.muted,
-            c.subtle,
-            c.border,
-            c.border_strong,
-            c.accent,
-            c.accent_ink,
-            c.accent_text,
-            c.hover,
-            c.selected,
-            c.online,
-            c.online_text,
-            c.warning,
-            c.danger,
-            c.danger_bg,
-            c.live,
-            c.on_live,
-            c.live_text,
-        ]
-        .map(h);
-        let want = [
-            "#17191a", "#1d2021", "#272b2d", "#131617", "#252829", "#eef0ee", "#a4abb1", "#93989b",
-            "#2c3032", "#717475", "#f3b752", "#111111", "#f3b752", "#2e3131", "#443b2a", "#85d69b",
-            "#85d69b", "#d8a657", "#f39b98", "#8f302d", "#ff7b5c", "#111111", "#ff7b5c",
-        ];
-        assert_eq!(got, want);
-        assert_eq!(
-            c.tiles.map(h),
-            [
-                "#634336", "#635636", "#4e6336", "#366349", "#365d63", "#364963", "#433663",
-                "#633653"
-            ]
-        );
         assert_eq!(h(t.primary_hover), "#ffc458");
         assert_eq!(h(t.danger_hover), "#9d3532");
     }
@@ -939,51 +899,6 @@ mod tests {
                 assert!(hue_apart(c.live, accent) > 15.0, "{}", h(c.live));
             }
         }
-    }
-
-    #[test]
-    fn light_matches_web() {
-        let t = Theme::light();
-        let c = t.c;
-        let got = [
-            c.bg,
-            c.panel,
-            c.surface,
-            c.rail,
-            c.elevated,
-            c.text,
-            c.muted,
-            c.subtle,
-            c.border,
-            c.border_strong,
-            c.accent,
-            c.accent_ink,
-            c.accent_text,
-            c.hover,
-            c.selected,
-            c.online,
-            c.online_text,
-            c.warning,
-            c.danger,
-            c.danger_bg,
-            c.live,
-            c.on_live,
-            c.live_text,
-        ]
-        .map(h);
-        let want = [
-            "#f8f5f0", "#f4f0e9", "#ece7df", "#eee9e1", "#fcfbf9", "#252829", "#5c646b", "#616467",
-            "#dcd6cc", "#86837e", "#e8a638", "#111111", "#836026", "#e3e0da", "#f2e3c9", "#287a45",
-            "#277643", "#a27e44", "#a12b29", "#b33b38", "#db5b24", "#111111", "#ad4a20",
-        ];
-        assert_eq!(got, want);
-        assert_eq!(
-            c.tiles.map(h),
-            [
-                "#ead2c8", "#eae0c8", "#daeac8", "#c8ead6", "#c8e5ea", "#c8d6ea", "#d2c8ea",
-                "#eac8dd"
-            ]
-        );
     }
 
     // index.css `--lr-role-*`, sampled from roles-editor.png.

@@ -1,5 +1,5 @@
 # The real app against Postgres, Redis, MinIO and the SFU: the fault matrix in
-# Chromium and Firefox, the core and access scenarios in Chromium, the
+# Chromium and Firefox, the core, media and access scenarios in Chromium, the
 # chat workflows (GEL-31), the PWA smoke and the desktop app's tests against
 # the seeded stack (GEL-376). Not a PR gate (GEL-378): it runs
 # after pushes to a version branch that touch the app, on release and hotfix
@@ -207,7 +207,6 @@ jobs:
         run: node web/scripts/e2e/ci-fault-prepare.mjs
 
       # The faults in both browsers, the scenarios without faults in Chromium.
-      # The media profile joins once its scenarios pass (GEL-378).
       - name: Real app scenarios and faults in both browsers
         run: |
           set -euo pipefail
@@ -215,7 +214,7 @@ jobs:
           for engine in chromium firefox; do
             profiles=(core-faults media-faults)
             if [ "$engine" = chromium ]; then
-              profiles+=(core access)
+              profiles+=(core media access)
             fi
             for profile in "${profiles[@]}"; do
               owned_media_env="$GELABBER_E2E_MEDIA_FAULT_ENV"

@@ -30,7 +30,8 @@ function data({ sender = true, enabled = true, muted = false } = {}) {
     roomAudio: { perSource: [1, 1], foreign: 0 },
     watchVideoSources: { selectedLive: 1, foreign: 0 },
     duplicateAudioPlaybackTracks: 0,
-    micCalls: 0,
+    // The watcher is in the call: one microphone capture, none for watching.
+    micCalls: 1,
     playRejected: 1,
   };
 }

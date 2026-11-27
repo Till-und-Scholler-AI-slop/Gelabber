@@ -1077,6 +1077,32 @@ mod tests {
         ));
     }
 
+    /// A sign-in the client has too ends a failed logout, as applySession
+    /// does.
+    #[test]
+    fn a_new_sign_in_ends_a_failed_logout() {
+        use testkit::FakeApi;
+        let api = FakeApi::start(true, |_, _, _| None);
+        let client = gelabber_client::Client::new(&api.origin).unwrap();
+        client.restore_session();
+        testkit::eventually("the session", || {
+            client.with_state(|s| matches!(s.session, gelabber_client::Session::Authenticated(_)))
+        });
+        client.fail_op(
+            "logout",
+            gelabber_client::ApiError::Transport("refused".into()),
+        );
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            logout_failed(ui, &client, true);
+        });
+        output.textures_delta.clear();
+        // The client clears it on its runtime.
+        testkit::eventually("the failure to go", || {
+            client.with_state(|s| s.op("logout").is_none())
+        });
+    }
+
     /// The window shows the shell on its own session check, so the page can
     /// load a server before the client's check answers. That answer names
     /// the same account: what was loaded stays (no "Navigation wird geladen").

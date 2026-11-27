@@ -56,8 +56,10 @@ const SETTLE_SECS: f64 = 3.0;
 enum Write {
     /// "Neue Rolle", with the name it sent.
     Create(String),
-    /// Colour or permissions.
-    Role(Uuid, u64),
+    /// A role's permissions; each write sends the whole list.
+    Permissions(Uuid, u64),
+    /// A role's colour, sent alone.
+    Color(Uuid, u64),
     Rename(Uuid, u64),
     Delete(Uuid),
     /// A member's roles, by user.
@@ -71,19 +73,33 @@ impl Write {
     fn key(&self, server: Uuid) -> String {
         match self {
             Self::Create(_) => format!("create_role:{server}"),
-            Self::Role(id, seq) | Self::Rename(id, seq) => format!("role:{id}:{seq}"),
+            Self::Permissions(id, seq) | Self::Color(id, seq) | Self::Rename(id, seq) => {
+                format!("role:{id}:{seq}")
+            }
             Self::Delete(id) => format!("delete_role:{id}"),
             Self::Member(user, seq) => format!("member_roles:{user}:{seq}"),
             Self::Base(seq) => format!("server_update:{server}:{seq}"),
         }
     }
 
+    /// The number of a quick write.
+    fn seq(&self) -> Option<u64> {
+        match self {
+            Self::Permissions(_, seq)
+            | Self::Color(_, seq)
+            | Self::Rename(_, seq)
+            | Self::Member(_, seq)
+            | Self::Base(seq) => Some(*seq),
+            Self::Create(_) | Self::Delete(_) => None,
+        }
+    }
+
     /// Whether `other` writes the same value ahead of the server.
     fn same_value(&self, other: &Write) -> bool {
         match (self, other) {
-            (Self::Role(a, _), Self::Role(b, _)) | (Self::Member(a, _), Self::Member(b, _)) => {
-                a == b
-            }
+            (Self::Permissions(a, _), Self::Permissions(b, _))
+            | (Self::Color(a, _), Self::Color(b, _))
+            | (Self::Member(a, _), Self::Member(b, _)) => a == b,
             (Self::Base(_), Self::Base(_)) => true,
             _ => false,
         }
@@ -115,8 +131,16 @@ pub(super) struct Roles {
     members: HashMap<Uuid, Ahead<Vec<Uuid>>>,
     /// "Alle Mitglieder" ahead of the server's answer.
     base: Option<Ahead<Vec<Permission>>>,
-    /// The last write's number.
-    seq: u64,
+    /// Refused writes that only older writes of the same value were still
+    /// waiting on: an older one's success afterwards is not theirs.
+    refused: Vec<Write>,
+    /// The newest accepted write of a value while older ones of it are
+    /// still on their way: the server holds its value, with their changes.
+    accepted: Vec<Write>,
+    /// The refused write the status line speaks of until a click or a
+    /// success of the same value: another value's success does not say
+    /// "Gespeichert" over it.
+    unresolved: Option<Write>,
     /// The member whose picker is open.
     pub(super) picker: Option<Uuid>,
 }
@@ -230,15 +254,16 @@ impl Roles {
             .map_or(&member.role_ids, |a| &a.value)
     }
 
-    /// The number of the next quick write.
+    /// The number of the next quick write: unique for the process, so no
+    /// earlier op of the client has its key. (Clearing a reused key raced
+    /// with the write's own op on the client's runtime and could take its
+    /// answer away, GEL-408.)
     fn next(&mut self) -> u64 {
-        self.seq += 1;
-        self.seq
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
     }
 
-    fn track(&mut self, app: &AppCtx, server: Uuid, write: Write) {
-        // A finished write of the same key must not read as this one's.
-        app.client.clear_op(write.key(server));
+    fn track(&mut self, _app: &AppCtx, _server: Uuid, write: Write) {
         self.writes.push(write);
     }
 }
@@ -332,6 +357,51 @@ fn settle(
     // A later write of the same value still on its way carries this one's
     // change too: the value stays ahead until the last one answers.
     let last = !r.writes.iter().any(|w| w.same_value(&write));
+    // Answers can come in out of order (GEL-408). Each write sends the whole
+    // value, so a newer write carries the changes of the older ones:
+    // - a refusal that only older writes are still waiting on is kept, and
+    //   their success afterwards does not say "Gespeichert" or keep it; a
+    //   newer write's success carries the refused change again;
+    // - the refusal of a write older than one the server took is moot: it
+    //   settles as that success did.
+    let same = |w: &&Write| w.same_value(&write);
+    let newer = |w: &&Write| w.seq() > write.seq();
+    let pending_newer = r.writes.iter().filter(same).any(|w| newer(&w));
+    let moot = outcome.is_err() && r.accepted.iter().filter(same).any(|w| newer(&w));
+    if outcome.is_ok() {
+        r.refused
+            .retain(|w| !(w.same_value(&write) && w.seq() < write.seq()));
+        if !last && !r.accepted.iter().filter(same).any(|w| newer(&w)) {
+            r.accepted.retain(|w| !w.same_value(&write));
+            r.accepted.push(write.clone());
+        }
+    } else if !moot && !last && !pending_newer {
+        r.refused.push(write.clone());
+    }
+    // Refusals older than an accepted write went above: what is left of
+    // this value is newer than this write.
+    let refused = r.refused.iter().any(|w| w.same_value(&write));
+    if last {
+        r.refused.retain(|w| !w.same_value(&write));
+        r.accepted.retain(|w| !w.same_value(&write));
+    }
+    let ok = Ok(());
+    let outcome = if moot { &ok } else { outcome };
+    let saved = last && !refused;
+    // The refusals the status line says.
+    let said = matches!(
+        write,
+        Write::Permissions(..) | Write::Color(..) | Write::Rename(..) | Write::Base(_)
+    );
+    if outcome.is_err() && said {
+        r.unresolved = Some(write.clone());
+    }
+    // A success speaks for its own value: over another value's refusal the
+    // status line keeps the refusal.
+    let say_saved = r.unresolved.as_ref().is_none_or(|w| w.same_value(&write));
+    if outcome.is_ok() && saved && say_saved {
+        r.unresolved = None;
+    }
     match (write, outcome) {
         (Write::Create(name), Ok(())) => {
             // The command put the new role into the detail before it ended.
@@ -348,21 +418,46 @@ fn settle(
             app.toasts
                 .failure(servers::error_role_not_created(), None, e)
         }
-        (Write::Role(id, _), Ok(())) => {
-            if last {
-                r.status.success(ui, common::saved());
+        (Write::Permissions(id, _), Ok(())) if last && refused => {
+            r.permissions.remove(&id);
+        }
+        (Write::Color(id, _), Ok(())) if last && refused => {
+            r.colors.remove(&id);
+        }
+        (Write::Permissions(id, _), Ok(())) => {
+            if saved {
+                if say_saved {
+                    r.status.success(ui, common::saved());
+                }
                 if let Some(a) = r.permissions.get_mut(&id) {
                     a.settled = Some(now);
+                }
+            }
+        }
+        (Write::Color(id, _), Ok(())) => {
+            if saved {
+                if say_saved {
+                    r.status.success(ui, common::saved());
                 }
                 if let Some(a) = r.colors.get_mut(&id) {
                     a.settled = Some(now);
                 }
             }
         }
-        (Write::Rename(..), Ok(())) => r.status.success(ui, common::saved()),
-        (Write::Role(id, _), Err(e)) => {
+        (Write::Rename(..), Ok(())) => {
+            if say_saved {
+                r.status.success(ui, common::saved());
+            }
+        }
+        (Write::Permissions(id, _), Err(e)) => {
             if last {
                 r.permissions.remove(&id);
+            }
+            r.status.error(ui, common::not_saved());
+            app.toasts.failure(servers::error_role_not_saved(), None, e);
+        }
+        (Write::Color(id, _), Err(e)) => {
+            if last {
                 r.colors.remove(&id);
             }
             r.status.error(ui, common::not_saved());
@@ -380,8 +475,11 @@ fn settle(
             app.toasts
                 .failure(servers::error_role_not_deleted(), None, e);
         }
+        (Write::Member(user, _), Ok(())) if last && refused => {
+            r.members.remove(&user);
+        }
         (Write::Member(user, _), Ok(())) => {
-            if last && let Some(a) = r.members.get_mut(&user) {
+            if saved && let Some(a) = r.members.get_mut(&user) {
                 a.settled = Some(now);
             }
         }
@@ -393,9 +491,12 @@ fn settle(
                 .failure(servers::error_member_roles_not_saved(), None, e);
         }
         // The client toasts a failed server write (`server_update`).
+        (Write::Base(_), Ok(())) if last && refused => r.base = None,
         (Write::Base(_), Ok(())) => {
-            if last {
-                r.status.success(ui, common::saved());
+            if saved {
+                if say_saved {
+                    r.status.success(ui, common::saved());
+                }
                 if let Some(a) = r.base.as_mut() {
                     a.settled = Some(now);
                 }
@@ -537,6 +638,7 @@ fn side_list(
     }
     if let Some(choice) = pick {
         r.status.clear();
+        r.unresolved = None;
         r.chosen = Some(choice);
     }
     ui.add_space(16.0);
@@ -554,6 +656,7 @@ fn side_list(
         && !creating
     {
         r.status.clear();
+        r.unresolved = None;
         let name = next_name(&detail.roles, texts::roles_new());
         let color = next_color(&detail.roles);
         r.track(app, server, Write::Create(name.clone()));
@@ -677,6 +780,7 @@ fn base_panel(ui: &mut Ui, app: &mut AppCtx, r: &mut Roles, detail: &ServerDetai
         let next = toggle_permission(&current, flag);
         r.base = Some(Ahead::new(next.clone()));
         r.status.clear();
+        r.unresolved = None;
         let server = detail.server.id;
         let seq = r.next();
         r.track(app, server, Write::Base(seq));
@@ -783,6 +887,7 @@ fn custom_panel(
                     .set_fields(vec![("name", field_message("name", code))]),
                 None => {
                     r.status.clear();
+                    r.unresolved = None;
                     let seq = r.next();
                     r.track(app, server, Write::Rename(role.id, seq));
                     app.client.update_role(
@@ -808,9 +913,10 @@ fn custom_panel(
         && color != current
     {
         r.status.clear();
+        r.unresolved = None;
         r.colors.insert(role.id, Ahead::new(color));
         let seq = r.next();
-        r.track(app, server, Write::Role(role.id, seq));
+        r.track(app, server, Write::Color(role.id, seq));
         app.client.update_role(
             server,
             role.id,
@@ -834,9 +940,10 @@ fn custom_panel(
     ) {
         let next = toggle_permission(&flags, flag);
         r.status.clear();
+        r.unresolved = None;
         r.permissions.insert(role.id, Ahead::new(next.clone()));
         let seq = r.next();
-        r.track(app, server, Write::Role(role.id, seq));
+        r.track(app, server, Write::Permissions(role.id, seq));
         app.client.update_role(
             server,
             role.id,
@@ -1246,6 +1353,241 @@ fn row_x(ui: &Ui, width: f32) -> std::ops::RangeInclusive<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The panel's bookkeeping without HTTP: the test settles the client's
+    /// ops of the writes in the order it chooses, and the panel's poll
+    /// takes them, as it does every frame (GEL-408).
+    struct Panel {
+        ctx: egui::Context,
+        client: gelabber_client::Client,
+        call: gelabber_call::Call,
+        images: crate::images::Images,
+        nav: crate::app::Nav,
+        session: crate::app::Session,
+        toasts: crate::toasts::Toasts,
+        r: Roles,
+        detail: ServerDetail,
+    }
+
+    impl Panel {
+        fn new() -> Self {
+            use crate::app::testkit::{HOME, workspace};
+            let client = gelabber_client::Client::new("http://127.0.0.1:9").unwrap();
+            let detail = workspace("GET", &format!("/servers/{HOME}")).unwrap().body;
+            Self {
+                ctx: egui::Context::default(),
+                call: gelabber_call::Call::new(client.clone()),
+                images: crate::images::Images::new(client.clone()),
+                client,
+                nav: crate::app::Nav::new("/"),
+                session: crate::app::Session::new(),
+                toasts: crate::toasts::Toasts::default(),
+                r: Roles::default(),
+                detail: serde_json::from_value(detail).unwrap(),
+            }
+        }
+
+        fn role(&self) -> Uuid {
+            crate::app::testkit::MODERATION.parse().unwrap()
+        }
+
+        /// A permission write of Moderation with `value`, on its way.
+        fn permissions(&mut self, value: Vec<Permission>) -> Write {
+            let id = self.role();
+            self.r.permissions.insert(id, Ahead::new(value));
+            let write = Write::Permissions(id, self.r.next());
+            self.r.writes.push(write.clone());
+            write
+        }
+
+        /// A colour write of Moderation, on its way.
+        fn color(&mut self, color: RoleColor) -> Write {
+            let id = self.role();
+            self.r.colors.insert(id, Ahead::new(color));
+            let write = Write::Color(id, self.r.next());
+            self.r.writes.push(write.clone());
+            write
+        }
+
+        /// The server answers `write`; the panel takes it in its next pass.
+        fn answer(&mut self, write: &Write, ok: bool) {
+            let key = write.key(self.detail.server.id);
+            if ok {
+                self.client.finish_op(&key);
+            } else {
+                self.client
+                    .fail_op(&key, gelabber_client::ApiError::Transport("refused".into()));
+            }
+            let Self {
+                ctx,
+                client,
+                call,
+                images,
+                nav,
+                session,
+                toasts,
+                r,
+                detail,
+            } = self;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut app = AppCtx {
+                    client,
+                    call,
+                    images,
+                    nav,
+                    session,
+                    account_mail: None,
+                    toasts,
+                    public_pages: None,
+                };
+                poll(ui, &mut app, r, detail);
+            });
+            output.textures_delta.clear();
+        }
+
+        fn status(&self) -> Option<&str> {
+            self.r
+                .status
+                .line
+                .as_ref()
+                .map(|(text, _, _)| text.as_str())
+        }
+
+        /// Whether the permissions still show the panel's value, not the
+        /// server's.
+        fn permissions_ahead(&self) -> bool {
+            self.r.permissions.contains_key(&self.role())
+        }
+
+        fn refusal_toasts(&self) -> usize {
+            self.toasts
+                .texts()
+                .iter()
+                .filter(|t| t.contains(servers::error_role_not_saved()))
+                .count()
+        }
+    }
+
+    /// A write's op key was never used before, also by a panel opened
+    /// again: no earlier answer can be read as its own, and nothing needs
+    /// clearing first (which raced with the write, GEL-408).
+    #[test]
+    fn write_numbers_are_unique_for_the_process() {
+        let (mut first, mut again) = (Roles::default(), Roles::default());
+        let numbers = [first.next(), first.next(), again.next(), again.next()];
+        let mut unique = numbers.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), numbers.len(), "{numbers:?}");
+    }
+
+    fn with(extra: &[Permission]) -> Vec<Permission> {
+        let mut value = vec![
+            Permission::ModerateMembers,
+            Permission::ManageMessages,
+            Permission::MentionEveryone,
+        ];
+        value.extend_from_slice(extra);
+        value
+    }
+
+    /// Two permission writes of one role, A then B, which sends A's change
+    /// again: whatever the answers and the order they come in, the panel
+    /// ends with what the server holds. B taken means both are saved.
+    #[test]
+    fn two_permission_writes_settle_in_any_order() {
+        let _de = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::De);
+        for (a_ok, b_ok, b_first) in [
+            (true, true, false),
+            (true, true, true),
+            (false, true, false),
+            (false, true, true),
+            (true, false, false),
+            (true, false, true),
+            (false, false, false),
+            (false, false, true),
+        ] {
+            let case = format!("A ok {a_ok}, B ok {b_ok}, B answered first {b_first}");
+            let mut p = Panel::new();
+            let a = p.permissions(with(&[Permission::ManageServer]));
+            let b = p.permissions(with(&[
+                Permission::ManageServer,
+                Permission::ManageChannels,
+            ]));
+            if b_first {
+                p.answer(&b, b_ok);
+                p.answer(&a, a_ok);
+            } else {
+                p.answer(&a, a_ok);
+                p.answer(&b, b_ok);
+            }
+            let want = if b_ok {
+                common::saved()
+            } else {
+                common::not_saved()
+            };
+            assert_eq!(p.status(), Some(want), "{case}");
+            assert_eq!(p.permissions_ahead(), b_ok, "{case}");
+            if b_ok && b_first {
+                // A's refusal came after B was taken: nothing to say.
+                assert_eq!(p.refusal_toasts(), 0, "{case}");
+            }
+        }
+    }
+
+    /// W1 and W2 on their way, W2 refused, then W3, which carries W2's
+    /// change again; W1 answered, then W3: saved.
+    #[test]
+    fn a_later_write_saves_over_an_older_refusal() {
+        let _de = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::De);
+        let mut p = Panel::new();
+        let w1 = p.permissions(with(&[Permission::ManageServer]));
+        let w2 = p.permissions(with(&[
+            Permission::ManageServer,
+            Permission::ManageChannels,
+        ]));
+        p.answer(&w2, false);
+        assert_eq!(p.status(), Some(common::not_saved()));
+        let w3 = p.permissions(with(&[
+            Permission::ManageServer,
+            Permission::ManageChannels,
+            Permission::SendFiles,
+        ]));
+        p.answer(&w1, true);
+        p.answer(&w3, true);
+        assert_eq!(p.status(), Some(common::saved()));
+        assert!(p.permissions_ahead());
+    }
+
+    /// A colour is sent alone and carries no permission: a refused
+    /// permission goes back to the server's value, and the status line
+    /// keeps the refusal, whichever answer comes first.
+    #[test]
+    fn a_colour_answer_does_not_save_a_refused_permission() {
+        let _de = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::De);
+        for colour_first in [false, true] {
+            let mut p = Panel::new();
+            let permissions = p.permissions(with(&[Permission::ManageServer]));
+            let colour = p.color(RoleColor::Green);
+            if colour_first {
+                p.answer(&colour, true);
+                p.answer(&permissions, false);
+            } else {
+                p.answer(&permissions, false);
+                p.answer(&colour, true);
+            }
+            assert_eq!(
+                p.status(),
+                Some(common::not_saved()),
+                "colour first {colour_first}"
+            );
+            assert!(!p.permissions_ahead(), "colour first {colour_first}");
+            assert!(
+                p.r.colors.contains_key(&p.role()),
+                "the colour stays: colour first {colour_first}"
+            );
+        }
+    }
 
     fn role(id: u128, name: &str, color: RoleColor, position: i32) -> ServerRole {
         ServerRole {
