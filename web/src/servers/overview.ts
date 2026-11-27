@@ -118,7 +118,7 @@ export function mentionsMe(
   message: Pick<Message, "mentions" | "mention_everyone">,
   me: string,
 ): boolean {
-  return message.mention_everyone === true || !!message.mentions?.includes(me);
+  return message.mention_everyone === true || message.mentions.includes(me);
 }
 
 const PICTURES = new Set([

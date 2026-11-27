@@ -295,7 +295,7 @@ impl Http {
         self.send(Method::PATCH, "/me", patch).await
     }
 
-    /// The account's language, `de` or `en` (v0.10 servers).
+    /// Saves the account's language, `de` or `en`.
     pub async fn set_locale(&self, locale: &str) -> Result<LocaleBody> {
         let body = LocaleBody {
             locale: locale.to_owned(),
@@ -731,22 +731,14 @@ impl Http {
         .await
     }
 
-    /// `PATCH` with only `attachment_descriptions`: an empty text clears it.
-    /// `content` is the message's text as shown: unchanged it leaves the
-    /// message unedited, and an older server, which ignores the alt text,
-    /// keeps the text instead of reading a missing one as empty.
-    pub async fn edit_alt_text(
-        &self,
-        id: Uuid,
-        attachment: Uuid,
-        content: &str,
-        text: &str,
-    ) -> Result<Message> {
+    /// `PATCH` with only `attachment_descriptions`, which leaves the text
+    /// as it is: an empty alt text clears it.
+    pub async fn edit_alt_text(&self, id: Uuid, attachment: Uuid, text: &str) -> Result<Message> {
         let text = (!text.is_empty()).then_some(text);
         self.send(
             Method::PATCH,
             &format!("/messages/{id}"),
-            &json!({"content": content, "attachment_descriptions": {attachment.to_string(): text}}),
+            &json!({"attachment_descriptions": {attachment.to_string(): text}}),
         )
         .await
     }
@@ -1119,13 +1111,9 @@ impl Http {
     // ---------------------------------------------------------- feedback
 
     /// Whether the instance takes feedback, and the unread count of the
-    /// dot. An API without the routes (older than v0.10) answers
-    /// `404 not_found`: that is off, not a failure.
+    /// dot.
     pub async fn feedback_status(&self) -> Result<FeedbackStatus> {
-        match self.get("/feedback/status").await {
-            Err(error) if error.status() == Some(404) => Ok(FeedbackStatus::OFF),
-            answer => answer,
-        }
+        self.get("/feedback/status").await
     }
 
     /// One page of the caller's entries with their threads; offset 0 is
@@ -1307,7 +1295,10 @@ mod tests {
                     };
                     let line = head.lines().next().unwrap_or("").to_owned();
                     let (status, reply) = if line.starts_with("GET /api/auth/session ") {
-                        ("200 OK", r#"{"user":null,"csrf_token":"t"}"#.to_owned())
+                        (
+                            "200 OK",
+                            r#"{"user":null,"csrf_token":"t","operator":false}"#.to_owned(),
+                        )
                     } else {
                         log.lock().push((line.clone(), body));
                         answer(&line)
@@ -1329,7 +1320,7 @@ mod tests {
         serde_json::json!({
             "id": id, "name": "Filmclub", "owner_id": Uuid::from_u128(9), "icon_url": null,
             "created_at": "2026-10-01T00:00:00Z", "role": "member",
-            "permissions": [], "member_permissions": [],
+            "permissions": [], "member_permissions": [], "blocked": false,
         })
         .to_string()
     }
@@ -1446,11 +1437,16 @@ mod tests {
                     r#"[{"user_id":"00000000-0000-0000-0000-000000000003","name":"Kai","avatar_url":null,"message":"","created_at":"2026-11-10T10:00:00Z"}]"#
                         .to_owned(),
                 ),
+                ["PATCH", path] if path.starts_with("/api/messages/") => (
+                    "200 OK",
+                    include_str!("../tests/fixtures/edit.json").to_owned(),
+                ),
                 _ => ("204 No Content", String::new()),
             }
         });
         let http = Http::new(&base).unwrap();
         let (server, kai) = (Uuid::from_u128(1), Uuid::from_u128(3));
+        let (message, picture) = (Uuid::from_u128(6), Uuid::from_u128(5));
         runtime.block_on(async {
             assert_eq!(http.join_listing(server).await.unwrap().id, server);
             let answer = http.request_join(server, "Hallo!").await.unwrap();
@@ -1476,9 +1472,15 @@ mod tests {
             assert_eq!(http.join_requests(server).await.unwrap()[0].user_id, kai);
             http.accept_join_request(server, kai).await.unwrap();
             http.decline_join_request(server, kai).await.unwrap();
+            // An alt text alone: the message's text is not sent and stays.
+            http.edit_alt_text(message, picture, "Ein Hund.")
+                .await
+                .unwrap();
+            http.edit_alt_text(message, picture, "").await.unwrap();
         });
         let s = "00000000-0000-0000-0000-000000000001";
         let u = "00000000-0000-0000-0000-000000000003";
+        let m = "00000000-0000-0000-0000-000000000006";
         let expected = [
             (format!("POST /api/directory/listings/{s}/join"), ""),
             (
@@ -1503,6 +1505,14 @@ mod tests {
             (
                 format!("POST /api/servers/{s}/join-requests/{u}/decline"),
                 "",
+            ),
+            (
+                format!("PATCH /api/messages/{m}"),
+                r#"{"attachment_descriptions":{"00000000-0000-0000-0000-000000000005":"Ein Hund."}}"#,
+            ),
+            (
+                format!("PATCH /api/messages/{m}"),
+                r#"{"attachment_descriptions":{"00000000-0000-0000-0000-000000000005":null}}"#,
             ),
         ];
         let seen = seen.lock();
@@ -1763,24 +1773,5 @@ mod tests {
             assert_eq!(line, &format!("{want_line} HTTP/1.1"));
             assert_eq!(body, &want_body, "{line}");
         }
-    }
-
-    /// An API older than the feedback routes answers `404 not_found`: the
-    /// feature is off there. Other failures stay failures.
-    #[test]
-    fn an_api_without_feedback_has_it_off() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let (base, _) = fake_api(|_| {
-            (
-                "404 Not Found",
-                r#"{"error":"not_found","message":"Not found"}"#.to_owned(),
-            )
-        });
-        let http = Http::new(&base).unwrap();
-        let status = runtime.block_on(http.feedback_status()).unwrap();
-        assert_eq!(status, FeedbackStatus::OFF);
-        let (base, _) = fake_api(|_| ("500 Internal Server Error", String::new()));
-        let http = Http::new(&base).unwrap();
-        assert!(runtime.block_on(http.feedback_status()).is_err());
     }
 }

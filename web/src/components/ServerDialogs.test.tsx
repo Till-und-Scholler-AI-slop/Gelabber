@@ -54,6 +54,7 @@ const server = (roles: ServerRole[]): ServerDetail => ({
   role: "owner",
   permissions: ["manage_channels"],
   member_permissions: [],
+  blocked: false,
   categories: [],
   channels: [],
   members: [],

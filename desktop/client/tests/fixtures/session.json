@@ -11,7 +11,9 @@
   "accent_color": null,
   "banner_color": null,
   "banner_url": null,
-  "avatar_decoration": null
+  "avatar_decoration": null,
+  "locale": "de"
  },
- "csrf_token": "0000000000000000000000000000000000000000000000000000000000000000"
+ "csrf_token": "0000000000000000000000000000000000000000000000000000000000000000",
+ "operator": false
 }

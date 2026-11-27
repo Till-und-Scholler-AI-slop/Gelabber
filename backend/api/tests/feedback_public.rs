@@ -38,6 +38,8 @@ fn config() -> Config {
 /// memory, either of which can be left out.
 fn state_with(pool: PgPool, operators: bool, mail: bool) -> (AppState, Mailer) {
     let mut state = AppState::with_pool(&config(), pool).expect("state");
+    // Tests run out entries by hand and sweep them with `public::sweep`.
+    state.workers.feedback_sweep = None;
     if operators {
         state.operators = Arc::new(HashSet::from(["lena@example.test".to_owned()]));
     }

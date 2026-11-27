@@ -211,10 +211,9 @@ async fn share_the_primary_monitor(server: &Server) {
     let screen = match Source::screen(&engine, &json!({"type": "screen", "fps": 30})) {
         Ok(screen) => screen,
         // GraphicsCaptureSession::IsSupported() said no: Windows before 10
-        // 1903, or a session that cannot capture.
+        // 1903, or a session that cannot capture. CI's runner can.
         Err(error) if error.to_string().contains("not supported on this Windows") => {
-            eprintln!("skipped: {error}");
-            return;
+            return gelabber_testing::missing(&format!("screen capture ({error})"));
         }
         Err(error) => panic!("screen source on Windows: {error}"),
     };

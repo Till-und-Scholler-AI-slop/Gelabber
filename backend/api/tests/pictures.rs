@@ -16,7 +16,9 @@ use uuid::Uuid;
 use common::Client;
 
 async fn owner_and_member(pool: PgPool) -> (Client, Client, String) {
-    let shared = common::state(pool);
+    let mut shared = common::state(pool);
+    // The tests wait for the media worker; it looks every 2 s in production.
+    shared.workers.pictures = Some(Duration::from_millis(50));
     let mut owner = Client::from_state(shared.clone());
     owner.bootstrap().await;
     let res = owner

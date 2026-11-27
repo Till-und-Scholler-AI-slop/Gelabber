@@ -20,14 +20,14 @@ const MIRA: Uuid = Uuid::from_u128(0xb8);
 fn member(id: Uuid, name: &str) -> serde_json::Value {
     json!({
         "user_id": id, "name": name, "avatar_url": null,
-        "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
+        "role_ids": [], "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
         "accent_color": null, "avatar_decoration": null, "role": "member"
     })
 }
 
 fn channel(id: Uuid, name: &str) -> serde_json::Value {
     json!({
-        "id": id, "server_id": SERVER, "category_id": null, "name": name,
+        "id": id, "server_id": SERVER, "limited": false, "role_ids": [], "category_id": null, "name": name,
         "kind": "voice", "created_at": "2026-01-01T00:00:00Z"
     })
 }
@@ -37,10 +37,11 @@ fn state() -> State {
     let server = json!({
         "id": SERVER, "name": "Wohnzimmer", "owner_id": LENA, "icon_url": null,
         "created_at": "2026-01-01T00:00:00Z", "role": "member",
-        "permissions": ["join_voice", "go_live"], "member_permissions": []
+        "permissions": ["join_voice", "go_live"], "blocked": false, "member_permissions": []
     });
     let mut detail = server.clone();
     detail["categories"] = json!([]);
+    detail["roles"] = json!([]);
     detail["channels"] = json!([channel(SOFA, "Sofa"), channel(KINO, "Kino")]);
     detail["members"] = json!([
         member(LENA, "Lena"),
@@ -52,7 +53,7 @@ fn state() -> State {
         "id": LENA, "email": "lena@example.test", "name": "Lena", "avatar_url": null,
         "created_at": "2026-01-01T00:00:00Z", "bio": null, "pronouns": null,
         "status_text": null, "accent_color": null, "banner_color": null,
-        "banner_url": null, "avatar_decoration": null
+        "banner_url": null, "avatar_decoration": null, "locale": "de"
     }))
     .expect("user");
     let mut s = State::default();
