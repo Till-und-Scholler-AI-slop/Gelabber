@@ -485,46 +485,81 @@ async fn lock_waiter(pool: &PgPool) {
 /// A socket's frame holds its session row and may then lock the user row
 /// (`presence::restore`), the reverse of disabling's order. When the two
 /// meet in a deadlock and Postgres aborts the disable, it tries again.
+///
+/// Which side Postgres aborts depends on timing: a waiting statement checks
+/// for a deadlock once, when its `deadlock_timeout` runs out. The disable
+/// waits first and is usually the one, but under load the socket's statement
+/// can start waiting after the disable's check and be aborted itself; the
+/// disable then succeeds at its first attempt and shows nothing about the
+/// retry. Such a round is rolled back, Tom is enabled and signed in again,
+/// and the deadlock is built once more, until the disable was the side
+/// aborted.
 #[sqlx::test]
 async fn disabling_tries_again_after_a_deadlock_with_a_socket(pool: PgPool) {
+    const ROUNDS: usize = 5;
     let state = operator_state(pool.clone());
     let mut lena = registered(&state, LENA, "Lena").await;
     let tom = registered(&state, TOM, "Tom").await;
     let tom_id: Uuid = tom.user_id().parse().unwrap();
 
-    // The socket's side: its session row first.
-    let mut socket = pool.begin().await.unwrap();
-    sqlx::query("SELECT 1 FROM sessions WHERE user_id = $1 FOR SHARE")
-        .bind(tom_id)
-        .execute(&mut *socket)
-        .await
-        .unwrap();
-    let id = tom.user_id().to_owned();
-    let disabling = tokio::spawn(async move { disable(&mut lena, &id, json!({})).await });
-    // Disabling holds the user row and waits to delete that session.
-    lock_waiter(&pool).await;
-    // Now the user row: Postgres finds the cycle and aborts the disable,
-    // which waited first.
-    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE")
-        .bind(tom_id)
-        .execute(&mut *socket)
-        .await
-        .unwrap();
-    socket.commit().await.unwrap();
+    for round in 1..=ROUNDS {
+        let audited = audit_rows(&pool).await.len();
+        // The socket's side: its session row first.
+        let mut socket = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM sessions WHERE user_id = $1 FOR SHARE")
+            .bind(tom_id)
+            .execute(&mut *socket)
+            .await
+            .unwrap();
+        let mut op = moved(&lena, &state);
+        let id = tom_id.to_string();
+        let disabling = tokio::spawn(async move { disable(&mut op, &id, json!({})).await });
+        // Disabling holds the user row and waits to delete that session.
+        lock_waiter(&pool).await;
+        // Now the user row: the cycle is complete.
+        let socket_aborted =
+            match sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE")
+                .bind(tom_id)
+                .execute(&mut *socket)
+                .await
+            {
+                Ok(_) => false,
+                Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("40P01") => true,
+                Err(err) => panic!("the socket's statement: {err}"),
+            };
+        if socket_aborted {
+            socket.rollback().await.unwrap();
+        } else {
+            socket.commit().await.unwrap();
+        }
 
-    let res = disabling.await.unwrap();
-    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    let (disabled, sessions): (bool, i64) = sqlx::query_as(
-        "SELECT disabled_at IS NOT NULL, \
-             (SELECT COUNT(*) FROM sessions WHERE user_id = $1) \
-         FROM users WHERE id = $1",
-    )
-    .bind(tom_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!((disabled, sessions), (true, 0));
-    assert_eq!(audit_rows(&pool).await.len(), 1);
+        let res = disabling.await.unwrap();
+        assert_eq!(res.status, StatusCode::OK, "round {round}: {}", res.body);
+        let (disabled, sessions): (bool, i64) = sqlx::query_as(
+            "SELECT disabled_at IS NOT NULL, \
+                 (SELECT COUNT(*) FROM sessions WHERE user_id = $1) \
+             FROM users WHERE id = $1",
+        )
+        .bind(tom_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((disabled, sessions), (true, 0), "round {round}");
+        // One disable, however many attempts it took.
+        assert_eq!(audit_rows(&pool).await.len(), audited + 1, "round {round}");
+        if !socket_aborted {
+            return;
+        }
+
+        // The socket was aborted: again, with Tom enabled and signed in.
+        let res = enable(&mut lena, &tom_id.to_string()).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        let mut again = Client::from_state(state.clone());
+        again.bootstrap().await;
+        let res = again.login(TOM, PASSWORD).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+    panic!("Postgres aborted the socket's side in all {ROUNDS} rounds; the retry never ran");
 }
 
 #[sqlx::test]

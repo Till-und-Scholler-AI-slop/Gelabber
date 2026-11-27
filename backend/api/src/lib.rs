@@ -48,7 +48,7 @@ use tracing::{Level, info_span};
 
 pub use config::Config;
 pub use gateway::{Event, EventDraft, EventKind, PresenceStatus, publish_channel, publish_server};
-pub use state::{AppState, Workers};
+pub use state::{AppState, Worker, WorkerPasses, Workers};
 
 /// Builds the HTTP router. Kept separate from `main` so integration tests
 /// can drive it in-process.

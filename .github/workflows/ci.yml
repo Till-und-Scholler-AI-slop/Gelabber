@@ -256,8 +256,14 @@ jobs:
           read -r tag migration < <(sh "$script" --fetch)
           echo "UPGRADE_FROM=$tag" >> "$GITHUB_ENV"
           echo "UPGRADE_FROM_MIGRATION=$migration" >> "$GITHUB_ENV"
-          # Servers refuse a changed released migration and run an inserted one out of order.
+          # Servers refuse a changed released migration and run an inserted one out of order;
+          # they run the line's own newest release too, once it has one (GEL-444).
           sh "$script" --check "$tag" "$migration"
+          own=$(sh "$script" --own --fetch)
+          if [ -n "$own" ]; then
+            read -r own_tag own_migration <<<"$own"
+            sh "$script" --check "$own_tag" "$own_migration"
+          fi
           newest=$(find backend/api/migrations -name '*.sql' | sed -n 's#.*/0*\([0-9][0-9]*\)_[^/]*\.sql$#\1#p' | sort -n | tail -1)
           if [ "$newest" -eq "$migration" ]; then
             note="$tag ends at migration $migration like this tree; no migration to upgrade across"

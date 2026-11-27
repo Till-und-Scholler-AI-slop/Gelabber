@@ -33,7 +33,7 @@ use uuid::Uuid;
 
 use super::{metadata, store_internal};
 use crate::error::ApiError;
-use crate::state::AppState;
+use crate::state::{AppState, Worker};
 use crate::storage::{ObjectStore, StoreError};
 
 /// The version of what the worker makes. Raising it (and the index
@@ -200,7 +200,10 @@ pub fn start(state: AppState) {
             loop {
                 match run_once(&state).await {
                     Ok(true) => continue,
-                    Ok(false) => break,
+                    Ok(false) => {
+                        state.worker_passes.finished(Worker::Pictures);
+                        break;
+                    }
                     Err(err) => {
                         tracing::warn!(error = ?err, "picture worker failed");
                         break;
