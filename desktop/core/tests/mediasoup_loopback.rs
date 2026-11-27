@@ -216,7 +216,9 @@ async fn round_trip(server: &Server) {
     // estimate. On a busy runner it can fall to some 250 kbit/s in the first
     // seconds and then climbs 8 % a second, too slowly for every layer to
     // start in this wait. libwebrtc then holds layers back and says so, which
-    // `check_held_back_layers` accepts.
+    // `check_held_back_layers` accepts. That every layer is sent at all is
+    // `every_simulcast_layer_reaches_the_server`'s to prove, under an
+    // estimate that delay cannot lower.
     for (name, producer, native) in &video {
         let expected = if matches!(*name, "AV1" | "VP9") { 1 } else { 3 };
         assert_eq!(
@@ -551,6 +553,170 @@ fn available_outgoing_bitrate(native: &gelabber_media_core::Producer) -> Value {
         .find(|s| s["type"] == "candidate-pair" && !s["availableOutgoingBitrate"].is_null())
         .map(|s| s["availableOutgoingBitrate"].clone())
         .unwrap_or(Value::Null)
+}
+
+/// Where the send bandwidth estimate of
+/// `every_simulcast_layer_reaches_the_server` starts, in kbit/s. It carries
+/// all three layers of a 720p VP8 and H264 stream at once (at most 0.2, 0.7
+/// and 2.5 Mbit/s each).
+const FIXED_ESTIMATE_KBPS: u32 = 8000;
+
+/// How many frames the sender encodes of its lowest layer before a layer
+/// still missing at the server counts as never sent: 10 s of a 30 fps test
+/// pattern. The bound runs at the speed of the call, not of a clock, so a
+/// slow runner gets as many frames as a fast one.
+const FRAMES_TO_WAIT: u64 = 300;
+
+/// A native sender sends every simulcast layer it configures, and each one
+/// reaches the server under its rid: what the web client's three layers
+/// (`scaleResolutionDownBy` 4, 2 and 1) need from the native core.
+///
+/// The round trip above cannot demand this. Its upper layers start only
+/// once libwebrtc's bandwidth estimate leaves room for them, and on a busy
+/// runner the estimate fell to some 250 kbit/s and climbed back too slowly
+/// for VP8's 720p layer (#409; GEL-77 for the test below it). Here the call
+/// negotiates no bandwidth feedback (no transport-cc, no REMB): the estimate
+/// starts at FIXED_ESTIMATE_KBPS and does not read delay, only reported
+/// packet loss could lower it. Each producer, the second one too, meets that
+/// estimate with its first frame, and libwebrtc starts every layer there.
+/// What the server's feedback does to the layers stays the round trip's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn every_simulcast_layer_reaches_the_server() {
+    if std::env::var_os("GELABBER_MEDIA_LOG").is_some() {
+        gelabber_media_core::set_log_level(gelabber_media_core::LogLevel::Info);
+    }
+    let server = Server::start().await;
+    every_layer(&server).await;
+    server.close().await;
+}
+
+/// The router's RTP capabilities without what a sender estimates its
+/// bandwidth from: the transport-cc and abs-send-time header extensions and
+/// the transport-cc and goog-remb feedback.
+fn without_bandwidth_feedback(mut capabilities: Value) -> Value {
+    if let Some(extensions) = capabilities["headerExtensions"].as_array_mut() {
+        extensions.retain(|extension| {
+            let uri = extension["uri"].as_str().unwrap_or_default();
+            !uri.contains("transport-wide-cc") && !uri.contains("abs-send-time")
+        });
+    }
+    for codec in capabilities["codecs"].as_array_mut().into_iter().flatten() {
+        if let Some(feedback) = codec["rtcpFeedback"].as_array_mut() {
+            feedback
+                .retain(|fb| !matches!(fb["type"].as_str(), Some("transport-cc" | "goog-remb")));
+        }
+    }
+    capabilities
+}
+
+/// The call of the test above, dropped on return.
+async fn every_layer(server: &Server) {
+    let engine = Engine::new(Audio::Dummy).unwrap();
+    let device = Device::new(&engine).unwrap();
+    let caps = serde_json::to_value(server.router.rtp_capabilities()).unwrap();
+    device.load(&without_bandwidth_feedback(caps)).unwrap();
+
+    let server_producers = Arc::new(Mutex::new(Vec::new()));
+    let (server_send, send_params) = server.transport().await;
+    let (send, send_events) = Transport::new(&device, Direction::Send, &send_params).unwrap();
+    server.serve(
+        send.clone(),
+        server_send,
+        send_events,
+        server_producers.clone(),
+    );
+    let at_server = |id: &str| {
+        server_producers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|producer| producer.id().to_string() == id)
+            .cloned()
+            .unwrap()
+    };
+    // Audio first: the harness, unlike the gateway, passes an empty CNAME
+    // on, which mediasoup refuses for a transport's first producer.
+    let mic = Source::microphone(&engine, &json!({})).unwrap();
+    let audio = {
+        let (send, mic) = (send.clone(), mic.clone());
+        blocking(move || send.produce(&mic, &json!({})))
+            .await
+            .unwrap()
+    };
+
+    let mut codecs = vec!["VP8"];
+    if h264_under_test(&device.rtp_capabilities().unwrap()) {
+        codecs.push("H264");
+    }
+    let mut video = Vec::new();
+    for codec in codecs {
+        let source = Source::test_pattern(&engine, 1280, 720, 30).unwrap();
+        let options = json!({
+            "codec": format!("video/{codec}"),
+            "encodings": [
+                { "scaleResolutionDownBy": 4 },
+                { "scaleResolutionDownBy": 2 },
+                { "scaleResolutionDownBy": 1 },
+            ],
+            "codecOptions": { "videoGoogleStartBitrate": FIXED_ESTIMATE_KBPS },
+        });
+        let native = {
+            let send = send.clone();
+            blocking(move || send.produce(&source, &options))
+                .await
+                .unwrap()
+        };
+        let producer = at_server(native.id());
+        assert_eq!(
+            producer.rtp_parameters().encodings.len(),
+            3,
+            "{codec}'s encodings at the server"
+        );
+        video.push((codec, producer, native));
+    }
+
+    for (codec, producer, native) in &video {
+        let rids: Vec<Option<String>> = producer
+            .rtp_parameters()
+            .encodings
+            .iter()
+            .map(|encoding| encoding.rid.clone())
+            .collect();
+        // Polls until every layer is live or the sender has encoded
+        // FRAMES_TO_WAIT frames of its lowest layer. (A sender that encodes
+        // nothing at all ends only with the CI job's timeout.)
+        let (live, encoded) = loop {
+            let live = live_rids(producer).await;
+            let encoded = outbound_rtp(native)
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|layer| layer["framesEncoded"].as_u64())
+                .max()
+                .unwrap_or(0);
+            if rids.iter().all(|rid| live.contains(rid)) || encoded >= FRAMES_TO_WAIT {
+                break (live, encoded);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        eprintln!(
+            "{codec}: layers {live:?} live of {rids:?} after {encoded} frames, send bandwidth \
+             estimate {} bit/s",
+            available_outgoing_bitrate(native)
+        );
+        let missing: Vec<_> = rids.iter().filter(|rid| !live.contains(rid)).collect();
+        if !missing.is_empty() {
+            eprintln!("{codec} native outbound-rtp: {}", outbound_rtp(native));
+        }
+        assert!(
+            missing.is_empty(),
+            "{codec} sends all its layers: {missing:?} never reached the server"
+        );
+    }
+
+    drop(video);
+    drop(audio);
+    drop(send);
 }
 
 /// Simulcast from pictures whose sides do not divide by the layers' scale
