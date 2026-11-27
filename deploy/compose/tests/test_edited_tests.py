@@ -1,4 +1,4 @@
-"""The report of test edits to look at (.github/workflows/scripts/test_edits.py),
+"""The report of test edits to look at (.github/workflows/scripts/edited_tests.py),
 run as ci.yml runs it, on scratch repositories."""
 import os
 from pathlib import Path
@@ -10,7 +10,7 @@ import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = ROOT / '.github/workflows/scripts/test_edits.py'
+SCRIPT = ROOT / '.github/workflows/scripts/edited_tests.py'
 ENV = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
 
 
