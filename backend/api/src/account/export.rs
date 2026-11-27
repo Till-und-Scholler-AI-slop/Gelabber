@@ -64,7 +64,7 @@ use crate::state::AppState;
 use crate::storage::{ObjectStore, StoreError};
 
 /// How often the worker looks for work without being woken.
-const TICK: Duration = Duration::from_secs(5);
+pub(crate) const TICK: Duration = Duration::from_secs(5);
 /// Rows per database page.
 const PAGE: i64 = 500;
 /// Claims an export gets before it is `failed`.
@@ -86,6 +86,9 @@ pub struct ExportView {
 
 /// Starts the export worker once per process (see the module comment).
 pub fn start(state: AppState) {
+    let Some(tick) = state.workers.account_export else {
+        return;
+    };
     if state.export_worker_started.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -104,7 +107,7 @@ pub fn start(state: AppState) {
             };
             if !busy {
                 let wake = state.account_export.notified();
-                let _ = tokio::time::timeout(TICK, wake).await;
+                let _ = tokio::time::timeout(tick, wake).await;
             }
         }
     });

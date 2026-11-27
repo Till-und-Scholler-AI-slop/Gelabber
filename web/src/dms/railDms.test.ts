@@ -23,8 +23,11 @@ const row = (
   server_id: null,
   read_message_id: null,
   read_at: null,
+  read_order: null,
+  membership_at: "2026-09-13T00:00:00Z",
   latest_order,
   unread_count,
+  mention_count: 0,
   ...extra,
 });
 

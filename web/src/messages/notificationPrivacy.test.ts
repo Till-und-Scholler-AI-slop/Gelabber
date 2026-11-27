@@ -93,11 +93,11 @@ describe("hidesContent", () => {
     ).toBe(true);
   });
 
-  it("shows the message on a server from before the switch", () => {
+  it("hides when the server answers 404 for the switch", () => {
     const missing = new ApiError("not_found", 404, "not found");
     expect(
       hidesContent({ data: undefined, error: missing, isInvalidated: true }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

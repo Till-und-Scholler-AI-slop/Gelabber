@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+/// How long a voice seat lives without a refresh.
 pub const VOICE_LEASE_MS: u64 = 5000;
 /// Most Lives one seat watches at once, the media service's `WATCH_LIMIT`.
 pub const WATCH_LIMIT: usize = 64;
@@ -176,6 +177,11 @@ impl VoiceRoster {
             p: seat.pubs.clone(),
             w: seat.watches.clone(),
         })?;
+        let lease = self
+            .connections
+            .inner
+            .voice_lease_ms
+            .load(std::sync::atomic::Ordering::Relaxed);
         self.connections
             .with_conn(|mut conn| {
                 let raw = raw.clone();
@@ -185,7 +191,7 @@ impl VoiceRoster {
                         .key(room_key(c))
                         .key(server_key(seat.server_id))
                         .arg(raw)
-                        .arg(VOICE_LEASE_MS)
+                        .arg(lease)
                         .invoke_async::<i32>(&mut conn)
                         .await
                 }
@@ -778,6 +784,17 @@ mod tests {
         let (id, _) = g.attach_session(u, Uuid::new_v4().to_string(), tx).await;
         (id, rx)
     }
+    /// Until no seat in channel `c` is left, within `wait`: their lease ran
+    /// out.
+    async fn until_no_seat_in(g: &Gateway, c: Uuid, wait: Duration) {
+        tokio::time::timeout(wait, async {
+            while !g.voice.records(room_key(c)).await.unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the seat's lease runs out");
+    }
     async fn redis() -> redis::aio::MultiplexedConnection {
         redis::Client::open(std::env::var("REDIS_URL").unwrap())
             .unwrap()
@@ -882,7 +899,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_join_failure_is_not_renewed_and_all_indexes_are_bounded() {
-        let g = gateway();
+        let g = gateway().with_voice_lease(Duration::from_millis(300));
         let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (id, _rx) = socket(&g, u).await;
         // Redis script writes the seat then fails on a corrupt server index.
@@ -896,7 +913,21 @@ mod tests {
             .unwrap();
         assert!(g.join_voice(id, u, s, c).await.is_err());
         assert!(!g.in_voice(id, s, c).await);
-        tokio::time::sleep(Duration::from_millis(5200)).await;
+        // The seat the script wrote before it failed runs out with its lease,
+        // the corrupt index after its second.
+        until_no_seat_in(&g, c, Duration::from_secs(5)).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while redis::cmd("EXISTS")
+                .arg(server_key(s))
+                .query_async::<bool>(&mut redis().await)
+                .await
+                .unwrap()
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the corrupt index runs out");
         g.refresh_voice(id).await.unwrap();
         assert!(g.voice_snapshot(s).await.unwrap().is_empty());
         assert!(g.voice.records(room_key(c)).await.unwrap().is_empty());
@@ -905,7 +936,10 @@ mod tests {
 
     #[tokio::test]
     async fn passive_watcher_gets_replacement_roster_after_crash_lease_expires() {
-        let a = gateway();
+        // Long enough for the watcher's first roster to see the seat on a
+        // busy machine, and short enough that the wait below proves this
+        // lease rather than the default 5 s one.
+        let a = gateway().with_voice_lease(Duration::from_secs(2));
         let b = gateway();
         let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (id, _rx) = socket(&a, u).await;
@@ -916,7 +950,7 @@ mod tests {
         assert!(
             matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.len()==1)
         );
-        tokio::time::sleep(Duration::from_millis(5200)).await;
+        until_no_seat_in(&b, c, Duration::from_secs(4)).await;
         b.refresh_rosters().await;
         assert!(
             matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.is_empty())

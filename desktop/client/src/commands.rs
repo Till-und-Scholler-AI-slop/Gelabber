@@ -97,8 +97,18 @@ impl Client {
         key: &str,
         work: impl Future<Output = Result<T, ApiError>>,
     ) -> Option<T> {
-        let epoch = self.epoch();
-        self.write(|s| s.ops.insert(key.to_owned(), OpState::Pending));
+        self.op_in(self.epoch(), key, work).await
+    }
+
+    /// [`Self::op`] for the account of `epoch`: once it signed out, `work`
+    /// does not start and nothing is recorded.
+    pub(crate) async fn op_in<T>(
+        &self,
+        epoch: u64,
+        key: &str,
+        work: impl Future<Output = Result<T, ApiError>>,
+    ) -> Option<T> {
+        self.write_in(epoch, |s| s.ops.insert(key.to_owned(), OpState::Pending))?;
         match work.await {
             Ok(value) => self
                 .write_in(epoch, |s| s.ops.insert(key.to_owned(), OpState::Done))
@@ -533,7 +543,7 @@ impl Client {
             // both open it would take turns forever.
             if !this.with_state(|s| s.server_details.contains_key(&id) || s.op(&key).is_some()) {
                 let work = this.reload_server(id);
-                this.op(&key, work).await;
+                this.op_in(epoch, &key, work).await;
             }
             this.inner.opening.lock().remove(&view);
         });
@@ -702,7 +712,7 @@ impl Client {
             {
                 let key = format!("server:{id}");
                 let work = this.reload_server(id);
-                this.op(&key, work).await;
+                this.op_in(epoch, &key, work).await;
             }
             let fetch = this.with_state(|s| {
                 s.channels
@@ -3520,5 +3530,45 @@ mod tests {
             assert!(s.messages(channel).is_none(), "{:?}", s.messages(channel));
             assert_eq!(s.view, View::default());
         });
+    }
+
+    /// A view opened for an account that signed out before the view's task
+    /// ran stays out of the next account's state (GEL-376).
+    #[test]
+    fn a_view_queued_before_sign_out_is_not_shown_to_the_next_account() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        let epoch = client.epoch();
+        client.write(|s| {
+            s.reset_account();
+            s.session = Session::Anonymous;
+        });
+        let view = View {
+            server: Some(Uuid::from_u128(7)),
+            channel: Some(Uuid::from_u128(8)),
+        };
+        let shown = client.change_view(view, epoch);
+        client.with_state(|s| {
+            assert_eq!(s.view, View::default());
+            assert!(s.last_server.is_none());
+        });
+        assert!(!shown);
+    }
+
+    /// A server's detail asked for by an account that signed out meanwhile
+    /// is neither requested nor recorded for the next one (GEL-376).
+    #[test]
+    fn an_op_of_a_signed_out_account_neither_runs_nor_records() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        let epoch = client.epoch();
+        client.write(|s| s.reset_account());
+        let id = Uuid::from_u128(7);
+        let key = format!("server:{id}");
+        let answer = client.block_on(client.op_in(epoch, &key, client.reload_server(id)));
+        assert!(answer.is_none());
+        assert!(client.with_state(|s| s.op(&key).is_none()));
+        assert!(seen.lock().is_empty(), "{:?}", seen.lock());
     }
 }
