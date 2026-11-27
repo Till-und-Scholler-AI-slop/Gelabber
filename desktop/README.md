@@ -70,10 +70,8 @@ else the system's (Linux: `LC_ALL`, then `LC_MESSAGES`, then `LANG`;
 Windows: the user's locale), else English. Signed in, it follows the
 account's language (`user.locale`): on sign-in, on the gateway frame `lc`
 and after a change under Einstellungen → Darstellung → Sprache, and keeps
-it in `settings.json` for the next start. Against a server older than
-v0.10 the account has no language, so the Sprache section is hidden and
-the device's choice stays. The text lives in the `gelabber-i18n` crate
-(`i18n/`); tests and the parity tool start in German.
+it in `settings.json` for the next start. The text lives in the
+`gelabber-i18n` crate (`i18n/`); tests and the parity tool start in German.
 
 Parity with the web client, against a seeded local stack (in `web/`:
 `node scripts/parity/seed.mjs`, then `node scripts/parity/shots.mjs <web-dir>`):

@@ -1790,7 +1790,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({
                 "id": id(n), "name": name, "owner_id": id(9), "icon_url": null,
                 "created_at": "2026-10-01T00:00:00Z", "role": "member",
-                "permissions": [], "member_permissions": [],
+                "permissions": [], "blocked": false, "member_permissions": [],
             }))
             .unwrap()
         };
@@ -2000,6 +2000,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({
                 "id": me.id, "email": "ich@example.test", "name": "Ich",
                 "email_verified": true, "created_at": "2026-10-01T00:00:00Z",
+                "locale": "de",
             }))
             .unwrap(),
         ));
@@ -2500,15 +2501,15 @@ mod tests {
         s.session = Session::Authenticated(Box::new(me));
         let member = |n: u128, name: &str| {
             serde_json::json!({"user_id": id(n), "name": name, "avatar_url": null,
-                "joined_at": "2026-10-01T00:00:00Z", "status_text": null,
+                "role_ids": [], "joined_at": "2026-10-01T00:00:00Z", "status_text": null,
                 "accent_color": null, "avatar_decoration": null, "role": "member"})
         };
         let detail: ServerDetail = serde_json::from_value(serde_json::json!({
             "id": id(1), "name": "Wohnzimmer", "owner_id": id(9), "icon_url": null,
             "created_at": "2026-10-01T00:00:00Z", "role": "member",
-            "permissions": [], "member_permissions": [],
-            "categories": [],
-            "channels": [{"id": id(100), "server_id": id(1), "category_id": null,
+            "permissions": [], "blocked": false, "member_permissions": [],
+            "roles": [], "categories": [],
+            "channels": [{"id": id(100), "server_id": id(1), "limited": false, "role_ids": [], "category_id": null,
                 "name": "allgemein", "kind": "text", "created_at": "2026-10-01T00:00:00Z"}],
             "members": [member(1, "Jonas"), member(3, "Kai"), member(5, "Lena")],
         }))
