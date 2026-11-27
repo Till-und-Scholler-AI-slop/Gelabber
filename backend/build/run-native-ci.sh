@@ -16,7 +16,8 @@ esac
 case "$workspace" in *:*) echo 'native CI workspace must not contain colons' >&2; exit 1 ;; esac
 case "$cargo_cache" in *:*) echo 'native CI cargo cache must not contain colons' >&2; exit 1 ;; esac
 
-# The upgrade test's boundary (GEL-413): the container has no git.
+# The upgrade test's boundary (GEL-413), by the same rule as CI; the
+# container has no git.
 if [ -z "${UPGRADE_FROM:-}" ] && previous=$(sh "$workspace/.github/workflows/scripts/previous_release.sh"); then
   UPGRADE_FROM=${previous% *}
   UPGRADE_FROM_MIGRATION=${previous#* }

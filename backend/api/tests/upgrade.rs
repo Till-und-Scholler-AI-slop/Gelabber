@@ -52,6 +52,13 @@ const FILE: &str = "00000000-0000-4000-8000-000000000301";
 /// The rows, in the previous release's schema. `{hash}` is the accounts'
 /// password hash, `{session}` the hash of Ada's session token. Every table
 /// of that schema gets a row (`every_table_of_the_previous_release_gets_a_row`).
+///
+/// The rows of these tables are only written, not read back: a migration
+/// that cannot run on them fails the test (a `NOT NULL` column without a
+/// default, say), one that rewrites them lossily does not. A sign-in through
+/// `user_identities`, the operator's view of `reports`, `operator_audit` and
+/// `feedback`, and the workers behind the rest are more than this test runs.
+/// They are listed in [`ONLY_WRITTEN`].
 const ROWS: &str = r#"
 INSERT INTO users (id, email, name, password_hash, email_verified_at, locale, bio, pronouns,
                    status_text, accent_color, banner_color, avatar_decoration, friend_code,
@@ -213,6 +220,25 @@ INSERT INTO beta_invitations (code, email)
 VALUES ('BETA-0001', 'frank@example.test');
 "#;
 
+/// Tables whose rows [`ROWS`] writes but the test does not read back.
+const ONLY_WRITTEN: &[&str] = &[
+    "account_exports",
+    "account_tokens",
+    "beta_invitations",
+    "feedback",
+    "feedback_messages",
+    "gateway_outbox",
+    "oidc_flows",
+    "oidc_results",
+    "operator_audit",
+    "push_receipts",
+    "push_subscriptions",
+    "reports",
+    "storage_cleanup",
+    "upload_daily_usage",
+    "user_identities",
+];
+
 /// Tables of the previous release that [`ROWS`] leaves empty, and why.
 const NOT_COVERED: &[(&str, &str)] = &[];
 
@@ -314,13 +340,24 @@ async fn a_server_upgrades_from_the_previous_release_with_its_rows(pool: PgPool)
         .unwrap_or_else(|err| panic!("upgrading {tag}'s rows: {err}"));
 
     // Ada's session from before the upgrade still holds.
-    let mut ada = Client::new(pool.clone());
+    let mut with_directory = common::state(pool.clone());
+    with_directory.directory = true;
+    let mut ada = Client::from_state(with_directory);
     ada.jar.insert(SESSION.to_owned(), token);
     let me = get(&mut ada, "/api/me").await;
     assert_eq!(me["id"], ADA, "{me}");
     assert_eq!(me["locale"], "en", "{me}");
     assert_eq!(me["pronouns"], "sie/ihr", "{me}");
     assert_eq!(me["accent_color"], "#336699", "{me}");
+    assert_eq!(me["bio"], "Baut Möbel", "{me}");
+    assert_eq!(me["status_text"], "In der Werkstatt", "{me}");
+    assert_eq!(me["banner_color"], "#996633", "{me}");
+    assert_eq!(me["avatar_decoration"], "ring", "{me}");
+    let presence = get(&mut ada, "/api/me/presence").await;
+    assert_eq!(presence["mode"], "dnd", "{presence}");
+    assert!(presence["until"].is_string(), "{presence}");
+    let code = get(&mut ada, "/api/me/friend-code").await;
+    assert_eq!(code["code"], "ABCD-EFGH", "{code}");
     let sessions = get(&mut ada, "/api/auth/sessions").await;
     assert_eq!(
         sessions["sessions"].as_array().map(Vec::len),
@@ -350,8 +387,8 @@ async fn a_server_upgrades_from_the_previous_release_with_its_rows(pool: PgPool)
     assert_eq!(role["name"], "Stammgäste", "{role}");
     assert_eq!(role["color"], "green", "{role}");
     assert_eq!(
-        role["permissions"].as_array().map(Vec::len),
-        Some(2),
+        role["permissions"],
+        json!(["manage_server", "send_messages"]),
         "{role}"
     );
     assert_eq!(
@@ -360,6 +397,15 @@ async fn a_server_upgrades_from_the_previous_release_with_its_rows(pool: PgPool)
         "{server}"
     );
     assert_eq!(find(channels, "id", LIMITED)["role_ids"], json!([ROLE]));
+    assert_eq!(find(channels, "id", LIMITED)["limited"], true);
+    assert_eq!(
+        server["member_permissions"],
+        json!(["send_messages", "send_files", "join_voice", "go_live"]),
+        "{server}"
+    );
+    let listing = get(&mut ada, &format!("/api/servers/{SERVER}/listing")).await;
+    assert_eq!(listing["listed"], true, "{listing}");
+    assert_eq!(listing["description"], "Holz und Metall", "{listing}");
     // The limited channel is the role's: Bob, holding it, sees it.
     let bobs_view = get(&mut bob, &format!("/api/servers/{SERVER}")).await;
     find(&bobs_view["channels"], "id", LIMITED);
@@ -418,6 +464,9 @@ async fn a_server_upgrades_from_the_previous_release_with_its_rows(pool: PgPool)
         page["messages"][0]["content"], "Kommst du morgen?",
         "{page}"
     );
+    let requests = get(&mut ada, "/api/dms/requests").await;
+    let request = &find(&requests, "id", REQUEST_DM)["request"];
+    assert_eq!(request["incoming"], true, "{requests}");
     let request = get(&mut ada, &format!("/api/channels/{REQUEST_DM}/messages")).await;
     assert_eq!(request["messages"][0]["content"], "Hallo Ada", "{request}");
 
@@ -484,5 +533,15 @@ async fn every_table_of_the_previous_release_gets_a_row(pool: PgPool) {
         empty.is_empty(),
         "{tag}'s tables without a row in ROWS: {empty:?}; add one, or say in NOT_COVERED why not"
     );
-    eprintln!("{} tables of {tag}, all with a row", tables.len());
+    for table in ONLY_WRITTEN {
+        assert!(
+            tables.contains(&(*table).to_owned()),
+            "ONLY_WRITTEN names {table}"
+        );
+    }
+    eprintln!(
+        "{} tables of {tag}, all with a row; {} of them only written, not read back",
+        tables.len(),
+        ONLY_WRITTEN.len()
+    );
 }

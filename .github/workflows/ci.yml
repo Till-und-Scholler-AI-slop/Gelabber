@@ -244,28 +244,21 @@ jobs:
             git diff -z --no-renames --name-only HEAD^1 HEAD
           fi | python3 .github/workflows/scripts/rust_tests.py --event "$EVENT" --base "$BASE_REF" | tee -a "$GITHUB_OUTPUT"
 
-      # The upgrade test starts from the previous release's schema (GEL-413).
-      # A version branch names the line; main and release/* take Cargo's.
+      # The upgrade test starts from the previous release's schema (GEL-413);
+      # the script picks the version line from the event's refs.
       - name: Previous release for the upgrade test
         env:
           BASE_REF: ${{ github.base_ref }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          line=()
-          for ref in "$BASE_REF" "$REF_NAME"; do
-            if [[ "$ref" =~ ^v[0-9]+\.[0-9]+$ ]]; then line=(--line "$ref"); break; fi
-          done
-          read -r tag migration < <(sh .github/workflows/scripts/previous_release.sh --fetch "${line[@]}")
+          script=.github/workflows/scripts/previous_release.sh
+          read -r tag migration < <(sh "$script" --fetch)
           echo "UPGRADE_FROM=$tag" >> "$GITHUB_ENV"
           echo "UPGRADE_FROM_MIGRATION=$migration" >> "$GITHUB_ENV"
-          # A server refuses to start on a released migration that changed.
-          changed=$(git diff --name-only --diff-filter=DMR "$tag" HEAD -- backend/api/migrations/)
-          if [ -n "$changed" ]; then
-            echo "::error title=Released migration changed::$changed changed since $tag"
-            exit 1
-          fi
-          newest=$(ls backend/api/migrations | sed -n 's/^0*\([0-9][0-9]*\)_.*\.sql$/\1/p' | sort -n | tail -1)
+          # Servers refuse a changed released migration and run an inserted one out of order.
+          sh "$script" --check "$tag" "$migration"
+          newest=$(find backend/api/migrations -name '*.sql' | sed -n 's#.*/0*\([0-9][0-9]*\)_[^/]*\.sql$#\1#p' | sort -n | tail -1)
           if [ "$newest" -eq "$migration" ]; then
             note="$tag ends at migration $migration like this tree; no migration to upgrade across"
             echo "::notice title=Upgrade test::$note"
