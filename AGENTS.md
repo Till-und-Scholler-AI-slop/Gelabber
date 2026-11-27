@@ -121,31 +121,40 @@ smoke test, parity and packages).
 
 ## Tests
 
-These rules hold for every test you add or change.
+These rules hold for every test you add and every line you change in one;
+the rules on failing and flaky tests hold for all tests.
 
 - **A test** states behaviour that a person or another program relies on,
-  and fails when that behaviour breaks. Before you add one, name the
-  regression it catches. A test that repeats a constant, reads back its own
-  mock, or compares source text where a lint rule can do the job catches
-  none; leave it out.
+  and fails when that behaviour breaks: break the code once and watch the
+  test fail. A test that repeats a constant, reads back its own mock, or
+  compares source text where a lint rule can do the job catches nothing;
+  leave it out.
 - **A fix** comes with a test that fails without it, where the code can be
-  tested. The pull request shows that test failing on the commit before the
-  fix.
-- **A failing test** passes by fixing the code. Change its expectation only
-  when the behaviour changed on purpose, and say so in the pull request. If
-  a test contradicts the task or cannot pass honestly, stop and report it.
+  tested. The pull request shows that failure: the test's output with the
+  fix taken out, or a red CI run of a commit that holds only the test (let
+  it finish before you push the fix).
+- **A failing test** is made to pass by fixing the code. Never delete, skip
+  or loosen a test to get a change green. Change its expectation only when
+  the behaviour changed on purpose, and say so in the pull request. If a
+  test contradicts the task or cannot pass honestly, stop and report it.
 - **Timing:** functional tests wait for an event or a state, or use a clock
   the test controls; they never synchronise with a `sleep` or assert a
-  wall-clock bound. A raised timeout states its cause in the commit message.
-- **Prerequisites:** a test whose service, tool or file is missing in CI
-  fails there; it never passes by returning early. `#[ignore]`, `.skip` and
-  their kin name the issue (`GEL-<n>`) that ends them.
-- **Where tests run:** every test runs in a workflow. A check that only runs
-  by hand is not a test: wire it into a workflow or leave it out.
-- **Code for an older version** names the version that removes it; its
-  tests go with it.
-- **Flaky tests:** when a test fails on code that did not change, open an
-  issue with a link to the failing run before you re-run it.
+  wall-clock bound. A check that something does not happen first waits for
+  an event that proves the work finished; only where none exists may it
+  wait a short fixed window. A raised timeout states its cause in the
+  commit message.
+- **Prerequisites:** a test whose service, tool or file is missing fails
+  when `CI` is set and may skip only without it. `#[ignore]`, `.skip` and
+  their kin name the issue (`GEL-<n>`) that ends them or the workflow that
+  runs them; a skip by platform names the platform.
+- **Where tests run:** every test that is not ignored runs in a workflow on
+  pull requests or pushes; manual diagnostics follow
+  `.claude/rules/ci-workflows.md`. Check that a new test ran in the pull
+  request's CI.
+- **Compatibility code** for an older version says in a comment which
+  version removes it (`remove in vX.Y`); its tests are removed with it.
+- **Flaky tests:** when a test your change does not touch fails, add a link
+  to the failing run to its open issue, or open one, before you re-run it.
 
 ## CI workflows (`.github/workflows`)
 
