@@ -533,6 +533,13 @@ for (const engine of [chromium, firefox]) {
       .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
       .click();
     await member.getByRole("dialog").getByRole("searchbox").fill("Daumen hoch");
+    // The chip shows the pending vote while its request runs, and a reload
+    // aborts a request still running: the reload below waits for the answer.
+    const saved = member.waitForResponse(
+      (response) =>
+        response.request().method() === "PUT" &&
+        response.url().includes(`/api/messages/${dmMessage.id}/reactions/`),
+    );
     await member
       .getByRole("dialog")
       .getByRole("button", { name: "Daumen hoch", exact: true })
@@ -543,6 +550,7 @@ for (const engine of [chromium, firefox]) {
         exact: true,
       })
       .waitFor();
+    assert.equal((await saved).status(), 200, "the DM reaction was not saved");
     const foreign = await contexts[2].request.put(
       new URL(
         `/api/messages/${dmMessage.id}/reactions/${encodeURIComponent("👍")}`,

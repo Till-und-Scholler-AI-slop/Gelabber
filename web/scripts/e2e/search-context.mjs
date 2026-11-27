@@ -27,11 +27,13 @@ const place = (page) =>
   page.locator('[role="log"]').evaluate(async (el) => {
     let still = 0;
     let last = el.scrollTop;
-    while (still < 5) {
+    // At most 2 s of frames; a place that never held does not compare.
+    for (let frame = 0; still < 5 && frame < 120; frame++) {
       await new Promise(requestAnimationFrame);
       still = el.scrollTop === last ? still + 1 : 0;
       last = el.scrollTop;
     }
+    if (still < 5) return { held: false, top: el.scrollTop };
     const box = el.getBoundingClientRect();
     const top = [...el.querySelectorAll("[data-index]")]
       .map((row) => ({ row, rect: row.getBoundingClientRect() }))
@@ -39,6 +41,7 @@ const place = (page) =>
       .sort((a, b) => a.rect.top - b.rect.top)[0];
     return top
       ? {
+          held: true,
           first: top.row.querySelector(".lr-message-text")?.textContent ?? "",
           offset: Math.round(top.rect.top - box.top),
         }
@@ -246,18 +249,25 @@ try {
       const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
       let still = 0;
       let last = state();
-      while (still < 5) {
+      // At most 2 s of frames: a list that never holds says so.
+      for (let frame = 0; still < 5 && frame < 120; frame++) {
         await new Promise(requestAnimationFrame);
         const now = state();
         still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
         last = now;
       }
       const [height, visible, top] = last;
-      return { height, visible, top, gap: height - top - visible };
+      return {
+        held: still >= 5,
+        height,
+        visible,
+        top,
+        gap: height - top - visible,
+      };
     }, offsetFromEnd);
   await until(
     () => settleList(0),
-    (state) => state.gap <= 1,
+    (state) => state.held && state.gap <= 1,
     "canonical-end-before-native-up",
   );
   // The reader leaves the end. A wheel moves 25 px here and 85 to 105 px on
@@ -275,7 +285,7 @@ try {
       );
       return settleList(40);
     },
-    (state) => state.gap > 16 && state.gap < 64,
+    (state) => state.held && state.gap > 16 && state.gap < 64,
     "history-place-before-search",
   );
   const beforeUnread = (await channelState(member, channel)).unread_count;
@@ -469,11 +479,11 @@ try {
     await log.waitFor();
     const kept = (now, when) =>
       assert.ok(
-        before &&
-          now &&
+        before?.held &&
+          now?.held &&
           now.first === before.first &&
           Math.abs(now.offset - before.offset) <= 2,
-        `the top row was ${before?.first} at ${before?.offset} px, is ${now?.first} at ${now?.offset} px ${when}`,
+        `the top row was ${before?.first} at ${before?.offset} px, is ${now?.first} at ${now?.offset} px ${when}${before?.held && now?.held ? "" : " (the list never held still)"}`,
       );
     kept(await place(member.page), "on return");
     // A jump after a refetch or a debounce comes later than the list's

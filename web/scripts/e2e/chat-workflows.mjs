@@ -72,6 +72,18 @@ const send = async (who, id, content) => {
 try {
   owner = await actor("owner");
   const member = await actor("member");
+  // The member's message requests still open: the list's query is fetching,
+  // and a read waits for it (useMarkRead's `ready`).
+  const memberFetches = new Set();
+  member.page.on("request", (request) => {
+    if (
+      request.method() === "GET" &&
+      /\/api\/channels\/[^/]+\/messages/.test(request.url())
+    )
+      memberFetches.add(request);
+  });
+  for (const event of ["requestfinished", "requestfailed"])
+    member.page.on(event, (request) => memberFetches.delete(request));
   const created = await api(owner, "/servers", "POST", {
     name: `Chat ${suffix}`,
   });
@@ -137,7 +149,8 @@ try {
           const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
           let still = 0;
           let last = state();
-          while (still < 5) {
+          // At most 2 s of frames: a list that never holds says so.
+          for (let frame = 0; still < 5 && frame < 120; frame++) {
             await new Promise(requestAnimationFrame);
             const now = state();
             still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
@@ -149,6 +162,7 @@ try {
           );
           const rect = newest?.getBoundingClientRect();
           return {
+            held: still >= 5,
             gap: el.scrollHeight - el.scrollTop - el.clientHeight,
             newestDrawn: !!newest,
             newestOnScreen:
@@ -162,14 +176,18 @@ try {
             listBusy: el.getAttribute("aria-busy") === "true",
           };
         });
-      await until(atEnd, (state) => state.gap <= 1, "scroll-to-end");
+      await until(
+        atEnd,
+        (state) => state.held && state.gap <= 1,
+        "scroll-to-end",
+      );
       // Its last sample says where the list stood and what the app made of
       // it: at the end, the newest on screen, no jump button, focused and
       // visible, and still unread is the app's fault.
       await until(
         async () => ({
           ...(await channelState(member, channel)),
-          list: await atEnd(),
+          list: { ...(await atEnd()), messageFetches: memberFetches.size },
         }),
         (row) => row.unread_count === 0,
         "scroll-read",
