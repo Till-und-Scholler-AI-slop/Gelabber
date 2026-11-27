@@ -162,16 +162,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
-        run: |
-          set -euo pipefail
-          if ! names=$(gh release view libwebrtc-packages --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); then
-            echo "::warning::The libwebrtc-packages release is missing, so the package is not stored."
-            echo "missing=false" >> "$GITHUB_OUTPUT"
-          elif printf '%s\n' "$names" | grep -qxF "$KEY.tar.zst"; then
-            echo "missing=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "missing=true" >> "$GITHUB_OUTPUT"
-          fi
+        run: desktop/native/scripts/libwebrtc-stored.sh "$KEY.tar.zst" >> "$GITHUB_OUTPUT"
 
       # A new libwebrtc build renews part 2 of the third-party notices: the step
       # summary says whether it changed, the artifact holds the file to commit.
@@ -308,16 +299,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
-        run: |
-          set -euo pipefail
-          if ! names=$(gh release view libwebrtc-packages --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); then
-            echo "::warning::The libwebrtc-packages release is missing, so the package is not stored."
-            echo "missing=false" >> "$GITHUB_OUTPUT"
-          elif printf '%s\n' "$names" | grep -qxF "$KEY.tar.gz"; then
-            echo "missing=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "missing=true" >> "$GITHUB_OUTPUT"
-          fi
+        run: desktop/native/scripts/libwebrtc-stored.sh "$KEY.tar.gz" >> "$GITHUB_OUTPUT"
 
   core-linux:
     name: Native core (Linux x64)
@@ -581,11 +563,18 @@ jobs:
         timeout-minutes: 5
         run: .github/workflows/scripts/apt-install.sh nsis
 
-      # After the check, which has fetched the crates of the lock file: one
-      # of the tests runs the script again without the network and, in CI,
-      # fails where it cannot (elsewhere it skips).
+      # test_release_wiring.py reads the workflows with the deployment tests' pinned PyYAML.
+      - name: PyYAML for the tests
+        run: |
+          python3 -m pip install --quiet --require-hashes --only-binary=:all: \
+            --target "$RUNNER_TEMP/python" -r deploy/compose/tests/requirements.txt
+
+      # After the check, which fetched the lock file's crates: one test runs the
+      # script again offline and, in CI, fails where it cannot.
       - name: Tests of the packaging scripts
         if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ runner.temp }}/python
         run: python3 -m unittest discover -s desktop/packaging/tests -v
 
       # shellcheck and PSScriptAnalyzer at the versions lint.sh pins (SHA-256), not the runner image's.
@@ -747,16 +736,7 @@ jobs:
       - name: Native app smoke test
         if: ${{ !cancelled() && steps.native.outcome == 'success' }}
         timeout-minutes: 5
-        run: |
-          $env:GELABBER_CONFIG_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'native-smoke')).FullName
-          $env:GELABBER_SMOKE = '10'
-          $app = Start-Process -FilePath (Join-Path $env:CARGO_TARGET_DIR 'release\gelabber.exe') -PassThru
-          $null = $app.Handle
-          if (-not $app.WaitForExit(2 * 60 * 1000)) {
-            $app.Kill()
-            throw 'the native app did not end within 2 minutes'
-          }
-          if ($app.ExitCode -ne 0) { throw "the native app ended with exit code $($app.ExitCode) instead of painting its setup screen" }
+        run: ./desktop/packaging/native/windows/smoke.ps1
 
       # What ships, read with dumpbin: exports, H264 code and what a clean
       # Windows lacks (the script says which).

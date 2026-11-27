@@ -19,7 +19,7 @@ client dropped its Tauri code.
 |---|---|
 | `native/` | C++ media core: libmediasoupclient + libwebrtc behind a C ABI (`include/gelabber_media.h`), built as one shared library |
 | `native/libwebrtc.env` | Pins: libwebrtc M140 commit, libmediasoupclient commit, libsdptransform tag |
-| `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows); a test desktop session with a ScreenCast portal |
+| `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows), the check whether the `libwebrtc-packages` release holds a package (`libwebrtc-stored.sh`); a test desktop session with a ScreenCast portal |
 | `native/patches/` | Patches applied to libwebrtc; `libmediasoupclient/` to libmediasoupclient |
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `native/tests/pipewire_chunk_test.cc` | Application sound on Linux stays inside PipeWire's buffer whatever offset and size a chunk carries; plain C++, built and run by `core/tests/voice.rs` like the mix test |
@@ -35,7 +35,7 @@ client dropped its Tauri code.
 | `testing/` | Rust crate `gelabber-testing`, for tests only: `missing` skips a test whose tool or service the machine lacks, and fails it in CI (GEL-375) |
 | `client/`, `call/`, `ui/`, `gelabber/` | The app (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
 | `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the setup page (in the sign-in pages' frame), the Tauri app's update notice, its "Server wechseln …" in the user menu and the install offers it left out, the references of the scenes `setup*`, `update-*` and those with `desktop` |
-| `packaging/native/` | The packages: `tarball.sh` and `check-core.sh` (Linux), `windows/installer.nsi` (NSIS) and the scripts `desktop-native.yml` runs on Windows (`windows/*.ps1`: `updater-key.ps1`, `build-installer.ps1`, `sign-update.ps1`, `install-test.ps1`, `check-binaries.ps1`, `loopback-address.ps1`), `version.sh` (the app's version for them and `release.yml`), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
+| `packaging/native/` | The packages: `tarball.sh` and `check-core.sh` (Linux), `windows/installer.nsi` (NSIS) and the scripts `desktop-native.yml` runs on Windows (`windows/*.ps1`: `updater-key.ps1`, `build-installer.ps1`, `sign-update.ps1`, `install-test.ps1`, `check-binaries.ps1`, `loopback-address.ps1`, `smoke.ps1`), `version.sh` (the app's version for them and `release.yml`), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
 | `packaging/lint.sh` | shellcheck and PSScriptAnalyzer over the packaging scripts, as CI runs them (`--install <dir>` fetches the pinned versions) |
 | `packaging/arch/` | The pacman package `gelabber-desktop` (`arch/native/PKGBUILD`) and repository; see its README |
 | `packaging/icons/` | The app icon (`icon.png`, `icon.ico`) for the packages and the installer |
