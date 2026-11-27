@@ -46,14 +46,16 @@ class Gates(unittest.TestCase):
     def test_ci_caddy_uses_compose_pin_and_checks_downloaded_version(self):
         compose = yaml.safe_load((ROOT / 'deploy/compose/compose.yaml').read_text())
         version = re.fullmatch(r'caddy:(.+)-alpine', compose['services']['proxy']['image']).group(1)
-        install = next(step['run'] for step in workflow_data.load('ci.yml')['jobs']['deploy']['steps']
-                       if step.get('name') == 'Install Caddy')
+        step = next(step for step in workflow_data.load('ci.yml')['jobs']['deploy']['steps']
+                    if step.get('name') == 'Install Caddy')
+        install = step['run']
+        self.assertEqual(str(step['env']['CADDY_VERSION']), version)
         # The download API can return a newer version despite its version query.
         # Use the exact upstream release asset and verify the installed binary.
-        self.assertIn(f'/releases/download/v{version}/caddy_{version}_linux_amd64.tar.gz', install)
+        self.assertIn('/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz', install)
         self.assertNotIn('caddyserver.com/api/download', install)
         # The installed binary's own version is compared, on one line.
-        self.assertRegex(install, rf'\$\(caddy version[^\n]*= "v{re.escape(version)}"')
+        self.assertRegex(install, r'\$\(caddy version[^\n]*= "v\$\{CADDY_VERSION\}"')
 
     def test_exact_success(self):
         m.check_ci(ci(), SHA, REPO)
