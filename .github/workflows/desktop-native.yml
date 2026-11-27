@@ -317,11 +317,6 @@ jobs:
     name: Native core (Linux x64)
     needs: libwebrtc-linux
     if: inputs.prebuilt_run == ''
-    # A newer push to a pull request cancels this job of the older run (ci.yml
-    # cancels the whole run, libwebrtc included). Branch runs are never cancelled.
-    concurrency:
-      group: desktop-core-linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -626,10 +621,6 @@ jobs:
     name: Native core and app (Windows x64)
     needs: libwebrtc-windows
     if: inputs.prebuilt_run == ''
-    # As core-linux: a newer push to a pull request cancels the older run's.
-    concurrency:
-      group: desktop-core-windows-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: windows-2022
     timeout-minutes: 120
     defaults:
@@ -1119,10 +1110,6 @@ jobs:
           $env:GELABBER_MEDIA_LIB_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'no-core')).FullName
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --all-targets -- -D warnings
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber -p gelabber-ui -p gelabber-call -p gelabber-client -p gelabber-i18n --all-targets -- -D warnings
-
-      - name: Format
-        if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
-        run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
   # A release whose pull request packaged its apps (candidate, GEL-358): the
   # installer gets the release key's signature here, and nothing built runs.

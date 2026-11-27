@@ -29,9 +29,11 @@ The **shipped line** is the latest release tag on `main`.
   merged in, the version bump and `.github/release-notes/vX.Y.Z.md`, opened as
   a PR to `main`. Merging it releases: after CI and image publishing on
   `main`, `release.yml` tags and publishes the new version by itself. Merge
-  nothing else into `main` until that release is out: a later merge cancels
-  the release commit's CI, and `image_set.py` then never promotes the version
-  (recover by re-running CI on `main`'s head). Then sync `main` back into the
+  nothing else into `main` until that release is out: `image_set.py` promotes
+  the version only while `main` still points at the release commit, and a
+  merge while that commit's CI run still waits to start replaces the run.
+  Either way the version is not promoted (recover by re-running CI on
+  `main`'s head). Then sync `main` back into the
   development line by PR.
 - **Hotfixes** for the shipped line: PR to `main`, then a sync PR from `main`
   to the development line that keeps the hotfix commits, so ancestry proves the
