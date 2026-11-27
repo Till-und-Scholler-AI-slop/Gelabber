@@ -794,9 +794,13 @@ impl SkipLink {
 fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
     use gelabber_client::OpState;
     let state = client.with_state(|s| s.op("logout").cloned());
-    // A new sign-in ends the old problem, as applySession does.
+    // A new sign-in ends the old problem, as applySession does. The page's
+    // session follows the client's a frame later, so in the frame of the
+    // click it is still signed in: only a sign-in the client has too counts.
     if signed_in {
-        if matches!(state, Some(OpState::Failed(_))) {
+        let client_signed_in =
+            client.with_state(|s| matches!(s.session, gelabber_client::Session::Authenticated(_)));
+        if client_signed_in && matches!(state, Some(OpState::Failed(_))) {
             client.clear_op("logout");
         }
         return;
@@ -1050,6 +1054,27 @@ mod tests {
                 .query_by_label("Sitzung abgelaufen. Melde dich erneut an.")
                 .is_none()
         );
+    }
+
+    /// The click on "Abmelden" runs in a frame whose page session is still
+    /// signed in. A refusal that the client has by the end of that frame
+    /// stays: only a sign-in the client has too ends it (GEL-369).
+    #[test]
+    fn a_refused_logout_outlasts_the_frame_of_its_click() {
+        let client = gelabber_client::Client::new("http://127.0.0.1:9").unwrap();
+        client.fail_op(
+            "logout",
+            gelabber_client::ApiError::Transport("refused".into()),
+        );
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            logout_failed(ui, &client, true);
+        });
+        output.textures_delta.clear();
+        assert!(matches!(
+            client.with_state(|s| s.op("logout").cloned()),
+            Some(gelabber_client::OpState::Failed(_))
+        ));
     }
 
     /// The window shows the shell on its own session check, so the page can
