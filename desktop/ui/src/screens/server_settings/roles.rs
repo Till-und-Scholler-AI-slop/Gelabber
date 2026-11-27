@@ -78,6 +78,16 @@ impl Write {
         }
     }
 
+    /// The number of a quick write.
+    fn seq(&self) -> Option<u64> {
+        match self {
+            Self::Role(_, seq) | Self::Rename(_, seq) | Self::Member(_, seq) | Self::Base(seq) => {
+                Some(*seq)
+            }
+            Self::Create(_) | Self::Delete(_) => None,
+        }
+    }
+
     /// Whether `other` writes the same value ahead of the server.
     fn same_value(&self, other: &Write) -> bool {
         match (self, other) {
@@ -117,6 +127,9 @@ pub(super) struct Roles {
     base: Option<Ahead<Vec<Permission>>>,
     /// The last write's number.
     seq: u64,
+    /// Refused writes that only older writes of the same value were still
+    /// waiting on: an older one's success afterwards is not theirs.
+    refused: Vec<Write>,
     /// The member whose picker is open.
     pub(super) picker: Option<Uuid>,
 }
@@ -332,6 +345,21 @@ fn settle(
     // A later write of the same value still on its way carries this one's
     // change too: the value stays ahead until the last one answers.
     let last = !r.writes.iter().any(|w| w.same_value(&write));
+    // Answers can come in out of order. A refusal that only older writes
+    // are still waiting on is kept: their success then does not say
+    // "Gespeichert" or keep the refused value (GEL-408).
+    let newer = r
+        .writes
+        .iter()
+        .any(|w| w.same_value(&write) && w.seq() > write.seq());
+    if outcome.is_err() && !last && !newer {
+        r.refused.push(write.clone());
+    }
+    let refused = r.refused.iter().any(|w| w.same_value(&write));
+    if last {
+        r.refused.retain(|w| !w.same_value(&write));
+    }
+    let saved = last && !refused;
     match (write, outcome) {
         (Write::Create(name), Ok(())) => {
             // The command put the new role into the detail before it ended.
@@ -348,8 +376,12 @@ fn settle(
             app.toasts
                 .failure(servers::error_role_not_created(), None, e)
         }
+        (Write::Role(id, _), Ok(())) if last && refused => {
+            r.permissions.remove(&id);
+            r.colors.remove(&id);
+        }
         (Write::Role(id, _), Ok(())) => {
-            if last {
+            if saved {
                 r.status.success(ui, common::saved());
                 if let Some(a) = r.permissions.get_mut(&id) {
                     a.settled = Some(now);
@@ -380,8 +412,11 @@ fn settle(
             app.toasts
                 .failure(servers::error_role_not_deleted(), None, e);
         }
+        (Write::Member(user, _), Ok(())) if last && refused => {
+            r.members.remove(&user);
+        }
         (Write::Member(user, _), Ok(())) => {
-            if last && let Some(a) = r.members.get_mut(&user) {
+            if saved && let Some(a) = r.members.get_mut(&user) {
                 a.settled = Some(now);
             }
         }
@@ -393,8 +428,9 @@ fn settle(
                 .failure(servers::error_member_roles_not_saved(), None, e);
         }
         // The client toasts a failed server write (`server_update`).
+        (Write::Base(_), Ok(())) if last && refused => r.base = None,
         (Write::Base(_), Ok(())) => {
-            if last {
+            if saved {
                 r.status.success(ui, common::saved());
                 if let Some(a) = r.base.as_mut() {
                     a.settled = Some(now);

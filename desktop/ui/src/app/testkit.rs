@@ -148,6 +148,11 @@ impl FakeApi {
         ANSWERING.with(|a| *a.borrow_mut() = Some(self.answering.clone()));
     }
 
+    /// Requests read and not yet answered.
+    pub fn answering(&self) -> usize {
+        self.answering.load(Ordering::SeqCst)
+    }
+
     pub fn saw(&self, request: &str) -> bool {
         self.seen.lock().iter().any(|r| r == request)
     }
