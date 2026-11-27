@@ -174,6 +174,16 @@ fn lena_joins_sofa_with_jonas_and_mira() {
     wait("unmuted for the others", Duration::from_secs(10), || {
         seat_of_lena().is_some_and(|o| !o.muted)
     });
+    call.set_deafened(true);
+    wait("deafened for the others", Duration::from_secs(10), || {
+        seat_of_lena().is_some_and(|o| o.deafened)
+    });
+    call.set_deafened(false);
+    wait(
+        "hearing again for the others",
+        Duration::from_secs(10),
+        || seat_of_lena().is_some_and(|o| !o.deafened && !o.muted),
+    );
 
     // Jonas' camera arrives as frames.
     wait("Jonas' camera", Duration::from_secs(20), || {

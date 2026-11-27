@@ -34,6 +34,12 @@ import {
   playbackSliderVolume,
   asProcessingMode,
   AUDIO_PROCESSING,
+  GATE_THRESHOLD_DEFAULT,
+  GATE_THRESHOLD_MAX,
+  GATE_THRESHOLD_MIN,
+  noteStreamProfileApply,
+  playbackSliderFill,
+  type MediaSettings,
 } from "./settings.ts";
 afterEach(resetMediaSettingsForTests);
 
@@ -500,5 +506,136 @@ describe("push-to-talk key: the stored label", () => {
     });
     await useMediaSettings.persist.rehydrate();
     expect(useMediaSettings.getState().pttKeyLabel).toBe("Z");
+  });
+});
+
+describe("every setting on its own", () => {
+  const storage = () => useMediaSettings.persist.getOptions().storage!;
+  const settingsOf = (state: MediaSettings): MediaSettings =>
+    Object.fromEntries(
+      Object.keys(DEFAULT_MEDIA_SETTINGS).map((key) => [
+        key,
+        state[key as keyof MediaSettings],
+      ]),
+    ) as MediaSettings;
+  async function reload() {
+    const saved = await storage().getItem("gelabber.media");
+    resetMediaSettingsForTests();
+    await storage().setItem("gelabber.media", saved!);
+    await useMediaSettings.persist.rehydrate();
+    return settingsOf(useMediaSettings.getState());
+  }
+  // A choice other than the default for every setting.
+  const CHOSEN: MediaSettings = {
+    audioInputId: "mic-2",
+    audioOutputId: "headset",
+    videoInputId: "cam-2",
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    outputVolume: 1.6,
+    inputGain: 1.5,
+    sourceAudioShare: "on",
+    sourceAudioApp: "player",
+    sourceAudioVolume: 0.5,
+    sourceAudioMuted: true,
+    quality: "high",
+    processingMode: "browser",
+    economyMode: true,
+    cameraProfile: "economy",
+    screenProfile: "detail",
+    screenMode: "sharp",
+    videoUploadLimit: 5_000_000,
+    callSounds: false,
+    callSoundVolume: 0.8,
+    otherMuteSounds: false,
+    messageToasts: false,
+    desktopNotify: true,
+    messageSound: false,
+    voiceInput: "ptt",
+    pttKey: "KeyV",
+    pttKeyLabel: "V",
+    pttReleaseDelay: 400,
+    gateAuto: false,
+    gateThresholdDb: -62,
+  };
+
+  it("changes the one setting it is given and keeps the others", () => {
+    for (const key of Object.keys(CHOSEN) as (keyof MediaSettings)[])
+      for (const [from, to] of [
+        [DEFAULT_MEDIA_SETTINGS, CHOSEN],
+        [CHOSEN, DEFAULT_MEDIA_SETTINGS],
+      ]) {
+        resetMediaSettingsForTests();
+        useMediaSettings.getState().patch(from);
+        useMediaSettings.getState().patch({ [key]: to[key] });
+        expect(settingsOf(useMediaSettings.getState()), key).toEqual({
+          ...from,
+          [key]: to[key],
+        });
+      }
+  });
+
+  it("remembers every choice, and every default, across a reload", async () => {
+    expect(await reload()).toEqual(DEFAULT_MEDIA_SETTINGS);
+    useMediaSettings.getState().patch(CHOSEN);
+    expect(await reload()).toEqual(CHOSEN);
+  });
+
+  it("keeps the sounds on, the upload unlimited and no app or key chosen for settings saved before them", async () => {
+    await storage().setItem("gelabber.media", { state: {} as never });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState()).toMatchObject({
+      callSounds: true,
+      otherMuteSounds: true,
+      messageSound: true,
+      videoUploadLimit: 0,
+      sourceAudioApp: "",
+      pttKey: "",
+    });
+  });
+
+  it("keeps the browser's filters for a saved filter that was only partly off", async () => {
+    for (const state of [
+      { noiseSuppression: false, autoGainControl: true },
+      { noiseSuppression: true, autoGainControl: false },
+    ]) {
+      await storage().setItem("gelabber.media", { state: state as never });
+      await useMediaSettings.persist.rehydrate();
+      expect(
+        useMediaSettings.getState().processingMode,
+        JSON.stringify(state),
+      ).toBe("browser");
+    }
+  });
+
+  it("keeps the input sensitivity inside the slider's range", () => {
+    const threshold = (value: number) => {
+      useMediaSettings.getState().patch({ gateThresholdDb: value });
+      return useMediaSettings.getState().gateThresholdDb;
+    };
+    expect(threshold(-62.4)).toBe(-62);
+    expect(threshold(-200)).toBe(GATE_THRESHOLD_MIN);
+    expect(threshold(12)).toBe(GATE_THRESHOLD_MAX);
+    expect(threshold(Number.NaN)).toBe(GATE_THRESHOLD_DEFAULT);
+  });
+
+  it("notes a profile change on the stream it was made for", () => {
+    noteStreamProfileApply("screen", "next");
+    expect(useMediaSettings.getState()).toMatchObject({
+      cameraProfileApply: "idle",
+      screenProfileApply: "next",
+    });
+    noteStreamProfileApply("camera", "live");
+    expect(useMediaSettings.getState()).toMatchObject({
+      cameraProfileApply: "live",
+      screenProfileApply: "next",
+    });
+  });
+
+  it("fills a playback slider up to its knob", () => {
+    expect(playbackSliderFill(0)).toBe("0%");
+    expect(playbackSliderFill(1)).toBe("50%");
+    expect(playbackSliderFill(MAX_PLAYBACK_VOLUME)).toBe("100%");
   });
 });

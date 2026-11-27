@@ -53,6 +53,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/desktop-native.yml
     with:
+      package: true
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
       prebuilt_run: ${{ needs.candidate.outputs.run }}
     # Only the signing keys, not every secret of the repository.
