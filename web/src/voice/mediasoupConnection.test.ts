@@ -1704,10 +1704,13 @@ describe("public mediasoup connection lifecycle", () => {
   });
 
   it("rejects a late SDK resolution by elapsed time even before its timer executes", async () => {
-    const f = fixture("voice", 20);
-    await f.start();
+    // The test's clock from the start: on real time, a loaded machine ran
+    // out the 20 ms SDK budget while the connection was still starting.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let elapsed = 0;
     vi.spyOn(performance, "now").mockImplementation(() => elapsed);
+    const f = fixture("voice", 20);
+    await f.start();
     const consumer = new NativeConsumer("consumer-1");
     f.device.transports[0].consume.mockImplementationOnce(async () => {
       elapsed = 21;
@@ -1925,12 +1928,15 @@ describe("the browser SDK's chunk", () => {
   });
 
   it("waits for a slow download outside the SDK operations' budget", async () => {
+    // The test's clock: on real time, a loaded machine could run out the
+    // 20 ms SDK budget after the download, while the device loads.
+    vi.useFakeTimers();
     const f = browser({ sdkTimeoutMs: 20 });
     const chunk = deferred<Sdk>();
     setBrowserSdkImportForTests(() => chunk.promise);
     const started = f.start();
     // Longer than the SDK budget; the chunk then arrives.
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await vi.advanceTimersByTimeAsync(60);
     chunk.resolve(f.sdk);
     await expect(started).resolves.toBeUndefined();
     expect(f.device.load).toHaveBeenCalledOnce();

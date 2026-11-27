@@ -17,6 +17,52 @@ const link = (href: string, suppressed = false): Inline => ({
   suppressed,
 });
 
+// The parser's work on a hostile input, counted instead of timed so the
+// bound holds on any machine. Its scans run through these string methods:
+// `startsWith` once per step of the inline and closer loops, `indexOf` for
+// code spans, `slice` and `split` for links. They are wrapped only while
+// the parse runs, which is synchronous, so nothing else is counted.
+type StringMethod = (this: string, ...args: unknown[]) => unknown;
+const scanned: Record<
+  string,
+  (self: string, args: unknown[], result: unknown) => number
+> = {
+  startsWith: () => 1,
+  includes: () => 1,
+  indexOf: (self, args, result) =>
+    (result === -1 ? self.length : Number(result) + 1) - Number(args[1] ?? 0),
+  slice: (_self, _args, result) => String(result).length,
+  split: (self) => self.length,
+};
+function parseWork(src: string): number {
+  const proto = String.prototype as unknown as Record<string, StringMethod>;
+  const saved = Object.keys(scanned).map(
+    (name) => [name, proto[name]] as const,
+  );
+  let work = 0;
+  for (const [name, original] of saved)
+    proto[name] = function (...args) {
+      const result = original.apply(this, args);
+      work += 1 + scanned[name](this, args, result);
+      return result;
+    };
+  try {
+    parseInline(src);
+  } finally {
+    for (const [name, original] of saved) proto[name] = original;
+  }
+  return work;
+}
+
+/** Doubling the input at most doubles the work, plus a little: a parser
+ * that rescans (the slow paths these tests guard) about quadruples it. */
+function expectLinearWork(make: (n: number) => string, n: number) {
+  const once = parseWork(make(n));
+  expect(parseWork(make(2 * n)), make(4).slice(0, 12)).toBeLessThanOrEqual(
+    2 * once + 1_000,
+  );
+}
+
 describe("inline markdown", () => {
   it("formats the Discord subset", () => {
     expect(parseInline("**b** *i* _i_ __u__ ~~s~~ ||x|| `c`")).toEqual([
@@ -205,13 +251,11 @@ describe("inline markdown", () => {
     expect(safeHref("HTTPS://Example.com")).toBe("https://example.com/");
   });
 
-  it("stays fast on pathological input", () => {
-    const started = performance.now();
-    parseInline("*a _b ~~c ||d **e __f ".repeat(90));
-    parseInline("**".repeat(1000));
-    parseInline("*a".repeat(1000));
-    parseInline("`".repeat(2000));
-    expect(performance.now() - started).toBeLessThan(500);
+  it("stays linear on pathological input", () => {
+    expectLinearWork((n) => "*a _b ~~c ||d **e __f ".repeat(n), 45);
+    expectLinearWork((n) => "**".repeat(n), 500);
+    expectLinearWork((n) => "*a".repeat(n), 500);
+    expectLinearWork((n) => "`".repeat(n), 1000);
   });
 });
 
@@ -278,26 +322,23 @@ describe("preview URLs", () => {
     ]);
   });
 
-  it("stays fast on many unclosed marks", () => {
-    // 20k characters take ~5 ms here and took over a second while the parser
-    // was quadratic, so the generous limit still catches a regression on a
-    // slow runner.
+  it("stays linear on many unclosed marks", () => {
+    // The parser was quadratic here once: it searched for a closer again
+    // after every opener of a mark that had none.
     for (const unit of ["*a ", "_a "]) {
-      const src = unit.repeat(Math.floor(20000 / unit.length));
-      const start = performance.now();
+      const src = unit.repeat(2000);
       expect(parseInline(src)).toEqual([text(src)]);
-      expect(performance.now() - start, unit).toBeLessThan(500);
+      expectLinearWork((n) => unit.repeat(n), 1000);
     }
   });
 
-  it("stays fast on a bare link with many trailing brackets", () => {
+  it("stays linear on a bare link with many trailing brackets", () => {
     // Trimming used to rescan the URL for every trailing bracket, and every
     // unclosed mark around it repeated that.
-    // Ten 2000-character messages took ~1.8 s that way and take ~1 ms now.
-    const src = "||**__~~*_http://a.b/" + ")".repeat(1960) + " _*~~__**||";
-    const start = performance.now();
-    for (let i = 0; i < 10; i++) parseInline(src);
-    expect(performance.now() - start).toBeLessThan(500);
+    expectLinearWork(
+      (n) => "||**__~~*_http://a.b/" + ")".repeat(n) + " _*~~__**||",
+      980,
+    );
     expect(previewUrls(parseMessage("(http://a.b/(c)))]"))).toEqual([
       "http://a.b/(c)",
     ]);
