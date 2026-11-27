@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
@@ -29,6 +29,11 @@ const render = () =>
     </QueryClientProvider>,
   );
 
+beforeEach(() => {
+  fixture.search = {};
+  fixture.user = null;
+});
+
 describe("forgot password page", () => {
   it("fills in the signed-in account's address", () => {
     fixture.user = { email: "ada@example.org" };
@@ -36,7 +41,7 @@ describe("forgot password page", () => {
   });
 
   it("prefers the address carried from the sign-in form", () => {
-    fixture.user = null;
+    fixture.user = { email: "ada@example.org" };
     fixture.search = { email: "bob@example.org" };
     expect(render()).toContain('value="bob@example.org"');
   });
