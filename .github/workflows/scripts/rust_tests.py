@@ -1,20 +1,25 @@
 """The backend tests a pull request can affect (GEL-393).
 
-ci.yml pipes a pull request's changed files into this script. It maps them to
-the backend workspace's crates (read from their Cargo.toml files, so no
-Rust toolchain is needed), adds every crate that depends on one of them, and prints a nextest filter for their tests plus the
-crates as JSON, as `$GITHUB_OUTPUT` lines.
+ci.yml pipes a pull request's changed files into this script, separated by
+NUL (`git diff -z`). It maps them to the backend workspace's crates (read
+from their Cargo.toml files, so no Rust toolchain is needed), adds every
+crate that depends on one of them, and prints a nextest filter for their
+tests plus the crates as JSON, as `$GITHUB_OUTPUT` lines.
 
-When in doubt it runs everything: on a push, the merge queue or a manual run;
-when a path is a Cargo.toml, Cargo.lock, the toolchain, .github/, a file in
-backend/ outside a crate or a file at the top of the repository; and when
-the crates cannot be read. A path in another area's folder (web/, desktop/,
-…) affects no backend test.
+When in doubt it runs everything: on a push, the merge queue or a manual
+run; for a pull request to main, whose run a push to main may reuse
+(tested_tree.py); when a path is a cache key input (tested_tree.py's lists:
+Cargo.lock, a Cargo.toml, the toolchain, the test image's
+backend/media/Dockerfile, backend/build/, .github/, …), a file in backend/
+outside a crate, a file at the top of the repository or a quoted path; and
+when the crates cannot be read. A path in another area's folder (web/,
+desktop/, …) affects no backend test.
 
 Only the test run shrinks. Cargo builds the whole workspace either way:
 building fewer packages unifies different dependency features (`cargo tree`
 shows eight crates for `-p gelabber-api` alone), so the cache would miss.
 """
+import importlib.util
 import json
 from pathlib import Path, PurePosixPath
 import sys
@@ -25,6 +30,17 @@ WORKSPACE = 'backend'
 # Paths that change what every crate is built or tested with.
 EVERYTHING = ('.github/', 'rust-toolchain.toml')
 ALL = 'all()'
+
+
+def load_tested_tree():
+    spec = importlib.util.spec_from_file_location('tested_tree', Path(__file__).with_name('tested_tree.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# What the cache keys hash, the backend's test image included: one list.
+tested_tree = load_tested_tree()
 
 
 def crates(root=None):
@@ -64,7 +80,8 @@ def affected(paths, workspace):
         return None
     changed = set()
     for path in paths:
-        if path.startswith(EVERYTHING) or '/' not in path:
+        # git quotes a name with `"`, a backslash or control characters; -z avoids it.
+        if path.startswith((*EVERYTHING, '"')) or '/' not in path or tested_tree.touches_cache_inputs([path]):
             return None
         if not path.startswith(f'{WORKSPACE}/'):
             continue
@@ -93,9 +110,10 @@ def outputs(selected):
 
 def main(argv):
     event = argv[argv.index('--event') + 1] if '--event' in argv else ''
-    paths = sys.stdin.read().splitlines()
+    base = argv[argv.index('--base') + 1] if '--base' in argv else ''
+    paths = sys.stdin.read().split('\0')
     selected = None
-    if event == 'pull_request':
+    if event == 'pull_request' and base != 'main':
         try:
             selected = affected(paths, crates())
         except (OSError, KeyError, TypeError, ValueError) as error:

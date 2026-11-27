@@ -6,9 +6,11 @@ so these tests follow the workspace when a crate gains a dependency.
 """
 import importlib.util
 import io
+import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -30,18 +32,20 @@ rust_tests = load()
 WORKSPACE = rust_tests.crates()
 
 
-def selected(*paths, event='pull_request'):
-    """The `$GITHUB_OUTPUT` lines ci.yml gets for these changed paths."""
+def selected(*paths, event='pull_request', base='v0.14', stdin=None):
+    """The `$GITHUB_OUTPUT` lines ci.yml gets for these changed paths, which
+    `git diff -z` ends with NUL each."""
     out = io.StringIO()
-    with mock.patch.object(sys, 'stdin', io.StringIO('\n'.join(paths) + '\n')), \
+    text = stdin if stdin is not None else ''.join(f'{path}\0' for path in paths)
+    with mock.patch.object(sys, 'stdin', io.StringIO(text)), \
             mock.patch.object(sys, 'stdout', out), mock.patch.object(sys, 'stderr', io.StringIO()):
-        rust_tests.main(['--event', event])
+        rust_tests.main(['--event', event, '--base', base])
     return dict(line.split('=', 1) for line in out.getvalue().splitlines())
 
 
-def runs(*paths, event='pull_request'):
+def runs(*paths, event='pull_request', base='v0.14', stdin=None):
     """The crates whose tests run, or 'all'."""
-    lines = selected(*paths, event=event)
+    lines = selected(*paths, event=event, base=base, stdin=stdin)
     if lines['all'] == 'true':
         assert lines['filter'] == 'all()'
         return 'all'
@@ -66,11 +70,44 @@ class Backend(unittest.TestCase):
                          {'gelabber-api'})
 
     def test_whatever_every_crate_is_built_with_runs_all(self):
-        for path in ('backend/Cargo.lock', 'backend/Cargo.toml', 'backend/api/Cargo.toml', 'rust-toolchain.toml',
+        # backend/media/Dockerfile's base stage is the image every backend test runs in.
+        for path in ('backend/media/Dockerfile', 'backend/build/mediasoup-worker.sha256',
+                     'backend/Cargo.lock', 'backend/Cargo.toml', 'backend/api/Cargo.toml', 'rust-toolchain.toml',
                      '.github/workflows/ci.yml', '.github/workflows/scripts/rust_tests.py',
                      'backend/.config/nextest.toml', 'backend/build/run-native-ci.sh', '.dockerignore'):
             with self.subTest(path=path):
                 self.assertEqual(runs('backend/api/src/lib.rs', path), 'all')
+
+    def test_a_pull_request_to_main_runs_all(self):
+        # A push to main may reuse this run for the same tree (tested_tree.py).
+        self.assertEqual(runs('backend/api/src/lib.rs', base='main'), 'all')
+
+    def test_a_quoted_name_runs_all(self):
+        self.assertEqual(runs('backend/api/src/lib.rs', '"backend/shared/src/a\\"b.rs"'), 'all')
+
+    def test_odd_names_from_the_workflows_diff_reach_their_crate(self):
+        """ci.yml's diff command on a scratch repository: a name git would
+        quote still counts for its crate."""
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        command = re.search(r'^\s*(git .*diff .*HEAD\^1 HEAD)$', ci, re.M).group(1)
+        env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*args):
+                subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *args],
+                               cwd=tmp, env=env, check=True, capture_output=True)
+            for folder in ('backend/api/src', 'backend/shared/src'):
+                Path(tmp, folder).mkdir(parents=True)
+            Path(tmp, 'backend/api/src/lib.rs').write_text('')
+            git('init', '-q')
+            git('add', '.')
+            git('commit', '-q', '-m', 'base')
+            Path(tmp, 'backend/api/src/lib.rs').write_text('// change\n')
+            Path(tmp, 'backend/shared/src/say "hi"\\tab.rs').write_text('')
+            git('add', '.')
+            git('commit', '-q', '-m', 'change')
+            diff = subprocess.run(command, shell=True, cwd=tmp, env=env, check=True,
+                                  capture_output=True, text=True).stdout
+        self.assertEqual(runs(stdin=diff), {'gelabber-shared', 'gelabber-api', 'gelabber-media'})
 
     def test_runs_all_when_in_doubt(self):
         self.assertEqual(runs(), 'all')
@@ -105,7 +142,8 @@ class Workflows(unittest.TestCase):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
         job = ci.split('\n  rust:\n', 1)[1].split('\n  deploy:\n', 1)[0]
         self.assertIn('fetch-depth: 2', job)
-        self.assertIn('rust_tests.py --event "$EVENT"', job)
+        self.assertIn('rust_tests.py --event "$EVENT" --base "$BASE_REF"', job)
+        self.assertIn('BASE_REF: ${{ github.base_ref }}', job)
         self.assertIn('SELECTED: ${{ steps.select.outputs.filter }}', job)
         self.assertIn('-E "($SELECTED) and not test(typing_broadcasts_fast_and_clears_on_stop)"', job)
         typing = job.split('- name: Test typing latency in isolation\n', 1)[1].split('\n', 1)[0]
