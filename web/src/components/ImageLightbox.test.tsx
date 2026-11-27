@@ -5,8 +5,8 @@ import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import { ImageLightbox } from "./ImageLightbox.tsx";
 import { isPlainClick } from "./plainClick.ts";
 
-// Markup only: node has no <dialog>, so showModal, Esc (onCancel), the
-// backdrop click and the focus on "Schließen" are not exercised here.
+// Markup only. Stepping through a gallery, Esc and the focus on
+// "Schließen" are in ImageLightbox.browser.test.tsx.
 describe("image lightbox", () => {
   const html = renderToStaticMarkup(
     <ImageLightbox
@@ -41,12 +41,6 @@ describe("image lightbox", () => {
     );
     expect(preview).toContain('src="/api/previews/p/i"');
     expect(preview).not.toContain("Herunterladen");
-  });
-
-  it("has no stepping: a message carries one attachment", () => {
-    expect(html).not.toContain("Vorheriges");
-    expect(html).not.toContain("Nächstes");
-    expect(html).not.toContain("lr-lightbox-count");
   });
 });
 
