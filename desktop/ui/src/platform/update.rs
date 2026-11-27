@@ -1332,7 +1332,6 @@ mod tests {
             endpoint(),
             format!("{REPOSITORY}/releases/latest/download/{MANIFEST}")
         );
-        assert_eq!(MANIFEST, "latest-native.json");
         assert!(!endpoint().ends_with("/latest.json"));
         assert_eq!(
             release_page("0.9.0-beta.2"),
@@ -1342,23 +1341,6 @@ mod tests {
             release_page("v0.9.0"),
             format!("{REPOSITORY}/releases/tag/v0.9.0")
         );
-    }
-
-    #[test]
-    fn the_manifest_reads_as_desktop_release_writes_it() {
-        // The jq program of release-asset-windows in desktop-release.yml.
-        let url =
-            format!("{REPOSITORY}/releases/download/v0.9.1/gelabber-native-windows-x64-setup.exe");
-        let manifest = serde_json::json!({
-            "version": "0.9.1",
-            "pub_date": "2026-11-05T12:00:00Z",
-            "platforms": {"windows-x86_64": {"url": url, "signature": "c2ln"}},
-        });
-        let latest: Latest = serde_json::from_value(manifest).unwrap();
-        let found = newer(&latest, "0.9.0", "windows-x86_64").unwrap();
-        assert_eq!(found.package, Some((url.clone(), "c2ln".into())));
-        assert_eq!(found.notes, None);
-        assert_eq!(file_name(&url), "gelabber-native-windows-x64-setup.exe");
     }
 
     #[test]

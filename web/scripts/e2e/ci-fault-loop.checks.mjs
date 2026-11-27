@@ -51,6 +51,7 @@ test("exact CI loop attempts every profile after the first failure, the faults i
       ["chromium", "core-faults", "", ""],
       ["chromium", "media-faults", ...sfu],
       ["chromium", "core", "", ""],
+      ["chromium", "media", ...sfu],
       ["chromium", "access", ...sfu],
       ["firefox", "core-faults", "", ""],
       ["firefox", "media-faults", ...sfu],

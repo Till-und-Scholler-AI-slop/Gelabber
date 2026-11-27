@@ -7,6 +7,7 @@ import {
   confirmDialog,
   navigate,
   observe,
+  responseTo,
   until,
 } from "./harness.mjs";
 
@@ -52,14 +53,14 @@ export async function coreScenarios(h, f) {
     await f.owner.page.reload();
     const first = await api(f.owner, "/auth/session");
     check(first.body.user?.id === f.owner.id, "reload-lost-session");
-    const logoutResponse = f.owner.page.waitForResponse(
+    const response = await responseTo(
+      f.owner.page,
       (r) =>
         new URL(r.url()).pathname === "/api/auth/logout" &&
         r.request().method() === "POST",
+      () => click(f.owner, "Abmelden"),
     );
-    await click(f.owner, "Abmelden");
     await f.owner.page.waitForURL(/\/login/);
-    const response = await logoutResponse;
     check(response.status() === 200, "logout-http-failed", {
       status: response.status(),
     });
@@ -520,16 +521,14 @@ export async function coreScenarios(h, f) {
       } else await route.continue();
     });
     try {
-      const failedResponse = f.owner.page.waitForResponse(
+      const failedResponse = await responseTo(
+        f.owner.page,
         (r) =>
           new URL(r.url()).pathname === `/api/channels/${chat}/messages` &&
           r.request().method() === "POST",
+        () => send(f.owner, "E2E recoverable send attempt"),
       );
-      await send(f.owner, "E2E recoverable send attempt");
-      check(
-        (await failedResponse).status() === 429,
-        "send-fault-response-missing",
-      );
+      check(failedResponse.status() === 429, "send-fault-response-missing");
       await until(
         async () => ({ rejected }),
         (s) => s.rejected === 1,
