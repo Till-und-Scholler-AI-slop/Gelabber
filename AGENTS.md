@@ -119,6 +119,34 @@ Desktop (`desktop/`) is its own Cargo workspace and needs a prebuilt libwebrtc
 package; see `desktop/README.md` ("Native app" for the native egui app's build,
 smoke test, parity and packages).
 
+## Tests
+
+These rules hold for every test you add or change.
+
+- **A test** states behaviour that a person or another program relies on,
+  and fails when that behaviour breaks. Before you add one, name the
+  regression it catches. A test that repeats a constant, reads back its own
+  mock, or compares source text where a lint rule can do the job catches
+  none; leave it out.
+- **A fix** comes with a test that fails without it, where the code can be
+  tested. The pull request shows that test failing on the commit before the
+  fix.
+- **A failing test** passes by fixing the code. Change its expectation only
+  when the behaviour changed on purpose, and say so in the pull request. If
+  a test contradicts the task or cannot pass honestly, stop and report it.
+- **Timing:** functional tests wait for an event or a state, or use a clock
+  the test controls; they never synchronise with a `sleep` or assert a
+  wall-clock bound. A raised timeout states its cause in the commit message.
+- **Prerequisites:** a test whose service, tool or file is missing in CI
+  fails there; it never passes by returning early. `#[ignore]`, `.skip` and
+  their kin name the issue (`GEL-<n>`) that ends them.
+- **Where tests run:** every test runs in a workflow. A check that only runs
+  by hand is not a test: wire it into a workflow or leave it out.
+- **Code for an older version** names the version that removes it; its
+  tests go with it.
+- **Flaky tests:** when a test fails on code that did not change, open an
+  issue with a link to the failing run before you re-run it.
+
 ## CI workflows (`.github/workflows`)
 
 The rules for workflows are in `.claude/rules/ci-workflows.md`. Read them
