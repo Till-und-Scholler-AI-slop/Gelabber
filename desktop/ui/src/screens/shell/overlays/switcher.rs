@@ -270,7 +270,7 @@ pub fn shortcut_groups(push_to_talk: Option<&str>) -> Vec<(&'static str, Vec<Sho
                 // Whatever is open takes Esc first (chat `overlay_open`).
                 (keys(&["Esc"]), shell::shortcuts_escape()),
                 (keys(&[shift, "Esc"]), shell::shortcuts_server_read()),
-                // The desktop app's own (setup.rs), as "Server wechseln …".
+                // The desktop app's own (setup.rs), as "Instanz wechseln …".
                 (keys(&[ctrl, shift, "S"]), shell::shortcuts_switch_server()),
                 (keys(&[ctrl, "/"]), shell::shortcuts_help()),
             ],

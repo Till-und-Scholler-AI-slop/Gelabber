@@ -1,9 +1,9 @@
 // The setup page as the desktop app draws it (desktop/ui/src/setup.rs), in
-// the sign-in pages' frame: checks and stores the server, then opens it.
-// Opened via "Server wechseln" (Ctrl+Shift+S or the user menu), it carries
-// the current server in ?server= and offers the way back to it; when that
-// server did not answer at start, ?error= says why in words and ?detail=
-// what the system said. Where the app installs updates itself, it shows
+// the sign-in pages' frame: checks and stores the instance, then opens it.
+// Opened via "Instanz wechseln" (Ctrl+Shift+S or the user menu), it carries
+// the current instance in ?server= and offers the way back to it; ?error=
+// says why the last check failed in words and ?detail= what the system
+// said. Where the app installs updates itself, it shows
 // their state and installs one that is there.
 const form = document.getElementById("server-form");
 const input = document.getElementById("server");
@@ -29,7 +29,7 @@ async function connect(server) {
   try {
     await window.__TAURI_INTERNALS__.invoke("set_server", { server });
   } catch (failure) {
-    showError("Der Server ist nicht erreichbar.", String(failure));
+    showError("Die Instanz ist nicht erreichbar.", String(failure));
   } finally {
     submit.disabled = back.disabled = false;
     submit.textContent = "Verbinden";
@@ -44,7 +44,7 @@ if (current) {
   back.querySelector("span").textContent = new URL(current).host;
   back.hidden = false;
   back.addEventListener("click", () => connect(current));
-  if (!failure) document.getElementById("title").textContent = "Server wechseln";
+  if (!failure) document.getElementById("title").textContent = "Instanz wechseln";
 }
 if (failure) {
   showError(failure, params.get("detail"));

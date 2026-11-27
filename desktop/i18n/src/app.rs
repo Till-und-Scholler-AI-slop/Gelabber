@@ -1,5 +1,5 @@
 //! The app around the screens: the frame's shared texts (skip link,
-//! session recovery, sign-out strip), the server setup, updates, the tray,
+//! session recovery, sign-out strip), the instance setup, updates, the tray,
 //! system notifications, files, push-to-talk and the single instance.
 //! Texts the web has too keep its wording (shell, chat, themes); the
 //! native-only ones are written in the same tone.
@@ -17,37 +17,45 @@ crate::strings! {
     recovery_signing_out = "Wird abgemeldet…" | "Signing out…";
     recovery_sign_out_again = "Erneut abmelden" | "Sign out again";
 
-    // The server setup (native only).
-    setup_guidance = "Die Adresse bekommst du von der Person, die den Server betreibt."
-        | "You get the address from the person who runs the server.";
-    setup_error_refused = "Server antwortet nicht – stimmen Adresse und Port?"
-        | "Server is not answering – are the address and port right?";
-    setup_error_timed_out = "Keine Antwort vom Server – läuft er und stimmt die Adresse?"
-        | "No answer from the server – is it running and is the address right?";
+    // The instance setup (native only). "Instanz": the Gelabber
+    // installation the app connects to; "Server" is a community there.
+    setup_guidance = "Die Adresse bekommst du von der Person, die die Instanz betreibt."
+        | "You get the address from the person who runs the instance.";
+    setup_error_refused = "Die Instanz antwortet nicht – stimmen Adresse und Port?"
+        | "The instance isn’t answering – are the address and port right?";
+    setup_error_timed_out = "Keine Antwort von der Instanz – läuft sie und stimmt die Adresse?"
+        | "No answer from the instance – is it running and is the address right?";
     setup_error_offline = "Kein Netzwerk – ist dein Computer online?"
         | "No network – is your computer online?";
-    setup_error_host_unreachable = "Der Server ist von hier aus nicht erreichbar – bist du im richtigen Netz?"
-        | "The server can’t be reached from here – are you on the right network?";
-    setup_error_unreachable = "Der Server ist nicht erreichbar." | "The server can’t be reached.";
-    setup_error_not_gelabber = "Unter dieser Adresse läuft kein Gelabber-Server."
-        | "There is no Gelabber server at this address.";
-    setup_error_server_trouble = "Der Server hat gerade ein Problem – versuch es gleich noch einmal."
-        | "The server has a problem right now – try again in a moment.";
-    setup_error_tls = "Keine sichere Verbindung zum Server möglich."
-        | "No secure connection to the server is possible.";
-    setup_error_tls_certificate = "Keine sichere Verbindung zum Server möglich – sein Zertifikat wird nicht anerkannt."
-        | "No secure connection to the server is possible – its certificate isn’t recognised.";
-    setup_error_empty = "Gib die Adresse deines Gelabber-Servers ein."
-        | "Enter the address of your Gelabber server.";
-    setup_error_no_address = "Die Adresse beginnt mit https:// oder http://, zum Beispiel https://gelabber.example.org."
-        | "The address starts with https:// or http://, for example https://gelabber.example.org.";
-    setup_title_switch = "Server wechseln" | "Switch server";
-    setup_title_connect = "Server verbinden" | "Connect to a server";
-    setup_lead = "Mit welchem Gelabber-Server soll sich die App verbinden?"
-        | "Which Gelabber server should the app connect to?";
-    setup_address_label = "Serveradresse" | "Server address";
+    setup_error_host_unreachable = "Die Instanz ist von hier aus nicht erreichbar – bist du im richtigen Netz?"
+        | "The instance can’t be reached from here – are you on the right network?";
+    setup_error_unreachable = "Die Instanz ist nicht erreichbar." | "The instance can’t be reached.";
+    setup_error_not_gelabber = "Unter dieser Adresse läuft keine Gelabber-Instanz."
+        | "There is no Gelabber instance at this address.";
+    setup_error_server_trouble = "Die Instanz hat gerade ein Problem – versuch es gleich noch einmal."
+        | "The instance has a problem right now – try again in a moment.";
+    setup_error_tls = "Keine sichere Verbindung zur Instanz möglich."
+        | "No secure connection to the instance is possible.";
+    setup_error_tls_certificate = "Keine sichere Verbindung zur Instanz möglich – ihr Zertifikat wird nicht anerkannt."
+        | "No secure connection to the instance is possible – its certificate isn’t recognised.";
+    setup_error_empty = "Gib die Adresse deiner Gelabber-Instanz ein."
+        | "Enter the address of your Gelabber instance.";
+    setup_error_no_address = "Gib eine Webadresse ein, zum Beispiel gelabber.example.org."
+        | "Enter a web address, for example gelabber.example.org.";
+    setup_title_switch = "Instanz wechseln" | "Switch instance";
+    setup_title_connect = "Mit einer Instanz verbinden" | "Connect to an instance";
+    setup_lead = "Mit welcher Gelabber-Instanz soll sich die App verbinden?"
+        | "Which Gelabber instance should the app connect to?";
+    setup_address_label = "Adresse der Instanz" | "Instance address";
     setup_connect = "Verbinden" | "Connect";
     setup_connecting = "Verbinde…" | "Connecting…";
+    setup_retry_now = "Jetzt erneut versuchen" | "Retry now";
+    setup_use_another = "Andere Instanz verwenden" | "Use another instance";
+    setup_switch_in_call_title = "Anruf verlassen und Instanz wechseln?"
+        | "Leave the call and switch instance?";
+    setup_switch_in_call_message = "Du verlässt dabei den Sprachkanal."
+        | "This makes you leave the voice channel.";
+    setup_switch_in_call_confirm = "Instanz wechseln" | "Switch instance";
     setup_updates_title = "Updates" | "Updates";
     setup_install_now = "Jetzt installieren" | "Install now";
     setup_installing = "Wird installiert…" | "Installing…";
@@ -138,12 +146,26 @@ pub fn setup_error_not_found(host: &str) -> String {
 /// The setup's error for a redirect to another origin.
 pub fn setup_error_redirect(to: &str) -> String {
     match get() {
-        Locale::De => {
-            format!(
-                "Der Server leitet auf {to} weiter. Gib diese Adresse ein, wenn du ihr vertraust."
-            )
-        }
-        Locale::En => format!("The server redirects to {to}. Enter this address if you trust it."),
+        Locale::De => format!(
+            "Die Instanz leitet auf {to} weiter. Nimm diese Adresse nur, wenn du ihr vertraust."
+        ),
+        Locale::En => format!("The instance redirects to {to}. Only use it if you trust it."),
+    }
+}
+
+/// The button that takes over the address a redirect named.
+pub fn setup_use_address(to: &str) -> String {
+    match get() {
+        Locale::De => format!("{to} verwenden"),
+        Locale::En => format!("Use {to}"),
+    }
+}
+
+/// The page while the stored instance does not answer at start.
+pub fn setup_cannot_reach(host: &str) -> String {
+    match get() {
+        Locale::De => format!("{host} ist nicht erreichbar"),
+        Locale::En => format!("Can’t reach {host}"),
     }
 }
 

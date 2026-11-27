@@ -1,16 +1,17 @@
-//! The desktop app's setup screen: asks for the server address, checks that
-//! a Gelabber server answers there, then hands the window over to
-//! [`GelabberApp`]. It sits in the front-door frame of the sign-in pages
-//! ([`layout::page`]: artwork, icon and wordmark, one card). "Server
-//! wechseln …" in the user menu and Ctrl+Shift+S come back here with the
-//! way back to the current server; a stored server that does not answer at
-//! start shows it with the reason. Where the app installs updates itself,
-//! it can install one from here too (desktop/parity/reference/setup is the
-//! parity reference).
+//! The desktop app's setup screen: asks for the instance's address (the
+//! Gelabber installation; "server" in the app is a community), checks that
+//! Gelabber answers there, then hands the window over to [`GelabberApp`].
+//! It sits in the front-door frame of the sign-in pages ([`layout::page`]:
+//! artwork, icon and wordmark, one card). "Instanz wechseln …" in the user
+//! menu and Ctrl+Shift+S come back here with the way back to the current
+//! instance, after asking while a call runs; a stored instance that does
+//! not answer at start shows a page that retries by itself (GEL-129).
+//! Where the app installs updates itself, it can install one from here too
+//! (desktop/parity/reference/setup is the parity reference).
 
 use std::net::TcpStream;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use egui::{Color32, Id, Key, Modifiers, Rect, Sense, Ui, Vec2};
 use gelabber_client::Client;
@@ -36,6 +37,14 @@ pub type Prepare = Box<dyn Fn(&Client)>;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// The whole of the request that asks whether Gelabber answers.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// The waits between attempts while the stored instance does not answer at
+/// start; the last one repeats.
+const RETRY_WAITS: [Duration; 4] = [
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+    Duration::from_secs(60),
+];
 
 /// Why a server cannot be used: in words for people at the field, and what
 /// the system said, for a muted line under it.
@@ -43,6 +52,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct Failure {
     pub message: String,
     pub detail: Option<String>,
+    /// The origin another address redirects to: offered as "Use …", never
+    /// followed by itself.
+    pub redirect: Option<String>,
 }
 
 impl Failure {
@@ -50,6 +62,7 @@ impl Failure {
         Self {
             message: message.into(),
             detail,
+            redirect: None,
         }
     }
 
@@ -95,13 +108,60 @@ impl Setup {
     }
 }
 
+/// The stored instance did not answer at start: tried again by itself,
+/// with growing waits, until it answers or the user picks another one.
+struct Retry {
+    origin: String,
+    /// Why the last attempt failed.
+    failure: Failure,
+    /// Failed attempts so far; the start-up check is the first.
+    failures: usize,
+    /// When the next attempt starts.
+    next: Instant,
+    probe: Option<Probe>,
+}
+
+impl Retry {
+    fn new(origin: String, failure: Failure, now: Instant) -> Self {
+        Self {
+            origin,
+            failure,
+            failures: 1,
+            next: now + RETRY_WAITS[0],
+            probe: None,
+        }
+    }
+
+    /// Whether an attempt should start now.
+    fn due(&self, now: Instant) -> bool {
+        self.probe.is_none() && now >= self.next
+    }
+
+    /// Another failed attempt: the next one waits longer.
+    fn failed(&mut self, failure: Failure, now: Instant) {
+        self.probe = None;
+        self.failure = failure;
+        self.failures += 1;
+        self.next = now + RETRY_WAITS[(self.failures - 1).min(RETRY_WAITS.len() - 1)];
+    }
+
+    /// Whole seconds until the next attempt, rounded up.
+    fn seconds_left(&self, now: Instant) -> u64 {
+        let left = self.next.saturating_duration_since(now);
+        left.as_secs() + u64::from(left.subsec_nanos() > 0)
+    }
+}
+
 enum Stage {
     Setup(Setup),
+    Retry(Retry),
     App {
         app: Box<GelabberApp>,
         origin: String,
-        /// The start-up check of a stored server.
+        /// The start-up check of a stored instance.
         probe: Option<Probe>,
+        /// "Instanz wechseln" during a call: asking whether to leave it.
+        asking: bool,
     },
 }
 
@@ -153,8 +213,8 @@ impl Launcher {
             match server_origin(&server) {
                 Ok(origin) => {
                     launcher.open(&cc.egui_ctx, &origin, false);
-                    // Like the Tauri app: open at once, and show the setup with
-                    // the reason when the server does not answer.
+                    // Like the Tauri app: open at once; when the instance does
+                    // not answer, the page that tries again.
                     if let Stage::App { probe, .. } = &mut launcher.stage {
                         *probe = Some(start_probe(&cc.egui_ctx, origin, false));
                     }
@@ -182,6 +242,7 @@ impl Launcher {
                 app: Box::new(GelabberApp::with_context(&cc.egui_ctx, client, route)),
                 origin,
                 probe: None,
+                asking: false,
             },
             remember: Box::new(|_| {}),
             prepare: None,
@@ -205,11 +266,11 @@ impl Launcher {
         }
     }
 
-    /// The running app, once a server was chosen.
+    /// The running app, once an instance was chosen.
     pub fn app(&mut self) -> Option<&mut GelabberApp> {
         match &mut self.stage {
             Stage::App { app, .. } => Some(app.as_mut()),
-            Stage::Setup(_) => None,
+            Stage::Setup(_) | Stage::Retry(_) => None,
         }
     }
 
@@ -219,12 +280,18 @@ impl Launcher {
         match &self.stage {
             Stage::App { app, probe, .. } => app.busy() || probing(probe),
             Stage::Setup(setup) => probing(&setup.probe),
+            Stage::Retry(retry) => probing(&retry.probe),
         }
     }
 
     /// Whether the setup screen shows.
     pub fn in_setup(&self) -> bool {
         matches!(self.stage, Stage::Setup(_))
+    }
+
+    /// Whether the page shows that tries the stored instance again.
+    pub fn in_retry(&self) -> bool {
+        matches!(self.stage, Stage::Retry(_))
     }
 
     /// Like the Tauri app's `set_server`: only an address where Gelabber
@@ -235,7 +302,11 @@ impl Launcher {
         };
         setup.error = None;
         match server_origin(input) {
-            Ok(origin) => setup.probe = Some(start_probe(ctx, origin, true)),
+            Ok(origin) => {
+                // The field shows what is tried: with https:// added.
+                setup.address = origin.clone();
+                setup.probe = Some(start_probe(ctx, origin, true));
+            }
             Err(failure) => setup.error = Some(failure),
         }
     }
@@ -253,6 +324,7 @@ impl Launcher {
                     app: Box::new(GelabberApp::with_context(ctx, client, None)),
                     origin: origin.to_owned(),
                     probe: None,
+                    asking: false,
                 };
             }
             Err(e) => {
@@ -266,14 +338,16 @@ impl Launcher {
         }
     }
 
-    /// "Server wechseln": the setup screen with the current server filled in.
-    fn show_setup(&mut self, current: String, error: Option<Failure>) {
-        self.stage = Stage::Setup(Setup::new(Some(current), error));
+    /// "Instanz wechseln": the setup screen with the current instance
+    /// filled in.
+    fn show_setup(&mut self, current: String) {
+        self.stage = Stage::Setup(Setup::new(Some(current), None));
     }
 }
 
-/// Asks for the setup screen ("Server wechseln …"); the [`Launcher`]
-/// around the app shows it after this frame.
+/// Asks for the setup screen ("Instanz wechseln …"); the [`Launcher`]
+/// around the app shows it after this frame, or first asks whether to
+/// leave a running call.
 pub fn switch_server(ctx: &egui::Context) {
     ctx.data_mut(|d| d.insert_temp(switch_id(), true));
 }
@@ -318,12 +392,19 @@ fn start_probe(ctx: &egui::Context, origin: String, gelabber: bool) -> Probe {
 }
 
 /// `server_origin` of the Tauri app: http(s) with a host, reduced to its
-/// origin.
+/// origin. Without a scheme it is https; http only when typed.
 pub fn server_origin(input: &str) -> Result<String, Failure> {
     let input = input.trim();
     if input.is_empty() {
         return Err(Failure::new(texts::setup_error_empty(), None));
     }
+    let with_scheme;
+    let input = if input.contains("://") {
+        input
+    } else {
+        with_scheme = format!("https://{input}");
+        &with_scheme
+    };
     let url =
         url::Url::parse(input).map_err(|_| Failure::new(texts::setup_error_no_address(), None))?;
     if !matches!(url.scheme(), "https" | "http") || url.host().is_none() {
@@ -423,10 +504,13 @@ fn check_gelabber(origin: &str) -> Result<String, Failure> {
                 .and_then(|l| l.to_str().ok())
                 .and_then(|l| response.url().join(l).ok());
             return Err(match to {
-                Some(to) => Failure::new(
-                    texts::setup_error_redirect(&to.origin().ascii_serialization()),
-                    detail,
-                ),
+                Some(to) => {
+                    let to = to.origin().ascii_serialization();
+                    Failure {
+                        redirect: Some(to.clone()),
+                        ..Failure::new(texts::setup_error_redirect(&to), detail)
+                    }
+                }
                 None => Failure::new(texts::setup_error_not_gelabber(), detail),
             });
         }
@@ -495,8 +579,17 @@ impl eframe::App for Launcher {
         // Ctrl+Shift+S: the setup screen, from every page (Tauri's SHORTCUTS).
         let shortcut =
             ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S));
+        let now = Instant::now();
         match &mut self.stage {
-            Stage::App { app, origin, probe } => {
+            Stage::App {
+                app,
+                origin,
+                probe,
+                asking,
+            } => {
+                // The question on top takes Esc from the page under it.
+                let escape =
+                    *asking && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
                 eframe::App::ui(app.as_mut(), ui, frame);
                 let failed = probe
                     .as_ref()
@@ -506,7 +599,28 @@ impl eframe::App for Launcher {
                     *probe = None;
                 }
                 let origin = origin.clone();
-                let switch = take_switch(&ctx) || shortcut;
+                let mut switch = take_switch(&ctx) || shortcut;
+                if switch && in_call(app) {
+                    // Nothing happens before the answer.
+                    *asking = true;
+                    switch = false;
+                }
+                if *asking {
+                    match crate::screens::shell::overlays::confirm::dialog(
+                        &ctx,
+                        texts::setup_switch_in_call_title(),
+                        Some(texts::setup_switch_in_call_message()),
+                        texts::setup_switch_in_call_confirm(),
+                        false,
+                        escape,
+                    ) {
+                        Some(yes) => {
+                            *asking = false;
+                            switch = yes;
+                        }
+                        None => ctx.request_repaint(),
+                    }
+                }
                 if switch || failed.is_some() {
                     // Leaving for the setup page ends the call, as the
                     // Tauri window's navigation does; the server is told.
@@ -515,12 +629,51 @@ impl eframe::App for Launcher {
                     crate::screens::voice::window::forget(&ctx);
                 }
                 if switch {
-                    self.show_setup(origin, None);
+                    self.show_setup(origin);
                 } else if let Some(reason) = failed {
-                    self.show_setup(origin, Some(reason));
+                    self.stage = Stage::Retry(Retry::new(origin, reason, now));
                 }
-                if self.in_setup() {
+                if !matches!(self.stage, Stage::App { .. }) {
                     ctx.request_repaint();
+                }
+            }
+            Stage::Retry(retry) => {
+                match retry.probe.as_ref().and_then(|p| p.lock().take()) {
+                    Some(Ok(origin)) => {
+                        self.open(&ctx, &origin, false);
+                        ctx.request_repaint();
+                        return;
+                    }
+                    Some(Err(failure)) => retry.failed(failure, now),
+                    None => {}
+                }
+                let action = retry_page(ui, retry, now);
+                self.setup_bg.set(Theme::of(&ctx).c.bg);
+                match action {
+                    Some(RetryAction::Now) => retry.next = now,
+                    Some(RetryAction::Another) => {
+                        let mut setup = Setup::new(Some(retry.origin.clone()), None);
+                        // "Erneut verbinden mit" stays the way back.
+                        setup.retry = true;
+                        setup.address.clear();
+                        self.stage = Stage::Setup(setup);
+                        ctx.request_repaint();
+                        return;
+                    }
+                    None => {}
+                }
+                if retry.due(now) {
+                    retry.probe = Some(start_probe(&ctx, retry.origin.clone(), false));
+                }
+                if retry.probe.is_none() {
+                    // The countdown, once a second.
+                    let left = retry.next.saturating_duration_since(now);
+                    let tick = Duration::from_nanos(u64::from(left.subsec_nanos()));
+                    ctx.request_repaint_after(if tick.is_zero() {
+                        Duration::from_secs(1)
+                    } else {
+                        tick
+                    });
                 }
             }
             Stage::Setup(setup) => {
@@ -533,6 +686,7 @@ impl eframe::App for Launcher {
                     (None, Some(_)) if checking => None,
                     (None, Some(Action::Connect)) => Some(setup.address.clone()),
                     (None, Some(Action::Back)) => setup.current.clone(),
+                    (None, Some(Action::Use(to))) => Some(to),
                 };
                 match checked {
                     Some(Ok(origin)) => self.open(&ctx, &origin, true),
@@ -553,14 +707,92 @@ impl eframe::App for Launcher {
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
         match &self.stage {
             Stage::App { app, .. } => eframe::App::clear_color(app.as_ref(), visuals),
-            Stage::Setup(_) => egui::Rgba::from(self.setup_bg.get()).to_array(),
+            Stage::Setup(_) | Stage::Retry(_) => egui::Rgba::from(self.setup_bg.get()).to_array(),
         }
     }
+}
+
+/// Whether leaving for the setup would end a call (`logOut`'s test).
+fn in_call(app: &GelabberApp) -> bool {
+    use gelabber_call::CallStatus;
+    matches!(
+        app.call().state().status,
+        CallStatus::Connecting | CallStatus::Connected | CallStatus::Reconnecting
+    )
 }
 
 enum Action {
     Connect,
     Back,
+    /// The address a redirect named.
+    Use(String),
+}
+
+enum RetryAction {
+    Now,
+    Another,
+}
+
+/// "Can't reach {host}": why, when the next attempt starts, and the ways
+/// out, in the setup's frame.
+fn retry_page(ui: &mut Ui, retry: &Retry, now: Instant) -> Option<RetryAction> {
+    let ctx = ui.ctx().clone();
+    ui.painter()
+        .rect_filled(ctx.content_rect(), 0.0, Theme::of(&ctx).c.bg);
+    let artwork = layout::wide(&ctx)
+        .then(|| layout::bundled_artwork(&ctx))
+        .flatten();
+    let mut action = None;
+    layout::page(ui, "setup-retry", artwork.as_ref(), false, &[], |ui| {
+        let theme = Theme::of(ui.ctx());
+        let width = ui.available_width();
+        let title = texts::setup_cannot_reach(&host_of(&retry.origin));
+        let heading = Block::wrapped(ui, &title, layout::HEADING, theme.c.text, width);
+        let size = Vec2::new(width, layout_unit(heading.height()));
+        let (rect, shown) = ui.allocate_exact_size(size, Sense::hover());
+        heading.paint(ui.painter(), rect.min);
+        crate::widgets::announce(&shown, egui::Role::Heading, &title);
+        let reason = Block::wrapped(ui, &retry.failure.message, text::BODY, theme.c.text, width);
+        let shown = text::show(ui, &reason);
+        crate::widgets::announce(&shown, egui::Role::Alert, &retry.failure.message);
+        if let Some(detail) = retry.failure.detail.as_deref() {
+            ui.add_space(space::S1);
+            let line = texts::setup_details(detail);
+            let block = Block::wrapped(ui, &line, text::META, theme.c.muted, width);
+            let shown = text::show(ui, &block);
+            crate::widgets::announce(&shown, egui::Role::Label, &line);
+        }
+        ui.add_space(space::S4);
+        let probing = retry.probe.is_some();
+        let status = if probing {
+            texts::setup_connecting().to_owned()
+        } else {
+            texts::recovery_retry_in(retry.seconds_left(now))
+        };
+        let block = Block::wrapped(ui, &status, text::META, theme.c.muted, width);
+        let shown = text::show(ui, &block);
+        crate::widgets::announce(&shown, egui::Role::Status, &status);
+        ui.add_space(space::S5);
+        if submit(
+            ui,
+            texts::setup_retry_now(),
+            texts::setup_connecting(),
+            probing,
+        ) {
+            action = Some(RetryAction::Now);
+        }
+        ui.add_space(space::S2);
+        if ui
+            .add(Button::new(texts::setup_use_another()).ghost().fill())
+            .clicked()
+        {
+            action = Some(RetryAction::Another);
+        }
+        if let Some(view) = update::setup_view(ui.ctx()).filter(|v| v.installs) {
+            updates_section(ui, &view);
+        }
+    });
+    action
 }
 
 /// The setup card in the sign-in pages' frame, in the active theme (the
@@ -599,7 +831,7 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
             .autofocus(true)
             .show(ui);
         if let Some(detail) = error.as_ref().and_then(|e| e.detail.as_deref()) {
-            // What the system said, for whoever runs the server.
+            // What the system said, for whoever runs the instance.
             ui.add_space(space::S1);
             let line = texts::setup_details(detail);
             let width = ui.available_width();
@@ -608,6 +840,20 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
             let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
             block.paint(ui.painter(), rect.min);
             crate::widgets::announce(&response, egui::Role::Label, &line);
+        }
+        if let Some(to) = error.as_ref().and_then(|e| e.redirect.clone()) {
+            // Never followed by itself: the user takes it over.
+            ui.add_space(space::S3);
+            if ui
+                .add(
+                    Button::new(&texts::setup_use_address(&to))
+                        .fill()
+                        .disabled(checking),
+                )
+                .clicked()
+            {
+                action = Some(Action::Use(to));
+            }
         }
         if field.response.changed() {
             setup.error = None;
@@ -704,31 +950,32 @@ fn updates_section(ui: &mut Ui, view: &SetupView) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Failure, Launcher, check_gelabber, classify, host_of, redirect_allowed, request_failure,
-        server_origin,
+        Failure, Launcher, RETRY_WAITS, Retry, check_gelabber, classify, host_of, redirect_allowed,
+        request_failure, server_origin,
     };
     use crate::app::testkit::{FakeApi, Reply, click_role, launcher, wait_for, wait_for_label};
     use crate::platform::paths::testing::TempConfig;
     use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT, Queryable};
     use gelabber_i18n::app as texts;
+    use std::time::{Duration, Instant};
 
     fn host(api: &FakeApi) -> String {
         api.origin.trim_start_matches("http://").to_owned()
     }
 
-    /// "Server wechseln …" in the account menu: the setup with the way back.
+    /// "Instanz wechseln …" in the account menu: the setup with the way back.
     #[test]
     fn the_user_menu_switches_servers() {
         let _config = TempConfig::new("setup-menu");
         let api = FakeApi::start(true, |_, _, _| None);
         let mut harness = launcher(&api, "/");
         crate::app::testkit::open_account(&mut harness, "Lena");
-        click_role(&mut harness, Role::MenuItem, "Server wechseln …");
+        click_role(&mut harness, Role::MenuItem, "Instanz wechseln …");
         wait_for(&mut harness, "the setup", |h| h.state().in_setup());
         let back = format!("Zurück zu {}", host(&api));
         wait_for_label(&mut harness, &back);
-        let field = harness.get_by_label("Serveradresse");
+        let field = harness.get_by_label("Adresse der Instanz");
         assert_eq!(field.value().as_deref(), Some(api.origin.as_str()));
         // Back: checked, then the app on the same server again.
         let asked = api.seen.lock().len();
@@ -759,32 +1006,163 @@ mod tests {
         assert!(harness.query_by_label("Verbinden").is_some());
     }
 
-    /// A stored server that does not answer: the setup with the reason in
-    /// words at the field, what the system said under it, and "Erneut
-    /// verbinden mit".
-    #[test]
-    fn an_unreachable_server_starts_in_setup() {
-        let _config = TempConfig::new("setup-unreachable");
-        // A port nothing listens on: bound once, then given up.
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
+    /// A port nothing listens on: bound once, then given up.
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
             .unwrap()
-            .port();
-        let server = format!("http://127.0.0.1:{port}");
-        let mut harness = egui_kittest::Harness::builder()
+            .port()
+    }
+
+    fn start_with(server: String) -> egui_kittest::Harness<'static, Launcher> {
+        egui_kittest::Harness::builder()
             .with_size(egui::vec2(1280.0, 800.0))
             .with_max_steps(10_000)
             .build_eframe(move |cc| {
                 Launcher::with_prepare(cc, Some(server.clone()), Box::new(|_| {}), None)
-            });
-        wait_for(&mut harness, "the setup", |h| h.state().in_setup());
-        let retry = format!("Erneut verbinden mit 127.0.0.1:{port}");
-        wait_for_label(&mut harness, &retry);
+            })
+    }
+
+    /// A stored instance that does not answer at start: the page that tries
+    /// again, with the reason in words, what the system said, when the next
+    /// attempt starts, and the ways out.
+    #[test]
+    fn an_unreachable_instance_is_retried_at_start() {
+        let _config = TempConfig::new("setup-unreachable");
+        let port = free_port();
+        let mut harness = start_with(format!("http://127.0.0.1:{port}"));
+        wait_for(&mut harness, "the retry page", |h| h.state().in_retry());
+        wait_for_label(
+            &mut harness,
+            &format!("127.0.0.1:{port} ist nicht erreichbar"),
+        );
         let error = harness.get_by_label(texts::setup_error_refused());
         assert_eq!(error.accesskit_node().role(), Role::Alert);
         assert!(harness.query_by_label_contains("Details: ").is_some());
+        let next = harness.get_by_label_contains("Neuer Versuch in ");
+        assert_eq!(next.accesskit_node().role(), Role::Status);
+        assert!(harness.query_by_label("Jetzt erneut versuchen").is_some());
+        // Another instance: the setup, with the way back to this one.
+        click_role(&mut harness, Role::Button, "Andere Instanz verwenden");
+        wait_for(&mut harness, "the setup", |h| h.state().in_setup());
+        wait_for_label(
+            &mut harness,
+            &format!("Erneut verbinden mit 127.0.0.1:{port}"),
+        );
         assert!(harness.query_by_label_contains("Zurück zu").is_none());
+    }
+
+    /// "Jetzt erneut versuchen" once the instance answers: the app.
+    #[test]
+    fn retrying_opens_the_app_once_the_instance_answers() {
+        let _config = TempConfig::new("setup-retry-now");
+        let port = free_port();
+        let mut harness = start_with(format!("http://127.0.0.1:{port}"));
+        wait_for(&mut harness, "the retry page", |h| h.state().in_retry());
+        let _listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        click_role(&mut harness, Role::Button, "Jetzt erneut versuchen");
+        wait_for(&mut harness, "the app", |h| {
+            !h.state().in_retry() && !h.state().in_setup()
+        });
+    }
+
+    /// The waits grow, 5, 10, 30, then 60 s for good; "Jetzt" is a wait of
+    /// none.
+    #[test]
+    fn the_retries_wait_longer_each_time() {
+        let start = Instant::now();
+        let failure = || Failure::new("x", None);
+        let mut retry = Retry::new("http://127.0.0.1:1".into(), failure(), start);
+        assert!(!retry.due(start));
+        assert_eq!(retry.seconds_left(start), 5);
+        assert_eq!(retry.seconds_left(start + Duration::from_millis(4_200)), 1);
+        assert!(retry.due(start + RETRY_WAITS[0]));
+        let mut now = start;
+        let mut waits = Vec::new();
+        for _ in 0..5 {
+            now += Duration::from_secs(100);
+            retry.failed(failure(), now);
+            waits.push(retry.next - now);
+        }
+        let secs = |s| Duration::from_secs(s);
+        assert_eq!(waits, [secs(10), secs(30), secs(60), secs(60), secs(60)]);
+        // While an attempt runs, none starts.
+        retry.probe = Some(Default::default());
+        assert!(!retry.due(now + secs(3600)));
+    }
+
+    /// "Instanz wechseln …" during a call asks first; "Abbrechen" keeps the
+    /// call and the app, "Instanz wechseln" leaves both. Ctrl+Shift+S asks
+    /// the same.
+    #[test]
+    fn switching_instance_in_a_call_asks_first() {
+        let _config = TempConfig::new("setup-switch-call");
+        let api = FakeApi::start(true, |_, _, _| None);
+        let mut harness = launcher(&api, "/");
+        let call = harness.state_mut().app().unwrap().call().clone();
+        call.set_state(gelabber_call::CallState {
+            status: gelabber_call::CallStatus::Connected,
+            server: Some(uuid::Uuid::from_u128(1)),
+            channel: Some(uuid::Uuid::from_u128(2)),
+            ..Default::default()
+        });
+        let question = "Anruf verlassen und Instanz wechseln?";
+        crate::app::testkit::open_account(&mut harness, "Lena");
+        click_role(&mut harness, Role::MenuItem, "Instanz wechseln …");
+        wait_for_label(&mut harness, question);
+        assert!(
+            !harness.state().in_setup(),
+            "nothing happens before the answer"
+        );
+        assert_eq!(call.state().status, gelabber_call::CallStatus::Connected);
+        click_role(&mut harness, Role::Button, "Abbrechen");
+        wait_for(&mut harness, "the question to go", |h| {
+            h.query_by_label(question).is_none()
+        });
+        assert!(!harness.state().in_setup());
+        assert_eq!(call.state().status, gelabber_call::CallStatus::Connected);
+
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::S,
+        );
+        wait_for_label(&mut harness, question);
+        assert!(!harness.state().in_setup());
+        crate::app::testkit::click_last(&mut harness, Role::Button, "Instanz wechseln");
+        wait_for(&mut harness, "the setup", |h| h.state().in_setup());
+    }
+
+    /// A redirect to another address offers it as a button, which fills the
+    /// field and connects there.
+    #[test]
+    fn a_redirect_is_taken_over_by_a_click() {
+        let _config = TempConfig::new("setup-redirect");
+        let good = FakeApi::start(true, |_, _, _| None);
+        let target = format!("{}/api/auth/mail", good.origin);
+        let moved = FakeApi::start(true, move |_, path, _| {
+            (path == "/auth/mail").then(|| {
+                Reply::status(302, serde_json::json!({})).header("location", target.clone())
+            })
+        });
+        let origin = moved.origin.clone();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .with_max_steps(10_000)
+            .build_eframe(move |cc| {
+                Launcher::setup(cc, Some(origin.clone()), None, Box::new(|_| {}))
+            });
+        harness.run();
+        let use_label = format!("{} verwenden", good.origin);
+        assert!(harness.query_by_label(&use_label).is_none());
+        harness
+            .get_by_role_and_label(Role::Button, "Verbinden")
+            .click();
+        wait_for_label(&mut harness, &use_label);
+        assert!(!good.saw("GET /auth/mail"), "not followed by itself");
+        click_role(&mut harness, Role::Button, &use_label);
+        wait_for(&mut harness, "the app", |h| !h.state().in_setup());
+        assert!(good.saw("GET /auth/mail"));
     }
 
     /// An address where something answers, but not Gelabber, is not taken.
@@ -949,6 +1327,7 @@ mod tests {
             "{}",
             failure.message
         );
+        assert_eq!(failure.redirect.as_deref(), Some(good.origin.as_str()));
         assert!(!good.saw("GET /auth/mail"), "not followed");
         // Within the same origin a redirect is fine.
         let moved = check_gelabber(&format!("{}/moved", evil.origin));
@@ -1067,8 +1446,21 @@ mod tests {
             server_origin("file:///etc/passwd").unwrap_err().message,
             texts::setup_error_no_address()
         );
+        // Without a scheme: https; http only when typed.
         assert_eq!(
-            server_origin("chat.example.org").unwrap_err().message,
+            server_origin("chat.example.org").as_deref(),
+            Ok("https://chat.example.org")
+        );
+        assert_eq!(
+            server_origin(" localhost:5173/app ").as_deref(),
+            Ok("https://localhost:5173")
+        );
+        assert_eq!(
+            server_origin("http://chat.example.org").as_deref(),
+            Ok("http://chat.example.org")
+        );
+        assert_eq!(
+            server_origin("chat example").unwrap_err().message,
             texts::setup_error_no_address()
         );
         assert!(server_origin("  ").is_err());

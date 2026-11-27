@@ -720,7 +720,7 @@ entries (`.shell-menu-item`, `role="menuitem"`: min-height 36, padding 0 10, rad
 bearbeiten", "Feedback geben" (only while `GET /api/feedback/status` says `enabled`;
 opens the feedback dialog, ui-auth-settings-dialogs §6.10; while a reply is unread
 it ends with the `.unread-dot` and its name with ", neue Antwort auf dein Feedback"),
-"Betrieb" (operators), "Server wechseln …" (desktop app only, title
+"Betrieb" (operators), "Instanz wechseln …" (desktop app only, title
 "Strg+Umschalt+S"), then another separator and "Abmelden". No "Einstellungen": the
 gear is beside the avatar. Keys: ↓ in the status field goes to the first entry; ↑/↓
 move round the entries, Home/End jump, ↑ on the first entry goes back to the field;
@@ -808,7 +808,7 @@ The file has 49 icons (`Icons.tsx:21-460`); the rest belong to other areas.
 | DM sidebar | Nachrichten, Neue Nachricht, Noch keine Unterhaltungen., Unterhaltungen |
 | Header | Suchen, In dieser Unterhaltung suchen, Wörter oder eine Phrase in Anführungszeichen, Strg F, Benachrichtigungen, Stummgeschaltet, `Benachrichtigungen für <x>`, `… (stumm)`, Mitgliederliste, Mitgliederliste einblenden, Mitgliederliste ausblenden, Live, Zuschauen, Zum Kanal |
 | Member panel | Mitglieder, Online, Abwesend, Offline, ` — ` (em dash between label and count), ` · Du`, `Profil von <Name>`, Live, `Live in <channel>`, einem Sprachkanal, Im Sprachkanal, `In <ch>`, `Stumm in <ch>`, `Taub in <ch>`, Stumm, Taub |
-| User panel | Online, Abwesend, Offline, `<presence> · <status>`, Einstellungen, Benutzermenü, Benutzerkonto, Profil bearbeiten, Feedback geben, Benutzermenü, neue Antwort auf dein Feedback, Server wechseln …, Abmelden, Dein Status, Status, Speichern, Speichert…, Gespeichert., Nicht gespeichert – erneut versuchen |
+| User panel | Online, Abwesend, Offline, `<presence> · <status>`, Einstellungen, Benutzermenü, Benutzerkonto, Profil bearbeiten, Feedback geben, Benutzermenü, neue Antwort auf dein Feedback, Instanz wechseln …, Abmelden, Dein Status, Status, Speichern, Speichert…, Gespeichert., Nicht gespeichert – erneut versuchen |
 
 ---------------------------------------------------------------------------------
 

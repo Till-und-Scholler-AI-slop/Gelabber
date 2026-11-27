@@ -1,4 +1,4 @@
-// "Server wechseln …" in the account menu: the entry the web client showed
+// "Instanz wechseln …" in the account menu: the entry the web client showed
 // inside the Tauri app (removed in 0.9) before the line above "Abmelden",
 // which the native app keeps as its own
 // (desktop/ui/src/screens/shell/user_panel.rs). The reference of the parity
@@ -6,7 +6,7 @@
 (() => {
   if (window.top !== window) return;
   const label = () =>
-    document.documentElement.lang.startsWith("en") ? "Switch server…" : "Server wechseln …";
+    document.documentElement.lang.startsWith("en") ? "Switch instance…" : "Instanz wechseln …";
   const place = () => {
     const menu = document.querySelector(".user-account-menu");
     if (!menu) return;

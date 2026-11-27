@@ -262,7 +262,7 @@ enum MenuItem {
 
 /// The account menu's entries, in the web's order (`AccountMenu`):
 /// "Profil bearbeiten", "Feedback geben" while the instance takes feedback,
-/// "Betrieb" for operators, the app's own "Server wechseln …", and after a
+/// "Betrieb" for operators, the app's own "Instanz wechseln …", and after a
 /// line "Abmelden". No "Einstellungen": the gear is beside the avatar.
 fn menu_items(operator: bool, feedback: bool) -> Vec<(MenuItem, &'static str)> {
     let mut items = vec![(MenuItem::Profile, shell::user_panel_edit_profile())];
@@ -272,7 +272,7 @@ fn menu_items(operator: bool, feedback: bool) -> Vec<(MenuItem, &'static str)> {
     if operator {
         items.push((MenuItem::Operator, shell::user_panel_operator()));
     }
-    // "Server wechseln …" is the desktop app's own (isDesktopApp).
+    // "Instanz wechseln …" is the desktop app's own (isDesktopApp).
     items.push((MenuItem::SwitchServer, shell::user_panel_switch_server()));
     items.push((MenuItem::SignOut, shell::user_panel_sign_out()));
     items
@@ -1105,7 +1105,7 @@ mod tests {
 
     /// The entries in the web's order (`AccountMenu`): "Profil bearbeiten",
     /// "Feedback geben" while the instance takes feedback, "Betrieb" for
-    /// operators, the app's own "Server wechseln …", then "Abmelden". No
+    /// operators, the app's own "Instanz wechseln …", then "Abmelden". No
     /// "Einstellungen": the gear is beside the avatar.
     #[test]
     fn the_menu_keeps_the_web_order() {
@@ -1166,7 +1166,7 @@ mod tests {
                 "Profil bearbeiten",
                 "Feedback geben",
                 "Betrieb",
-                "Server wechseln …",
+                "Instanz wechseln …",
                 "Abmelden"
             ]
         );
@@ -1384,7 +1384,7 @@ mod tests {
             [
                 "Profil bearbeiten",
                 "Betrieb",
-                "Server wechseln …",
+                "Instanz wechseln …",
                 "Abmelden"
             ]
         );

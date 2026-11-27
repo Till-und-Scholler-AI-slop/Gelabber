@@ -60,8 +60,8 @@ crate::strings! {
     user_panel_sign_out = "Abmelden" | "Sign out";
     user_panel_status = "Status" | "Status";
     user_panel_saving = "Speichert…" | "Saving…";
-    /// The desktop app's own menu item: back to the server setup.
-    user_panel_switch_server = "Server wechseln …" | "Switch server…";
+    /// The desktop app's own menu item: back to the instance setup.
+    user_panel_switch_server = "Instanz wechseln …" | "Switch instance…";
 
     row_menu_not_saved = "Nicht gespeichert." | "Not saved.";
     row_menu_mark_read = "Als gelesen markieren" | "Mark as read";
@@ -110,9 +110,9 @@ crate::strings! {
     shortcuts_fullscreen_mute_keys = "M / Leertaste" | "M / Space";
     shortcuts_fullscreen_mute = "Im Vollbild: Stummschaltung ein oder aus"
         | "In full screen: mute on or off";
-    /// The desktop app's own shortcut, as "Server wechseln …".
-    shortcuts_switch_server = "Mit einem anderen Gelabber-Server verbinden"
-        | "Connect to another Gelabber server";
+    /// The desktop app's own shortcut, as "Instanz wechseln …".
+    shortcuts_switch_server = "Mit einer anderen Gelabber-Instanz verbinden"
+        | "Connect to another Gelabber instance";
 
     someone = "Jemand" | "Someone";
     overview = "Übersicht" | "Overview";

@@ -1972,7 +1972,7 @@ mod tests {
             package: Some((format!("http://{addr}/setup.exe"), SIG_A.into())),
         }));
         updater.dismissed = Some("0.9.1".into());
-        // The call left on the way here ("Server wechseln …") ended just now.
+        // The call left on the way here ("Instanz wechseln …") ended just now.
         assert!(updater.lock.locked(true, Instant::now()));
         ask(&ctx, SetupAsk::Install);
         updater.setup(&ctx);

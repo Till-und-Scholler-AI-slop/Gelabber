@@ -286,7 +286,7 @@ pub(crate) fn op_pending(app: &AppCtx, key: &str) -> bool {
 /// (or a gallery preview), text size and reduced motion. Cheap; the shell
 /// calls it every frame so every page follows.
 /// Drops what the window knows about the previous account's themes (a
-/// new app after "Server wechseln").
+/// new app after "Instanz wechseln").
 pub fn forget_account(ctx: &egui::Context) {
     themes::forget(ctx);
 }

@@ -786,7 +786,7 @@ mod tests {
         drop(config);
     }
 
-    /// "Server wechseln …" in a push-to-talk call: the setup screen has no
+    /// "Instanz wechseln …" in a push-to-talk call: the setup screen has no
     /// call, so the global key (hook, portal session) is let go.
     #[test]
     fn the_setup_screen_lets_the_global_key_go() {

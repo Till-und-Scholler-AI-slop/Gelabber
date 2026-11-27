@@ -93,7 +93,7 @@ fn due(w: &Windows, serial: impl Fn(VideoKey) -> Option<u64>) -> Vec<VideoKey> {
         .collect()
 }
 
-/// A new app on this context ("Server wechseln"): the old call's windows
+/// A new app on this context ("Instanz wechseln"): the old call's windows
 /// close, and the old call (with its client) is not kept alive for them.
 pub fn forget(ctx: &egui::Context) {
     ctx.data_mut(|d| d.remove::<Windows>(id()));
@@ -321,7 +321,7 @@ mod tests {
         );
     }
 
-    /// "Server wechseln" makes a new app on the same context: the windows
+    /// "Instanz wechseln" makes a new app on the same context: the windows
     /// let go of the old call, so it and its client can end.
     #[test]
     fn a_new_app_lets_the_old_call_go() {

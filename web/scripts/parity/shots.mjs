@@ -70,7 +70,7 @@ function stopCall(child) {
 
 // Scenes with `desktop`: the web client as the Tauri app showed it, which the
 // native app follows: without install offers (NO_INSTALL) and with the app's
-// own "Server wechseln …" in the user menu (USER_MENU).
+// own "Instanz wechseln …" in the user menu (USER_MENU).
 const NO_INSTALL = await readFile(join(repo, "desktop/parity/reference/no-install.css"), "utf8");
 const USER_MENU = await readFile(join(repo, "desktop/parity/reference/user-menu.js"), "utf8");
 // Scenes with `update` (and `desktop`): the update the app offers, as
