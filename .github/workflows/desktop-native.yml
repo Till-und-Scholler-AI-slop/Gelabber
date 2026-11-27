@@ -391,13 +391,37 @@ jobs:
             libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
             gstreamer1.0-plugins-ugly gstreamer1.0-libav python3-gi
 
+      - name: Install cargo-nextest
+        if: inputs.release_tag == ''
+        run: .github/workflows/scripts/install-nextest.sh
+
       # Every test of the workspace. This core is built with H264, so the
-      # loopback call must use it.
+      # loopback call must use it. Profile ci retries a failed test once and
+      # writes JUnit (desktop/.config/nextest.toml); nextest skips doctests.
       - name: Loopback call against mediasoup 0.33
         if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
-        run: cargo test --locked --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
+        run: |
+          set -euo pipefail
+          cargo nextest run --profile ci --locked --manifest-path desktop/Cargo.toml --no-fail-fast --test-threads=1
+          cargo test --locked --manifest-path desktop/Cargo.toml --doc
+
+      # A test that passed only on retry passes the run, but never silently.
+      - name: Flaky tests
+        if: ${{ !cancelled() && inputs.release_tag == '' }}
+        env:
+          JOB_LABEL: Native core (Linux x64)
+        run: python3 .github/workflows/scripts/flaky_tests.py summary desktop/target/nextest/ci/junit.xml
+
+      - name: Upload the test report
+        if: ${{ !cancelled() && inputs.release_tag == '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-desktop-linux
+          path: desktop/target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Loopback call with the GStreamer H264 encoder
         if: inputs.release_tag == ''
