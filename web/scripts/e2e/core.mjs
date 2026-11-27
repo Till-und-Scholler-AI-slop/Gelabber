@@ -207,7 +207,12 @@ export async function coreScenarios(h, f) {
     "new-message-request-connected-recipient-discovers-without-refetch",
     ["05a", "06b"],
     async () => {
-      await navigate(f.member, "/d/requests", f.base);
+      // In the app, so the member's gateway socket stays the one it has:
+      // a new page would start a socket of its own after the request.
+      await f.member.page
+        .getByRole("link", { name: "Direktnachrichten", exact: true })
+        .click();
+      await f.member.page.getByRole("link", { name: /^Anfragen/ }).click();
       await f.member.page
         .getByRole("heading", { name: "Nachrichtenanfragen", exact: true })
         .waitFor();
