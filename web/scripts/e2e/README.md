@@ -5,14 +5,21 @@
 `.github/workflows/e2e-extended.yml` runs these scenarios against its own API,
 SFU, Postgres, Redis and MinIO (`ci-fault-prepare.mjs`, then `fault-run.mjs`
 per browser and profile from `profiles.mjs`): the fault profiles `core-faults`
-and `media-faults` in Chromium and Firefox, the profiles `core` and `access`
-in Chromium (`media` once its scenarios pass). It runs after pushes to a
+and `media-faults` in Chromium and Firefox, the profiles `core`, `media` and
+`access` in Chromium. It runs after pushes to a
 version branch that touch `backend/` or `web/`, on release and hotfix pull
 requests to `main`, and by hand. After a push run the issue "Extended E2E
 fails on <branch>" is opened or updated when the run is red and closed when it
 is green again (GEL-378). The same workflow runs `chat-workflows.mjs` and
 `../smoke-pwa.mjs`. The rest of this file records how the scenarios came
 about.
+
+A profile can list scenarios known to fail (`expectedFailures`: id ->
+`{ issue, reason, site? }`). Such a scenario that fails with that reason (and
+at that file:line) leaves the gate green and is logged as `EXPECTED FAIL`; one
+that fails otherwise, passes, or is BLOCKED turns the gate red, a pass until
+its entry goes. `leftOut` names scenarios of the suite a profile leaves out,
+with the reason the run prints (`LEFT OUT`).
 
 Gelabber uses mediasoup 0.33 through the official Rust binding
 and public mediasoup-client 3.26.0, with Gelabber's own v4 WebSocket/authority
@@ -104,7 +111,7 @@ as `$GELABBER_E2E_REPORT.stray.json`.
 
 - Media: actual UI "Live gehen" watched inside the voice channel (viewers join the call; no camera/display calls and at most their microphone sender); several people live at once; default autoplay; late watch aged at least 30 seconds from publication; native selected ICE path; decoded and rendered frame growth with changing synthetic pixels and distinct Live/camera color bands. Bytes alone cannot pass. First-frame budgets: 5 seconds direct, 10 seconds relay. Native publisher encoding must begin first.
 - Recovery: targeted browser Media-WS/Gateway disconnects, automatic signaling return within 20 seconds, same live capture track sent without another display request. Gateway-only recovery must keep the healthy peer. No publisher click after the fault. Browser offline for 8 seconds is separately labeled: established UDP may remain flowing; it does not claim an OS network outage or server restart.
-- Lifecycle: all 20 live start/stop cycles run before the current client resource assertions are assessed, followed by an independent late viewer. A voice connection has at most two active SDK PCs; stop leaves voice audio. Public transport compaction retires old native resources before retaining captures on replacement transports. Report the actual native PC/transceiver counts from the executed candidate; the previous engine's sender-reuse and fixed SDP-size results do not qualify v4. These checks do not prove unexposed SFU publication/task bounds. No reload of the publisher during the cycles.
+- Lifecycle: 20 live start/stop cycles. In each, the watcher stops watching before the Live ends, so the next cycle starts from "Zuschauen"; each cycle's client resources are checked in the cycle (one connection that sends and one that only receives, per participant) and once more after the loop, followed by an independent late viewer, which leaves the call with the scenario. A re-watch's first frame has 15 seconds (each cycle records it). A voice connection has at most two active SDK PCs; stop leaves voice audio. Public transport compaction retires old native resources before retaining captures on replacement transports. Report the actual native PC/transceiver counts from the executed candidate; the previous engine's sender-reuse and fixed SDP-size results do not qualify v4. These checks do not prove unexposed SFU publication/task bounds. No reload of the publisher during the cycles.
 - UI: SPA channel navigation must not label old-channel video as the new channel; stop/leave/mute/live controls remain reachable. Native picker cancellation and a refused Live must release capture. Simulated `NotAllowedError` requires a visible playback retry; actual default autoplay is a separate native-browser check, without policy overrides.
 - Watch audio: room microphone audio exactly once plus the selected publisher's Live audio paired to its current Live Producer/epoch. A Live nobody opted into is not forwarded. Positive other-room audio/Live must not leak. Native source/RTP and duplicate-playback observations complement session-wide Volume/Deafen/click-retry checks. Human audible quality stays manual.
 - Forced track arrival: before holding/reversing callbacks, require exactly two live fixture capture objects (one camera, one Live display), each bound to a distinct current native sender. Read each sender's own stats and require fresh encoded-frame growth for every source across two observations. One legacy encoding and multiple simulcast RIDs are both valid; several RTP records for one source cannot substitute for a missing source. Native track identifiers stay in browser memory; evidence uses fixture ordinals and RID labels. Run the focused ownership/deadline checks with `node --test scripts/e2e/publisher-encoders.checks.mjs`.

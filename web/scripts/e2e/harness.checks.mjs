@@ -12,6 +12,7 @@ import {
   until,
 } from "./harness.mjs";
 import { decoded, interrupt } from "./media.mjs";
+import { profiles } from "./profiles.mjs";
 import { instrument } from "./probe.mjs";
 import { createContext, runInContext } from "node:vm";
 import {
@@ -343,4 +344,72 @@ test("a failed step is listed with its time; its row names the call that ran out
     Object.keys(failureEvidence(new CheckFailure("fixture-x"))),
     ["site"],
   );
+});
+test("a listed expected failure keeps the gate green only while it fails for its reason", () => {
+  const expected = {
+    known: { issue: "GEL-1", reason: "known-reason" },
+    pinned: {
+      issue: "GEL-2",
+      reason: "browser-deadline",
+      site: "media.mjs:431",
+    },
+  };
+  const rows = [{ id: "fixture", status: "PASS" }];
+  const run = (row) =>
+    gate([...rows, row], [row.id], [{ status: 204 }], expected);
+  const failing = run({ id: "known", status: "FAIL", reason: "known-reason" });
+  assert.equal(failing.passed, true);
+  assert.deepEqual(failing.expectedFailures, [
+    { id: "known", issue: "GEL-1", reason: "known-reason" },
+  ]);
+  assert.equal(
+    run({
+      id: "pinned",
+      status: "FAIL",
+      reason: "browser-deadline",
+      site: "media.mjs:431:15",
+    }).passed,
+    true,
+  );
+  const passing = run({ id: "known", status: "PASS" });
+  assert.equal(passing.passed, false);
+  assert.deepEqual(passing.nowPassing, [{ id: "known", issue: "GEL-1" }]);
+  const otherReason = run({
+    id: "known",
+    status: "FAIL",
+    reason: "another-reason",
+    site: "media.mjs:9:1",
+  });
+  assert.equal(otherReason.passed, false);
+  assert.deepEqual(otherReason.otherFailures, [
+    {
+      id: "known",
+      issue: "GEL-1",
+      reason: "another-reason",
+      site: "media.mjs:9:1",
+    },
+  ]);
+  for (const row of [
+    // The pinned reason at another line is another failure.
+    {
+      id: "pinned",
+      status: "FAIL",
+      reason: "browser-deadline",
+      site: "media.mjs:4310:2",
+    },
+    { id: "known", status: "BLOCKED" },
+    { id: "other", status: "FAIL", reason: "known-reason" },
+  ])
+    assert.equal(run(row).passed, false);
+});
+test("every expected failure of a profile names one of its cases, its issue and its reason", () => {
+  for (const [name, profile] of Object.entries(profiles))
+    for (const [id, entry] of Object.entries(profile.expectedFailures ?? {})) {
+      assert.ok(
+        profile.cases.includes(id),
+        `${name}: ${id} is not one of its cases`,
+      );
+      assert.match(entry.issue, /^(GEL-\d+|#\d+)$/, `${name}: ${id}`);
+      assert.match(entry.reason, /^[a-z0-9-]+$/, `${name}: ${id}`);
+    }
 });
