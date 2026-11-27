@@ -20,6 +20,9 @@ export type InstallState = {
   /** The system whose desktop app this browser could run instead; null on
    * phones and other systems. */
   desktop: DesktopPlatform | null;
+  /** Which desktop browser this is, for the install hint; "other" on phones
+   * and where the user agent says nothing we know. */
+  browser: DesktopBrowser;
   available: boolean;
   pending: boolean;
   accepted: boolean;
@@ -33,11 +36,38 @@ const initial: InstallState = {
   ios: false,
   mobile: false,
   desktop: null,
+  browser: "other",
   available: false,
   pending: false,
   accepted: false,
   failed: false,
 };
+
+export type DesktopBrowser = "chromium" | "safari" | "firefox" | "other";
+
+/**
+ * The desktop browser family, as far as the user agent tells: Chromium
+ * (Chrome, Edge) shows an install icon in the address bar, Safari on macOS
+ * has File › Add to Dock, Firefox installs no web apps. Anything else gets
+ * the generic hint.
+ */
+export function desktopBrowser(nav: {
+  userAgent: string;
+  userAgentData?: { brands?: { brand: string }[] };
+}): DesktopBrowser {
+  const ua = nav.userAgent;
+  // Opera has no install icon in the address bar.
+  if (/OPR\/|Opera/.test(ua)) return "other";
+  if (
+    nav.userAgentData?.brands?.some((entry) => entry.brand === "Chromium") ||
+    /Chrome\/|Chromium\/|Edg\//.test(ua)
+  )
+    return "chromium";
+  if (/Firefox\//.test(ua)) return "firefox";
+  if (/Macintosh/.test(ua) && /Version\/[\d.]+.*Safari\//.test(ua))
+    return "safari";
+  return "other";
+}
 
 export const useInstallation = create<InstallState>(() => initial);
 let deferredPrompt: InstallPromptEvent | null = null;
@@ -50,7 +80,11 @@ export function trackInstallation(target: Window): () => void {
   const display = target.matchMedia("(display-mode: standalone)");
   const nav = target.navigator as Navigator & {
     standalone?: boolean;
-    userAgentData?: { platform?: string; mobile?: boolean };
+    userAgentData?: {
+      platform?: string;
+      mobile?: boolean;
+      brands?: { brand: string }[];
+    };
   };
   const standalone = () => display.matches || nav.standalone === true;
   const ios =
@@ -65,6 +99,7 @@ export function trackInstallation(target: Window): () => void {
     ios,
     mobile,
     desktop: mobile ? null : desktopPlatform(nav),
+    browser: mobile ? "other" : desktopBrowser(nav),
   });
 
   const beforeInstall = (event: Event) => {

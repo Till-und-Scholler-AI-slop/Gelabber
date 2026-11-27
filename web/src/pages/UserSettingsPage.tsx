@@ -22,7 +22,6 @@ import { UserPanel } from "../components/UserPanel.tsx";
 import { useFeedbackStatus } from "../feedback/queries.ts";
 import { useT } from "../i18n/catalog.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
-import { useInstallation } from "../pwa/install.ts";
 import {
   DEFAULT_SETTINGS_AREA,
   isSettingsArea,
@@ -30,34 +29,16 @@ import {
   SETTINGS_LIST_QUERY,
   settingsArea,
   visibleSettingsAreas,
-  type SettingsArea,
 } from "./settingsAreas.ts";
 import { SettingsAreaPart } from "./settingsAreaPart.ts";
 import "./settings.css";
 
-function useInstallable() {
-  // The installed web app can still get the desktop app.
-  return useInstallation(
-    (state) => !state.standalone || state.desktop !== null,
-  );
-}
-
 /** The areas, grouped "Konto" and "App". `list` draws them as the phone's
  * list screen: taller rows with a chevron. */
-function SettingsNavigation({
-  current,
-  list = false,
-}: {
-  current?: SettingsArea | undefined;
-  list?: boolean;
-}) {
+function SettingsNavigation({ list = false }: { list?: boolean }) {
   const t = useT(settings);
   const feedback = useFeedbackStatus().data;
-  const areas = visibleSettingsAreas(
-    useInstallable(),
-    current,
-    feedback?.enabled === true,
-  );
+  const areas = visibleSettingsAreas(feedback?.enabled === true);
   const unread = feedback?.enabled === true && feedback.unread > 0;
   return (
     <nav
@@ -103,8 +84,6 @@ function SettingsNavigation({
 
 /** The workspace sidebar while settings are open. */
 export function SettingsSidebar() {
-  const params = useParams({ strict: false });
-  const current = isSettingsArea(params.area) ? params.area : undefined;
   const t = useT(settings);
   return (
     <aside
@@ -113,7 +92,7 @@ export function SettingsSidebar() {
     >
       <div className="sidebar-brand">{t("title")}</div>
       <div className="settings-sidebar-scroll">
-        <SettingsNavigation current={current} />
+        <SettingsNavigation />
       </div>
       <UserPanel />
     </aside>

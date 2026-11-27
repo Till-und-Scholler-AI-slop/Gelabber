@@ -2,6 +2,7 @@ import { ChevronIcon } from "../components/Icons.tsx";
 import { useT } from "../i18n/catalog.ts";
 import { pwa } from "../i18n/catalogs/pwa.ts";
 import { DesktopApp } from "./DesktopApp.tsx";
+import { DESKTOP_PLATFORM_LABEL } from "./desktopApp.ts";
 import {
   promptInstallation,
   useInstallation,
@@ -35,6 +36,25 @@ export function InstallDisclosurePanel({ state }: { state: InstallState }) {
       <InstallPanel state={state} />
     </details>
   );
+}
+
+/** Where this desktop browser keeps installing, or that it has none. */
+function DesktopBrowserHint({ state }: { state: InstallState }) {
+  const t = useT(pwa);
+  switch (state.browser) {
+    case "chromium":
+      return t("desktopBrowser.chromium");
+    case "safari":
+      return t("desktopBrowser.safari");
+    case "firefox":
+      return state.desktop
+        ? t("desktopBrowser.firefoxDesktopApp", {
+            platform: DESKTOP_PLATFORM_LABEL[state.desktop],
+          })
+        : t("desktopBrowser.firefox");
+    default:
+      return t("desktopBrowser.where");
+  }
 }
 
 export function InstallPanel({ state }: { state: InstallState }) {
@@ -76,7 +96,9 @@ export function InstallPanel({ state }: { state: InstallState }) {
           ) : state.accepted ? null : state.mobile ? (
             <p>{offered ? t("mobile.alsoMenu") : t("mobile.menu")}</p>
           ) : offered ? null : (
-            <p>{t("desktopBrowser.where")}</p>
+            <p>
+              <DesktopBrowserHint state={state} />
+            </p>
           )}
           <p className="pwa-install-note">{t("install.online")}</p>
         </>

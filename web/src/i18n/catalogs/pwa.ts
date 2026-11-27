@@ -36,7 +36,7 @@ export const pwa = defineCatalog(
     "install.installed":
       "Gelabber ist bereits als App geöffnet oder installiert.",
     "install.insecure":
-      "Öffne Gelabber über HTTPS, damit du es als App installieren kannst.",
+      "Zum Installieren braucht es HTTPS. Bitte die Person, die diese Instanz betreibt, das einzurichten.",
     "install.button": "App installieren",
     "install.opening": "Installation öffnen…",
     "install.accepted":
@@ -53,6 +53,14 @@ export const pwa = defineCatalog(
       "Wähle im Browsermenü „App installieren“ oder „Zum Startbildschirm hinzufügen“. Bietet dein Browser das nicht an, öffne Gelabber in Chrome.",
     "desktopBrowser.where":
       "Die Installation findest du in der Adressleiste oder im Browsermenü, z. B. in Chrome oder Edge.",
+    "desktopBrowser.chromium":
+      "Klicke rechts in der Adressleiste auf das Symbol zum Installieren.",
+    "desktopBrowser.safari":
+      "Wähle in Safari „Ablage“ › „Zum Dock hinzufügen“.",
+    "desktopBrowser.firefox":
+      "Firefox kann keine Web-Apps installieren. Öffne Gelabber dafür in Chrome oder Edge.",
+    "desktopBrowser.firefoxDesktopApp":
+      "Firefox kann keine Web-Apps installieren. Nimm die Desktop-App für {platform} oder öffne Gelabber in Chrome oder Edge.",
     "install.online": "Die App braucht weiterhin eine Internetverbindung.",
   },
   {
@@ -83,7 +91,8 @@ export const pwa = defineCatalog(
     "install.mobile": "Open it straight from your home screen.",
     "install.desktop": "Open it in a window of its own.",
     "install.installed": "Gelabber is already open or installed as an app.",
-    "install.insecure": "Open Gelabber over HTTPS to install it as an app.",
+    "install.insecure":
+      "Installing needs HTTPS. Ask the person who runs this instance to set it up.",
     "install.button": "Install app",
     "install.opening": "Opening installation…",
     "install.accepted":
@@ -99,6 +108,13 @@ export const pwa = defineCatalog(
       "Choose “Install app” or “Add to Home screen” in the browser menu. If your browser doesn’t offer that, open Gelabber in Chrome.",
     "desktopBrowser.where":
       "You’ll find the installation in the address bar or the browser menu, e.g. in Chrome or Edge.",
+    "desktopBrowser.chromium":
+      "Click the install icon at the right of the address bar.",
+    "desktopBrowser.safari": "In Safari, choose File › Add to Dock.",
+    "desktopBrowser.firefox":
+      "Firefox cannot install web apps. Open Gelabber in Chrome or Edge for that.",
+    "desktopBrowser.firefoxDesktopApp":
+      "Firefox cannot install web apps. Use the desktop app for {platform}, or open Gelabber in Chrome or Edge.",
     "install.online": "The app still needs an internet connection.",
   },
 );

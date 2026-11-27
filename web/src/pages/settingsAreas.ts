@@ -89,20 +89,12 @@ export function settingsArea(id: SettingsArea): SettingsAreaInfo {
 }
 
 /**
- * The areas listed in the navigation. "App" is only offered where Gelabber
- * can still be installed, or while it is the open area. "Feedback" only
- * while the instance takes feedback.
+ * The areas listed in the navigation. "App" is always there: once the web
+ * app is installed it says so and still offers the desktop app. "Feedback"
+ * only while the instance takes feedback.
  */
-export function visibleSettingsAreas(
-  installable: boolean,
-  current: SettingsArea | undefined,
-  feedback: boolean,
-): SettingsAreaInfo[] {
-  return SETTINGS_AREAS.filter(
-    (area) =>
-      (area.id !== "app" || installable || current === "app") &&
-      (area.id !== "feedback" || feedback),
-  );
+export function visibleSettingsAreas(feedback: boolean): SettingsAreaInfo[] {
+  return SETTINGS_AREAS.filter((area) => area.id !== "feedback" || feedback);
 }
 
 /**

@@ -32,6 +32,26 @@ describe("install panel", () => {
     expect(render({ available: true })).not.toContain("Adressleiste");
   });
 
+  it("names where each desktop browser installs, or that it cannot", () => {
+    expect(render({ browser: "chromium" })).toContain(
+      "Klicke rechts in der Adressleiste auf das Symbol zum Installieren.",
+    );
+    expect(render({ browser: "safari" })).toContain(
+      "„Ablage“ › „Zum Dock hinzufügen“",
+    );
+    const firefox = render({ browser: "firefox", desktop: "windows" });
+    expect(firefox).toContain("Firefox kann keine Web-Apps installieren.");
+    expect(firefox).toContain("Desktop-App für Windows");
+    expect(firefox).not.toContain("Adressleiste");
+    // macOS has no desktop app to point to.
+    const mac = render({ browser: "firefox" });
+    expect(mac).toContain("in Chrome oder Edge");
+    expect(mac).not.toContain("Desktop-App");
+    expect(render({ browser: "other" })).toContain(
+      "in der Adressleiste oder im Browsermenü",
+    );
+  });
+
   it("gives iPhone and iPad the Safari steps instead of a button", () => {
     const html = render({ mobile: true, ios: true });
     expect(html).toContain("Öffne Gelabber in Safari.");
@@ -41,7 +61,11 @@ describe("install panel", () => {
   });
 
   it("reports the states in which nothing can be installed", () => {
-    expect(render({ secure: false, mobile: true })).toContain("über HTTPS");
+    const insecure = render({ secure: false, browser: "chromium" });
+    expect(insecure).toContain(
+      "Zum Installieren braucht es HTTPS. Bitte die Person, die diese Instanz betreibt, das einzurichten.",
+    );
+    expect(insecure).not.toContain("Adressleiste");
     const installed = render({ installed: true, available: true });
     expect(installed).toContain("bereits als App");
     expect(installed).not.toContain("<button");

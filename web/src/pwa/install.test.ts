@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  desktopBrowser,
   installHintUseful,
   promptInstallation,
   trackInstallation,
@@ -257,5 +258,59 @@ describe("browser installation", () => {
       installed: false,
     });
     expect(offer(browser).defaultPrevented).toBe(false);
+  });
+});
+
+describe("desktop browser", () => {
+  const ua = (userAgent: string) => desktopBrowser({ userAgent });
+  it("tells Chromium, Safari and Firefox apart by the user agent", () => {
+    expect(
+      ua(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      ),
+    ).toBe("chromium");
+    expect(
+      ua(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+      ),
+    ).toBe("chromium");
+    expect(
+      ua(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+      ),
+    ).toBe("safari");
+    expect(
+      ua(
+        "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+      ),
+    ).toBe("firefox");
+    expect(
+      ua(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+      ),
+    ).toBe("firefox");
+  });
+
+  it("falls back to the generic hint for browsers it does not know", () => {
+    expect(
+      ua(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 OPR/115.0.0.0",
+      ),
+    ).toBe("other");
+    expect(ua("Mozilla/5.0 (X11; Linux x86_64) Konqueror/5")).toBe("other");
+  });
+
+  it("is only set on desktop systems", () => {
+    const browser = new Browser();
+    browser.navigator.userAgent =
+      "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+    track(browser);
+    expect(useInstallation.getState().browser).toBe("other");
+    cleanup?.();
+    const desktop = new Browser();
+    desktop.navigator.userAgent =
+      "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0";
+    track(desktop);
+    expect(useInstallation.getState().browser).toBe("firefox");
   });
 });
