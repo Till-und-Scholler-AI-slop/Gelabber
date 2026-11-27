@@ -1847,6 +1847,9 @@ mod tests {
 
     /// Two quick switches on one role: each write settles from its own
     /// answer, so the second one's failure is said and not "Gespeichert.".
+    /// The second is refused by what it asks for (manage_channels) and
+    /// answered only after the first: the two requests are on their way at
+    /// once and could reach the stand-in in either order (GEL-408).
     #[test]
     fn a_failed_second_switch_is_not_saved() {
         use crate::app::testkit::wait_for_label;
@@ -1854,19 +1857,22 @@ mod tests {
         use egui::accesskit::Role as A11y;
         use egui_kittest::kittest::Queryable;
         let _config = crate::platform::paths::testing::TempConfig::new("roles-second-fails");
+        use std::sync::atomic::{AtomicBool, Ordering};
         let log = Log::default();
         let inner = with_roles(log.clone());
-        let patches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = log.clone();
+        let release = std::sync::Arc::new(AtomicBool::new(false));
+        let held = release.clone();
         let api = FakeApi::start(true, move |method, path, body| {
-            if method == "PATCH" && path.starts_with("/roles/") {
-                let n = patches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if n == 1 {
-                    failed
-                        .lock()
-                        .push((method.into(), path.into(), body.into()));
-                    return Some(Reply::error(403, "forbidden"));
+            if method == "PATCH" && path.starts_with("/roles/") && body.contains("manage_channels")
+            {
+                failed
+                    .lock()
+                    .push((method.into(), path.into(), body.into()));
+                while !held.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
+                return Some(Reply::error(403, "forbidden"));
             }
             inner(method, path, body)
         });
@@ -1884,7 +1890,84 @@ mod tests {
         wait_for(&mut harness, "both writes", |_| {
             logged(&log, "PATCH", &path).len() == 2
         });
+        // The first answered, the second held: then the refusal. (This shows
+        // the stand-in answered the first; the client may take it after the
+        // refusal, an order the panel's own tests in roles.rs cover too.)
+        wait_for(&mut harness, "the first answer", |_| api.answering() == 1);
+        release.store(true, Ordering::SeqCst);
         wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+        // Both answers taken, in whichever order the client did.
+        crate::app::testkit::wait_until_idle(&mut harness);
+        // The newer write sends the whole list, the older change too: what
+        // the panel's order tests in roles.rs take for granted.
+        let refused = logged(&log, "PATCH", &path)
+            .into_iter()
+            .find(|body| body.contains("manage_channels"))
+            .expect("the second write");
+        assert!(refused.contains("manage_server"), "{refused}");
+        // The refused switch shows the server's value again.
+        use egui_kittest::kittest::NodeT;
+        let channels = harness
+            .query_all_by_label("Kanäle verwalten")
+            .next()
+            .and_then(|n| n.accesskit_node().toggled());
+        assert_eq!(channels, Some(egui::accesskit::Toggled::False));
+    }
+
+    /// The same two switches with the answers the other way round: the
+    /// second is refused while the first is still on its way. The first's
+    /// success then says nothing of the second: "Nicht gespeichert" stays
+    /// and the refused switch shows the server's value (GEL-408).
+    #[test]
+    fn a_refused_second_switch_is_not_saved_by_the_first_answer() {
+        use crate::app::testkit::wait_for_label;
+        use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for};
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::{NodeT, Queryable};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _config = crate::platform::paths::testing::TempConfig::new("roles-refused-first");
+        let log = Log::default();
+        let inner = with_roles(log.clone());
+        let release = std::sync::Arc::new(AtomicBool::new(false));
+        let held = release.clone();
+        let api = FakeApi::start(true, move |method, path, body| {
+            if method == "PATCH" && path.starts_with("/roles/") {
+                if body.contains("manage_channels") {
+                    return Some(Reply::error(403, "forbidden"));
+                }
+                while !held.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+            inner(method, path, body)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Neue Rolle");
+        click_role(&mut harness, A11y::Link, "Rollen");
+        click_node(&mut harness, "Server verwalten", |h| {
+            h.query_all_by_label("Server verwalten").next().map(id_of)
+        });
+        click_now(&mut harness, "Kanäle verwalten", |h| {
+            h.query_all_by_label("Kanäle verwalten").next().map(id_of)
+        });
+        // The refusal answered and shown, the first held: then the first.
+        wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+        wait_for(&mut harness, "the first held", |_| api.answering() == 1);
+        release.store(true, Ordering::SeqCst);
+        crate::app::testkit::wait_until_idle(&mut harness);
+        assert!(
+            harness
+                .query_by_label("Nicht gespeichert – erneut versuchen")
+                .is_some()
+        );
+        assert!(harness.query_by_label("Gespeichert.").is_none());
+        // The refused switch shows the server's value again; the stand-in
+        // has no gateway to bring the first write's role.
+        let channels = harness
+            .query_all_by_label("Kanäle verwalten")
+            .next()
+            .and_then(|n| n.accesskit_node().toggled());
+        assert_eq!(channels, Some(egui::accesskit::Toggled::False));
     }
 
     /// The "+" on a member row lists the roles; a checkbox saves the
