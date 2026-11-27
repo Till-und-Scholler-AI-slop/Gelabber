@@ -19,13 +19,13 @@ Run from the repository root. A pull request passes when
     version (tag, digest, commit or version string), for a dependency the
     commit message names; no line is only added or only removed (hash lines
     of requirements.txt aside);
-  - `Cargo.toml` and `web/package.json`, compared parsed: only the version
+  - `Cargo.toml` and `package.json` (`web/`, `web/scripts/mutation/`), compared parsed: only the version
     of a dependency the commit message names changes (in a dependency
     table, as a string or a table's `version`);
   - `Cargo.lock`: every package new to the file comes from crates.io with a
     plain version; a package kept at its version keeps its source and
     checksum;
-  - `web/package-lock.json`: outside `packages` nothing changes; every
+  - `package-lock.json` (the same two folders): outside `packages` nothing changes; every
     changed package has a plain version, an `integrity`, and a `resolved`
     URL that is the npm registry's tarball of that package and version; a
     package kept at its version keeps both; the root entry changes only the
@@ -73,8 +73,8 @@ ECOSYSTEMS = {
 FILES = [
     (r"(backend|desktop)/([\w.-]+/)*Cargo\.toml", "cargo-manifest"),
     (r"(backend|desktop)/Cargo\.lock", "cargo-lock"),
-    (r"web/package\.json", "npm-manifest"),
-    (r"web/package-lock\.json", "npm-lock"),
+    (r"web(/scripts/mutation)?/package\.json", "npm-manifest"),
+    (r"web(/scripts/mutation)?/package-lock\.json", "npm-lock"),
     (r"(backend/api|backend/media|web|deploy/compose/minio|deploy/compose/mc)/Dockerfile", "dockerfile"),
     (r"deploy/compose/[\w.-]+\.ya?ml", "compose"),
     (r"\.github/workflows/[\w.-]+\.ya?ml", "workflow"),

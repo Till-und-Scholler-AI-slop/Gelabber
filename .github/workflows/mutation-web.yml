@@ -17,7 +17,7 @@ on:
     paths:
       - '.github/workflows/mutation-web.yml'
       - '.github/workflows/scripts/mutation_web.py'
-      - 'web/stryker.config.mjs'
+      - 'web/scripts/mutation/**'
       - 'web/vitest.mutation.config.ts'
 
 permissions:
@@ -73,6 +73,7 @@ jobs:
           node-version: 26.13.1
 
       # The web job's cache, saved by pushes; this workflow only reads it.
+      # Stryker's own packages (web/scripts/mutation) come from the registry.
       - name: Restore the npm cache
         if: steps.plan.outputs.files != '0'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -84,11 +85,12 @@ jobs:
         if: steps.plan.outputs.files != '0'
         working-directory: target/web
         run: |
-          if [ ! -f stryker.config.mjs ]; then
-            echo "::error::The tested commit has no web/stryker.config.mjs (GEL-388) yet."
+          if [ ! -f scripts/mutation/stryker.config.mjs ]; then
+            echo "::error::The tested commit has no web/scripts/mutation/stryker.config.mjs (GEL-388) yet."
             exit 1
           fi
           npm ci
+          npm ci --prefix scripts/mutation
 
       # A mutant that loops for ever ends by Stryker's timeoutMS (5 s over
       # the test's own time) and counts as detected.
@@ -98,7 +100,7 @@ jobs:
         working-directory: target/web
         env:
           MUTATE: ${{ steps.plan.outputs.mutate }}
-        run: npx stryker run --mutate "$MUTATE"
+        run: scripts/mutation/node_modules/.bin/stryker run scripts/mutation/stryker.config.mjs --mutate "$MUTATE"
 
       - name: Summary
         id: summary

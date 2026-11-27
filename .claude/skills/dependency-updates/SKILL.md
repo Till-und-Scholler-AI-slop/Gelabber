@@ -156,6 +156,7 @@ repairing it:
 ```sh
 cargo metadata --locked --format-version 1 --manifest-path <dir>/Cargo.toml > /dev/null   # each of backend, desktop whose Cargo.lock the picks changed
 (cd web && npm install --package-lock-only --ignore-scripts) && git diff --exit-code -- web/package-lock.json   # when the picks changed web/
+(cd web/scripts/mutation && npm install --package-lock-only --ignore-scripts) && git diff --exit-code -- web/scripts/mutation/package-lock.json   # Stryker's own folder (GEL-388), when the picks changed it
 ```
 
 Either fails: `git checkout -- .`, `git switch -`, report the output, and

@@ -127,6 +127,19 @@ BASE = {
                 'version': '2.8.0', 'dev': True, 'optional': True, 'inBundle': True, 'license': '0BSD'},
         }}, indent=2) + '\n',
     'web/Dockerfile': 'FROM node:26.13.0-trixie AS build\nRUN npm ci\nFROM nginx:1.31.9-alpine\n',
+    # Stryker's own folder for mutation-web.yml (GEL-388).
+    'web/scripts/mutation/package.json': json.dumps({
+        'name': 'gelabber-web-mutation', 'private': True, 'devDependencies': {'@stryker-mutator/core': '10.1.1'},
+    }, indent=2) + '\n',
+    'web/scripts/mutation/package-lock.json': json.dumps({
+        'name': 'gelabber-web-mutation', 'lockfileVersion': 3, 'requires': True,
+        'packages': {
+            '': {'name': 'gelabber-web-mutation', 'devDependencies': {'@stryker-mutator/core': '10.1.1'}},
+            'node_modules/@stryker-mutator/core': {
+                'version': '10.1.1', 'dev': True,
+                'resolved': 'https://registry.npmjs.org/@stryker-mutator/core/-/core-10.1.1.tgz',
+                'integrity': 'sha512-stryker1'},
+        }}, indent=2) + '\n',
     'deploy/compose/compose.yaml': 'services:\n  caddy:\n    image: caddy:2.11.8-alpine\n',
     '.github/workflows/ci.yml': f'jobs:\n  a:\n    steps:\n      - uses: docker/login-action@{SHA1} # v4.7.0\n',
     'deploy/compose/tests/requirements.txt':
@@ -248,6 +261,11 @@ CASES = {
          'web/package-lock.json': npm_lock(lambda p: (p['']['dependencies'].update(zustand='^5.1.2'),
                                                        p.update({'node_modules/zustand': lock_entry('zustand', '5.1.2', 'sha512-zustand2')})))},
         [('zustand', None, '5.1.2')], None, {'branch': 'dependabot/npm_and_yarn/web/npm-3'}),
+    'npm in the Stryker folder (GEL-388)': (
+        {'web/scripts/mutation/package.json': BASE['web/scripts/mutation/package.json'].replace('10.1.1', '10.1.2'),
+         'web/scripts/mutation/package-lock.json': BASE['web/scripts/mutation/package-lock.json'].replace(
+             '10.1.1', '10.1.2').replace('sha512-stryker1', 'sha512-stryker2')},
+        [('@stryker-mutator/core', '10.1.1', '10.1.2')], None, {'branch': 'dependabot/npm_and_yarn/npm-5'}),
     'npm range only in the manifest': (
         {'web/package.json': npm_manifest(lambda m: m['dependencies'].update({'zustand': '^5.1.2'}))},
         [('zustand', None, '5.1.2')], None, {'branch': 'dependabot/npm_and_yarn/web/npm-4'}),

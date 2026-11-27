@@ -254,9 +254,12 @@ class Workflow(unittest.TestCase):
         paths = load('mutation-web.yml')['on']['pull_request']['paths']
         for path in paths:
             with self.subTest(path=path):
-                self.assertTrue((ROOT / path).is_file())
+                self.assertTrue(list(ROOT.glob(path.removesuffix('/**') + '/*') if path.endswith('/**')
+                                     else [ROOT / path] if (ROOT / path).is_file() else []))
         self.assertIn('.github/workflows/scripts/mutation_web.py', paths)
         self.assertIn('.github/workflows/mutation-web.yml', paths)
+        # Stryker's config and its pinned packages, a Dependabot update of them too.
+        self.assertIn('web/scripts/mutation/**', paths)
 
 
 if __name__ == '__main__':
