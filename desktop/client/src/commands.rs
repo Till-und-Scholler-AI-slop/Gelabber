@@ -184,7 +184,9 @@ impl Client {
                     });
                     let delay = SESSION_RETRY[failures.min(4) - 1];
                     let weak = this.weak();
+                    let timer = this.timer();
                     this.runtime().spawn(async move {
+                        let _timer = timer;
                         tokio::time::sleep(delay).await;
                         if let Some(client) = Client::from_weak(&weak)
                             && client.with_state(|s| s.session == Session::Unknown)
@@ -2559,7 +2561,9 @@ impl Client {
                 .saturating_mul(1 << failures.min(5))
                 .min(RECOVERY_RETRY_MAX);
             let weak = this.weak();
+            let timer = this.timer();
             this.runtime().spawn(async move {
+                let _timer = timer;
                 tokio::time::sleep(wait).await;
                 let Some(client) = Client::from_weak(&weak) else {
                     return;
@@ -2660,7 +2664,9 @@ impl Client {
             *local.unread_since.get_or_insert(Instant::now())
         };
         let weak = self.weak();
+        let timer = self.timer();
         self.runtime().spawn(async move {
+            let _timer = timer;
             let wait = UNREAD_DEBOUNCE.min(UNREAD_MAX_WAIT.saturating_sub(first.elapsed()));
             tokio::time::sleep(wait).await;
             let Some(client) = Client::from_weak(&weak) else {

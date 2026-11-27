@@ -1457,8 +1457,11 @@ mod tests {
         wait_for(&mut harness, "the unseen link's revoke", |_| {
             api.saw("DELETE /invites/einestunde22")
         });
-        // The link replaced by the shown one goes too; the shown one stays.
-        assert!(api.saw("DELETE /invites/siebentage22"));
+        // The link replaced by the shown one goes too (its own request, in
+        // either order); the shown one stays.
+        wait_for(&mut harness, "the replaced link's revoke", |_| {
+            api.saw("DELETE /invites/siebentage22")
+        });
         assert!(!api.saw("DELETE /invites/vierundzwanz"));
     }
 
