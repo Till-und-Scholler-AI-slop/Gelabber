@@ -140,4 +140,50 @@ describe("ws protocol", () => {
     expect(nextCursor(5, 6)).toEqual({ accept: true, cursor: 6 });
     expect(nextCursor(undefined, 1)).toEqual({ accept: true, cursor: 1 });
   });
+
+  it("passes on the account frames and errors the client acts on", () => {
+    // Each of these reaches a handler in client.ts; a dropped one means a
+    // blocked server, a read on another device or a new friend request
+    // never shows.
+    for (const frame of [
+      { op: "err", e: "server_blocked", s: "srv" },
+      { op: "ns" },
+      {
+        op: "rd",
+        d: [
+          {
+            channel_id: "ch",
+            server_id: "srv",
+            read_message_id: "m9",
+            read_at: "2026-11-27T12:00:00Z",
+            unread_count: 0,
+            mention_count: 0,
+          },
+        ],
+      },
+      { op: "fr" },
+      { op: "mr" },
+      { op: "bl" },
+    ])
+      expect(decode(JSON.stringify(frame)), frame.op).toEqual(frame);
+  });
+
+  it("keeps away and offline apart from online", () => {
+    for (const st of ["i", "x"])
+      expect(decode(`{"op":"p","s":"srv","u":"ada","st":"${st}"}`)).toEqual({
+        op: "p",
+        s: "srv",
+        u: "ada",
+        st,
+      });
+  });
+
+  it("keys each server's topic apart from every other topic", () => {
+    const keys = [
+      topicKey({ s: "a" }),
+      topicKey({ s: "b" }),
+      topicKey({ s: "a", c: "ch" }),
+    ];
+    expect(new Set(keys).size).toBe(3);
+  });
 });

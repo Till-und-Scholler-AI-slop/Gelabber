@@ -405,3 +405,121 @@ describe("plain text", () => {
     expect(plainText("a * b…")).toBe("a * b…");
   });
 });
+
+describe("edges the parser has to get right", () => {
+  const id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+
+  it("keeps the text right before and after a code block", () => {
+    expect(parseMessage("a```b```c")).toEqual([
+      { type: "paragraph", children: [text("a")] },
+      { type: "codeblock", lang: null, text: "b" },
+      { type: "paragraph", children: [text("c")] },
+    ]);
+  });
+
+  it("leaves an escaped fence as text", () => {
+    expect(parseMessage("\\```not code```")).toEqual([
+      { type: "paragraph", children: [text("```not code```")] },
+    ]);
+  });
+
+  it("keeps a quote between the lines around it", () => {
+    expect(parseMessage("intro\n> q\noutro")).toEqual([
+      { type: "paragraph", children: [text("intro")] },
+      { type: "quote", children: [text("q")] },
+      { type: "paragraph", children: [text("outro")] },
+    ]);
+  });
+
+  it("drops one space of padding on each side of inline code only", () => {
+    expect(parseInline("` a `")).toEqual([{ type: "code", text: "a" }]);
+    expect(parseInline("` <b>`")).toEqual([{ type: "code", text: " <b>" }]);
+    expect(parseInline("`ab `")).toEqual([{ type: "code", text: "ab " }]);
+    expect(parseInline("`   `")).toEqual([{ type: "code", text: "   " }]);
+  });
+
+  it("finds a closing mark past escapes, unclosed backticks, links and mentions", () => {
+    expect(parseInline("*a \\* b*")).toEqual([
+      { type: "em", children: [text("a * b")] },
+    ]);
+    expect(parseInline("*a `b*")).toEqual([
+      { type: "em", children: [text("a `b")] },
+    ]);
+    expect(parseInline("*a <https://x.example/*> b*")).toEqual([
+      {
+        type: "em",
+        children: [text("a "), link("https://x.example/*", true), text(" b")],
+      },
+    ]);
+    expect(parseInline(`<@${id}> *a <https://x.example/*> b*`)).toEqual([
+      { type: "mention", userId: id },
+      text(" "),
+      {
+        type: "em",
+        children: [text("a "), link("https://x.example/*", true), text(" b")],
+      },
+    ]);
+  });
+
+  it("formats marks at the end of a message and inside words", () => {
+    expect(parseInline("_end_")).toEqual([
+      { type: "em", children: [text("end")] },
+    ]);
+    expect(parseInline("*a*b")).toEqual([
+      { type: "em", children: [text("a")] },
+      text("b"),
+    ]);
+    expect(parseInline("a**b**c a||d||")).toEqual([
+      text("a"),
+      { type: "strong", children: [text("b")] },
+      text("c a"),
+      { type: "spoiler", children: [text("d")] },
+    ]);
+    expect(parseInline("a_b_")).toEqual([text("a_b_")]);
+    expect(parseInline("* a*")).toEqual([text("* a*")]);
+    expect(parseInline("~~a~~~")).toEqual([
+      { type: "strike", children: [text("a")] },
+      text("~"),
+    ]);
+  });
+
+  it("starts a link or mention only at its own angle bracket", () => {
+    expect(parseInline("1 < 2 <https://a.example/>")).toEqual([
+      text("1 < 2 "),
+      link("https://a.example/", true),
+    ]);
+    expect(parseInline(`1 < 2 <@${id}>`)).toEqual([
+      text("1 < 2 "),
+      { type: "mention", userId: id },
+    ]);
+    expect(parseInline("<http://a.example/>")).toEqual([
+      link("http://a.example/", true),
+    ]);
+    expect(parseInline("<https://:80>")).toEqual([text("<https://:80>")]);
+  });
+
+  it("links a capitalised URL and leaves an unbalanced bracket out", () => {
+    expect(parseInline("Https://a.example")).toEqual([
+      {
+        type: "link",
+        href: "https://a.example/",
+        text: "Https://a.example",
+        suppressed: false,
+      },
+    ]);
+    expect(parseInline("https://a.example/[c]]")).toEqual([
+      link("https://a.example/[c]"),
+      text("]"),
+    ]);
+  });
+
+  it("previews links inside formatting", () => {
+    expect(
+      previewUrls(parseMessage("**https://a.example** _https://b.example_")),
+    ).toEqual(["https://a.example/", "https://b.example/"]);
+  });
+
+  it("keeps @everyone in plain text", () => {
+    expect(plainText("hey @everyone")).toBe("hey @everyone");
+  });
+});
