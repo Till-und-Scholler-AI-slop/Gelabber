@@ -407,28 +407,35 @@ jobs:
       # Every test of the workspace. This core is built with H264, so the
       # loopback call must use it. Profile ci retries a failed test once and
       # writes JUnit (desktop/.config/nextest.toml); nextest skips doctests.
+      # The media tests run one at a time, the others side by side (GEL-393).
       - name: Loopback call against mediasoup 0.33
         if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
+          MEDIA_TESTS: package(gelabber-media-core) | package(gelabber-call)
         run: |
-          set -euo pipefail
-          cargo nextest run --profile ci --locked --manifest-path desktop/Cargo.toml --no-fail-fast --test-threads=1
-          cargo test --locked --manifest-path desktop/Cargo.toml --doc
+          set -uo pipefail
+          status=0
+          cargo nextest run --profile ci-media --locked --manifest-path desktop/Cargo.toml --no-fail-fast -E "$MEDIA_TESTS" || status=1
+          cargo nextest run --profile ci --locked --manifest-path desktop/Cargo.toml --no-fail-fast -E "not ($MEDIA_TESTS)" || status=1
+          cargo test --locked --manifest-path desktop/Cargo.toml --doc || status=1
+          exit "$status"
 
       # A test that passed only on retry passes the run, but never silently.
       - name: Flaky tests
         if: ${{ !cancelled() && inputs.release_tag == '' }}
         env:
           JOB_LABEL: Native core (Linux x64)
-        run: python3 .github/workflows/scripts/flaky_tests.py summary desktop/target/nextest/ci/junit.xml
+        run: python3 .github/workflows/scripts/flaky_tests.py summary desktop/target/nextest/ci-media/junit.xml desktop/target/nextest/ci/junit.xml
 
       - name: Upload the test report
         if: ${{ !cancelled() && inputs.release_tag == '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: junit-desktop-linux
-          path: desktop/target/nextest/ci/junit.xml
+          path: |
+            desktop/target/nextest/ci-media/junit.xml
+            desktop/target/nextest/ci/junit.xml
           if-no-files-found: ignore
           retention-days: 7
 

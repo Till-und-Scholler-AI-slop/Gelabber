@@ -7,7 +7,7 @@ silently, though:
 `summary JUNIT...` writes every flaky test to the job summary
 ($GITHUB_STEP_SUMMARY) and as a warning on the run.
 
-`issues JUNIT...` (push runs, with an `issues: write` token) adds each flake
+`issues JUNIT|FOLDER...` (push runs, with an `issues: write` token) adds each flake
 to its issue: the one .github/flaky-tests.toml names for the test, else the
 open issue "Flaky test: <test>", which it opens the first time.
 
@@ -60,12 +60,13 @@ def flakes(junit):
 
 
 def read_reports(paths):
-    """The flakes of every report that exists; a job that failed before its
-    tests ran wrote none."""
+    """The flakes of every report that exists, and of every report in a
+    folder (the downloaded artifacts); a job that failed before its tests
+    ran wrote none."""
     found = []
-    for path in paths:
-        if Path(path).is_file():
-            found.extend(flakes(Path(path).read_text(encoding='utf-8')))
+    for path in map(Path, paths):
+        for report in sorted(path.rglob('*.xml')) if path.is_dir() else [path] if path.is_file() else []:
+            found.extend(flakes(report.read_text(encoding='utf-8')))
     return found
 
 
@@ -201,7 +202,7 @@ def main(argv):
         file_issues(actions, repo)
         print(f'{len(actions)} flaky test(s) recorded.')
         return 0
-    print('usage: flaky_tests.py check | summary JUNIT... | issues JUNIT...', file=sys.stderr)
+    print('usage: flaky_tests.py check | summary JUNIT... | issues JUNIT|FOLDER...', file=sys.stderr)
     return 2
 
 

@@ -9,3 +9,10 @@ retries = 1
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# The media core's tests (loopback calls through mediasoup, devices) and the
+# call crate's run one at a time in profile ci-media, the others side by side
+# in ci (GEL-393; desktop-native.yml). Its own profile, for its own JUnit.
+[profile.ci-media]
+inherits = "ci"
+test-threads = 1
