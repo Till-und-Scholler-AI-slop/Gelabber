@@ -38,7 +38,7 @@ impl State {
 }
 
 /// Answers that say the link itself is no good, not that loading failed.
-const DEAD: [&str; 3] = ["not_found", "invite_invalid", "banned"];
+const DEAD: [&str; 4] = ["not_found", "invite_invalid", "banned", "server_blocked"];
 
 fn load(app: &AppCtx, code: &str) -> Request {
     let http = app.client.http().clone();
@@ -279,7 +279,9 @@ fn dead(ui: &mut Ui, app: &mut AppCtx, code: &str) {
             },
         );
         let mut lines = vec![(message, false)];
-        if !banned {
+        // A new link to a server you may not enter, or one the operator
+        // blocked, would not help either.
+        if !banned && code != "server_blocked" {
             lines.push((auth::invite_ask_for_new(), true));
         }
         result_lines(ui, &lines);

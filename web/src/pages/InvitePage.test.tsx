@@ -134,4 +134,25 @@ describe("invite page", () => {
     expect(html).toContain("Einladung nicht nutzbar");
     expect(html).not.toContain(">Beitreten</button>");
   });
+
+  it("shows a blocked server as a dead invite, from preview or join", () => {
+    const blocked = () => {
+      const html = renderToStaticMarkup(<InvitePage />);
+      expect(html).toContain("Einladung nicht nutzbar");
+      expect(html).toContain("Dieser Server wurde vom Betreiber gesperrt.");
+      expect(html).toContain('<a href="/">Zu deinen Servern</a>');
+      expect(html).not.toContain("Frag nach einem neuen Link.");
+      expect(html).not.toContain("Erneut versuchen");
+      expect(html).not.toContain(">Beitreten</button>");
+    };
+    fixture.preview = failed("server_blocked");
+    blocked();
+    fixture.preview = loaded();
+    fixture.join = {
+      error: new ApiError("server_blocked", 403, "blocked"),
+      isPending: false,
+      mutate: () => {},
+    };
+    blocked();
+  });
 });

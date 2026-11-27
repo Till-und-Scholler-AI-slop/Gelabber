@@ -29,6 +29,7 @@ const DEAD_INVITE: readonly ApiErrorCode[] = [
   "not_found",
   "invite_invalid",
   "banned",
+  "server_blocked",
 ];
 
 const errorCode = (error: unknown): ApiErrorCode =>
@@ -174,7 +175,9 @@ function DeadInvite({ code }: { code: ApiErrorCode }) {
         <p>
           {code === "not_found" ? t("invite.notFound") : errorMessage(code)}
         </p>
-        {code === "banned" ? null : (
+        {/* A new link to a server you may not enter, or one the operator
+            blocked, would not help either. */}
+        {code === "banned" || code === "server_blocked" ? null : (
           <p className="auth-quiet">{t("invite.askForNew")}</p>
         )}
       </div>

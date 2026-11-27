@@ -1073,3 +1073,102 @@ fn a_refused_password_sign_in_offers_the_link_again() {
             .is_none()
     );
 }
+
+/// The invite page of a signed-in Lena on `api` whose preview answers
+/// `preview` and whose join answers `join`.
+fn invite_page(
+    preview: impl Fn() -> Reply + Send + Sync + 'static,
+    join: impl Fn() -> Reply + Send + Sync + 'static,
+) -> FakeApi {
+    FakeApi::start(true, move |method, at, _| match (method, at) {
+        ("GET", "/invites/k7xm2pqrstuv") => Some(preview()),
+        ("POST", "/invites/k7xm2pqrstuv/join") => Some(join()),
+        _ => None,
+    })
+}
+
+fn blocked() -> Reply {
+    Reply::error(403, "server_blocked")
+}
+
+/// Whether the last frame painted a text that contains `text`: the result
+/// lines of the auth cards are painted, not in the accessibility tree.
+fn painted(harness: &egui_kittest::Harness<'_, crate::Launcher>, text: &str) -> bool {
+    fn walk(shape: &egui::Shape, text: &str) -> bool {
+        match shape {
+            egui::Shape::Text(t) => t.galley.text().contains(text),
+            egui::Shape::Vec(shapes) => shapes.iter().any(|s| walk(s, text)),
+            _ => false,
+        }
+    }
+    harness
+        .output()
+        .shapes
+        .iter()
+        .any(|clipped| walk(&clipped.shape, text))
+}
+
+/// `DeadInvite` for a server the operator blocked: its reason, the way to
+/// the servers, and neither a retry nor a new link to ask for.
+fn assert_blocked_invite(harness: &mut egui_kittest::Harness<'_, crate::Launcher>) {
+    wait_for(harness, "the dead invite", |h| {
+        painted(h, "Dieser Server wurde vom Betreiber gesperrt.")
+            && h.query_by_label("Beitreten").is_none()
+    });
+    assert!(painted(harness, "Einladung nicht nutzbar"));
+    assert!(!painted(harness, "Frag nach einem neuen Link."));
+    assert!(
+        harness
+            .query_by_role_and_label(Role::Button, "Zu deinen Servern")
+            .is_some()
+    );
+    assert!(harness.query_by_label("Erneut versuchen").is_none());
+}
+
+/// A blocked server is a dead invite when the preview says so (GEL-86).
+#[test]
+fn a_blocked_server_on_preview_is_a_dead_invite() {
+    let _config = TempConfig::new("auth-invite-blocked-preview");
+    let api = invite_page(blocked, blocked);
+    let mut harness = launcher(&api, "/invite/k7xm2pqrstuv");
+    assert_blocked_invite(&mut harness);
+}
+
+/// … and when the block lands between the preview and the join.
+#[test]
+fn a_blocked_server_on_join_is_a_dead_invite() {
+    let _config = TempConfig::new("auth-invite-blocked-join");
+    let api = invite_page(
+        || {
+            Reply::json(serde_json::json!({
+                "code": "k7xm2pqrstuv",
+                "server": {"id": "s1", "name": "Spieleabend", "member_count": 3},
+                "expires_at": null,
+                "member": false,
+            }))
+        },
+        blocked,
+    );
+    let mut harness = launcher(&api, "/invite/k7xm2pqrstuv");
+    wait_for_label(&mut harness, "Beitreten");
+    click_role(&mut harness, Role::Button, "Beitreten");
+    assert_blocked_invite(&mut harness);
+}
+
+/// The other dead answers keep no retry either.
+#[test]
+fn a_dead_invite_offers_no_retry() {
+    for (code, status) in [("not_found", 404), ("invite_invalid", 410), ("banned", 403)] {
+        let _config = TempConfig::new(&format!("auth-invite-dead-{code}"));
+        let answer = move || Reply::error(status, code);
+        let api = invite_page(answer, answer);
+        let mut harness = launcher(&api, "/invite/k7xm2pqrstuv");
+        wait_for(&mut harness, "the dead invite", |h| {
+            painted(h, "Einladung nicht nutzbar") || painted(h, "Kein Zutritt")
+        });
+        assert!(
+            harness.query_by_label("Erneut versuchen").is_none(),
+            "{code}"
+        );
+    }
+}
