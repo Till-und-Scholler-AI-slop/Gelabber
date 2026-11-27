@@ -110,7 +110,12 @@ pub fn within(secs: u64, test: impl FnOnce() + Send + 'static) {
             }
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            eprintln!("the UI thread hung for {secs} s; ending the test run");
+            // Past the test's captured output, which the abort would lose.
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "the UI thread hung for {secs} s; ending the test run"
+            );
             std::process::abort();
         }
     }
