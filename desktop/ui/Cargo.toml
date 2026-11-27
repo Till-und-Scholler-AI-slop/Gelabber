@@ -60,8 +60,3 @@ gelabber-call = { path = "../call", features = ["testing"] }
 gelabber-i18n = { path = "../i18n", features = ["testing"] }
 gelabber-testing = { path = "../testing" }
 egui_kittest = { version = "0.37.0", features = ["wgpu", "eframe", "snapshot"] }
-
-# Against the seeded stack with the native media core (see its header).
-[[test]]
-name = "voice_live"
-required-features = ["media"]

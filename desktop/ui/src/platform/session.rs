@@ -392,7 +392,7 @@ mod tests {
     /// `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-ui
     /// signed_in_after_a_restart -- --ignored`. Signs out again at the end.
     #[test]
-    #[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
+    #[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); runs in e2e-extended.yml after merges (GEL-376)"]
     fn signed_in_after_a_restart() {
         let server =
             std::env::var("GELABBER_TEST_SERVER").expect("GELABBER_TEST_SERVER, the seeded stack");
