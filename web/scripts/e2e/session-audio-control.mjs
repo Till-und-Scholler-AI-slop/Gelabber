@@ -31,7 +31,7 @@ function data({
       audioTracks: 1,
       paused: false,
       muted: muted && !(spared && i === 0),
-      volume: 0.35,
+      volume: 1,
     })),
     roomAudio: { perSource: [1, 1], foreign: 0 },
     watchVideoSources: { selectedLive: 1, foreign: 0 },
@@ -48,7 +48,11 @@ export async function sessionAudioControl({
   replaceTrack = false,
   finalRestoreError = false,
   retryStartsNothing = false,
+  noticeStays = false,
+  muteDoesNothing = false,
   deafenSparesOne = false,
+  undeafenSparesOne = false,
+  volumeSparesOne = false,
   micReadyAfterPoll = false,
   micNeverConnected = false,
   micNoOutboundRtp = false,
@@ -58,15 +62,20 @@ export async function sessionAudioControl({
   const actions = [];
   let finishedVolume = false,
     retried = false,
+    volumeSteps = 100,
     result,
     error;
-  // The only control the scenario counts is the retry, gone once clicked.
+  // The only control the scenario counts is the retry, gone once clicked;
+  // the only one it presses keys on is the call volume, 1 % a step.
   const locator = {
     click: async () => {
       retried = true;
     },
-    press: async () => {},
-    count: async () => (retried ? 0 : 1),
+    press: async (key) => {
+      if (key === "Home") volumeSteps = 0;
+      if (key === "ArrowRight") volumeSteps++;
+    },
+    count: async () => (retried && !noticeStays ? 0 : 1),
     first() {
       return this;
     },
@@ -181,7 +190,8 @@ export async function sessionAudioControl({
               ? "undeafen"
               : null;
       if (phase) {
-        const enabled = phase === "undeafen",
+        const enabled =
+            phase === "undeafen" || (phase === "mute" && muteDoesNothing),
           lost = lostMicAt === phase;
         f.watcher.microphone.enabled = enabled;
         if (lost) f.watcher.state.nativeSenders = [];
@@ -209,6 +219,12 @@ export async function sessionAudioControl({
           enabled: false,
           muted: true,
           spared: true,
+        });
+      if (phase === "undeafen" && undeafenSparesOne)
+        f.watcher.sample.playback[0].muted = true;
+      if (code === "session-volume-not-applied-to-every-path")
+        f.watcher.sample.playback.forEach((path, i) => {
+          path.volume = volumeSparesOne && i === 0 ? 1 : volumeSteps / 100;
         });
       const sample = await probe();
       check(accept(sample), code, { last: sample });

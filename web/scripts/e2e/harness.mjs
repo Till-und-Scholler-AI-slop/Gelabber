@@ -324,7 +324,8 @@ export async function startHarness() {
       return path;
     }
     const voicePath = await channel("E2E Voice A");
-    const otherPath = await channel("E2E Voice B");
+    // Other scenarios open it by its name.
+    await channel("E2E Voice B");
     async function join(who) {
       await who.page.goto(invite);
       await who.page
@@ -347,7 +348,6 @@ export async function startHarness() {
       serverId,
       textPath,
       voicePath,
-      otherPath,
       base,
     };
   }

@@ -429,9 +429,16 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           window.__e2e.rejectPlayback = true;
         });
         await click(f.watcher, "Beitreten");
+        // First the room's paths, under a name of their own: a participant
+        // left over from another scenario shows up here, not as a refusal.
+        await until(
+          () => snapshot(f.watcher),
+          (s) => audioPlays(s).length === paths,
+          "fixture-room-audio-paths-not-two",
+        );
         const blocked = await until(
           () => snapshot(f.watcher),
-          (s) => s.playRejected > 0 && audioPlays(s).length === paths,
+          (s) => s.playRejected > 0,
           "fixture-room-audio-playback-not-refused",
         );
         const retry = f.watcher.page.getByRole("button", {
@@ -654,8 +661,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         // While a Live plays in the call, the call bar's "Lautstärke" holds
         // the call volume ("Gespräche") beside the Live's own.
         await f.watcher.page
+          .getByRole("region", { name: "Aktive Medien", exact: true })
           .getByRole("button", { name: "Lautstärke", exact: true })
-          .first()
           .click();
         const volume = f.watcher.page
           .getByRole("dialog", { name: "Lautstärke", exact: true })

@@ -247,7 +247,11 @@ test("actual audio task retries playback with the real click, then keeps the mic
 });
 for (const [option, code] of [
   [{ retryStartsNothing: true }, "audio-click-retry-did-not-play-every-path"],
+  [{ noticeStays: true }, "audio-click-retry-did-not-play-every-path"],
+  [{ muteDoesNothing: true }, "session-mute-did-not-disable-mic"],
   [{ deafenSparesOne: true }, "session-deafen-did-not-mute-every-path"],
+  [{ undeafenSparesOne: true }, "session-undeafen-did-not-restore-every-path"],
+  [{ volumeSparesOne: true }, "session-volume-not-applied-to-every-path"],
 ]) {
   test(`actual audio task fails when the app breaks it ${JSON.stringify(option)}`, async () => {
     const r = await sessionAudioControl(option);
