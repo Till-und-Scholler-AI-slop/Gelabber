@@ -408,7 +408,7 @@ describe("stream sound: the stored choice", () => {
     expect(useMediaSettings.getState().sourceAudioShare).toBe("auto");
   });
 
-  it("has no choice from the boolean that v0.5 and earlier saved", async () => {
+  it("has no choice from the boolean alone (settings saved by v0.5 and earlier)", async () => {
     expect(await reloadWith({ shareSourceAudio: true })).toBe("auto");
     expect(await reloadWith({ quality: "high" })).toBe("auto");
     // A key this version does not know does not reach the state.
@@ -423,6 +423,11 @@ describe("stream sound: the stored choice", () => {
     await storage().setItem("gelabber.media", saved);
     await useMediaSettings.persist.rehydrate();
     expect(useMediaSettings.getState().sourceAudioShare).toBe("off");
+    // What a browser that last ran v0.6 to v0.14.0 holds: the boolean next
+    // to the choice. The choice is read.
+    expect(
+      await reloadWith({ sourceAudioShare: "off", shareSourceAudio: true }),
+    ).toBe("off");
   });
 
   it("takes anything else for no choice", async () => {

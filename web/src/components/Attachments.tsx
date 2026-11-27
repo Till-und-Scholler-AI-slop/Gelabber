@@ -59,10 +59,9 @@ export function AttachmentList({
   editAlt?: AltTextTarget;
 }) {
   const [editing, setEditing] = useState<Attachment | null>(null);
-  const files = attachments;
-  if (files.length === 0) return null;
-  const images = files.filter((a) => isImageType(a.content_type));
-  const others = files.filter((a) => !isImageType(a.content_type));
+  if (attachments.length === 0) return null;
+  const images = attachments.filter((a) => isImageType(a.content_type));
+  const others = attachments.filter((a) => !isImageType(a.content_type));
   return (
     <div className="lr-attachments">
       {images.length > 0 ? (

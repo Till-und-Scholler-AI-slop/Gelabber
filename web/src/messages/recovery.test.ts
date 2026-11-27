@@ -24,6 +24,7 @@ function message(id: string): Message {
     reactions: [],
     mentions: [],
     mention_everyone: false,
+    revision: 1,
     attachments: [],
   };
 }
