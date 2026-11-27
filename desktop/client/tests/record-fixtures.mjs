@@ -78,10 +78,15 @@ class Person {
   }
 }
 
-/** The gateway socket of a person: every frame it receives, in order. */
+/**
+ * The gateway socket of a person: every frame it receives, and in `kept`
+ * the ones waited for, in order. Only those are recorded: the others (a
+ * room snapshot now and then, one's own presence) come or not by timing.
+ */
 class Socket {
   constructor(person) {
     this.frames = [];
+    this.kept = [];
     this.waiters = [];
     const url = new URL("/ws", BASE);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -102,7 +107,13 @@ class Socket {
   }
 
   /** The next frame (from now on, or already received when `seen`) that `match`es. */
-  until(what, match, { seen = false } = {}) {
+  async until(what, match, options) {
+    const frame = await this.next(what, match, options);
+    if (!this.kept.includes(frame)) this.kept.push(frame);
+    return frame;
+  }
+
+  next(what, match, { seen = false } = {}) {
     if (seen) {
       const found = this.frames.find(match);
       if (found) return Promise.resolve(found);
@@ -219,6 +230,16 @@ async function record(out) {
       (f) => f.op === "ok" && f.s === scratch && !f.c,
       { seen: true },
     );
+    await socket.until(
+      "the server's presence",
+      (f) => f.op === "p" && f.s === scratch && Array.isArray(f.snap),
+      { seen: true },
+    );
+    await socket.until(
+      "the server's voice rooms",
+      (f) => f.op === "sig" && f.t === "r" && f.s === scratch,
+      { seen: true },
+    );
     socket.send({ op: "s", s: scratch, c: text });
     await socket.until(
       "channel subscribed",
@@ -265,6 +286,15 @@ async function record(out) {
         reply_to: first.id,
       }),
     );
+    for (const [what, message] of [
+      ["Lena's message", first],
+      ["Jonas' reply", reply],
+    ])
+      await socket.until(
+        what,
+        (f) => f.op === "e" && f.t === "c" && f.i === message.id,
+        { seen: true },
+      );
     keep(
       "reaction",
       await jonas.call(
@@ -351,7 +381,7 @@ async function record(out) {
     await socket.until("locale", (f) => f.op === "lc", { seen: true });
     await lena.call("PUT", "/me/locale", { locale: "de" });
     await socket.close();
-    keep("frames", socket.frames);
+    keep("frames", socket.kept);
   } finally {
     await lena
       .call("DELETE", `/servers/${scratch}`)
@@ -367,21 +397,23 @@ async function record(out) {
   return recorded;
 }
 
-/** Keys and value types, not values: what the client's models depend on. */
-function shape(value) {
+/**
+ * Keys and value types, not values: what the client's models depend on.
+ * Every path with the type found there (`.messages[].author.name string`);
+ * the elements of an array count together, whatever their number.
+ */
+function shape(value, path = "", out = new Set()) {
   if (Array.isArray(value)) {
-    const kinds = [
-      ...new Set(value.map((v) => JSON.stringify(shape(v)))),
-    ].sort();
-    return { array: kinds.map((k) => JSON.parse(k)) };
+    out.add(`${path} array`);
+    for (const element of value) shape(element, `${path}[]`, out);
+  } else if (value && typeof value === "object") {
+    out.add(`${path} object`);
+    for (const [key, child] of Object.entries(value))
+      shape(child, `${path}.${key}`, out);
+  } else {
+    out.add(`${path} ${value === null ? "null" : typeof value}`);
   }
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((k) => [k, shape(value[k])]),
-    );
-  return value === null ? "null" : typeof value;
+  return out;
 }
 
 /** FNV-1a, 64 bits, as hex: models.rs computes the same without a crate. */
@@ -397,6 +429,7 @@ if (check) {
   try {
     await record(fresh);
     const differ = [];
+    const details = [];
     for (const file of (await readdir(committed)).filter(
       (f) => f.endsWith(".json") && f !== "recorded.json",
     )) {
@@ -404,13 +437,22 @@ if (check) {
         await readFile(join(fresh, file), "utf8").catch(() => "null"),
       );
       const then = JSON.parse(await readFile(join(committed, file), "utf8"));
-      if (JSON.stringify(shape(now)) !== JSON.stringify(shape(then)))
+      const [a, b] = [shape(then), shape(now)];
+      const gone = [...a].filter((p) => !b.has(p));
+      const added = [...b].filter((p) => !a.has(p));
+      if (gone.length || added.length) {
         differ.push(file);
+        details.push(
+          `${file}: the API no longer sends ${JSON.stringify(gone.slice(0, 8))}, ` +
+            `sends new ${JSON.stringify(added.slice(0, 8))}`,
+        );
+      }
     }
     if (differ.length) {
       console.error(
         `The API sends other shapes than these fixtures: ${differ.join(", ")}. ` +
-          "Record them again (node desktop/client/tests/record-fixtures.mjs) and adapt models.rs.",
+          "Record them again (node desktop/client/tests/record-fixtures.mjs) and adapt models.rs.\n" +
+          details.join("\n"),
       );
       process.exit(1);
     }

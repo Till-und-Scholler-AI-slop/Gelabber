@@ -1,16 +1,16 @@
 {
-  "id": "2e05f99c-a677-463f-809f-651717b6b038",
-  "channel_id": "9c5ff6a2-ea00-45d4-8dff-47d9cf132fa0",
+  "id": "fb11b023-3ad2-47aa-aa36-25e961fa0bed",
+  "channel_id": "e68dd730-1f6c-449b-86f3-1f5e740ea5f9",
   "author": {
     "id": "d899594b-1041-431b-aadb-ada4789bbcc7",
     "name": "Jonas",
     "avatar_url": null
   },
   "content": "<@c58d9797-28f4-4571-bd2a-9ced973c0b7b> Antwort",
-  "created_at": "2026-11-27T17:04:04.368770Z",
+  "created_at": "2026-11-27T18:00:58.581447Z",
   "edited_at": null,
-  "revision": 98,
-  "created_order": 62,
+  "revision": 128,
+  "created_order": 74,
   "attachments": [],
   "reactions": [],
   "mentions": [
@@ -18,7 +18,7 @@
   ],
   "mention_everyone": false,
   "reply": {
-    "id": "ff363218-ee87-4e3a-83ac-a2d78d91a5e5",
+    "id": "31ea78da-b4ca-4962-b123-926f0ad5ec30",
     "deleted": false,
     "author": {
       "id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
