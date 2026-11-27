@@ -269,9 +269,10 @@ export async function startHarness() {
   }
   async function fixture() {
     try {
-      return { ...(await buildFixture()), steps: fixtureSteps };
+      // A copy: scenarios register more actors through the same steps later.
+      return { ...(await buildFixture()), steps: [...fixtureSteps] };
     } catch (error) {
-      if (error instanceof Error) error.steps = fixtureSteps;
+      if (error instanceof Error) error.steps = [...fixtureSteps];
       throw error;
     }
   }
