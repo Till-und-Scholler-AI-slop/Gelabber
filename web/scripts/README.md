@@ -15,8 +15,9 @@ the document named in the table describes. Run all of them from `web/`.
 | `npm run test:pwa-smoke` (`smoke-pwa.mjs`)                                                                                                                                                                            | the same workflow                                                          | the built `dist` behind the production nginx; see `docs/v0.6-pwa.md` |
 
 A check that is known to fail stays in its script's list of expected failures
-(`e2e/expected-failures.mjs`) under the issue that ends it. The run fails when
-such a check passes, so its entry goes with the fix.
+(`e2e/expected-failures.mjs`), with the issue that ends it and the failure
+message it expects. The run fails when such a check passes, so its entry goes
+with the fix, when it fails with another message, and when no check passed.
 
 ## Started by hand
 
