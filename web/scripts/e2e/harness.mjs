@@ -94,6 +94,30 @@ export function timedOutAction(error) {
       )?.[1] ?? null)
     : null;
 }
+// Each step's name and time in order, a failed step included.
+export function stepLog() {
+  const steps = [];
+  async function step(name, action) {
+    const start = Date.now();
+    try {
+      return await action();
+    } finally {
+      steps.push({ step: name, ms: Date.now() - start });
+    }
+  }
+  return { steps, step };
+}
+// Where a failure happened, for its report row: the scenario's own line, not
+// the harness helper that threw; for a Playwright timeout also the call that
+// ran out and the harness line; and the steps an error carries.
+export function failureEvidence(error) {
+  const action = timedOutAction(error);
+  return {
+    site: failureSite(error?.stack),
+    ...(action ? { action, harnessSite: harnessSite(error.stack) } : {}),
+    ...(Array.isArray(error?.steps) ? { steps: error.steps } : {}),
+  };
+}
 export function safeError(error) {
   // Playwright errors contain URLs, form values and call logs: never persist them.
   return error instanceof CheckFailure ||
@@ -204,15 +228,7 @@ export async function startHarness() {
     cleanup: [],
   };
   // How long each fixture step took, in the fixture's row (GEL-423).
-  const fixtureSteps = [];
-  async function step(name, action) {
-    const start = Date.now();
-    try {
-      return await action();
-    } finally {
-      fixtureSteps.push({ step: name, ms: Date.now() - start });
-    }
-  }
+  const { steps: fixtureSteps, step } = stepLog();
   async function actor(label) {
     // The scenarios find controls by their German names, and the
     // app follows the browser's language (src/i18n/locale.ts), English on CI.
@@ -431,15 +447,7 @@ export async function startHarness() {
               : error instanceof CheckFailure && /fixture/.test(error.message)
                 ? "test-error"
                 : "unconfirmed-failure",
-        // The scenario's own line, not the harness helper that threw.
-        site: failureSite(error.stack),
-        ...(timedOutAction(error)
-          ? {
-              action: timedOutAction(error),
-              harnessSite: harnessSite(error.stack),
-            }
-          : {}),
-        ...(Array.isArray(error?.steps) ? { steps: error.steps } : {}),
+        ...failureEvidence(error),
         ...(error instanceof CheckFailure ||
         error instanceof NativeInterfaceFailure
           ? { metrics: error.metrics }

@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import {
   CheckFailure,
   check,
+  failureEvidence,
   failureSite,
   harnessSite,
+  stepLog,
   timedOutAction,
   revision,
   safeError,
@@ -95,6 +97,52 @@ test("evidence errors discard Playwright URLs, secrets and call logs", () => {
   );
   assert.equal(revision("secret"), "unknown");
   assert.equal(revision("828ee23"), "828ee23");
+});
+test("a failed set-up row lists each step's time and the call that ran out", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
+  const { steps, step } = stepLog();
+  assert.equal(
+    await step("Publisher-register-page", async () => {
+      t.mock.timers.setTime(1_500);
+      return "page";
+    }),
+    "page",
+  );
+  const deadline = new Error(
+    'page.waitForURL: Timeout 12000ms exceeded.\nCall log:\n  - waiting for "http://127.0.0.1:15186/s/1?invite=SECRET"',
+  );
+  deadline.name = "TimeoutError";
+  deadline.stack = [
+    "TimeoutError: page.waitForURL: Timeout 12000ms exceeded.",
+    "    at step (file:///w/web/scripts/e2e/harness.mjs:150:22)",
+    "    at async fixture (file:///w/web/scripts/e2e/harness.mjs:286:7)",
+    "    at async file:///w/web/scripts/e2e/run.mjs:42:9",
+  ].join("\n");
+  await assert.rejects(
+    step("server-create", async () => {
+      t.mock.timers.setTime(13_600);
+      throw deadline;
+    }),
+    (error) => error === deadline,
+  );
+  assert.deepEqual(steps, [
+    { step: "Publisher-register-page", ms: 1_500 },
+    { step: "server-create", ms: 12_100 },
+  ]);
+  deadline.steps = steps;
+  const evidence = failureEvidence(deadline);
+  assert.deepEqual(evidence, {
+    site: "run.mjs:42:9",
+    action: "page.waitForURL",
+    harnessSite: "harness.mjs:150:22",
+    steps,
+  });
+  assert.ok(!JSON.stringify(evidence).includes("SECRET"));
+  // A check's own failure names no Playwright call.
+  assert.deepEqual(
+    Object.keys(failureEvidence(new CheckFailure("fixture-x"))),
+    ["site"],
+  );
 });
 test("11a account-creating runner refuses production and credential-bearing URLs", () => {
   for (const url of [
