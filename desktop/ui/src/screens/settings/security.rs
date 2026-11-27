@@ -1024,6 +1024,26 @@ mod drawn {
             .collect()
     }
 
+    /// Clicks the `nth` button labelled `label` (testkit::click_node).
+    fn press(h: &mut Harness<'_, Launcher>, label: &str, nth: usize) {
+        crate::app::testkit::click_node(h, label, |h| {
+            button(h, label)
+                .get(nth)
+                .copied()
+                .map(crate::app::testkit::id_of)
+        });
+    }
+
+    /// Clicks the last button labelled `label`.
+    fn press_last(h: &mut Harness<'_, Launcher>, label: &str) {
+        crate::app::testkit::click_node(h, label, |h| {
+            button(h, label)
+                .last()
+                .copied()
+                .map(crate::app::testkit::id_of)
+        });
+    }
+
     fn href(h: &mut Harness<'_, Launcher>) -> String {
         h.state_mut().app().expect("app").nav().location().href()
     }
@@ -1083,7 +1103,7 @@ mod drawn {
         assert_eq!(button(&h, "Export anfordern").len(), 1);
         assert_eq!(button(&h, "Konto löschen").len(), 1);
         assert_eq!(button(&h, "Auf allen Geräten abmelden").len(), 1);
-        button(&h, "Abmelden")[1].click();
+        press(&mut h, "Abmelden", 1);
         wait_for(&mut h, "the device gone", |h| {
             h.query_by_label("Firefox unter Windows").is_none()
         });
@@ -1099,7 +1119,7 @@ mod drawn {
         let api = FakeApi::start(true, |method, path, _| page(method, path));
         let mut h = launcher(&api, "/settings/konto");
         wait_for_label(&mut h, "Gelabber für Linux");
-        button(&h, "Abmelden")[0].click();
+        press(&mut h, "Abmelden", 0);
         wait_for(&mut h, "the sign-in page", |h| {
             h.query_by_label("Anmelden").is_some() && h.query_by_label("Dieses Gerät").is_none()
         });
@@ -1126,7 +1146,7 @@ mod drawn {
         });
         let mut h = launcher(&api, "/settings/konto");
         wait_for_label(&mut h, "Export anfordern");
-        button(&h, "Export anfordern")[0].click();
+        press(&mut h, "Export anfordern", 0);
         wait_for_label(&mut h, "Wird erstellt. Das kann eine Weile dauern.");
         let building = button(&h, "Wird erstellt…");
         assert_eq!(building.len(), 1);
@@ -1141,7 +1161,7 @@ mod drawn {
         });
         let mut h = launcher(&api, "/settings/konto");
         wait_for_label(&mut h, "Export anfordern");
-        button(&h, "Export anfordern")[0].click();
+        press(&mut h, "Export anfordern", 0);
         crate::app::testkit::wait_for_text(
             &mut h,
             "Einen neuen Export kannst du in 5 Stunden anfordern.",
@@ -1174,7 +1194,7 @@ mod drawn {
             },
         );
         wait_for_label(&mut h, "Bereit bis 18. November 2036, 46,0 MB.");
-        button(&h, "Herunterladen")[0].click();
+        press(&mut h, "Herunterladen", 0);
         let saved = dir.join("gelabber-export-2036-11-11.zip");
         crate::app::testkit::wait_for_text(&mut h, "Gespeichert unter");
         assert_eq!(std::fs::read(&saved).expect("saved"), br#"{"zip":true}"#);
@@ -1209,7 +1229,7 @@ mod drawn {
             },
         );
         wait_for_label(&mut h, "Bereit bis 18. November 2036, 46,0 MB.");
-        button(&h, "Herunterladen")[0].click();
+        press(&mut h, "Herunterladen", 0);
         wait_for(&mut h, "the download", |_| {
             api.saw("GET /me/export/download")
         });
@@ -1237,12 +1257,12 @@ mod drawn {
         // The list of servers is in before the dialog decides.
         wait_for(&mut h, "the servers", |_| api.saw("GET /servers"));
         h.run_steps(3);
-        button(&h, "Konto löschen")[0].click();
+        press(&mut h, "Konto löschen", 0);
         wait_for_label(&mut h, "1 Mitglied");
         // Its row, beside the rail's tile.
         assert!(h.query_all_by_label("Wohnzimmer").count() >= 2);
         assert!(h.query_by_label("Konto endgültig löschen?").is_none());
-        button(&h, "Servereinstellungen")[0].click();
+        press(&mut h, "Servereinstellungen", 0);
         wait_for(&mut h, "server settings", |h| {
             h.query_by_label("Servereinstellungen").is_none()
         });
@@ -1281,23 +1301,23 @@ mod drawn {
         });
         wait_for(&mut h, "the servers", |_| api.saw("GET /servers"));
         h.run_steps(3);
-        button(&h, "Konto löschen")[0].click();
+        press(&mut h, "Konto löschen", 0);
         wait_for_label(&mut h, "Konto endgültig löschen?");
         // Empty: nothing is sent.
-        button(&h, "Konto löschen").last().expect("submit").click();
+        press_last(&mut h, "Konto löschen");
         h.run_steps(4);
         assert!(!api.saw("DELETE /me"));
         // The API knows of a server the list did not.
         type_into(&mut h, "Passwort", "anders");
-        button(&h, "Konto löschen").last().expect("submit").click();
+        press_last(&mut h, "Konto löschen");
         wait_for_label(&mut h, "5 Mitglieder");
-        button(&h, "Schließen").last().expect("close").click();
+        press_last(&mut h, "Schließen");
         h.run_steps(4);
         // Once more, now with nothing in the way.
-        button(&h, "Konto löschen")[0].click();
+        press(&mut h, "Konto löschen", 0);
         wait_for_label(&mut h, "Konto endgültig löschen?");
         type_into(&mut h, "Passwort", "geheim");
-        button(&h, "Konto löschen").last().expect("submit").click();
+        press_last(&mut h, "Konto löschen");
         wait_for_label(&mut h, "Dein Konto wurde gelöscht.");
         assert_eq!(href(&mut h), "/login?reason=deleted");
         assert!(deleted.load(Ordering::SeqCst));

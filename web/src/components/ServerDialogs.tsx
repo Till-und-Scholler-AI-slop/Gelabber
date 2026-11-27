@@ -6,6 +6,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 
+import { isMalformedAnswer } from "../api/wire.ts";
 import { currentUserId, useUserId } from "../auth/scope.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
@@ -42,6 +43,7 @@ import type {
 } from "../servers/types.ts";
 import { ChannelAccessField } from "./ChannelAccessField.tsx";
 import { Field } from "./Field.tsx";
+import { notifyError } from "./toasts.ts";
 import { FormError } from "./FormError.tsx";
 import { HashIcon, LinkIcon, PlusIcon, SpeakerIcon } from "./Icons.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
@@ -195,7 +197,12 @@ function CreateServerForm({
         void navigate({ to: "/s/$serverId", params: { serverId: detail.id } });
         promptInvite({ userId, id: detail.id, name: detail.name });
       },
-      onError: fromError,
+      // It may have been created: close, say so, and let the list show it.
+      onError: (error) => {
+        if (!isMalformedAnswer(error)) return fromError(error);
+        onClose();
+        notifyError(error);
+      },
     });
   };
 

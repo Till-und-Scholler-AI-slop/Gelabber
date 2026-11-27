@@ -539,11 +539,7 @@ fn a_server_that_did_not_load_offers_a_retry() {
             )
         })
     };
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !failed(&client) {
-        assert!(std::time::Instant::now() < until, "the load did not fail");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    crate::app::testkit::eventually("the load to fail", || failed(&client));
     let mut h = harness(client, call, |ui, app| {
         let rect = Rect::from_min_size(pos2(288.0, 0.0), vec2(744.0, 744.0));
         crate::screens::shell::overview::show(ui, app, rect, SERVER);

@@ -7,18 +7,14 @@ mod common;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
 use gelabber_api::{AppState, EventKind, publish_channel};
 use gelabber_shared::ticket::member_authority_key;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 use uuid::Uuid;
 
-use common::{Client, SESSION};
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+use common::Client;
+use common::ws::{self, Ws, connect, send, until};
 
 async fn register(state: &AppState, name: &str) -> Client {
     let mut client = Client::with_state(state.clone());
@@ -583,64 +579,13 @@ async fn here_reaches_only_members_who_see_the_channel(pool: PgPool) {
     assert_eq!(res.body["mentions"], json!([cara.user_id()]));
 }
 
-async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{SESSION}={}", client.jar[SESSION])
-            .parse()
-            .unwrap(),
-    );
-    tokio_tungstenite::connect_async(req)
-        .await
-        .expect("connect")
-        .0
-}
-
-async fn send(ws: &mut Ws, frame: Value) {
-    ws.send(Message::Text(frame.to_string().into()))
-        .await
-        .unwrap();
-}
-
-async fn until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            match ws.next().await.expect("open socket").expect("frame") {
-                Message::Text(raw) => {
-                    let frame: Value = serde_json::from_str(&raw).unwrap();
-                    if frame["op"] == "h" {
-                        send(ws, json!({"op": "h"})).await;
-                    }
-                    if pred(&frame) {
-                        return frame;
-                    }
-                }
-                other => panic!("unexpected {other:?}"),
-            }
-        }
-    })
-    .await
-    .expect("matching frame")
-}
-
 /// No `e` frame for `channel` arrives within a second.
 async fn quiet(ws: &mut Ws, channel: Uuid) {
-    let got = tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            if let Some(Ok(Message::Text(raw))) = ws.next().await {
-                let frame: Value = serde_json::from_str(&raw).unwrap();
-                if frame["op"] == "h" {
-                    send(ws, json!({"op": "h"})).await;
-                }
-                if frame["op"] == "e" && frame["c"] == channel.to_string() {
-                    return frame;
-                }
-            }
-        }
+    let got = ws::within(ws, Duration::from_secs(1), |f| {
+        f["op"] == "e" && f["c"] == channel.to_string()
     })
     .await;
-    assert!(got.is_err(), "event in a hidden channel: {got:?}");
+    assert_eq!(got, None, "event in a hidden channel");
 }
 
 async fn subscribe(ws: &mut Ws, sid: Uuid, cid: Uuid) {

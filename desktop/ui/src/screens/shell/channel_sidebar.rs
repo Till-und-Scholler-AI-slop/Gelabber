@@ -1174,6 +1174,7 @@ pub fn brand_named(ui: &Ui, rect: Rect, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::testkit::click_role;
 
     /// Wohnzimmer with `categories` as (n, name) and `channels` as
     /// (n, category n or 0 for none, name, kind).
@@ -1333,21 +1334,15 @@ mod tests {
         let api = FakeApi::start(true, |method, path, _| workspace(method, path));
         let mut harness = launcher(&api, &format!("/s/{HOME}"));
         wait_for_label(&mut harness, "allgemein");
-        harness
-            .get_by_role_and_label(Role::DisclosureTriangle, "Wohnzimmer")
-            .click();
+        click_role(&mut harness, Role::DisclosureTriangle, "Wohnzimmer");
         wait_for_label(&mut harness, "Servereinstellungen");
         harness.key_press(egui::Key::Escape);
         harness.run_steps(4);
         assert!(harness.query_by_label("Servereinstellungen").is_none());
         // A click on the name still opens and closes it.
-        let name = |h: &egui_kittest::Harness<'_, crate::Launcher>| {
-            h.get_by_role_and_label(Role::DisclosureTriangle, "Wohnzimmer")
-                .click();
-        };
-        name(&harness);
+        click_role(&mut harness, Role::DisclosureTriangle, "Wohnzimmer");
         wait_for_label(&mut harness, "Servereinstellungen");
-        name(&harness);
+        click_role(&mut harness, Role::DisclosureTriangle, "Wohnzimmer");
         harness.run_steps(4);
         assert!(harness.query_by_label("Servereinstellungen").is_none());
     }

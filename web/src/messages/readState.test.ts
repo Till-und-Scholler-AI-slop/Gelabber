@@ -18,6 +18,7 @@ import type { Gateway } from "../ws/client.ts";
 const user = {
   id: "read-user",
   email: "read@example.test",
+  locale: "de",
   name: "Read",
   avatar_url: null,
   created_at: "2026-10-05T00:00:00Z",
@@ -76,13 +77,22 @@ describe("read eligibility and recovery", () => {
     });
     const unsubscribe = observer.subscribe(() => {});
     await vi.waitFor(() => expect(resolve).toBeTypeOf("function"));
-    response = () => json([{ channel_id: "c", unread_count: 1 }]);
+    const row = (unread_count: number) => ({
+      channel_id: "c",
+      server_id: null,
+      read_message_id: null,
+      read_at: null,
+      read_order: null,
+      membership_at: "2026-01-01T00:00:00Z",
+      latest_order: null,
+      unread_count,
+      mention_count: 0,
+    });
+    response = () => json([row(1)]);
     await refreshChatWorkflows(client, stamp);
-    resolve(json([{ channel_id: "c", unread_count: 100 }]));
+    resolve(json([row(100)]));
     await vi.waitFor(() =>
-      expect(client.getQueryData(readKey(stamp))).toEqual([
-        { channel_id: "c", unread_count: 1 },
-      ]),
+      expect(client.getQueryData(readKey(stamp))).toEqual([row(1)]),
     );
     unsubscribe();
     observer.destroy();
@@ -207,8 +217,8 @@ describe("read eligibility and recovery", () => {
     const current = {
       target_id: "target",
       messages: [],
-      before: null,
-      after: null,
+      before: "2026-01-01T00:00:00Z|target",
+      after: "2026-01-01T00:00:00Z|target",
     };
     response = () => json(current);
     await refreshChatWorkflows(client, stamp, "channel");
@@ -252,8 +262,8 @@ describe("read eligibility and recovery", () => {
       json({
         target_id: "target",
         messages: [{ id: "private" }],
-        before: null,
-        after: null,
+        before: "2026-01-01T00:00:00Z|target",
+        after: "2026-01-01T00:00:00Z|target",
       }),
     );
     await Promise.resolve();

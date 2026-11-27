@@ -6,6 +6,7 @@ use egui::accesskit::Role;
 use egui_kittest::kittest::{NodeT, Queryable};
 
 use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label, wait_for_text};
+use crate::app::testkit::{click, click_role, click_role_now};
 use crate::platform::paths::testing::TempConfig;
 
 /// A 429 with `Retry-After: 30` for `path`.
@@ -64,9 +65,7 @@ fn login_waits_out_a_rate_limit() {
     wait_for_label(&mut harness, "E-Mail-Adresse");
     type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
     type_into(&mut harness, "Passwort", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Anmelden")
-        .click();
+    click_role(&mut harness, Role::Button, "Anmelden");
     assert_cooldown(&mut harness);
     // Enter does not send while it waits.
     let sent = api.seen.lock().len();
@@ -88,9 +87,7 @@ fn register_waits_out_a_rate_limit() {
     type_into(&mut harness, "Name", "Lena");
     type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
     type_into(&mut harness, "Passwort", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Registrieren")
-        .click();
+    click_role(&mut harness, Role::Button, "Registrieren");
     assert_cooldown(&mut harness);
 }
 
@@ -101,9 +98,7 @@ fn forgot_password_waits_out_a_rate_limit() {
     let mut harness = launcher(&api, "/forgot-password");
     wait_for_label(&mut harness, "E-Mail-Adresse");
     type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
-    harness
-        .get_by_role_and_label(Role::Button, "Link schicken")
-        .click();
+    click_role(&mut harness, Role::Button, "Link schicken");
     assert_cooldown(&mut harness);
 }
 
@@ -118,9 +113,7 @@ fn a_rate_limit_without_a_wait_says_so_generically() {
     wait_for_label(&mut harness, "E-Mail-Adresse");
     type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
     type_into(&mut harness, "Passwort", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Anmelden")
-        .click();
+    click_role(&mut harness, Role::Button, "Anmelden");
     wait_for_text(
         &mut harness,
         "Zu viele Anfragen. Bitte kurz warten und noch einmal versuchen.",
@@ -176,9 +169,7 @@ fn reset_password_waits_out_a_rate_limit() {
     let mut harness = launcher(&api, &format!("/reset-password{LINK}"));
     wait_for_label(&mut harness, "Neues Passwort");
     type_into(&mut harness, "Neues Passwort", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Passwort speichern")
-        .click();
+    click_role(&mut harness, Role::Button, "Passwort speichern");
     assert_cooldown(&mut harness);
 }
 
@@ -189,9 +180,7 @@ fn verify_email_waits_out_a_rate_limit() {
     let mut harness = launcher(&api, &format!("/verify-email{LINK}"));
     wait_for_label(&mut harness, "Passwort");
     type_into(&mut harness, "Passwort", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Bestätigen")
-        .click();
+    click_role(&mut harness, Role::Button, "Bestätigen");
     assert_cooldown(&mut harness);
 }
 
@@ -226,9 +215,7 @@ fn login_speaks_english() {
     assert!(harness.query_all_by_label("Register").next().is_some());
     type_into(&mut harness, "Email address", "lena@example.test");
     type_into(&mut harness, "Password", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Sign in")
-        .click();
+    click_role(&mut harness, Role::Button, "Sign in");
     wait_for_text(&mut harness, "Too many attempts. Please wait 30 seconds.");
     harness.get_by_label_contains("Try again in");
 }
@@ -305,9 +292,7 @@ fn login_links_the_published_legal_pages() {
         .expect("placed")
         .y1;
     assert!(below("Impressum") > submit);
-    harness
-        .get_by_role_and_label(Role::Link, "Datenschutz")
-        .click();
+    click_role(&mut harness, Role::Link, "Datenschutz");
     harness.run_steps(2);
     assert_eq!(opened.opened(), [format!("{}/de/datenschutz", api.origin)]);
     // The app stays where it was.
@@ -325,7 +310,7 @@ fn legal_links_follow_the_language() {
     wait_for_label(&mut harness, "Terms");
     assert_eq!(legal_links(&harness), ["Imprint", "Privacy", "Terms"]);
     assert!(harness.query_by_label("Legal").is_some());
-    harness.get_by_role_and_label(Role::Link, "Terms").click();
+    click_role(&mut harness, Role::Link, "Terms");
     harness.run_steps(2);
     assert_eq!(opened.opened(), [format!("{}/en/terms", api.origin)]);
 }
@@ -347,7 +332,7 @@ fn a_page_in_one_language_is_linked_in_the_other() {
     let mut harness = launcher(&api, "/forgot-password");
     wait_for_label(&mut harness, "Privacy");
     assert_eq!(legal_links(&harness), ["Privacy"]);
-    harness.get_by_role_and_label(Role::Link, "Privacy").click();
+    click_role(&mut harness, Role::Link, "Privacy");
     harness.run_steps(2);
     assert_eq!(opened.opened(), [format!("{}/de/datenschutz", api.origin)]);
 }
@@ -518,7 +503,7 @@ fn the_card_waits_for_the_browser_and_can_give_up() {
     let mut harness = launcher(&api, "/login?redirect=%2Finvite%2Fabc");
     let opened = browser(&harness, false);
     wait_for_label(&mut harness, "Über Google anmelden");
-    harness.get_by_label("Über Google anmelden").click();
+    click(&mut harness, "Über Google anmelden");
     wait_for_label(&mut harness, "Weiter im Browser …");
     assert_eq!(
         opened.lock().as_slice(),
@@ -530,9 +515,8 @@ fn the_card_waits_for_the_browser_and_can_give_up() {
             .accesskit_node()
             .is_disabled()
     );
-    harness
-        .get_by_role_and_label(Role::Button, "Abbrechen")
-        .click();
+    // The card waits for the browser: the sign-in stays on its way.
+    click_role_now(&mut harness, Role::Button, "Abbrechen");
     wait_for_label(&mut harness, "Über Google anmelden");
     assert!(harness.query_by_label("Abbrechen").is_none());
 }
@@ -559,7 +543,7 @@ fn the_google_button_takes_a_click_after_a_late_session_check() {
     let mut harness = launcher(&api, "/login");
     browser(&harness, false);
     wait_for_label(&mut harness, "Über Google anmelden");
-    harness.get_by_label("Über Google anmelden").click();
+    click(&mut harness, "Über Google anmelden");
     wait_for_label(&mut harness, "Weiter im Browser …");
 }
 
@@ -601,7 +585,7 @@ fn a_provider_sign_in_signs_in() {
     let mut harness = launcher(&api, "/login?redirect=%2Fsettings%2Fprofil");
     browser(&harness, true);
     wait_for_label(&mut harness, "Über Google anmelden");
-    harness.get_by_label("Über Google anmelden").click();
+    click(&mut harness, "Über Google anmelden");
     wait_for(&mut harness, "signed in", |h| {
         h.query_by_label("E-Mail-Adresse").is_none() && signed_in.load(Ordering::SeqCst)
     });
@@ -631,7 +615,7 @@ fn a_refused_provider_sign_in_says_why() {
     let mut harness = launcher(&api, "/login");
     browser(&harness, true);
     wait_for_label(&mut harness, "Über Google anmelden");
-    harness.get_by_label("Über Google anmelden").click();
+    click(&mut harness, "Über Google anmelden");
     wait_for_text(
         &mut harness,
         "Zu dieser E-Mail-Adresse gibt es schon ein Konto, dessen Adresse nie bestätigt wurde.",
@@ -683,7 +667,7 @@ fn a_provider_sign_in_without_an_invitation_goes_to_register() {
         let mut harness = launcher(&api, from);
         browser(&harness, true);
         wait_for_label(&mut harness, "Über Google anmelden");
-        harness.get_by_label("Über Google anmelden").click();
+        click(&mut harness, "Über Google anmelden");
         wait_for_text(&mut harness, "Zum Registrieren brauchst du eine Einladung.");
         let href = harness
             .state_mut()
@@ -755,7 +739,7 @@ fn a_first_provider_sign_in_picks_its_name() {
     let mut harness = launcher(&api, "/register");
     browser(&harness, true);
     wait_for_label(&mut harness, "Über Google anmelden");
-    harness.get_by_label("Über Google anmelden").click();
+    click(&mut harness, "Über Google anmelden");
     // The provider's name for the person is the suggestion.
     wait_for_label(&mut harness, "Anzeigename");
     assert_eq!(
@@ -773,9 +757,7 @@ fn a_first_provider_sign_in_picks_its_name() {
         .location()
         .href();
     assert_eq!(path, "/sign-in/name");
-    harness
-        .get_by_role_and_label(Role::Button, "Konto anlegen")
-        .click();
+    click_role(&mut harness, Role::Button, "Konto anlegen");
     wait_for(&mut harness, "account created", |h| {
         created.load(Ordering::SeqCst) && h.query_by_label("Anzeigename").is_none()
     });
@@ -856,9 +838,7 @@ fn an_invitation_link_fills_the_code_and_sends_it() {
             .query_by_label("Gelabber ist gerade nur mit Einladung offen.")
             .is_none()
     );
-    harness
-        .get_by_role_and_label(Role::Button, "Registrieren")
-        .click();
+    click_role(&mut harness, Role::Button, "Registrieren");
     wait_for_label(&mut harness, "Andere Adresse verwenden");
     let body = bodies.lock()[0].clone();
     assert_eq!(body["invitation"], "k7m2p9qrs4tx");
@@ -875,18 +855,14 @@ fn an_invitation_only_instance_asks_for_a_code() {
     let mut harness = launcher(&api, "/register");
     wait_for_label(&mut harness, "Gelabber ist gerade nur mit Einladung offen.");
     fill_account(&mut harness);
-    harness
-        .get_by_role_and_label(Role::Button, "Registrieren")
-        .click();
+    click_role(&mut harness, Role::Button, "Registrieren");
     // The field's own error takes the focus (its copy: rules.rs tests).
     wait_for(&mut harness, "the code field's error", |h| {
         crate::app::testkit::focused_label(h).as_deref() == Some("Einladungscode")
     });
     assert!(bodies.lock().is_empty());
     type_into(&mut harness, "Einladungscode", " abc123 ");
-    harness
-        .get_by_role_and_label(Role::Button, "Registrieren")
-        .click();
+    click_role(&mut harness, Role::Button, "Registrieren");
     wait_for_label(&mut harness, "Andere Adresse verwenden");
     assert_eq!(bodies.lock()[0]["invitation"], "abc123");
 }
@@ -917,9 +893,7 @@ fn a_server_invite_admits_without_the_field() {
             .query_by_label("Gelabber ist gerade nur mit Einladung offen.")
             .is_none()
     );
-    harness
-        .get_by_role_and_label(Role::Button, "Registrieren")
-        .click();
+    click_role(&mut harness, Role::Button, "Registrieren");
     wait_for_text(
         &mut harness,
         "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
@@ -955,9 +929,7 @@ fn a_refusal_for_a_code_brings_the_field_up() {
             .next()
             .is_none()
     );
-    harness
-        .get_by_role_and_label(Role::Button, "Registrieren")
-        .click();
+    click_role(&mut harness, Role::Button, "Registrieren");
     wait_for_label(&mut harness, "Einladungscode");
     wait_for(&mut harness, "the code field's error", |h| {
         crate::app::testkit::focused_label(h).as_deref() == Some("Einladungscode")
@@ -975,9 +947,7 @@ fn a_disabled_account_is_told_at_sign_in() {
     wait_for_label(&mut harness, "E-Mail-Adresse");
     type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
     type_into(&mut harness, "Passwort", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Anmelden")
-        .click();
+    click_role(&mut harness, Role::Button, "Anmelden");
     wait_for_text(&mut harness, "Dieses Konto ist gesperrt.");
 }
 
@@ -1053,18 +1023,14 @@ fn an_unconfirmed_address_gets_its_link_after_a_provider_refused() {
     wait_for_text(&mut harness, "Gib oben deine E-Mail-Adresse ein");
 
     // Without an address focus moves to the field and nothing is sent.
-    harness
-        .get_by_role_and_label(Role::Button, "Bestätigungsmail senden")
-        .click();
+    click_role(&mut harness, Role::Button, "Bestätigungsmail senden");
     wait_for(&mut harness, "focus on the address", |h| {
         crate::app::testkit::focused_label(h).as_deref() == Some("E-Mail-Adresse")
     });
     assert!(!api.saw("POST /auth/verify-email/resend"));
 
     type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
-    harness
-        .get_by_role_and_label(Role::Button, "Bestätigungsmail senden")
-        .click();
+    click_role(&mut harness, Role::Button, "Bestätigungsmail senden");
     wait_for_text(
         &mut harness,
         "Falls zu dieser Adresse ein unbestätigtes Konto gehört, ist ein Link unterwegs.",
@@ -1076,9 +1042,7 @@ fn an_unconfirmed_address_gets_its_link_after_a_provider_refused() {
     assert!(button.accesskit_node().is_disabled());
 
     // The way to a new password, with the address.
-    harness
-        .get_by_role_and_label(Role::Button, "Passwort vergessen?")
-        .click();
+    click_role(&mut harness, Role::Button, "Passwort vergessen?");
     wait_for(&mut harness, "the reset page", |h| {
         h.query_by_label("Link schicken").is_some()
     });
@@ -1094,9 +1058,7 @@ fn a_refused_password_sign_in_offers_the_link_again() {
     wait_for_label(&mut harness, "E-Mail-Adresse");
     type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
     type_into(&mut harness, "Passwort", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Anmelden")
-        .click();
+    click_role(&mut harness, Role::Button, "Anmelden");
     wait_for_text(&mut harness, "Bitte bestätige zuerst deine E-Mail-Adresse.");
     wait_for_text(
         &mut harness,

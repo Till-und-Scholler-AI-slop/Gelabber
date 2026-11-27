@@ -30,13 +30,13 @@ async fn get(state: AppState, path: &str) -> (StatusCode, Value) {
     (status, json)
 }
 
-/// Binds and immediately releases a loopback port so that connecting to it is
-/// refused instead of hanging.
-async fn closed_port() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    addr
+/// A loopback port that refuses connections instead of hanging: bound but
+/// not listening, and kept bound while the socket lives, so nothing else
+/// takes it in between.
+fn closed_port() -> (SocketAddr, tokio::net::TcpSocket) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    (socket.local_addr().unwrap(), socket)
 }
 
 /// A TCP server that accepts connections and never answers, simulating a
@@ -55,7 +55,7 @@ async fn silent_server() -> (SocketAddr, tokio::task::JoinHandle<()>) {
 
 #[tokio::test]
 async fn health_answers_without_dependencies() {
-    let unreachable = closed_port().await;
+    let (unreachable, _bound) = closed_port();
     let state = AppState::from_config(&config(unreachable, unreachable, 500)).unwrap();
 
     let (status, body) = get(state, "/health").await;
@@ -66,8 +66,8 @@ async fn health_answers_without_dependencies() {
 
 #[tokio::test]
 async fn ready_reports_each_refused_dependency() {
-    let postgres = closed_port().await;
-    let redis = closed_port().await;
+    let (postgres, _postgres_bound) = closed_port();
+    let (redis, _redis_bound) = closed_port();
     let state = AppState::from_config(&config(postgres, redis, 2000)).unwrap();
 
     let started = Instant::now();
@@ -195,7 +195,7 @@ async fn ready_probes_once_for_a_burst() {
 
 #[tokio::test]
 async fn metrics_is_prometheus_text_and_health_stays_json() {
-    let unreachable = closed_port().await;
+    let (unreachable, _bound) = closed_port();
     let state = AppState::from_config(&config(unreachable, unreachable, 500)).unwrap();
     let app = app(state);
 

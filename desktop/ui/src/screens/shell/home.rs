@@ -214,6 +214,7 @@ pub fn welcome(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::testkit::{click_node, click_role, id_of};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -241,9 +242,7 @@ mod tests {
         let message = "Die Server konnten nicht geladen werden.";
         wait_for_label(&mut harness, message);
         fail.store(false, Ordering::SeqCst);
-        harness
-            .get_by_role_and_label(Role::Button, "Erneut versuchen")
-            .click();
+        click_role(&mut harness, Role::Button, "Erneut versuchen");
         wait_for(&mut harness, "the list", |h| {
             h.query_by_label(message).is_none()
         });
@@ -258,14 +257,9 @@ mod tests {
         let mut harness = launcher(&api, "/");
         wait_for_label(&mut harness, "Die Server konnten nicht geladen werden.");
         // Settled: the failure's toast and the window's first frames.
-        let start = std::time::Instant::now();
-        let mut idle = false;
-        while !idle && start.elapsed() < std::time::Duration::from_secs(10) {
-            harness.step();
-            idle = !harness.ctx.has_requested_repaint();
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(idle, "still repainting");
+        crate::app::testkit::wait_for(&mut harness, "the app to stop repainting", |h| {
+            !h.ctx.has_requested_repaint()
+        });
     }
 
     /// DmIndexPage and the DM sidebar's placeholder: LoadError and its text.
@@ -284,11 +278,9 @@ mod tests {
         );
         assert!(harness.query_by_label("Navigation").is_some());
         fail.store(false, Ordering::SeqCst);
-        let retry = harness
-            .query_all_by_label("Erneut versuchen")
-            .next()
-            .expect("a retry button");
-        retry.click();
+        click_node(&mut harness, "a retry button", |h| {
+            h.query_all_by_label("Erneut versuchen").next().map(id_of)
+        });
         wait_for(&mut harness, "the list", |h| {
             h.query_by_label(page).is_none()
         });
@@ -320,11 +312,9 @@ mod tests {
         let page = "Die Direktnachrichten konnten nicht geladen werden.";
         wait_for_label(&mut harness, page);
         phase.store(1, Ordering::SeqCst);
-        harness
-            .query_all_by_label("Erneut versuchen")
-            .next()
-            .expect("a retry button")
-            .click();
+        click_node(&mut harness, "a retry button", |h| {
+            h.query_all_by_label("Erneut versuchen").next().map(id_of)
+        });
         wait_for_label(&mut harness, "Wird geladen…");
         harness.run_steps(5);
         assert!(harness.query_by_label(page).is_some());
@@ -354,11 +344,6 @@ mod tests {
             if gone.load(Ordering::SeqCst) && path.starts_with(&format!("/servers/{HOME}")) {
                 return Some(Reply::error(403, "forbidden"));
             }
-            // Left: the list no longer has it either, as the API's; with
-            // the stand-in gateway open the app fetches the list again.
-            if gone.load(Ordering::SeqCst) && method == "GET" && path == "/servers" {
-                return Some(Reply::json(serde_json::json!([])));
-            }
             workspace(method, path)
         });
         let mut harness = launcher(&api, &format!("/s/{HOME}"));
@@ -385,10 +370,7 @@ mod tests {
         wait_for(&mut harness, "the server to go", |h| {
             h.query_by_label("allgemein").is_none() && h.query_by_label("Wohnzimmer").is_none()
         });
-        for _ in 0..30 {
-            harness.step();
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        crate::app::testkit::wait_until_idle(&mut harness);
         assert_eq!(route(&mut harness), crate::route::Route::Home);
         assert!(
             harness

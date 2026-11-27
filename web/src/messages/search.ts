@@ -1,5 +1,5 @@
 import { api } from "../api/client.ts";
-import type { MessagePage } from "./types.ts";
+import { isMessage, malformed, wholePage, wholeRows } from "../api/wire.ts";
 import type { Message } from "./types.ts";
 
 export type MessageContext = {
@@ -14,10 +14,22 @@ export function messageContext(
   messageId: string,
   signal?: AbortSignal,
 ) {
-  return api<MessageContext>(
-    `/channels/${channelId}/messages/${messageId}/context`,
-    { signal },
-  );
+  return api<unknown>(`/channels/${channelId}/messages/${messageId}/context`, {
+    signal,
+  }).then((value): MessageContext => {
+    const context = value as Partial<MessageContext> | null;
+    if (
+      !context ||
+      typeof context.target_id !== "string" ||
+      typeof context.before !== "string" ||
+      typeof context.after !== "string"
+    )
+      throw malformed("message context", value);
+    return {
+      ...context,
+      messages: wholeRows(context.messages, isMessage, "message"),
+    } as MessageContext;
+  });
 }
 
 export function searchMessages(
@@ -28,7 +40,7 @@ export function searchMessages(
 ) {
   const params = new URLSearchParams({ q, limit: "25" });
   if (before) params.set("before", before);
-  return api<MessagePage>(`/channels/${channelId}/messages/search?${params}`, {
+  return api<unknown>(`/channels/${channelId}/messages/search?${params}`, {
     signal,
-  });
+  }).then(wholePage);
 }

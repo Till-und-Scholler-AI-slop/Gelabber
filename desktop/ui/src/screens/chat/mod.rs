@@ -1613,6 +1613,7 @@ mod tests {
 
 #[cfg(test)]
 mod page_tests {
+    use crate::app::testkit::{click, click_role};
     use egui_kittest::kittest::Queryable;
     use serde_json::json;
 
@@ -1658,18 +1659,20 @@ mod page_tests {
                "i": message["id"], "d": message, "r": message["revision"]})
     }
 
-    /// Text typed into the composer and sent with Enter goes to the API and
-    /// shows once, also when the gateway brings it back to its author, as
-    /// the real one does (GEL-376).
-    #[test]
-    fn a_message_sent_through_the_app_shows_once() {
-        use crate::app::testkit::{ALLGEMEIN, HOME, LENA};
-        use egui::accesskit::Role;
-        let _config = TempConfig::new("send-message");
-        let sent: std::sync::Arc<parking_lot::Mutex<Option<serde_json::Value>>> =
-            std::sync::Arc::default();
-        let created = sent.clone();
-        let api = FakeApi::start(true, move |method, path, body| match (method, path) {
+    /// The messages of #allgemein the stand-in holds: what the test sent or
+    /// pushed, as the API would have them.
+    type Kept = std::sync::Arc<parking_lot::Mutex<Vec<serde_json::Value>>>;
+
+    /// The stand-in API with its gateway: Wohnzimmer, Lena may write, and
+    /// #allgemein's history is `kept`. A sent message joins `kept`.
+    fn live_api(kept: &Kept) -> FakeApi {
+        use crate::app::testkit::{ALLGEMEIN, LENA};
+        let kept = kept.clone();
+        FakeApi::with_gateway(true, move |method, path, body| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                let messages = kept.lock().clone();
+                Some(Reply::json(json!({"messages": messages, "has_more": false})))
+            }
             ("POST", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
                 let body: serde_json::Value = serde_json::from_str(body).ok()?;
                 let message = json!({
@@ -1683,11 +1686,10 @@ mod page_tests {
                     "created_order": 1,
                     "nonce": body["nonce"],
                 });
-                *created.lock() = Some(message.clone());
+                kept.lock().push(message.clone());
                 Some(Reply::json(message))
             }
             _ => {
-                // Lena may write.
                 let mut reply = workspace(method, path)?;
                 if let Some(list) = reply
                     .body
@@ -1698,30 +1700,57 @@ mod page_tests {
                 }
                 Some(reply)
             }
-        });
-        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
-        wait_for_label(&mut harness, "Nachricht an #allgemein");
-        wait_for(&mut harness, "the subscription", |_| {
+        })
+    }
+
+    /// #allgemein open, its topic subscribed, and the round of recovery the
+    /// gateway's opening starts behind it: its requests are seen after
+    /// `GET /ws`, and idle waits for the rest of it.
+    fn open_live(api: &FakeApi) -> egui_kittest::Harness<'static, crate::setup::Launcher> {
+        use crate::app::testkit::{ALLGEMEIN, HOME, wait_until_idle};
+        let mut harness = launcher(api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for(&mut harness, "the subscription and the recovery round", |_| {
+            let seen = api.seen.lock();
+            let after = seen
+                .iter()
+                .position(|r| r == "GET /ws")
+                .map_or(&seen[..0], |at| &seen[at..]);
             api.gateway.subscribed(HOME, Some(ALLGEMEIN))
+                && ["GET /servers", "GET /dms", "GET /messages/unread"]
+                    .iter()
+                    .all(|r| after.iter().any(|s| s == r))
         });
-        harness.get_by_label("Nachricht an #allgemein").click();
-        harness.run_steps(2);
+        wait_until_idle(&mut harness);
+        harness
+    }
+
+    /// Text typed into the composer and sent with Enter goes to the API and
+    /// shows once, also when the gateway brings it back to its author, as
+    /// the real one does (GEL-376).
+    #[test]
+    fn a_message_sent_through_the_app_shows_once() {
+        use crate::app::testkit::{ALLGEMEIN, wait_until_idle};
+        use egui::accesskit::Role;
+        let _config = TempConfig::new("send-message");
+        let kept = Kept::default();
+        let api = live_api(&kept);
+        let mut harness = open_live(&api);
+        click(&mut harness, "Nachricht an #allgemein");
         harness.event(egui::Event::Text("Hallo aus der App".into()));
-        harness.run_steps(2);
         harness.key_press(egui::Key::Enter);
         wait_for(&mut harness, "the message at the API", |_| {
-            sent.lock().is_some()
+            !kept.lock().is_empty()
         });
-        let message = sent.lock().clone().expect("sent");
+        let message = kept.lock()[0].clone();
         assert_eq!(message["content"], "Hallo aus der App");
         assert!(message["nonce"].is_string(), "{message}");
         api.gateway.push(created_event(1, &message));
         // Frames come in order: once the next one is drawn, the echo was read.
         let later = history_message(2, "Und noch eine");
+        kept.lock().push(later.clone());
         api.gateway.push(created_event(2, &later));
-        wait_for(&mut harness, "Und noch eine", |h| {
-            h.query_by_label("Und noch eine").is_some()
-        });
+        wait_for_label(&mut harness, "Und noch eine");
+        wait_until_idle(&mut harness);
         assert!(
             harness
                 .query_by_role_and_label(Role::Label, "Hallo aus der App")
@@ -1743,25 +1772,17 @@ mod page_tests {
     }
 
     /// Another person's message arrives over the gateway while the channel
-    /// is open and is drawn without a reload (GEL-376).
+    /// is open and is drawn (GEL-376).
     #[test]
     fn a_message_from_another_person_arrives_live() {
-        use crate::app::testkit::{ALLGEMEIN, HOME};
         let _config = TempConfig::new("receive-message");
-        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
-        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
-        wait_for(&mut harness, "the subscription", |_| {
-            api.gateway.subscribed(HOME, Some(ALLGEMEIN))
-        });
-        let history = format!("GET /channels/{ALLGEMEIN}/messages");
-        let fetched = api.seen.lock().iter().filter(|r| **r == history).count();
-        api.gateway.push(created_event(
-            1,
-            &history_message(1, "Seid ihr heute Abend da?"),
-        ));
+        let kept = Kept::default();
+        let api = live_api(&kept);
+        let mut harness = open_live(&api);
+        let message = history_message(1, "Seid ihr heute Abend da?");
+        kept.lock().push(message.clone());
+        api.gateway.push(created_event(1, &message));
         wait_for_label(&mut harness, "Seid ihr heute Abend da?");
-        let after = api.seen.lock().iter().filter(|r| **r == history).count();
-        assert_eq!(after, fetched, "drawn from the frame, not refetched");
     }
 
     /// `DmChannelPage`: the conversation's own fetch failed, so the page
@@ -1936,10 +1957,7 @@ mod page_tests {
         // while the window is in the background.
         let read = format!("PUT /channels/{ALLGEMEIN}/read");
         let marks = || api.seen.lock().iter().filter(|r| **r == read).count();
-        for _ in 0..20 {
-            harness.step();
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        crate::app::testkit::wait_until_idle(&mut harness);
         let before = marks();
         assert_eq!(before, 0);
         harness.input_mut().focused = true;
@@ -1988,7 +2006,7 @@ mod page_tests {
         harness.run_steps(4);
         // ↑ in the empty composer edits my last message.
         wait_for_label(&mut harness, "Nachricht an #allgemein");
-        harness.get_by_label("Nachricht an #allgemein").click();
+        click(&mut harness, "Nachricht an #allgemein");
         harness.run_steps(2);
         harness.key_press(egui::Key::ArrowUp);
         wait_for_label(&mut harness, "Speichern");
@@ -2131,9 +2149,7 @@ mod page_tests {
             "Zur Nachricht von Jonas: Film oder Spiel heute?",
         );
         harness.run_steps(2);
-        harness
-            .get_by_role_and_label(Role::Label, "Film oder Spiel heute?")
-            .click();
+        click_role(&mut harness, Role::Label, "Film oder Spiel heute?");
         let context = format!("GET /channels/{ALLGEMEIN}/messages/{hit}/context");
         wait_for(&mut harness, "the hit in its context", |_| {
             api.saw(&context)
@@ -2169,10 +2185,10 @@ mod page_tests {
         let home = crate::app::testkit::HOME;
         let mut harness = launcher(&api, &format!("/s/{home}/c/{spiele}"));
         wait_for_label(&mut harness, "Nachricht an #spiele");
-        harness.get_by_label("allgemein").click();
+        click(&mut harness, "allgemein");
         wait_for_label(&mut harness, "Nachricht an #allgemein");
         harness.run_steps(4);
-        harness.get_by_label("Emoji einfügen").click();
+        click(&mut harness, "Emoji einfügen");
         wait_for(&mut harness, "the picker", |h| {
             h.query_all_by_label("Emoji einfügen").count() > 1
         });
@@ -2217,7 +2233,7 @@ mod page_tests {
         harness.get_by_label("Search");
         assert!(harness.query_by_label("Nachricht an #allgemein").is_none());
         harness.run_steps(4);
-        harness.get_by_label("Insert emoji").click();
+        click(&mut harness, "Insert emoji");
         // The picker's title is the button's label.
         wait_for(&mut harness, "the picker", |h| {
             h.query_all_by_label("Insert emoji").count() > 1

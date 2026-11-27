@@ -30,6 +30,7 @@ const user = {
   id: "a",
   name: "Ada",
   email: "a@example.test",
+  locale: "de",
   avatar_url: null,
   created_at: "2026-09-28T00:00:00Z",
 };
@@ -130,6 +131,9 @@ describe("sending a GIF", () => {
             created_at: "2026-09-28T00:00:00Z",
             edited_at: null,
             attachments: [],
+            reactions: [],
+            mentions: [],
+            mention_everyone: false,
             gif,
           })
         : json(404, { error: "not_found" }),
@@ -172,6 +176,9 @@ describe("sending a GIF", () => {
         created_at: "2026-09-28T00:00:00Z",
         edited_at: null,
         attachments: [],
+        reactions: [],
+        mentions: [],
+        mention_everyone: false,
         gif,
       });
     });
