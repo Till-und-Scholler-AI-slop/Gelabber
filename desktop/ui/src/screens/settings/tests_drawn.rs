@@ -93,11 +93,14 @@ pub fn harness(
     (h, world, client, call)
 }
 
-/// Runs `test` on its own thread and ends the whole run if it has not
-/// finished in time: a hung UI thread cannot be stopped, and it holds the
-/// config lock (`TempConfig`), so a plain failure would leave every later
-/// test that takes the lock waiting for it.
-pub fn within(secs: u64, test: impl FnOnce() + Send + 'static) {
+/// Runs `test` on its own thread with a config directory of its own
+/// (`TempConfig`), and fails if it has not finished in time: a hung UI
+/// thread fails the test instead of hanging the run. The directory's lock
+/// is taken here, before the time runs, so waiting for it counts for
+/// nothing; and the failure lets it go, so the tests after it do not wait
+/// for the hung thread.
+pub fn within(secs: u64, config: &str, test: impl FnOnce() + Send + 'static) {
+    let _config = crate::platform::paths::testing::TempConfig::new(config);
     let (tx, rx) = std::sync::mpsc::channel();
     let handle = std::thread::spawn(move || {
         test();
@@ -111,13 +114,7 @@ pub fn within(secs: u64, test: impl FnOnce() + Send + 'static) {
             }
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            // Past the test's captured output, which the abort would lose.
-            use std::io::Write;
-            let _ = writeln!(
-                std::io::stderr(),
-                "the UI thread hung for {secs} s; ending the test run"
-            );
-            std::process::abort();
+            panic!("the UI thread hung for {secs} s")
         }
     }
 }
@@ -133,8 +130,7 @@ fn settings_page(area: &'static str) -> impl FnMut(&mut Ui, &mut AppCtx) {
 /// "Weitere Themes" under Darstellung once locked the page's state twice.
 #[test]
 fn more_themes_leads_to_the_themes_area() {
-    within(30, || {
-        let _config = crate::platform::paths::testing::TempConfig::new("more-themes");
+    within(30, "more-themes", || {
         let (mut h, world, _client, _call) =
             harness("/settings/darstellung", settings_page("darstellung"));
         h.run_steps(4);
@@ -148,8 +144,7 @@ fn more_themes_leads_to_the_themes_area() {
 /// side mouse buttons alone (app.rs asks `recording_key`).
 #[test]
 fn recording_a_key_claims_the_side_buttons() {
-    within(30, || {
-        let _config = crate::platform::paths::testing::TempConfig::new("ptt-record");
+    within(30, "ptt-record", || {
         let (mut h, _world, _client, _call) = harness("/settings/audio", settings_page("audio"));
         super::prefs::update(&h.ctx, |p| p.voice_input = "ptt".into());
         h.run_steps(4);
@@ -176,8 +171,7 @@ fn recording_a_key_claims_the_side_buttons() {
 /// focus on its heading; Video has none.
 #[test]
 fn the_call_settings_links_lead_to_the_page() {
-    within(30, || {
-        let _config = crate::platform::paths::testing::TempConfig::new("media-links");
+    within(30, "media-links", || {
         let mut page = settings_page("darstellung");
         let (mut h, world, _client, _call) = harness("/settings/darstellung", move |ui, app| {
             page(ui, app);
@@ -221,8 +215,7 @@ fn the_call_settings_links_lead_to_the_page() {
 /// the diagnostics, their heading focused.
 #[test]
 fn the_diagnostics_fragment_opens_on_the_section() {
-    within(30, || {
-        let _config = crate::platform::paths::testing::TempConfig::new("media-fragment");
+    within(30, "media-fragment", || {
         let (mut h, _world, _client, _call) =
             harness(super::DIAGNOSTICS_HREF, settings_page("audio"));
         h.run_steps(8);
@@ -237,8 +230,7 @@ fn the_diagnostics_fragment_opens_on_the_section() {
 /// The diagnostics section in English.
 #[test]
 fn the_diagnostics_section_speaks_english() {
-    within(30, || {
-        let _config = crate::platform::paths::testing::TempConfig::new("media-links-english");
+    within(30, "media-links-english", || {
         let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
         let (mut h, _world, _client, _call) = harness("/settings/audio", settings_page("audio"));
         h.run_steps(4);
@@ -252,9 +244,8 @@ fn the_diagnostics_section_speaks_english() {
 /// the interface's language, each option in its own.
 #[test]
 fn the_language_section_follows_the_interface_language() {
-    within(30, || {
+    within(30, "language-english", || {
         use gelabber_i18n::Locale;
-        let _config = crate::platform::paths::testing::TempConfig::new("language-english");
         let _locale = gelabber_i18n::on_this_thread(Locale::De);
         // The navigation column beside the page, as the shell lays them out.
         let mut page = settings_page("darstellung");
@@ -327,8 +318,7 @@ fn is_disabled(h: &H, label: &str) -> bool {
 /// connected with "Trennen"; Ändern opens today's form in a dialog.
 #[test]
 fn anmeldung_lists_the_password_and_a_connected_provider() {
-    within(30, || {
-        let _config = crate::platform::paths::testing::TempConfig::new("sign-in-connected");
+    within(30, "sign-in-connected", || {
         let mut h = security_with(sign_in_methods(true, true));
         assert!(h.query_by_label("Anmeldung").is_some());
         assert!(h.query_by_label("Passwort").is_some());
@@ -369,8 +359,7 @@ fn anmeldung_lists_the_password_and_a_connected_provider() {
 /// Not connected: "Verbinden", which with a password asks for it first.
 #[test]
 fn connecting_with_a_password_asks_for_it() {
-    within(30, || {
-        let _config = crate::platform::paths::testing::TempConfig::new("sign-in-open");
+    within(30, "sign-in-open", || {
         let mut h = security_with(sign_in_methods(true, false));
         assert!(h.query_by_label("Nicht verbunden.").is_some());
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Verbinden")
@@ -391,8 +380,7 @@ fn connecting_with_a_password_asks_for_it() {
 /// until a password is set.
 #[test]
 fn without_a_password_trennen_waits_for_festlegen() {
-    within(30, || {
-        let _config = crate::platform::paths::testing::TempConfig::new("sign-in-google-only");
+    within(30, "sign-in-google-only", || {
         let mut h = security_with(sign_in_methods(false, true));
         assert!(
             h.query_by_label("Noch keins gesetzt. Du meldest dich mit Google an.")
