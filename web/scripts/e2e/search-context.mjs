@@ -1,4 +1,4 @@
-/* global process, document, sessionStorage, Event, console, setTimeout, Buffer */
+/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame */
 // Local browser integration for scoped search navigation; no physical-device claim.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -226,7 +226,22 @@ try {
     "canonical-end-before-native-up",
   );
   await new Promise((r) => setTimeout(r, 500));
-  await member.page.mouse.wheel(0, -25);
+  // How far a wheel delta scrolls differs between machines (25 px here, 105
+  // on a CI runner): step up in small wheel moves, each come to rest, until
+  // the list is just off its end.
+  const restingGap = () =>
+    log.evaluate(async (el) => {
+      let still = 0;
+      let last = el.scrollTop;
+      while (still < 5) {
+        await new Promise(requestAnimationFrame);
+        still = el.scrollTop === last ? still + 1 : 0;
+        last = el.scrollTop;
+      }
+      return el.scrollHeight - el.scrollTop - el.clientHeight;
+    });
+  for (let step = 0; step < 20 && (await restingGap()) <= 16; step++)
+    await member.page.mouse.wheel(0, -5);
   await until(
     () =>
       log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
