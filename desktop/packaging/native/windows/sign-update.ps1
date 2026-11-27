@@ -5,7 +5,9 @@
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $name = 'gelabber-native-windows-x64-setup.exe'
-$version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
+# desktop/packaging/native/version.sh
+$version = $env:DESKTOP_VERSION
+if (-not $version) { throw 'DESKTOP_VERSION is not set (desktop/packaging/native/version.sh)' }
 if ($env:RELEASE_TAG) {
   if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
     throw "release $($env:RELEASE_TAG): the secret TAURI_SIGNING_PRIVATE_KEY is not set, so the update cannot be signed (desktop/README.md, Updates)"

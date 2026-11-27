@@ -234,5 +234,48 @@ class CoreCheck(unittest.TestCase):
         self.assertIn('the core carries H264 code of OpenH264 or FFmpeg', result.stdout)
 
 
+
+class VersionScript(unittest.TestCase):
+    """version.sh, from which the workflows and the Windows scripts take the
+    app's version (desktop-native.yml, release.yml)."""
+    SCRIPT = NATIVE / 'version.sh'
+
+    def version(self):
+        text = (DESKTOP / 'Cargo.toml').read_text()
+        return re.search(r'^\[workspace\.package\]\n(?:.*\n)*?version = "([^"]+)"', text, re.M).group(1)
+
+    def run_script(self, *arguments):
+        return subprocess.run(['bash', self.SCRIPT, *map(str, arguments)], capture_output=True, text=True,
+                              env={'PATH': os.environ['PATH']})
+
+    def test_it_reads_the_workspace_version(self):
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, self.version() + '\n')
+
+    def test_a_windows_checkout_reads_the_same(self):
+        text = (DESKTOP / 'Cargo.toml').read_text()
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / 'Cargo.toml'
+            manifest.write_bytes(text.replace('\n', '\r\n').encode())
+            self.assertEqual(self.run_script(manifest).stdout, self.version() + '\n')
+
+    def test_a_release_must_carry_its_tag(self):
+        version = self.version()
+        self.assertEqual(self.run_script('--tag', f'v{version}').returncode, 0)
+        self.assertEqual(self.run_script('--tag', '').returncode, 0)
+        for tag in (version, f'v{version}.1', 'v0.0.1'):
+            with self.subTest(tag=tag):
+                result = self.run_script('--tag', tag)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f'release {tag}: desktop/Cargo.toml, and with it the app, says {version}',
+                              result.stderr)
+
+    def test_the_windows_scripts_take_it_from_the_workflow(self):
+        for path in sorted((NATIVE / 'windows').glob('*.ps1')):
+            with self.subTest(script=path.name):
+                self.assertNotRegex(path.read_text(), r'Cargo\.toml')
+
+
 if __name__ == '__main__':
     unittest.main()

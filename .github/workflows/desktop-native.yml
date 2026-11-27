@@ -618,6 +618,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # For the installer, its signature and the install test; a release must carry its tag's version.
+      - name: Desktop version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(desktop/packaging/native/version.sh --tag "$RELEASE_TAG")"
+          echo "DESKTOP_VERSION=$version" | tee -a "$GITHUB_ENV"
+
       - name: Restore libwebrtc package
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -872,10 +880,7 @@ jobs:
           if [ -z "$RELEASE_TAG" ] || [ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]; then
             echo "release ${RELEASE_TAG:-?} must be signed from its tag, not $GITHUB_REF"; exit 1
           fi
-          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1)"
-          if [ "v$version" != "$RELEASE_TAG" ]; then
-            echo "release $RELEASE_TAG: desktop/Cargo.toml, and with it the app, says $version"; exit 1
-          fi
+          version="$(desktop/packaging/native/version.sh --tag "$RELEASE_TAG")"
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "release $RELEASE_TAG: the secret TAURI_SIGNING_PRIVATE_KEY is not set, so the update cannot be signed (desktop/README.md, Updates)"; exit 1
           fi
@@ -967,18 +972,14 @@ jobs:
             if [ "$PUBLISH" = true ] && [ -z "$ARCH_REPO_GPG_KEY" ]; then
               echo "ARCH_REPO_PUBLISH is on but the ARCH_REPO_GPG_KEY secret is missing"; exit 1
             fi
-            # The package gets its version from the tag, the app in it (what
-            # media_info reports) from the desktop workspace: the same, or
-            # the release is not built.
-            app="v$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1)"
-            if [ "$app" != "$TAG" ]; then
-              echo "release $TAG: desktop/Cargo.toml, and with it the app, says $app"; exit 1
-            fi
+            # The package gets its version from the tag, the app in it from the
+            # desktop workspace: the same, or the release is not built.
+            desktop/packaging/native/version.sh --tag "$TAG" >/dev/null
             version="$TAG"
             url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-native-linux-x64.tar.gz"
           else
             # Test builds: the workspace version plus the run number.
-            version="$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1).r${GITHUB_RUN_NUMBER}"
+            version="$(desktop/packaging/native/version.sh).r${GITHUB_RUN_NUMBER}"
             url=""
           fi
           desktop/packaging/arch/repo.sh build "$version" gelabber-native-linux-x64.tar.gz site $url

@@ -11,6 +11,8 @@ import re
 import tomllib
 import unittest
 
+from workflow_data import load, names, scripts
+
 ROOT = Path(__file__).resolve().parents[3]
 SEMVER = re.compile(
     r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
@@ -62,6 +64,15 @@ class DesktopVersion(unittest.TestCase):
                 self.assertFalse(desktop_version_allowed(desktop, root))
         with self.assertRaises(ValueError):
             desktop_version_allowed('0.6', '0.5.2')
+
+
+class VersionReaders(unittest.TestCase):
+    def test_no_workflow_reads_the_version_by_itself(self):
+        # desktop/packaging/native/version.sh does (its tests: desktop/packaging/tests).
+        parses = re.compile(r'\^version = |Cargo\.toml.*version|version.*Cargo\.toml')
+        found = [f'{name}: {job}: {step}' for name in names() for job, step, script in scripts(load(name))
+                 if 'desktop/Cargo.toml' in script and parses.search(script)]
+        self.assertEqual(found, [])
 
 if __name__ == '__main__':
     unittest.main()
