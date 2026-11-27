@@ -296,17 +296,28 @@ export async function mediaScenarios(h, f) {
         "signaling-reconnect-deadline",
         20_000,
       );
+      const sample = () =>
+        nativeEvaluate(f.owner, () => ({
+          trackLive: window.__e2e.savedTrack?.readyState === "live",
+          trackStillSent: window.__e2e.peers.some(
+            (p) =>
+              p.connectionState !== "closed" &&
+              p.getSenders().some((s) => s.track === window.__e2e.savedTrack),
+          ),
+          originalPeerConnected:
+            window.__e2e.savedPeer?.connectionState === "connected",
+        }));
+      // A new media socket comes first, its new transports after: wait until
+      // a live peer sends the saved track again (or the deadline says it
+      // never does), then compare.
+      await until(
+        sample,
+        (state) => state.trackStillSent,
+        "recovery-track-not-sent-again",
+        20_000,
+      ).catch(() => {});
       const after = await snapshot(f.owner);
-      const identity = await nativeEvaluate(f.owner, () => ({
-        trackLive: window.__e2e.savedTrack?.readyState === "live",
-        trackStillSent: window.__e2e.peers.some(
-          (p) =>
-            p.connectionState !== "closed" &&
-            p.getSenders().some((s) => s.track === window.__e2e.savedTrack),
-        ),
-        originalPeerConnected:
-          window.__e2e.savedPeer?.connectionState === "connected",
-      }));
+      const identity = await sample();
       check(
         after.displayCalls === before.displayCalls &&
           identity.trackLive &&
@@ -440,7 +451,9 @@ export async function mediaScenarios(h, f) {
             beforeStopInventory.probatorRtpRows <= 1 &&
             beforeStopInventory.unexpectedRtpRows === 0 &&
             beforeStopInventory.invalidBindings === 0 &&
-            activePeers(frames.last).length === 1 &&
+            // A watcher in the call sends its microphone too: one receive and
+            // one send connection, as for every publisher (e2e/README.md).
+            activePeers(frames.last).length <= 2 &&
             activePeers(frames.last).every(
               (p) =>
                 p.connection === "connected" &&

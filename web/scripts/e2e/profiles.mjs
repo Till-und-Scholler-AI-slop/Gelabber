@@ -18,6 +18,7 @@ export const profiles = {
       "forced-track-arrival-reorder-source-identity",
       "rejected-native-sdp-keeps-voice-other-source-no-ghost",
       "session-audio-mute-deafen-volume-playback-retry",
+      "active-call-responsive-controls",
     ],
   },
   core: {

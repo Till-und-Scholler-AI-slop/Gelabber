@@ -5,8 +5,8 @@
 `.github/workflows/e2e-extended.yml` runs these scenarios against its own API,
 SFU, Postgres, Redis and MinIO (`ci-fault-prepare.mjs`, then `fault-run.mjs`
 per browser and profile from `profiles.mjs`): the fault profiles `core-faults`
-and `media-faults` in Chromium and Firefox, the profiles `core` and `access`
-in Chromium (`media` once its scenarios pass). It runs after pushes to a
+and `media-faults` in Chromium and Firefox, the profiles `core`, `media` and
+`access` in Chromium. It runs after pushes to a
 version branch that touch `backend/` or `web/`, on release and hotfix pull
 requests to `main`, and by hand. After a push run the issue "Extended E2E
 fails on <branch>" is opened or updated when the run is red and closed when it
