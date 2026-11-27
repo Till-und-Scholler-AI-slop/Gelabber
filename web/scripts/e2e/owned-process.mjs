@@ -134,9 +134,10 @@ export async function clearLeftover(pidFile, binaryPath, name) {
     console.log(`Leftover owned ${name} not removed: ${leftover.kept}`);
   return leftover;
 }
-// The port probe's failure, named after a leftover that had to stay.
-export function portTaken(leftover, error) {
+// A start that finds the port (or the API's fault database) taken after it
+// had to leave a leftover alone names that leftover's reason.
+export function heldByLeftover(leftover, error, what = "port") {
   return leftover.kept
-    ? new OwnedPortsBlocked(`port-taken-${leftover.kept}`)
+    ? new OwnedPortsBlocked(`${what}-taken-${leftover.kept}`)
     : error;
 }

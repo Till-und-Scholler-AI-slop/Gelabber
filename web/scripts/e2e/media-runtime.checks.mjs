@@ -13,6 +13,7 @@ async function mediaProbe({
   loopback = false,
   optIn = false,
   portMax = false,
+  logFails = false,
 } = {}) {
   const calls = [],
     owned = [],
@@ -44,7 +45,7 @@ async function mediaProbe({
         owned.push("leftover");
         return {};
       },
-      portTaken: (_leftover, error) => error,
+      heldByLeftover: (_leftover, error) => error,
       recordOwned: async (_file, pid) => owned.push(`record-${pid}`),
       forgetOwned: async () => owned.push("forget"),
       killOnExit: () => {
@@ -75,12 +76,15 @@ async function mediaProbe({
             : path === "/tmp/manifest.json"
               ? JSON.stringify(manifest)
               : binary,
-      open: async () => ({
-        fd: 9,
-        close: async () => {
-          calls.push("log.close");
-        },
-      }),
+      open: async () => {
+        if (logFails) throw new Error(secret);
+        return {
+          fd: 9,
+          close: async () => {
+            calls.push("log.close");
+          },
+        };
+      },
     },
     "node:net": { createServer: () => port },
   };
@@ -161,4 +165,10 @@ test("SFU loopback is refused without opt-in, validates private control endpoint
   const positive = await mediaProbe({ loopback: true, optIn: true });
   assert.equal(positive.failure, undefined);
   assert.deepEqual(positive.calls, ["spawn", "SIGTERM", "log.close"]);
+});
+test("an SFU start that fails before it records its child leaves the PID file alone", async () => {
+  // Another run's fresh file is not this start's to delete (GEL-457).
+  const { owned, failure } = await mediaProbe({ logFails: true });
+  assert.ok(failure);
+  assert.deepEqual(owned, ["leftover"]);
 });

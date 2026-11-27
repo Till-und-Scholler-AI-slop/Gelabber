@@ -9,11 +9,15 @@ import { promisify } from "node:util";
 import { attemptAll, closeOwnedApi, TeardownFailure } from "./teardown.mjs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
-import { OwnedPortsBlocked, removeLeftover } from "./owned-process.mjs";
+import {
+  heldByLeftover,
+  OwnedPortsBlocked,
+  removeLeftover,
+} from "./owned-process.mjs";
 import { failureSite, safeError, safeTarget } from "./harness.mjs";
 
 const secret = "PRIVATE-cookie-signed-URL-password";
@@ -356,7 +360,13 @@ test("API teardown continues across failed lock, restore, close and log stages w
   ]);
   assert.equal(proxies[0], first);
 });
-test("exact startFaultApi.close releases remaining proxies/log and stops the own locker after lock pipe failure", async () => {
+// startFaultApi with fakes; `portFails`, `dbInUse` and `leftover` (what
+// clearLeftover found) shape its start (GEL-457).
+async function apiSource({
+  portFails = false,
+  dbInUse = false,
+  leftover = {},
+} = {}) {
   const calls = [],
     binary = "fixture-binary";
   const manifest = {
@@ -373,7 +383,14 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
   };
   const portProbe = new EventEmitter();
   portProbe.listen = () => {
-    queueMicrotask(() => portProbe.emit("listening"));
+    queueMicrotask(() =>
+      portFails
+        ? portProbe.emit(
+            "error",
+            Object.assign(new Error("in use"), { code: "EADDRINUSE" }),
+          )
+        : portProbe.emit("listening"),
+    );
   };
   portProbe.close = (done) => done();
   let index = 0;
@@ -381,7 +398,7 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
   execFileMock[promisify.custom] = async (_cmd, args) => {
     const dbCheck = args.at(-1).includes("pg_stat_activity");
     if (dbCheck) calls.push("db.check");
-    return { stdout: dbCheck ? "0\n" : "1\n", stderr: "" };
+    return { stdout: dbCheck && !dbInUse ? "0\n" : "1\n", stderr: "" };
   };
   const proxy = () => {
     const id = index++;
@@ -440,9 +457,9 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
       "./owned-process.mjs": {
         clearLeftover: async () => {
           calls.push("owned.leftover");
-          return {};
+          return leftover;
         },
-        portTaken: (_leftover, error) => error,
+        heldByLeftover,
         recordOwned: async () => calls.push("owned.record"),
         forgetOwned: async () => calls.push("owned.forget"),
         killOnExit: () => {
@@ -453,6 +470,14 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
     },
     { process: { env: {} }, URL, fetch: async () => ({ ok: true }) },
   );
+  return { source, calls, children };
+}
+const apiOptions = {
+  envPath: "/tmp/fixture.env",
+  manifestPath: "/tmp/fixture-manifest.json",
+};
+test("exact startFaultApi.close releases remaining proxies/log and stops the own locker after lock pipe failure", async () => {
+  const { source, calls, children } = await apiSource();
   const runtime = await source.startFaultApi({
     envPath: "/tmp/fixture.env",
     manifestPath: "/tmp/fixture-manifest.json",
@@ -489,6 +514,35 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
   assert.deepEqual(
     calls.filter((name) => name.startsWith("owned.")),
     ["owned.leftover", "owned.hook", "owned.record"],
+  );
+});
+test("a start that fails before it records its API leaves the PID file alone", async () => {
+  // Another run's fresh file, or the reason a kept leftover stays, is not
+  // this start's to delete.
+  const { source, calls } = await apiSource({ portFails: true });
+  await assert.rejects(source.startFaultApi(apiOptions));
+  assert.deepEqual(
+    calls.filter((name) => name.startsWith("owned.")),
+    ["owned.leftover"],
+  );
+});
+test("a port or fault database held by a leftover that stays names its reason", async () => {
+  const kept = { kept: "leftover-binary-is-not-this-starts-binary" };
+  for (const [options, reason] of [
+    [{ portFails: true, leftover: kept }, `port-taken-${kept.kept}`],
+    [{ dbInUse: true, leftover: kept }, `fault-db-taken-${kept.kept}`],
+  ]) {
+    const { source } = await apiSource(options);
+    await assert.rejects(
+      source.startFaultApi(apiOptions),
+      (error) => error instanceof OwnedPortsBlocked && error.message === reason,
+    );
+  }
+  // Without such a leftover the database check keeps its own failure.
+  const { source } = await apiSource({ dbInUse: true });
+  await assert.rejects(
+    source.startFaultApi(apiOptions),
+    /Another process already uses the fault DB/,
   );
 });
 test("successful actions leave gate unchanged and preserve sequential teardown order", async () => {
@@ -627,8 +681,14 @@ async function untilGone(pid, timeoutMs = 10_000) {
 // that started at `started`.
 function killAfter(t, pid, started) {
   t.after(async () => {
-    if ((await processStat(pid))?.started === started)
+    const stat = await processStat(pid);
+    // A zombie has ended already, and may be reaped meanwhile.
+    if (stat?.state === "Z" || stat?.started !== started) return;
+    try {
       process.kill(pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
   });
 }
 // A fault runner: starts a sleeper, ties it to itself and records it in
@@ -658,8 +718,10 @@ async function runner(t, pidFile) {
   });
   let out = "";
   child.stdout.on("data", (data) => (out += data));
+  // A stand-in that dies before it prints ends the wait too.
+  const exited = once(child, "exit");
   while (!out.includes("\n") && child.exitCode === null)
-    await once(child.stdout, "data");
+    await Promise.race([once(child.stdout, "data"), exited]);
   const owned = Number(out.trim());
   assert.ok(Number.isInteger(owned) && owned > 1, out);
   killAfter(t, owned, (await processStat(owned)).started);
@@ -755,6 +817,8 @@ test("a second start beside a live run touches nothing of it", async (t) => {
   });
   assert.ok(await running(run.owned), "run B ended run A's child");
   assert.equal(run.process.exitCode, null);
+  // Run A's record stays for its own teardown or the next start.
+  assert.equal(JSON.parse(await readFile(pidFile, "utf8")).pid, run.owned);
 });
 test("a leftover that is not provably this start's own stays", async (t) => {
   const pidFile = await pidDir(t);
@@ -780,6 +844,17 @@ test("a leftover that is not provably this start's own stays", async (t) => {
   assert.deepEqual(await removeLeftover(pidFile, process.execPath), {
     kept: "pid-file-not-private-to-this-user",
   });
+  // A symbolic link to a private file of this user is not the file.
+  const target = `${pidFile}.target`;
+  await writeFile(target, JSON.stringify(record), { mode: 0o600 });
+  await rm(pidFile);
+  await symlink(target, pidFile);
+  assert.deepEqual(await removeLeftover(pidFile, process.execPath), {
+    kept: "pid-file-not-private-to-this-user",
+  });
+  await rm(pidFile);
+  // Another user's file is refused the same way (file.uid); a check running
+  // as one user cannot make one, so only the mode and the link are tried.
   // The PID now belongs to a process with another start time.
   await write({ ...record, started: String(Number(record.started) + 1) });
   assert.deepEqual(await removeLeftover(pidFile, process.execPath), {});

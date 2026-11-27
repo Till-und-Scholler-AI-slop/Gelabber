@@ -14,7 +14,7 @@ import {
   clearLeftover,
   forgetOwned,
   killOnExit,
-  portTaken,
+  heldByLeftover,
   recordOwned,
 } from "./owned-process.mjs";
 import {
@@ -91,30 +91,38 @@ export async function startFaultApi({
       )
     ).stdout.trim();
   }
-  assert.equal(
-    await sql(
+  if (
+    (await sql(
       "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()",
-    ),
-    "0",
-    "Another process already uses the fault DB",
-  );
+    )) !== "0"
+  )
+    throw heldByLeftover(
+      leftover,
+      new assert.AssertionError({
+        message: "Another process already uses the fault DB",
+      }),
+      "fault-db",
+    );
   const proxies = [];
   let child,
     logfile,
     unhook,
+    recorded = false,
     paused = false;
   const locks = new Set();
   const topics = new Set();
   async function close() {
     await closeOwnedApi({ locks, proxies, child, logfile });
     unhook?.();
-    await forgetOwned(pidFile);
+    // Only the file this start wrote: another run's, or the reason a kept
+    // leftover stays, belongs to the next start.
+    if (recorded) await forgetOwned(pidFile);
   }
   try {
     const portProbe = createServer();
     portProbe.listen({ host: "127.0.0.1", port: apiPort, exclusive: true });
     await once(portProbe, "listening").catch((error) => {
-      throw portTaken(leftover, error);
+      throw heldByLeftover(leftover, error);
     });
     await new Promise((r) => portProbe.close(r));
     const redis = await tcpFaultProxy(env.REDIS_URL, redisPort);
@@ -159,7 +167,10 @@ export async function startFaultApi({
     child.on("error", () => {
       spawnError = true;
     });
-    if (child.pid) await recordOwned(pidFile, child.pid, manifest.binaryPath);
+    if (child.pid) {
+      await recordOwned(pidFile, child.pid, manifest.binaryPath);
+      recorded = true;
+    }
     const origin = `http://127.0.0.1:${apiPort}`;
     let ready = false;
     const deadline = Date.now() + 30_000;

@@ -16,7 +16,7 @@ import {
   clearLeftover,
   forgetOwned,
   killOnExit,
-  portTaken,
+  heldByLeftover,
   recordOwned,
 } from "./owned-process.mjs";
 
@@ -76,10 +76,13 @@ export async function startFaultMedia({
   const probe = createServer();
   probe.listen({ host: "127.0.0.1", port: 18087, exclusive: true });
   await once(probe, "listening").catch((error) => {
-    throw portTaken(leftover, error);
+    throw heldByLeftover(leftover, error);
   });
   await new Promise((r) => probe.close(r));
-  let child, logfile, unhook;
+  let child,
+    logfile,
+    unhook,
+    recorded = false;
   async function close() {
     const failed = await attemptAll([
       ["media-child-stop", () => terminateOwnedChild(child)],
@@ -87,7 +90,8 @@ export async function startFaultMedia({
     ]);
     if (failed.length) throw new TeardownFailure(failed);
     unhook?.();
-    await forgetOwned(pidFile);
+    // Only the file this start wrote (see fault-runtime.mjs).
+    if (recorded) await forgetOwned(pidFile);
   }
   try {
     logfile = await open("/tmp/gelabber-e2e-fault-media-18087.log", "w", 0o600);
@@ -102,7 +106,10 @@ export async function startFaultMedia({
     child.on("error", () => {
       spawnError = true;
     });
-    if (child.pid) await recordOwned(pidFile, child.pid, manifest.binaryPath);
+    if (child.pid) {
+      await recordOwned(pidFile, child.pid, manifest.binaryPath);
+      recorded = true;
+    }
     const origin = "http://127.0.0.1:18087";
     const deadline = Date.now() + 30_000;
     let ready = false;
