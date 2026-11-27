@@ -1,6 +1,6 @@
 //! Transactional message/discovery outbox, serialized per channel.
 use super::{EventDraft, EventKind, Gateway};
-use crate::{AppState, error::ApiError};
+use crate::{AppState, Worker, error::ApiError};
 use serde_json::Value;
 use sqlx::{FromRow, PgConnection};
 use std::sync::atomic::Ordering;
@@ -182,7 +182,10 @@ impl Gateway {
         tokio::spawn(async move {
             while !state.db.is_closed() {
                 let full = match deliver_pending(&state, 32).await {
-                    Ok(delivered) => delivered == 32,
+                    Ok(delivered) => {
+                        state.worker_passes.finished(Worker::Delivery);
+                        delivered == 32
+                    }
                     Err(err) => {
                         tracing::debug!(error = err.code(), "outbox delivery will retry");
                         false

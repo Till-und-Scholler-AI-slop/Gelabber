@@ -16,6 +16,14 @@ esac
 case "$workspace" in *:*) echo 'native CI workspace must not contain colons' >&2; exit 1 ;; esac
 case "$cargo_cache" in *:*) echo 'native CI cargo cache must not contain colons' >&2; exit 1 ;; esac
 
+# The upgrade test's boundary (GEL-413), by the same rule as CI; the
+# container has no git.
+if [ -z "${UPGRADE_FROM:-}" ] && previous=$(sh "$workspace/.github/workflows/scripts/previous_release.sh"); then
+  UPGRADE_FROM=${previous% *}
+  UPGRADE_FROM_MIGRATION=${previous#* }
+  export UPGRADE_FROM UPGRADE_FROM_MIGRATION
+fi
+
 image=$(docker image inspect --format '{{.Id}}' gelabber-native-ci-toolchain:local)
 case "$image" in sha256:*) digest=${image#sha256:} ;; *) echo 'native CI image ID missing' >&2; exit 1 ;; esac
 case "$digest" in *[!a-f0-9]*|'') echo 'native CI image ID invalid' >&2; exit 1 ;; esac
@@ -34,4 +42,5 @@ exec docker run --rm --init --network host \
   --env CARGO_TERM_COLOR --env CARGO_PROFILE_DEV_DEBUG \
   --env DATABASE_URL --env REDIS_URL \
   --env MINIO_ENDPOINT --env MINIO_ROOT_USER --env MINIO_ROOT_PASSWORD \
+  --env UPGRADE_FROM --env UPGRADE_FROM_MIGRATION \
   "$image" cargo "$@"

@@ -438,6 +438,51 @@ describe("edges the parser has to get right", () => {
     expect(parseInline("`   `")).toEqual([{ type: "code", text: "   " }]);
   });
 
+  it("returns for generated inputs of its marks and never adds text", () => {
+    // mulberry32 with a fixed seed: the same 3000 inputs on every run.
+    let seed = 430;
+    const random = (n: number) => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) % n;
+    };
+    const chars = [
+      "*",
+      "_",
+      "~",
+      "|",
+      "`",
+      "\\",
+      "<",
+      ">",
+      "[",
+      "]",
+      " ",
+      "a",
+      "b",
+    ];
+    const shown = (nodes: Inline[]): string =>
+      nodes
+        .map((node) =>
+          "text" in node
+            ? node.text
+            : "children" in node
+              ? shown(node.children)
+              : "",
+        )
+        .join("");
+    for (let k = 0; k < 3000; k++) {
+      let src = "";
+      for (let n = 1 + random(24); n > 0; n--)
+        src += chars[random(chars.length)];
+      expect(
+        shown(parseInline(src)).length,
+        JSON.stringify(src),
+      ).toBeLessThanOrEqual(src.length);
+    }
+  });
+
   it("finds a closing mark past links and mentions", () => {
     expect(parseInline("*a <https://x.example/*> b*")).toEqual([
       {

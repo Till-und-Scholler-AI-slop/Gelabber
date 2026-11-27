@@ -1,6 +1,13 @@
 // One function per API route. No caching here; `queries.ts` owns that.
 
 import { api } from "../api/client.ts";
+import {
+  isChannel,
+  isServer,
+  isServerDetail,
+  whole,
+  wholeRows,
+} from "../api/wire.ts";
 import type {
   Ban,
   Category,
@@ -19,24 +26,40 @@ import type {
   UpdateServerInput,
 } from "./types.ts";
 
+/** A server row the server answered with, whole, or the request fails. */
+export const wholeServer = (value: unknown): Server =>
+  whole(value, isServer, "server");
+const wholeDetail = (value: unknown): ServerDetail =>
+  whole(value, isServerDetail, "server detail");
+const wholeChannel = (value: unknown): Channel =>
+  whole(value, isChannel, "channel");
+
 export const listServers = (signal?: AbortSignal) =>
-  api<Server[]>("/servers", { signal });
+  api<unknown>("/servers", { signal }).then((rows) =>
+    wholeRows(rows, isServer, "server"),
+  );
 
 export const getServer = (id: string, signal?: AbortSignal) =>
-  api<ServerDetail>(`/servers/${id}`, { signal });
+  api<unknown>(`/servers/${id}`, { signal }).then(wholeDetail);
 
 export const createServer = (name: string) =>
-  api<ServerDetail>("/servers", { method: "POST", body: { name } });
+  api<unknown>("/servers", { method: "POST", body: { name } }).then(
+    wholeDetail,
+  );
 
 export const updateServer = (id: string, patch: UpdateServerInput) =>
-  api<Server>(`/servers/${id}`, { method: "PATCH", body: patch });
+  api<unknown>(`/servers/${id}`, { method: "PATCH", body: patch }).then(
+    wholeServer,
+  );
 
 /** A square image prepared by `prepareAvatar`; needs `manage_server`. */
 export const uploadServerIcon = (id: string, image: Blob) =>
-  api<Server>(`/servers/${id}/icon`, { method: "PUT", body: image });
+  api<unknown>(`/servers/${id}/icon`, { method: "PUT", body: image }).then(
+    wholeServer,
+  );
 
 export const removeServerIcon = (id: string) =>
-  api<Server>(`/servers/${id}/icon`, { method: "DELETE" });
+  api<unknown>(`/servers/${id}/icon`, { method: "DELETE" }).then(wholeServer);
 
 export const deleteServer = (id: string) =>
   api<null>(`/servers/${id}`, { method: "DELETE" });
@@ -57,7 +80,7 @@ export const deleteCategory = (id: string) =>
   api<null>(`/categories/${id}`, { method: "DELETE" });
 
 export const createChannel = (serverId: string, input: CreateChannelInput) =>
-  api<Channel>(`/servers/${serverId}/channels`, {
+  api<unknown>(`/servers/${serverId}/channels`, {
     method: "POST",
     body: {
       name: input.name,
@@ -65,10 +88,10 @@ export const createChannel = (serverId: string, input: CreateChannelInput) =>
       category_id: input.category_id ?? "",
       ...(input.role_ids !== undefined ? { role_ids: input.role_ids } : {}),
     },
-  });
+  }).then(wholeChannel);
 
 export const updateChannel = (id: string, patch: UpdateChannelInput) =>
-  api<Channel>(`/channels/${id}`, {
+  api<unknown>(`/channels/${id}`, {
     method: "PATCH",
     body: {
       ...(patch.name !== undefined ? { name: patch.name } : {}),
@@ -77,7 +100,7 @@ export const updateChannel = (id: string, patch: UpdateChannelInput) =>
         : {}),
       ...(patch.role_ids !== undefined ? { role_ids: patch.role_ids } : {}),
     },
-  });
+  }).then(wholeChannel);
 
 export const deleteChannel = (id: string) =>
   api<null>(`/channels/${id}`, { method: "DELETE" });
@@ -95,7 +118,9 @@ export const previewInvite = (code: string, signal?: AbortSignal) =>
   api<InvitePreview>(`/invites/${encodeURIComponent(code)}`, { signal });
 
 export const joinInvite = (code: string) =>
-  api<Server>(`/invites/${encodeURIComponent(code)}/join`, { method: "POST" });
+  api<unknown>(`/invites/${encodeURIComponent(code)}/join`, {
+    method: "POST",
+  }).then(wholeServer);
 
 export const kickMember = (serverId: string, userId: string) =>
   api<null>(`/servers/${serverId}/kick`, {
@@ -142,10 +167,10 @@ export const setMemberRoles = (
 /** The owner hands the server to another member (#519); the answer is the
  * server as the caller now sees it, as a member. */
 export const transferServer = (serverId: string, userId: string) =>
-  api<Server>(`/servers/${serverId}/transfer`, {
+  api<unknown>(`/servers/${serverId}/transfer`, {
     method: "POST",
     body: { user_id: userId },
-  });
+  }).then(wholeServer);
 
 /** The link people paste: same origin, web route `/invite/{code}`. */
 export function inviteUrl(code: string): string {

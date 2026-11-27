@@ -877,12 +877,13 @@ fn account_popover(
 
 #[cfg(test)]
 mod tests {
+    use crate::app::testkit::{click_last, click_node, click_role, id_of};
     use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT, Queryable};
 
     use crate::app::testkit::{
         FakeApi, Reply, account_button, launcher, open_account, wait_for, wait_for_label,
-        wait_for_text,
+        wait_for_path, wait_for_text,
     };
     use crate::platform::paths::testing::TempConfig;
 
@@ -900,19 +901,6 @@ mod tests {
             .collect()
     }
 
-    /// Steps until the app is on `path`.
-    fn wait_for_path(harness: &mut App<'_>, path: &str) {
-        let start = std::time::Instant::now();
-        while harness.state_mut().app().unwrap().nav().route().path() != path {
-            assert!(
-                start.elapsed() < std::time::Duration::from_secs(15),
-                "timed out waiting for {path}"
-            );
-            harness.step();
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-
     /// logOut: in a call it asks first; "Abbrechen" stays signed in.
     #[test]
     fn signing_out_in_a_call_asks_first() {
@@ -927,18 +915,14 @@ mod tests {
             channel: Some(uuid::Uuid::from_u128(2)),
             ..Default::default()
         });
-        harness
-            .get_by_role_and_label(Role::MenuItem, "Abmelden")
-            .click();
+        click_role(&mut harness, Role::MenuItem, "Abmelden");
         wait_for_label(&mut harness, "Abmelden und Anruf beenden?");
         assert!(
             harness
                 .query_by_label("Du verlässt dabei den Sprachkanal.")
                 .is_some()
         );
-        harness
-            .get_by_role_and_label(Role::Button, "Abbrechen")
-            .click();
+        click_role(&mut harness, Role::Button, "Abbrechen");
         harness.run_steps(10);
         assert!(!api.saw("POST /auth/logout"));
         assert!(
@@ -948,15 +932,9 @@ mod tests {
         );
         // Confirmed: signed out, on the login page.
         open_menu(&mut harness);
-        harness
-            .get_by_role_and_label(Role::MenuItem, "Abmelden")
-            .click();
+        click_role(&mut harness, Role::MenuItem, "Abmelden");
         wait_for_label(&mut harness, "Abmelden und Anruf beenden?");
-        let confirm = harness
-            .query_all_by_label("Abmelden")
-            .rfind(|n| n.accesskit_node().role() == Role::Button)
-            .expect("the dialog's button");
-        confirm.click();
+        click_last(&mut harness, Role::Button, "Abmelden");
         wait_for(&mut harness, "the logout", |_| api.saw("POST /auth/logout"));
         wait_for_label(&mut harness, "Anmelden");
     }
@@ -968,10 +946,9 @@ mod tests {
         let _config = TempConfig::new("status-focus");
         let api = FakeApi::start(true, |_, _, _| None);
         let mut harness = launcher(&api, "/");
-        wait_for(&mut harness, "the user panel", |h| {
-            account_button(h, "Lena").is_some()
+        click_node(&mut harness, "the avatar", |h| {
+            account_button(h, "Lena").map(id_of)
         });
-        account_button(&harness, "Lena").unwrap().click();
         let field = crate::widgets::field::field_id("user-status-text");
         let mut seen = Vec::new();
         for _ in 0..6 {
@@ -998,9 +975,7 @@ mod tests {
         });
         let mut harness = launcher(&api, "/");
         open_menu(&mut harness);
-        harness
-            .get_by_role_and_label(Role::MenuItem, "Abmelden")
-            .click();
+        click_role(&mut harness, Role::MenuItem, "Abmelden");
         let text =
             "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
         wait_for_label(&mut harness, text);
@@ -1010,9 +985,7 @@ mod tests {
                 .is_none()
         );
         fail.store(false, std::sync::atomic::Ordering::SeqCst);
-        harness
-            .get_by_role_and_label(Role::Button, "Erneut abmelden")
-            .click();
+        click_role(&mut harness, Role::Button, "Erneut abmelden");
         wait_for(&mut harness, "the strip to go", |h| {
             h.query_by_label(text).is_none()
         });
@@ -1038,31 +1011,19 @@ mod tests {
         // A real session: the held sign-out carries its cookie.
         let client = gelabber_client::Client::new(&api.origin).expect("client");
         client.http().restore_session_cookie("tok");
-        let mut harness = egui_kittest::Harness::builder()
-            .with_size(egui::vec2(1280.0, 800.0))
-            .with_max_steps(10_000)
-            .with_step_dt(1.0 / 60.0)
-            .build_eframe(move |cc| {
-                crate::Launcher::with_app(cc, client.clone(), Some("/settings/konto".into()))
-            });
+        let mut harness = crate::app::testkit::launcher_with(&api, client, "/settings/konto");
         wait_for_label(&mut harness, "Auf allen Geräten abmelden");
-        harness
-            .get_by_role_and_label(Role::Button, "Auf allen Geräten abmelden")
-            .click();
+        click_role(&mut harness, Role::Button, "Auf allen Geräten abmelden");
         // The question's button; the row of Sicherheit has that title too.
         wait_for(&mut harness, "the question", |h| {
             h.query_by_role_and_label(Role::Button, "Überall abmelden")
                 .is_some()
         });
-        harness
-            .get_by_role_and_label(Role::Button, "Überall abmelden")
-            .click();
+        click_role(&mut harness, Role::Button, "Überall abmelden");
         let text = "Die Abmeldung auf allen Geräten konnte nicht bestätigt werden. Bitte versuche es erneut.";
         wait_for_label(&mut harness, text);
         fail.store(false, std::sync::atomic::Ordering::SeqCst);
-        harness
-            .get_by_role_and_label(Role::Button, "Erneut abmelden")
-            .click();
+        click_role(&mut harness, Role::Button, "Erneut abmelden");
         wait_for(&mut harness, "the strip to go", |h| {
             h.query_by_label(text).is_none()
         });
@@ -1084,8 +1045,7 @@ mod tests {
     /// under it is not marked read too, nor with Shift the whole server.
     #[test]
     fn esc_closes_the_menu_and_marks_nothing_read() {
-        use crate::app::testkit::{ALLGEMEIN, HOME, workspace};
-        use std::time::{Duration, Instant};
+        use crate::app::testkit::{ALLGEMEIN, HOME, wait_until_idle, workspace};
 
         let _config = TempConfig::new("menu-esc");
         let api = FakeApi::start(true, |method, path, _| workspace(method, path));
@@ -1097,24 +1057,11 @@ mod tests {
                 .filter(|r| r.starts_with("PUT ") && r.ends_with("/read"))
                 .count()
         };
-        // Settled: requests go to another thread.
-        let settle = |harness: &mut egui_kittest::Harness<'_, crate::Launcher>| {
-            for _ in 0..20 {
-                harness.step();
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        };
-        // With nothing open, Esc marks #allgemein read (once it is shown).
-        let start = Instant::now();
-        while reads() == 0 {
-            assert!(
-                start.elapsed() < Duration::from_secs(15),
-                "no Esc mark-read"
-            );
-            harness.key_press(egui::Key::Escape);
-            settle(&mut harness);
-        }
-        settle(&mut harness);
+        // With nothing open, Esc marks #allgemein read once it is shown.
+        wait_until_idle(&mut harness);
+        harness.key_press(egui::Key::Escape);
+        wait_until_idle(&mut harness);
+        assert_eq!(reads(), 1, "the Esc mark-read");
         let before = reads();
         for shift in [false, true] {
             open_menu(&mut harness);
@@ -1123,7 +1070,7 @@ mod tests {
             } else {
                 harness.key_press(egui::Key::Escape);
             }
-            settle(&mut harness);
+            wait_until_idle(&mut harness);
             assert!(
                 harness.query_by_label("Abmelden").is_none(),
                 "closed (shift: {shift})"
@@ -1313,17 +1260,13 @@ mod tests {
             ]
         );
         assert!(!entries(&harness).iter().any(|e| e == "8 Stunden"));
-        harness
-            .get_by_role_and_label(Role::MenuItemRadio, "Nicht stören")
-            .click();
+        click_role(&mut harness, Role::MenuItemRadio, "Nicht stören");
         harness.run_steps(3);
         assert_eq!(
             entries(&harness)[..4],
             ["1 Stunde", "8 Stunden", "24 Stunden", "Bis ich es ändere"]
         );
-        harness
-            .get_by_role_and_label(Role::MenuItem, "8 Stunden")
-            .click();
+        click_role(&mut harness, Role::MenuItem, "8 Stunden");
         wait_for(&mut harness, "the mode saved", |_| {
             api.saw("PUT /me/presence")
         });
@@ -1374,13 +1317,9 @@ mod tests {
         let mut harness = launcher(&api, &format!("/s/{}", crate::app::testkit::HOME));
         open_menu(&mut harness);
         harness.run_steps(3);
-        harness
-            .get_by_role_and_label(Role::MenuItemRadio, "Abwesend")
-            .click();
+        click_role(&mut harness, Role::MenuItemRadio, "Abwesend");
         harness.run_steps(3);
-        harness
-            .get_by_role_and_label(Role::MenuItem, "Bis ich es ändere")
-            .click();
+        click_role(&mut harness, Role::MenuItem, "Bis ich es ändere");
         let client = harness.state_mut().app().unwrap().client().clone();
         wait_for(&mut harness, "the refusal", |_| {
             client.with_state(|s| {
@@ -1419,9 +1358,7 @@ mod tests {
         harness.run_steps(4);
         // The panel's gear keeps its name (the overview's room card has
         // the call's own gear).
-        harness
-            .get_by_role_and_label(Role::Button, "Einstellungen")
-            .click();
+        click_role(&mut harness, Role::Button, "Einstellungen");
         wait_for_path(&mut harness, "/settings/darstellung");
         assert_eq!(call.state().status, gelabber_call::CallStatus::Connected);
     }
@@ -1451,9 +1388,7 @@ mod tests {
                 "Abmelden"
             ]
         );
-        harness
-            .get_by_role_and_label(Role::MenuItem, "Betrieb")
-            .click();
+        click_role(&mut harness, Role::MenuItem, "Betrieb");
         wait_for(&mut harness, "the browser", |_| !opened.opened().is_empty());
         assert_eq!(opened.opened(), [format!("{}/betrieb/server", api.origin)]);
         harness.run_steps(3);
@@ -1471,9 +1406,7 @@ mod tests {
         let mut harness = launcher(&api, "/betrieb/meldungen");
         let opened = crate::platform::open_testing::Recording::start();
         wait_for_label(&mut harness, "Im Browser öffnen");
-        harness
-            .get_by_role_and_label(Role::Button, "Im Browser öffnen")
-            .click();
+        click_role(&mut harness, Role::Button, "Im Browser öffnen");
         wait_for(&mut harness, "the browser", |_| !opened.opened().is_empty());
         assert_eq!(
             opened.opened(),

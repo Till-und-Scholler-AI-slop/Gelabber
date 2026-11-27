@@ -17,6 +17,7 @@ import {
 import { useRef } from "react";
 
 import { ApiError } from "../api/client.ts";
+import { isMalformedAnswer } from "../api/wire.ts";
 import {
   scopeGeneration,
   stampHolds,
@@ -357,9 +358,8 @@ const targetGone = (error: unknown) =>
 // ---------------------------------------------------------------------------
 // Servers
 
-export function useCreateServer() {
-  const client = useQueryClient();
-  return useMutation({
+export function createServerOptions(client: QueryClient) {
+  return mutationOptions({
     mutationFn: (name: string) => remote.createServer(name.trim()),
     onMutate: () => takeStamp(),
     onSuccess: (detail, _name, stamp) => {
@@ -381,7 +381,20 @@ export function useCreateServer() {
         ]);
       }
     },
+    // The server may exist although its answer was rejected: show the list
+    // as it is, so a second click does not create a second one.
+    onError: (error, _name, stamp) => {
+      if (stampHolds(stamp) && isMalformedAnswer(error))
+        void client.invalidateQueries({
+          queryKey: serverKeys.list(stamp.userId, stamp.generation),
+        });
+    },
   });
+}
+
+export function useCreateServer() {
+  const client = useQueryClient();
+  return useMutation(createServerOptions(client));
 }
 
 /** The cached detail, if any — the freshest state including optimistic writes. */
@@ -772,9 +785,8 @@ export function useDeleteCategory(serverId: string) {
 // ---------------------------------------------------------------------------
 // Channels
 
-export function useCreateChannel(serverId: string) {
-  const client = useQueryClient();
-  return useMutation({
+export function createChannelOptions(client: QueryClient, serverId: string) {
+  return mutationOptions({
     mutationFn: (input: CreateChannelInput) =>
       remote.createChannel(serverId, input),
     onMutate: (input) => {
@@ -819,9 +831,20 @@ export function useCreateChannel(serverId: string) {
         ...detail,
         channels: replaceRow(detail.channels, ctx.tmp, null),
       }));
+      if (isMalformedAnswer(error)) {
+        // It may have been created: show the server as it is.
+        refetchServer(client, ctx.userId, ctx.generation, serverId);
+        notifyError(error);
+        return;
+      }
       notifyError(error, translate(servers, "error.channelNotCreated"));
     },
   });
+}
+
+export function useCreateChannel(serverId: string) {
+  const client = useQueryClient();
+  return useMutation(createChannelOptions(client, serverId));
 }
 
 /** A channel as the PATCH will leave it. */
@@ -1156,6 +1179,13 @@ export function useJoinInvite() {
     onSuccess: (server, _code, stamp) => {
       if (!stampHolds(stamp)) return;
       rememberJoinedServer(client, stamp, server);
+    },
+    // Joined although the answer was rejected: the list shows it.
+    onError: (error, _code, stamp) => {
+      if (stampHolds(stamp) && isMalformedAnswer(error))
+        void client.invalidateQueries({
+          queryKey: serverKeys.list(stamp.userId, stamp.generation),
+        });
     },
   });
 }
@@ -1614,6 +1644,11 @@ export function useTransferServer(serverId: string) {
       if (!stampHolds(stamp)) return;
       mergeServer(client, stamp.userId, stamp.generation, server);
       refetchServer(client, stamp.userId, stamp.generation, serverId);
+    },
+    // Moved although the answer was rejected: read the server again.
+    onError: (error, _userId, stamp) => {
+      if (stampHolds(stamp) && isMalformedAnswer(error))
+        refetchServer(client, stamp.userId, stamp.generation, serverId);
     },
   });
 }

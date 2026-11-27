@@ -85,12 +85,14 @@ function rows(count: number, start = 1): Message[] {
     reactions: [],
     mentions: [],
     mention_everyone: false,
+    revision: 1,
     attachments: [],
   }));
 }
 const ada = {
   id: "user-a",
   email: "a@example.com",
+  locale: "de",
   name: "A",
   avatar_url: null,
   created_at: "2026-09-28T09:00:00Z",

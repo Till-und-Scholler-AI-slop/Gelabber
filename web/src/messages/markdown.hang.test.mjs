@@ -17,6 +17,9 @@ describe("markdown", () => {
     for (const [input, expected] of [
       ["*a `b*", [em("a `b")]],
       ["*a \\* b*", [em("a * b")]],
+      // An unclosed run of backticks stays whole: its second backtick does
+      // not open code that hides the closing mark.
+      ["*a ``b*` c*", [em("a ``b"), { type: "text", text: "` c*" }]],
     ]) {
       const child = spawnSync(
         process.execPath,

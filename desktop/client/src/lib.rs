@@ -77,6 +77,8 @@ struct Inner {
     runtime: Option<tokio::runtime::Runtime>,
     http: Http,
     busy: AtomicUsize,
+    /// Timers set for later work (a retry, a debounce), see [`Client::scheduled`].
+    scheduled: AtomicUsize,
     repaint: RwLock<Option<Repaint>>,
     voice_hook: RwLock<Option<VoiceHook>>,
     voice_jobs: Mutex<Option<tokio::sync::mpsc::UnboundedSender<VoiceJob>>>,
@@ -117,6 +119,17 @@ impl Drop for Inner {
     }
 }
 
+/// A timer of [`Client::scheduled`], counted until it drops.
+pub(crate) struct Timer(Weak<Inner>);
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        if let Some(inner) = self.0.upgrade() {
+            inner.scheduled.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+}
+
 /// Cheap to clone; all clones share one connection, cookie jar and state.
 #[derive(Clone)]
 pub struct Client {
@@ -138,6 +151,7 @@ impl Client {
                 runtime: Some(runtime),
                 http,
                 busy: AtomicUsize::new(0),
+                scheduled: AtomicUsize::new(0),
                 repaint: RwLock::new(None),
                 voice_hook: RwLock::new(None),
                 voice_jobs: Mutex::new(None),
@@ -243,6 +257,19 @@ impl Client {
     /// True while any request started through [`Self::spawn`] is running.
     pub fn busy(&self) -> bool {
         self.inner.busy.load(Ordering::Acquire) > 0
+    }
+
+    /// Timers set for later work that have not finished it yet: a session
+    /// check's or a resync's retry, the unread counts' debounce. The app's
+    /// tests wait for them as for a request; the UI does not show them.
+    pub fn scheduled(&self) -> usize {
+        self.inner.scheduled.load(Ordering::Acquire)
+    }
+
+    /// Counts a timer in [`Self::scheduled`] until the returned guard drops.
+    pub(crate) fn timer(&self) -> Timer {
+        self.inner.scheduled.fetch_add(1, Ordering::AcqRel);
+        Timer(self.weak())
     }
 
     /// Runs `work` on the client runtime, counted by [`Self::busy`], and

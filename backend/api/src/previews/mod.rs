@@ -41,7 +41,7 @@ use crate::auth::session::CurrentUser;
 use crate::config::PreviewConfig;
 use crate::error::ApiError;
 use crate::limits::{MINUTE, PREVIEW_SERVER_FACTOR};
-use crate::state::AppState;
+use crate::state::{AppState, Worker};
 use crate::storage::StoreError;
 
 use self::net::{FetchError, Fetcher, Kind, Policy};
@@ -190,8 +190,9 @@ pub fn start(state: AppState) {
             if state.db.is_closed() {
                 break;
             }
-            if let Err(err) = sweep(&state.db).await {
-                warn!(error = %err, "link preview sweep failed");
+            match sweep(&state.db).await {
+                Ok(_) => state.worker_passes.finished(Worker::PreviewSweep),
+                Err(err) => warn!(error = %err, "link preview sweep failed"),
             }
         }
     });

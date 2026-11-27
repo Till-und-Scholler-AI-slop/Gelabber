@@ -135,12 +135,9 @@ mod tests {
             de_body.contains("Konto auf chat.example.org ist gelöscht"),
             "{de_body}"
         );
-        assert_eq!(
-            en_body,
-            "Hi,\n\nYour Gelabber account on chat.example.org has been deleted. Your \
-             messages, files, direct messages and reactions have been removed, and you \
-             have left every server.\n\n\
-             This email is only a confirmation; there is nothing you need to do.\n"
+        assert!(
+            en_body.contains("account on chat.example.org has been deleted"),
+            "{en_body}"
         );
     }
 

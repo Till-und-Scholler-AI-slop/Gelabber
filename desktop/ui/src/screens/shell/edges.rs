@@ -297,6 +297,7 @@ pub fn paint(ui: &Ui) {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::testkit::click;
     use crate::app::testkit::{
         ALLGEMEIN, FakeApi, HOME, launcher, wait_for, wait_for_label, workspace,
     };
@@ -313,7 +314,7 @@ mod tests {
         let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
         wait_for_label(&mut harness, "Übersicht");
         assert!(harness.query_by_label("Breite der Kanalliste").is_some());
-        harness.get_by_label("Kanalliste").click();
+        click(&mut harness, "Kanalliste");
         wait_for(&mut harness, "the folded list", |h| {
             h.query_by_label("Übersicht").is_none()
         });
@@ -322,7 +323,7 @@ mod tests {
         // The rail and the user panel's settings stay.
         assert!(harness.query_by_label("Direktnachrichten").is_some());
         assert!(harness.query_by_label("Einstellungen").is_some());
-        harness.get_by_label("Kanalliste").click();
+        click(&mut harness, "Kanalliste");
         wait_for_label(&mut harness, "Übersicht");
         assert!(!layout::collapsed(&harness.ctx));
     }

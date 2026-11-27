@@ -48,7 +48,7 @@ import {
 } from "../messages/queries.ts";
 import { isAudioType, isImageType, isVideoType } from "../messages/rules.ts";
 import type { Message } from "../messages/types.ts";
-import { asAttachmentList, asGif } from "../messages/types.ts";
+import { asGif } from "../messages/types.ts";
 import { gifBox } from "../gifs/api.ts";
 import { Avatar } from "./Avatar.tsx";
 import { confirmAction } from "./confirm.ts";
@@ -772,12 +772,13 @@ function MessageList({
       onOpened,
       estimateSize: (index) => {
         const message = items[index]!;
-        const files = asAttachmentList(message.attachments);
-        const pictures = files.filter((a) => isImageType(a.content_type));
+        const pictures = message.attachments.filter((a) =>
+          isImageType(a.content_type),
+        );
         const images = pictures.length;
         const image = images > 0;
         // Players and file rows below the pictures.
-        const extra = files.reduce(
+        const extra = message.attachments.reduce(
           (sum, a) =>
             sum +
             (isVideoType(a.content_type)

@@ -1,14 +1,18 @@
 import { ApiError, api, timeoutSignal } from "../api/client.ts";
+import { isMessage, whole, wholePage } from "../api/wire.ts";
 import type { GifPick } from "../gifs/api.ts";
 import { translate } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import type {
   ListMessagesParams,
   Message,
-  MessagePage,
   PresignRequest,
   PresignResponse,
 } from "./types.ts";
+
+/** A message the server answered with, whole, or the request fails. */
+export const wholeMessage = (value: unknown): Message =>
+  whole(value, isMessage, "message");
 
 function query(params: ListMessagesParams): string {
   const search = new URLSearchParams();
@@ -24,9 +28,9 @@ export const listMessages = (
   params: ListMessagesParams = {},
   signal?: AbortSignal,
 ) =>
-  api<MessagePage>(`/channels/${channelId}/messages${query(params)}`, {
+  api<unknown>(`/channels/${channelId}/messages${query(params)}`, {
     signal,
-  });
+  }).then(wholePage);
 
 export const createMessage = (
   channelId: string,
@@ -38,7 +42,7 @@ export const createMessage = (
   /** Alt texts by attachment id (#575). */
   descriptions: Record<string, string> = {},
 ) =>
-  api<Message>(`/channels/${channelId}/messages`, {
+  api<unknown>(`/channels/${channelId}/messages`, {
     method: "POST",
     body: {
       ...(gif
@@ -53,10 +57,12 @@ export const createMessage = (
       ...(replyTo ? { reply_to: replyTo } : {}),
       ...(nonce ? { nonce } : {}),
     },
-  });
+  }).then(wholeMessage);
 
 export const updateMessage = (id: string, content: string) =>
-  api<Message>(`/messages/${id}`, { method: "PATCH", body: { content } });
+  api<unknown>(`/messages/${id}`, { method: "PATCH", body: { content } }).then(
+    wholeMessage,
+  );
 
 /** Sets (or, empty, clears) a picture's alt text; the text stays (#575). */
 export const updateAltText = (
@@ -64,10 +70,10 @@ export const updateAltText = (
   attachmentId: string,
   text: string,
 ) =>
-  api<Message>(`/messages/${messageId}`, {
+  api<unknown>(`/messages/${messageId}`, {
     method: "PATCH",
     body: { attachment_descriptions: { [attachmentId]: text.trim() || null } },
-  });
+  }).then(wholeMessage);
 
 export const deleteMessage = (id: string) =>
   api<null>(`/messages/${id}`, { method: "DELETE" });
