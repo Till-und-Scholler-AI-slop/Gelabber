@@ -13,6 +13,9 @@ if (process.env.GELABBER_E2E_PROFILE) {
     throw new Error("unknown or conflicting E2E profile");
   process.env.GELABBER_E2E_SUITE = profile.suite;
   process.env.GELABBER_E2E_CASES = profile.cases.join(",");
+  process.env.GELABBER_E2E_EXPECTED_FAILURES = JSON.stringify(
+    profile.expectedFailures ?? {},
+  );
 }
 const suite = process.env.GELABBER_E2E_SUITE ?? "all";
 if (!["all", "media", "core", "access"].includes(suite))

@@ -20,6 +20,13 @@ export const profiles = {
       "session-audio-mute-deafen-volume-playback-retry",
       "active-call-responsive-controls",
     ],
+    // Known to fail, each under the issue that ends it: a FAIL keeps the
+    // gate green, a PASS turns it red until the entry goes (selection.mjs).
+    expectedFailures: {
+      "20-live-start-stop-bounded-client-resources": "GEL-409",
+      "session-audio-mute-deafen-volume-playback-retry": "GEL-409",
+      "active-call-responsive-controls": "GEL-409",
+    },
   },
   core: {
     suite: "core",

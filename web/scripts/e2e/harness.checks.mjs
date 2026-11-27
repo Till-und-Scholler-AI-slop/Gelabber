@@ -220,3 +220,31 @@ test("explicit exclusions are NOT_RUN, required failures and incomplete selectio
   assert.throws(() => selection("good-case,good-case"));
   assert.throws(() => selection("bad/secret"));
 });
+test("a listed expected failure keeps the gate green only while it fails", () => {
+  const expected = { known: "GEL-1" };
+  const rows = [{ id: "fixture", status: "PASS" }];
+  const failing = gate(
+    [...rows, { id: "known", status: "FAIL" }],
+    ["known"],
+    [{ status: 204 }],
+    expected,
+  );
+  assert.equal(failing.passed, true);
+  assert.deepEqual(failing.expectedFailures, [{ id: "known", issue: "GEL-1" }]);
+  const passing = gate(
+    [...rows, { id: "known", status: "PASS" }],
+    ["known"],
+    [{ status: 204 }],
+    expected,
+  );
+  assert.equal(passing.passed, false);
+  assert.deepEqual(passing.nowPassing, [{ id: "known", issue: "GEL-1" }]);
+  for (const row of [
+    { id: "known", status: "BLOCKED" },
+    { id: "other", status: "FAIL" },
+  ])
+    assert.equal(
+      gate([...rows, row], [row.id], [{ status: 204 }], expected).passed,
+      false,
+    );
+});
