@@ -455,8 +455,7 @@ mod tests {
     #[test]
     fn binds_reports_press_and_release_and_closes_the_session() {
         let Some((_daemon, address)) = private_bus("portal") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let (log, logged) = mpsc::channel();
         let _portal = connection::Builder::address(address.as_str())
@@ -509,8 +508,7 @@ mod tests {
     #[test]
     fn without_the_portal_the_binding_fails_with_a_reason() {
         let Some((_daemon, address)) = private_bus("portal-none") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let (events, got) = mpsc::channel();
         let events = Mutex::new(events);

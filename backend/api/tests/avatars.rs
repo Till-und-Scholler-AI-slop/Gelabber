@@ -15,6 +15,14 @@ const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x40\0\0\0\x40\x08\x06
 /// A 64×64 lossy WebP header (`VP8 ` key frame).
 const WEBP: &[u8] = b"RIFF\x16\0\0\0WEBPVP8 \x0a\0\0\0\x10\x02\x00\x9d\x01\x2a\x40\x00\x40\x00";
 
+/// The cleanup worker is off: the tests run its steps by hand, and one
+/// plays a claim it has made.
+fn state(pool: PgPool) -> AppState {
+    let mut state = common::state(pool);
+    state.workers.storage_cleanup = None;
+    state
+}
+
 async fn signed_in(state: &AppState, email: &str) -> Client {
     let mut client = Client::from_state(state.clone());
     client.bootstrap().await;
@@ -25,7 +33,7 @@ async fn signed_in(state: &AppState, email: &str) -> Client {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn upload_serves_bytes_and_replaces_the_old_object(pool: PgPool) {
-    let mut ada = signed_in(&common::state(pool), "ada@example.com").await;
+    let mut ada = signed_in(&state(pool), "ada@example.com").await;
 
     let (status, first) = ada
         .send_bytes(Method::PUT, "/api/me/avatar", "image/png", PNG.to_vec())
@@ -100,7 +108,7 @@ async fn upload_serves_bytes_and_replaces_the_old_object(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn refuses_non_images_strangers_and_foreign_paths(pool: PgPool) {
     // One state: the in-memory store is per state.
-    let state = common::state(pool);
+    let state = state(pool);
     let mut ada = signed_in(&state, "ada@example.com").await;
     let (status, _) = ada
         .send_bytes(
@@ -156,7 +164,7 @@ fn key_of(url: &str) -> String {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn clearing_an_uploaded_avatar_deletes_it(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let mut ada = signed_in(&state, "ada@example.com").await;
     let (status, uploaded) = ada
         .send_bytes(Method::PUT, "/api/me/avatar", "image/png", PNG.to_vec())
@@ -184,7 +192,7 @@ async fn clearing_an_uploaded_avatar_deletes_it(pool: PgPool) {
 /// again, else B stays in the store unreferenced.
 #[sqlx::test(migrations = "./migrations")]
 async fn overlapping_writes_delete_what_they_really_replaced(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let mut ada = signed_in(&state, "ada@example.com").await;
     let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
     let (_, first) = ada
@@ -233,7 +241,7 @@ async fn overlapping_writes_delete_what_they_really_replaced(pool: PgPool) {
 /// deleted object.
 #[sqlx::test(migrations = "./migrations")]
 async fn abandoned_upload_is_removed_by_the_cleanup_worker(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let ada = signed_in(&state, "ada@example.com").await;
     let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
     let url = format!("/api/avatars/{id}/{}", uuid::Uuid::new_v4());
@@ -310,7 +318,7 @@ async fn until_a_session_waits_for_a_lock(pool: &PgPool) {
 /// unlocked read sees A from the statement snapshot and deletes A instead.
 #[sqlx::test(migrations = "./migrations")]
 async fn concurrent_write_reads_its_predecessor_under_the_row_lock(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let mut ada = signed_in(&state, "ada@example.com").await;
     let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
     let (_, first) = ada
@@ -356,7 +364,7 @@ async fn concurrent_write_reads_its_predecessor_under_the_row_lock(pool: PgPool)
 /// while our clear waits; the clear must delete B, not the earlier A.
 #[sqlx::test(migrations = "./migrations")]
 async fn concurrent_banner_write_reads_its_predecessor_under_the_row_lock(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let mut ada = signed_in(&state, "ada@example.com").await;
     let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
     let (_, first) = ada
@@ -403,7 +411,7 @@ async fn concurrent_banner_write_reads_its_predecessor_under_the_row_lock(pool: 
 /// the row lock is `FOR NO KEY UPDATE`, not `FOR UPDATE`.
 #[sqlx::test(migrations = "./migrations")]
 async fn profile_write_does_not_wait_for_foreign_key_share_locks(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let ada = signed_in(&state, "ada@example.com").await;
     let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
 
@@ -435,7 +443,7 @@ async fn profile_write_does_not_wait_for_foreign_key_share_locks(pool: PgPool) {
 /// withdraw that row and point the profile at the object being deleted.
 #[sqlx::test(migrations = "./migrations")]
 async fn late_save_is_refused_once_the_worker_claimed_the_upload(pool: PgPool) {
-    let state = common::state(pool.clone());
+    let state = state(pool.clone());
     let ada = signed_in(&state, "ada@example.com").await;
     let id = uuid::Uuid::parse_str(ada.user_id()).unwrap();
     let url = format!("/api/avatars/{id}/{}", uuid::Uuid::new_v4());
@@ -509,7 +517,7 @@ async fn failed_put_keeps_its_pending_cleanup(pool: PgPool) {
     let task = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
-    let mut state = common::state(pool.clone());
+    let mut state = state(pool.clone());
     let mut ada = signed_in(&state, "ada@example.com").await;
     state.store =
         gelabber_api::storage::ObjectStore::from_minio(Some(&gelabber_api::config::MinioConfig {
@@ -562,7 +570,7 @@ async fn real_minio_avatar_upload_fetch_and_replace(pool: PgPool) {
         root_credentials: true,
         delivery: gelabber_api::config::AttachmentDelivery::Redirect,
     };
-    let mut state = common::state(pool);
+    let mut state = state(pool);
     state.store = gelabber_api::storage::ObjectStore::from_minio(Some(&config)).unwrap();
     state.store.ensure_ready().await.unwrap();
     let mut ada = signed_in(&state, "ada@example.com").await;

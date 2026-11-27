@@ -17,19 +17,24 @@ use crate::state::AppState;
 use crate::storage::StoreError;
 
 const BATCH: i64 = 32;
+/// How often the worker looks for due cleanup and expired uploads.
+pub(crate) const TICK: Duration = Duration::from_secs(1);
 
 pub fn start(state: AppState) {
+    let Some(every) = state.workers.storage_cleanup else {
+        return;
+    };
     if state.storage_worker_started.swap(true, Ordering::AcqRel) {
         return;
     }
     tokio::spawn(async move {
         // Slow HEADs must not delay already committed object deletion jobs.
-        tokio::join!(run(&state, true), run(&state, false));
+        tokio::join!(run(&state, every, true), run(&state, every, false));
     });
 }
 
-async fn run(state: &AppState, expiry: bool) {
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
+async fn run(state: &AppState, every: Duration, expiry: bool) {
+    let mut tick = tokio::time::interval(every);
     loop {
         tick.tick().await;
         if state.db.is_closed() {

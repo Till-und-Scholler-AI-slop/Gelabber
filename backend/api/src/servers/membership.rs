@@ -1,6 +1,7 @@
 //! Who the caller is inside a server, and what they may do there.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use serde::Serialize;
 use sqlx::{FromRow, PgPool};
@@ -183,17 +184,23 @@ pub async fn lock_server(
     Ok(tx)
 }
 
+/// How long kick, ban and server delete wait for the server row
+/// ([`lock_server_bounded`], `AppState::server_lock_wait`).
+pub const SERVER_LOCK_WAIT: Duration = Duration::from_secs(5);
+
 /// [`lock_server`] exclusively for kick, ban and server delete, waiting at
-/// most 5 s. Readers hold the row shared only briefly (the gateway ends its
-/// check before writing to a socket, GEL-42), so a longer wait means
-/// something keeps it held; the caller gets a retryable answer. The rest of
-/// the transaction waits as usual.
+/// most `wait` ([`SERVER_LOCK_WAIT`]). Readers hold the row shared only
+/// briefly (the gateway ends its check before writing to a socket, GEL-42),
+/// so a longer wait means something keeps it held; the caller gets a
+/// retryable answer. The rest of the transaction waits as usual.
 pub async fn lock_server_bounded(
     db: &PgPool,
     server_id: Uuid,
+    wait: Duration,
 ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
     let mut tx = db.begin().await?;
-    sqlx::query("SET LOCAL lock_timeout = '5s'")
+    sqlx::query("SELECT set_config('lock_timeout', $1, true)")
+        .bind(format!("{}ms", wait.as_millis().max(1)))
         .execute(&mut *tx)
         .await?;
     let locked = sqlx::query_scalar::<_, Uuid>("SELECT id FROM servers WHERE id = $1 FOR UPDATE")

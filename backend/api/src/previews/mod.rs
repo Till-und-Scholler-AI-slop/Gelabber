@@ -59,7 +59,7 @@ const WORKERS: usize = 4;
 const QUEUE: usize = 256;
 /// Largest preview image in pixels; the bytes are capped by `net`.
 const IMAGE_MAX_EDGE: u32 = 4096;
-const SWEEP_EVERY: Duration = Duration::from_secs(3600);
+pub(crate) const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 /// How long a stored image may wait for its row before cleanup removes it.
 const PENDING_SECS: f64 = 600.0;
 const YOUTUBE_OEMBED: &str = "https://www.youtube.com/oembed";
@@ -160,6 +160,9 @@ pub fn router() -> Router<AppState> {
 
 /// Starts the workers and the hourly sweep once per state.
 pub fn start(state: AppState) {
+    let Some(every) = state.workers.link_previews else {
+        return;
+    };
     let Some(previews) = &state.previews else {
         return;
     };
@@ -181,7 +184,7 @@ pub fn start(state: AppState) {
         }
     });
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(SWEEP_EVERY);
+        let mut tick = tokio::time::interval(every);
         loop {
             tick.tick().await;
             if state.db.is_closed() {
@@ -235,7 +238,12 @@ pub fn request_host(headers: &HeaderMap) -> Option<String> {
 }
 
 async fn process(state: &AppState, author_id: Uuid, job: Job) {
-    let deadline = tokio::time::Instant::now() + JOB_BUDGET;
+    let budget = state
+        .previews
+        .as_ref()
+        .and_then(|previews| previews.policy().job_budget)
+        .unwrap_or(JOB_BUDGET);
+    let deadline = tokio::time::Instant::now() + budget;
     // An edit keeps the card a link already has: it is not fetched again,
     // and a slow site cannot take it away by spending the budget.
     let existing: HashMap<String, Uuid> = sqlx::query_as(

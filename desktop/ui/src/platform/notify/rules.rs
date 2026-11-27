@@ -351,25 +351,25 @@ mod tests {
             s.session = Session::Authenticated(Box::new(
                 serde_json::from_value(serde_json::json!({
                     "id": id(ME), "email": "ich@example.test", "name": "Ich",
-                    "created_at": "2026-10-01T00:00:00Z",
+                    "created_at": "2026-10-01T00:00:00Z", "locale": "de",
                 }))
                 .unwrap(),
             ));
             let channel = |n: u128, name: &str, kind: &str| {
                 serde_json::json!({
-                    "id": id(n), "server_id": id(SRV), "category_id": null, "name": name,
+                    "id": id(n), "server_id": id(SRV), "limited": false, "role_ids": [], "category_id": null, "name": name,
                     "kind": kind, "created_at": "2026-10-01T00:00:00Z",
                 })
             };
             let detail = serde_json::from_value(serde_json::json!({
                 "id": id(SRV), "name": "Runde", "owner_id": id(99), "icon_url": null,
                 "created_at": "2026-10-01T00:00:00Z", "role": role,
-                "permissions": permissions, "member_permissions": permissions,
-                "categories": [],
+                "permissions": permissions, "blocked": false, "member_permissions": permissions,
+                "roles": [], "categories": [],
                 "channels": [channel(LOUNGE, "Lounge", "voice"), channel(CHAT, "allgemein", "text")],
                 "members": [{
                     "user_id": id(ADA), "name": "Ada", "avatar_url": null,
-                    "joined_at": "2026-10-01T00:00:00Z", "role": "member",
+                    "role_ids": [], "joined_at": "2026-10-01T00:00:00Z", "role": "member",
                 }],
             }))
             .unwrap();

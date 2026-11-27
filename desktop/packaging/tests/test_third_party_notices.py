@@ -1,7 +1,6 @@
 """Checks of desktop/packaging/third-party-notices.py that need neither the
 libwebrtc checkout nor a build: python3 -m unittest discover -s desktop/packaging/tests"""
 import importlib.util
-import os
 from pathlib import Path
 import struct
 import subprocess
@@ -9,6 +8,12 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+
+# A missing tool skips a test here and fails it in CI, as everywhere (GEL-375).
+_SPEC = importlib.util.spec_from_file_location(
+    'prerequisites', Path(__file__).resolve().parents[3] / 'deploy/compose/tests/prerequisites.py')
+prerequisites = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(prerequisites)
 
 
 SCRIPT = Path(__file__).parents[1] / 'third-party-notices.py'
@@ -402,9 +407,7 @@ class CheckTests(unittest.TestCase):
             result = self.check(copy)
             stale = ('is out of date', 'is not the text the script wrote', 'the inputs of part')
             if result.returncode and not any(reason in result.stderr for reason in stale):
-                if os.environ.get('CI'):
-                    self.fail(f'--check could not run:\n{result.stderr.strip()}')
-                self.skipTest(result.stderr.strip())
+                prerequisites.missing(f'what --check needs ({result.stderr.strip()})')
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('  Licence   ISC\n', committed)
             copy.write_text(committed.replace('  Licence   ISC\n', '  Licence   GPL-3.0\n'), encoding='utf-8')

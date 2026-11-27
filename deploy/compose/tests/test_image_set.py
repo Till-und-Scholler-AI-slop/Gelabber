@@ -46,14 +46,16 @@ class Gates(unittest.TestCase):
     def test_ci_caddy_uses_compose_pin_and_checks_downloaded_version(self):
         compose = yaml.safe_load((ROOT / 'deploy/compose/compose.yaml').read_text())
         version = re.fullmatch(r'caddy:(.+)-alpine', compose['services']['proxy']['image']).group(1)
-        install = next(step['run'] for step in workflow_data.load('ci.yml')['jobs']['deploy']['steps']
-                       if step.get('name') == 'Install Caddy')
+        step = next(step for step in workflow_data.load('ci.yml')['jobs']['deploy']['steps']
+                    if step.get('name') == 'Install Caddy')
+        install = step['run']
+        self.assertEqual(str(step['env']['CADDY_VERSION']), version)
         # The download API can return a newer version despite its version query.
         # Use the exact upstream release asset and verify the installed binary.
-        self.assertIn(f'/releases/download/v{version}/caddy_{version}_linux_amd64.tar.gz', install)
+        self.assertIn('/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz', install)
         self.assertNotIn('caddyserver.com/api/download', install)
         # The installed binary's own version is compared, on one line.
-        self.assertRegex(install, rf'\$\(caddy version[^\n]*= "v{re.escape(version)}"')
+        self.assertRegex(install, r'\$\(caddy version[^\n]*= "v\$\{CADDY_VERSION\}"')
 
     def test_exact_success(self):
         m.check_ci(ci(), SHA, REPO)
@@ -113,8 +115,18 @@ class Promotion(unittest.TestCase):
         self.env.start()
         self.api = patch.object(m, 'api', side_effect=lambda path: ci() if path.startswith('actions/') else {'object': {'sha': SHA}})
         self.api.start()
+        # The MinIO tag's build: test_minio_source.py tests the waiting itself.
+        self.waited = []
+        self.minio = [patch.object(m.minio_source, 'source', side_effect=lambda name, rev='HEAD': f'{name}-sources'),
+                      patch.object(m.minio_source, 'main_head', return_value='main-head'),
+                      patch.object(m.minio_source, 'wait_for',
+                                   side_effect=lambda ref, tree: self.waited.append((ref, tree)) or DIGEST)]
+        for patcher in self.minio:
+            patcher.start()
 
     def tearDown(self):
+        for patcher in self.minio:
+            patcher.stop()
         self.api.stop()
         self.env.stop()
         os.chdir(self.old)
@@ -257,7 +269,7 @@ class Promotion(unittest.TestCase):
             item['digest'] = 'sha256:' + str(index) * 64
             expected[item['image']] = item['digest']
         Path('image-set.json').write_text(json.dumps(manifest))
-        calls = self.latest_run(digest=lambda ref: expected[ref.rsplit(':', 1)[0]])
+        calls = self.latest_run(digest=lambda ref: expected[ref.split('@')[0].rsplit(':', 1)[0]])
         self.assertIn(('git', 'merge-base', '--is-ancestor', SHA, 'HEAD'), calls)
         self.assertIn(('git', 'fetch', '--no-tags', 'origin', 'refs/tags/v0.2.4:refs/tags/v0.2.4'), calls)
         self.assertEqual(aliased(calls), every_image())
@@ -300,12 +312,39 @@ class Promotion(unittest.TestCase):
                 calls = self.latest_run(api=api)
                 self.assertEqual(aliased(calls), every_image())
 
+    def test_promote_records_the_minio_build_of_the_release_commit(self):
+        # GEL-402: the tag may still be rebuilt from this commit's sources.
+        with patch.object(m, 'tag_sha', return_value=None), patch.object(m, 'registry_digest', return_value=DIGEST), \
+                patch.object(m, 'run'), patch.object(m.minio_source, 'wait_for', return_value=OTHER) as wait:
+            m.promote()
+        wait.assert_called_once_with(f'ghcr.io/{REPO}/minio:{m.MINIO_PIN}', 'minio-sources')
+        self.assertEqual(json.loads(Path('image-set.json').read_text())['minio']['digest'], OTHER)
+
+    def test_promote_fails_at_once_when_main_has_other_minio_sources(self):
+        # publish-minio.yml builds only main's sources: waiting for these could not end.
+        sources = {SHA: 'old', 'main-head': 'new'}
+        with patch.object(m, 'tag_sha', return_value=None), patch.object(m, 'registry_digest', return_value=DIGEST), \
+                patch.object(m, 'run'), patch.object(m.minio_source, 'source', side_effect=lambda name, rev: sources[rev]), \
+                patch.object(m.minio_source, 'wait_for') as wait, self.assertRaisesRegex(ValueError, 'main has moved on'):
+            m.promote()
+        wait.assert_not_called()
+
+    def test_latest_keeps_the_released_minio_build_after_its_tag_was_rebuilt(self):
+        # publish-minio.yml replaces the pinned tag when its build image changes (GEL-402).
+        self.prepare_release()
+        calls = self.latest_run(digest=lambda ref: OTHER if ref.endswith(':' + m.MINIO_PIN) else DIGEST)
+        minio = [c for c in calls if c[0] == 'docker' and '/minio:latest' in c[-2]]
+        self.assertEqual(len(minio), 1)
+        self.assertTrue(minio[0][-1].endswith('/minio@' + DIGEST))
+
     def test_latest_preflights_minio_and_all_app_digests_before_any_alias_write(self):
         self.prepare_release()
-        for bad in ('media:v0.2.4', 'minio:' + m.MINIO_PIN):
+        # MinIO's recorded build is checked by its digest (GEL-402); a build
+        # the registry no longer has ("manifest unknown", None) fails too.
+        for bad, answer in (('media:v0.2.4', OTHER), ('minio@' + DIGEST, OTHER), ('minio@' + DIGEST, None)):
             calls = []
-            with self.subTest(bad=bad), self.assertRaises(ValueError):
-                self.latest_run(digest=lambda ref: OTHER if ref.endswith(bad) else DIGEST,
+            with self.subTest(bad=bad, answer=answer), self.assertRaises(ValueError):
+                self.latest_run(digest=lambda ref: answer if ref.endswith(bad) else DIGEST,
                                 run=lambda *args: calls.append(args))
             self.assertFalse(any(c[0] == 'docker' for c in calls))
 

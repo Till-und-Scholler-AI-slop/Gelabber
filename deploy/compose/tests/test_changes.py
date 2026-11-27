@@ -98,8 +98,9 @@ class Areas(unittest.TestCase):
 
     def test_files_other_areas_read_start_them(self):
         # Read by test_public_pages.py, test_update_signature.py,
-        # generate-emoji-data.py --check, landingImage.test.mjs and
-        # ci-fault-loop.checks.mjs (a step of e2e-extended.yml). Also the
+        # generate-emoji-data.py --check, landingImage.test.mjs,
+        # ci-fault-loop.checks.mjs (a step of e2e-extended.yml) and the
+        # packaging tests (prerequisites.py). Also the
         # deployment tests' own inputs outside deploy/: the Claude Code hooks,
         # both versions, the backend's build.
         for path, area in (('.claude/hooks/fast_checks.py', 'deploy'),
@@ -110,7 +111,8 @@ class Areas(unittest.TestCase):
                            ('desktop/packaging/updater.pub', 'deploy'),
                            ('desktop/ui/assets/emoji/emoji-data.json', 'web'),
                            ('.github/workflows/e2e-extended.yml', 'web'),
-                           ('docs/design/v0.10/landing-preview-en.png', 'web')):
+                           ('docs/design/v0.10/landing-preview-en.png', 'web'),
+                           ('deploy/compose/tests/prerequisites.py', 'desktop')):
             with self.subTest(path=path):
                 self.assertTrue((ROOT / path).is_file())
                 self.assertIn(area, changes.areas([path]))

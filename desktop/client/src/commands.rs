@@ -384,14 +384,14 @@ impl Client {
             if let Ok(list) = settings {
                 s.notification_settings = list;
             }
-            // An old server without the route answers 404; keep the default.
+            // Unknown after a failure: notifications hide the content.
             if let Ok(privacy) = privacy {
                 s.notification_privacy = Some(privacy);
             }
             if let Ok(doc) = themes {
                 s.themes = Some(doc);
             }
-            // An old server without manual presence: automatic, as there.
+            // Automatic after a failure, until a frame says otherwise.
             if let Ok(mode) = mode {
                 s.presence_mode = mode;
             }
@@ -1045,38 +1045,18 @@ impl Client {
     }
 
     /// Sets or (blank) clears the alt text of a picture of my message
-    /// (#575); the text stays. `opened_with` is the message's text when the
-    /// dialog opened, for a message no longer loaded. Op key `alt:<id>`.
-    pub fn edit_alt_text(&self, id: Uuid, attachment: Uuid, opened_with: Option<&str>, text: &str) {
+    /// (#575); the text stays. Op key `alt:<id>`.
+    pub fn edit_alt_text(&self, id: Uuid, attachment: Uuid, text: &str) {
         let http = self.http().clone();
         let text = text.trim().to_owned();
         let op = format!("alt:{id}");
         // Pending before anything runs, so the dialog waiting on it never
         // reads a missing or stale state as done.
         self.write(|s| s.ops.insert(op.clone(), OpState::Pending));
-        // The text as shown goes along: a server from before #575 reads a
-        // PATCH without `content` as an empty text and would delete it.
-        // Without a known text nothing is sent, as an empty one would be a
-        // text edit that deletes it.
-        let content = self
-            .with_state(|s| s.find_message(id).map(|m| m.content.clone()))
-            .or_else(|| opened_with.map(str::to_owned));
-        let Some(content) = content else {
-            // Never asked the server: an error of its own, not a lost connection.
-            let error = ApiError::Api {
-                status: 0,
-                code: "unloaded".into(),
-                message: gelabber_i18n::chat::alt_message_unloaded().into(),
-                fields: serde_json::Value::Null,
-                retry_after: None,
-            };
-            self.fail_op(&op, error);
-            return;
-        };
         self.message_write(
             op,
             id,
-            async move { http.edit_alt_text(id, attachment, &content, &text).await },
+            async move { http.edit_alt_text(id, attachment, &text).await },
             |s, m| s.apply_message(m),
         );
     }
@@ -2726,7 +2706,7 @@ impl Client {
 /// The signed-in user's language, as the server confirmed or announced it.
 pub(crate) fn record_locale(state: &mut State, locale: String) {
     if let Session::Authenticated(user) = &mut state.session {
-        user.locale = Some(locale);
+        user.locale = locale;
     }
 }
 
@@ -2776,7 +2756,7 @@ mod tests {
             s.session = Session::Authenticated(Box::new(
                 serde_json::from_value(serde_json::json!({
                     "id": Uuid::from_u128(1), "email": "ich@example.test", "name": "Ich",
-                    "created_at": "2026-10-01T00:00:00Z",
+                    "created_at": "2026-10-01T00:00:00Z", "locale": "de",
                 }))
                 .unwrap(),
             ));
@@ -2886,7 +2866,7 @@ mod tests {
                 serde_json::from_value(serde_json::json!({
                     "id": server, "name": "Wohnzimmer", "owner_id": Uuid::from_u128(9),
                     "icon_url": null, "created_at": "2026-10-01T00:00:00Z", "role": "member",
-                    "permissions": [], "member_permissions": [],
+                    "permissions": [], "blocked": false, "member_permissions": [],
                 }))
                 .unwrap(),
             ];
@@ -3023,7 +3003,7 @@ mod tests {
         serde_json::json!({
             "id": id, "name": name, "owner_id": Uuid::from_u128(9),
             "icon_url": null, "created_at": "2026-10-01T00:00:00Z", "role": "member",
-            "permissions": [], "member_permissions": [],
+            "permissions": [], "blocked": false, "member_permissions": [],
         })
     }
 

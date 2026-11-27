@@ -84,7 +84,7 @@ fn signed_in(fixture: &Fixture, who: &str) -> Client {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER)"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
 fn seeded_workspace_loads_like_the_web() {
     let fx = fixture();
     let lena = signed_in(&fx, "lena");
@@ -196,7 +196,7 @@ impl Drop for Scratch {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER)"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
 fn messages_typing_and_presence_arrive_over_the_gateway() {
     let fx = fixture();
     let lena = signed_in(&fx, "lena");
@@ -423,7 +423,7 @@ fn scratch_server(client: &Client, name: &str) -> (Scratch, Uuid) {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER)"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
 fn attachments_upload_bind_and_download() {
     let fx = fixture();
     let lena = signed_in(&fx, "lena");
@@ -462,7 +462,7 @@ fn attachments_upload_bind_and_download() {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER)"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
 fn reconnect_resumes_without_losing_or_repeating_events() {
     let fx = fixture();
     let lena = signed_in(&fx, "lena");
@@ -530,7 +530,7 @@ fn reconnect_resumes_without_losing_or_repeating_events() {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER)"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER); GEL-376 decides where it runs"]
 fn switching_accounts_keeps_nothing_of_the_first() {
     let fx = fixture();
     let client = signed_in(&fx, "lena");
