@@ -392,11 +392,10 @@ mod tests {
     /// `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-ui
     /// signed_in_after_a_restart -- --ignored`. Signs out again at the end.
     #[test]
-    #[ignore]
+    #[ignore = "needs the seeded stack (GELABBER_TEST_SERVER)"]
     fn signed_in_after_a_restart() {
-        let Ok(server) = std::env::var("GELABBER_TEST_SERVER") else {
-            return;
-        };
+        let server =
+            std::env::var("GELABBER_TEST_SERVER").expect("GELABBER_TEST_SERVER, the seeded stack");
         // Read at run time: the seed writes it, git ignores it.
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -562,8 +561,7 @@ mod tests {
         }
 
         let Some((_daemon, address)) = crate::platform::testing::private_bus("secrets") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let _config = TempConfig::new("keyring");
         let shared: Shared = Arc::default();
@@ -654,8 +652,7 @@ mod tests {
             }
         }
         let Some((_daemon, address)) = crate::platform::testing::private_bus("secrets-hung") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let _service = zbus::blocking::connection::Builder::address(address.as_str())
             .unwrap()

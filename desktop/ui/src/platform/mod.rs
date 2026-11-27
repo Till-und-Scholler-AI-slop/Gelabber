@@ -850,7 +850,8 @@ pub(crate) mod testing {
     }
 
     /// A session bus of its own without service files, or none where
-    /// dbus-daemon is missing (headless CI).
+    /// dbus-daemon is not installed: the test then calls
+    /// `gelabber_testing::missing`. Any other failure fails the test.
     pub fn private_bus(name: &str) -> Option<(Daemon, String)> {
         const CONFIG: &str = r#"<busconfig>
           <type>session</type>
@@ -866,17 +867,23 @@ pub(crate) mod testing {
             "gelabber-ui-bus-{}-{name}.conf",
             std::process::id()
         ));
-        std::fs::write(&config, CONFIG).ok()?;
-        let mut daemon = Command::new("dbus-daemon")
+        std::fs::write(&config, CONFIG).expect("the bus configuration");
+        let spawned = Command::new("dbus-daemon")
             .arg(format!("--config-file={}", config.display()))
             .args(["--nofork", "--print-address"])
             .stdout(Stdio::piped())
-            .spawn()
-            .ok()?;
-        let output = daemon.stdout.take();
+            .spawn();
+        let mut daemon = match spawned {
+            Ok(daemon) => daemon,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => panic!("dbus-daemon: {error}"),
+        };
+        let output = daemon.stdout.take().expect("piped");
         let daemon = Daemon(daemon);
         let mut address = String::new();
-        BufReader::new(output?).read_line(&mut address).ok()?;
+        BufReader::new(output)
+            .read_line(&mut address)
+            .expect("the bus address");
         let _ = std::fs::remove_file(config);
         Some((daemon, address.trim().to_owned()))
     }

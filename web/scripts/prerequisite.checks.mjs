@@ -1,0 +1,18 @@
+/* global console */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { missing } from "./prerequisite.mjs";
+
+test("outside CI a missing prerequisite is skipped and says so", (t) => {
+  const log = t.mock.method(console, "log", () => {});
+  missing("a tool", { ci: false });
+  assert.deepEqual(log.mock.calls[0].arguments, [
+    "Skipped: a tool is missing on this machine (with CI set, this fails).",
+  ]);
+});
+
+test("in CI a missing prerequisite fails", () => {
+  assert.throws(() => missing("a tool", { ci: true }), {
+    message: "a tool is missing; CI must provide it (GEL-375)",
+  });
+});

@@ -17,6 +17,7 @@ const checks = [
   [vm, "scripts/e2e/native-finish.checks.mjs"],
   [vm, "scripts/e2e/media-extra.checks.mjs"],
   ["scripts/smoke-netem.checks.mjs"],
+  ["scripts/prerequisite.checks.mjs"],
   ["scripts/e2e/faults.checks.mjs"],
   [vm, "scripts/e2e/teardown.checks.mjs"],
   [vm, "scripts/e2e/media-runtime.checks.mjs"],

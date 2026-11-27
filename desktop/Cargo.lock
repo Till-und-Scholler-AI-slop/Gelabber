@@ -1997,6 +1997,7 @@ version = "0.14.0"
 dependencies = [
  "cmake",
  "deep_filter",
+ "gelabber-testing",
  "mediasoup",
  "ndarray",
  "serde_json",
@@ -2021,6 +2022,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "gelabber-testing"
+version = "0.14.0"
+
+[[package]]
 name = "gelabber-ui"
 version = "0.14.0"
 dependencies = [
@@ -2034,6 +2039,7 @@ dependencies = [
  "gelabber-call",
  "gelabber-client",
  "gelabber-i18n",
+ "gelabber-testing",
  "image",
  "ksni",
  "minisign-verify",

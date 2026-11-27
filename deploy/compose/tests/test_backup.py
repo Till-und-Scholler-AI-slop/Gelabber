@@ -2,8 +2,8 @@
 age recipient is set, and a failure leaves the writers stopped (#299).
 
 A fake docker on PATH plays Compose and the two producers, and a stub age
-stands in for the real one, so CI needs neither. With age installed, two
-more tests make and decrypt a real backup and try malformed recipients.
+stands in for the real one. Two more tests make and decrypt a real backup
+with age and try malformed recipients; the deploy job installs age for them.
 """
 import os
 from pathlib import Path
@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from prerequisites import requires
 from test_changes import changed_areas
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'backup.sh'
@@ -206,7 +207,7 @@ class Backup(unittest.TestCase):
         self.assertEqual(self.calls(), [])
         self.assertFalse((self.compose / 'backups').exists())
 
-    @unittest.skipUnless(shutil.which('age') and shutil.which('age-keygen'), 'age not installed')
+    @requires(shutil.which('age') and shutil.which('age-keygen'), 'age')
     def test_real_age_round_trip(self):
         key = self.tmp / 'key.txt'
         subprocess.run(['age-keygen', '-o', str(key)], check=True, capture_output=True)
@@ -224,7 +225,7 @@ class Backup(unittest.TestCase):
                     check=True, capture_output=True).stdout
                 self.assertEqual(decrypted, plain)
 
-    @unittest.skipUnless(shutil.which('age'), 'age not installed')
+    @requires(shutil.which('age'), 'age')
     def test_real_age_refuses_malformed_recipients(self):
         for recipient in ('garbage', 'ssh-ed25519 AAAAnot-a-key'):
             with self.subTest(recipient=recipient):
