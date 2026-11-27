@@ -9,18 +9,14 @@ use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
 use chrono::{DateTime, Utc};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use gelabber_api::{AppState, Config, app};
 use serde_json::json;
 use sqlx::PgPool;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::COOKIE;
 
+use common::ws::{self, Ws};
 use common::{Client, SESSION};
-
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// 4 hours absolute, 1 hour idle: renewals are written in 5-minute steps.
 fn lifetime_state(pool: PgPool, ttl_hours: &str, idle_hours: &str) -> AppState {
@@ -226,47 +222,12 @@ async fn serve(state: AppState) -> std::net::SocketAddr {
 }
 
 async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut request = format!("ws://{addr}/ws")
-        .into_client_request()
-        .expect("ws request");
-    let cookie = client.jar.get(SESSION).expect("session cookie");
-    request.headers_mut().insert(
-        COOKIE,
-        format!("{SESSION}={cookie}")
-            .parse()
-            .expect("cookie header"),
-    );
-    let (ws, response) = tokio_tungstenite::connect_async(request)
-        .await
-        .unwrap_or_else(|err| panic!("ws connect failed: {err}"));
-    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
-    ws
-}
-
-async fn send_json(ws: &mut Ws, value: serde_json::Value) {
-    ws.send(Message::Text(value.to_string().into()))
-        .await
-        .expect("ws send");
+    ws::connect(addr, client).await
 }
 
 /// Answers server heartbeats for `span`; fails if the socket closes.
 async fn stay_connected(ws: &mut Ws, span: Duration) {
-    let deadline = tokio::time::Instant::now() + span;
-    loop {
-        let next = tokio::time::timeout_at(deadline, ws.next()).await;
-        match next {
-            Err(_) => return,
-            Ok(Some(Ok(Message::Text(text)))) => {
-                if text.contains(r#""op":"h""#) {
-                    send_json(ws, json!({ "op": "h" })).await;
-                }
-            }
-            Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => {
-                panic!("socket closed early")
-            }
-            Ok(Some(Ok(_))) => {}
-        }
-    }
+    assert_eq!(ws::within(ws, span, |_| false).await, None);
 }
 
 /// Opening the socket is a use. Activity frames renew through the same
@@ -292,7 +253,7 @@ async fn the_upgrade_renews_and_heartbeats_do_not(pool: PgPool) {
     assert_eq!(row(&pool).await.1, due, "heartbeats are not a use");
 
     // The same socket renews on activity, so the check above could see one.
-    send_json(&mut ws, json!({ "op": "p" })).await;
+    ws::send(&mut ws, json!({ "op": "p" })).await;
     for _ in 0..20 {
         stay_connected(&mut ws, Duration::from_millis(100)).await;
         if row(&pool).await.1 != due {
@@ -333,7 +294,7 @@ async fn socket_closes_when_the_session_runs_out(pool: PgPool) {
             match ws.next().await {
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
                 Some(Ok(Message::Text(text))) if text.contains(r#""op":"h""#) => {
-                    send_json(&mut ws, json!({ "op": "h" })).await;
+                    ws::send(&mut ws, json!({ "op": "h" })).await;
                 }
                 Some(Ok(_)) => {}
             }

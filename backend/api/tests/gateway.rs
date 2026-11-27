@@ -656,7 +656,9 @@ async fn sockets_per_account_are_capped(pool: PgPool) {
 
     let mut first = open.remove(0);
     first.close(None).await.ok();
-    while first.next().await.is_some() {}
+    tokio::time::timeout(ws::WAIT, async { while first.next().await.is_some() {} })
+        .await
+        .expect("the closed socket ends");
     let freed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
@@ -778,8 +780,20 @@ async fn a_stalled_subscribe_does_not_hold_off_a_kick(pool: PgPool) {
     }
     let mut ws = connect_reading_slowly(addr, &session_cookie(&member)).await;
     send(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
-    // The replay write is blocked by now.
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // The first event of the replay arrives: the subscribe is past its
+    // checks and writing, and the next megabytes no longer fit.
+    let first = tokio::time::timeout(ws::WAIT, ws.next())
+        .await
+        .expect("the replay starts")
+        .expect("ws open")
+        .expect("ws frame");
+    assert!(
+        first
+            .to_text()
+            .is_ok_and(|text| text.starts_with(r#"{"op":"e""#)),
+        "{:.80}",
+        first.to_text().unwrap_or_default()
+    );
 
     let kicked = tokio::time::timeout(
         ws::WAIT,
@@ -1061,14 +1075,10 @@ async fn presence_online_idle_offline_without_bumping_chat_seq(pool: PgPool) {
     .await;
 
     // Server-side per-client idle: no activity frames, heartbeat still flows.
-    let auto_idle = tokio::time::timeout(Duration::from_millis(400), async {
-        until(&mut owner_ws, |f| {
-            f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "i"
-        })
-        .await
+    let auto_idle = until(&mut owner_ws, |f| {
+        f["op"] == "p" && f["u"] == member.user_id() && f["st"] == "i"
     })
-    .await
-    .expect("idle timeout");
+    .await;
     assert_eq!(auto_idle["st"], "i");
 
     member_ws.close(None).await.ok();
@@ -1255,16 +1265,13 @@ async fn two_clients_keep_user_online_until_the_last_goes_idle(pool: PgPool) {
     until(&mut b, |f| f["op"] == "ok").await;
 
     send(&mut a, json!({ "op": "p", "st": "i" })).await;
-    // The other tab is still online — aggregate must stay online.
-    let flipped = tokio::time::timeout(Duration::from_millis(150), async {
-        until(&mut b, |f| f["op"] == "p" && f["st"] == "i").await
+    // The other tab is still online — aggregate must stay online. No frame
+    // answers the idle one without counting as activity, so a short window.
+    let flipped = ws::within(&mut b, Duration::from_millis(150), |f| {
+        f["op"] == "p" && f["st"] == "i"
     })
     .await;
-    assert!(
-        flipped.is_err(),
-        "one idle client must not mark the user idle: {:?}",
-        flipped.ok()
-    );
+    assert_eq!(flipped, None, "one idle client must not mark the user idle");
 
     send(&mut b, json!({ "op": "p", "st": "i" })).await;
     let idle = until(&mut a, |f| f["op"] == "p" && f["st"] == "i").await;
@@ -1403,15 +1410,12 @@ async fn last_close_and_idle_reach_every_server_the_user_is_on(pool: PgPool) {
     );
 
     send(&mut tab_a, json!({ "op": "p", "st": "i" })).await;
-    let no_idle = tokio::time::timeout(Duration::from_millis(120), async {
-        until(&mut watch_s2, |f| f["op"] == "p" && f["st"] == "i").await
+    // A short window, as in two_clients_keep_user_online_until_the_last_goes_idle.
+    let flipped = ws::within(&mut watch_s2, Duration::from_millis(120), |f| {
+        f["op"] == "p" && f["st"] == "i"
     })
     .await;
-    assert!(
-        no_idle.is_err(),
-        "one idle tab must not flip the user: {:?}",
-        no_idle.ok()
-    );
+    assert_eq!(flipped, None, "one idle tab must not flip the user");
 
     send(&mut tab_b, json!({ "op": "p", "st": "i" })).await;
     let idle_s1 = until(&mut watch_s1, |f| {
@@ -2023,16 +2027,8 @@ async fn dm_discovery_reaches_already_connected_recipient_and_no_other_user(pool
     send(&mut bob, json!({"op":"s","s":c,"c":c,"n":0})).await;
     let event = until(&mut bob, |f| f["op"] == "e").await;
     assert_eq!(event["d"]["id"], first.body["id"]);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(150), async {
-            loop {
-                let f = recv(&mut cara).await;
-                assert_ne!(f["op"], "dm", "foreign discovery leak");
-            }
-        })
-        .await
-        .is_err()
-    );
+    let leak = ws::within(&mut cara, Duration::from_millis(150), |f| f["op"] == "dm").await;
+    assert_eq!(leak, None, "foreign discovery leak");
     let list = recipient.send(Method::GET, "/api/dms", None).await;
     assert_eq!(list.body.as_array().unwrap().len(), 1);
 }
@@ -2224,16 +2220,8 @@ async fn notification_settings_go_to_the_own_sockets_only(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     until(&mut first, |f| f["op"] == "ns").await;
     until(&mut second, |f| f["op"] == "ns").await;
-    assert!(
-        tokio::time::timeout(Duration::from_millis(200), async {
-            loop {
-                let f = recv(&mut other).await;
-                assert_ne!(f["op"], "ns", "settings of another account");
-            }
-        })
-        .await
-        .is_err()
-    );
+    let leak = ws::within(&mut other, Duration::from_millis(200), |f| f["op"] == "ns").await;
+    assert_eq!(leak, None, "settings of another account");
 }
 
 #[sqlx::test]
@@ -2277,17 +2265,9 @@ async fn a_read_position_reaches_the_readers_other_sockets_only(pool: PgPool) {
     // The same mark again moves nothing and says nothing.
     let res = member.send(Method::PUT, &path, Some(mark.clone())).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    for ws in [&mut phone, &mut other] {
-        assert!(
-            tokio::time::timeout(Duration::from_millis(200), async {
-                loop {
-                    let f = recv(ws).await;
-                    assert_ne!(f["op"], "rd", "an unmoved or foreign read position");
-                }
-            })
-            .await
-            .is_err()
-        );
+    for socket in [&mut phone, &mut other] {
+        let moved = ws::within(socket, Duration::from_millis(200), |f| f["op"] == "rd").await;
+        assert_eq!(moved, None, "an unmoved or foreign read position");
     }
 }
 
