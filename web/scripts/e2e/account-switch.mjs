@@ -17,7 +17,8 @@ export async function accountSwitchScenarios(h, f) {
         const monitor = await f.owner.context.newPage();
         await monitor.goto(`${f.base}/profile`);
         let release,
-          requests = 0;
+          requests = 0,
+          delivered = false;
         const gate = new Promise((resolve) => {
           release = resolve;
         });
@@ -27,14 +28,21 @@ export async function accountSwitchScenarios(h, f) {
           requests++;
           if (requests === 1) {
             await gate;
-            await route.fulfill({
-              status,
-              contentType: "application/json",
-              body:
-                status === 403
-                  ? '{"error":"csrf_failed","message":"E2E synthetic stale CSRF"}'
-                  : '{"error":"unauthorized","message":"E2E synthetic delayed 401"}',
-            });
+            // Released by `finally` after unroute, the request may be gone:
+            // nothing is left to answer then.
+            await route
+              .fulfill({
+                status,
+                contentType: "application/json",
+                body:
+                  status === 403
+                    ? '{"error":"csrf_failed","message":"E2E synthetic stale CSRF"}'
+                    : '{"error":"unauthorized","message":"E2E synthetic delayed 401"}',
+              })
+              .then(
+                () => (delivered = true),
+                () => {},
+              );
           } else await route.continue();
         });
         try {
@@ -57,8 +65,13 @@ export async function accountSwitchScenarios(h, f) {
           await logoutResponse;
           await f.owner.page.waitForURL(/\/login/);
           await login(f.owner, f.member.email, f.member.password);
+          // To B's profile inside the same document: the gear, then Profil.
           await f.owner.page
-            .getByRole("link", { name: "E2E Member", exact: true })
+            .getByRole("link", { name: "Einstellungen", exact: true })
+            .click();
+          await f.owner.page
+            .getByRole("navigation", { name: "Einstellungsbereiche" })
+            .getByRole("link", { name: "Profil", exact: true })
             .click();
           const before = await api({ page: monitor }, "/auth/session");
           check(
@@ -66,6 +79,11 @@ export async function accountSwitchScenarios(h, f) {
             "second-tab-cookie-not-account-b",
           );
           release();
+          await until(
+            async () => ({ delivered }),
+            (r) => r.delivered,
+            "old-account-response-not-delivered",
+          );
           await observe(1_000, async () => ({ requests }));
           const after = await api({ page: monitor }, "/auth/session");
           const name = await f.owner.page
@@ -94,10 +112,8 @@ export async function accountSwitchScenarios(h, f) {
           await f.owner.page.unroute(endpoint);
           await monitor.close();
           // Restore the fixture's original owner via the real UI, even if the assertion was red.
-          const loggedIn = await f.owner.page
-            .getByRole("button", { name: "Abmelden", exact: true })
-            .count();
-          if (loggedIn) {
+          const session = await api(f.owner, "/auth/session");
+          if (session.body?.user) {
             const response = f.owner.page.waitForResponse(
               (r) =>
                 new URL(r.url()).pathname === "/api/auth/logout" &&

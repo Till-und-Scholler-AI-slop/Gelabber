@@ -18,9 +18,8 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use common::ws::{self, connect};
 use common::{Client, SESSION};
-use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
 const PASSWORD: &str = "correct horse";
 const LENA: &str = "lena@example.test";
@@ -1188,23 +1187,6 @@ fn mail_token(mail: &gelabber_api::mail::Sent) -> String {
     rest.chars().take(64).collect()
 }
 
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{SESSION}={}", client.jar[SESSION])
-            .parse()
-            .unwrap(),
-    );
-    tokio_tungstenite::connect_async(req)
-        .await
-        .expect("connect")
-        .0
-}
-
 #[sqlx::test]
 async fn disabling_closes_the_accounts_open_sockets(pool: PgPool) {
     let mut state = common::ws_state(pool);
@@ -1213,33 +1195,12 @@ async fn disabling_closes_the_accounts_open_sockets(pool: PgPool) {
     let mut lena = registered(&state, LENA, "Lena").await;
     let tom = registered(&state, TOM, "Tom").await;
     let mut ws = connect(addr, &tom).await;
-    // Open and kept alive until the account is disabled.
-    let open = tokio::time::timeout(Duration::from_millis(500), closed(&mut ws)).await;
-    assert!(open.is_err(), "socket closed before disabling");
+    // Open, and kept alive until the account is disabled.
+    ws::registered(&mut ws).await;
 
     let res = disable(&mut lena, tom.user_id(), json!({})).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    tokio::time::timeout(Duration::from_secs(3), closed(&mut ws))
-        .await
-        .expect("socket closed after disabling");
-}
-
-/// Answers heartbeats until the socket closes.
-async fn closed(ws: &mut Ws) {
-    while let Some(frame) = ws.next().await {
-        match frame {
-            Ok(Message::Close(_)) | Err(_) => return,
-            Ok(Message::Text(raw)) => {
-                let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
-                if frame["op"] == "h" {
-                    let _ = ws
-                        .send(Message::Text(json!({ "op": "h" }).to_string().into()))
-                        .await;
-                }
-            }
-            _ => {}
-        }
-    }
+    ws::closed(&mut ws).await;
 }
 
 // ---- Beta invitations ----
@@ -2017,21 +1978,21 @@ async fn blocking_ends_seats_and_subscriptions(pool: PgPool) {
     join_server(&mut ben, &abend.code).await;
     let sid = Uuid::parse_str(&abend.id).unwrap();
     let mut ws = connect(addr, &ben).await;
-    ws_send(
+    ws::send(
         &mut ws,
         json!({ "op": "s", "s": abend.id, "c": abend.text }),
     )
     .await;
-    ws_until(&mut ws, |f| {
+    ws::until(&mut ws, |f| {
         f["op"] == "ok" && f["c"] == abend.text.as_str()
     })
     .await;
-    ws_send(
+    ws::send(
         &mut ws,
         json!({ "op": "sig", "t": "j", "s": abend.id, "c": abend.voice }),
     )
     .await;
-    ws_until(&mut ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    ws::until(&mut ws, |f| f["op"] == "sig" && f["t"] == "j").await;
     assert_eq!(state.gateway.voice_snapshot(sid).await.unwrap().len(), 1);
 
     let res = operate(
@@ -2042,67 +2003,39 @@ async fn blocking_ends_seats_and_subscriptions(pool: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    ws_until(&mut ws, |f| {
+    ws::until(&mut ws, |f| {
         f["op"] == "err" && f["e"] == "server_blocked" && f["s"] == abend.id.as_str()
     })
     .await;
     assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
 
     // Subscribing again and rejoining voice are refused alike.
-    ws_send(
+    ws::send(
         &mut ws,
         json!({ "op": "s", "s": abend.id, "c": abend.text }),
     )
     .await;
-    ws_until(&mut ws, |f| f["op"] == "err" && f["e"] == "server_blocked").await;
-    ws_send(
+    ws::until(&mut ws, |f| f["op"] == "err" && f["e"] == "server_blocked").await;
+    ws::send(
         &mut ws,
         json!({ "op": "sig", "t": "j", "s": abend.id, "c": abend.voice }),
     )
     .await;
-    ws_until(&mut ws, |f| f["op"] == "err" && f["e"] == "server_blocked").await;
+    ws::until(&mut ws, |f| f["op"] == "err" && f["e"] == "server_blocked").await;
     assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
 
     // After unblocking the same socket subscribes again.
     let res = operate(&mut lena, &abend.id, "unblock", None).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    ws_send(
+    ws::send(
         &mut ws,
         json!({ "op": "s", "s": abend.id, "c": abend.text }),
     )
     .await;
-    ws_until(&mut ws, |f| {
+    ws::until(&mut ws, |f| {
         f["op"] == "ok" && f["c"] == abend.text.as_str()
     })
     .await;
-}
-
-async fn ws_send(ws: &mut Ws, frame: serde_json::Value) {
-    ws.send(Message::Text(frame.to_string().into()))
-        .await
-        .unwrap();
-}
-
-/// The first frame matching `pred`, answering heartbeats on the way.
-async fn ws_until(ws: &mut Ws, pred: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            match ws.next().await.expect("open socket").expect("frame") {
-                Message::Text(raw) => {
-                    let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
-                    if frame["op"] == "h" {
-                        ws_send(ws, json!({ "op": "h" })).await;
-                    }
-                    if pred(&frame) {
-                        return frame;
-                    }
-                }
-                other => panic!("unexpected {other:?}"),
-            }
-        }
-    })
-    .await
-    .expect("matching frame")
 }
 
 #[sqlx::test]

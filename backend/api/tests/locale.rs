@@ -8,14 +8,11 @@ use std::time::Duration;
 
 use axum::http::header::ACCEPT_LANGUAGE;
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::COOKIE;
 
-use common::{Client, SESSION};
+use common::Client;
+use common::ws::{self, connect, until};
 
 const PASSWORD: &str = "password123";
 
@@ -156,48 +153,6 @@ async fn a_language_change_is_validated_and_guarded(pool: PgPool) {
     assert_eq!(session.body["user"]["locale"], "de");
 }
 
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
-    let cookie = client.jar.get(SESSION).expect("session cookie");
-    request
-        .headers_mut()
-        .insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
-    let (ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
-    ws
-}
-
-/// The next frame; server heartbeats are answered on the way, like a client.
-async fn recv(ws: &mut Ws) -> Value {
-    loop {
-        let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
-            .await
-            .expect("ws recv timeout")
-            .expect("ws closed")
-            .expect("ws error");
-        if let Message::Text(text) = msg {
-            let frame: Value = serde_json::from_str(text.as_str()).unwrap();
-            if frame["op"] == "h" {
-                ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
-                    .await
-                    .unwrap();
-            }
-            return frame;
-        }
-    }
-}
-
-async fn recv_until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
-    loop {
-        let frame = recv(ws).await;
-        if pred(&frame) {
-            return frame;
-        }
-    }
-}
-
 #[sqlx::test]
 async fn the_account_sockets_hear_the_new_language(pool: PgPool) {
     let (mut ada, _) = register(&pool, "ada@example.com", None, None).await;
@@ -205,26 +160,14 @@ async fn the_account_sockets_hear_the_new_language(pool: PgPool) {
     let (addr, _) = common::serve_ws(pool).await;
     let mut first = connect(addr, &ada).await;
     let mut other = connect(addr, &bob).await;
-    // Every socket is registered once it answers a heartbeat.
     for ws in [&mut first, &mut other] {
-        ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
-            .await
-            .unwrap();
-        recv_until(ws, |f| f["op"] == "h").await;
+        ws::registered(ws).await;
     }
 
     let res = put_locale(&mut ada, json!({ "locale": "en" })).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    let frame = recv_until(&mut first, |f| f["op"] == "lc").await;
+    let frame = until(&mut first, |f| f["op"] == "lc").await;
     assert_eq!(frame, json!({ "op": "lc", "l": "en" }));
-    assert!(
-        tokio::time::timeout(Duration::from_millis(200), async {
-            loop {
-                let f = recv(&mut other).await;
-                assert_ne!(f["op"], "lc", "language of another account");
-            }
-        })
-        .await
-        .is_err()
-    );
+    let heard = ws::within(&mut other, Duration::from_millis(200), |f| f["op"] == "lc").await;
+    assert_eq!(heard, None, "language of another account");
 }

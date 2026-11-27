@@ -266,102 +266,73 @@ class SystemHeaderTests(unittest.TestCase):
         self.assertNotIn('cxx_only', block)
 
 
-class WorkflowFactTests(unittest.TestCase):
-    """What part 1 says about the job that builds the Windows package."""
+class PackageFactTests(unittest.TestCase):
+    """What part 1 says about how the Windows package is built and checked,
+    read from desktop/native/windows-build.env and check-binaries.ps1."""
 
-    WORKFLOW = (
-        'name: Desktop\n'
-        'jobs:\n'
-        '  # RUSTFLAGS in a comment is not a second place that sets it.\n'
-        '  core-windows:\n'
-        '    name: Windows\n'
-        '    env:\n'
-        '      PYTHON: python\n'
-        '      # The app must start without the redistributable.\n'
-        '      RUSTFLAGS: -C target-feature=+crt-static\n'
-        '    steps:\n'
-        '      - name: Check and measure the binaries\n'
-        '        run: |\n'
-        "          $h264 = @('WelsInitEncoderExt', 'avcodec_open2') |\n"
-        '            Where-Object { $content.Contains($_) }\n'
-        '          $problems = @(\n'
-        '            if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $h264" }\n'
-        '          )\n'
-        '      - name: Upload the app\n'
-        '        with:\n'
-        '          path: gelabber-native-windows-x64-setup.exe\n'
-        '\n'
-        '  release-asset-windows:\n'
-        '    needs: [core-windows, notices]\n'
-        '    steps:\n'
-        '      - run: gh release upload "$TAG" gelabber-native-windows-x64-setup.exe\n'
+    SETTINGS = (
+        '# RUSTFLAGS in a comment is not a second place that sets it.\n'
+        'RUSTFLAGS=-C target-feature=+crt-static\n'
+        'MESON_ARGS=--vsenv -Db_vscrt=mt\n'
     )
-    RUNTIME, H264, RELEASE = notices.EXPECTED_WORKFLOW_FACTS
+    CHECK = (
+        '# The names are looked for in the file.\n'
+        "$h264 = @('WelsInitEncoderExt', 'avcodec_open2') |\n"
+        '  Where-Object { $content.Contains($_) }\n'
+        '$problems = @(\n'
+        '  if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $h264" }\n'
+        ')\n'
+    )
+    RUNTIME, H264 = notices.EXPECTED_PACKAGE_FACTS
 
-    def reading(self, workflow):
-        """The script reads this text in place of the repository's workflow."""
+    def reading(self, settings=SETTINGS, check=CHECK):
+        """The script reads these texts in place of the repository's files."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        file = tree(tmp.name, {'workflow.yml': workflow}) / 'workflow.yml'
-        return mock.patch.multiple(notices, WORKFLOW=file, RELEASE_WORKFLOW=file)
+        folder = tree(tmp.name, {'build.env': settings, 'check.ps1': check})
+        return mock.patch.multiple(notices, WINDOWS_BUILD=folder / 'build.env', WINDOWS_CHECK=folder / 'check.ps1')
 
-    def facts(self, workflow):
-        with self.reading(workflow):
-            return notices.workflow_facts()
+    def untrue(self, settings=SETTINGS, check=CHECK):
+        with self.reading(settings, check):
+            return [name for name, holds in notices.package_facts().items() if not holds]
 
-    def untrue(self, workflow):
-        return [name for name, holds in self.facts(workflow).items() if not holds]
+    def test_the_files_of_the_repository_are_the_ones_described(self):
+        self.assertEqual(notices.package_facts(), notices.EXPECTED_PACKAGE_FACTS)
 
-    def test_the_workflow_of_the_repository_is_the_one_described(self):
-        self.assertEqual(notices.workflow_facts(), notices.EXPECTED_WORKFLOW_FACTS)
-
-    def test_a_job_like_the_described_one_is_recognised(self):
-        self.assertEqual(self.facts(self.WORKFLOW), notices.EXPECTED_WORKFLOW_FACTS)
-        quoted = self.WORKFLOW.replace('-C target-feature=+crt-static', '"-C target-feature=+crt-static"')
-        self.assertEqual(self.untrue(quoted), [])
+    def test_files_like_the_described_ones_are_recognised(self):
+        self.assertEqual(self.untrue(), [])
+        self.assertEqual(self.untrue(settings=self.SETTINGS.replace('\n', '\r\n')), [])
 
     def test_another_c_runtime_for_the_app_is_noticed(self):
-        flags = '      RUSTFLAGS: -C target-feature=+crt-static\n'
-        self.assertIn(flags, self.WORKFLOW)
-        for workflow in (
-            self.WORKFLOW.replace(flags, ''),
-            self.WORKFLOW.replace(flags, '      RUSTFLAGS: -C target-feature=-crt-static\n'),
-            self.WORKFLOW.replace(flags, '      RUSTFLAGS: -C target-cpu=x86-64-v2\n'),
-            # Another job has it, the Windows one does not.
-            self.WORKFLOW.replace(flags, '').replace(
-                '  release-asset-windows:\n', '  release-asset-windows:\n    env:\n' + flags),
-            # A step sets the variable again.
-            self.WORKFLOW.replace(
-                '      - name: Upload the app\n',
-                '      - name: Upload the app\n        env:\n          RUSTFLAGS: ""\n'),
+        flags = 'RUSTFLAGS=-C target-feature=+crt-static\n'
+        self.assertIn(flags, self.SETTINGS)
+        for settings in (
+            self.SETTINGS.replace(flags, ''),
+            self.SETTINGS.replace(flags, 'RUSTFLAGS=-C target-feature=-crt-static\n'),
+            self.SETTINGS.replace(flags, 'RUSTFLAGS=-C target-cpu=x86-64-v2\n'),
+            self.SETTINGS.replace(flags, '# ' + flags),
+            # As GITHUB_ENV takes them: rustc would get the quotes, or another variable is set.
+            self.SETTINGS.replace(flags, 'RUSTFLAGS="-C target-feature=+crt-static"\n'),
+            self.SETTINGS.replace(flags, 'RUSTFLAGS = -C target-feature=+crt-static\n'),
+            self.SETTINGS.replace(flags, ' RUSTFLAGS=-C target-feature=+crt-static\n'),
+            # A second line sets the variable again.
+            self.SETTINGS + 'RUSTFLAGS=\n',
         ):
-            self.assertEqual(self.untrue(workflow), [self.RUNTIME], workflow)
+            self.assertEqual(self.untrue(settings=settings), [self.RUNTIME], settings)
 
     def test_a_missing_search_for_h264_names_is_noticed(self):
         for gone in ("'avcodec_open2'", "'WelsInitEncoderExt', ", 'if ($h264) { ', '.Contains($_)'):
-            self.assertIn(gone, self.WORKFLOW)
-            self.assertEqual(self.untrue(self.WORKFLOW.replace(gone, '')), [self.H264], gone)
+            self.assertIn(gone, self.CHECK)
+            self.assertEqual(self.untrue(check=self.CHECK.replace(gone, '')), [self.H264], gone)
+        # Only in a comment of the script is not a search.
+        commented = ''.join(f'# {line}\n' for line in self.CHECK.splitlines())
+        self.assertEqual(self.untrue(check=commented), [self.H264])
 
-    def test_an_installer_from_elsewhere_is_noticed(self):
-        other = (
-            '\n  nightly:\n    steps:\n'
-            '      - run: gh release upload nightly gelabber-native-windows-x64-setup.exe\n'
-        )
-        for workflow in (
-            self.WORKFLOW.replace('needs: [core-windows, notices]', 'needs: [notices]'),
-            self.WORKFLOW.replace('needs: [core-windows, notices]', 'needs: core-windows-arm'),
-            self.WORKFLOW.replace('    needs: [core-windows, notices]\n', ''),
-            self.WORKFLOW + other,
-        ):
-            self.assertEqual(self.untrue(workflow), [self.RELEASE], workflow)
-        alone = self.WORKFLOW.replace('needs: [core-windows, notices]', 'needs: core-windows')
-        self.assertEqual(self.untrue(alone), [])
-
-    def test_part_1_is_not_written_for_another_workflow(self):
-        with self.reading(self.WORKFLOW.replace('+crt-static', '-crt-static')):
+    def test_part_1_is_not_written_for_another_build(self):
+        with self.reading(settings=self.SETTINGS.replace('+crt-static', '-crt-static')):
             with self.assertRaisesRegex(SystemExit, r'part 1 describes .* no longer true: \[.*\+crt-static'):
                 notices.scope_part()
-        with self.reading(self.WORKFLOW):
+        with self.reading():
             self.assertIn('RUSTFLAGS "-C target-feature=+crt-static"', ' '.join(notices.scope_part().split()))
 
 
