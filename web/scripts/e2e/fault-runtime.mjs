@@ -1,4 +1,4 @@
-/* global process, fetch, URL */
+/* global process, fetch, URL, console */
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -10,6 +10,12 @@ import { setTimeout as pause } from "node:timers/promises";
 import { objectStatus } from "./s3-object.mjs";
 import { tcpFaultProxy, storageFaultProxy } from "./faults.mjs";
 import { deleteTopicKeys } from "./redis-command.mjs";
+import {
+  forgetOwned,
+  killOnExit,
+  recordOwned,
+  removeLeftover,
+} from "./owned-process.mjs";
 import {
   closeOwnedApi,
   terminateOwnedChild,
@@ -90,12 +96,23 @@ export async function startFaultApi({
   const proxies = [];
   let child,
     logfile,
+    unhook,
     paused = false;
   const locks = new Set();
   const topics = new Set();
+  const pidFile = `/tmp/gelabber-e2e-fault-api-${apiPort}.pid`;
   async function close() {
     await closeOwnedApi({ locks, proxies, child, logfile });
+    unhook?.();
+    await forgetOwned(pidFile);
   }
+  // An earlier runner that ended without its teardown may have left its API
+  // on the port (GEL-457).
+  const leftover = await removeLeftover(pidFile);
+  if (leftover)
+    console.log(
+      `Removed the owned API (pid ${leftover}) an earlier runner left behind`,
+    );
   try {
     const portProbe = createServer();
     portProbe.listen({ host: "127.0.0.1", port: apiPort, exclusive: true });
@@ -138,10 +155,12 @@ export async function startFaultApi({
       },
       stdio: ["ignore", logfile.fd, logfile.fd],
     });
+    unhook = killOnExit(child);
     let spawnError = false;
     child.on("error", () => {
       spawnError = true;
     });
+    if (child.pid) await recordOwned(pidFile, child.pid, manifest.binaryPath);
     const origin = `http://127.0.0.1:${apiPort}`;
     let ready = false;
     const deadline = Date.now() + 30_000;
@@ -161,6 +180,7 @@ export async function startFaultApi({
     local(redisTarget);
     return {
       origin,
+      leftoverRemoved: leftover,
       redis,
       storage,
       database,

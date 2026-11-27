@@ -1,4 +1,4 @@
-/* global process, fetch, URL */
+/* global process, fetch, URL, console */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -12,6 +12,12 @@ import {
   terminateOwnedChild,
   TeardownFailure,
 } from "./teardown.mjs";
+import {
+  forgetOwned,
+  killOnExit,
+  recordOwned,
+  removeLeftover,
+} from "./owned-process.mjs";
 
 export async function startFaultMedia({
   envPath,
@@ -63,17 +69,27 @@ export async function startFaultMedia({
       .digest("hex"),
     manifest.sha256,
   );
+  const pidFile = "/tmp/gelabber-e2e-fault-media-18087.pid";
+  // An earlier runner that ended without its teardown may have left its SFU
+  // on the port (GEL-457).
+  const leftover = await removeLeftover(pidFile);
+  if (leftover)
+    console.log(
+      `Removed the owned SFU (pid ${leftover}) an earlier runner left behind`,
+    );
   const probe = createServer();
   probe.listen({ host: "127.0.0.1", port: 18087, exclusive: true });
   await once(probe, "listening");
   await new Promise((r) => probe.close(r));
-  let child, logfile;
+  let child, logfile, unhook;
   async function close() {
     const failed = await attemptAll([
       ["media-child-stop", () => terminateOwnedChild(child)],
       ["media-log-close", () => logfile?.close()],
     ]);
     if (failed.length) throw new TeardownFailure(failed);
+    unhook?.();
+    await forgetOwned(pidFile);
   }
   try {
     logfile = await open("/tmp/gelabber-e2e-fault-media-18087.log", "w", 0o600);
@@ -83,10 +99,12 @@ export async function startFaultMedia({
       env: { ...process.env, ...env, REDIS_URL: redis.href },
       stdio: ["ignore", logfile.fd, logfile.fd],
     });
+    unhook = killOnExit(child);
     let spawnError = false;
     child.on("error", () => {
       spawnError = true;
     });
+    if (child.pid) await recordOwned(pidFile, child.pid, manifest.binaryPath);
     const origin = "http://127.0.0.1:18087";
     const deadline = Date.now() + 30_000;
     let ready = false;
@@ -132,6 +150,7 @@ export async function startFaultMedia({
     return {
       origin,
       manifest,
+      leftoverRemoved: leftover,
       pid: child.pid,
       iceAdapter: {
         enabled: loopbackIceAdapter,

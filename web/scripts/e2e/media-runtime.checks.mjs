@@ -15,6 +15,7 @@ async function mediaProbe({
   portMax = false,
 } = {}) {
   const calls = [],
+    owned = [],
     binary = "owned-media-control",
     secret = "PRIVATE-media-env-error";
   const manifest = {
@@ -38,6 +39,18 @@ async function mediaProbe({
   };
   let launchedEnv;
   const mocks = {
+    "./owned-process.mjs": {
+      removeLeftover: async () => {
+        owned.push("leftover");
+        return null;
+      },
+      recordOwned: async (_file, pid) => owned.push(`record-${pid}`),
+      forgetOwned: async () => owned.push("forget"),
+      killOnExit: () => {
+        owned.push("hook");
+        return () => owned.push("unhook");
+      },
+    },
     "./teardown.mjs": {
       ...teardown,
       terminateOwnedChild: (child) => teardown.terminateOwnedChild(child, 0),
@@ -103,12 +116,16 @@ async function mediaProbe({
   } catch (error) {
     failure = error;
   }
-  return { calls, failure, secret };
+  return { calls, owned, failure, secret };
 }
 test("own SFU child-stop failure still closes private log and exposes only controlled teardown steps", async () => {
-  const { calls, failure, secret } = await mediaProbe({ failStop: true });
+  const { calls, owned, failure, secret } = await mediaProbe({
+    failStop: true,
+  });
   assert.deepEqual(calls, ["spawn", "SIGTERM", "SIGKILL", "log.close"]);
   assert.equal(failure.name, "TeardownFailure");
+  // A failed teardown keeps the exit hook and the PID file (GEL-457).
+  assert.deepEqual(owned, ["leftover", "hook", "record-1"]);
   assert.deepEqual(failure.steps, ["media-child-stop", "child-sigterm"]);
   assert.ok(!JSON.stringify(failure).includes(secret));
 });
@@ -119,6 +136,15 @@ test("own SFU refuses a shared port before spawn; successful owned teardown rema
   const own = await mediaProbe();
   assert.equal(own.failure, undefined);
   assert.deepEqual(own.calls, ["spawn", "SIGTERM", "log.close"]);
+  // A leftover of an earlier runner goes before the port is probed; the new
+  // SFU is tied to this runner until its teardown succeeded (GEL-457).
+  assert.deepEqual(own.owned, [
+    "leftover",
+    "hook",
+    "record-1",
+    "unhook",
+    "forget",
+  ]);
 });
 
 test("SFU loopback is refused without opt-in, validates private control endpoints, and never inherits a port maximum", async () => {

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { iceAdapterOptions } from "./browser-options.mjs";
-import { safeTarget } from "./harness.mjs";
+import { failureSite, safeError, safeTarget } from "./harness.mjs";
 import { startFaultApi, useFaultRuntime } from "./fault-runtime.mjs";
 import { startFaultMedia } from "./media-runtime.mjs";
 import { attemptAll } from "./teardown.mjs";
@@ -27,6 +27,25 @@ async function recordFailure(kind, record) {
   }
 }
 
+// A promise that start-up left behind and that rejects later would end Node
+// before the teardown below (GEL-457). Until the harness listens itself
+// (startHarness, GEL-453), it fails by name here and the runner goes on.
+const startupStrays = [];
+process.on("unhandledRejection", (error) => {
+  if (process.listenerCount("unhandledRejection") > 1) return;
+  process.exitCode = 1;
+  const reason = safeError(error);
+  startupStrays.push({
+    id: "stray-rejection",
+    status: "FAIL",
+    reason,
+    classification: "test-error",
+    during: "startup",
+    site: failureSite(error?.stack),
+    at: new Date().toISOString(),
+  });
+  console.error(`FAIL stray-rejection during start-up (${reason})`);
+});
 let runtime, mediaRuntime, web, cache, adapterProof;
 const digest = async (path) =>
   createHash("sha256")
@@ -194,4 +213,10 @@ try {
       "FAIL owned-runtime-teardown-failed; redacted teardown artifact attempted",
     );
   }
+  if (startupStrays.length)
+    await recordFailure("startup-stray", {
+      status: "FAIL",
+      results: startupStrays,
+      completeAcceptance: false,
+    });
 }

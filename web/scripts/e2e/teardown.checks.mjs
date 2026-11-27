@@ -1,4 +1,4 @@
-/* global URL, queueMicrotask */
+/* global URL, queueMicrotask, process */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -7,7 +7,14 @@ import { EventEmitter } from "node:events";
 import vm from "node:vm";
 import { promisify } from "node:util";
 import { attemptAll, closeOwnedApi, TeardownFailure } from "./teardown.mjs";
-import { safeTarget } from "./harness.mjs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setTimeout as pause } from "node:timers/promises";
+import { recordOwned, removeLeftover } from "./owned-process.mjs";
+import { failureSite, safeError, safeTarget } from "./harness.mjs";
 
 const secret = "PRIVATE-cookie-signed-URL-password";
 async function executeSource(filename, mocks, globals = {}) {
@@ -70,6 +77,8 @@ async function runnerProbe({
   extraEnv = {},
   hashChange = false,
   returnedMediaOrigin = "http://127.0.0.1:18087",
+  strayAtStartup = false,
+  harnessListening = false,
 } = {}) {
   const acquired = [],
     hashReads = new Map();
@@ -91,8 +100,14 @@ async function runnerProbe({
     close: () => action("runtime.close"),
     resumeApi: () => action("api.resume"),
   };
+  const listeners = {};
   const fakeProcess = {
     exitCode: 0,
+    listeners,
+    on(event, listener) {
+      (listeners[event] ??= []).push(listener);
+    },
+    listenerCount: (event) => listeners[event]?.length ?? 0,
     env: {
       GELABBER_E2E_FAULT_ENV: "/tmp/fixture.env",
       GELABBER_E2E_API_MANIFEST: "/tmp/fixture-manifest.json",
@@ -120,10 +135,19 @@ async function runnerProbe({
           };
         },
       },
-      "./harness.mjs": { safeTarget },
+      "./harness.mjs": { failureSite, safeError, safeTarget },
       "./fault-runtime.mjs": {
         startFaultApi: async () => {
           acquired.push("api");
+          if (strayAtStartup) {
+            // The harness's own listener, once startHarness has run.
+            if (harnessListening)
+              fakeProcess.on("unhandledRejection", () => {});
+            const stray = new Error(`connect ECONNREFUSED ${secret}`);
+            stray.stack = `${stray.message}\n    at file:///w/web/scripts/e2e/faults.mjs:12:3`;
+            for (const listener of listeners.unhandledRejection ?? [])
+              listener(stray, Promise.resolve());
+          }
           return runtime;
         },
         useFaultRuntime: (x) => {
@@ -410,6 +434,18 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
       "./redis-command.mjs": {
         deleteTopicKeys: async () => 4,
       },
+      "./owned-process.mjs": {
+        removeLeftover: async () => {
+          calls.push("owned.leftover");
+          return null;
+        },
+        recordOwned: async () => calls.push("owned.record"),
+        forgetOwned: async () => calls.push("owned.forget"),
+        killOnExit: () => {
+          calls.push("owned.hook");
+          return () => calls.push("owned.unhook");
+        },
+      },
     },
     { process: { env: {} }, URL, fetch: async () => ({ ok: true }) },
   );
@@ -442,6 +478,12 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
     assert.ok(calls.includes(name), name);
   assert.ok(children.every((c) => c.signalCode === "SIGTERM"));
   assert.ok(!JSON.stringify(failure).includes(secret));
+  // An earlier runner's leftover goes first; the new API stays tied to this
+  // runner (exit hook, PID file) while its teardown failed (GEL-457).
+  assert.deepEqual(
+    calls.filter((name) => name.startsWith("owned.")),
+    ["owned.leftover", "owned.hook", "owned.record"],
+  );
 });
 test("successful actions leave gate unchanged and preserve sequential teardown order", async () => {
   const result = await runnerProbe();
@@ -519,4 +561,113 @@ test("exact adapter runner records equal baseline hashes and makes changed basel
     (await runnerProbe({ extraEnv, reportFailure: true })).exitCode,
     1,
   );
+});
+test("a stray rejection during start-up fails by name and the runner still tears down", async () => {
+  const result = await runnerProbe({ strayAtStartup: true });
+  assert.equal(result.exitCode, 1);
+  const record = result.records.find((r) =>
+    r.path.endsWith(".startup-stray.json"),
+  );
+  assert.equal(record.body.status, "FAIL");
+  assert.equal(record.body.results[0].id, "stray-rejection");
+  assert.equal(record.body.results[0].during, "startup");
+  assert.equal(record.body.results[0].site, "faults.mjs:12:3");
+  assert.ok(
+    result.messages.some((m) =>
+      m.startsWith("FAIL stray-rejection during start-up"),
+    ),
+  );
+  for (const name of ["web.close", "runtime.close", "cache.remove"])
+    assert.ok(result.calls.includes(name), name);
+  assert.ok(!JSON.stringify(result).includes(secret));
+  // Once the harness listens, its own row records a stray, not this one.
+  const later = await runnerProbe({
+    strayAtStartup: true,
+    harnessListening: true,
+  });
+  assert.equal(later.exitCode, 0);
+  assert.ok(!later.records.some((r) => r.path.endsWith(".startup-stray.json")));
+});
+
+// GEL-457 with real processes: a stand-in for the API or SFU that runs until
+// it is killed.
+function sleeper(t) {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], {
+    stdio: "ignore",
+  });
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill("SIGKILL");
+  });
+  return child;
+}
+// Running, as opposed to gone or a zombie, from /proc/<pid>/stat.
+async function running(pid) {
+  const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => null);
+  return Boolean(stat) && stat.slice(stat.lastIndexOf(")") + 2)[0] !== "Z";
+}
+async function untilGone(pid, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while ((await running(pid)) && Date.now() < deadline) await pause(50);
+  return !(await running(pid));
+}
+test("a runner that crashes takes its owned child with it", async (t) => {
+  const module = new URL("./owned-process.mjs", import.meta.url).href;
+  const runner = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { spawn } from "node:child_process";
+       import { killOnExit } from ${JSON.stringify(module)};
+       const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+       killOnExit(child);
+       console.log(child.pid);
+       // A rejection nobody awaits ends this runner without any teardown.
+       Promise.reject(new Error("runner-crash"));`,
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  let out = "";
+  runner.stdout.on("data", (data) => (out += data));
+  const [code] = await once(runner, "exit");
+  const pid = Number(out.trim());
+  t.after(() => {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone, as it should be.
+    }
+  });
+  assert.notEqual(code, 0);
+  assert.ok(Number.isInteger(pid) && pid > 1, out);
+  assert.ok(await untilGone(pid), `owned child ${pid} outlived its runner`);
+});
+test("the next start removes a recorded leftover and nothing else", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "gelabber-owned-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const pidFile = join(dir, "api.pid");
+  assert.equal(await removeLeftover(pidFile), null);
+  // A runner killed with SIGKILL left this one behind.
+  const leftover = sleeper(t);
+  await once(leftover, "spawn");
+  await recordOwned(pidFile, leftover.pid, process.execPath);
+  const exited = once(leftover, "exit");
+  assert.equal(await removeLeftover(pidFile), leftover.pid);
+  assert.deepEqual(await exited, [null, "SIGKILL"]);
+  assert.equal(await removeLeftover(pidFile), null);
+  // The PID now belongs to another process (another start time), or runs
+  // another binary: neither is touched.
+  const other = sleeper(t);
+  await once(other, "spawn");
+  await recordOwned(pidFile, other.pid, process.execPath);
+  const record = JSON.parse(await readFile(pidFile, "utf8"));
+  for (const changed of [
+    { ...record, started: String(Number(record.started) + 1) },
+    { ...record, exe: "/opt/gelabber-api" },
+  ]) {
+    await writeFile(pidFile, JSON.stringify(changed));
+    assert.equal(await removeLeftover(pidFile), null);
+    assert.ok(await running(other.pid));
+  }
 });

@@ -95,7 +95,14 @@ Add `GELABBER_E2E_BROWSER=firefox` for Firefox. The profiles `media`,
 combined with `GELABBER_E2E_CASES` or `GELABBER_E2E_SUITE`. The runtime
 refuses an env file readable by others, a database not named
 `gelabber_fault_<hex>` and a binary whose SHA-256 differs from its manifest.
-Ports are bound exclusively and existing services are never stopped. A Redis
+Ports are bound exclusively and existing services are never stopped. The own
+API and SFU end with the runner (an exit hook) and leave a PID file beside
+their log in `/tmp`; a runner that died without its teardown (SIGKILL) left
+them running, so the next start ends a process whose PID, start time and
+binary match that file, says so, and records it as `leftoverRemoved` in the
+report (GEL-457). A promise that start-up leaves behind and that rejects
+before the harness listens fails as `stray-rejection` in
+`$GELABBER_E2E_REPORT.startup-stray.json`, and the runner tears down. A Redis
 reset deletes only four exact topic keys, never `FLUSH`. Proxies are restored
 and owned processes closed in `finally`. A startup or teardown failure makes
 the exit code nonzero and is written, redacted, beside the report as
