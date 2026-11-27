@@ -70,7 +70,7 @@ Run the checks of the area you touched:
 | Backend (`backend/`) | `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`, the tests as described in [AGENTS.md](AGENTS.md) |
 | Web (`web/`) | `npx playwright install chromium-headless-shell` once, then `npm run lint`, `npm test`, `npm run test:checks`, `npm run build` |
 | Desktop (`desktop/`) | `cargo fmt`, `cargo clippy` and `cargo test` as in [desktop/README.md](desktop/README.md) |
-| Deployment and workflows | `python3 -m unittest discover -s deploy/compose/tests` |
+| Deployment and workflows | `python3 -m pip install --require-hashes --target ~/.cache/gelabber-pyyaml -r deploy/compose/tests/requirements.txt` once (the pinned PyYAML; Debian's Python needs `python3-pip`), then `PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests` |
 
 CI runs the areas a pull request touches; `ci-ok` is the one required
 check.

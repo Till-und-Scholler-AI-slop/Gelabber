@@ -85,6 +85,7 @@ function rows(count: number, start = 1): Message[] {
     reactions: [],
     mentions: [],
     mention_everyone: false,
+    revision: 1,
     attachments: [],
   }));
 }

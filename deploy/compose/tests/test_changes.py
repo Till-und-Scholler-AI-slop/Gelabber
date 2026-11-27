@@ -58,6 +58,8 @@ class Areas(unittest.TestCase):
                 ('.github/workflows/desktop-release.yml', {'desktop', 'deploy'}),
                 ('.github/workflows/libwebrtc-store.yml', {'desktop', 'deploy'}),
                 ('.github/workflows/scripts/apt-install.sh', {'desktop', 'deploy'}),
+                # The rust job picks and checks the upgrade test's release with it (GEL-444).
+                ('.github/workflows/scripts/previous_release.sh', {'backend', 'deploy'}),
                 ('.github/workflows/minio-images.yml', {'minio', 'deploy'}),
                 ('.github/workflows/publish-minio.yml', {'minio', 'deploy'}),
                 ('.github/workflows/cache-cleanup.yml', {'deploy'}),

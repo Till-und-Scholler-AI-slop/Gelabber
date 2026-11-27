@@ -220,7 +220,8 @@ async function showRecalled(data) {
 //   notification it would show, with these fields as its data.
 // - Every other browser hands over the JSON, with them under
 //   `notification`.
-// - A push queued by a server from before v0.12 has them at the top level.
+// Servers send only that form since v0.12, and an upgrade comes from the
+// release before, so no push of an older form is still queued (GEL-446).
 function pushed(event) {
   const proposed = event.notification;
   if (proposed && proposed.data && typeof proposed.data === "object") {
@@ -237,7 +238,7 @@ function pushed(event) {
   if (declared && declared.data && typeof declared.data === "object") {
     return { ...declared.data, title: declared.title, body: declared.body };
   }
-  return json;
+  return null;
 }
 
 self.addEventListener("push", (event) => {

@@ -422,9 +422,9 @@ pub struct ReadBody {
 }
 
 /// `POST /api/feedback/{id}/read`: the person has seen the replies up to
-/// `through`, or all of them without a body (older clients). A reply that
-/// arrived after the client loaded the list keeps the entry unread, so its
-/// "Neu" mark and the dot survive the read call that raced it.
+/// `through`. A reply that arrived after the client loaded the list keeps
+/// the entry unread, so its "Neu" mark and the dot survive the read call
+/// that raced it.
 async fn read(
     _: Enabled,
     State(state): State<AppState>,
@@ -440,11 +440,15 @@ async fn read(
         })?
     };
     let through = match body.through.as_deref().map(Uuid::parse_str) {
-        None => None,
-        Some(Ok(through)) => Some(through),
-        Some(Err(_)) => {
+        Some(Ok(through)) => through,
+        given => {
+            let code = if given.is_none() {
+                "required"
+            } else {
+                "invalid"
+            };
             let mut errors = FieldErrors::new();
-            errors.insert("through", "invalid");
+            errors.insert("through", code);
             return Err(ApiError::Validation(errors));
         }
     };
@@ -460,29 +464,24 @@ async fn read(
     if found.is_none() {
         return Err(ApiError::NotFound);
     }
-    let seen: Option<DateTime<Utc>> = match through {
-        None => None,
-        Some(through) => Some(
-            sqlx::query_scalar(
-                "SELECT created_at FROM feedback_messages WHERE id = $1 AND feedback_id = $2",
-            )
-            .bind(through)
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| {
-                let mut errors = FieldErrors::new();
-                errors.insert("through", "invalid");
-                ApiError::Validation(errors)
-            })?,
-        ),
-    };
+    let seen: DateTime<Utc> = sqlx::query_scalar(
+        "SELECT created_at FROM feedback_messages WHERE id = $1 AND feedback_id = $2",
+    )
+    .bind(through)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| {
+        let mut errors = FieldErrors::new();
+        errors.insert("through", "invalid");
+        ApiError::Validation(errors)
+    })?;
     // The mark moves to the first operator reply after what was seen, or
     // goes. It never comes back once cleared, so a stale tab cannot mark
     // replies unread again that another tab already read.
     sqlx::query(
         "UPDATE feedback SET person_unread_since = CASE \
-             WHEN $2::timestamptz IS NULL OR person_unread_since IS NULL THEN NULL \
+             WHEN person_unread_since IS NULL THEN NULL \
              ELSE (SELECT min(m.created_at) FROM feedback_messages m \
                    WHERE m.feedback_id = $1 AND m.author_kind = 'operator' \
                      AND m.created_at > $2 AND m.created_at >= person_unread_since) \

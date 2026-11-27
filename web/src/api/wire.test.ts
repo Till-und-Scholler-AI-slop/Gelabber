@@ -45,11 +45,10 @@ describe("what the server hands over", () => {
       "reactions",
       "attachments",
       "edited_at",
+      "revision",
     ])
       expect(isMessage(without(message, key)), key).toBe(false);
     expect(isMessage({ ...message, reactions: [{ emoji: "👍" }] })).toBe(false);
-    // An unsent message has neither, and the server's always has both.
-    expect(isMessage(without(message, "revision"))).toBe(true);
   });
 
   it("leaves a malformed row out of a page and keeps the others", () => {
