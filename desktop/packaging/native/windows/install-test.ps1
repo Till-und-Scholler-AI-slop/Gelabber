@@ -10,7 +10,9 @@ $install = Join-Path $env:LOCALAPPDATA 'Gelabber'
 $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Gelabber.lnk'
 $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Gelabber.lnk'
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gelabber'
-$version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
+# desktop/packaging/native/version.sh
+$version = $env:DESKTOP_VERSION
+if (-not $version) { throw 'DESKTOP_VERSION is not set (desktop/packaging/native/version.sh)' }
 function Run($file, [string[]]$arguments, $minutes) {
   $process = Start-Process -FilePath $file -ArgumentList $arguments -PassThru
   # Without the handle taken now, the exit code is gone once the process ends.
