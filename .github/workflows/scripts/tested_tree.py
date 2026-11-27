@@ -5,8 +5,8 @@ its tree (`record`). When that pull request is merged into `main` and
 `main` has not moved since the run, the merge commit on `main` has the same
 tree, so CI on the push need not check it again: `find` prints the run
 whose result stands for it. Anything else (no pull request, another tree,
-fewer areas checked, an error) prints nothing, and CI runs the areas changed
-since the last passed push run (`since`).
+fewer areas checked, an error) prints nothing: CI on `main` then checks
+every area, and desktop-release.yml (`--candidate`) builds the packages.
 
 `find --candidate` finds the same for a release tag, from a run that also
 packaged the apps as the release ships them (desktop-native.yml `candidate`):
