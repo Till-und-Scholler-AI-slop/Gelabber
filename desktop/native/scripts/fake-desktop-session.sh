@@ -138,6 +138,8 @@ export GELABBER_TEST_NOISE_ENDS=$(($(date +%s) + noise_minutes * 60))
 export GELABBER_TEST_MIC=Gelabber-Mic
 export GELABBER_TEST_SPEAKERS=Gelabber-Speakers
 
+# pkg-config prints several flags, one word each.
+# shellcheck disable=SC2046
 "${GELABBER_HOST_CC:-gcc}" -O2 -o "$runtime/fake_screen" "$here/fake_screen.c" \
   $(pkg-config --cflags --libs libpipewire-0.3)
 mkfifo "$runtime/node"

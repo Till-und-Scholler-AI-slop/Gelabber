@@ -22,8 +22,9 @@ is the order of the work; check each step's result before the next one.
    `git show --stat "$(git log origin/main --grep '^release: v' -1 --format=%h)"`
    (workspace manifests and lock files, `web/src/version.ts`, the image tags
    in `deploy/compose/compose.yaml`, `deploy/README.md`). Then
-   `python3 -m unittest discover -s deploy/compose/tests` (it checks that the
-   versions agree).
+   `PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests`
+   with the pinned PyYAML installed as `AGENTS.md` (Commands) says (it checks
+   that the versions agree).
 4. **Notes.** `.github/release-notes/vX.Y.Z.md`, short, in the shape of
    `v0.12.0.md` (notes before it are longer and follow an older shape):
    - `# Gelabber vX.Y.Z`, then two or three sentences on what the release

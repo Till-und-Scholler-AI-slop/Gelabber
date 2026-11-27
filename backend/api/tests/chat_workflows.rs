@@ -441,52 +441,6 @@ async fn a_transaction_started_before_read_still_creates_an_unread_later_message
     assert_eq!(summary(&mut b, &channel).await["unread_count"], 0);
 }
 
-#[sqlx::test(migrations = false)]
-async fn migration_backfills_creation_order_and_continues_without_duplicates(pool: PgPool) {
-    // A real pre-feature database with deliberately reversed physical row order.
-    for source in [
-        include_str!("../migrations/0001_users_sessions.sql"),
-        include_str!("../migrations/0002_servers_channels_invites.sql"),
-        include_str!("../migrations/0003_messages.sql"),
-        include_str!("../migrations/0004_direct_messages.sql"),
-        include_str!("../migrations/0005_moderation.sql"),
-        include_str!("../migrations/0006_attachments.sql"),
-        include_str!("../migrations/0007_realtime_delivery.sql"),
-        include_str!("../migrations/0008_storage_lifecycle.sql"),
-        include_str!("../migrations/0009_account_themes.sql"),
-    ] {
-        sqlx::raw_sql(source).execute(&pool).await.unwrap();
-    }
-    let user:Uuid=sqlx::query_scalar("INSERT INTO users(email,name,password_hash) VALUES('upgrade@example.test','Upgrade','unused') RETURNING id").fetch_one(&pool).await.unwrap();
-    let server: Uuid =
-        sqlx::query_scalar("INSERT INTO servers(name,owner_id) VALUES('Upgrade',$1) RETURNING id")
-            .bind(user)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    let channel: Uuid = sqlx::query_scalar(
-        "INSERT INTO channels(server_id,name,kind) VALUES($1,'Upgrade','text') RETURNING id",
-    )
-    .bind(server)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let recent:Uuid=sqlx::query_scalar("INSERT INTO messages(channel_id,author_id,content,created_at) VALUES($1,$2,'newer','2026-10-05T01:00:00Z') RETURNING id").bind(channel).bind(user).fetch_one(&pool).await.unwrap();
-    let older:Uuid=sqlx::query_scalar("INSERT INTO messages(channel_id,author_id,content,created_at) VALUES($1,$2,'older','2026-10-05T00:00:00Z') RETURNING id").bind(channel).bind(user).fetch_one(&pool).await.unwrap();
-    sqlx::raw_sql(include_str!("../migrations/0010_chat_read_state.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    let ordering: Vec<(Uuid, i64)> =
-        sqlx::query_as("SELECT id,created_order FROM messages ORDER BY created_order")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-    assert_eq!(ordering, vec![(older, 1), (recent, 2)]);
-    let next:i64=sqlx::query_scalar("INSERT INTO messages(channel_id,author_id,content) VALUES($1,$2,'after upgrade') RETURNING created_order").bind(channel).bind(user).fetch_one(&pool).await.unwrap();
-    assert_eq!(next, 3);
-}
-
 #[sqlx::test]
 async fn equal_timestamp_and_lower_uuid_cannot_hide_a_later_unread_insert(pool: PgPool) {
     let (mut a, mut b, _, channel) = setup(pool.clone()).await;

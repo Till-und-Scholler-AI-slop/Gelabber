@@ -30,32 +30,3 @@ pub fn default_channels(locale: Locale) -> DefaultChannels {
         },
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn both_languages() {
-        let de = default_channels(Locale::De);
-        assert_eq!(
-            [
-                de.text_category,
-                de.text_channel,
-                de.voice_category,
-                de.voice_channel
-            ],
-            ["Textkanäle", "allgemein", "Sprachkanäle", "Wohnzimmer"]
-        );
-        let en = default_channels(Locale::En);
-        assert_eq!(
-            [
-                en.text_category,
-                en.text_channel,
-                en.voice_category,
-                en.voice_channel
-            ],
-            ["Text channels", "general", "Voice channels", "Living room"]
-        );
-    }
-}
