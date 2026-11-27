@@ -85,6 +85,15 @@ describe("mentions", () => {
     ]);
   });
 
+  it("finds a mention after a link at the start of a message", () => {
+    expect(splitMentions(`<https://a.example/> hi <@${BOB}>`, members)).toEqual(
+      [
+        { kind: "text", text: "<https://a.example/> hi " },
+        { kind: "user", id: BOB, name: "Bob" },
+      ],
+    );
+  });
+
   // The cases of `links_follow_the_web_client` in backend/api/src/messages/mentions.rs:
   // the markdown view highlights exactly what the server pings.
   it("highlights in markdown exactly where the server pings", () => {

@@ -47,11 +47,14 @@ async fn ticketed(
     .await;
     (code, lease)
 }
-fn denied(value: &Value) {
+/// The request was refused with `code`: `forbidden` for what belongs to
+/// another peer or does not match, `bad_request` for what cannot be.
+fn denied(value: &Value, code: &str) {
     assert_eq!(
         value["op"], "err",
         "unauthorized operation accepted: {value}"
     );
+    assert_eq!(value["e"], code, "{value}");
 }
 #[tokio::test]
 async fn sdk_empty_video_cname_does_not_poison_transport_for_later_audio() {
@@ -102,12 +105,17 @@ async fn native_transport_ids_and_directions_are_peer_scoped() {
     denied(
         &b.rpc(json!({"op":"restartIce","transportId":transport}))
             .await,
+        "forbidden",
     );
     denied(
         &b.rpc(json!({"op":"closeTransport","transportId":transport}))
             .await,
+        "forbidden",
     );
-    denied(&a.rpc(json!({"op":"transport","direction":"send"})).await);
+    denied(
+        &a.rpc(json!({"op":"transport","direction":"send"})).await,
+        "bad_request",
+    );
     let restart = a
         .ok(json!({"op":"restartIce","transportId":transport}))
         .await;
@@ -138,7 +146,10 @@ async fn publication_identity_survives_replacement_and_late_old_cleanup() {
         .await;
     peer.ok(json!({"op":"resumeProducer","producerId":next["producerId"]}))
         .await;
-    denied(&peer.rpc(produce("a", Uuid::new_v4(), None)).await);
+    denied(
+        &peer.rpc(produce("a", Uuid::new_v4(), None)).await,
+        "forbidden",
+    );
     peer.close().await;
 }
 #[tokio::test]
@@ -149,8 +160,7 @@ async fn screen_and_its_sound_need_the_go_live_grant() {
     peer.transport("send").await;
     let epoch = Uuid::new_v4();
     let refused = peer.rpc(produce("s", epoch, None)).await;
-    denied(&refused);
-    assert_eq!(refused["e"], "forbidden", "{refused}");
+    denied(&refused, "forbidden");
     let refused = peer.rpc(produce("sa", epoch, Some("any-parent"))).await;
     assert_eq!(refused["e"], "forbidden", "{refused}");
     // Microphone and camera stay open to every member in the room.
@@ -165,15 +175,24 @@ async fn source_audio_requires_exact_live_parent_and_capture_epoch() {
     let mut peer = Peer::join(addr, &code).await;
     peer.transport("send").await;
     let epoch = Uuid::new_v4();
-    denied(&peer.rpc(produce("sa", epoch, None)).await);
+    denied(&peer.rpc(produce("sa", epoch, None)).await, "forbidden");
     let screen = peer.ok(produce("s", epoch, None)).await;
     let parent = screen["producerId"].as_str().unwrap();
-    denied(&peer.rpc(produce("sa", Uuid::new_v4(), Some(parent))).await);
-    denied(&peer.rpc(produce("sa", epoch, Some("foreign-parent"))).await);
+    denied(
+        &peer.rpc(produce("sa", Uuid::new_v4(), Some(parent))).await,
+        "forbidden",
+    );
+    denied(
+        &peer.rpc(produce("sa", epoch, Some("foreign-parent"))).await,
+        "forbidden",
+    );
     let audio = peer.ok(produce("sa", epoch, Some(parent))).await;
     peer.ok(json!({"op":"closeProducer","producerId":parent}))
         .await;
-    denied(&peer.rpc(produce("sa", epoch, Some(parent))).await);
+    denied(
+        &peer.rpc(produce("sa", epoch, Some(parent))).await,
+        "forbidden",
+    );
     peer.ok(json!({"op":"closeProducer","producerId":audio["producerId"]}))
         .await;
     peer.close().await;
@@ -199,16 +218,16 @@ async fn consumer_is_paused_until_exact_generation_ready_and_watch_off_stops_nat
     assert_eq!(event["owner"], owner.to_string());
     assert_eq!(event["k"], "s");
     assert_eq!(event["epoch"], epoch.to_string());
-    denied(&viewer.rpc(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":Uuid::new_v4()})).await);
+    denied(&viewer.rpc(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":Uuid::new_v4()})).await, "forbidden");
     viewer.ok(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":event["generation"]})).await;
-    denied(&publisher.rpc(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":event["generation"]})).await);
+    denied(&publisher.rpc(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":event["generation"]})).await, "forbidden");
     viewer.ok(json!({"op":"q","consumerId":event["consumerId"],"generation":event["generation"],"h":90,"congested":false})).await;
     viewer
         .ok(json!({"op":"w","u":owner,"k":"s","on":false}))
         .await;
     let closed = viewer.event("consumerClosed").await;
     assert_eq!(closed["consumerId"], event["consumerId"]);
-    denied(&viewer.rpc(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":event["generation"]})).await);
+    denied(&viewer.rpc(json!({"op":"consumerReady","consumerId":event["consumerId"],"generation":event["generation"]})).await, "forbidden");
     viewer
         .ok(json!({"op":"w","u":owner,"k":"s","on":true}))
         .await;
@@ -273,7 +292,7 @@ async fn malformed_rtp_cannot_reserve_a_source_or_hide_later_success() {
     peer.transport("send").await;
     let mut bad = produce("v", Uuid::new_v4(), None);
     bad["rtp"] = json!({});
-    denied(&peer.rpc(bad).await);
+    denied(&peer.rpc(bad).await, "bad_request");
     peer.ok(produce("v", Uuid::new_v4(), None)).await;
     peer.close().await;
     tokio::time::timeout(Duration::from_secs(1), async {

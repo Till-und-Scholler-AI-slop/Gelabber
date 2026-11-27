@@ -19,6 +19,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 pub mod mock_issuer;
+pub mod ws;
 
 pub const SESSION: &str = "gelabber_session";
 pub const CSRF: &str = "gelabber_csrf";
@@ -42,35 +43,48 @@ pub fn redis_url() -> String {
 }
 
 /// Real Redis + short heartbeat so gateway tests finish quickly. Most tests
-/// leave some sockets unread while they assert events on another socket;
-/// their dead timeout must outlive those assertions.
+/// leave some sockets unread while they assert events on another socket, so
+/// those do not answer heartbeats: the dead timeout must outlive the whole
+/// test, on a slow machine too. Tests of the timeout set their own.
+pub const WS_DEAD_MS: u64 = 60_000;
+
 pub fn ws_state(pool: PgPool) -> AppState {
-    ws_state_with_dead(pool, 5_000)
+    ws_state_with_dead(pool, WS_DEAD_MS)
 }
 
 pub fn ws_state_with_dead(pool: PgPool, dead_ms: u64) -> AppState {
+    ws_state_with(pool, &[("API_WS_DEAD_MS", dead_ms.to_string())])
+}
+
+/// [`ws_state`] with some settings in place of the test defaults.
+pub fn ws_state_with(pool: PgPool, settings: &[(&str, String)]) -> AppState {
     let redis = redis_url();
-    let config = Config::from_source(|key| match key {
-        "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
-        // Previews fetch in the background; tests/previews.rs turns them on.
-        "API_LINK_PREVIEWS" => Some("false".to_owned()),
-        "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
-        "REDIS_URL" => Some(redis.clone()),
-        "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
-        "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
-        "API_WS_DEAD_MS" => Some(dead_ms.to_string()),
-        "API_WS_REPLAY" => Some("8".to_owned()),
-        "API_WS_IDLE_MS" => Some("30000".to_owned()),
-        "API_WS_PRESENCE_TTL_MS" => Some("2000".to_owned()),
-        "API_WS_TYPING_TTL_MS" => Some("400".to_owned()),
-        _ => None,
+    let config = Config::from_source(|key| {
+        if let Some((_, value)) = settings.iter().find(|(name, _)| *name == key) {
+            return Some(value.clone());
+        }
+        match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+            // Previews fetch in the background; tests/previews.rs turns them on.
+            "API_LINK_PREVIEWS" => Some("false".to_owned()),
+            "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
+            "REDIS_URL" => Some(redis.clone()),
+            "API_SESSION_TTL_HOURS" => Some("2".to_owned()),
+            "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
+            "API_WS_DEAD_MS" => Some(WS_DEAD_MS.to_string()),
+            "API_WS_REPLAY" => Some("8".to_owned()),
+            "API_WS_IDLE_MS" => Some("30000".to_owned()),
+            "API_WS_PRESENCE_TTL_MS" => Some("2000".to_owned()),
+            "API_WS_TYPING_TTL_MS" => Some("400".to_owned()),
+            _ => None,
+        }
     })
     .expect("ws test config");
     AppState::with_pool(&config, pool).expect("state")
 }
 
 pub async fn serve_ws(pool: PgPool) -> (std::net::SocketAddr, AppState) {
-    serve_ws_with_dead(pool, 5_000).await
+    serve_ws_with_dead(pool, WS_DEAD_MS).await
 }
 
 pub async fn serve_ws_with_dead(pool: PgPool, dead_ms: u64) -> (std::net::SocketAddr, AppState) {

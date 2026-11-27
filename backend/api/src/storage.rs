@@ -1049,12 +1049,16 @@ mod tests {
     }
 
     async fn read_all(store: &ObjectStore, key: &str) -> Result<Vec<u8>, StoreError> {
-        let mut chunks = store.read(key).await?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = chunks.next().await {
-            bytes.extend_from_slice(&chunk?);
-        }
-        Ok(bytes)
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut chunks = store.read(key).await?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = chunks.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
+            Ok(bytes)
+        })
+        .await
+        .expect("the object is read within 10 s")
     }
 
     /// #519: a worker reads a whole object through the internal endpoint
