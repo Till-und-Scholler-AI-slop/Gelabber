@@ -19,7 +19,8 @@ import unittest
 from workflow_data import load, local_call, names, scripts, skips, steps, triggers, writes
 
 CARGO = re.compile(r'\bcargo (?:build|test|clippy|run|check|nextest)\b')
-UNTRUSTED = ('pull_request', 'merge_group')
+# Each judged as itself: pull_request_target runs with the base branch's ref.
+UNTRUSTED = ('pull_request', 'pull_request_target', 'merge_group')
 
 
 def untrusted_jobs(name, event):
@@ -29,8 +30,7 @@ def untrusted_jobs(name, event):
 
 def pull_request_workflows(event='pull_request'):
     """Workflows `event` starts, and those their jobs call, by file name."""
-    todo = [name for name in names() if event in triggers(load(name))
-            or (event == 'pull_request' and 'pull_request_target' in triggers(load(name)))]
+    todo = [name for name in names() if event in triggers(load(name))]
     seen = []
     while todo:
         name = todo.pop(0)
@@ -119,6 +119,47 @@ class PushPaths(unittest.TestCase):
         self.assertTrue(pushes)
 
 
+class PushWiring(unittest.TestCase):
+    """The writes above get what they write: a broken link here fails nothing
+    visibly, the package or image is simply never stored."""
+
+    def test_a_missing_libwebrtc_package_reaches_the_store(self):
+        native = load('desktop-native.yml')
+        for system in ('linux', 'windows'):
+            with self.subTest(system=system):
+                store = native['jobs'][f'libwebrtc-{system}']['outputs']['store']
+                self.assertEqual(store, "${{ steps.asset.outputs.missing == 'true' && steps.key.outputs.key || '' }}")
+                self.assertEqual(native['on']['workflow_call']['outputs'][f'libwebrtc-{system}-store']['value'],
+                                 f'${{{{ jobs.libwebrtc-{system}.outputs.store }}}}')
+                job = load('libwebrtc-store.yml')['jobs'][system]
+                self.assertEqual(job['if'], f"inputs.{system}-key != ''")
+                self.assertIn(f'${{{{ inputs.{system}-key }}}}',
+                              [step.get('env', {}).get('KEY') for step in job['steps']])
+        for name in ('ci.yml', 'desktop-release.yml'):
+            caller = load(name)['jobs']['libwebrtc-store']
+            self.assertEqual(local_call(load(name)['jobs'][caller['needs']]), 'desktop-native.yml')
+            for system in ('linux', 'windows'):
+                with self.subTest(name=name, system=system):
+                    self.assertEqual(caller['with'][f'{system}-key'],
+                                     f"${{{{ needs.{caller['needs']}.outputs.libwebrtc-{system}-store }}}}")
+
+    def test_both_minio_images_reach_the_registry(self):
+        workflow = load('publish-minio.yml')
+        images, publish = workflow['jobs']['images'], workflow['jobs']['publish']
+        self.assertEqual(images['with']['keep'], "${{ github.ref == 'refs/heads/main' }}")
+        self.assertIn("needs.images.outputs.built == 'true'", publish['if'])
+        uploaded = [step['with']['name'] for _, step in steps(load('minio-images.yml'))
+                    if step.get('uses', '').startswith('actions/upload-artifact@')]
+        downloaded = [step['with']['name'] for step in publish['steps']
+                      if step.get('uses', '').startswith('actions/download-artifact@')]
+        self.assertEqual(len(uploaded), 1)
+        self.assertEqual(downloaded, uploaded)
+        pushed = ' '.join(script for _, _, script in scripts({'jobs': {'publish': publish}}))
+        for image, tag in (('GHCR_IMAGE', 'MINIO_RELEASE'), ('GHCR_MC_IMAGE', 'MC_RELEASE')):
+            with self.subTest(image=image):
+                self.assertIn(f'docker push "${{{image}}}:${{{tag}}}"', pushed)
+
+
 class RunScripts(unittest.TestCase):
     def test_scripts_read_the_github_context_from_the_environment(self):
         found = [f'{name}: job {job_id}: {step}' for name in names()
@@ -138,14 +179,17 @@ class Conditions(unittest.TestCase):
     def test_an_equally_safe_condition_counts(self):
         for condition in ("github.event_name != 'pull_request'", "github.event_name == 'push'",
                           "${{ github.ref == 'refs/heads/main' && always() }}",
-                          "(github.event_name == 'push' || github.event_name == 'release') && x"):
+                          "(github.event_name == 'push' || github.event_name == 'release') && x",
+                          # The flaky-tests job (GEL-389): pushes only, whatever else it needs.
+                          "!cancelled() && github.event_name == 'push' && (a || b)"):
             with self.subTest(condition=condition):
                 self.assertTrue(skips({'if': condition}, 'pull_request'))
 
     def test_a_condition_a_pull_request_can_meet_does_not(self):
         for condition in ('always()', "github.event_name == 'push' || github.event_name == 'pull_request'",
                           "github.event_name != 'merge_group'", "github.ref != 'refs/heads/main'",
-                          "github.ref == 'refs/heads/gh-readonly-queue/v0.14/pr-1'", None):
+                          "github.ref == 'refs/heads/gh-readonly-queue/v0.14/pr-1'",
+                          "github.event_name == 'push' || always()", None):
             with self.subTest(condition=condition):
                 self.assertFalse(skips({'if': condition} if condition else {}, 'pull_request'))
 

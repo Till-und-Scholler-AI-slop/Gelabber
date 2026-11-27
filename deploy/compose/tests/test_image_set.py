@@ -52,7 +52,8 @@ class Gates(unittest.TestCase):
         # Use the exact upstream release asset and verify the installed binary.
         self.assertIn(f'/releases/download/v{version}/caddy_{version}_linux_amd64.tar.gz', install)
         self.assertNotIn('caddyserver.com/api/download', install)
-        self.assertIn(f'= "v{version}"', install)
+        # The installed binary's own version is compared, on one line.
+        self.assertRegex(install, rf'\$\(caddy version[^\n]*= "v{re.escape(version)}"')
 
     def test_exact_success(self):
         m.check_ci(ci(), SHA, REPO)
@@ -210,6 +211,7 @@ class Promotion(unittest.TestCase):
             calls = [call.args for call in writes.call_args_list]
             self.assertEqual(aliased(calls), every_image())
             for call in (c for c in calls if c[0] == 'docker'):
+                self.assertTrue(call[-2].endswith(':latest'), call)
                 self.assertTrue(call[-1].endswith('@' + DIGEST))
 
     def test_pre_release_is_flagged_and_never_latest(self):

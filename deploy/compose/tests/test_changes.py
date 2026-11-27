@@ -47,14 +47,6 @@ class Areas(unittest.TestCase):
     def test_the_toolchain_concerns_both_rust_workspaces(self):
         self.assertTrue({'backend', 'desktop'} <= changes.areas(['rust-toolchain.toml']))
 
-    def test_the_storage_keys_the_desktop_test_reads_concern_it_too(self):
-        legacy = (ROOT / 'desktop/ui/src/platform/legacy.rs').read_text(encoding='utf-8')
-        read = set(re.findall(r'include_str!\("(?:\.\./)+(web/[^"]+)"\)', legacy))
-        self.assertTrue(read)
-        for path in read:
-            with self.subTest(path=path):
-                self.assertEqual(changes.areas([path]), {'web', 'desktop'})
-
     def test_emoji_data_concerns_web_too(self):
         self.assertIn('web', changes.areas(['backend/shared/data/emoji-18.0.json']))
 
@@ -69,6 +61,7 @@ class Areas(unittest.TestCase):
                 ('.github/workflows/minio-images.yml', {'minio', 'deploy'}),
                 ('.github/workflows/publish-minio.yml', {'minio', 'deploy'}),
                 ('.github/workflows/cache-cleanup.yml', {'deploy'}),
+                ('.github/workflows/e2e-extended.yml', {'web', 'deploy'}),
                 ('.github/workflows/scripts/caches.py', {'deploy'}),
                 ('.github/dependabot.yml', {'deploy'}),
                 ('.github/ISSUE_TEMPLATE/bug_report.yml', set()),
@@ -83,28 +76,40 @@ class Areas(unittest.TestCase):
                     self.assertIn('deploy', changes.areas([path.relative_to(ROOT).as_posix()]))
 
     def test_a_called_workflow_starts_the_area_of_the_job_that_calls_it(self):
-        called = [(match.group(1), workflow_data.local_call(job))
-                  for job in workflow_data.load('ci.yml')['jobs'].values()
-                  if workflow_data.local_call(job)
-                  and (match := re.search(r"needs\.changes\.outputs\.(\w+) == 'true'", str(job.get('if', ''))))]
-        self.assertEqual({area for area, _ in called}, {'desktop', 'minio'})
-        for area, workflow in called:
-            with self.subTest(workflow=workflow):
-                self.assertIn(area, changes.areas(['.github/workflows/' + workflow]))
+        jobs = workflow_data.load('ci.yml')['jobs']
+        # Gated on another job rather than an area: libwebrtc-store needs desktop.
+        not_by_area = {'libwebrtc-store': 'desktop'}
+        called = set()
+        for job_id, job in jobs.items():
+            uses = [job.get('uses', '')] + [step.get('uses', '') for step in job.get('steps', [])]
+            for local in (use for use in uses if use.startswith('./')):
+                with self.subTest(job=job_id, uses=local):
+                    match = re.fullmatch(r'\./(\.github/workflows/[\w.-]+\.yml)', local)
+                    self.assertTrue(match, f'{job_id} uses {local}: map it in changes.py and here')
+                    gates = re.findall(r"needs\.changes\.outputs\.(\w+) == 'true'", str(job.get('if', '')))
+                    if job_id in not_by_area:
+                        self.assertEqual(gates, [])
+                        self.assertIn(not_by_area[job_id], changes.areas([match.group(1)]))
+                        continue
+                    self.assertEqual(len(gates), 1, f'{job_id}: no area gate this test understands')
+                    self.assertIn(gates[0], changes.areas([match.group(1)]))
+                    called.add(gates[0])
+        self.assertEqual(called, {'desktop', 'minio'})
 
     def test_files_other_areas_read_start_them(self):
-        # Read by test_public_pages.py, test_update_signature.py, this file
-        # (legacy.rs), generate-emoji-data.py --check and landingImage.test.mjs.
-        # Also the deployment tests' own inputs outside deploy/: the Claude
-        # Code hooks, both versions, the backend's build.
+        # Read by test_public_pages.py, test_update_signature.py,
+        # generate-emoji-data.py --check, landingImage.test.mjs and
+        # ci-fault-loop.checks.mjs (a step of e2e-extended.yml). Also the
+        # deployment tests' own inputs outside deploy/: the Claude Code hooks,
+        # both versions, the backend's build.
         for path, area in (('.claude/hooks/fast_checks.py', 'deploy'),
                            ('backend/Cargo.toml', 'deploy'), ('desktop/Cargo.toml', 'deploy'),
                            ('backend/build/run-native-ci.sh', 'deploy'), ('.dockerignore', 'deploy'),
                            ('.dockerignore', 'backend'), ('backend/build/run-native-ci.sh', 'backend'),
                            ('web/docker-entrypoint.d/50-gelabber-public-pages.sh', 'deploy'),
                            ('desktop/packaging/updater.pub', 'deploy'),
-                           ('desktop/ui/src/platform/legacy.rs', 'deploy'),
                            ('desktop/ui/assets/emoji/emoji-data.json', 'web'),
+                           ('.github/workflows/e2e-extended.yml', 'web'),
                            ('docs/design/v0.10/landing-preview-en.png', 'web')):
             with self.subTest(path=path):
                 self.assertTrue((ROOT / path).is_file())
@@ -148,7 +153,8 @@ class Outputs(unittest.TestCase):
             with self.subTest(path=path):
                 out = self.run_script(stdin=path + '\n')
                 self.assertEqual((out['minio'], out['minio-build']), (area, build))
-        self.assertEqual(self.run_script('--all')['minio-build'], 'false')
+        # A release candidate (--all) builds from source: operators fall back to it.
+        self.assertEqual(self.run_script('--all')['minio-build'], 'true')
 
     def test_all_runs_everything(self):
         out = self.run_script('--all')
@@ -157,22 +163,33 @@ class Outputs(unittest.TestCase):
         self.assertEqual(len(json.loads(out['images'])), 3)
 
 
-def copied(dockerfile, context):
-    """What a Dockerfile's COPY and ADD lines take from the build context, as
-    repository paths; a folder ends in '/'."""
-    text = re.sub(r'\\\n', ' ', (ROOT / dockerfile).read_text())
+def copied(dockerfile, context, text=None):
+    """What a Dockerfile's COPY and ADD lines and RUN bind mounts take from
+    the build context, as repository paths; a folder ends in '/'."""
+    text = re.sub(r'\\\n', ' ', text if text is not None else (ROOT / dockerfile).read_text())
     found = set()
+
+    def add(source):
+        path = (ROOT / context / source).resolve().relative_to(ROOT).as_posix()
+        found.add(path + '/' if (ROOT / path).is_dir() else path)
+
     for line in text.splitlines():
         words = line.split()
-        if not words or words[0].upper() not in ('COPY', 'ADD'):
+        if not words:
+            continue
+        if words[0].upper() == 'RUN':
+            for mount in re.findall(r'--mount=(\S+)', line):
+                options = dict(option.partition('=')[::2] for option in mount.split(','))
+                if options.get('type') == 'bind' and 'from' not in options:
+                    add(options.get('source', '.'))
+            continue
+        if words[0].upper() not in ('COPY', 'ADD'):
             continue
         args = words[1:]
         if any(arg.startswith('--from=') for arg in args):
             continue
-        sources = [arg for arg in args if not arg.startswith('--')][:-1]
-        for source in sources:
-            path = (ROOT / context / source).resolve().relative_to(ROOT).as_posix()
-            found.add(path + '/' if (ROOT / path).is_dir() else path)
+        for source in [arg for arg in args if not arg.startswith('--')][:-1]:
+            add(source)
     return found
 
 
@@ -209,6 +226,11 @@ class Images(unittest.TestCase):
                                  outermost(sources | {image['file'], ignore, changes.CI}
                                            | checks.get(image['name'], set())))
 
+    def test_a_bind_mount_is_an_input(self):
+        found = copied('backend/api/Dockerfile', '.', 'RUN --mount=type=bind,source=backend/build,target=/b \\\n'
+                       '    --mount=type=cache,target=/c --mount=type=bind,from=x,source=/y,target=/z true\n')
+        self.assertEqual(found, {'backend/build/'})
+
     def test_an_api_change_builds_only_the_api_image(self):
         self.assertEqual(changes.images(['backend/api/src/main.rs']), {'api'})
         self.assertEqual(changes.images(['backend/media/src/main.rs']), {'media'})
@@ -238,6 +260,7 @@ def run_areas(env, diff=()):
                        'case "$*" in *" diff "*) printf "%s" "$FAKE_DIFF" ;; esac\n')
         git.chmod(0o755)
         full = {**os.environ, 'EVENT': 'pull_request', 'CANDIDATE': '', 'REUSED_RUN': '', 'BEFORE': '',
+                'GITHUB_REF': 'refs/heads/v0.14',
                 **env, 'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': os.devnull,
                 'GIT_LOG': str(log), 'FAKE_DIFF': ''.join(path + '\n' for path in diff),
                 'PATH': f'{tmp}{os.pathsep}{os.environ["PATH"]}'}
@@ -267,7 +290,8 @@ class Workflow(unittest.TestCase):
     def test_a_push_runs_the_areas_since_its_starting_point(self):
         # GEL-360: a merge into a version branch no longer runs every area;
         # GEL-363: it starts at the last commit whose push run passed.
-        self.assertTrue(areas_step()['env']['BEFORE'].startswith('${{ steps.reuse.outputs.since ||'))
+        self.assertEqual(areas_step()['env']['BEFORE'], '${{ steps.reuse.outputs.since || github.event.before '
+                                                        '|| github.event.merge_group.base_sha }}')
         before = 'a' * 40
         ran, commands = run_areas({'EVENT': 'push', 'BEFORE': before}, ['backend/api/src/main.rs'])
         self.assertEqual(ran, {'backend', 'deploy'})
@@ -340,6 +364,15 @@ class Workflow(unittest.TestCase):
         for folder in sorted(folders):
             with self.subTest(folder=folder):
                 self.assertTrue([s for s in scripts if f'python3 -m unittest discover -s {folder} ' in s])
+
+    def test_a_push_to_main_that_reuses_no_run_checks_every_area(self):
+        """Release merges ran every area only because of their release notes;
+        main checks all of them whenever it cannot reuse a run (GEL-390)."""
+        for ref, expected in (('refs/heads/main', set(changes.AREAS)), ('refs/heads/v0.14', {'web'})):
+            with self.subTest(ref=ref):
+                ran, _ = run_areas({'EVENT': 'push', 'GITHUB_REF': ref, 'BEFORE': 'a' * 40},
+                                   ['web/src/main.tsx'])
+                self.assertEqual(ran, expected)
 
     def test_moved_and_non_ascii_paths_start_their_areas(self):
         """The pull request's diff command, run on a scratch repository: a
