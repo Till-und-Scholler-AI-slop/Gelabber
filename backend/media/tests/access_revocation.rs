@@ -1,4 +1,19 @@
 //! Negative wire authorization regressions; unique local Redis test keys only.
+//!
+//! What they hold media to (the API side is `api/ACCESS_REVOCATION.md`):
+//! a ticket is consumed in one Redis Lua operation (GETDEL, envelope check,
+//! member and channel generation, exact session user, expiry against Redis
+//! time), so an invalid ticket is used up as well. Join checks the authority
+//! again after the room's router exists, and every joined peer checks it once
+//! a second; each Redis call has a 500 ms deadline. Only a successful check
+//! refreshes demand (EX 35); media never renews the session lease and never
+//! deletes demand when one tab leaves.
+//!
+//! A missing authority, a stale generation or an expired session removes the
+//! peer and its publications with `unauthorized`. A check that fails (Redis
+//! error, draining pool) removes it with `gone`, so the client rejoins with a
+//! new ticket. Both are terminal: the server then closes the WebSocket, and
+//! the negative clients here never leave on their own.
 use futures_util::{SinkExt, StreamExt};
 use gelabber_media::{AppState, Config, app};
 use serde_json::json;
