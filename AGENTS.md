@@ -23,9 +23,10 @@ The **shipped line** is the latest release tag on `main`.
   open one first (see Planning). Release work uses `release/vX.Y.Z`,
   `hotfix/vX.Y.Z-<short-description>` and `sync/main-into-vX.Y`. Only
   version branches start with `v`. Dependabot keeps its own names. Its pull
-  requests are never merged; the skill `dependency-updates` carries them onto
-  the development line, and on a red CI run stops with a draft and a report
-  for a maintainer.
+  requests are never merged; the skill `dependency-updates` carries those
+  that apply cleanly onto the development line (the others wait for the next
+  release), and on a red CI run stops with a draft and a report for a
+  maintainer.
 - **Features:** branch off the development line; the PR targets it. Older
   version branches are complete.
 - **Releases:** a release branch from the development line with `origin/main`

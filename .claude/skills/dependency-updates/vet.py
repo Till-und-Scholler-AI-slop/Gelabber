@@ -43,8 +43,8 @@ files, updates [{name, from, to, type, update_type, group, security}] and
 security. `from` comes from the commit message, else from the removed side
 of the change. An update's `security` lists the GitHub advisories (public
 advisory database) that affect its `from` version, or is null when `from`
-is unknown; Docker and Compose images have no advisory database, so theirs
-is always empty. The pull request's `security` is true when an update has an
+is unknown or the database refuses the query; Docker and Compose images have
+no advisory database, so theirs is always empty. The pull request's `security` is true when an update has an
 advisory, "unknown" when one cannot be looked up, else false. Exit status 1, with every reason on stderr, when
 any pull request fails; then nothing of the run is carried or closed. The
 commits are fetched into a temporary ref that is deleted at the end; the
@@ -335,7 +335,8 @@ def check_commit(sha, names, say, froms):
     for p in set(removed) | set(added):
         if sorted(removed.get(p, [])) != sorted(added.get(p, [])):
             say(f"commit {sha[:10]} {p}: lines added or removed beyond a version change")
-    for p in files:
+    # Lock files first: a `from` read off a lock is a version, a manifest's may be a range.
+    for p in sorted(files, key=lambda p: (kind_of(p) not in ("cargo-lock", "npm-lock"), p)):
         kind = kind_of(p)
         if kind in ("cargo-lock", "npm-lock", "cargo-manifest", "npm-manifest"):
             old, new = show(f"{sha}^", p), show(sha, p)
@@ -357,8 +358,12 @@ def check_commit(sha, names, say, froms):
 
 
 def advisories(ecosystem, name, version):
-    found = gh_json("api", "-X", "GET", "/advisories", "-f", f"ecosystem={ecosystem}",
-                    "-f", f"affects={name}@{version}")
+    """GHSA ids affecting name@version, or None when the database refuses the query."""
+    try:
+        found = gh_json("api", "-X", "GET", "/advisories", "-f", f"ecosystem={ecosystem}",
+                        "-f", f"affects={name}@{version}")
+    except (subprocess.CalledProcessError, ValueError):
+        return None
     return [a.get("ghsa_id") for a in found]
 
 

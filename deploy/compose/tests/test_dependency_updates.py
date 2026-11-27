@@ -1,5 +1,5 @@
 """The scripts of the weekly dependency update
-(.claude/skills/dependency-updates: vet.py, resolve.py, renew.sh, pip_hashes.py).
+(.claude/skills/dependency-updates: vet.py, renew.sh, pip_hashes.py).
 
 vet.py runs in a clone of a local repository whose refs/pull/<n>/head hold
 crafted commits, with a fake `gh` on PATH that answers from a JSON file."""
@@ -35,6 +35,9 @@ FAKE_GH = textwrap.dedent('''\
         out({'nameWithOwner': 'owner/repo'})
     if args[:1] == ['api'] and '/advisories' in args:
         query = dict(a.split('=', 1) for a in args if '=' in a)
+        if query['affects'] in state.get('refuse', []):
+            print('gh: Validation Failed (HTTP 422)', file=sys.stderr)
+            sys.exit(1)
         out(state.get('advisories', {}).get(query['ecosystem'] + '/' + query['affects'], []))
     if args[:1] == ['api'] and args[1].startswith('repos/owner/repo/commits/'):
         sha = args[1].rsplit('/', 1)[1]
@@ -98,16 +101,19 @@ BASE = {
         '''),
     'web/package.json': json.dumps({
         'name': 'web', 'version': '0.14.0', 'scripts': {'test': 'vitest'},
-        'dependencies': {'react': '19.3.1'}, 'devDependencies': {'@tailwindcss/vite': '4.3.4'},
+        'dependencies': {'react': '19.3.1', 'zustand': '^5.1.1'}, 'devDependencies': {'@tailwindcss/vite': '4.3.4'},
     }, indent=2) + '\n',
     'web/package-lock.json': json.dumps({
         'name': 'web', 'version': '0.14.0', 'lockfileVersion': 3, 'requires': True,
         'packages': {
-            '': {'name': 'web', 'version': '0.14.0', 'dependencies': {'react': '19.3.1'},
+            '': {'name': 'web', 'version': '0.14.0', 'dependencies': {'react': '19.3.1', 'zustand': '^5.1.1'},
                  'devDependencies': {'@tailwindcss/vite': '4.3.4'}},
             'node_modules/react': {'version': '19.3.1',
                                    'resolved': 'https://registry.npmjs.org/react/-/react-19.3.1.tgz',
                                    'integrity': 'sha512-react1'},
+            'node_modules/zustand': {'version': '5.1.1',
+                                     'resolved': 'https://registry.npmjs.org/zustand/-/zustand-5.1.1.tgz',
+                                     'integrity': 'sha512-zustand1'},
             'node_modules/@tailwindcss/vite': {
                 'version': '4.3.4', 'dev': True,
                 'resolved': 'https://registry.npmjs.org/@tailwindcss/vite/-/vite-4.3.4.tgz',
@@ -237,6 +243,14 @@ CASES = {
          'web/package-lock.json': npm_lock(oxide_bump)},
         [('@tailwindcss/vite', '4.3.4', '4.3.5')], None, {'branch': 'dependabot/npm_and_yarn/web/npm-2'}),
     'from read off the change': (SERDE, [('serde', None, '1.0.201')], None, {}),
+    'npm range, from read off the lock': (
+        {'web/package.json': npm_manifest(lambda m: m['dependencies'].update({'zustand': '^5.1.2'})),
+         'web/package-lock.json': npm_lock(lambda p: (p['']['dependencies'].update(zustand='^5.1.2'),
+                                                       p.update({'node_modules/zustand': lock_entry('zustand', '5.1.2', 'sha512-zustand2')})))},
+        [('zustand', None, '5.1.2')], None, {'branch': 'dependabot/npm_and_yarn/web/npm-3'}),
+    'npm range only in the manifest': (
+        {'web/package.json': npm_manifest(lambda m: m['dependencies'].update({'zustand': '^5.1.2'}))},
+        [('zustand', None, '5.1.2')], None, {'branch': 'dependabot/npm_and_yarn/web/npm-4'}),
     'unknown from': (
         {'backend/Cargo.lock': BASE['backend/Cargo.lock'] + textwrap.dedent(f'''
             [[package]]
@@ -424,8 +438,8 @@ class Vet(unittest.TestCase):
             cls.state['commits'][sha] = {'commit': {'verification': {'verified': False, 'reason': 'unsigned'}},
                                          'committer': {'login': 'rafiistcool'}}
 
-    def vet(self, *numbers, advisories=None):
-        state = dict(self.state, advisories=advisories or {})
+    def vet(self, *numbers, advisories=None, refuse=()):
+        state = dict(self.state, advisories=advisories or {}, refuse=list(refuse))
         with tempfile.TemporaryDirectory() as tmp:
             state_file = Path(tmp) / 'state.json'
             state_file.write_text(json.dumps(state))
@@ -459,6 +473,23 @@ class Vet(unittest.TestCase):
                              advisories={'rust/serde@1.0.200': [{'ghsa_id': 'GHSA-yyyy'}]})
         self.assertEqual(out[0]['updates'][0]['from'], '1.0.200')
         self.assertIs(out[0]['security'], True)
+
+    def test_an_npm_from_comes_from_the_lock_not_the_range(self):
+        _, out, _ = self.vet(self.numbers['npm range, from read off the lock'])
+        self.assertEqual(out[0]['updates'][0]['from'], '5.1.1')
+        self.assertEqual(out[0]['updates'][0]['security'], [])
+
+    def test_a_range_without_a_lock_version_is_unknown(self):
+        code, out, err = self.vet(self.numbers['npm range only in the manifest'])
+        self.assertEqual((code, err), (0, ''))
+        self.assertIsNone(out[0]['updates'][0]['from'])
+        self.assertEqual(out[0]['security'], 'unknown')
+
+    def test_a_refused_advisory_query_is_unknown(self):
+        code, out, err = self.vet(self.numbers['cargo version and lock'], refuse=['serde@1.0.200'])
+        self.assertEqual((code, err), (0, ''))
+        self.assertIsNone(out[0]['updates'][0]['security'])
+        self.assertEqual(out[0]['security'], 'unknown')
 
     def test_an_unknown_from_is_unknown_not_safe(self):
         code, out, err = self.vet(self.numbers['unknown from'])
@@ -543,112 +574,6 @@ class Renew(unittest.TestCase):
         code, ci, err = self.renew('node', dockerfile='FROM node:latest\n')
         self.assertNotEqual(code, 0)
         self.assertIn('no Node version', err)
-
-
-COMPOSE = ('services:\n  prometheus:\n    image: prom/prometheus:{p}\n    command:\n      - --a\n'
-           '  proxy:\n    image: caddy:{c}-alpine\n    ports:\n      - "80:80"\n')
-
-
-class Resolve(unittest.TestCase):
-    """resolve.py on a cherry-pick of a Dependabot commit built on main onto a
-    development line that carried an earlier week's update of the same lines."""
-
-    def pick(self, base, ours, theirs, names):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp) / 'repo'
-            git(Path(tmp), 'init', '-q', str(repo))
-            def commit(files, msg):
-                for path, text in files.items():
-                    (repo / path).parent.mkdir(parents=True, exist_ok=True)
-                    (repo / path).write_text(text)
-                git(repo, 'add', '-A')
-                git(repo, 'commit', '-q', '-m', msg)
-                return git(repo, 'rev-parse', 'HEAD')
-            first = commit(base, 'base')
-            commit(ours, 'week 1 on the development line')
-            git(repo, 'checkout', '-q', '--detach', first)
-            dependabot = commit(theirs, 'week 2 from Dependabot')
-            git(repo, 'checkout', '-q', '-')
-            picked = subprocess.run(['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@t',
-                                     '-c', 'rerere.enabled=false', 'cherry-pick', dependabot],
-                                    capture_output=True, text=True)
-            self.assertNotEqual(picked.returncode, 0, 'the pick should conflict')
-            (Path(tmp) / 'vet.jsonl').write_text(json.dumps({'number': 7, 'updates': [{'name': n} for n in names]}) + '\n')
-            result = subprocess.run([sys.executable, '-I', str(SKILL / 'resolve.py'), str(Path(tmp) / 'vet.jsonl'), '7'],
-                                    cwd=repo, capture_output=True, text=True)
-            unmerged = git(repo, 'diff', '--name-only', '--diff-filter=U')
-            files = {path: (repo / path).read_text() for path in {**base, **theirs}}
-            return result.returncode, result.stdout, result.stderr, unmerged, files
-
-    def test_443_then_546_takes_the_higher_versions(self):
-        code, out, _, unmerged, files = self.pick(
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.14.0', c='2.11.4')},
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.15.1', c='2.11.7')},
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.16.0', c='2.11.8')},
-            ['prom/prometheus', 'caddy'])
-        self.assertEqual((code, unmerged), (0, ''))
-        self.assertEqual(files['deploy/compose/compose.yaml'], COMPOSE.format(p='v3.16.0', c='2.11.8'))
-        self.assertIn('resolved deploy/compose/compose.yaml', out)
-
-    def test_a_higher_version_on_the_development_line_stays(self):
-        code, _, _, _, files = self.pick(
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.14.0', c='2.11.4')},
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.17.0', c='2.11.7')},
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.16.0', c='2.11.8')},
-            ['prom/prometheus', 'caddy'])
-        self.assertEqual(code, 0)
-        self.assertEqual(files['deploy/compose/compose.yaml'], COMPOSE.format(p='v3.17.0', c='2.11.8'))
-
-    def test_another_change_in_the_hunk_is_not_resolved(self):
-        ours = COMPOSE.format(p='v3.15.1', c='2.11.4').replace('    command:\n', '    command: []\n    restart: always\n')
-        code, _, err, unmerged, _ = self.pick(
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.14.0', c='2.11.4')},
-            {'deploy/compose/compose.yaml': ours},
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.16.0', c='2.11.4')},
-            ['prom/prometheus'])
-        self.assertEqual(code, 1)
-        self.assertIn('deploy/compose/compose.yaml', err)
-        self.assertEqual(unmerged, 'deploy/compose/compose.yaml')
-
-    def test_a_dependency_the_pull_request_does_not_name_is_not_resolved(self):
-        code, _, err, _, _ = self.pick(
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.14.0', c='2.11.4')},
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.15.1', c='2.11.4')},
-            {'deploy/compose/compose.yaml': COMPOSE.format(p='v3.16.0', c='2.11.4')},
-            ['caddy'])
-        self.assertEqual(code, 1)
-        self.assertIn('not the same dependency', err)
-
-    def test_cargo_manifest_and_lock(self):
-        base = {'backend/Cargo.toml': BASE['backend/Cargo.toml'], 'backend/Cargo.lock': BASE['backend/Cargo.lock']}
-        ours = {'backend/Cargo.toml': BASE['backend/Cargo.toml'].replace('1.0.200', '1.0.202'),
-                'backend/Cargo.lock': BASE['backend/Cargo.lock'].replace('1.0.200', '1.0.202')}
-        theirs = {'backend/Cargo.toml': BASE['backend/Cargo.toml'].replace('1.0.200', '1.0.201'),
-                  'backend/Cargo.lock': BASE['backend/Cargo.lock'].replace('1.0.200', '1.0.201')}
-        code, out, _, unmerged, files = self.pick(base, ours, theirs, ['serde'])
-        self.assertEqual(code, 0)
-        self.assertIn('serde = "1.0.202"', files['backend/Cargo.toml'])
-        self.assertIn('lock backend/Cargo.lock', out)
-        self.assertEqual(unmerged, 'backend/Cargo.lock')
-
-    def test_a_pin_keeps_its_hashes(self):
-        req = 'PyYAML=={v} \\\n' + ''.join('    --hash=sha256:{h} \\\n'.replace('{h}', h) for h in H[:2]) + '    --hash=sha256:' + '9' * 64 + '\n'
-        theirs_text = f'PyYAML==6.0.4 \\\n    --hash=sha256:{"8" * 64}\n'
-        code, _, _, _, files = self.pick(
-            {'deploy/compose/tests/requirements.txt': req.replace('{v}', '6.0.2')},
-            {'deploy/compose/tests/requirements.txt': req.replace('{v}', '6.0.3')},
-            {'deploy/compose/tests/requirements.txt': theirs_text},
-            ['pyyaml'])
-        self.assertEqual(code, 0)
-        self.assertEqual(files['deploy/compose/tests/requirements.txt'], theirs_text)
-
-    def test_a_tie_takes_the_pull_requests_digest(self):
-        line = 'FROM nginx:1.31.9-alpine@sha256:{d}\n'
-        code, _, _, _, files = self.pick({'web/Dockerfile': line.format(d='1' * 64)},
-                                         {'web/Dockerfile': line.format(d='2' * 64)},
-                                         {'web/Dockerfile': line.format(d='3' * 64)}, ['nginx'])
-        self.assertEqual(code, 0)
-        self.assertEqual(files['web/Dockerfile'], line.format(d='3' * 64))
 
 
 def load_pip_hashes():
