@@ -5,12 +5,18 @@ The fixture is a JUnit report that cargo-nextest 0.9.149 wrote with
 `--profile ci` for three tests: one passes, one fails once and then passes,
 one fails both times.
 """
+import contextlib
 import importlib.util
+import io
+import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / '.github/workflows/scripts/flaky_tests.py'
@@ -39,17 +45,18 @@ class Reports(unittest.TestCase):
         self.assertEqual(found[0].attempts, 2)
         self.assertIn('first attempt fails', found[0].message)
 
+    def test_a_missing_report_is_named(self):
+        missing = str(FIXTURE.parent / 'missing.xml')
+        self.assertEqual(flaky_tests.read_reports([missing, str(FIXTURE)]),
+                         (flaky_tests.flakes(FIXTURE.read_text()), [missing]))
+
     def test_a_folder_holds_the_downloaded_reports(self):
         with tempfile.TemporaryDirectory() as tmp:
-            nested = Path(tmp, 'junit-desktop-linux/ci-media')
+            nested = Path(tmp, 'junit-desktop-linux/ci')
             nested.mkdir(parents=True)
             (nested / 'junit.xml').write_text(FIXTURE.read_text())
-            self.assertEqual([flake.test for flake in flaky_tests.read_reports([tmp])], ['flakycrate::t flaky'])
-
-    def test_a_job_without_a_report_has_no_flakes(self):
-        # A job that failed before its tests ran wrote no report.
-        self.assertEqual(flaky_tests.read_reports([str(FIXTURE.parent / 'missing.xml'), str(FIXTURE)]),
-                         flaky_tests.flakes(FIXTURE.read_text()))
+            found, missing = flaky_tests.read_reports([tmp])
+            self.assertEqual(([flake.test for flake in found], missing), (['flakycrate::t flaky'], []))
 
 
 class Quarantine(unittest.TestCase):
@@ -74,7 +81,7 @@ class Quarantine(unittest.TestCase):
 
 
 class Report(unittest.TestCase):
-    FLAKES = [flaky_tests.Flake('api::gateway known', 2, 'timed out'),
+    FLAKES = [flaky_tests.Flake('api::gateway known', 2, "panicked at tests/gateway.rs:9:5:\nassertion `left == right` failed"),
               flaky_tests.Flake('ui new_one', 2, 'took 100%0A::error::forged\n::error::forged too')]
 
     def test_the_summary_names_every_flaky_test_and_where_it_is_tracked(self):
@@ -91,7 +98,9 @@ class Report(unittest.TestCase):
             self.assertNotIn('\n', line)
         # The runner decodes %0A into a line break; the text must stay text.
         self.assertIn('took 100%250A::error::forged', lines[1])
-        self.assertNotIn('forged too', lines[1])
+        self.assertIn('%0A::error::forged too', lines[1])
+        # Where it panicked, then what failed: the assertion is on line two.
+        self.assertIn('%0Aassertion `left == right` failed', lines[0])
 
     def test_a_message_cannot_end_its_code_block(self):
         message = 'left ``` and ```` inside'
@@ -120,11 +129,121 @@ class Issues(unittest.TestCase):
         [(action, target, _)] = flaky_tests.plan([flake], {}, {target: 42}, RUN)
         self.assertEqual((action, target), ('comment', 42))
 
+    def test_a_run_opens_at_most_three_issues(self):
+        found = [flaky_tests.Flake(f'ui test_{n}', 2, 'slow start') for n in range(5)]
+        actions = flaky_tests.plan(found + [flaky_tests.Flake('api known', 2, '')], {'api known': 1058}, {}, RUN)
+        self.assertEqual([action for action, _, _ in actions], ['open'] * 3 + ['skip'] * 2 + ['comment'])
+
+    def test_without_the_open_issues_no_issue_is_opened(self):
+        found = [flaky_tests.Flake('ui new', 2, ''), flaky_tests.Flake('api known', 2, '')]
+        actions = flaky_tests.plan(found, {'api known': 1058}, None, RUN)
+        self.assertEqual([(action, target) for action, target, _ in actions],
+                         [('skip', 'Flaky test: ui new'), ('comment', 1058)])
+
+    def test_a_new_issue_asks_for_its_place_in_linear(self):
+        [(_, _, body)] = flaky_tests.plan([flaky_tests.Flake('ui new', 2, '')], {}, {}, RUN)
+        self.assertIn('Add this issue to the Linear project Gelabber, label Bug.', body)
+
     def test_a_long_test_name_still_finds_its_issue(self):
         flake = flaky_tests.Flake('x ' + 'y' * 300, 2, '')
         [(_, title, _)] = flaky_tests.plan([flake], {}, {}, RUN)
         self.assertEqual(len(title), 256)
         self.assertEqual(flaky_tests.plan([flake], {}, {title: 9}, RUN)[0][:2], ('comment', 9))
+
+
+class FakeGitHub:
+    """Answers `gh api` as GitHub would, and records each request."""
+
+    def __init__(self, issues, fail=()):
+        self.issues, self.fail, self.calls = issues, fail, []
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        endpoint = next(arg for arg in args if arg.startswith('repos/'))
+        if any(part in endpoint for part in self.fail):
+            raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 403: rate limit')
+        if '--method' not in args:
+            return json.dumps([self.issues])
+        if endpoint.endswith('/comments'):
+            return '{}'
+        return json.dumps({'number': 500 + len(self.calls)})
+
+    def posts(self):
+        return [(next(a for a in call if a.startswith('repos/')), [a for a in call if a.startswith(('title=', 'body='))])
+                for call in self.calls if '--method' in call]
+
+
+ENV = {'GITHUB_REPOSITORY': 'o/r', 'GITHUB_SERVER_URL': 'https://github.com', 'GITHUB_RUN_ID': '1',
+       'GITHUB_REF_NAME': 'v0.14', 'GITHUB_SHA': 'abc123'}
+
+
+class Main(unittest.TestCase):
+    """The script as CI runs it, with a stand-in for GitHub."""
+
+    def run_main(self, argv, github=None, quarantine=''):
+        with tempfile.TemporaryDirectory() as tmp:
+            listed = Path(tmp, 'flaky-tests.toml')
+            listed.write_text(quarantine)
+            summary = Path(tmp, 'summary.md')
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {**ENV, 'GITHUB_STEP_SUMMARY': str(summary)}), \
+                    mock.patch.object(flaky_tests, 'QUARANTINE', listed), \
+                    mock.patch.object(flaky_tests, 'gh_api', github or FakeGitHub([])), \
+                    contextlib.redirect_stdout(out):
+                code = flaky_tests.main(argv)
+            return code, out.getvalue(), summary.read_text() if summary.exists() else ''
+
+    def test_summary_writes_the_table_with_the_listed_issue(self):
+        code, out, summary = self.run_main(['summary', str(FIXTURE)],
+                                           quarantine='[[test]]\nid = "flakycrate::t flaky"\nissue = 77\n')
+        self.assertEqual(code, 0)
+        self.assertIn('::warning title=Flaky test::flakycrate::t flaky failed', out)
+        self.assertIn('| `flakycrate::t flaky` | 2 | #77 |', summary)
+
+    def test_summary_fails_without_its_report(self):
+        missing = str(FIXTURE.parent / 'missing.xml')
+        code, out, _ = self.run_main(['summary', missing])
+        self.assertEqual(code, 1)
+        self.assertIn(f'::error title=Flaky tests::no JUnit report at {missing}', out)
+
+    def test_issues_adds_a_flake_to_the_open_issue_of_its_test(self):
+        github = FakeGitHub([{'number': 41, 'title': 'Flaky test: flakycrate::t flaky'},
+                             {'number': 42, 'title': 'Flaky test: flakycrate::t flaky', 'pull_request': {}},
+                             {'number': 43, 'title': 'Something else'}])
+        code, _, summary = self.run_main(['issues', str(FIXTURE.parent / 'missing.xml'), str(FIXTURE)], github)
+        self.assertEqual(code, 0)
+        self.assertNotIn('--method', github.calls[0])
+        self.assertIn('repos/o/r/issues?state=open&per_page=100', github.calls[0])
+        [(endpoint, fields)] = github.posts()
+        self.assertEqual(endpoint, 'repos/o/r/issues/41/comments')
+        self.assertIn('https://github.com/o/r/actions/runs/1', fields[0])
+        self.assertIn('- Added to #41', summary)
+
+    def test_issues_comments_on_the_listed_issue_or_opens_one(self):
+        github = FakeGitHub([])
+        self.run_main(['issues', str(FIXTURE)], github, quarantine='[[test]]\nid = "flakycrate::t flaky"\nissue = 77\n')
+        self.assertEqual([endpoint for endpoint, _ in github.posts()], ['repos/o/r/issues/77/comments'])
+        github = FakeGitHub([])
+        _, _, summary = self.run_main(['issues', str(FIXTURE)], github)
+        [(endpoint, fields)] = github.posts()
+        self.assertEqual(endpoint, 'repos/o/r/issues')
+        self.assertIn('title=Flaky test: flakycrate::t flaky', fields)
+        self.assertIn('- Opened #', summary)
+
+    def test_a_failed_request_warns_and_the_run_goes_on(self):
+        github = FakeGitHub([], fail=('issues/77/comments',))
+        code, out, summary = self.run_main(['issues', str(FIXTURE)], github,
+                                           quarantine='[[test]]\nid = "flakycrate::t flaky"\nissue = 77\n')
+        self.assertEqual(code, 0)
+        self.assertIn('::warning title=Flaky test not recorded::', out)
+        self.assertIn('- Not recorded (GitHub request failed)', summary)
+
+    def test_unknown_open_issues_open_none(self):
+        github = FakeGitHub([], fail=('state=open',))
+        code, out, _ = self.run_main(['issues', str(FIXTURE)], github)
+        self.assertEqual(code, 0)
+        self.assertIn('::warning title=Open issues unknown::', out)
+        self.assertEqual(github.posts(), [])
 
 
 class Workflows(unittest.TestCase):
@@ -156,6 +275,7 @@ class Workflows(unittest.TestCase):
         self.assertIn('needs: [rust, desktop]', job)
         self.assertIn('pattern: junit-*', job)
         self.assertIn('flaky_tests.py issues junit\n', job)
+        self.assertIn("github.event_name == 'push'", job)
         for name in ('junit-rust-${{ matrix.part }}', 'junit-desktop-linux'):
             self.assertIn(f'name: {name}\n', ci + (ROOT / '.github/workflows/desktop-native.yml').read_text())
 
