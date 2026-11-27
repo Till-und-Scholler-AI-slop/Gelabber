@@ -434,8 +434,12 @@ export async function mediaScenarios(h, f) {
       for (let i = 0; i < 20; i++) {
         await click(f.owner, "Live gehen");
         await click(f.watcher, "Zuschauen");
+        // A re-watch's first frame took up to 4.3 s on a loaded machine
+        // (20 cycles, load 16 to 35), close to the 5 s budget; this scenario
+        // claims bounded resources, not the first frame's time.
         const frames = await progress(f.watcher, {
           ...options,
+          budget: options.budget * 3,
           color: i % 2 ? [30, 220, 30] : [220, 30, 30],
         });
         const beforeStopOwner = await snapshot(f.owner);
