@@ -199,6 +199,25 @@ export async function startHarness() {
     results: [],
     cleanup: [],
   };
+  // A promise a scenario left behind can reject after its row is written.
+  // Node would end the run on it, before the report and the runner's
+  // teardown, and every later profile would find the ports taken (GEL-453).
+  // It fails by name instead, and the run goes on.
+  process.on("unhandledRejection", (error) => {
+    const reason = safeError(error);
+    process.exitCode = 1;
+    report.results.push({
+      id: "stray-rejection",
+      status: "FAIL",
+      reason,
+      classification: "test-error",
+      // The case that was running, not necessarily the one that left it.
+      during: report.checkpoint?.case ?? null,
+      site: failureSite(error?.stack),
+      at: new Date().toISOString(),
+    });
+    console.log(`FAIL stray-rejection (${reason})`);
+  });
   async function actor(label) {
     // The scenarios find controls by their German names, and the
     // app follows the browser's language (src/i18n/locale.ts), English on CI.
@@ -284,15 +303,16 @@ export async function startHarness() {
       dialog = owner.page.getByRole("dialog", { name: "Kanal erstellen" });
       await dialog.getByText(kind, { exact: true }).click();
       await dialog.getByLabel("Name", { exact: true }).fill(name);
-      const createdResponse = owner.page.waitForResponse(
+      const response = await responseTo(
+        owner.page,
         (r) =>
           new URL(r.url()).pathname === `/api/servers/${serverId}/channels` &&
           r.request().method() === "POST",
+        () =>
+          dialog
+            .getByRole("button", { name: "Erstellen", exact: true })
+            .click(),
       );
-      await dialog
-        .getByRole("button", { name: "Erstellen", exact: true })
-        .click();
-      const response = await createdResponse;
       check(
         [200, 201].includes(response.status()),
         "channel-fixture-create-rejected",
