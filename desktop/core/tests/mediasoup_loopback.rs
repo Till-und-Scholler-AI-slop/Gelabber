@@ -561,7 +561,7 @@ fn available_outgoing_bitrate(native: &gelabber_media_core::Producer) -> Value {
 /// and 2.5 Mbit/s each).
 const FIXED_ESTIMATE_KBPS: u32 = 8000;
 
-/// How many frames the sender encodes of its lowest layer before a layer
+/// How many frames the sender encodes in its busiest layer before a layer
 /// still missing at the server counts as never sent: 10 s of a 30 fps test
 /// pattern. The bound runs at the speed of the call, not of a clock, so a
 /// slow runner gets as many frames as a fast one.
@@ -675,6 +675,19 @@ async fn every_layer(server: &Server) {
         video.push((codec, producer, native));
     }
 
+    // A sender whose encoder does not start, or whose transport does not
+    // connect, fails here: the frame-counted wait below needs frames.
+    for (codec, producer, _) in &video {
+        wait_for(
+            &format!("{codec} RTP at the server"),
+            Duration::from_secs(20),
+            || {
+                let producer = producer.clone();
+                async move { !live_rids(&producer).await.is_empty() }
+            },
+        )
+        .await;
+    }
     for (codec, producer, native) in &video {
         let rids: Vec<Option<String>> = producer
             .rtp_parameters()
@@ -683,8 +696,7 @@ async fn every_layer(server: &Server) {
             .map(|encoding| encoding.rid.clone())
             .collect();
         // Polls until every layer is live or the sender has encoded
-        // FRAMES_TO_WAIT frames of its lowest layer. (A sender that encodes
-        // nothing at all ends only with the CI job's timeout.)
+        // FRAMES_TO_WAIT frames in its busiest layer.
         let (live, encoded) = loop {
             let live = live_rids(producer).await;
             let encoded = outbound_rtp(native)
