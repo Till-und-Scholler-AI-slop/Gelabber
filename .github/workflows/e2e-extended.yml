@@ -3,7 +3,8 @@
 # chat workflows (GEL-31), the PWA smoke and the desktop app's tests against
 # the seeded stack (GEL-376). Not a PR gate (GEL-378): it runs
 # after pushes to a version branch that touch the app, on release and hotfix
-# pull requests to main, and by hand. A push run opens, updates or closes an issue.
+# pull requests to main, and by hand; a push starts only the jobs its paths
+# concern (scripts/e2e_jobs.py). A push run opens, updates or closes an issue.
 name: Extended E2E
 
 on:
@@ -15,6 +16,8 @@ on:
       - 'web/**'
       - 'desktop/**'
       - '.github/workflows/e2e-extended.yml'
+      - '.github/workflows/scripts/e2e_jobs.py'
+      - '.github/workflows/scripts/changes.py'
       - '.github/workflows/scripts/apt-install.sh'
       - 'deploy/compose/compose.yaml'
   pull_request:
@@ -32,13 +35,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  faults:
-    name: Fault acceptance (Chromium, Firefox)
+  plan:
+    name: Which jobs run
     # Of the pull requests to main, only a release or hotfix (Dependabot's go there too).
     if: >-
       github.event_name != 'pull_request' ||
       startsWith(github.head_ref, 'release/') ||
       startsWith(github.head_ref, 'hotfix/')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      faults: ${{ steps.jobs.outputs.faults }}
+      desktop: ${{ steps.jobs.outputs.desktop }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A push starts the jobs its commits concern; anything else starts both.
+      - name: Jobs
+        id: jobs
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = push ] && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+              && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
+            git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD \
+              | python3 .github/workflows/scripts/e2e_jobs.py | tee -a "$GITHUB_OUTPUT"
+          else
+            python3 .github/workflows/scripts/e2e_jobs.py --all | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  faults:
+    name: Fault acceptance (Chromium, Firefox)
+    needs: plan
+    if: needs.plan.outputs.faults == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 120
     permissions:
@@ -290,10 +324,8 @@ jobs:
   # parity scenes (desktop/live-tests.sh, GEL-376). Beside the faults, so it adds no wall time.
   desktop-live:
     name: Desktop app against the stack
-    if: >-
-      github.event_name != 'pull_request' ||
-      startsWith(github.head_ref, 'release/') ||
-      startsWith(github.head_ref, 'hotfix/')
+    needs: plan
+    if: needs.plan.outputs.desktop == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
@@ -458,7 +490,10 @@ jobs:
 
       # The parity stack (desktop/README.md "Parity"): API, media server and
       # Vite on 5180, seeded by web/scripts/parity/seed.mjs.
+      # Its own limit: a step that times out fails, so the job's result says
+      # failure and the issue job reports it (a cancelled job reaches nobody).
       - name: Desktop tests against the seeded stack
+        timeout-minutes: 20
         env:
           CARGO_TARGET_DIR: /mnt/desktop-target
           API_ADDR: 127.0.0.1:8080
@@ -475,7 +510,7 @@ jobs:
           API_RATE_AUTH_PER_MIN: "0"
         run: |
           set -euo pipefail
-          logs="$RUNNER_TEMP/desktop-live"
+          logs="$RUNNER_TEMP/desktop-live-logs"
           mkdir -p "$logs"
           backend/target/debug/gelabber-api >"$logs/api.log" 2>&1 &
           api=$!
@@ -501,6 +536,14 @@ jobs:
             exit 1
           fi
 
+      - name: Upload the stack's logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-live-logs
+          path: ${{ runner.temp }}/desktop-live-logs/
+          if-no-files-found: warn
+
       - name: Stop test MinIO
         if: always()
         run: docker rm -f gelabber-desktop-minio || true
@@ -508,10 +551,37 @@ jobs:
   # Who looks at a red push run: an open issue per branch, which the Linear
   # sync brings to the team; the next green push run closes it. Pull requests
   # show their result themselves, runs by hand serve debug branches.
+  # The push run's outcome from its jobs (scripts/e2e_jobs.py): a timed-out
+  # job fails it, a skipped one counts for neither. Read-only; report writes.
+  outcome:
+    name: The push run's outcome
+    needs: [plan, faults, desktop-live]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      result: ${{ steps.result.outputs.result }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Result
+        id: result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          FAULTS: ${{ needs.faults.result }}
+          DESKTOP: ${{ needs.desktop-live.result }}
+        run: |
+          set -euo pipefail
+          echo "result=$(python3 .github/workflows/scripts/e2e_jobs.py result "$PLAN" "$FAULTS" "$DESKTOP")" \
+            | tee -a "$GITHUB_OUTPUT"
+
   report:
     name: Issue for the push run's result
-    needs: [faults, desktop-live]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch' }}
+    needs: outcome
+    if: ${{ !cancelled() && needs.outcome.result == 'success' && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -520,7 +590,7 @@ jobs:
       - name: Open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
-          RESULT: ${{ contains(needs.*.result, 'failure') && 'failure' || (needs.faults.result == 'success' && needs.desktop-live.result == 'success') && 'success' || 'other' }}
+          RESULT: ${{ needs.outcome.outputs.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
