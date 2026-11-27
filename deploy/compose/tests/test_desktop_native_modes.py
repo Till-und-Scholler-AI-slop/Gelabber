@@ -9,7 +9,7 @@ the table here too.
 """
 import unittest
 
-from workflow_data import load
+from workflow_data import ROOT, load, names
 from workflow_expressions import condition, evaluate
 
 WORKFLOW = 'desktop-native.yml'
@@ -191,6 +191,85 @@ class Modes(unittest.TestCase):
             with self.subTest(job=job_id):
                 self.assertNotIn(None, names)
                 self.assertEqual(len(names), len(set(names)))
+
+
+class WindowsPackage(unittest.TestCase):
+    """What part 1 of the app's THIRD-PARTY-NOTICES.txt says about the job
+    that builds the Windows package (desktop/packaging/third-party-notices.py
+    reads the build settings and the check script; this holds the wiring)."""
+    INSTALLER = 'gelabber-native-windows-x64-setup.exe'
+    ARTIFACT = 'gelabber-native-windows-x64'
+    CHECK = './desktop/packaging/native/windows/check-binaries.ps1'
+    SETTINGS = 'desktop/native/windows-build.env'
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = load(WORKFLOW)
+        cls.windows = cls.workflow['jobs']['core-windows']
+
+    def test_the_job_builds_with_the_build_settings(self):
+        steps = self.windows['steps']
+        loads = [index for index, step in enumerate(steps)
+                 if self.SETTINGS in str(step.get('run', '')) and 'GITHUB_ENV' in str(step.get('run', ''))]
+        self.assertEqual(len(loads), 1)
+        self.assertNotIn('if', steps[loads[0]])
+        builds = [index for index, step in enumerate(steps)
+                  if 'cargo ' in str(step.get('run', '')) or 'rust-cache' in step.get('uses', '')]
+        self.assertTrue(builds)
+        self.assertLess(loads[0], min(builds))
+        # Nothing sets the variables again.
+        for scope, env in [('workflow', self.workflow.get('env', {})), ('job', self.windows.get('env', {})),
+                           *[(step['name'], step.get('env', {})) for step in steps]]:
+            with self.subTest(scope=scope):
+                self.assertFalse({'RUSTFLAGS', 'MESON_ARGS', 'CARGO_ENCODED_RUSTFLAGS'} & set(env))
+        for step in steps[loads[0] + 1:]:
+            with self.subTest(step=step['name']):
+                self.assertNotRegex(str(step.get('run', '')), r'RUSTFLAGS|MESON_ARGS')
+        # Nor do the scripts the job runs (outside comments).
+        called = [ROOT / run.removeprefix('./') for run in (str(step.get('run', '')) for step in steps)
+                  if run.startswith('./desktop/') and run.endswith('.ps1')]
+        self.assertTrue(called)
+        for script in called:
+            code = '\n'.join(line for line in script.read_text().splitlines() if not line.lstrip().startswith('#'))
+            with self.subTest(script=script.name):
+                self.assertNotRegex(code, r'RUSTFLAGS|MESON_ARGS')
+
+    def test_every_build_runs_the_check_of_the_binaries(self):
+        checks = [step for step in self.windows['steps'] if step.get('run') == self.CHECK]
+        self.assertEqual(len(checks), 1)
+        named = [checks[0]['name']]
+        # A failed check fails the job.
+        self.assertFalse(checks[0].get('continue-on-error', False))
+        self.assertFalse(self.windows.get('continue-on-error', False))
+        for mode in JOBS['core-windows']:
+            with self.subTest(mode=mode):
+                self.assertIn(named[0], runs(mode)['core-windows'])
+
+    def test_a_release_takes_the_windows_installer_from_that_job_only(self):
+        release = load('desktop-release.yml')['jobs']
+        upload = release['release-asset-windows']
+        self.assertEqual(needs_of(upload), ['build'])
+        self.assertEqual(release['build']['uses'], f'./.github/workflows/{WORKFLOW}')
+        # The jobs of the build that upload the installer: core-windows, and
+        # prebuilt, which signs core-windows' installer of the candidate run and builds nothing.
+        uploaders = {job_id for job_id, job in self.workflow['jobs'].items() for step in job.get('steps', [])
+                     if step.get('uses', '').startswith('actions/upload-artifact@')
+                     and step['with']['name'] == self.ARTIFACT}
+        self.assertEqual(uploaders, {'core-windows', 'prebuilt'})
+        prebuilt = ' '.join(str(step.get('run', '')) for step in self.workflow['jobs']['prebuilt']['steps'])
+        for mark in ('cargo ', 'makensis', 'build-installer'):
+            self.assertNotIn(mark, prebuilt)
+        downloads = [step['with'] for step in self.workflow['jobs']['prebuilt']['steps']
+                     if step.get('uses', '').startswith('actions/download-artifact@')
+                     and step['with']['name'] == self.ARTIFACT]
+        self.assertEqual([d['run-id'] for d in downloads], ['${{ inputs.prebuilt_run }}'])
+        # No other job of any workflow makes or handles the installer.
+        allowed = {(WORKFLOW, 'core-windows'), (WORKFLOW, 'prebuilt'), ('desktop-release.yml', 'release-asset-windows')}
+        found = [(name, job_id) for name in names() for job_id, job in load(name).get('jobs', {}).items()
+                 if (name, job_id) not in allowed
+                 and any(self.INSTALLER in str(step.get('run', '')) + str(step.get('with', ''))
+                         or 'build-installer.ps1' in str(step.get('run', '')) for step in job.get('steps', []))]
+        self.assertEqual(found, [])
 
 
 class Expressions(unittest.TestCase):

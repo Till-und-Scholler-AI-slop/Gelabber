@@ -83,7 +83,7 @@ VERSION_SH = 'desktop/packaging/native/version.sh'
 # The steps that read the version and, in a release, check it against the tag.
 RELEASE_CHECKS = {
     ('release.yml', 'github-release', "Desktop app has the release's version"),
-    ('desktop-native.yml', 'core-windows', 'Desktop version'),
+    ('desktop-native.yml', 'core-windows', 'Version and build settings'),
     ('desktop-native.yml', 'prebuilt', 'Sign the native update'),
     ('desktop-native.yml', 'arch-repo', 'Build package and repository'),
 }
@@ -131,6 +131,7 @@ class ReleaseTagChecks(unittest.TestCase):
             root = Path(tmp)
             files = {'desktop/Cargo.toml': f'[workspace.package]\nversion = "{version}"\n',
                      VERSION_SH: (ROOT / VERSION_SH).read_text(),
+                     'desktop/native/windows-build.env': (ROOT / 'desktop/native/windows-build.env').read_text(),
                      'desktop/packaging/arch/repo.sh': STUB, 'desktop/packaging/arch/README.md': '',
                      'bin/npx': '#!/bin/sh\n', 'bin/sha256sum': '#!/bin/sh\n'}
             for name, text in files.items():
@@ -166,10 +167,11 @@ class ReleaseTagChecks(unittest.TestCase):
                               result.stdout + result.stderr)
 
     def test_the_windows_job_hands_the_version_on(self):
-        site = ('desktop-native.yml', 'core-windows', 'Desktop version')
+        site = ('desktop-native.yml', 'core-windows', 'Version and build settings')
         result, written = self.run_step(site, '', version='0.15.0-rc.1')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('DESKTOP_VERSION=0.15.0-rc.1\n', written)
+        self.assertIn('RUSTFLAGS=-C target-feature=+crt-static\nMESON_ARGS=--vsenv -Db_vscrt=mt\n', written)
 
 if __name__ == '__main__':
     unittest.main()
