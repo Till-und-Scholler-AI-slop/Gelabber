@@ -57,7 +57,7 @@ def steps(workflow):
 
 def scripts(workflow):
     """(job id, step name, script) for every `run:` step."""
-    return [(job_id, step.get('name', ''), step['run']) for job_id, step in steps(workflow) if 'run' in step]
+    return [(job_id, step.get('name', ''), str(step['run'])) for job_id, step in steps(workflow) if 'run' in step]
 
 
 def _split(text, operator):

@@ -8,7 +8,6 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
-from test_changes import changed_areas
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('image_set', ROOT / '.github/workflows/scripts/image_set.py')
@@ -73,22 +72,6 @@ class Gates(unittest.TestCase):
     def test_different_release_digest_refused(self):
         with patch.object(m, 'registry_digest', return_value=OTHER), self.assertRaises(ValueError):
             m.preflight({'api': {'image': 'image', 'digest': DIGEST}}, 'v0.2.4')
-
-    def test_shared_and_build_dependencies_trigger_workflows(self):
-        # Ask the script ci.yml runs, not a duplicate list pretending to execute Actions.
-        for path in ('backend/shared/src/lib.rs', 'backend/api/src/main.rs', 'backend/media/src/main.rs',
-                     'backend/build/run-native-ci.sh', '.dockerignore', 'backend/Cargo.toml',
-                     'backend/Cargo.lock', 'rust-toolchain.toml'):
-            with self.subTest(path=path):
-                self.assertIn('backend', changed_areas(path))
-        # They run after the merge; their tests are here.
-        for path in ('.github/workflows/scripts/image_set.py', '.github/workflows/publish-images.yml'):
-            with self.subTest(path=path):
-                self.assertIn('deploy', changed_areas(path))
-        self.assertIn('web', changed_areas('web/Dockerfile'))
-        self.assertIn('deploy', changed_areas('deploy/compose/compose.yaml'))
-        text = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertNotIn('paths:', text.split('\non:\n', 1)[1].split('concurrency:', 1)[0])
 
     def test_only_version_releases_start_the_desktop_build(self):
         # Publishing the build-deps mirror release once ran the whole desktop build.

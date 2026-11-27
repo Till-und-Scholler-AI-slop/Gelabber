@@ -7,8 +7,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
+
+import workflow_data
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / '.github/workflows/scripts/changes.py'
@@ -82,18 +83,25 @@ class Areas(unittest.TestCase):
                     self.assertIn('deploy', changes.areas([path.relative_to(ROOT).as_posix()]))
 
     def test_a_called_workflow_starts_the_area_of_the_job_that_calls_it(self):
-        ci = (ROOT / '.github/workflows/ci.yml').read_text()
-        called = re.findall(r"if: .*needs\.changes\.outputs\.(\w+) == 'true'\n"
-                            r"(?:    .*\n)*?    uses: \./(\.github/workflows/[\w.-]+)", ci)
+        called = [(match.group(1), workflow_data.local_call(job))
+                  for job in workflow_data.load('ci.yml')['jobs'].values()
+                  if workflow_data.local_call(job)
+                  and (match := re.search(r"needs\.changes\.outputs\.(\w+) == 'true'", str(job.get('if', ''))))]
         self.assertEqual({area for area, _ in called}, {'desktop', 'minio'})
         for area, workflow in called:
             with self.subTest(workflow=workflow):
-                self.assertIn(area, changes.areas([workflow]))
+                self.assertIn(area, changes.areas(['.github/workflows/' + workflow]))
 
     def test_files_other_areas_read_start_them(self):
-        # The checks that read them: test_public_pages.py, test_update_signature.py,
-        # this file (legacy.rs), generate-emoji-data.py --check, landingImage.test.mjs.
-        for path, area in (('web/docker-entrypoint.d/50-gelabber-public-pages.sh', 'deploy'),
+        # Read by test_public_pages.py, test_update_signature.py, this file
+        # (legacy.rs), generate-emoji-data.py --check and landingImage.test.mjs.
+        # Also the deployment tests' own inputs outside deploy/: the Claude
+        # Code hooks, both versions, the backend's build.
+        for path, area in (('.claude/hooks/fast_checks.py', 'deploy'),
+                           ('backend/Cargo.toml', 'deploy'), ('desktop/Cargo.toml', 'deploy'),
+                           ('backend/build/run-native-ci.sh', 'deploy'), ('.dockerignore', 'deploy'),
+                           ('.dockerignore', 'backend'), ('backend/build/run-native-ci.sh', 'backend'),
+                           ('web/docker-entrypoint.d/50-gelabber-public-pages.sh', 'deploy'),
                            ('desktop/packaging/updater.pub', 'deploy'),
                            ('desktop/ui/src/platform/legacy.rs', 'deploy'),
                            ('desktop/ui/assets/emoji/emoji-data.json', 'web'),
@@ -215,73 +223,95 @@ class Images(unittest.TestCase):
         self.assertEqual(changes.images(['backend/build/run-native-ci.sh']), set())
 
 
+def areas_step():
+    return next(step for step in workflow_data.load('ci.yml')['jobs']['changes']['steps']
+                if step.get('name') == 'Areas')
+
+
+def run_areas(env, diff=()):
+    """ci.yml's Areas step, run with a fake git that answers `diff` with
+    these paths: its outputs, and the git commands it ran."""
+    with tempfile.TemporaryDirectory() as tmp:
+        output, log = Path(tmp) / 'output', Path(tmp) / 'git.log'
+        git = Path(tmp) / 'git'
+        git.write_text('#!/bin/sh\necho "$*" >> "$GIT_LOG"\n'
+                       'case "$*" in *" diff "*) printf "%s" "$FAKE_DIFF" ;; esac\n')
+        git.chmod(0o755)
+        full = {**os.environ, 'EVENT': 'pull_request', 'CANDIDATE': '', 'REUSED_RUN': '', 'BEFORE': '',
+                **env, 'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': os.devnull,
+                'GIT_LOG': str(log), 'FAKE_DIFF': ''.join(path + '\n' for path in diff),
+                'PATH': f'{tmp}{os.pathsep}{os.environ["PATH"]}'}
+        subprocess.run(['bash', '-c', areas_step()['run']], cwd=ROOT, env=full, check=True,
+                       capture_output=True)
+        out = dict(line.split('=', 1) for line in output.read_text().splitlines())
+        commands = log.read_text().splitlines() if log.exists() else []
+    return {area for area in changes.AREAS if out[area] == 'true'}, commands
+
+
 class Workflow(unittest.TestCase):
     """ci.yml uses the script and gates on the one check ci-ok."""
 
     def setUp(self):
-        self.ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.ci = workflow_data.load('ci.yml')
 
     def test_pull_requests_and_pushes_are_not_path_filtered(self):
-        triggers = self.ci.split('\non:\n', 1)[1].split('\nconcurrency:', 1)[0]
-        self.assertNotIn('paths:', triggers)
+        for event in ('pull_request', 'push', 'merge_group'):
+            with self.subTest(event=event):
+                self.assertFalse({'paths', 'paths-ignore'} & set(self.ci['on'][event] or {}))
 
-    def test_a_push_runs_the_areas_since_its_previous_head(self):
-        # GEL-360: a merge into a version branch no longer runs every area.
-        areas = self.ci.split('      - name: Areas\n', 1)[1].split('\n      - name:', 1)[0]
-        self.assertIn('BEFORE: ${{ steps.reuse.outputs.since || github.event.before || github.event.merge_group.base_sha }}', areas)
-        self.assertIn('diff --no-renames --name-only "$BEFORE" HEAD | python3 .github/workflows/scripts/changes.py', areas)
-        self.assertIn('changes.py --all', areas)
+    def test_a_pull_request_runs_the_areas_of_its_diff(self):
+        ran, commands = run_areas({}, ['web/src/main.tsx'])
+        self.assertEqual(ran, {'web'})
+        self.assertIn('-c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD', commands)
 
-    def test_every_area_has_a_gated_job(self):
-        for area in changes.AREAS:
-            with self.subTest(area=area):
-                self.assertIn(f"needs.changes.outputs.{area} == 'true'", self.ci)
-
-    def test_ci_ok_needs_every_job(self):
-        jobs = [line[2:-1] for line in self.ci.split('\njobs:\n', 1)[1].splitlines()
-                if line.startswith('  ') and not line.startswith('   ') and line.endswith(':')]
-        block = self.ci.split('\n  ci-ok:\n', 1)[1]
-        needs = block.split('needs: [', 1)[1].split(']', 1)[0]
-        self.assertEqual(sorted(name.strip() for name in needs.split(',')),
-                         sorted(job for job in jobs if job != 'ci-ok'))
-        self.assertIn('if: always()', block)
-
-    def test_every_deployment_test_suite_runs(self):
-        for suite in sorted((ROOT / 'deploy').glob('**/tests/test_*.py')):
-            folder = suite.parent.relative_to(ROOT).as_posix()
-            with self.subTest(folder=folder):
-                self.assertIn(f'python3 -m unittest discover -s {folder} ', self.ci)
+    def test_a_push_runs_the_areas_since_its_starting_point(self):
+        # GEL-360: a merge into a version branch no longer runs every area;
+        # GEL-363: it starts at the last commit whose push run passed.
+        self.assertTrue(areas_step()['env']['BEFORE'].startswith('${{ steps.reuse.outputs.since ||'))
+        before = 'a' * 40
+        ran, commands = run_areas({'EVENT': 'push', 'BEFORE': before}, ['backend/api/src/main.rs'])
+        self.assertEqual(ran, {'backend', 'deploy'})
+        self.assertIn(f'-c core.quotePath=false diff --no-renames --name-only {before} HEAD', commands)
+        self.assertEqual(run_areas({'EVENT': 'push', 'BEFORE': '0' * 40}, ['docs/x.md'])[0], set(changes.AREAS))
+        self.assertEqual(run_areas({'EVENT': 'push', 'REUSED_RUN': '42', 'BEFORE': before},
+                                   ['backend/api/src/main.rs'])[0], set())
 
     def test_a_release_candidate_runs_every_area_main_reuses(self):
-        """The Areas step, run as for a release pull request whose only
-        change is its notes: main reuses its run only with every area."""
-        step = self.ci.split('      - name: Areas\n', 1)[1].split('\n\n', 1)[0]
-        script = textwrap.dedent(step.split('        run: |\n', 1)[1])
+        """A release pull request whose only change is its notes: main
+        reuses its run only with every area."""
         tested_tree = importlib.util.spec_from_file_location(
             'tested_tree', ROOT / '.github/workflows/scripts/tested_tree.py')
         reuse = importlib.util.module_from_spec(tested_tree)
         tested_tree.loader.exec_module(reuse)
         for candidate, expected in (('true', set(changes.AREAS)), ('false', set())):
-            with self.subTest(candidate=candidate), tempfile.TemporaryDirectory() as tmp:
-                output = Path(tmp) / 'output'
-                env = {**os.environ, 'EVENT': 'pull_request', 'CANDIDATE': candidate,
-                       'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': os.devnull}
-                # The pull request's diff: the release notes alone.
-                git = Path(tmp) / 'git'
-                git.write_text('#!/bin/sh\necho .github/release-notes/v9.9.9.md\n')
-                git.chmod(0o755)
-                env['PATH'] = f'{tmp}{os.pathsep}{env["PATH"]}'
-                subprocess.run(['bash', '-c', script], cwd=ROOT, env=env, check=True, capture_output=True)
-                out = dict(line.split('=', 1) for line in output.read_text().splitlines())
-                ran = {area for area in changes.AREAS if out[area] == 'true'}
+            with self.subTest(candidate=candidate):
+                ran, _ = run_areas({'CANDIDATE': candidate}, ['.github/release-notes/v9.9.9.md'])
                 self.assertEqual(ran, expected)
                 if candidate == 'true':
                     self.assertTrue(reuse.stands_for({'schema': 1, 'tree': 't', 'areas': sorted(ran)}, 't'))
 
+    def test_every_area_has_a_gated_job(self):
+        conditions = [str(job.get('if', '')) for job in self.ci['jobs'].values()]
+        for area in changes.AREAS:
+            with self.subTest(area=area):
+                self.assertTrue([c for c in conditions if f"needs.changes.outputs.{area} == 'true'" in c])
+
+    def test_ci_ok_needs_every_job(self):
+        jobs = self.ci['jobs']
+        self.assertEqual(set(jobs['ci-ok']['needs']), set(jobs) - {'ci-ok'})
+        self.assertEqual(jobs['ci-ok']['if'], 'always()')
+
+    def test_every_deployment_test_suite_runs(self):
+        scripts = [script for job_id, _, script in workflow_data.scripts(self.ci) if job_id == 'deploy']
+        folders = {suite.parent.relative_to(ROOT).as_posix() for suite in (ROOT / 'deploy').glob('**/tests/test_*.py')}
+        for folder in sorted(folders):
+            with self.subTest(folder=folder):
+                self.assertTrue([s for s in scripts if f'python3 -m unittest discover -s {folder} ' in s])
+
     def test_moved_and_non_ascii_paths_start_their_areas(self):
         """The pull request's diff command, run on a scratch repository: a
         move names its source too, and a non-ASCII path stays unquoted."""
-        command = re.search(r'^\s*(git .*diff .*HEAD\^1 HEAD) \|', self.ci, re.M).group(1)
+        command = re.search(r'^\s*(git .*diff .*HEAD\^1 HEAD) \|', areas_step()['run'], re.M).group(1)
         # Git's defaults as on a runner, not this machine's settings.
         env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
         with tempfile.TemporaryDirectory() as tmp:
