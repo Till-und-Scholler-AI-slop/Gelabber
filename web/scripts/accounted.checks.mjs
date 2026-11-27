@@ -1,3 +1,4 @@
+/* global URL */
 // Every script under web/scripts is named somewhere that runs or documents
 // it: web/scripts/README.md, package.json, checks.mjs, a workflow, or a path in
 // a script that is (an import, `new URL("./x.py", import.meta.url)`, a
