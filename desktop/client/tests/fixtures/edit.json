@@ -1,22 +1,22 @@
 {
-  "id": "31ea78da-b4ca-4962-b123-926f0ad5ec30",
-  "channel_id": "e68dd730-1f6c-449b-86f3-1f5e740ea5f9",
+  "id": "4031fc5a-929c-49e2-9c89-56ba39af70d2",
+  "channel_id": "b4730f18-b56b-4f27-818f-a809aa9e6ff6",
   "author": {
-    "id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
+    "id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
     "name": "Lena",
     "avatar_url": null
   },
   "content": "Erste **Nachricht**, geändert",
-  "created_at": "2026-11-27T18:00:58.526230Z",
-  "edited_at": "2026-11-27T18:00:58.675226Z",
-  "revision": 130,
-  "created_order": 73,
+  "created_at": "2026-11-27T18:47:56.905490Z",
+  "edited_at": "2026-11-27T18:47:57.082482Z",
+  "revision": 65,
+  "created_order": 32,
   "attachments": [],
   "reactions": [
     {
       "emoji": "👍",
       "user_ids": [
-        "d899594b-1041-431b-aadb-ada4789bbcc7"
+        "cf6336df-54a8-467e-a622-9eb772100bd3"
       ]
     }
   ],

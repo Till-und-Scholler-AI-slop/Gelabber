@@ -1,9 +1,9 @@
 {
-  "id": "7951037b-531e-420a-87ce-cb4cdf091cf3",
+  "id": "abc17d0a-f188-49da-bd2f-1c429850b85a",
   "name": "Aufnahme",
-  "owner_id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
+  "owner_id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
   "icon_url": null,
-  "created_at": "2026-11-27T18:00:58.239621Z",
+  "created_at": "2026-11-27T18:47:56.376097Z",
   "role": "member",
   "permissions": [
     "send_messages",

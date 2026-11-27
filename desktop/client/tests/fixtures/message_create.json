@@ -1,19 +1,19 @@
 {
-  "id": "31ea78da-b4ca-4962-b123-926f0ad5ec30",
-  "channel_id": "e68dd730-1f6c-449b-86f3-1f5e740ea5f9",
+  "id": "4031fc5a-929c-49e2-9c89-56ba39af70d2",
+  "channel_id": "b4730f18-b56b-4f27-818f-a809aa9e6ff6",
   "author": {
-    "id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
+    "id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
     "name": "Lena",
     "avatar_url": null
   },
   "content": "Erste **Nachricht** ||geheim||",
-  "created_at": "2026-11-27T18:00:58.526230Z",
+  "created_at": "2026-11-27T18:47:56.905490Z",
   "edited_at": null,
-  "revision": 127,
-  "created_order": 73,
+  "revision": 62,
+  "created_order": 32,
   "attachments": [],
   "reactions": [],
   "mentions": [],
   "mention_everyone": false,
-  "nonce": "a0bc534e-b4df-4ee6-bd77-822b23e10c14"
+  "nonce": "2fd142f8-cd40-4d36-85c5-1592d1d921b6"
 }

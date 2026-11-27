@@ -1,13 +1,13 @@
 {
-  "id": "51906494-1479-42d0-befe-d7335cf3992b",
-  "upload_url": "http://127.0.0.1:29400/gelabber/att/51906494-1479-42d0-befe-d7335cf3992b?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=gelabber%2F20261127%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261127T180058Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=95b924923310bdb6ae4dd50c2d86a747be2685e7f63211d834da0f6866e4a537",
+  "id": "a77a3c22-1651-49a8-94f4-3ed6f2cace28",
+  "upload_url": "http://127.0.0.1:29400/gelabber/att/a77a3c22-1651-49a8-94f4-3ed6f2cace28?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=gelabber%2F20261127%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261127T184756Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=3e0445afb11296d37c0affd1af56d441d1625e54efaa64fb0c19a0addc22e07b",
   "headers": {
     "Content-Length": "5",
     "Content-Type": "text/plain"
   },
   "expires_in": 600,
   "attachment": {
-    "id": "51906494-1479-42d0-befe-d7335cf3992b",
+    "id": "a77a3c22-1651-49a8-94f4-3ed6f2cace28",
     "filename": "hallo.txt",
     "content_type": "text/plain",
     "size": 5

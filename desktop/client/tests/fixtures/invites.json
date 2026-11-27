@@ -1,11 +1,11 @@
 [
   {
-    "code": "zupux4xr3q9a",
-    "server_id": "7951037b-531e-420a-87ce-cb4cdf091cf3",
-    "created_by": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
-    "created_at": "2026-11-27T18:00:58.262563Z",
-    "expires_at": null,
-    "max_uses": null,
+    "code": "mhk6uay6h84m",
+    "server_id": "abc17d0a-f188-49da-bd2f-1c429850b85a",
+    "created_by": "dab64b25-3c51-417c-a638-b3abaad54d3d",
+    "created_at": "2026-11-27T18:47:56.417030Z",
+    "expires_at": "2026-11-28T18:47:56.416439Z",
+    "max_uses": 5,
     "uses": 0
   }
 ]
