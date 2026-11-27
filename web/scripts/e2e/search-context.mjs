@@ -273,18 +273,20 @@ try {
   // The reader leaves the end. A wheel moves 25 px here and 85 to 105 px on
   // a CI runner, too far for this place, and a scrollbar-like jump keeps the
   // list pinned when its height changed since its last recorded position
-  // (scrollEndIntent), so it is pulled back to the end. So the intent goes
-  // the way the list reads it, as an upward wheel that moves nothing, and
-  // the list is placed 40 px from its end and read back once it holds.
-  await until(
-    async () => {
-      await log.evaluate((el) =>
+  // (scrollEndIntent), so it is pulled back to the end: GEL-461, a defect a
+  // scrollbar user can hit too. Until it is fixed the intent goes the way
+  // the list reads it, as an upward wheel that moves nothing; the wheel goes
+  // with the fix.
+  const leaveEnd = (offset) =>
+    log
+      .evaluate((el) =>
         el.dispatchEvent(
           new WheelEvent("wheel", { deltaY: -1, bubbles: true }),
         ),
-      );
-      return settleList(40);
-    },
+      )
+      .then(() => settleList(offset));
+  await until(
+    () => leaveEnd(40),
     (state) => state.held && state.gap > 16 && state.gap < 64,
     "history-place-before-search",
   );
@@ -457,10 +459,14 @@ try {
     const marker = `${needle} place`;
     await send(owner, channel, marker);
     await member.page.getByText(marker, { exact: true }).waitFor();
-    // Up from the end, as a reader leaves it (scrollEndIntent).
-    await log.evaluate((el) => {
-      el.scrollTop = el.scrollHeight - el.clientHeight - 200;
-    });
+    // Up from the end, as a reader leaves it, and really in the history:
+    // a list pulled back to its end would make the check below pass on
+    // nothing (GEL-461, see the fixture above).
+    await until(
+      () => leaveEnd(200),
+      (state) => state.held && state.gap > 150,
+      "place-reader-not-in-history",
+    );
     const before = await place(member.page);
     await search(marker);
     await member.page

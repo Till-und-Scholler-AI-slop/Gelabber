@@ -1,4 +1,4 @@
-/* global process, document, window, fetch, Event, console, setTimeout, Buffer, requestAnimationFrame */
+/* global process, document, window, fetch, Event, console, setTimeout, Buffer, requestAnimationFrame, URL */
 // Local browser acceptance for read state, scoped search and composer drafts.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -84,6 +84,20 @@ try {
   });
   for (const event of ["requestfinished", "requestfailed"])
     member.page.on(event, (request) => memberFetches.delete(request));
+  // The member's reads as sent: which message, and the server's answer.
+  // Never sent, rejected, or sent for an older row tell three causes apart.
+  const memberReads = [];
+  member.page.on("response", (response) => {
+    const request = response.request();
+    if (
+      request.method() === "PUT" &&
+      /\/api\/channels\/[^/]+\/read$/.test(new URL(request.url()).pathname)
+    )
+      memberReads.push({
+        messageId: request.postDataJSON()?.message_id ?? null,
+        status: response.status(),
+      });
+  });
   const created = await api(owner, "/servers", "POST", {
     name: `Chat ${suffix}`,
   });
@@ -132,7 +146,7 @@ try {
         el.scrollTop = 0;
         el.dispatchEvent(new Event("scroll"));
       });
-      await send(owner, channel, "history must stay unread");
+      const newest = await send(owner, channel, "history must stay unread");
       await until(
         () => channelState(member, channel),
         (row) => row.unread_count === 1,
@@ -142,10 +156,11 @@ try {
       assert.equal((await channelState(member, channel)).unread_count, 1);
       // From the top, the jump lands at the end the virtual list estimates;
       // rows measured there can move the end on. Scroll until the list holds
-      // at its end, as a reader keeps scrolling, then the newest is read.
-      const atEnd = () =>
-        log.evaluate(async (el) => {
-          el.scrollTop = el.scrollHeight;
+      // at its end, as a reader keeps scrolling; after that only read it, so
+      // a drift away from the end shows in the sample.
+      const listState = (scroll) =>
+        log.evaluate(async (el, scroll) => {
+          if (scroll) el.scrollTop = el.scrollHeight;
           const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
           let still = 0;
           let last = state();
@@ -174,20 +189,31 @@ try {
             focused: document.hasFocus(),
             visibility: document.visibilityState,
             listBusy: el.getAttribute("aria-busy") === "true",
+            // A failed read shows this and stops further attempts.
+            readNotSaved: el
+              .closest("main, body")
+              .textContent.includes("Lesestatus nicht gespeichert."),
           };
-        });
+        }, scroll);
       await until(
-        atEnd,
+        () => listState(true),
         (state) => state.held && state.gap <= 1,
         "scroll-to-end",
       );
+      const readsBefore = memberReads.length;
       // Its last sample says where the list stood and what the app made of
       // it: at the end, the newest on screen, no jump button, focused and
-      // visible, and still unread is the app's fault.
+      // visible, and still unread is the app's fault; the reads sent since
+      // say whether it never sent one, was refused, or read an older row.
       await until(
         async () => ({
           ...(await channelState(member, channel)),
-          list: { ...(await atEnd()), messageFetches: memberFetches.size },
+          list: {
+            ...(await listState(false)),
+            messageFetches: memberFetches.size,
+            reads: memberReads.slice(readsBefore),
+            newestId: newest.id,
+          },
         }),
         (row) => row.unread_count === 0,
         "scroll-read",

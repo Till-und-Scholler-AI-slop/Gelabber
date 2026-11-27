@@ -18,7 +18,9 @@ the document named in the table describes. Run all of them from `web/`.
 A check that is known to fail stays in its script's list of expected failures
 (`e2e/expected-failures.mjs`), with the issue that ends it and the failure
 message it expects. The run fails when such a check passes, so its entry goes
-with the fix, when it fails with another message, and when no check passed.
+with the fix, when it fails with another message, when it did not run although
+the run included it (renamed or no longer reached; a filter such as
+`GELABBER_A11Y_ONLY` leaves checks out), and when no check passed.
 
 ## Started by hand
 

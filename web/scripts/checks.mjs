@@ -34,6 +34,7 @@ const checks = [
   ["scripts/load/load.checks.mjs"],
   ["scripts/audio/benchmark-rnnoise.mjs"],
   ["scripts/run-within.checks.mjs"],
+  ["scripts/accounted.checks.mjs"],
 ];
 // Longest first, so the slowest one does not start last.
 const smokes = [
