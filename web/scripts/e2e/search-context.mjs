@@ -226,9 +226,10 @@ try {
     "canonical-end-before-native-up",
   );
   await new Promise((r) => setTimeout(r, 500));
-  // How far a wheel delta scrolls differs between machines (25 px here, 105
-  // on a CI runner): step up in small wheel moves, each come to rest, until
-  // the list is just off its end.
+  // How far a wheel scrolls differs between machines (25 px here, 85 to 105
+  // on a CI runner, whatever the delta). The upward wheel is the reader's
+  // intent: it lets the list go from its end, and only the reader takes it
+  // back there. The page then sets the place, just off the end.
   const restingGap = () =>
     log.evaluate(async (el) => {
       let still = 0;
@@ -240,8 +241,12 @@ try {
       }
       return el.scrollHeight - el.scrollTop - el.clientHeight;
     });
-  for (let step = 0; step < 20 && (await restingGap()) <= 16; step++)
-    await member.page.mouse.wheel(0, -5);
+  await member.page.mouse.wheel(0, -25);
+  await until(restingGap, (gap) => gap > 16, "history-wheel-up");
+  await log.evaluate((el) => {
+    el.scrollTop = el.scrollHeight - el.clientHeight - 40;
+  });
+  await restingGap();
   await until(
     () =>
       log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),

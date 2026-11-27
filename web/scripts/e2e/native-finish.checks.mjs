@@ -118,10 +118,14 @@ async function finishProbe(
     "./probe.mjs": { instrument() {}, sample() {} },
     "./native-evaluate.mjs": {
       ...native,
-      // Shorten only the infrastructure control's waits. Execute the actual
-      // deadline helper; the committed harness retains its 5/12s budgets.
-      deadlineProbe: (probe, deadline) =>
-        native.deadlineProbe(probe, Math.min(deadline, Date.now() + 25)),
+      // Closes that never settle run into the harness's own deadline: shorten
+      // it to 25 ms for that case only. Everywhere else the 5/12 s budgets
+      // stay, so a healthy step on a slow machine cannot run out of time.
+      deadlineProbe:
+        brokenClose === "pending"
+          ? (probe, deadline) =>
+              native.deadlineProbe(probe, Math.min(deadline, Date.now() + 25))
+          : native.deadlineProbe,
     },
     "./browser-options.mjs": options,
     "node:child_process": {
