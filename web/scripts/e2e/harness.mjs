@@ -39,6 +39,14 @@ export async function pollPause(deadline) {
   while (Date.now() < wakeAt) await pause(Math.max(1, wakeAt - Date.now()));
   return another && Date.now() + probeBudgetMin <= deadline;
 }
+/** Runs `action` and returns the response `match` picks on `page`. A
+ * waiter started before an action that then throws rejects later with
+ * nobody listening, and that ends the whole runner before its teardown
+ * (GEL-453); waiting on both at once keeps its rejection handled. */
+export async function responseTo(page, match, action) {
+  const [response] = await Promise.all([page.waitForResponse(match), action()]);
+  return response;
+}
 export async function until(probe, accept, code, timeout = 10_000) {
   const deadline = Date.now() + timeout;
   let last;
@@ -191,6 +199,25 @@ export async function startHarness() {
     results: [],
     cleanup: [],
   };
+  // A promise a scenario left behind can reject after its row is written.
+  // Node would end the run on it, before the report and the runner's
+  // teardown, and every later profile would find the ports taken (GEL-453).
+  // It fails by name instead, and the run goes on.
+  process.on("unhandledRejection", (error) => {
+    const reason = safeError(error);
+    process.exitCode = 1;
+    report.results.push({
+      id: "stray-rejection",
+      status: "FAIL",
+      reason,
+      classification: "test-error",
+      // The case that was running, not necessarily the one that left it.
+      during: report.checkpoint?.case ?? null,
+      site: failureSite(error?.stack),
+      at: new Date().toISOString(),
+    });
+    console.log(`FAIL stray-rejection (${reason})`);
+  });
   async function actor(label) {
     // The scenarios find controls by their German names, and the
     // app follows the browser's language (src/i18n/locale.ts), English on CI.
@@ -276,15 +303,16 @@ export async function startHarness() {
       dialog = owner.page.getByRole("dialog", { name: "Kanal erstellen" });
       await dialog.getByText(kind, { exact: true }).click();
       await dialog.getByLabel("Name", { exact: true }).fill(name);
-      const createdResponse = owner.page.waitForResponse(
+      const response = await responseTo(
+        owner.page,
         (r) =>
           new URL(r.url()).pathname === `/api/servers/${serverId}/channels` &&
           r.request().method() === "POST",
+        () =>
+          dialog
+            .getByRole("button", { name: "Erstellen", exact: true })
+            .click(),
       );
-      await dialog
-        .getByRole("button", { name: "Erstellen", exact: true })
-        .click();
-      const response = await createdResponse;
       check(
         [200, 201].includes(response.status()),
         "channel-fixture-create-rejected",
@@ -500,16 +528,16 @@ export async function startHarness() {
         await page.goto(`${base}/login`);
         await page.getByLabel("E-Mail-Adresse").fill(owner.email);
         await page.getByLabel("Passwort", { exact: true }).fill(password);
-        const login = page.waitForResponse(
+        stage = "submit-login";
+        const login = await responseTo(
+          page,
           (r) =>
             new URL(r.url()).pathname === "/api/auth/login" &&
             r.request().method() === "POST",
+          () =>
+            page.getByRole("button", { name: "Anmelden", exact: true }).click(),
         );
-        stage = "submit-login";
-        await page
-          .getByRole("button", { name: "Anmelden", exact: true })
-          .click();
-        statuses.login = (await login).status();
+        statuses.login = login.status();
         stage = "wait-login-redirect";
         await page.waitForURL((url) => !url.pathname.includes("login"));
         stage = "delete-owned-server";
@@ -571,7 +599,20 @@ export async function startHarness() {
     report.finishedAt = new Date().toISOString();
     for (const id of gate(report.results, selected, report.cleanup).absent)
       blocked(id, "selected-case-unknown-or-not-reached");
-    report.gate = gate(report.results, selected, report.cleanup);
+    const expected = JSON.parse(
+      process.env.GELABBER_E2E_EXPECTED_FAILURES || "{}",
+    );
+    report.gate = gate(report.results, selected, report.cleanup, expected);
+    for (const { id, issue, reason } of report.gate.expectedFailures)
+      console.log(`EXPECTED FAIL ${id} (${issue}): ${reason}`);
+    for (const { id, issue, reason, site } of report.gate.otherFailures)
+      console.log(
+        `FAIL of an expected failure for another reason: ${id} ${reason} at ${site} (listed under ${issue})`,
+      );
+    for (const { id, issue } of report.gate.nowPassing)
+      console.log(
+        `PASS of an expected failure: remove ${id} from its profile's list (${issue})`,
+      );
     const path =
       process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
     await mkdir(dirname(path), { recursive: true });

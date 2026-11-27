@@ -1,4 +1,4 @@
-/* global URL */
+/* global URL, setImmediate */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -109,6 +109,7 @@ async function finishProbe(
   const process = {
     env: { GELABBER_E2E_REPORT: "/tmp/native-finish-control.json" },
     exitCode: 0,
+    on() {},
   };
   const mocks = {
     playwright: {
@@ -272,4 +273,165 @@ test("actual harness pending close paths time out visibly and still write the re
       ),
     );
   assert.equal(r.reports[0].gate.passed, false);
+});
+
+// GEL-453: the actual harness with a fake browser. `page` overrides parts of
+// the fake page; `process` is the harness's own.
+async function harnessProbe({ page: overrides = {}, process }) {
+  const locator = {
+    fill: async () => {},
+    click: async () => {},
+    first() {
+      return this;
+    },
+    // Only the channel dialog's "Erstellen" takes the override.
+    getByRole(role, { name } = {}) {
+      if (role === "dialog") return { ...this, dialog: name };
+      return this.dialog === "Kanal erstellen" &&
+        name === "Erstellen" &&
+        overrides.createClick
+        ? { ...this, click: overrides.createClick }
+        : this;
+    },
+    getByLabel() {
+      return this;
+    },
+    getByText() {
+      return this;
+    },
+    inputValue: async () => "http://127.0.0.1:5174/invite/control",
+  };
+  const browser = {
+    version: () => "155.0",
+    newContext: async () => ({
+      addInitScript: async () => {},
+      newPage: async () => ({
+        goto: async () => {},
+        waitForURL: async () => {},
+        waitForFunction: async () => {},
+        url: () => "http://127.0.0.1:5174/s/server-control/c/text-control",
+        setDefaultTimeout() {},
+        isClosed: () => false,
+        getByRole: (role, options) => locator.getByRole(role, options),
+        getByLabel: () => locator,
+        locator: () => locator,
+        waitForResponse: async () => ({
+          status: () => 200,
+          json: async () => ({ id: "voice-control" }),
+        }),
+        evaluate: async (_fn, arg) =>
+          arg?.path === "/servers/server-control"
+            ? {
+                status: 200,
+                body: { channels: [{ id: "text-control", kind: "text" }] },
+              }
+            : { status: 200, body: { user: { id: "owned-control" } } },
+        close: async () => {},
+        ...overrides,
+      }),
+      close: async () => {},
+    }),
+    close: async () => {},
+  };
+  const mocks = {
+    playwright: {
+      chromium: { launch: async () => browser },
+      firefox: { launch: async () => browser },
+    },
+    "./probe.mjs": { instrument() {}, sample() {} },
+    "./native-evaluate.mjs": native,
+    "./browser-options.mjs": options,
+    "node:child_process": {
+      execFileSync: (_cmd, args) =>
+        args.includes("rev-parse") ? "a".repeat(40) : "",
+    },
+    "node:fs/promises": {
+      readdir: async () => [],
+      readFile: async () => "",
+      mkdir: async () => {},
+      writeFile: async () => {},
+    },
+  };
+  const harnessUrl = new URL("./harness.mjs", import.meta.url);
+  const context = vm.createContext({ URL, process, console: { log() {} } });
+  const source = new vm.SourceTextModule(await readFile(harnessUrl, "utf8"), {
+    context,
+    identifier: harnessUrl.href,
+    initializeImportMeta: (meta) => {
+      meta.url = harnessUrl.href;
+    },
+  });
+  await source.link(async (name) => {
+    const exports = mocks[name] ?? (await import(name));
+    return new vm.SyntheticModule(
+      Object.keys(exports),
+      function () {
+        for (const [k, v] of Object.entries(exports)) this.setExport(k, v);
+      },
+      { context },
+    );
+  });
+  await source.evaluate();
+  return source.namespace.startHarness();
+}
+const harnessProcess = () => {
+  const listeners = {};
+  return {
+    env: { GELABBER_E2E_REPORT: "/tmp/stray-rejection-control.json" },
+    exitCode: 0,
+    listeners,
+    on(event, listener) {
+      listeners[event] = listener;
+    },
+  };
+};
+test("a fixture whose channel click fails leaves no response waiter unheard", async () => {
+  const unheard = [];
+  const listen = (reason) => unheard.push(reason);
+  globalThis.process.on("unhandledRejection", listen);
+  try {
+    let expire;
+    const h = await harnessProbe({
+      process: harnessProcess(),
+      page: {
+        waitForResponse: () =>
+          new Promise((_, reject) => {
+            expire = reject;
+          }),
+        createClick: async () => {
+          throw new Error("create-click-failed");
+        },
+      },
+    });
+    await assert.rejects(h.fixture(), /create-click-failed/);
+    // The waiter's own deadline passes after the fixture already failed.
+    expire(new Error("page.waitForResponse: Timeout 12000ms exceeded."));
+    await new Promise((done) => setImmediate(done));
+  } finally {
+    globalThis.process.off("unhandledRejection", listen);
+  }
+  assert.deepEqual(unheard, []);
+});
+test("a stray rejection fails by name and the run goes on", async () => {
+  const process = harnessProcess();
+  const h = await harnessProbe({ process });
+  const before = await h.run("first-control", [], async () => ({}));
+  assert.equal(before.status, "PASS");
+  // A promise first-control left behind rejects later, unheard.
+  const stray = new Error(
+    'page.waitForResponse: Timeout 12000ms exceeded while waiting for event "response" PRIVATE',
+  );
+  stray.name = "TimeoutError";
+  stray.stack = `${stray.message}\n    at file:///w/web/scripts/e2e/core.mjs:55:41`;
+  assert.equal(typeof process.listeners.unhandledRejection, "function");
+  process.listeners.unhandledRejection(stray, Promise.resolve());
+  const after = await h.run("second-control", [], async () => ({}));
+  assert.equal(after.status, "PASS");
+  const row = h.report.results.find((r) => r.id === "stray-rejection");
+  assert.equal(row.status, "FAIL");
+  assert.equal(row.reason, "browser-deadline");
+  assert.equal(row.during, "first-control");
+  assert.equal(row.site, "core.mjs:55:41");
+  assert.equal(process.exitCode, 1);
+  assert.ok(!JSON.stringify(h.report.results).includes("PRIVATE"));
 });

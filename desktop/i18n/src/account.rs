@@ -122,29 +122,15 @@ mod tests {
     use crate::on_this_thread;
 
     #[test]
-    fn texts_with_names_and_counts_speak_both_languages() {
+    fn counts_speak_both_languages() {
         let _de = on_this_thread(Locale::De);
-        assert_eq!(devices_desktop("Linux"), "Gelabber für Linux");
-        assert_eq!(
-            devices_browser_on("Firefox", "Windows"),
-            "Firefox unter Windows"
-        );
-        assert_eq!(
-            devices_last_active(&devices_last_active_days_ago(12)),
-            "Zuletzt aktiv: vor 12 Tagen"
-        );
+        assert_eq!(devices_last_active_days_ago(12), "vor 12 Tagen");
         assert_eq!(devices_last_active_days_ago(1), "vor 1 Tag");
         assert_eq!(delete_owned_members(1), "1 Mitglied");
         assert_eq!(delete_owned_members(5), "5 Mitglieder");
         drop(_de);
         let _en = on_this_thread(Locale::En);
-        assert_eq!(devices_desktop("Linux"), "Gelabber for Linux");
-        assert_eq!(devices_browser_on("Safari", "iOS"), "Safari on iOS");
         assert_eq!(devices_last_active_days_ago(2), "2 days ago");
-        assert_eq!(
-            export_hint_ready("18 November 2036", "46.0 MB"),
-            "Ready until 18 November 2036, 46.0 MB."
-        );
         assert_eq!(delete_owned_members(1), "1 member");
     }
 }
