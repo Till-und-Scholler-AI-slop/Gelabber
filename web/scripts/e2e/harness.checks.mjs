@@ -5,6 +5,8 @@ import {
   CheckFailure,
   check,
   failureSite,
+  harnessSite,
+  timedOutAction,
   revision,
   safeError,
   safeTarget,
@@ -62,6 +64,23 @@ test("a failure names the scenario's line, not the harness helper", () => {
     "harness.mjs:286:10",
   );
   assert.equal(failureSite(undefined), null);
+  assert.equal(harnessSite(stack), "harness.mjs:45:9");
+  assert.equal(harnessSite(undefined), null);
+});
+test("a browser deadline names the Playwright call that ran out, nothing else", () => {
+  const e = new Error(
+    'page.goto: Timeout 12000ms exceeded.\nCall log:\n  - navigating to "http://127.0.0.1:15186/register?token=SECRET"',
+  );
+  e.name = "TimeoutError";
+  assert.equal(timedOutAction(e), "page.goto");
+  e.message = "locator.click: Timeout 12000ms exceeded.\nCall log: SECRET";
+  assert.equal(timedOutAction(e), "locator.click");
+  e.message = "https://host/?token=SECRET: Timeout 1ms exceeded";
+  assert.equal(timedOutAction(e), null);
+  assert.equal(
+    timedOutAction(new Error("page.goto: Timeout 12000ms exceeded.")),
+    null,
+  );
 });
 test("evidence errors discard Playwright URLs, secrets and call logs", () => {
   const e = new Error(

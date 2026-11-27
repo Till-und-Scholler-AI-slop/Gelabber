@@ -82,6 +82,18 @@ export function failureSite(stack = "") {
     sites.find((site) => !site.startsWith("harness.mjs:")) ?? sites[0] ?? null
   );
 }
+// The harness line too: the same scenario line can call several of its steps.
+export function harnessSite(stack = "") {
+  return stack.match(/scripts\/e2e\/(harness\.mjs:\d+:\d+)/)?.[1] ?? null;
+}
+// Only Playwright's method name ("page.goto"), never the rest of its message.
+export function timedOutAction(error) {
+  return error?.name === "TimeoutError"
+    ? (/^([a-z]+\.[a-zA-Z]+): Timeout \d+ms exceeded/.exec(
+        error.message,
+      )?.[1] ?? null)
+    : null;
+}
 export function safeError(error) {
   // Playwright errors contain URLs, form values and call logs: never persist them.
   return error instanceof CheckFailure ||
@@ -191,6 +203,16 @@ export async function startHarness() {
     results: [],
     cleanup: [],
   };
+  // How long each fixture step took, in the fixture's row (GEL-423).
+  const fixtureSteps = [];
+  async function step(name, action) {
+    const start = Date.now();
+    try {
+      return await action();
+    } finally {
+      fixtureSteps.push({ step: name, ms: Date.now() - start });
+    }
+  }
   async function actor(label) {
     // The scenarios find controls by their German names, and the
     // app follows the browser's language (src/i18n/locale.ts), English on CI.
@@ -212,52 +234,70 @@ export async function startHarness() {
       completedActorContextCloses.add(context);
     };
     actors.push(result);
-    await page.goto(`${base}/register`);
-    await page.getByLabel("Name", { exact: true }).fill(`E2E ${label}`);
-    await page.getByLabel("E-Mail-Adresse").fill(email);
-    await page.getByLabel("Passwort", { exact: true }).fill(password);
-    await page
-      .getByRole("button", { name: "Registrieren", exact: true })
-      .click();
-    await page.waitForURL((url) => !url.pathname.includes("register"));
+    await step(`${label}-register-page`, async () => {
+      await page.goto(`${base}/register`);
+      await page.getByLabel("Name", { exact: true }).fill(`E2E ${label}`);
+    });
+    await step(`${label}-register-submit`, async () => {
+      await page.getByLabel("E-Mail-Adresse").fill(email);
+      await page.getByLabel("Passwort", { exact: true }).fill(password);
+      await page
+        .getByRole("button", { name: "Registrieren", exact: true })
+        .click();
+      await page.waitForURL((url) => !url.pathname.includes("register"));
+    });
     const session = await api(result, "/auth/session");
     check(session.body?.user?.id, "registration-session-missing");
     result.id = session.body.user.id;
     return result;
   }
   async function fixture() {
+    try {
+      return { ...(await buildFixture()), steps: fixtureSteps };
+    } catch (error) {
+      if (error instanceof Error) error.steps = fixtureSteps;
+      throw error;
+    }
+  }
+  async function buildFixture() {
     const owner = await actor("Publisher");
-    await owner.page
-      .getByRole("button", { name: "Server erstellen", exact: true })
-      .first()
-      .click();
-    let dialog = owner.page.getByRole("dialog", { name: "Server erstellen" });
-    await dialog.getByLabel("Name", { exact: true }).fill(`E2E ${suffix}`);
-    await dialog
-      .getByRole("button", { name: "Erstellen", exact: true })
-      .click();
-    // Creating a community opens its overview with an invite link already
-    // made. Keep the link, then select the actual text channel through the
-    // UI before continuing the message scenarios.
-    await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
+    let dialog;
+    await step("server-create", async () => {
+      await owner.page
+        .getByRole("button", { name: "Server erstellen", exact: true })
+        .first()
+        .click();
+      dialog = owner.page.getByRole("dialog", { name: "Server erstellen" });
+      await dialog.getByLabel("Name", { exact: true }).fill(`E2E ${suffix}`);
+      await dialog
+        .getByRole("button", { name: "Erstellen", exact: true })
+        .click();
+      // Creating a community opens its overview with an invite link already
+      // made. Keep the link, then select the actual text channel through the
+      // UI before continuing the message scenarios.
+      await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
+    });
     const serverId = new URL(owner.page.url()).pathname.split("/")[2];
-    dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
-    await owner.page.waitForFunction(() =>
-      document
-        .querySelector('input[aria-label="Einladungslink"]')
-        ?.value.includes("/invite/"),
-    );
-    const invite = await dialog
-      .getByRole("textbox", { name: "Einladungslink" })
-      .inputValue();
-    // Closing the dialog revokes a link nobody copied or shared
-    // (inviteSession.ts), so take it the way a user would first.
-    await dialog
-      .getByRole("button", { name: "Link kopieren", exact: true })
-      .click();
-    await dialog
-      .getByRole("button", { name: "Schließen", exact: true })
-      .click();
+    const invite = await step("invite-link", async () => {
+      dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
+      await owner.page.waitForFunction(() =>
+        document
+          .querySelector('input[aria-label="Einladungslink"]')
+          ?.value.includes("/invite/"),
+      );
+      const link = await dialog
+        .getByRole("textbox", { name: "Einladungslink" })
+        .inputValue();
+      // Closing the dialog revokes a link nobody copied or shared
+      // (inviteSession.ts), so take it the way a user would first.
+      await dialog
+        .getByRole("button", { name: "Link kopieren", exact: true })
+        .click();
+      await dialog
+        .getByRole("button", { name: "Schließen", exact: true })
+        .click();
+      return link;
+    });
     servers.push({ owner, id: serverId });
     const detail = await api(owner, `/servers/${serverId}`);
     check(detail.status === 200, "fixture-server-detail-missing");
@@ -266,8 +306,12 @@ export async function startHarness() {
     );
     check(textChannel?.id, "fixture-text-channel-missing");
     const textPath = `/s/${serverId}/c/${textChannel.id}`;
-    await owner.page.locator(`a.channel-row-link[href="${textPath}"]`).click();
-    await owner.page.waitForURL((url) => url.pathname === textPath);
+    await step("text-channel-open", async () => {
+      await owner.page
+        .locator(`a.channel-row-link[href="${textPath}"]`)
+        .click();
+      await owner.page.waitForURL((url) => url.pathname === textPath);
+    });
     async function channel(name, kind = "Sprache") {
       await owner.page.locator("summary.server-sidebar-menu-button").click();
       await owner.page
@@ -295,8 +339,12 @@ export async function startHarness() {
       await owner.page.locator(`.channel-sidebar a[href="${path}"]`).click();
       return path;
     }
-    const voicePath = await channel("E2E Voice A");
-    const otherPath = await channel("E2E Voice B");
+    const voicePath = await step("voice-channel-a", () =>
+      channel("E2E Voice A"),
+    );
+    const otherPath = await step("voice-channel-b", () =>
+      channel("E2E Voice B"),
+    );
     async function join(who) {
       await who.page.goto(invite);
       await who.page
@@ -307,9 +355,11 @@ export async function startHarness() {
     }
     const member = await actor("Member");
     const watcher = await actor("Watch");
-    await join(member);
-    await join(watcher);
-    await owner.page.goto(`${base}${voicePath}`);
+    await step("Member-join", () => join(member));
+    await step("Watch-join", () => join(watcher));
+    await step("Publisher-voice-open", () =>
+      owner.page.goto(`${base}${voicePath}`),
+    );
     return {
       owner,
       member,
@@ -383,6 +433,13 @@ export async function startHarness() {
                 : "unconfirmed-failure",
         // The scenario's own line, not the harness helper that threw.
         site: failureSite(error.stack),
+        ...(timedOutAction(error)
+          ? {
+              action: timedOutAction(error),
+              harnessSite: harnessSite(error.stack),
+            }
+          : {}),
+        ...(Array.isArray(error?.steps) ? { steps: error.steps } : {}),
         ...(error instanceof CheckFailure ||
         error instanceof NativeInterfaceFailure
           ? { metrics: error.metrics }
