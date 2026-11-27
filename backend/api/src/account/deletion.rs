@@ -40,7 +40,7 @@ use crate::mail::Mail;
 use crate::state::AppState;
 
 /// How often the worker looks for deleted accounts without being woken.
-const TICK: Duration = Duration::from_secs(2);
+pub(crate) const TICK: Duration = Duration::from_secs(2);
 /// Messages removed per transaction.
 const MESSAGE_BATCH: i64 = 500;
 /// Accounts one pass looks at; one that keeps failing does not hold up the
@@ -165,6 +165,9 @@ pub async fn mark_deleted(db: &PgPool, user_id: Uuid) -> Result<Removed, ApiErro
 
 /// Starts the purge worker once per process (see the module comment).
 pub fn start(state: AppState) {
+    let Some(tick) = state.workers.account_purge else {
+        return;
+    };
     if state.purge_worker_started.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -180,7 +183,7 @@ pub fn start(state: AppState) {
             // An account finished: look for the next one at once.
             if !busy {
                 let wake = state.account_purge.notified();
-                let _ = tokio::time::timeout(TICK, wake).await;
+                let _ = tokio::time::timeout(tick, wake).await;
             }
         }
     });

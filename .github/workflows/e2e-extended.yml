@@ -471,6 +471,8 @@ jobs:
           MEDIA_ICE_BIND: 127.0.0.1:0
           MEDIA_ADVERTISED_IP: 127.0.0.1
           GELABBER_DEV_PUBLIC_PAGES: scripts/parity/public-pages.json
+          # The tests sign in again and again; the sign-in limit is for people.
+          API_RATE_AUTH_PER_MIN: "0"
         run: |
           set -euo pipefail
           logs="$RUNNER_TEMP/desktop-live"

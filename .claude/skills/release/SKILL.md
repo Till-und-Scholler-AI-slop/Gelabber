@@ -11,7 +11,8 @@ is the order of the work; check each step's result before the next one.
 
 1. **Scope.** The Linear milestone vX.Y.Z has no open issue that should
    ship; move the rest to the next milestone. CI on the development line's head is
-   green. Compatibility code due in vX.Y fails
+   green, and so is the last Extended E2E push run on it (its issue "Extended
+   E2E fails on vX.Y" is closed). Compatibility code due in vX.Y fails
    `deploy/compose/tests/test_compat_markers.py` once the version is
    bumped; remove it with its tests in a pull request of its own to the
    development line first.
@@ -44,7 +45,8 @@ is the order of the work; check each step's result before the next one.
    upgrade traps that came up before: image pins that must move together,
    new required `.env` variables, and migrations that cannot be undone.
 5. **Pull request** `release: vX.Y.Z` to `main`. A maintainer merges it once
-   `ci-ok` is green; no second approval is needed. **Merging it deploys
+   `ci-ok` is green; no second approval is needed. Extended E2E runs on it by
+   itself; a red run there is understood before the merge. **Merging it deploys
    production:** `release.yml` moves `latest` and the server's Watchtower
    pulls it. So the merge needs an explicit go from a maintainer, never only
    an agent's decision, and before it the operator takes a backup
