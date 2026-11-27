@@ -40,10 +40,11 @@ async function mediaProbe({
   let launchedEnv;
   const mocks = {
     "./owned-process.mjs": {
-      removeLeftover: async () => {
+      clearLeftover: async () => {
         owned.push("leftover");
-        return null;
+        return {};
       },
+      portTaken: (_leftover, error) => error,
       recordOwned: async (_file, pid) => owned.push(`record-${pid}`),
       forgetOwned: async () => owned.push("forget"),
       killOnExit: () => {

@@ -9,11 +9,11 @@ import { promisify } from "node:util";
 import { attemptAll, closeOwnedApi, TeardownFailure } from "./teardown.mjs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
-import { recordOwned, removeLeftover } from "./owned-process.mjs";
+import { OwnedPortsBlocked, removeLeftover } from "./owned-process.mjs";
 import { failureSite, safeError, safeTarget } from "./harness.mjs";
 
 const secret = "PRIVATE-cookie-signed-URL-password";
@@ -79,6 +79,7 @@ async function runnerProbe({
   returnedMediaOrigin = "http://127.0.0.1:18087",
   strayAtStartup = false,
   harnessListening = false,
+  apiStartError,
 } = {}) {
   const acquired = [],
     hashReads = new Map();
@@ -138,6 +139,7 @@ async function runnerProbe({
       "./harness.mjs": { failureSite, safeError, safeTarget },
       "./fault-runtime.mjs": {
         startFaultApi: async () => {
+          if (apiStartError) throw apiStartError;
           acquired.push("api");
           if (strayAtStartup) {
             // The harness's own listener, once startHarness has run.
@@ -376,10 +378,11 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
   portProbe.close = (done) => done();
   let index = 0;
   const execFileMock = () => {};
-  execFileMock[promisify.custom] = async (_cmd, args) => ({
-    stdout: args.at(-1).includes("pg_stat_activity") ? "0\n" : "1\n",
-    stderr: "",
-  });
+  execFileMock[promisify.custom] = async (_cmd, args) => {
+    const dbCheck = args.at(-1).includes("pg_stat_activity");
+    if (dbCheck) calls.push("db.check");
+    return { stdout: dbCheck ? "0\n" : "1\n", stderr: "" };
+  };
   const proxy = () => {
     const id = index++;
     return {
@@ -435,10 +438,11 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
         deleteTopicKeys: async () => 4,
       },
       "./owned-process.mjs": {
-        removeLeftover: async () => {
+        clearLeftover: async () => {
           calls.push("owned.leftover");
-          return null;
+          return {};
         },
+        portTaken: (_leftover, error) => error,
         recordOwned: async () => calls.push("owned.record"),
         forgetOwned: async () => calls.push("owned.forget"),
         killOnExit: () => {
@@ -478,8 +482,10 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
     assert.ok(calls.includes(name), name);
   assert.ok(children.every((c) => c.signalCode === "SIGTERM"));
   assert.ok(!JSON.stringify(failure).includes(secret));
-  // An earlier runner's leftover goes first; the new API stays tied to this
-  // runner (exit hook, PID file) while its teardown failed (GEL-457).
+  // A dead runner's API holds the fault database too: its leftover goes
+  // before that check. The new API stays tied to this runner (exit hook,
+  // PID file) while its teardown failed (GEL-457).
+  assert.ok(calls.indexOf("owned.leftover") < calls.indexOf("db.check"));
   assert.deepEqual(
     calls.filter((name) => name.startsWith("owned.")),
     ["owned.leftover", "owned.hook", "owned.record"],
@@ -589,10 +595,10 @@ test("a stray rejection during start-up fails by name and the runner still tears
   assert.ok(!later.records.some((r) => r.path.endsWith(".startup-stray.json")));
 });
 
-// GEL-457 with real processes: a stand-in for the API or SFU that runs until
-// it is killed.
+// GEL-457 with real processes. A sleeper stands in for the API or SFU.
+const sleeperCode = "setInterval(() => {}, 1e6)";
 function sleeper(t) {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], {
+  const child = spawn(process.execPath, ["-e", sleeperCode], {
     stdio: "ignore",
   });
   t.after(() => {
@@ -601,26 +607,101 @@ function sleeper(t) {
   });
   return child;
 }
-// Running, as opposed to gone or a zombie, from /proc/<pid>/stat.
-async function running(pid) {
+async function processStat(pid) {
   const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => null);
-  return Boolean(stat) && stat.slice(stat.lastIndexOf(")") + 2)[0] !== "Z";
+  if (!stat) return null;
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  return { state: fields[0], started: fields[19] };
+}
+// Running, as opposed to gone or a zombie.
+async function running(pid) {
+  const stat = await processStat(pid);
+  return Boolean(stat) && stat.state !== "Z";
 }
 async function untilGone(pid, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   while ((await running(pid)) && Date.now() < deadline) await pause(50);
   return !(await running(pid));
 }
+// Kills `pid` at the end of a check, only while it is still the process
+// that started at `started`.
+function killAfter(t, pid, started) {
+  t.after(async () => {
+    if ((await processStat(pid))?.started === started)
+      process.kill(pid, "SIGKILL");
+  });
+}
+// A fault runner: starts a sleeper, ties it to itself and records it in
+// pidFile, prints the sleeper's PID and runs until it is killed.
+async function runner(t, pidFile) {
+  const module = new URL("./owned-process.mjs", import.meta.url).href;
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { spawn } from "node:child_process";
+       import { once } from "node:events";
+       import { killOnExit, recordOwned } from ${JSON.stringify(module)};
+       const child = spawn(process.execPath, ["-e", ${JSON.stringify(sleeperCode)}], { stdio: "ignore" });
+       await once(child, "spawn");
+       killOnExit(child);
+       await recordOwned(${JSON.stringify(pidFile)}, child.pid, process.execPath);
+       console.log(child.pid);
+       setInterval(() => {}, 1e6);`,
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill("SIGKILL");
+  });
+  let out = "";
+  child.stdout.on("data", (data) => (out += data));
+  while (!out.includes("\n") && child.exitCode === null)
+    await once(child.stdout, "data");
+  const owned = Number(out.trim());
+  assert.ok(Number.isInteger(owned) && owned > 1, out);
+  killAfter(t, owned, (await processStat(owned)).started);
+  return { process: child, owned };
+}
+async function pidDir(t) {
+  const dir = await mkdtemp(join(tmpdir(), "gelabber-owned-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  return join(dir, "api.pid");
+}
+test("a start the leftover check stops is BLOCKED with its reason", async () => {
+  const result = await runnerProbe({
+    apiStartError: new OwnedPortsBlocked("live-fault-run-owns-the-ports"),
+  });
+  assert.equal(result.exitCode, 1);
+  assert.deepEqual(result.acquired, []);
+  const record = result.records.find((r) => r.path.endsWith(".startup.json"));
+  assert.equal(record.body.status, "BLOCKED");
+  assert.equal(record.body.reason, "live-fault-run-owns-the-ports");
+  assert.ok(
+    result.messages.includes(
+      "BLOCKED live-fault-run-owns-the-ports; redacted startup artifact written",
+    ),
+  );
+  // Any other start-up error keeps the generic, redacted reason.
+  const other = await runnerProbe({ apiStartError: new Error(secret) });
+  assert.equal(
+    other.records.find((r) => r.path.endsWith(".startup.json")).body.reason,
+    "owned-runtime-startup-or-run-error",
+  );
+  assert.ok(!JSON.stringify(other).includes(secret));
+});
 test("a runner that crashes takes its owned child with it", async (t) => {
   const module = new URL("./owned-process.mjs", import.meta.url).href;
-  const runner = spawn(
+  const crashing = spawn(
     process.execPath,
     [
       "--input-type=module",
       "-e",
       `import { spawn } from "node:child_process";
        import { killOnExit } from ${JSON.stringify(module)};
-       const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+       const child = spawn(process.execPath, ["-e", ${JSON.stringify(sleeperCode)}], { stdio: "ignore" });
        killOnExit(child);
        console.log(child.pid);
        // A rejection nobody awaits ends this runner without any teardown.
@@ -629,45 +710,78 @@ test("a runner that crashes takes its owned child with it", async (t) => {
     { stdio: ["ignore", "pipe", "ignore"] },
   );
   let out = "";
-  runner.stdout.on("data", (data) => (out += data));
-  const [code] = await once(runner, "exit");
+  crashing.stdout.on("data", (data) => (out += data));
+  const [code] = await once(crashing, "exit");
   const pid = Number(out.trim());
-  t.after(() => {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // Already gone, as it should be.
-    }
-  });
   assert.notEqual(code, 0);
   assert.ok(Number.isInteger(pid) && pid > 1, out);
-  assert.ok(await untilGone(pid), `owned child ${pid} outlived its runner`);
+  const gone = await untilGone(pid);
+  if (!gone) killAfter(t, pid, (await processStat(pid))?.started);
+  assert.ok(gone, `owned child ${pid} outlived its runner`);
 });
-test("the next start removes a recorded leftover and nothing else", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "gelabber-owned-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const pidFile = join(dir, "api.pid");
-  assert.equal(await removeLeftover(pidFile), null);
-  // A runner killed with SIGKILL left this one behind.
-  const leftover = sleeper(t);
-  await once(leftover, "spawn");
-  await recordOwned(pidFile, leftover.pid, process.execPath);
-  const exited = once(leftover, "exit");
-  assert.equal(await removeLeftover(pidFile), leftover.pid);
-  assert.deepEqual(await exited, [null, "SIGKILL"]);
-  assert.equal(await removeLeftover(pidFile), null);
-  // The PID now belongs to another process (another start time), or runs
-  // another binary: neither is touched.
-  const other = sleeper(t);
-  await once(other, "spawn");
-  await recordOwned(pidFile, other.pid, process.execPath);
-  const record = JSON.parse(await readFile(pidFile, "utf8"));
-  for (const changed of [
-    { ...record, started: String(Number(record.started) + 1) },
-    { ...record, exe: "/opt/gelabber-api" },
-  ]) {
-    await writeFile(pidFile, JSON.stringify(changed));
-    assert.equal(await removeLeftover(pidFile), null);
-    assert.ok(await running(other.pid));
-  }
+test("the next start ends what a runner killed with SIGKILL left behind", async (t) => {
+  const pidFile = await pidDir(t);
+  assert.deepEqual(await removeLeftover(pidFile, process.execPath), {});
+  const run = await runner(t, pidFile);
+  run.process.kill("SIGKILL");
+  await once(run.process, "exit");
+  assert.ok(await running(run.owned), "the leftover runs on its own");
+  assert.deepEqual(await removeLeftover(pidFile, process.execPath), {
+    removed: run.owned,
+  });
+  assert.ok(await untilGone(run.owned));
+  assert.deepEqual(await removeLeftover(pidFile, process.execPath), {});
+});
+test("a second start beside a live run touches nothing of it", async (t) => {
+  const pidFile = await pidDir(t);
+  const run = await runner(t, pidFile);
+  // Run B, a separate process, starts while run A still runs.
+  const module = new URL("./owned-process.mjs", import.meta.url).href;
+  const second = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { removeLeftover } from ${JSON.stringify(module)};
+       console.log(JSON.stringify(await removeLeftover(${JSON.stringify(pidFile)}, process.execPath)));`,
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  let out = "";
+  second.stdout.on("data", (data) => (out += data));
+  await once(second, "exit");
+  assert.deepEqual(JSON.parse(out), {
+    blocked: "live-fault-run-owns-the-ports",
+  });
+  assert.ok(await running(run.owned), "run B ended run A's child");
+  assert.equal(run.process.exitCode, null);
+});
+test("a leftover that is not provably this start's own stays", async (t) => {
+  const pidFile = await pidDir(t);
+  const child = sleeper(t);
+  await once(child, "spawn");
+  const record = {
+    pid: child.pid,
+    started: (await processStat(child.pid)).started,
+    // No such runner any more.
+    runner: { pid: 2 ** 22 + 1, started: "1" },
+  };
+  const write = (body, mode = 0o600) =>
+    writeFile(pidFile, JSON.stringify(body), { mode }).then(() =>
+      chmod(pidFile, mode),
+    );
+  // Another binary than the one this start runs, or one rebuilt meanwhile.
+  await write(record);
+  assert.deepEqual(await removeLeftover(pidFile, "/bin/sh"), {
+    kept: "leftover-binary-is-not-this-starts-binary",
+  });
+  // A file others could have written.
+  await write(record, 0o644);
+  assert.deepEqual(await removeLeftover(pidFile, process.execPath), {
+    kept: "pid-file-not-private-to-this-user",
+  });
+  // The PID now belongs to a process with another start time.
+  await write({ ...record, started: String(Number(record.started) + 1) });
+  assert.deepEqual(await removeLeftover(pidFile, process.execPath), {});
+  assert.ok(await running(child.pid));
 });

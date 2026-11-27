@@ -12,6 +12,7 @@ import { failureSite, safeError, safeTarget } from "./harness.mjs";
 import { startFaultApi, useFaultRuntime } from "./fault-runtime.mjs";
 import { startFaultMedia } from "./media-runtime.mjs";
 import { attemptAll } from "./teardown.mjs";
+import { OwnedPortsBlocked } from "./owned-process.mjs";
 
 async function recordFailure(kind, record) {
   const report =
@@ -135,18 +136,21 @@ try {
   process.env.GELABBER_SMOKE_URL = "http://127.0.0.1:15186";
   process.env.GELABBER_E2E_API_SHA = runtime.manifest.sourceSha;
   await import("./run.mjs");
-} catch {
+} catch (error) {
   // Startup/teardown errors can contain credentials or signed URLs: persist no raw error.
   process.exitCode = 1;
+  // A start the leftover check stopped names why (GEL-457).
+  const reason =
+    error instanceof OwnedPortsBlocked
+      ? error.message
+      : "owned-runtime-startup-or-run-error";
   await recordFailure("startup", {
     status: "BLOCKED",
-    reason: "owned-runtime-startup-or-run-error",
+    reason,
     completeAcceptance: false,
     runner: fileURLToPath(import.meta.url),
   });
-  console.error(
-    "BLOCKED owned-runtime-startup-or-run-error; redacted startup artifact written",
-  );
+  console.error(`BLOCKED ${reason}; redacted startup artifact written`);
 } finally {
   const failedSteps = await attemptAll([
     ["api-resume", () => runtime?.resumeApi?.()],

@@ -1,4 +1,4 @@
-/* global process, fetch, URL, console */
+/* global process, fetch, URL */
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -11,10 +11,11 @@ import { objectStatus } from "./s3-object.mjs";
 import { tcpFaultProxy, storageFaultProxy } from "./faults.mjs";
 import { deleteTopicKeys } from "./redis-command.mjs";
 import {
+  clearLeftover,
   forgetOwned,
   killOnExit,
+  portTaken,
   recordOwned,
-  removeLeftover,
 } from "./owned-process.mjs";
 import {
   closeOwnedApi,
@@ -68,6 +69,10 @@ export async function startFaultApi({
     manifest.sha256,
     "API binary provenance mismatch",
   );
+  // A dead runner's API still holds the port and the fault database: it goes
+  // before both are checked (GEL-457).
+  const pidFile = `/tmp/gelabber-e2e-fault-api-${apiPort}.pid`;
+  const leftover = await clearLeftover(pidFile, manifest.binaryPath, "API");
   const pgEnv = {
     ...process.env,
     PGHOST: db.hostname,
@@ -100,23 +105,17 @@ export async function startFaultApi({
     paused = false;
   const locks = new Set();
   const topics = new Set();
-  const pidFile = `/tmp/gelabber-e2e-fault-api-${apiPort}.pid`;
   async function close() {
     await closeOwnedApi({ locks, proxies, child, logfile });
     unhook?.();
     await forgetOwned(pidFile);
   }
-  // An earlier runner that ended without its teardown may have left its API
-  // on the port (GEL-457).
-  const leftover = await removeLeftover(pidFile);
-  if (leftover)
-    console.log(
-      `Removed the owned API (pid ${leftover}) an earlier runner left behind`,
-    );
   try {
     const portProbe = createServer();
     portProbe.listen({ host: "127.0.0.1", port: apiPort, exclusive: true });
-    await once(portProbe, "listening");
+    await once(portProbe, "listening").catch((error) => {
+      throw portTaken(leftover, error);
+    });
     await new Promise((r) => portProbe.close(r));
     const redis = await tcpFaultProxy(env.REDIS_URL, redisPort);
     proxies.push(redis);
@@ -180,7 +179,7 @@ export async function startFaultApi({
     local(redisTarget);
     return {
       origin,
-      leftoverRemoved: leftover,
+      leftoverRemoved: leftover.removed ?? null,
       redis,
       storage,
       database,

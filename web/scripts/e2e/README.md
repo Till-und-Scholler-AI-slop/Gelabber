@@ -95,13 +95,16 @@ Add `GELABBER_E2E_BROWSER=firefox` for Firefox. The profiles `media`,
 combined with `GELABBER_E2E_CASES` or `GELABBER_E2E_SUITE`. The runtime
 refuses an env file readable by others, a database not named
 `gelabber_fault_<hex>` and a binary whose SHA-256 differs from its manifest.
-Ports are bound exclusively and existing services are never stopped. The own
-API and SFU end with the runner (an exit hook) and leave a PID file beside
-their log in `/tmp`; a runner that died without its teardown (SIGKILL) left
-them running, so the next start ends a process whose PID, start time and
-binary match that file, says so, and records it as `leftoverRemoved` in the
-report (GEL-457). A promise that start-up leaves behind and that rejects
-before the harness listens fails as `stray-rejection` in
+Ports are bound exclusively, and no service is stopped but an own API or SFU
+that a dead runner left behind. The own API and SFU end with the runner (an exit hook); a runner ended by SIGKILL, by
+SIGTERM or SIGINT sent to it alone or for lack of memory runs no hook, so each
+of them leaves a private PID file beside its log in `/tmp` that names it and
+its runner. The next start ends such a leftover only when that runner is dead
+and the leftover runs this start's own API or SFU binary, says so and records
+its PID as `leftoverRemoved` in the report; while the runner is alive, the
+start ends `BLOCKED live-fault-run-owns-the-ports` and touches nothing of it
+(GEL-457). A promise that start-up leaves behind and that rejects before the
+harness listens fails as `stray-rejection` in
 `$GELABBER_E2E_REPORT.startup-stray.json`, and the runner tears down. A Redis
 reset deletes only four exact topic keys, never `FLUSH`. Proxies are restored
 and owned processes closed in `finally`. A startup or teardown failure makes
