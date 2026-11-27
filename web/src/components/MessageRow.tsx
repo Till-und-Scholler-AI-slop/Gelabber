@@ -87,22 +87,48 @@ type MessageRowProps = {
 /** One message in the list. A row that throws while it draws shows a notice
  *  in its place with "Erneut versuchen"; the other rows stay (GEL-420). */
 export function MessageRow(props: MessageRowProps) {
+  const { message } = props;
   return (
     <CatchBoundary
-      getResetKey={() => `${props.message.id}:${props.message.revision ?? ""}`}
-      errorComponent={MessageRowFailed}
+      getResetKey={() => `${message.id}:${message.revision ?? ""}`}
+      errorComponent={({ reset }: ErrorComponentProps) => (
+        <MessageRowFailed message={message} reset={reset} />
+      )}
     >
       <MessageRowContent {...props} />
     </CatchBoundary>
   );
 }
 
-function MessageRowFailed({ reset }: ErrorComponentProps) {
+/** In the list's place of the row: focusable like a row (the list moves
+ *  focus to rows), and quiet, as the list itself announces new rows. The
+ *  author and the time show when they are readable. */
+function MessageRowFailed({
+  message,
+  reset,
+}: {
+  message: Message;
+  reset: () => void;
+}) {
   const t = useT(chat);
   const tc = useT(common);
+  const author: unknown = (message as { author?: { name?: unknown } }).author
+    ?.name;
+  const time =
+    typeof message.created_at === "string"
+      ? formatClock(message.created_at)
+      : "";
   return (
-    <div role="alert" className="lr-message-row lr-message-failed">
-      <p>{t("row.failed")}</p>
+    <div tabIndex={-1} className="lr-message-row lr-message-failed">
+      <p>
+        {typeof author === "string" && author ? (
+          <span className="lr-message-failed-meta">
+            {author}
+            {time ? ` · ${time}` : ""}
+          </span>
+        ) : null}
+        <span>{t("row.failed")}</span>
+      </p>
       <Button size="sm" variant="ghost" onClick={reset}>
         {tc("tryAgain")}
       </Button>

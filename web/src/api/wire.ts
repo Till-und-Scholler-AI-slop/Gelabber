@@ -151,10 +151,18 @@ export const isReadState: Check<ReadState> = (value): value is ReadState =>
 export function wholePage(value: unknown): MessagePage {
   if (!record(value) || !flag(value.has_more))
     throw malformed("message page", value);
-  return {
+  const page: MessagePage = {
     ...(value as MessagePage),
     messages: wholeRows(value.messages, isMessage, "message"),
   };
+  // Paging goes on from the oldest row the server sent, also when that row,
+  // or every row, was left out (`encodeCursor` in messages/pages.ts).
+  const oldest: unknown = (value.messages as unknown[])[0];
+  if (page.older === undefined && record(oldest)) {
+    if (text(oldest.created_at) && text(oldest.id))
+      page.older = `${oldest.created_at}|${oldest.id}`;
+  }
+  return page;
 }
 
 /** The rows of a list that are whole; the others are reported and left out.
@@ -182,5 +190,14 @@ export function whole<T>(value: unknown, check: Check<T>, what: string): T {
  *  so once in the console. */
 export function malformed(what: string, value: unknown): ApiError {
   reportMalformed(what, value);
-  return new ApiError("internal", 0, `The server sent a malformed ${what}.`);
+  return new ApiError(
+    "malformed_answer",
+    0,
+    `The server sent a malformed ${what}.`,
+  );
+}
+
+/** A request whose answer was rejected: it may still have done its work. */
+export function isMalformedAnswer(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "malformed_answer";
 }

@@ -35,6 +35,8 @@ export const isUser: Check<User> = (value): value is User =>
   text(value.name) &&
   textOrNull(value.avatar_url) &&
   text(value.created_at) &&
+  // The one check against a fixed list: a third language needs `isLocale`
+  // changed, in the same release as the API, as web and API ship together.
   isLocale(value.locale);
 
 const reported = new Set<string>();
@@ -42,11 +44,12 @@ const reported = new Set<string>();
 /** Says once per object what was dropped, with the object for the reader of
  *  the console. */
 export function reportMalformed(what: string, value: unknown): void {
-  const id =
+  // One key per object: a message that comes both by REST and by the
+  // gateway is told once.
+  const key =
     record(value) && (text(value.id) || text(value.channel_id))
       ? String(value.id ?? value.channel_id)
-      : JSON.stringify(value)?.slice(0, 200);
-  const key = `${what}:${id}`;
+      : `${what}:${JSON.stringify(value)?.slice(0, 200)}`;
   if (reported.has(key)) return;
   reported.add(key);
   console.warn(`[gelabber] dropped a malformed ${what} from the server`, value);

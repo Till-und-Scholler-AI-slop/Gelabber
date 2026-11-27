@@ -48,6 +48,9 @@ export type ApiErrorCode =
   | "upstream_unavailable"
   | "upstream_quota"
   | "internal"
+  /** Client-side: the answer is not what the server sends (GEL-420); the
+   * request may still have done its work. */
+  | "malformed_answer"
   | "network"
   | "timeout"
   | "invitation_required"
@@ -555,6 +558,9 @@ async function performAuthApi<T>(
     }
     requireAuthRequest(options, stamp);
     if (!response.ok) throwResponseError(response, payload);
+    // An account the client cannot read is a failed answer, not "nobody
+    // signed in": sign-in shows its error, the bootstrap its retry (GEL-420).
+    if (!logout && hasMalformedAccount(payload)) throw malformedAccount();
     rememberCsrf(payload);
     if (user !== undefined && !(logout && sessionScope().userId === null)) {
       sessionSink?.(user, {
@@ -724,9 +730,25 @@ function isSessionPayload(payload: unknown): payload is {
     !payload.csrf_token
   )
     return false;
-  if (payload.user === null || isUser(payload.user)) return true;
+  return payload.user === null || isUser(payload.user);
+}
+
+/** A session answer whose account is there but not whole. */
+function hasMalformedAccount(payload: unknown): boolean {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    !("user" in payload) ||
+    payload.user === null ||
+    isUser(payload.user)
+  )
+    return false;
   reportMalformed("session user", payload.user);
-  return false;
+  return true;
+}
+
+function malformedAccount(): ApiError {
+  return new ApiError("internal", 0, "The server sent a malformed account.");
 }
 
 /** `operator` of a session payload: anything but `true` is no operator. */

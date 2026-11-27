@@ -409,6 +409,10 @@ button.lr-reply-header:focus-visible .lr-reply-excerpt {
   font-size: 13.5px;
   color: var(--lr-muted);
 }
+.lr-message-failed-meta {
+  margin-right: 8px;
+  font-weight: 600;
+}
 
 /* Own messages on their way, and those that did not arrive. */
 .lr-message-row.is-sending .lr-message-text,
