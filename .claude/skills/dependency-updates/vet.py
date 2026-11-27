@@ -73,8 +73,11 @@ ECOSYSTEMS = {
 FILES = [
     (r"(backend|desktop)/([\w.-]+/)*Cargo\.toml", "cargo-manifest"),
     (r"(backend|desktop)/Cargo\.lock", "cargo-lock"),
-    (r"web(/scripts/mutation)?/package\.json", "npm-manifest"),
-    (r"web(/scripts/mutation)?/package-lock\.json", "npm-lock"),
+    (r"web/package\.json", "npm-manifest"),
+    (r"web/package-lock\.json", "npm-lock"),
+    # Stryker's own folder for mutation-web.yml (GEL-388).
+    (r"web/scripts/mutation/package\.json", "npm-manifest"),
+    (r"web/scripts/mutation/package-lock\.json", "npm-lock"),
     (r"(backend/api|backend/media|web|deploy/compose/minio|deploy/compose/mc)/Dockerfile", "dockerfile"),
     (r"deploy/compose/[\w.-]+\.ya?ml", "compose"),
     (r"\.github/workflows/[\w.-]+\.ya?ml", "workflow"),

@@ -9,18 +9,22 @@ request's merge commit (GITHUB_SHA), the branch a manual run names
 (AGENTS.md). Writes base=, sha=, branch= and label= to $GITHUB_OUTPUT.
 
 `plan BASE SHA` lists the lines of web/src that SHA adds or changes against
-BASE as Stryker `--mutate` patterns (`src/x.ts:3-9`), at most MAX_FILES
-files and MAX_LINES lines; the files past either limit are named in the
-summary. Writes plan.json and mutate= to $GITHUB_OUTPUT.
+BASE as Stryker `--mutate` patterns (`src/x.ts:3-9`), in path order; a file
+that would take the plan past MAX_FILES files or MAX_LINES lines is left out
+and named in the summary, and smaller files after it still go in. Writes
+plan.json and mutate= to $GITHUB_OUTPUT.
 
-`summary REPORT PLAN` reads Stryker's JSON report: the surviving mutants per
-file and line go to the job summary, and issue.json holds what `issue`
-needs.
+`summary REPORT PLAN WEB` reads Stryker's JSON report: the mutants no test
+detected, by file and then by line, go to the job summary, and issue.json
+holds what `issue` needs. WEB is the tested web/ folder, to tell which
+files only browser tests cover.
 
 `issue ISSUE_JSON [--dry-run]` (scheduled runs, with an `issues: write`
-token) opens the one standing issue when mutants survive, replaces its list
-when they changed, and closes it when none survive. `--dry-run` reads the
-open issues and prints what it would do instead.
+token) keeps one issue: the newest with TITLE or with its marker, open or
+closed. It opens it when mutants survive, reopens and updates it when the
+list changed, leaves it alone while the list is the same (also when someone
+closed it), and closes it when none survive or nothing changed since the
+release. `--dry-run` reads the issues and prints what it would do instead.
 """
 import hashlib
 import html
@@ -41,6 +45,8 @@ MAX_LINES = 1500
 # 1 MiB. The full list is always in the run's artifact.
 ISSUE_LIMIT = 60000
 SUMMARY_LIMIT = 400000
+# Mutants listed in the open; the rest go in a collapsed list.
+SHOWN = 50
 SNIPPET = 60
 SOURCE = re.compile(r'web/src/[A-Za-z0-9._/-]+\.tsx?')
 # Translations are data, not logic: every string would be a mutant.
@@ -51,20 +57,27 @@ FINGERPRINT = re.compile(r'<!-- mutation-web: ([0-9a-f]{64}) -->')
 UNDETECTED = ('Survived', 'NoCoverage')
 DETECTED = ('Killed', 'Timeout')
 LINEAR = 'This issue reaches Linear without a project: add it to the project Gelabber, label Improvement.'
+TODO = ('**What to do with a mutant below:** write a test that fails on it, or say in a comment here '
+        'that it is equivalent or does not matter.')
 READING = """\
 **Reading this.** The run informs; it gates nothing. A surviving mutant is a \
-change to a changed line that no node test noticed. Some are equivalent \
-mutants: they behave like the original, and no test can kill them. A kill \
-only shows that some test's result changed, so a test that pins today's \
-output kills mutants as well as a test of the right behaviour. A timeout \
-counts as detected: a mutant that loops for ever is ended by Stryker's \
-timeout. Only the node tests run; the Chromium tests may catch some \
-survivors. In GEL-388's sample about 9 of every 100 web mutants survived \
-although they changed what a user sees."""
+change to a changed line that no node test noticed; an unreached one sits \
+on a line no node test runs. Some are equivalent mutants: they behave like \
+the original, and no test can kill them. A kill only shows that some test's \
+result changed, so a test that pins today's output kills mutants as well as \
+a test of the right behaviour. A timeout counts as detected: a mutant that \
+loops for ever is ended by Stryker's timeout. Only the node tests run; the \
+Chromium tests (`*.browser.test.tsx`) may catch some. In GEL-388's sample, \
+59 of 94 surviving markdown mutants and 14 of 27 surviving ws/protocol \
+mutants changed what a user or another program sees."""
 
 
 def run(*args, stdin=None):
-    return subprocess.run(args, check=True, capture_output=True, text=True, input=stdin).stdout
+    try:
+        return subprocess.run(args, check=True, capture_output=True, text=True, input=stdin).stdout
+    except subprocess.CalledProcessError as error:
+        print(error.stderr, file=sys.stderr, end='')
+        raise
 
 
 def output(**values):
@@ -179,15 +192,15 @@ def plan(base, sha):
         raise ValueError('plan needs a release tag and a commit SHA')
     diff = run('git', 'diff', '--no-color', '--no-ext-diff', '--no-renames', '-U0',
                f'refs/tags/{base}', sha, '--', 'web/src')
-    result = plan_from_diff(diff)
+    result = plan_from_diff(diff, MAX_FILES, MAX_LINES)
     result.update(base=base, sha=sha, label=os.environ.get('LABEL', sha[:12]))
     Path('plan.json').write_text(json.dumps(result, indent=1) + '\n', encoding='utf-8')
     for item in result['skipped']:
-        print(f'::warning title=Mutation run cut::{item["path"]} ({item["lines"]} lines) not mutated: '
+        print(f'::warning title=File left out of the mutation run::{item["path"]} ({item["lines"]} lines): '
               f'{item["reason"]}')
     output(mutate=patterns(result), files=len(result['files']))
     print(f'{len(result["files"])} files, {result["lines"]} changed lines to mutate; '
-          f'{len(result["skipped"])} files over the limits.')
+          f'{len(result["skipped"])} files left out by the limits.')
 
 
 def plural(count, word):
@@ -229,22 +242,61 @@ def fingerprint(found):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def table(found, limit):
-    """Rows of the survivors table within `limit` characters, and how many
-    did not fit."""
-    rows = ['| File | Line | Status | Mutator | Original | Mutant |', '|---|---|---|---|---|---|']
-    size = sum(len(r) + 1 for r in rows)
-    for index, (name, line, _, status, mutator, before, after) in enumerate(found):
-        row = (f'| `web/{name}` | {line} | {"no test reaches it" if status == "NoCoverage" else "survived"} '
-               f'| {mutator} | {snippet(before)} | {snippet(after)} |')
-        if size + len(row) + 1 > limit:
-            return rows, len(found) - index
-        rows.append(row)
-        size += len(row) + 1
-    return rows, 0
+def browser_only(web, name):
+    """The browser test of a source file (`src/x.tsx`) when it has one and
+    no node test of the same name, else None."""
+    stem = Path(web) / re.sub(r'\.tsx?$', '', name)
+    browser = stem.with_name(stem.name + '.browser.test.tsx')
+    node = [stem.with_name(stem.name + f'.test.{ext}') for ext in ('ts', 'tsx', 'mjs', 'js')]
+    return browser.name if browser.is_file() and not any(path.is_file() for path in node) else None
 
 
-def report_text(plan_data, counts, found, limit):
+def file_table(found, web):
+    """Per file, the most undetected mutants first."""
+    files = {}
+    for name, _, _, status, *_ in found:
+        files.setdefault(name, [0, 0])[status == 'NoCoverage'] += 1
+    rows = ['| File | Survived | No node test reaches it | Note |', '|---|---|---|---|']
+    for name, (survived, unreached) in sorted(files.items(), key=lambda item: (-sum(item[1]), item[0])):
+        only = browser_only(web, name)
+        note = f'tested only in Chromium (`{only}`), which this run leaves out' if only else ''
+        rows.append(f'| `web/{name}` | {survived} | {unreached} | {note} |')
+    return rows
+
+
+def mutant_row(item):
+    name, line, _, status, mutator, before, after = item
+    return (f'| `web/{name}` | {line} | {"unreached" if status == "NoCoverage" else "survived"} '
+            f'| {mutator} | {snippet(before)} | {snippet(after)} |')
+
+
+def mutant_rows(found, budget):
+    """The mutant list: SHOWN rows in the open, the rest collapsed, within
+    `budget` characters; the last line says how many did not fit."""
+    head = ['| File | Line | Status | Mutator | Original | Mutant |', '|---|---|---|---|---|---|']
+    rows = [mutant_row(item) for item in found]
+    lines = head + rows[:SHOWN]
+    rest = rows[SHOWN:]
+    size = sum(len(line) + 1 for line in lines)
+    if size > budget:
+        raise ValueError('the budget does not hold the first rows')
+    if rest:
+        opening = ['', f'<details><summary>{plural(len(rest), "more mutant")}</summary>', ''] + head
+        size += sum(len(line) + 1 for line in opening) + 200
+        kept = []
+        for row in rest:
+            if size + len(row) + 1 > budget:
+                break
+            kept.append(row)
+            size += len(row) + 1
+        if kept:
+            lines += opening + kept + ['', '</details>']
+        if len(kept) < len(rest):
+            lines += ['', f'{len(rest) - len(kept)} more are in the run\'s artifact `mutation-web`.']
+    return lines
+
+
+def report_text(plan_data, counts, found, limit, web):
     total = sum(counts.values())
     detected = sum(counts.get(s, 0) for s in DETECTED)
     valid = detected + sum(counts.get(s, 0) for s in UNDETECTED)
@@ -254,29 +306,29 @@ def report_text(plan_data, counts, found, limit):
         f'{plan_data["base"]}: {plural(len(plan_data["files"]), "file")}, {plural(plan_data["lines"], "line")}, '
         f'{plural(total, "mutant")}.',
         '',
-        '| Killed | Timeout | Survived | No test reaches it | Other | Detected |',
+        '| Killed | Timeout | Survived | No node test reaches it | Other | Detected |',
         '|---|---|---|---|---|---|',
         f'| {counts.get("Killed", 0)} | {counts.get("Timeout", 0)} | {counts.get("Survived", 0)} '
         f'| {counts.get("NoCoverage", 0)} | {total - valid} | {score} |',
         '',
     ]
     if plan_data['skipped']:
-        parts += [f'**Cut:** {plural(len(plan_data["skipped"]), "file")} past the limits '
-                  f'({plan_data["limits"]["files"]} files, {plan_data["limits"]["lines"]} lines) '
-                  'were not mutated: ' + ', '.join(f'`{s["path"]}` ({s["lines"]} lines)'
-                                                  for s in plan_data['skipped']) + '.', '']
-    if found:
-        rows, left = table(found, limit - sum(len(p) + 1 for p in parts) - len(READING) - 200)
-        parts += [f'### {plural(len(found), "mutant")} no test detected', ''] + rows
-        if left:
-            parts += ['', f'{left} more are in the run\'s artifact `mutation-web`.']
-        parts.append('')
+        parts += [f'**Left out:** {plural(len(plan_data["skipped"]), "file")} would have taken the run past '
+                  f'{plan_data["limits"]["files"]} files or {plan_data["limits"]["lines"]} lines: '
+                  + ', '.join(f'`{s["path"]}` ({s["lines"]} lines)' for s in plan_data['skipped']) + '.', '']
+    if not plan_data['files']:
+        parts += [f'No `web/src` lines changed since {plan_data["base"]}: nothing to mutate.', '']
+    elif not found:
+        parts += ['A test detected every mutant of the changed lines.', '']
     else:
-        parts += ['No mutant survived.', '']
+        parts += [f'### {plural(len(found), "mutant")} no test detected, by file', '']
+        parts += file_table(found, web) + ['', TODO, '', '### By line', '']
+        budget = limit - sum(len(p) + 1 for p in parts) - len(READING) - 10
+        parts += mutant_rows(found, budget) + ['']
     return '\n'.join(parts + [READING])
 
 
-def summary(report_path, plan_path):
+def summary(report_path, plan_path, web):
     plan_data = json.loads(Path(plan_path).read_text(encoding='utf-8'))
     if Path(report_path).exists():
         counts, found = undetected(json.loads(Path(report_path).read_text(encoding='utf-8')))
@@ -284,7 +336,7 @@ def summary(report_path, plan_path):
         counts, found = {}, []
     else:
         raise FileNotFoundError(f'no Stryker report at {report_path}')
-    text = '## Web mutation testing\n\n' + report_text(plan_data, counts, found, SUMMARY_LIMIT)
+    text = '## Web mutation testing\n\n' + report_text(plan_data, counts, found, SUMMARY_LIMIT, web)
     path = os.environ.get('GITHUB_STEP_SUMMARY')
     if path:
         with open(path, 'a', encoding='utf-8') as out:
@@ -292,48 +344,60 @@ def summary(report_path, plan_path):
     else:
         print(text)
     Path('issue.json').write_text(json.dumps({
-        'count': len(found), 'fingerprint': fingerprint(found), 'sha': plan_data['sha'],
-        'body': report_text(plan_data, counts, found, ISSUE_LIMIT - 1000),
+        'count': len(found), 'survived': counts.get('Survived', 0), 'unreached': counts.get('NoCoverage', 0),
+        'files': len(plan_data['files']), 'base': plan_data['base'], 'sha': plan_data['sha'],
+        'fingerprint': fingerprint(found), 'body': report_text(plan_data, counts, found, ISSUE_LIMIT - 1000, web),
     }) + '\n', encoding='utf-8')
     output(undetected=len(found))
 
 
 def decide(existing, info, run_url):
-    """What `issue` does: a list of ('create', None, body), ('edit', number,
-    body), ('comment', number, text) and ('close', number, None).
-    `existing` is the open issue's (number, body) or None."""
+    """What `issue` does: a list of ('create', None, body), ('reopen',
+    number, None), ('edit', number, body), ('comment', number, text) and
+    ('close', number, None). `existing` is the issue's number, body and state
+    (OPEN or CLOSED), or None."""
     sha = info['sha'][:12]
+    is_open = existing is not None and existing['state'] == 'OPEN'
     if info['count'] == 0:
-        if existing is None:
+        if not is_open:
             return []
-        return [('comment', existing[0], f'No mutant survives at {sha}: {run_url}'), ('close', existing[0], None)]
+        text = (f'No `web/src` lines changed since {info["base"]} at {sha}, so nothing was mutated: {run_url}'
+                if info['files'] == 0 else f'A test detects every mutant of the changed lines at {sha}: {run_url}')
+        return [('comment', existing['number'], text), ('close', existing['number'], None)]
     body = (f'[Scheduled run]({run_url}); the full report is its artifact `mutation-web`.\n\n'
             f'{info["body"]}\n\n{LINEAR}\n\n<!-- mutation-web: {info["fingerprint"]} -->\n')
     if existing is None:
         return [('create', None, body)]
-    m = FINGERPRINT.search(existing[1] or '')
+    m = FINGERPRINT.search(existing['body'] or '')
     if m and m[1] == info['fingerprint']:
+        # The same list: nothing new, also for an issue someone closed.
         return []
-    return [('edit', existing[0], body),
-            ('comment', existing[0], f'{info["count"]} mutants survive at {sha}, '
-                                     f'a different list than before: {run_url}. The description lists them.')]
+    number = existing['number']
+    text = (f'{info["count"]} mutants no test detects at {sha} ({info["survived"]} survived, '
+            f'{info["unreached"]} unreached), a different list than before: {run_url}. The description lists them.')
+    return ([] if is_open else [('reopen', number, None)]) + [('edit', number, body), ('comment', number, text)]
 
 
-def open_issue(repo):
-    found = json.loads(run('gh', 'issue', 'list', '--repo', repo, '--state', 'open', '--limit', '100',
-                           '--search', f'in:title "{TITLE}"', '--json', 'number,title,body'))
-    match = [i for i in found if i['title'] == TITLE]
-    return (match[0]['number'], match[0]['body']) if match else None
+def find_issue(repo):
+    """The newest issue, open or closed, titled TITLE or carrying the marker
+    (which survives a changed title)."""
+    found = {}
+    for query in (f'in:title "{TITLE}"', 'mutation-web in:body'):
+        for item in json.loads(run('gh', 'issue', 'list', '--repo', repo, '--state', 'all', '--limit', '100',
+                                   '--search', query, '--json', 'number,title,body,state')):
+            if item['title'] == TITLE or FINGERPRINT.search(item.get('body') or ''):
+                found[item['number']] = item
+    return found[max(found)] if found else None
 
 
 def issue(info_path, dry_run):
     repo = os.environ['GITHUB_REPOSITORY']
     run_url = f"{os.environ['GITHUB_SERVER_URL']}/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     info = json.loads(Path(info_path).read_text(encoding='utf-8'))
-    existing = open_issue(repo)
+    existing = find_issue(repo)
     actions = decide(existing, info, run_url)
-    print(f'Open issue "{TITLE}": {"#" + str(existing[0]) if existing else "none"}; '
-          f'{info["count"]} mutants undetected.')
+    where = f'#{existing["number"]} ({existing["state"].lower()})' if existing else 'none'
+    print(f'Issue "{TITLE}": {where}; {info["count"]} mutants undetected.')
     if not actions:
         print('Nothing to do.')
     for action, number, text in actions:
@@ -341,15 +405,12 @@ def issue(info_path, dry_run):
             print(f'Would {action} {"#" + str(number) if number else "an issue"}' + (f':\n{text}\n' if text else ''))
         elif action == 'create':
             print(run('gh', 'issue', 'create', '--repo', repo, '--title', TITLE, '--body-file', '-', stdin=text))
-        elif action == 'edit':
-            run('gh', 'issue', 'edit', str(number), '--repo', repo, '--body-file', '-', stdin=text)
-            print(f'Updated #{number}')
-        elif action == 'comment':
-            run('gh', 'issue', 'comment', str(number), '--repo', repo, '--body-file', '-', stdin=text)
-            print(f'Commented on #{number}')
+        elif action in ('edit', 'comment'):
+            run('gh', 'issue', action, str(number), '--repo', repo, '--body-file', '-', stdin=text)
+            print(f'#{number}: {action}')
         else:
-            run('gh', 'issue', 'close', str(number), '--repo', repo)
-            print(f'Closed #{number}')
+            run('gh', 'issue', action, str(number), '--repo', repo)
+            print(f'#{number}: {action}')
 
 
 def main(argv):
@@ -358,12 +419,12 @@ def main(argv):
         target()
     elif command == 'plan' and len(args) == 2:
         plan(*args)
-    elif command == 'summary' and len(args) == 2:
+    elif command == 'summary' and len(args) == 3:
         summary(*args)
     elif command == 'issue' and args and set(args[1:]) <= {'--dry-run'}:
         issue(args[0], '--dry-run' in args[1:])
     else:
-        print('usage: mutation_web.py target | plan BASE SHA | summary REPORT PLAN | issue ISSUE_JSON [--dry-run]',
+        print('usage: mutation_web.py target | plan BASE SHA | summary REPORT PLAN WEB | issue ISSUE_JSON [--dry-run]',
               file=sys.stderr)
         return 2
     return 0

@@ -18,6 +18,7 @@ on:
       - '.github/workflows/mutation-web.yml'
       - '.github/workflows/scripts/mutation_web.py'
       - 'web/scripts/mutation/**'
+      - 'web/vitest.config.ts'
       - 'web/vitest.mutation.config.ts'
 
 permissions:
@@ -84,13 +85,15 @@ jobs:
       - name: Install
         if: steps.plan.outputs.files != '0'
         working-directory: target/web
+        env:
+          LABEL: ${{ steps.target.outputs.label }}
         run: |
           if [ ! -f scripts/mutation/stryker.config.mjs ]; then
-            echo "::error::The tested commit has no web/scripts/mutation/stryker.config.mjs (GEL-388) yet."
+            echo "::error::${LABEL} has no web/scripts/mutation/stryker.config.mjs (GEL-388) yet."
             exit 1
           fi
           npm ci
-          npm ci --prefix scripts/mutation
+          (cd scripts/mutation && npm ci)
 
       # A mutant that loops for ever ends by Stryker's timeoutMS (5 s over
       # the test's own time) and counts as detected.
@@ -105,7 +108,7 @@ jobs:
       - name: Summary
         id: summary
         if: steps.plan.outputs.files == '0' || steps.mutate.outcome == 'success'
-        run: python3 .github/workflows/scripts/mutation_web.py summary target/web/reports/mutation/mutation.json plan.json
+        run: python3 .github/workflows/scripts/mutation_web.py summary target/web/reports/mutation/mutation.json plan.json target/web
 
       - name: Upload the report
         if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
