@@ -9,6 +9,11 @@ name: Extended E2E
 
 on:
   workflow_dispatch:
+    inputs:
+      version_line:
+        description: The version line a run by hand stands for (vX.Y; empty takes the branch's)
+        required: false
+        default: ''
   push:
     branches: ['v[0-9]*']
     paths:
@@ -323,10 +328,16 @@ jobs:
 
   # The desktop app's tests against the same kind of stack, seeded like the
   # parity scenes (desktop/live-tests.sh, GEL-376). Beside the faults, so it adds no wall time.
+  # Against a server of this tree and of the previous minor version: the app
+  # supports both (AGENTS.md, "Supported versions"; GEL-436).
   desktop-live:
-    name: Desktop app against the stack
+    name: Desktop app against the stack (${{ matrix.server }})
     needs: plan
     if: needs.plan.outputs.desktop == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [this tree, previous minor]
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
@@ -458,7 +469,29 @@ jobs:
           PY
 
       - name: Build the API and the media server
+        if: matrix.server == 'this tree'
         run: cargo build --locked --manifest-path backend/Cargo.toml -p gelabber-api -p gelabber-media
+
+      # The newest release of the previous minor (the rule of the upgrade
+      # test): its published API and media images, its web client and seed.
+      - name: The previous minor's release
+        id: previous
+        if: matrix.server == 'previous minor'
+        env:
+          BASE_REF: ${{ github.base_ref || inputs.version_line }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          release=$(.github/workflows/scripts/previous_release.sh --fetch)
+          tag=${release%% *}
+          echo "The app of this tree against the server of $tag." | tee -a "$GITHUB_STEP_SUMMARY"
+          repo="${GITHUB_REPOSITORY,,}"
+          for image in api media; do
+            docker pull --quiet "ghcr.io/${repo}/${image}:${tag}"
+          done
+          mkdir -p "$RUNNER_TEMP/previous"
+          git archive "$tag" web | tar -x -C "$RUNNER_TEMP/previous"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Build the desktop tests
         env:
@@ -477,9 +510,14 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Vite and Chromium for the call's people
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.tag }}
         run: |
           set -euo pipefail
           npm ci --prefix web
+          if [ -n "$PREVIOUS" ]; then
+            npm ci --prefix "$RUNNER_TEMP/previous/web"
+          fi
           cd web
           # System packages through apt-install.sh, as in the faults job (GEL-404).
           mapfile -t deps < <(npx playwright install-deps --dry-run chromium | sed -n 's/^  \([^ ]\+\)$/\1/p')
@@ -509,18 +547,36 @@ jobs:
           GELABBER_DEV_PUBLIC_PAGES: scripts/parity/public-pages.json
           # The tests sign in again and again; the sign-in limit is for people.
           API_RATE_AUTH_PER_MIN: "0"
+          PREVIOUS: ${{ steps.previous.outputs.tag }}
         run: |
           set -euo pipefail
           logs="$RUNNER_TEMP/desktop-live-logs"
           mkdir -p "$logs"
-          backend/target/debug/gelabber-api >"$logs/api.log" 2>&1 &
-          api=$!
-          backend/target/debug/gelabber-media >"$logs/media.log" 2>&1 &
-          media=$!
-          (cd web && exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5180 --strictPort) \
+          web=web
+          if [ -n "$PREVIOUS" ]; then
+            # The released images, on the job's network like the services.
+            repo="${GITHUB_REPOSITORY,,}"
+            api_env=()
+            for name in DATABASE_URL REDIS_URL MINIO_ENDPOINT MINIO_PUBLIC_ENDPOINT MINIO_ROOT_USER \
+                MINIO_ROOT_PASSWORD MINIO_BUCKET API_ADDR API_OPERATOR_EMAILS API_DIRECTORY APP_PUBLIC_URL \
+                OIDC_GOOGLE_CLIENT_ID OIDC_GOOGLE_CLIENT_SECRET API_RATE_AUTH_PER_MIN; do
+              api_env+=(-e "$name")
+            done
+            docker run -d --name gelabber-previous-api --network host "${api_env[@]}" "ghcr.io/${repo}/api:${PREVIOUS}"
+            docker run -d --name gelabber-previous-media --network host \
+              -e REDIS_URL -e MEDIA_ADDR -e MEDIA_ICE_BIND -e MEDIA_ADVERTISED_IP "ghcr.io/${repo}/media:${PREVIOUS}"
+            web="$RUNNER_TEMP/previous/web"
+            trap 'docker logs gelabber-previous-api >"$logs/api.log" 2>&1; docker logs gelabber-previous-media >"$logs/media.log" 2>&1; docker rm -f gelabber-previous-api gelabber-previous-media >/dev/null 2>&1 || true; kill "$vite" 2>/dev/null || true' EXIT
+          else
+            backend/target/debug/gelabber-api >"$logs/api.log" 2>&1 &
+            api=$!
+            backend/target/debug/gelabber-media >"$logs/media.log" 2>&1 &
+            media=$!
+            trap 'kill "$api" "$media" "$vite" 2>/dev/null || true' EXIT
+          fi
+          (cd "$web" && exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5180 --strictPort) \
             >"$logs/vite.log" 2>&1 &
           vite=$!
-          trap 'kill "$api" "$media" "$vite" 2>/dev/null || true' EXIT
           deadline=$((SECONDS + 120))
           until curl -fsS http://127.0.0.1:8080/ready >/dev/null \
             && curl -fsS "$GELABBER_TEST_SERVER/" >/dev/null; do
@@ -531,10 +587,14 @@ jobs:
             fi
             sleep 2
           done
-          (cd web && node scripts/parity/seed.mjs "$GELABBER_TEST_SERVER")
+          # The seed of that server's version, into the file the desktop tests read.
+          (cd "$web" && node scripts/parity/seed.mjs "$GELABBER_TEST_SERVER" "$GITHUB_WORKSPACE/web/scripts/parity/fixture.json")
           status=0
-          # The client's recorded fixtures still have the API's shapes (desktop/client/tests/models.rs).
-          node desktop/client/tests/record-fixtures.mjs "$GELABBER_TEST_SERVER" --check || status=1
+          # The client's recorded fixtures still have the API's shapes (desktop/client/tests/models.rs);
+          # they stand for this tree's server.
+          if [ -z "$PREVIOUS" ]; then
+            node desktop/client/tests/record-fixtures.mjs "$GELABBER_TEST_SERVER" --check || status=1
+          fi
           desktop/live-tests.sh || status=1
           if [ "$status" -ne 0 ]; then
             tail -n 100 "$logs"/*.log
@@ -545,7 +605,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: desktop-live-logs
+          name: desktop-live-logs-${{ matrix.server == 'this tree' && 'tree' || 'previous' }}
           path: ${{ runner.temp }}/desktop-live-logs/
           if-no-files-found: warn
 

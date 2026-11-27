@@ -90,6 +90,21 @@ class Outcome(unittest.TestCase):
         self.assertEqual(step['env']['RESULT'], '${{ needs.outcome.outputs.result }}')
 
 
+class PreviousMinor(unittest.TestCase):
+    def test_the_desktop_tests_also_run_against_the_previous_minor(self):
+        # The app supports servers of its own and the previous minor (GEL-436).
+        job = workflow_data.load('e2e-extended.yml')['jobs']['desktop-live']
+        self.assertEqual(job['strategy']['matrix']['server'], ['this tree', 'previous minor'])
+        self.assertIs(job['strategy']['fail-fast'], False)
+
+    def test_the_previous_release_follows_the_one_rule(self):
+        # previous_release.sh decides it for the upgrade test too; no second rule.
+        steps = workflow_data.load('e2e-extended.yml')['jobs']['desktop-live']['steps']
+        step = next(s for s in steps if s.get('id') == 'previous')
+        self.assertIn('.github/workflows/scripts/previous_release.sh --fetch', step['run'])
+        self.assertNotIn('git tag', step['run'])
+
+
 class Libwebrtc(unittest.TestCase):
     def test_desktop_live_looks_for_the_package_desktop_native_builds(self):
         # desktop-native.yml stores the package under this key; desktop-live
