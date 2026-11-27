@@ -235,11 +235,11 @@ Red: list the failed jobs (`gh pr checks <pr>`), read their logs
 (`gh run view <run> --log-failed`), and take the first case that fits:
 
 1. **The development line is red.** The latest finished CI run of a push to
-   it:
+   it that a newer push did not cancel:
 
    ```sh
    base=$(git branch -r --list 'origin/v[0-9]*' --sort=-version:refname | head -1 | sed 's#^ *origin/##')
-   gh run list --workflow ci.yml --branch "$base" --event push --status completed --limit 1 --json conclusion,url
+   gh run list --workflow ci.yml --branch "$base" --event push --status completed --limit 20 --json conclusion,url --jq '[.[] | select(.conclusion != "cancelled" and .conclusion != "skipped")][0]'
    ```
 
    Anything but `success`: stop, leave the pull request in draft, record
