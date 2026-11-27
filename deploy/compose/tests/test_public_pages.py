@@ -1,11 +1,15 @@
 """The public pages (#522) reach the web container: compose passes every value
 the web image's start script reads and mounts the operator's texts, those
 texts stay out of commits, and both Caddyfiles hand the pages' paths to web."""
+import fnmatch
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import unittest
+
+from compose_config import config
+from test_homelab_caddy import _adapt, _find_caddy
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parents[1]
@@ -27,75 +31,94 @@ DERIVED = {'GELABBER_ACCOUNT_MAIL': '${SMTP_HOST:+on}',
 PUBLIC_PATHS = ('/', '/de/', '/en/', '/de/impressum', '/en/privacy', '/robots.txt',
                 '/sitemap.xml', '/public-pages.json', '/de/feedback',
                 '/en/feedback/thanks')
-WEB_UPSTREAMS = {'Caddyfile': 'web:80',
-                 'Caddyfile.homelab': '{$GELABBER_WEB_UPSTREAM:127.0.0.1:8088}'}
+# The upstream that serves web, and the site's host, by Caddyfile.
+WEB_UPSTREAMS = {'Caddyfile': ('web:80', None), 'Caddyfile.homelab': ('127.0.0.1:8088', 'gelabber.home.arpa')}
 
 
-def web_service():
-    return re.search(r'^  web:\n(.*?)^  \S', (ROOT / 'compose.yaml').read_text(),
-                     re.M | re.S).group(1)
+def route(adapted, path, host):
+    """What Caddy's adapted configuration does with a request: the dial of the
+    reverse_proxy that answers it, or the handler that does."""
+    def walk(routes):
+        for entry in routes:
+            if not any(matches(matcher) for matcher in entry.get('match') or [{}]):
+                continue
+            for handler in entry.get('handle', []):
+                if handler['handler'] == 'subroute':
+                    found = walk(handler['routes'])
+                    if found:
+                        return found
+                elif handler['handler'] == 'reverse_proxy':
+                    return handler['upstreams'][0]['dial']
+                elif handler['handler'] in ('static_response', 'file_server'):
+                    return handler['handler']
+        return None
+
+    def matches(matcher):
+        hosts, paths = matcher.get('host'), matcher.get('path')
+        return ((hosts is None or host in hosts)
+                and (paths is None or any(fnmatch.fnmatchcase(path, pattern) for pattern in paths)))
+
+    for server in adapted['apps']['http']['servers'].values():
+        found = walk(server['routes'])
+        if found:
+            return found
+    return None
 
 
-def web_environment():
-    env = re.search(r'^    environment:\n((?:      .*\n|\s*\n)*)', web_service(), re.M).group(1)
-    return dict(re.findall(r'^      ([A-Z][A-Z0-9_]*): (.*)$', env, re.M))
+def web():
+    return config()['services']['web']
 
 
-def site_handles(text):
-    """(paths, upstream) of each `handle` in the order Caddy tries them; a
-    handle without a matcher has paths None."""
-    matchers = {name: paths.split() for name, paths in
-                re.findall(r'^\s*(@\w+) path (.+)$', text, re.M)}
-    handles = []
-    for match in re.finditer(r'^\thandle(?: (\S+))? \{\n(.*?)^\t\}', text, re.M | re.S):
-        target, body = match.groups()
-        upstream = re.search(r'reverse_proxy (\S+)', body)
-        paths = None if target is None else matchers.get(target, [target])
-        handles.append((paths, upstream and upstream.group(1)))
-    return handles
-
-
-def caddy_path_matches(pattern, path):
-    if pattern.endswith('*'):
-        return path.startswith(pattern[:-1])
-    return path == pattern
-
-
-class PublicPages(unittest.TestCase):
-    def test_web_receives_every_setting_with_an_empty_default(self):
-        env = web_environment()
+@unittest.skipUnless(shutil.which('docker'), 'Docker CLI is unavailable')
+class Compose(unittest.TestCase):
+    def test_web_receives_every_setting_and_nothing_when_unset(self):
+        unset, given = web()['environment'], config({key: f'set-{key}' for key in SETTINGS})
         for key in sorted(SETTINGS):
             with self.subTest(key=key):
-                self.assertEqual(env.get(key), '${' + key + ':-}')
+                self.assertEqual(unset.get(key), '')
+                self.assertEqual(given['services']['web']['environment'].get(key), f'set-{key}')
 
+    def test_web_learns_only_whether_mail_and_operators_are_on(self):
+        secret = {'SMTP_HOST': 'smtp.example.test', 'API_OPERATOR_EMAILS': 'op@example.test'}
+        unset, given = web()['environment'], config(secret)['services']['web']['environment']
+        for key in DERIVED:
+            with self.subTest(key=key):
+                self.assertEqual((unset.get(key), given.get(key)), ('', 'on'))
+        for key, value in given.items():
+            with self.subTest(key=key):
+                self.assertNotIn('example.test', value)
+
+    def test_web_mounts_the_legal_texts_read_only(self):
+        mounts = [volume for volume in web().get('volumes', [])
+                  if volume['target'] == '/etc/gelabber/legal']
+        self.assertEqual(len(mounts), 1)
+        self.assertIs(mounts[0].get('read_only'), True)
+        self.assertEqual(Path(mounts[0]['source']), ROOT / 'legal')
+        self.assertTrue((ROOT / 'legal/README.md').is_file())
+
+
+class Caddy(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        caddy = _find_caddy()
+        cls.adapted = {name: _adapt((ROOT / name).read_text(), caddy) for name in WEB_UPSTREAMS}
+
+    def test_both_caddyfiles_send_the_public_paths_to_web(self):
+        for name, (upstream, host) in WEB_UPSTREAMS.items():
+            for path in PUBLIC_PATHS:
+                with self.subTest(caddyfile=name, path=path):
+                    self.assertEqual(route(self.adapted[name], path, host), upstream)
+
+    def test_the_api_route_of_the_form_goes_to_the_api(self):
+        for name, (upstream, host) in WEB_UPSTREAMS.items():
+            with self.subTest(caddyfile=name):
+                self.assertNotIn(route(self.adapted[name], '/api/public/feedback', host), (upstream, None))
+
+
+class Files(unittest.TestCase):
     def test_the_start_script_reads_only_these_settings(self):
         read = set(re.findall(r'\$\{((?:GELABBER_|APP_)[A-Z0-9_]*)', SCRIPT.read_text()))
         self.assertEqual(sorted(read - SCRIPT_TEST_ONLY), sorted(SETTINGS | DERIVED.keys()))
-
-    def test_web_learns_only_whether_mail_and_operators_are_on(self):
-        env = web_environment()
-        for key, value in DERIVED.items():
-            with self.subTest(key=key):
-                self.assertEqual(env.get(key), value)
-        # No other value of web reads the mail or operator settings.
-        for key, value in env.items():
-            if key in DERIVED:
-                continue
-            with self.subTest(key=key):
-                self.assertNotRegex(value, r'SMTP_|API_OPERATOR_EMAILS')
-
-    def test_the_api_route_of_the_form_goes_to_the_api(self):
-        for name in WEB_UPSTREAMS:
-            handles = site_handles((ROOT / name).read_text())
-            with self.subTest(caddyfile=name):
-                first = next(target for paths, target in handles
-                             if paths is None
-                             or any(caddy_path_matches(p, '/api/public/feedback') for p in paths))
-                self.assertNotEqual(first, WEB_UPSTREAMS[name])
-
-    def test_web_mounts_the_legal_texts_read_only(self):
-        self.assertIn('      - ./legal:/etc/gelabber/legal:ro\n', web_service())
-        self.assertTrue((ROOT / 'legal/README.md').is_file())
 
     def test_the_examples_list_every_setting(self):
         for example in ('.env.example', '.env.homelab.example'):
@@ -111,18 +134,6 @@ class PublicPages(unittest.TestCase):
         self.assertTrue(ignored('deploy/compose/legal/privacy.de.html'))
         self.assertTrue(ignored('deploy/compose/legal/imprint.en.html'))
         self.assertFalse(ignored('deploy/compose/legal/README.md'))
-
-    def test_both_caddyfiles_send_the_public_paths_to_web(self):
-        for name, upstream in WEB_UPSTREAMS.items():
-            handles = site_handles((ROOT / name).read_text())
-            self.assertGreaterEqual(len(handles), 7, name)
-            self.assertEqual(handles[-1], (None, upstream))
-            for path in PUBLIC_PATHS:
-                with self.subTest(caddyfile=name, path=path):
-                    first = next(target for paths, target in handles
-                                 if paths is None
-                                 or any(caddy_path_matches(p, path) for p in paths))
-                    self.assertEqual(first, upstream)
 
 
 if __name__ == '__main__':

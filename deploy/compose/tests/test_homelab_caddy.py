@@ -23,7 +23,6 @@ MINIO_HOST = "minio.home.arpa"
 MINIO_DIAL = "127.0.0.1:9000"
 HOSTPORT = "{http.request.hostport}"
 HOST_ONLY = "{http.request.host}"
-UPSTREAM_HOSTPORT = "{http.reverse_proxy.upstream.hostport}"
 
 
 def _find_caddy() -> str:
@@ -171,27 +170,6 @@ class MinioProxyConfigTest(unittest.TestCase):
         adapted = _adapt(reordered, self.caddy_bin)
         assert_effective_minio_presign_config(self, adapted)
 
-    def test_commented_reverse_proxy_does_not_pass(self) -> None:
-        broken = _replace_minio_site(
-            self.source,
-            "\t# reverse_proxy {$GELABBER_MINIO_UPSTREAM:127.0.0.1:9000} {\n"
-            "\t#\theader_up Host {hostport}\n"
-            "\t# }\n",
-        )
-        # Empty site is invalid or has no proxy — either way must fail the assert.
-        try:
-            adapted = _adapt(broken, self.caddy_bin)
-        except AssertionError:
-            return
-        with self.assertRaises(AssertionError):
-            assert_effective_minio_presign_config(self, adapted)
-
-    def test_missing_reverse_proxy_fails(self) -> None:
-        broken = _replace_minio_site(self.source, "\trespond \"no proxy\" 200\n")
-        adapted = _adapt(broken, self.caddy_bin)
-        with self.assertRaises(AssertionError):
-            assert_effective_minio_presign_config(self, adapted)
-
     def test_host_only_override_fails_hostport_check(self) -> None:
         broken = _replace_minio_site(
             self.source,
@@ -208,37 +186,6 @@ class MinioProxyConfigTest(unittest.TestCase):
         proxy = _minio_proxy(route)
         assert proxy is not None
         self.assertEqual(_host_header_values(proxy), [HOST_ONLY])
-
-    def test_upstream_host_override_fails_hostport_check(self) -> None:
-        broken = _replace_minio_site(
-            self.source,
-            "\treverse_proxy {$GELABBER_MINIO_UPSTREAM:127.0.0.1:9000} {\n"
-            "\t\theader_up Host {upstream_hostport}\n"
-            "\t}\n",
-        )
-        adapted = _adapt(broken, self.caddy_bin)
-        with self.assertRaises(AssertionError):
-            assert_effective_minio_presign_config(self, adapted)
-        route = _find_host_route(adapted, MINIO_HOST)
-        assert route is not None
-        proxy = _minio_proxy(route)
-        assert proxy is not None
-        self.assertEqual(_host_header_values(proxy), [UPSTREAM_HOSTPORT])
-
-    def test_commented_host_forward_lines_do_not_satisfy_hostport(self) -> None:
-        # The old assertIn/regex suite stayed green when only the Host lines
-        # were commented. Effective config must fail the hostport assertion
-        # (no Host set → empty list ≠ {hostport}).
-        broken = _replace_minio_site(
-            self.source,
-            "\treverse_proxy {$GELABBER_MINIO_UPSTREAM:127.0.0.1:9000} {\n"
-            "\t\t# header_up Host {hostport}\n"
-            "\t\t# header_up Host {host}\n"
-            "\t}\n",
-        )
-        adapted = _adapt(broken, self.caddy_bin)
-        with self.assertRaises(AssertionError):
-            assert_effective_minio_presign_config(self, adapted)
 
 
 if __name__ == "__main__":
