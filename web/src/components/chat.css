@@ -401,6 +401,14 @@ button.lr-reply-header:focus-visible .lr-reply-excerpt {
   color: var(--lr-muted);
   overflow-wrap: anywhere;
 }
+/* A row that could not be drawn (GEL-420): one muted line and its retry. */
+.lr-message-failed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13.5px;
+  color: var(--lr-muted);
+}
 
 /* Own messages on their way, and those that did not arrive. */
 .lr-message-row.is-sending .lr-message-text,

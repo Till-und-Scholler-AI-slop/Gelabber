@@ -12,6 +12,7 @@ import { useSession } from "../auth/store.ts";
 import { resetReplyTargets, useReplyTargets } from "../messages/replyTarget.ts";
 import type { Message } from "../messages/types.ts";
 import { resetEditDrafts } from "./editDrafts.ts";
+import { MentionContext } from "./mentionContext.ts";
 import { MessageRow } from "./MessageRow.tsx";
 
 const message: Message = {
@@ -139,5 +140,52 @@ describe("message menu", () => {
     await userEvent.click(menu.getByRole("menuitem", { name: "Löschen" }));
     await userEvent.keyboard("{/Shift}");
     expect(onDelete).toHaveBeenCalledExactlyOnceWith(true);
+  });
+});
+
+describe("a row that cannot be drawn", () => {
+  it("shows a notice in its place, and the row beside it stays", async () => {
+    // A message that slipped past the checks without `mentions`: drawing
+    // it for another reader throws.
+    const broken = {
+      ...message,
+      id: "m2",
+      author: { id: "u2", name: "Bea", avatar_url: null },
+      content: "Kaputt",
+      mentions: undefined,
+    } as unknown as Message;
+    const row = (shown: Message) => (
+      <MessageRow
+        key={shown.id}
+        message={shown}
+        continued={false}
+        mine={shown.author.id === "u1"}
+        canSend
+        canDelete={false}
+        onEdit={() => {}}
+        onDelete={() => {}}
+      />
+    );
+    const screen = await render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MentionContext.Provider
+          value={{ members: [], mentionable: [], me: "u1", keywords: false }}
+        >
+          {row(message)}
+          {row(broken)}
+        </MentionContext.Provider>
+      </QueryClientProvider>,
+    );
+    await expect
+      .element(screen.getByText("Treffen wir uns um acht?"))
+      .toBeVisible();
+    const notice = screen.getByRole("alert");
+    await expect
+      .element(notice.getByText("Diese Nachricht kann nicht angezeigt werden."))
+      .toBeVisible();
+    await expect
+      .element(notice.getByRole("button", { name: "Erneut versuchen" }))
+      .toBeVisible();
+    await expect.element(screen.getByText("Kaputt")).not.toBeInTheDocument();
   });
 });

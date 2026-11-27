@@ -33,6 +33,7 @@ const me = {
   id: "jonas",
   name: "Jonas",
   email: "jonas@test.invalid",
+  locale: "de",
   avatar_url: null,
   created_at,
 };

@@ -1,7 +1,7 @@
 // One function per directory route. No caching here; `queries.ts` owns that.
 
 import { api } from "../api/client.ts";
-import type { Server } from "../servers/types.ts";
+import { wholeServer } from "../servers/api.ts";
 import type {
   DirectoryStatus,
   JoinRequest,
@@ -33,7 +33,9 @@ export const listListings = (
 
 /** An open server: the caller becomes a member; the answer is the list row. */
 export const joinListing = (serverId: string) =>
-  api<Server>(`/directory/listings/${serverId}/join`, { method: "POST" });
+  api<unknown>(`/directory/listings/${serverId}/join`, {
+    method: "POST",
+  }).then(wholeServer);
 
 export const requestJoin = (serverId: string, message: string) =>
   api<{ request: RequestState }>(`/directory/listings/${serverId}/request`, {

@@ -3,7 +3,9 @@
 // forever, and the API's error envelope surfaced as `ApiError`.
 
 import type { SessionStamp } from "../auth/scope.ts";
+import type { User } from "../auth/types.ts";
 import { randomUuid } from "../lib/uuid.ts";
+import { isUser, reportMalformed } from "./shapes.ts";
 
 export type FieldCode =
   | "required"
@@ -710,7 +712,7 @@ async function retryWithSession(
 }
 
 function isSessionPayload(payload: unknown): payload is {
-  user: { id: string; email: string; name: string } | null;
+  user: User | null;
   csrf_token: string;
 } {
   if (
@@ -722,18 +724,9 @@ function isSessionPayload(payload: unknown): payload is {
     !payload.csrf_token
   )
     return false;
-  const user = payload.user;
-  return (
-    user === null ||
-    (typeof user === "object" &&
-      "id" in user &&
-      typeof user.id === "string" &&
-      user.id.length > 0 &&
-      "email" in user &&
-      typeof user.email === "string" &&
-      "name" in user &&
-      typeof user.name === "string")
-  );
+  if (payload.user === null || isUser(payload.user)) return true;
+  reportMalformed("session user", payload.user);
+  return false;
 }
 
 /** `operator` of a session payload: anything but `true` is no operator. */

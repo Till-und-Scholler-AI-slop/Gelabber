@@ -2,6 +2,10 @@
 // state of a send that is still on its way or did not arrive.
 
 import {
+  CatchBoundary,
+  type ErrorComponentProps,
+} from "@tanstack/react-router";
+import {
   useContext,
   useLayoutEffect,
   useMemo,
@@ -64,17 +68,7 @@ import { translate, useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { common } from "../i18n/catalogs/common.ts";
 
-export function MessageRow({
-  message,
-  continued,
-  arrival,
-  mine,
-  canSend,
-  canDelete,
-  attempt,
-  onEdit,
-  onDelete,
-}: {
+type MessageRowProps = {
   message: Message;
   continued: boolean;
   /** Just came in live: fades in once, as it mounts. */
@@ -88,7 +82,45 @@ export function MessageRow({
   onEdit: (content: string, failed: () => void) => void;
   /** `skipConfirm` with Shift held. */
   onDelete: (skipConfirm: boolean) => void;
-}) {
+};
+
+/** One message in the list. A row that throws while it draws shows a notice
+ *  in its place with "Erneut versuchen"; the other rows stay (GEL-420). */
+export function MessageRow(props: MessageRowProps) {
+  return (
+    <CatchBoundary
+      getResetKey={() => `${props.message.id}:${props.message.revision ?? ""}`}
+      errorComponent={MessageRowFailed}
+    >
+      <MessageRowContent {...props} />
+    </CatchBoundary>
+  );
+}
+
+function MessageRowFailed({ reset }: ErrorComponentProps) {
+  const t = useT(chat);
+  const tc = useT(common);
+  return (
+    <div role="alert" className="lr-message-row lr-message-failed">
+      <p>{t("row.failed")}</p>
+      <Button size="sm" variant="ghost" onClick={reset}>
+        {tc("tryAgain")}
+      </Button>
+    </div>
+  );
+}
+
+function MessageRowContent({
+  message,
+  continued,
+  arrival,
+  mine,
+  canSend,
+  canDelete,
+  attempt,
+  onEdit,
+  onDelete,
+}: MessageRowProps) {
   const t = useT(chat);
   const tc = useT(common);
   const pending = isPendingId(message.id);

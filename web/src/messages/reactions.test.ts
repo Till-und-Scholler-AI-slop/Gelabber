@@ -19,6 +19,7 @@ const user = {
   id: "me",
   name: "Ada",
   email: "ada@test.invalid",
+  locale: "de",
   avatar_url: null,
   created_at: "2026-10-05T00:00:00Z",
 };

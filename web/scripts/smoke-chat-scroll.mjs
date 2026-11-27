@@ -265,7 +265,11 @@ const visibleNames = (page) =>
  * A fresh page on the channel. The older page waits until `releaseOlder()`;
  * `send()` pushes a chat event for the channel through the gateway.
  */
-async function open({ unread, shown = "Nachricht 99." } = {}) {
+async function open({
+  unread,
+  shown = "Nachricht 99.",
+  history = newest,
+} = {}) {
   const context = await browser.newContext({
     viewport: { width: 1100, height: 760 },
     locale: "de-DE",
@@ -295,7 +299,7 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
       if (!url.searchParams.has("before"))
         return route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify({ messages: newest, has_more: true }),
+          body: JSON.stringify({ messages: history, has_more: true }),
         });
       olderAsked(Date.now());
       await held;
@@ -962,6 +966,46 @@ try {
     );
     console.log(
       `PASS: ${label}: the list gives ${after.listBottom - placed.listBottom}px to a toast, keeps the newest message's actions reachable, and takes the room back`,
+    );
+    await opened.close();
+  }
+
+  {
+    // A server bug, a cut answer or a broken frame (GEL-420): Jonas's
+    // message without `mentions`, once in the history and once live. The
+    // list leaves it out and keeps everything else, with no error page.
+    const label = "malformed message";
+    const broken = (n) => {
+      const row = { ...message(n), content: `Nachricht ${n}. Kaputt.` };
+      delete row.mentions;
+      return row;
+    };
+    const history = newest.map((row) =>
+      row.id === all[97].id ? broken(97) : row,
+    );
+    const opened = await open({ history, shown: "Nachricht 99." });
+    const { page, send } = opened;
+    const failed = page.getByRole("heading", {
+      name: "Etwas ist schiefgelaufen",
+    });
+    await page.getByText("Nachricht 96.").waitFor();
+    assert.equal(
+      await page.getByText("Nachricht 97. Kaputt.").count(),
+      0,
+      `${label}: the malformed row from the history is shown`,
+    );
+    assert.equal(await failed.count(), 0, `${label}: the chat shows its error`);
+    send({ t: "c", d: broken(100) });
+    send({ t: "c", d: message(101) });
+    await page.getByText("Nachricht 101.").waitFor();
+    assert.equal(
+      await page.getByText("Nachricht 100. Kaputt.").count(),
+      0,
+      `${label}: the malformed row from the gateway is shown`,
+    );
+    assert.equal(await failed.count(), 0, `${label}: the chat shows its error`);
+    console.log(
+      `PASS: ${label}: a message without \`mentions\` is left out, from the history and from the gateway; the other messages stay`,
     );
     await opened.close();
   }
