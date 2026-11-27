@@ -1525,8 +1525,7 @@ export function setLiveViewMode(
   if (state.sourceWatchSupported) sendViewMode(userId, mode);
 }
 
-/** A gateway from before GEL-32 does not know the choice: the Live then
- * plays as its owner set it. */
+/** Best effort: without an answer the Live plays as its owner set it. */
 function sendViewMode(userId: string, mode: LiveViewMode | null): void {
   void voice.seat
     .request("viewMode", { u: userId, sharp: mode ? mode === "sharp" : null })

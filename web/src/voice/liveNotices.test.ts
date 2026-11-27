@@ -99,6 +99,7 @@ const unset: NotificationSetting = {
   level: null,
   muted: false,
   muted_until: null,
+  voice: false,
 };
 
 /** A handler with a hidden window, toasts and desktop notifications on, and

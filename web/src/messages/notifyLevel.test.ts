@@ -124,6 +124,7 @@ describe("a conversation without an unread row", () => {
     level: null,
     muted: false,
     muted_until: null,
+    voice: false,
     ...change,
   });
 
