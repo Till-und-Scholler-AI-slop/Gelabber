@@ -114,11 +114,15 @@ Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
   `backend/api/.env.example`); storage and avatar tests fail without the MinIO
   ones. The database role needs `CREATEDB` for `sqlx::test`.
 
-Deployment tests: `python3 -m unittest discover -s deploy/compose/tests` (and
-`-s deploy/tools/tests`); they need the PyYAML that
-`deploy/compose/tests/requirements.txt` pins. CI installs it with
-`python3 -m pip install --require-hashes --target <dir> -r deploy/compose/tests/requirements.txt`
-and runs the tests with `PYTHONPATH=<dir>`; a virtual environment does the same.
+Deployment tests need the PyYAML that `deploy/compose/tests/requirements.txt`
+pins, installed with a Python that has `pip` (Debian's needs `python3-pip`):
+
+```
+python3 -m pip install --require-hashes --target ~/.cache/gelabber-pyyaml -r deploy/compose/tests/requirements.txt
+PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests
+```
+
+`deploy/tools/tests` runs the same way.
 
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
 `npm test`, `npm run test:checks`, `npm run build`.

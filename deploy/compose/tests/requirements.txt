@@ -1,5 +1,6 @@
 # What the deployment tests need beyond the standard library (GEL-403):
-#   python3 -m pip install --require-hashes -r deploy/compose/tests/requirements.txt
+#   python3 -m pip install --require-hashes --target ~/.cache/gelabber-pyyaml -r deploy/compose/tests/requirements.txt
+#   PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests
 # Every file of the release is hashed, so any platform installs the same version.
 PyYAML==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
