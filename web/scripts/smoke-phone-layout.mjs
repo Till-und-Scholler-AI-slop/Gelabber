@@ -40,10 +40,12 @@ const server = {
   id: SERVER,
   name: "Wohnzimmer",
   owner_id: JONAS,
+  icon_url: null,
   created_at: AT,
   role: "member",
   permissions,
   member_permissions: permissions,
+  blocked: false,
 };
 const channel = (channelId, name, kind) => ({
   id: channelId,
@@ -52,8 +54,22 @@ const channel = (channelId, name, kind) => ({
   name,
   kind,
   created_at: AT,
+  limited: false,
+  role_ids: [],
 });
 const person = (userId, name) => ({ id: userId, name, avatar_url: null });
+/** A member as `GET /api/servers/{id}` lists them. */
+const member = (userId, name, role) => ({
+  user_id: userId,
+  name,
+  avatar_url: null,
+  joined_at: AT,
+  status_text: null,
+  accent_color: null,
+  avatar_decoration: null,
+  role_ids: [],
+  role,
+});
 const detail = {
   ...server,
   categories: [],
@@ -65,22 +81,8 @@ const detail = {
       channel(id(210 + i), `spiel-${i}`, "text"),
     ),
   ],
-  members: [
-    {
-      user_id: ME,
-      name: "Lena",
-      avatar_url: null,
-      joined_at: AT,
-      role: "member",
-    },
-    {
-      user_id: JONAS,
-      name: "Jonas",
-      avatar_url: null,
-      joined_at: AT,
-      role: "owner",
-    },
-  ],
+  members: [member(ME, "Lena", "member"), member(JONAS, "Jonas", "owner")],
+  roles: [],
 };
 // More history than fits the screen, so the list has an end to stay at.
 const history = Array.from({ length: 24 }, (_, i) => ({
@@ -94,13 +96,28 @@ const history = Array.from({ length: 24 }, (_, i) => ({
   edited_at: null,
   attachments: [],
   reactions: [],
+  mentions: [],
+  mention_everyone: false,
 }));
 
 function answer(path, method, body) {
   if (path === "/api/auth/session")
     return {
-      user: { ...person(ME, "Lena"), email: "lena@example.test" },
+      user: {
+        ...person(ME, "Lena"),
+        email: "lena@example.test",
+        created_at: AT,
+        bio: null,
+        pronouns: null,
+        status_text: null,
+        accent_color: null,
+        banner_color: null,
+        banner_url: null,
+        avatar_decoration: null,
+        locale: "de",
+      },
       csrf_token: "a".repeat(64),
+      operator: false,
     };
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
@@ -131,7 +148,14 @@ function answer(path, method, body) {
       server_id: SERVER,
       read_message_id: history.at(-1).id,
       read_at: AT,
+      read_order: history.at(-1).created_order,
+      membership_at: AT,
+      latest_order: history.at(-1).created_order,
       unread_count: 0,
+      mention_count: 0,
+      level: "all",
+      muted: false,
+      muted_until: null,
     };
   return {};
 }

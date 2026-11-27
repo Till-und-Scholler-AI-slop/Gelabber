@@ -50,10 +50,12 @@ const server = {
   id: SERVER,
   name: "Wohnzimmer",
   owner_id: ME,
+  icon_url: null,
   created_at: AT,
   role: "owner",
   permissions,
   member_permissions: permissions,
+  blocked: false,
 };
 const channel = (cid, name, kind) => ({
   id: cid,
@@ -62,8 +64,22 @@ const channel = (cid, name, kind) => ({
   name,
   kind,
   created_at: AT,
+  limited: false,
+  role_ids: [],
 });
 const person = (uid, name) => ({ id: uid, name, avatar_url: null });
+/** A member as `GET /api/servers/{id}` lists them. */
+const member = (userId, name, role) => ({
+  user_id: userId,
+  name,
+  avatar_url: null,
+  joined_at: AT,
+  status_text: null,
+  accent_color: null,
+  avatar_decoration: null,
+  role_ids: [],
+  role,
+});
 const detail = {
   ...server,
   categories: [],
@@ -71,28 +87,27 @@ const detail = {
     channel(TEXT, "allgemein", "text"),
     channel(VOICE, "Sofa", "voice"),
   ],
-  members: [
-    {
-      user_id: ME,
-      name: "Lena",
-      avatar_url: null,
-      joined_at: AT,
-      role: "owner",
-    },
-    {
-      user_id: JONAS,
-      name: "Jonas",
-      avatar_url: null,
-      joined_at: AT,
-      role: "member",
-    },
-  ],
+  members: [member(ME, "Lena", "owner"), member(JONAS, "Jonas", "member")],
+  roles: [],
 };
 function answer(path) {
   if (path === "/api/auth/session")
     return {
-      user: { ...person(ME, "Lena"), email: "lena@example.test" },
+      user: {
+        ...person(ME, "Lena"),
+        email: "lena@example.test",
+        created_at: AT,
+        bio: null,
+        pronouns: null,
+        status_text: null,
+        accent_color: null,
+        banner_color: null,
+        banner_url: null,
+        avatar_decoration: null,
+        locale: "de",
+      },
       csrf_token: "a".repeat(64),
+      operator: false,
     };
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
