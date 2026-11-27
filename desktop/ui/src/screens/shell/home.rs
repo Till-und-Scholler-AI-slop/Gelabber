@@ -354,6 +354,11 @@ mod tests {
             if gone.load(Ordering::SeqCst) && path.starts_with(&format!("/servers/{HOME}")) {
                 return Some(Reply::error(403, "forbidden"));
             }
+            // Left: the list no longer has it either, as the API's; with
+            // the stand-in gateway open the app fetches the list again.
+            if gone.load(Ordering::SeqCst) && method == "GET" && path == "/servers" {
+                return Some(Reply::json(serde_json::json!([])));
+            }
             workspace(method, path)
         });
         let mut harness = launcher(&api, &format!("/s/{HOME}"));

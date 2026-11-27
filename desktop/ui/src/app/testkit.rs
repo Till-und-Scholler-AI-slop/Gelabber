@@ -1,5 +1,6 @@
 //! For kittest tests of whole screens: a stand-in Gelabber API on a local
-//! port (enough of it for the app to start signed in or out), and a
+//! port (enough of it for the app to start signed in or out) with its
+//! gateway (`/ws`: subscriptions answered, frames pushed by the test), and a
 //! harness around the [`Launcher`] that steps until a condition holds.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -64,6 +65,99 @@ pub struct FakeApi {
     pub origin: String,
     /// `METHOD /path` of every request, in order.
     pub seen: Arc<Mutex<Vec<String>>>,
+    /// Its `/ws`.
+    pub gateway: Arc<Gateway>,
+}
+
+/// The stand-in gateway: answers each subscription with an `ok` at the
+/// topic's last pushed sequence number of [`EPOCH`], keeps every frame the
+/// app sends, and sends the app the frames a test pushes, on every open
+/// socket.
+#[derive(Default)]
+pub struct Gateway {
+    received: Mutex<Vec<Value>>,
+    sockets: Mutex<Vec<std::sync::mpsc::Sender<Value>>>,
+    /// The last `n` pushed per topic (`s`, `c`).
+    sequence: Mutex<std::collections::HashMap<(String, Option<String>), u64>>,
+}
+
+/// The `ep` of every topic of the stand-in gateway.
+pub const EPOCH: &str = "00000000-0000-4000-8000-0000000000e0";
+
+impl Gateway {
+    /// Sends `frame` to the app on every open socket.
+    pub fn push(&self, frame: Value) {
+        if let (Some(s), Some(n)) = (frame["s"].as_str(), frame["n"].as_u64()) {
+            let topic = (s.to_owned(), frame["c"].as_str().map(str::to_owned));
+            self.sequence.lock().insert(topic, n);
+        }
+        self.sockets
+            .lock()
+            .retain(|socket| socket.send(frame.clone()).is_ok());
+    }
+
+    /// Whether the app subscribed to server `s` (and channel `c`).
+    pub fn subscribed(&self, s: &str, c: Option<&str>) -> bool {
+        self.received
+            .lock()
+            .iter()
+            .any(|f| f["op"] == "s" && f["s"] == s && f["c"].as_str() == c)
+    }
+
+    fn serve(&self, stream: TcpStream, key: &str) {
+        use tungstenite::protocol::Role;
+        let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
+        let mut head = stream.try_clone().expect("clone");
+        let switching = format!(
+            "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\
+             sec-websocket-accept: {accept}\r\n\r\n"
+        );
+        if head.write_all(switching.as_bytes()).is_err() {
+            return;
+        }
+        // Reads wait briefly, so frames pushed meanwhile go out.
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(10)));
+        let mut socket = tungstenite::WebSocket::from_raw_socket(stream, Role::Server, None);
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.sockets.lock().push(tx);
+        loop {
+            while let Ok(frame) = rx.try_recv() {
+                if socket.send(frame.to_string().into()).is_err() {
+                    return;
+                }
+            }
+            match socket.read() {
+                Ok(tungstenite::Message::Text(text)) => {
+                    let Ok(frame) = serde_json::from_str::<Value>(text.as_str()) else {
+                        continue;
+                    };
+                    if frame["op"] == "s" {
+                        let topic = (
+                            frame["s"].as_str().unwrap_or_default().to_owned(),
+                            frame["c"].as_str().map(str::to_owned),
+                        );
+                        let n = self.sequence.lock().get(&topic).copied().unwrap_or(0);
+                        let mut ok = json!({"op": "ok", "s": frame["s"], "n": n, "ep": EPOCH});
+                        if !frame["c"].is_null() {
+                            ok["c"] = frame["c"].clone();
+                        }
+                        if socket.send(ok.to_string().into()).is_err() {
+                            return;
+                        }
+                    }
+                    self.received.lock().push(frame);
+                }
+                Ok(tungstenite::Message::Close(_)) => return,
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => return,
+            }
+        }
+    }
 }
 
 impl FakeApi {
@@ -74,16 +168,21 @@ impl FakeApi {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let origin = format!("http://{}", listener.local_addr().expect("addr"));
         let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let gateway: Arc<Gateway> = Arc::default();
         let state = Arc::new(Mutex::new(signed_in));
         let route: Arc<Route> = Arc::new(route);
-        let (log, flag) = (seen.clone(), state.clone());
+        let (log, flag, ws) = (seen.clone(), state.clone(), gateway.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (log, flag, route) = (log.clone(), flag.clone(), route.clone());
-                std::thread::spawn(move || serve(stream, &log, &flag, &*route));
+                let (log, flag, route, ws) = (log.clone(), flag.clone(), route.clone(), ws.clone());
+                std::thread::spawn(move || serve(stream, &log, &flag, &*route, &ws));
             }
         });
-        Self { origin, seen }
+        Self {
+            origin,
+            seen,
+            gateway,
+        }
     }
 
     pub fn saw(&self, request: &str) -> bool {
@@ -91,7 +190,13 @@ impl FakeApi {
     }
 }
 
-fn serve(stream: TcpStream, log: &Mutex<Vec<String>>, signed_in: &Mutex<bool>, route: &Route) {
+fn serve(
+    stream: TcpStream,
+    log: &Mutex<Vec<String>>,
+    signed_in: &Mutex<bool>,
+    route: &Route,
+    gateway: &Gateway,
+) {
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
     let mut out = stream;
     loop {
@@ -105,6 +210,7 @@ fn serve(stream: TcpStream, log: &Mutex<Vec<String>>, signed_in: &Mutex<bool>, r
             parts.next().unwrap_or("").to_owned(),
         );
         let mut length = 0;
+        let mut websocket_key = None;
         loop {
             let mut header = String::new();
             if reader.read_line(&mut header).unwrap_or(0) == 0 {
@@ -114,11 +220,19 @@ fn serve(stream: TcpStream, log: &Mutex<Vec<String>>, signed_in: &Mutex<bool>, r
             if header.is_empty() {
                 break;
             }
-            if let Some((name, value)) = header.split_once(':')
-                && name.eq_ignore_ascii_case("content-length")
-            {
-                length = value.trim().parse().unwrap_or(0);
+            if let Some((name, value)) = header.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    length = value.trim().parse().unwrap_or(0);
+                } else if name.eq_ignore_ascii_case("sec-websocket-key") {
+                    websocket_key = Some(value.trim().to_owned());
+                }
             }
+        }
+        if let Some(key) = websocket_key
+            && target.split('?').next() == Some("/ws")
+        {
+            log.lock().push(format!("{method} /ws"));
+            return gateway.serve(out, &key);
         }
         let mut body = vec![0; length];
         if reader.read_exact(&mut body).is_err() {
