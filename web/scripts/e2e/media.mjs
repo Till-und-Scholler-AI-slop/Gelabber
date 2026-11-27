@@ -184,7 +184,7 @@ export async function progress(
     "selected-network-path-mismatch",
     { paths },
   );
-  return { firstFrameMs, first, last };
+  return { firstFrameMs, startedAt: start, watchedAt, first, last };
 }
 async function reset(f) {
   for (const actor of [f.owner, f.member, f.watcher])

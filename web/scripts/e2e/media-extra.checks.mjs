@@ -377,3 +377,131 @@ for (const [name, owner, code] of [
     assert.ok(r.error instanceof CheckFailure, String(r.error));
     assert.equal(r.error.message, code);
   });
+
+// GEL-460: a passing retry keeps its step times, so a slow one that still
+// passes says which step took its time.
+async function sdpRetryRow(firstFrameMs) {
+  const clock = { now: 10_000 };
+  const flows = {
+    owner: {
+      rpc: [
+        { method: "produce", kind: "v", sentAt: 1, answeredAt: 2 },
+        { method: "produce", kind: "s", sentAt: 10_400, answeredAt: 10_450 },
+      ],
+      consumers: [],
+    },
+    member: {
+      rpc: [
+        { method: "w", kind: "s", sentAt: 10_900, answeredAt: 10_920 },
+        {
+          method: "consumerReady",
+          kind: "s",
+          sentAt: 11_000,
+          answeredAt: 11_010,
+        },
+      ],
+      consumers: [
+        { arrivedAt: 10_990, layers: { spatial: 0, temporal: 2, at: 11_200 } },
+      ],
+    },
+  };
+  const actor = (name) => ({
+    page: {
+      evaluate: async (fn) =>
+        fn.name === "samplePublicationFlow" ? flows[name] : undefined,
+    },
+  });
+  const snapshot = {
+    videos: [{ kind: "camera", width: 320, height: 180 }],
+    peers: [],
+    rejectedSdp: 1,
+    displayCalls: 1,
+    captures: [{ kind: "display", slot: 1, state: "ended" }],
+  };
+  const mocks = {
+    "./harness.mjs": {
+      CheckFailure,
+      check() {},
+      click: async () => {},
+      liveTiles: (page) => page.locator("figure"),
+      snapshot: async () => snapshot,
+      observe: async () => {},
+      until: async () => snapshot,
+    },
+    "./media.mjs": {
+      watchSource: async () => {},
+      activePeers: () => [],
+      armPlaybackRetry: () => {},
+      // The green retry: its wait began at the click.
+      progress: async (_actor, { color }) =>
+        color[1] === 220
+          ? {
+              firstFrameMs,
+              startedAt: clock.now,
+              watchedAt: clock.now + 600,
+              last: snapshot,
+            }
+          : { last: snapshot },
+    },
+  };
+  const context = vm.createContext({
+    Date: class {
+      static now() {
+        return clock.now;
+      }
+    },
+  });
+  const source = new vm.SourceTextModule(
+    await readFile(new URL("./media-extra.mjs", import.meta.url), "utf8"),
+    { context },
+  );
+  await source.link(async (name) => {
+    const exports = mocks[name] ?? (await import(name));
+    return new vm.SyntheticModule(
+      Object.keys(exports),
+      function () {
+        for (const [key, value] of Object.entries(exports))
+          this.setExport(key, value);
+      },
+      { context },
+    );
+  });
+  await source.evaluate();
+  let row;
+  const h = {
+    run: async (id, _predecessors, task) => {
+      if (id === "rejected-native-sdp-keeps-voice-other-source-no-ghost")
+        row = await task();
+    },
+  };
+  await source.namespace.mediaExtraScenarios(
+    h,
+    { owner: actor("owner"), member: actor("member") },
+    {
+      begin: async () => {},
+      reset: async () => {},
+      options: { budget: 5_000 },
+    },
+  );
+  return JSON.parse(JSON.stringify(row));
+}
+test("a passing Live retry keeps its step times, and a slow one its raw records too", async () => {
+  const fast = await sdpRetryRow(1_200);
+  assert.deepEqual(fast.retrySteps, {
+    produceSent: 400,
+    produceAnswered: 450,
+    watchSent: 900,
+    watchAnswered: 920,
+    consumerArrived: 990,
+    consumerReadySent: 1_000,
+    consumerReadyAnswered: 1_010,
+    lastLayerReport: 1_200,
+    layer: { spatial: 0, temporal: 2 },
+    firstFrame: 1_200,
+  });
+  assert.equal(fast.publisherLive, undefined);
+  const slow = await sdpRetryRow(4_465);
+  assert.equal(slow.retrySteps.firstFrame, 4_465);
+  assert.equal(slow.publisherLive.rpc.length, 2);
+  assert.equal(slow.subscriberLive.consumers.length, 1);
+});
