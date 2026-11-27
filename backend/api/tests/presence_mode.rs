@@ -89,9 +89,13 @@ async fn setup(pool: PgPool) -> World {
     }
 }
 
-/// The socket as the web client and the app of v0.13 and v0.14 open it,
-/// `?caps=dnd` included.
+/// The socket as the web client opens it.
 async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
+    ws::connect_to(addr, "/ws", Some(&client.jar[SESSION]), None).await
+}
+
+/// The socket as the app (and the web client before v0.14.1) opens it.
+async fn connect_app(addr: std::net::SocketAddr, client: &Client) -> Ws {
     ws::connect_to(addr, "/ws?caps=dnd", Some(&client.jar[SESSION]), None).await
 }
 
@@ -158,9 +162,10 @@ async fn others_see_the_mode_and_the_own_sockets_hear_it(pool: PgPool) {
     let res = owner.send(Method::GET, "/api/me/presence", None).await;
     assert_eq!(res.body, json!({ "mode": "auto", "until": null }));
 
-    // A socket going idle does not change what others see.
+    // A socket going idle does not change what others see, on the web
+    // (`ada_ws`) and in the app.
     send(&mut bob_ws, json!({ "op": "p", "st": "i" })).await;
-    let mut late = connect(addr, &owner).await;
+    let mut late = connect_app(addr, &owner).await;
     assert_eq!(
         listed(&watch(&mut late, server).await, &bob).as_deref(),
         Some("d")

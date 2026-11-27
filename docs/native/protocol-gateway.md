@@ -42,8 +42,8 @@ Signaling split (by design, `backend/api/src/gateway/mod.rs:15-17`,
 
 | Item | Value | Ref |
 |---|---|---|
-| URL | `wss://<host>/ws?caps=dnd` when the app origin is https, else `ws://<host>/ws?caps=dnd` | `web/src/ws/client.ts:53-60` |
-| `caps` query | `dnd` (v0.11, #590): the presence status `d`. Servers before v0.14 send `d` only to sockets opened with it and Do not disturb as `o` to the others; from v0.14 every socket hears `d` and the query is not read. Clients keep sending it while they support v0.13 servers | `backend/api/src/gateway/mod.rs` (`upgrade`) |
+| URL | `wss://<host>/ws` when the app origin is https, else `ws://<host>/ws`. The app opens `/ws?caps=dnd` | `web/src/ws/client.ts:53-59`, `desktop/client/src/gateway.rs` |
+| `caps` query | `dnd` (v0.11, #590): the presence status `d`. Servers before v0.14.1 send `d` only to sockets opened with it and Do not disturb as `o` to the others; from v0.14.1 every socket hears `d` and the query is not read. The web client stopped sending it with v0.14.1; the app sends it as long as it supports v0.14.0 servers, until v0.16 | `backend/api/src/gateway/mod.rs` (`upgrade`) |
 | Method | HTTP GET upgrade | `backend/api/src/gateway/mod.rs:44-46` |
 | Auth | Cookie `gelabber_session=<raw token>` (the raw token from the login/register `Set-Cookie`) | `backend/api/src/cookies.rs:8`, `backend/api/src/auth/session.rs:282` |
 | CSRF | Not needed for `/ws` (GET) | `backend/api/src/auth/session.rs:270-272` |
@@ -296,7 +296,7 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `dm` | `{"op":"dm","c":"<dmChannelId>"}` | a DM involving this account appeared (new DM / first message); verify via REST then subscribe. From v0.10 also sent when the peer's account was deleted and the DM channel with it: the REST check then answers `404` and the DM leaves the list | `protocol.rs:432-433`, `delivery.rs:193-204` |
 | `sig` | `{"op":"sig","t":"j","s":"<srv>",["c":"<chan>",]["u":"<user>",]["k":"a",]["on":true,]["m":false,]["d":false,]["snap":[…],]["replay":true,]["w":["<owner>",…]]}` | voice presence, see §5 | `protocol.rs:469-489` |
 | `err` | `{"op":"err","e":"not_found",["s":"<uuid>",]["c":"<uuid>"]}` | see §3.1 | `protocol.rs:490-497` |
-| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `d` do not disturb (#590; servers before v0.14 send it only to sockets opened with `caps=dnd`, see §1.1), `x` offline. A client should count a letter it does not know as `o` | `protocol.rs:96-129,498-508,829-844` |
+| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `d` do not disturb (#590; servers before v0.14.1 send it only to sockets opened with `caps=dnd`, see §1.1), `x` offline. A client should count a letter it does not know as `o` | `protocol.rs:96-129,498-508,829-844` |
 | `y` | `{"op":"y","s":"<srv>","c":"<chan>","u":"<user>","on":true}` | typing; delivered only to sockets subscribed to channel topic `c` | `protocol.rs:509-511`, `hub/fanout.rs:206-221` |
 | `ns` | `{"op":"ns"}` | notification settings changed on some device → refetch them | `protocol.rs:512-515` |
 | `rd` | `{"op":"rd","d":[ReadSync,…]}` | read positions moved on another device | `protocol.rs:516-534` |

@@ -54,7 +54,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/ws", get(upgrade))
 }
 
-/// `GET /ws`. Clients add `?caps=dnd`, which servers before v0.14 needed
+/// `GET /ws`. The app adds `?caps=dnd`, which servers before v0.14.1 need
 /// to send the presence status `d` (#590); every socket hears it now.
 async fn upgrade(
     State(state): State<AppState>,
