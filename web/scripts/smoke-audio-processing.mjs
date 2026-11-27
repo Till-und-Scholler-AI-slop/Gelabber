@@ -5,7 +5,15 @@ import { chromium, firefox } from "playwright";
 import { settle } from "./e2e/expected-failures.mjs";
 
 // Known failures, each under the issue that ends it (e2e/expected-failures.mjs).
-const EXPECTED_FAILURES = { firefox: "GEL-417" };
+// Firefox stops at the first probe, so its later steps (strong mode, A/B
+// recording, dialog, playback) run only in Chromium until GEL-417 is fixed.
+const EXPECTED_FAILURES = {
+  firefox: {
+    issue: "GEL-417",
+    message:
+      /^\{"requested":"enhanced","actual":"browser","message":"Lokaler Rauschfilter nicht verfügbar/,
+  },
+};
 const passed = [];
 const failed = [];
 const url = new URL(process.env.GELABBER_AUDIO_URL ?? "http://127.0.0.1:5179");

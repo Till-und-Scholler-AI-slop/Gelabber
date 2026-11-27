@@ -208,10 +208,8 @@ jobs:
           path: /tmp/gelabber-e2e/*.json
           if-no-files-found: warn
 
-      # The browser checks against one running app with its API, gateway and
-      # SFU (web/scripts/e2e/server-checks.mjs): chat workflows (GEL-31), search
-      # context, keyboard and viewports, reactions, call sounds, audio
-      # processing and source audio. Runs even when a fault run failed.
+      # web/scripts/e2e/server-checks.mjs lists the checks; they run even when a
+      # fault run failed.
       - name: Browser checks against the API, gateway and SFU
         if: ${{ !cancelled() }}
         env:

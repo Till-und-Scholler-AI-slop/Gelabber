@@ -468,14 +468,19 @@ try {
       .getByRole("button", { name: "Zurück zum Chat", exact: true })
       .click();
     await log.waitFor();
-    const after = await place(member.page);
-    assert.ok(
-      before &&
-        after &&
-        after.first === before.first &&
-        Math.abs(after.offset - before.offset) <= 2,
-      `the top row was ${before?.first} at ${before?.offset} px, is ${after?.first} at ${after?.offset} px`,
-    );
+    const kept = (now, when) =>
+      assert.ok(
+        before &&
+          now &&
+          now.first === before.first &&
+          Math.abs(now.offset - before.offset) <= 2,
+        `the top row was ${before?.first} at ${before?.offset} px, is ${now?.first} at ${now?.offset} px ${when}`,
+      );
+    kept(await place(member.page), "on return");
+    // A jump after a refetch or a debounce comes later than the list's
+    // first rest: the same window the read checks above wait for.
+    await new Promise((r) => setTimeout(r, 900));
+    kept(await place(member.page), "900 ms later");
   });
   const cancelTarget = await send(
     owner,
@@ -597,6 +602,7 @@ try {
     JSON.stringify(
       {
         checks,
+        failures,
         browser: "Chromium",
         mobileViewport: "390x844",
         physicalDeviceAcceptance: false,

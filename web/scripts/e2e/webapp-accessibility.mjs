@@ -11,7 +11,10 @@ import { settle } from "./expected-failures.mjs";
 
 // Known failures, each under the issue that ends it (expected-failures.mjs).
 const EXPECTED_FAILURES = {
-  "Esc while editing returns focus to the edit button": "GEL-401",
+  "Esc while editing returns focus to the edit button": {
+    issue: "GEL-401",
+    message: /^edit Escape lost opener focus$/,
+  },
 };
 
 const base = safeTarget(
@@ -635,9 +638,32 @@ try {
         }
         return last;
       });
-      // Whether End and PageDown in the editor may scroll the history is
-      // open (Chromium passes PageDown from a field that cannot scroll on to
-      // the list); this check makes no claim about it.
+      // End belongs to the editor, not to the list, which ignores keys typed
+      // in fields: the caret goes to the end and the history stays. The
+      // caret's arrival shows the key was handled. PageDown is left out:
+      // Chromium passes it from a field that cannot scroll on to the list,
+      // and whether the app should stop that is open (#1183).
+      await input.evaluate((el) => el.setSelectionRange(0, 0));
+      await page.keyboard.press("End");
+      await until(
+        () => input.evaluate((el) => el.selectionStart === el.value.length),
+        Boolean,
+        "edit-end-caret",
+      );
+      assert.equal(
+        await log.evaluate(async (el) => {
+          let still = 0;
+          let last = el.scrollTop;
+          while (still < 5) {
+            await new Promise(requestAnimationFrame);
+            still = el.scrollTop === last ? still + 1 : 0;
+            last = el.scrollTop;
+          }
+          return last;
+        }),
+        editTop,
+        "editing keys jumped canonical history",
+      );
       await page.keyboard.press("Escape");
       await capture("12b-edit-escape");
       // Asserted in its own check below, so this one goes on.
@@ -900,9 +926,9 @@ try {
     ),
   );
 }
+// settle() also fails a run in which no check passed, such as a filter that
+// matches only an expected failure, or none.
 assert.deepEqual(
   settle(EXPECTED_FAILURES, { passed: checks, failed: failures }),
   [],
 );
-// A filter that matches no check must not pass with nothing run.
-assert.ok(checks.length + failures.length > 0, "no check ran");

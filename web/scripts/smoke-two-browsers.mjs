@@ -28,8 +28,6 @@ const pages = [];
 async function participant(name) {
   const context = await browser.newContext({
     permissions: ["camera", "microphone"],
-    // The labels below are German; the app follows the browser's language.
-    locale: "de-DE",
   });
   await context.addInitScript(() => {
     const NativePeer = window.RTCPeerConnection;
@@ -462,28 +460,19 @@ try {
       .locator("form textarea")
       .fill(`Browser upload ${extension} ${suffix}`);
     await a.page.getByRole("button", { name: "Senden" }).click();
-    // A picture loads once in view (loading="lazy") and may re-mount after a
-    // failed first try. With a thumbnail's srcset its width says nothing
-    // (#574), so it has to decode; the bytes are compared below.
-    const picture = b.page.locator(`img[alt="${filename}"]`).last();
-    await picture.scrollIntoViewIfNeeded({ timeout: 30_000 });
     await b.page.waitForFunction(
       (name) =>
-        [...document.images]
-          .filter((image) => image.alt === name)
-          .at(-1)
-          ?.decode()
-          .then(
-            () => true,
-            () => false,
-          ),
+        [...document.images].some(
+          (image) =>
+            image.alt === name && image.complete && image.naturalWidth === 8,
+        ),
       filename,
       { timeout: 30_000 },
     );
-    // The original, not the `?size=400` thumbnail the page shows.
-    const original = new URL(await picture.getAttribute("src"), base);
-    original.searchParams.delete("size");
-    const response = await b.page.request.get(original.href);
+    const src = await b.page
+      .locator(`img[alt="${filename}"]`)
+      .getAttribute("src");
+    const response = await b.page.request.get(new URL(src, base).href);
     assert.equal(response.status(), 200);
     assert.deepEqual(await response.body(), bytes);
   }

@@ -42,3 +42,5 @@ node scripts/landing/shot.mjs readme   # ../docs/assets/readme-{hero,chat,voice}
 ```
 
 `seed.mjs` makes accounts of its own per language (`lena.en@example.test`, …), so it can run next to the parity seed; it seeds once per database. `shot.mjs` sets Lena's account language, keeps Jonas live in Sofa with `scripts/parity/call.mjs` and writes the pictures at 1280×800 (the README's at device scale 1.5). Look at each picture before committing it.
+
+The made-up strategy map that Jonas's Live shows, `web/public/images/landing/lan-map.svg`, comes from `scripts/landing/lan-map.py` (in `web/`: `python3 scripts/landing/lan-map.py`). It is deterministic: run it again only to change the map.
