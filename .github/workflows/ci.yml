@@ -37,13 +37,13 @@ jobs:
       actions: read
       contents: read
     outputs:
-      reused-run: ${{ steps.reuse.outputs.run }}
       candidate: ${{ steps.candidate.outputs.candidate }}
       backend: ${{ steps.areas.outputs.backend }}
       web: ${{ steps.areas.outputs.web }}
       desktop: ${{ steps.areas.outputs.desktop }}
       deploy: ${{ steps.areas.outputs.deploy }}
       minio: ${{ steps.areas.outputs.minio }}
+      minio-build: ${{ steps.areas.outputs.minio-build }}
       images: ${{ steps.areas.outputs.images }}
     steps:
       - name: Checkout
@@ -72,31 +72,6 @@ jobs:
             SINCE="$since" python3 .github/workflows/scripts/tested_tree.py find-queue >> "$GITHUB_OUTPUT"
           fi
 
-      # A pull request checks out its merge commit; the first parent is the base.
-      # --no-renames lists a move's source too; quotePath=false leaves non-ASCII paths unquoted.
-      # A push runs the areas its commits touch, as a pull request does (GEL-360);
-      # the caches of the others stay valid. Without the previous head: all.
-      - name: Areas
-        id: areas
-        env:
-          EVENT: ${{ github.event_name }}
-          REUSED_RUN: ${{ steps.reuse.outputs.run }}
-          BEFORE: ${{ steps.reuse.outputs.since || github.event.before || github.event.merge_group.base_sha }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT" = pull_request ]; then
-            git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
-          elif [ -n "$REUSED_RUN" ]; then
-            echo "Run $REUSED_RUN passed this tree: no area runs again." | tee -a "$GITHUB_STEP_SUMMARY"
-            python3 .github/workflows/scripts/changes.py < /dev/null >> "$GITHUB_OUTPUT"
-          elif { [ "$EVENT" = push ] || [ "$EVENT" = merge_group ]; } && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
-              && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
-            echo "Areas changed since $BEFORE." | tee -a "$GITHUB_STEP_SUMMARY"
-            git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
-          else
-            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
-          fi
-
       # A release or hotfix pull request to main packages its apps as the
       # release ships them; desktop-release.yml then only signs (GEL-358).
       - name: Release candidate
@@ -113,6 +88,52 @@ jobs:
             case "$HEAD_REF" in release/v*|hotfix/v*) candidate=true ;; esac
           fi
           echo "candidate=$candidate" | tee -a "$GITHUB_OUTPUT"
+
+      # A pull request checks out its merge commit; the first parent is the base.
+      # --no-renames lists a move's source too; quotePath=false leaves non-ASCII paths unquoted.
+      # A push runs the areas its commits touch, as a pull request does (GEL-360);
+      # the caches of the others stay valid. Without a starting point, or on main: all.
+      - name: Areas
+        id: areas
+        env:
+          EVENT: ${{ github.event_name }}
+          CANDIDATE: ${{ steps.candidate.outputs.candidate }}
+          REUSED_RUN: ${{ steps.reuse.outputs.run }}
+          BEFORE: ${{ steps.reuse.outputs.since || github.event.before || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$CANDIDATE" = true ]; then
+            echo "Release candidate: every area runs, so that main can reuse this run." | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = pull_request ]; then
+            git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
+          elif [ -n "$REUSED_RUN" ]; then
+            echo "Run $REUSED_RUN passed this tree: no area runs again." | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 .github/workflows/scripts/changes.py < /dev/null >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+            echo "A push to main that reuses no run checks every area." | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
+          elif { [ "$EVENT" = push ] || [ "$EVENT" = merge_group ]; } && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+              && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
+            echo "Areas changed since $BEFORE." | tee -a "$GITHUB_STEP_SUMMARY"
+            git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
+          else
+            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
+          fi
+
+      # Deleted or loosened assertions, skips, raised limits, sleeps and retries (GEL-387);
+      # the base branch's copy, so a pull request cannot switch its own report off.
+      - name: Test edits to look at
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 1
+        run: |
+          script=.github/workflows/scripts/edited_tests.py
+          if git cat-file -e "HEAD^1:$script" 2>/dev/null; then
+            git show "HEAD^1:$script" | python3 - HEAD^1 HEAD
+          else
+            python3 "$script" HEAD^1 HEAD
+          fi
 
       - name: Record the tested tree
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -208,6 +229,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
+
+      # A pull request runs the tests of the crates it changes and of those
+      # that depend on them; anything else runs all (rust_tests.py, GEL-393).
+      - name: Tests the change can affect
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = pull_request ]; then
+            git diff -z --no-renames --name-only HEAD^1 HEAD
+          fi | python3 .github/workflows/scripts/rust_tests.py --event "$EVENT" --base "$BASE_REF" | tee -a "$GITHUB_OUTPUT"
 
       - name: Login to GHCR for pinned test MinIO
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -254,9 +289,7 @@ jobs:
           load: true
           provenance: false
           tags: gelabber-native-ci-toolchain:local
-          cache-from: |
-            type=registry,ref=ghcr.io/till-und-scholler-ai-slop/gelabber/media:buildcache
-            type=gha,scope=media
+          cache-from: type=registry,ref=ghcr.io/till-und-scholler-ai-slop/gelabber/media:buildcache
 
       # zizmor's cache-poisoning: the image above is only loaded for the tests, never published.
       - name: Cache cargo
@@ -275,19 +308,11 @@ jobs:
 
       # Runs the test binaries side by side instead of one after another.
       - name: Install cargo-nextest
-        env:
-          NEXTEST_VERSION: 0.9.149
-          NEXTEST_SHA256: d65c7f14bcb5c1566d1ecd534c5da8dedb81ba58586e478b0ab81c877d2bd8ad
-        run: |
-          set -euo pipefail
-          archive="$(mktemp)"
-          trap 'rm -f "$archive"' EXIT
-          curl -fsSL "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-x86_64-unknown-linux-musl.tar.gz" -o "$archive"
-          echo "${NEXTEST_SHA256}  ${archive}" | sha256sum --check
-          mkdir -p "${CARGO_HOME:-$HOME/.cargo}/bin"
-          tar -xzf "$archive" -C "${CARGO_HOME:-$HOME/.cargo}/bin" cargo-nextest
+        run: .github/workflows/scripts/install-nextest.sh
 
       - name: Test workspace
+        env:
+          SELECTED: ${{ steps.select.outputs.filter }}
         run: |
           set -euo pipefail
           test -n "$MINIO_ENDPOINT"
@@ -295,12 +320,13 @@ jobs:
           test -n "$MINIO_ROOT_PASSWORD"
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           # The 100 ms typing assertion runs alone in the next step.
-          sh backend/build/run-native-ci.sh nextest run --locked --workspace --all-targets --no-fail-fast \
+          # Profile ci retries a failed test once and writes JUnit (backend/.config/nextest.toml).
+          sh backend/build/run-native-ci.sh nextest run --profile ci --locked --workspace --all-targets --no-fail-fast \
             --partition hash:${{ matrix.part }}/2 \
-            -E 'not test(typing_broadcasts_fast_and_clears_on_stop)'
+            -E "($SELECTED) and not test(typing_broadcasts_fast_and_clears_on_stop)"
 
       - name: Test typing latency in isolation
-        if: matrix.part == 1
+        if: matrix.part == 1 && (steps.select.outputs.all == 'true' || contains(fromJSON(steps.select.outputs.packages), 'gelabber-api'))
         env:
           VERIFY_TYPING_STABILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_typing_stability }}
         run: |
@@ -314,6 +340,22 @@ jobs:
             # Same flags as above, so the built tests are reused.
             sh backend/build/run-native-ci.sh test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
           done
+
+      # A test that passed only on retry passes the run, but never silently.
+      - name: Flaky tests
+        if: ${{ !cancelled() }}
+        env:
+          JOB_LABEL: Rust tests (${{ matrix.part }}/2)
+        run: python3 .github/workflows/scripts/flaky_tests.py summary backend/target/nextest/ci/junit.xml
+
+      - name: Upload the test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-rust-${{ matrix.part }}
+          path: backend/target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Dump test MinIO logs
         if: failure()
@@ -366,6 +408,29 @@ jobs:
           zizmor --version
           zizmor --format github .github/workflows
 
+      # Expressions, needs/outputs, runner labels and shell scripts in the
+      # workflows; shellcheck at warning level, its style notes are not gated.
+      - name: Check workflows with actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          SHELLCHECK_VERSION: 0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+          SHELLCHECK_OPTS: --severity=warning
+        run: |
+          set -euo pipefail
+          tools="$(mktemp -d)"
+          trap 'rm -rf "$tools"' EXIT
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o "$tools/actionlint.tar.gz"
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" -o "$tools/shellcheck.tar.xz"
+          echo "${ACTIONLINT_SHA256}  $tools/actionlint.tar.gz" | sha256sum --check
+          echo "${SHELLCHECK_SHA256}  $tools/shellcheck.tar.xz" | sha256sum --check
+          tar -xzf "$tools/actionlint.tar.gz" -C "$tools" actionlint
+          tar -xJf "$tools/shellcheck.tar.xz" -C "$tools" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          "$tools/actionlint" --version
+          "$tools/shellcheck" --version
+          "$tools/actionlint" -shellcheck "$tools/shellcheck" -pyflakes=
+
       # Also checks that every workflow action is pinned to a commit SHA.
       - name: Test deployment config
         run: python3 -m unittest discover -s deploy/compose/tests -v
@@ -393,11 +458,25 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26.13.1
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+
+      # Pull requests only read the npm cache; pushes save it (setup-node's
+      # cache saved per-PR copies, which cache-cleanup.yml then deleted).
+      - name: Restore the npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: node-cache-Linux-x64-npm-${{ hashFiles('web/package-lock.json') }}
 
       - name: Install
         run: npm ci
+
+      - name: Save the npm cache
+        if: github.event_name == 'push' && steps.npm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
 
       - name: Verify pinned emoji data
         run: python3 scripts/generate-emoji-data.py --check
@@ -457,9 +536,6 @@ jobs:
           echo "GELABBER_VERSION=v$(python3 -c 'import tomllib; print(tomllib.load(open("backend/Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
           echo "OCI_CREATED=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
 
-      - name: Compose version pins match workspace
-        run: grep -F "${GHCR_IMAGE}:${GELABBER_VERSION}" deploy/compose/compose.yaml
-
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -477,23 +553,22 @@ jobs:
             OCI_VERSION=${{ env.GELABBER_VERSION }}
             OCI_CREATED=${{ env.OCI_CREATED }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
-          # Pull requests read the layer cache; main writes it. The Actions
-          # cache is read until the first publish has filled the registry's.
-          cache-from: |
-            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
-            type=gha,scope=${{ matrix.name }}
+          # Pull requests read the layer cache; main writes it.
+          cache-from: type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
 
       - name: Verify actual media image readiness and normal shutdown
         if: matrix.name == 'media'
         run: python3 backend/build/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$GITHUB_SHA"
 
-  # Builds and checks the pinned MinIO and mc images; publish-minio.yml
-  # pushes them from main.
+  # Checks the pinned MinIO and mc images, built from source when their
+  # Dockerfiles change; publish-minio.yml pushes missing ones from main.
   minio:
     name: MinIO images
     needs: changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.minio == 'true'
     uses: ./.github/workflows/minio-images.yml
+    with:
+      build: ${{ needs.changes.outputs.minio-build == 'true' }}
 
   desktop:
     name: Desktop
@@ -522,19 +597,63 @@ jobs:
       linux-key: ${{ needs.desktop.outputs.libwebrtc-linux-store }}
       windows-key: ${{ needs.desktop.outputs.libwebrtc-windows-store }}
 
+  # After a push, every flaky test goes to its issue (flaky_tests.py), from
+  # a job of its own: the tests' jobs keep read-only tokens.
+  flaky-tests:
+    name: Record flaky tests
+    needs: [rust, desktop]
+    if: >-
+      !cancelled() && github.event_name == 'push' &&
+      (needs.rust.result != 'skipped' || needs.desktop.result != 'skipped')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the test reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: junit-*
+          path: junit
+
+      - name: Add each flake to its issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/workflows/scripts/flaky_tests.py issues junit
+
   # The one required check: red if any job that ran failed or was cancelled.
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, lint, rust, web, deploy, images, minio, desktop, libwebrtc-store]
+    needs: [changes, lint, rust, web, deploy, images, minio, desktop, flaky-tests, libwebrtc-store]
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
+      # An area output that is neither true nor false (a typo actionlint
+      # cannot see, GEL-397) skips that area's jobs, and a skip counts as passed.
       - name: Every job that ran passed
         env:
           RESULTS: ${{ toJSON(needs.*.result) }}
+          AREAS: >-
+            backend=${{ needs.changes.outputs.backend }}
+            web=${{ needs.changes.outputs.web }}
+            desktop=${{ needs.changes.outputs.desktop }}
+            deploy=${{ needs.changes.outputs.deploy }}
+            minio=${{ needs.changes.outputs.minio }}
         run: |
           echo "$RESULTS"
           if printf '%s' "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
             exit 1
           fi
+          for area in $AREAS; do
+            case "${area#*=}" in
+              true|false) ;;
+              *) echo "::error::The changes job's output ${area%%=*} is '${area#*=}', not true or false."; exit 1 ;;
+            esac
+          done

@@ -1,18 +1,26 @@
-# Builds the pinned MinIO CE server and mc images from source
-# (deploy/compose/minio, deploy/compose/mc) and checks them, with a read-only
-# token: the build runs fetched Go modules. ci.yml calls it for pull requests,
-# publish-minio.yml before it pushes the images from main.
+# Checks the pinned MinIO CE server and mc images, built from source
+# (deploy/compose/minio, deploy/compose/mc) when asked or not yet published, with
+# a read-only token: the build runs fetched Go modules. ci.yml calls it for pull
+# requests, publish-minio.yml before it pushes missing images from main.
 name: MinIO CE images
 
 on:
   workflow_call:
     inputs:
+      build:
+        description: Build from source even when the pinned images are published
+        type: boolean
+        required: false
+        default: false
       keep:
         description: Upload the built images as the artifact minio-images
         type: boolean
         required: false
         default: false
     outputs:
+      built:
+        description: Whether the images were built here rather than pulled
+        value: ${{ jobs.build.outputs.built }}
       minio-release:
         value: ${{ jobs.build.outputs.minio-release }}
       mc-release:
@@ -33,6 +41,7 @@ jobs:
     outputs:
       minio-release: ${{ env.MINIO_RELEASE }}
       mc-release: ${{ env.MC_RELEASE }}
+      built: ${{ steps.published.outputs.found != 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,12 +52,10 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY,,}"
-          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' backend/Cargo.toml | head -n 1)"
           echo "GHCR_IMAGE=ghcr.io/${repo}/minio" >> "$GITHUB_ENV"
           echo "LOCAL_IMAGE=gelabber/minio" >> "$GITHUB_ENV"
           echo "GHCR_MC_IMAGE=ghcr.io/${repo}/mc" >> "$GITHUB_ENV"
           echo "LOCAL_MC_IMAGE=gelabber/mc" >> "$GITHUB_ENV"
-          echo "GELABBER_VERSION=${ver}" >> "$GITHUB_ENV"
 
       - name: Compose pin matches
         run: |
@@ -59,12 +66,29 @@ jobs:
           grep -F "${GHCR_MC_IMAGE}:${MC_RELEASE}" deploy/compose/compose.yaml
           grep -F "MC_RELEASE: ${MC_RELEASE}" deploy/compose/compose.yaml
           grep -F "ARG MC_RELEASE=${MC_RELEASE}" deploy/compose/mc/Dockerfile
-          test "${GELABBER_VERSION}" = "v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' backend/Cargo.toml | head -n 1)"
+
+      # Unless its Dockerfiles changed, check the images operators pull; the
+      # source build (3 to 5 minutes, no cache) runs only for a missing tag.
+      - name: Published images
+        id: published
+        if: ${{ !inputs.build }}
+        run: |
+          set -euo pipefail
+          if docker pull "${GHCR_IMAGE}:${MINIO_RELEASE}" && docker pull "${GHCR_MC_IMAGE}:${MC_RELEASE}"; then
+            docker tag "${GHCR_IMAGE}:${MINIO_RELEASE}" "${LOCAL_IMAGE}:${MINIO_RELEASE}"
+            docker tag "${GHCR_MC_IMAGE}:${MC_RELEASE}" "${LOCAL_MC_IMAGE}:${MC_RELEASE}"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "The pinned images are not published yet: building them."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Buildx
+        if: steps.published.outputs.found != 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build
+        if: steps.published.outputs.found != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: deploy/compose/minio
@@ -84,6 +108,7 @@ jobs:
           printf '%s\n' "$out" | grep -F "${MINIO_RELEASE}"
 
       - name: Build mc
+        if: steps.published.outputs.found != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: deploy/compose/mc
@@ -143,11 +168,11 @@ jobs:
 
       # publish-minio.yml pushes them in a job of its own.
       - name: Save the images
-        if: inputs.keep
+        if: inputs.keep && steps.published.outputs.found != 'true'
         run: docker save -o minio-images.tar "${LOCAL_IMAGE}:${MINIO_RELEASE}" "${LOCAL_MC_IMAGE}:${MC_RELEASE}"
 
       - name: Upload the images
-        if: inputs.keep
+        if: inputs.keep && steps.published.outputs.found != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: minio-images

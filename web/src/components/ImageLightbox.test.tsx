@@ -43,10 +43,50 @@ describe("image lightbox", () => {
     expect(preview).not.toContain("Herunterladen");
   });
 
-  it("has no stepping: a message carries one attachment", () => {
+  it("shows no stepping for a single picture", () => {
     expect(html).not.toContain("Vorheriges");
     expect(html).not.toContain("Nächstes");
     expect(html).not.toContain("lr-lightbox-count");
+  });
+});
+
+// The first render only: stepping itself (← / →, the buttons, a swipe) needs
+// a browser.
+describe("image lightbox with a gallery", () => {
+  const picture = (id: string, filename: string) => ({
+    id,
+    src: attachmentUrl(id),
+    filename,
+    download: attachmentDownloadUrl(id),
+  });
+  const gallery = [
+    picture("a", "erstes.png"),
+    picture("b", "zweites.png"),
+    picture("c", "drittes.png"),
+  ];
+  const html = renderToStaticMarkup(
+    <ImageLightbox image={gallery[1]!} gallery={gallery} onClose={() => {}} />,
+  );
+
+  it("offers previous, next and the count for several pictures", () => {
+    expect(html).toContain(
+      '<button type="button" class="lr-lightbox-step is-previous" aria-label="Vorheriges Bild">',
+    );
+    expect(html).toContain(
+      '<button type="button" class="lr-lightbox-step is-next" aria-label="Nächstes Bild">',
+    );
+    expect(html).toContain(
+      '<span class="lr-lightbox-count" aria-hidden="true">2 / 3</span>',
+    );
+  });
+
+  it("opens on the picture asked for, not on the gallery's first", () => {
+    expect(html).toContain('aria-label="Bild 2 von 3: zweites.png"');
+    expect(html.match(/<img [^>]*>/g)).toHaveLength(1);
+    expect(html).toContain('src="/api/attachments/b"');
+    expect(html).toContain('alt="zweites.png"');
+    expect(html).toContain('href="/api/attachments/b?download=1"');
+    expect(html).not.toMatch(/erstes\.png|drittes\.png/);
   });
 });
 

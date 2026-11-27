@@ -9,7 +9,6 @@ import { useT } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { formatSize } from "../messages/rules.ts";
-import { isTauriApp } from "../tauriApp.ts";
 import { DownloadLink } from "./Attachments.tsx";
 import { CloseIcon } from "./Icons.tsx";
 
@@ -44,11 +43,8 @@ const DOUBLE_TAP_MS = 300;
 type View = { scale: number; x: number; y: number };
 const FIT: View = { scale: 1, x: 0, y: 0 };
 
-/** Tabs exist outside the installed web app and the desktop app. The
- *  old Tauri shell is no standalone window, but its system browser has no
- *  session cookie. */
+/** Tabs exist outside the installed web app. */
 function hasTabs(): boolean {
-  if (isTauriApp()) return false;
   try {
     return !window.matchMedia("(display-mode: standalone)").matches;
   } catch {

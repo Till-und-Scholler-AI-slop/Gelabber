@@ -20,8 +20,8 @@ class Browser extends EventTarget {
 
 let cleanup: (() => void) | undefined;
 afterEach(() => cleanup?.());
-function track(browser = new Browser(), native = false) {
-  cleanup = trackInstallation(browser as unknown as Window, native);
+function track(browser = new Browser()) {
+  cleanup = trackInstallation(browser as unknown as Window);
   return browser;
 }
 function offer(
@@ -222,30 +222,19 @@ describe("browser installation", () => {
     expect(hint()).toBe(false);
     cleanup?.();
 
-    // Inside the installed app or the desktop app there is nothing to offer.
+    // Inside the installed app there is nothing to offer.
     const app = new Browser();
     app.display.matches = true;
     track(app);
     expect(hint()).toBe(false);
-    cleanup?.();
-    track(new Browser(), true);
-    expect(hint()).toBe(false);
   });
 
-  it("does not offer installation over insecure HTTP or in the native desktop app", () => {
+  it("does not offer installation over insecure HTTP", () => {
     const browser = new Browser();
     browser.isSecureContext = false;
     track(browser);
     expect(offer(browser).defaultPrevented).toBe(false);
     expect(useInstallation.getState().available).toBe(false);
-    cleanup?.();
-    browser.isSecureContext = true;
-    track(browser, true);
-    expect(offer(browser).defaultPrevented).toBe(false);
-    expect(useInstallation.getState()).toMatchObject({
-      available: false,
-      native: true,
-    });
   });
 
   it("removes listeners and ignores late results after disposal", async () => {
