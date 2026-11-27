@@ -15,22 +15,49 @@ export function wanted(ids, id) {
 export function requiredCase(ids, id, setup = false) {
   return setup || wanted(ids, id);
 }
+/** Whether a FAIL row is the failure its entry expects: the same reason,
+ * and the same file:line when the entry pins a `site`. */
+function expectedFailure(row, entry) {
+  return (
+    row.status === "FAIL" &&
+    !!entry &&
+    row.reason === entry.reason &&
+    (!entry.site ||
+      row.site === entry.site ||
+      !!row.site?.startsWith(`${entry.site}:`))
+  );
+}
 /**
- * `expected`: case id -> issue, for scenarios known to fail (a profile's
- * `expectedFailures`). Such a FAIL leaves the gate green; such a PASS turns
- * it red until the entry is removed. BLOCKED stays red either way.
+ * `expected`: case id -> { issue, reason, site? }, for scenarios known to
+ * fail (a profile's `expectedFailures`). A FAIL with that reason (and site)
+ * leaves the gate green; a FAIL for another reason, a PASS and a BLOCKED
+ * turn it red. A PASS stays red until the entry is removed.
  */
 export function gate(results, selected, cleanup, expected = {}) {
   const absent = selected.filter((id) => !results.some((r) => r.id === id));
   const expectedFailures = results
-    .filter((r) => r.status === "FAIL" && expected[r.id])
-    .map((r) => ({ id: r.id, issue: expected[r.id] }));
+    .filter((r) => expectedFailure(r, expected[r.id]))
+    .map((r) => ({ id: r.id, issue: expected[r.id].issue, reason: r.reason }));
+  // Listed, but failed otherwise than its entry says.
+  const otherFailures = results
+    .filter(
+      (r) =>
+        r.status === "FAIL" &&
+        expected[r.id] &&
+        !expectedFailure(r, expected[r.id]),
+    )
+    .map((r) => ({
+      id: r.id,
+      issue: expected[r.id].issue,
+      reason: r.reason,
+      site: r.site,
+    }));
   const nowPassing = results
     .filter((r) => r.status === "PASS" && expected[r.id])
-    .map((r) => ({ id: r.id, issue: expected[r.id] }));
+    .map((r) => ({ id: r.id, issue: expected[r.id].issue }));
   const failures = results.filter(
     (r) =>
-      (r.status === "FAIL" && !expected[r.id]) ||
+      (r.status === "FAIL" && !expectedFailure(r, expected[r.id])) ||
       r.status === "BLOCKED" ||
       r.fixtureRecovery === "BLOCKED",
   );
@@ -48,6 +75,7 @@ export function gate(results, selected, cleanup, expected = {}) {
     excluded,
     absent,
     expectedFailures,
+    otherFailures,
     // Listed as failing but passed: remove them from the profile's list.
     nowPassing,
     // This runner cannot prove native picker, audible two-device, WAN or production gates.

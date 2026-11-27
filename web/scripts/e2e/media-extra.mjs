@@ -92,10 +92,14 @@ export async function concurrentLive(h, f, { reset, options }) {
     simultaneousLives: 2,
     settled,
     tiles: shown,
-    // Two Lives in the room: measure the owner's by name (GEL-33).
+    // Two Lives in the room: each one is measured by name (GEL-33).
     first: await progress(f.watcher, {
       ...options,
       publisher: `E2E ${f.owner.label}`,
+    }),
+    second: await progress(f.watcher, {
+      ...options,
+      publisher: `E2E ${f.member.label}`,
     }),
   };
 }

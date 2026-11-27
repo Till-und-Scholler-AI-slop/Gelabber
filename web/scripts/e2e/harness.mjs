@@ -575,8 +575,12 @@ export async function startHarness() {
       process.env.GELABBER_E2E_EXPECTED_FAILURES || "{}",
     );
     report.gate = gate(report.results, selected, report.cleanup, expected);
-    for (const { id, issue } of report.gate.expectedFailures)
-      console.log(`EXPECTED FAIL ${id} (${issue})`);
+    for (const { id, issue, reason } of report.gate.expectedFailures)
+      console.log(`EXPECTED FAIL ${id} (${issue}): ${reason}`);
+    for (const { id, issue, reason, site } of report.gate.otherFailures)
+      console.log(
+        `FAIL of an expected failure for another reason: ${id} ${reason} at ${site} (listed under ${issue})`,
+      );
     for (const { id, issue } of report.gate.nowPassing)
       console.log(
         `PASS of an expected failure: remove ${id} from its profile's list (${issue})`,

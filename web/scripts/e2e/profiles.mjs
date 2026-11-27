@@ -17,16 +17,16 @@ export const profiles = {
       "autoplay-rejection-visible-click-retry",
       "forced-track-arrival-reorder-source-identity",
       "rejected-native-sdp-keeps-voice-other-source-no-ghost",
-      "session-audio-mute-deafen-volume-playback-retry",
       "active-call-responsive-controls",
     ],
-    // Known to fail, each under the issue that ends it: a FAIL keeps the
-    // gate green, a PASS turns it red until the entry goes (selection.mjs).
-    expectedFailures: {
-      "20-live-start-stop-bounded-client-resources": "GEL-409",
-      "session-audio-mute-deafen-volume-playback-retry": "GEL-409",
-      "active-call-responsive-controls": "GEL-409",
-    },
+    // Left out: session-audio-mute-deafen-volume-playback-retry. It keeps
+    // watching in one voice room while joining another, which since a Live
+    // is watched inside its call ends the watch; its rewrite is #1186.
+    //
+    // Known to fail, each with the issue that ends it and its reason (and
+    // site): such a FAIL keeps the gate green; another FAIL or a PASS turns
+    // it red, a PASS until the entry goes (selection.mjs).
+    expectedFailures: {},
   },
   core: {
     suite: "core",

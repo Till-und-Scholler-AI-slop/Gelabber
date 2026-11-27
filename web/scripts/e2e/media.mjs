@@ -13,6 +13,11 @@ import {
 
 export const activePeers = (s) =>
   s.peers.filter((p) => p.connection !== "closed");
+/** A member of a call holds at most one connection that sends (its
+ * microphone, a Live) and one that only receives. */
+export const oneSendOneReceive = (peers) =>
+  peers.filter((p) => p.senders > 0).length <= 1 &&
+  peers.filter((p) => !(p.senders > 0)).length <= 1;
 export function armPlaybackRetry() {
   // Keep unmute/autoplay callbacks blocked until the real user click reaches
   // the retry button; lifting the fault earlier can remove that button.
@@ -308,14 +313,14 @@ export async function mediaScenarios(h, f) {
             window.__e2e.savedPeer?.connectionState === "connected",
         }));
       // A new media socket comes first, its new transports after: wait until
-      // a live peer sends the saved track again (or the deadline says it
-      // never does), then compare.
+      // a live peer sends the saved track again, or the track ended, then
+      // compare. A client that never sends it again fails here.
       await until(
         sample,
-        (state) => state.trackStillSent,
+        (state) => state.trackStillSent || !state.trackLive,
         "recovery-track-not-sent-again",
         20_000,
-      ).catch(() => {});
+      );
       const after = await snapshot(f.owner);
       const identity = await sample();
       check(
@@ -451,9 +456,9 @@ export async function mediaScenarios(h, f) {
             beforeStopInventory.probatorRtpRows <= 1 &&
             beforeStopInventory.unexpectedRtpRows === 0 &&
             beforeStopInventory.invalidBindings === 0 &&
-            // A watcher in the call sends its microphone too: one receive and
-            // one send connection, as for every publisher (e2e/README.md).
-            activePeers(frames.last).length <= 2 &&
+            // A watcher in the call sends its microphone too: one receive
+            // and one send connection, as for every publisher (e2e/README.md).
+            oneSendOneReceive(activePeers(frames.last)) &&
             activePeers(frames.last).every(
               (p) =>
                 p.connection === "connected" &&
@@ -477,6 +482,13 @@ export async function mediaScenarios(h, f) {
             actualConsumerInventory: beforeStopInventory,
           },
         );
+        // The watcher stops watching before the Live ends, so each cycle
+        // starts from "Zuschauen": whether the same person's next Live is
+        // watched by itself is not this scenario's claim.
+        await f.watcher.page
+          .getByRole("button", { name: "Nicht mehr zuschauen", exact: true })
+          .first()
+          .click();
         await click(f.owner, "Live beenden");
         await until(
           () => snapshot(f.owner),
@@ -496,12 +508,6 @@ export async function mediaScenarios(h, f) {
             actualConsumerInventory: beforeStopInventory,
           },
         });
-        // Explicit watcher stop is UI cleanup; the next start never reloads publisher.
-        const stop = f.watcher.page.getByRole("button", {
-          name: "Nicht mehr zuschauen",
-          exact: true,
-        });
-        if (await stop.count()) await stop.first().click();
       }
       await click(f.owner, "Live gehen");
       const late = await h.actor("CycleWatch");
@@ -541,9 +547,10 @@ export async function mediaScenarios(h, f) {
       check(
         cycles.every(
           (c) =>
-            activePeers(c.watcher).length <= 1 &&
+            // Still in the call once the Live ended (see above).
+            oneSendOneReceive(activePeers(c.watcher)) &&
             activePeers(c.watcher).every(
-              (p) => p.transceivers <= 4 && p.receivers <= 2,
+              (p) => p.transceivers <= 4 && p.receivers <= 2 && p.senders <= 1,
             ),
         ),
         "watch-resource-growth",
@@ -712,7 +719,18 @@ export async function mediaScenarios(h, f) {
             .getByRole("button", { name: /^Navigation öffnen/ })
             .click();
         } else {
-          check(metrics.channelsHeight >= 156, "channel-navigation-collapsed");
+          // Measured on its own: the list settles after the resize.
+          await until(
+            () =>
+              nativeEvaluate(f.owner, () => ({
+                channelsHeight: document
+                  .querySelector(".sidebar-list-scroll")
+                  .getBoundingClientRect().height,
+              })),
+            (state) => state.channelsHeight >= 156,
+            "channel-navigation-collapsed",
+            2_000,
+          );
         }
         // Scroll to the owner's controls, including on short landscape drawers.
         await page.locator("summary.server-sidebar-menu-button").click();
@@ -722,13 +740,18 @@ export async function mediaScenarios(h, f) {
         await page
           .getByRole("dialog", { name: "Kanal erstellen", exact: true })
           .waitFor();
-        // The drawer makes way for a dialog opened from it.
+        // The drawer makes way for a dialog opened from it; it closes before
+        // the dialog opens and is drawn until its exit animation ends.
         if (viewport.width <= 800) {
-          check(
-            !(await page
-              .getByRole("dialog", { name: "Navigation", exact: true })
-              .isVisible()),
+          const navigation = page.getByRole("dialog", {
+            name: "Navigation",
+            exact: true,
+          });
+          await until(
+            async () => ({ viewport, visible: await navigation.isVisible() }),
+            (state) => !state.visible,
             "navigation-stacked-under-dialog",
+            2_000,
           );
         }
         await page.keyboard.press("Escape");
