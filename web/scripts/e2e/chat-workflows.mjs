@@ -1,4 +1,4 @@
-/* global process, document, window, fetch, Event, console, setTimeout, Buffer */
+/* global process, document, window, fetch, Event, console, setTimeout, Buffer, requestAnimationFrame */
 // Local browser acceptance for read state, scoped search and composer drafts.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
