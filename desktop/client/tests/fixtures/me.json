@@ -3,7 +3,7 @@
   "email": "lena@example.test",
   "name": "Lena",
   "avatar_url": null,
-  "created_at": "2030-01-01T00:00:00.000Z",
+  "created_at": "2030-01-01T00:00:00Z",
   "bio": null,
   "pronouns": null,
   "status_text": null,

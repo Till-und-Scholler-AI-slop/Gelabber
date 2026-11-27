@@ -4,7 +4,7 @@
     "name": "Wohnzimmer",
     "owner_id": "00000000-0000-4000-8000-000000000004",
     "icon_url": null,
-    "created_at": "2030-01-01T00:00:02.000Z",
+    "created_at": "2030-01-01T00:00:02Z",
     "role": "owner",
     "permissions": [
       "manage_server",
@@ -30,7 +30,7 @@
     "name": "Spieleabend",
     "owner_id": "00000000-0000-4000-8000-000000000005",
     "icon_url": null,
-    "created_at": "2030-01-01T00:00:16.000Z",
+    "created_at": "2030-01-01T00:00:16Z",
     "role": "member",
     "permissions": [
       "send_messages",

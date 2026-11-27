@@ -9,8 +9,8 @@
         "avatar_url": null
       },
       "content": "Erste **Nachricht**, geändert",
-      "created_at": "2030-01-01T00:00:40.000Z",
-      "edited_at": "2030-01-01T00:00:42.000Z",
+      "created_at": "2030-01-01T00:00:40Z",
+      "edited_at": "2030-01-01T00:00:42Z",
       "revision": 25,
       "created_order": 16,
       "attachments": [],

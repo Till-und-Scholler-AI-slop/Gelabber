@@ -1,9 +1,9 @@
 {
   "id": "00000000-0000-4000-8000-000000000028",
-  "upload_url": "http://127.0.0.1:29400/gelabber/att/00000000-0000-4000-8000-000000000028?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=gelabber%2F20261127%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261127T202529Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=5c92e0cde2206890208342edbe2a27dc2d839032f6168c885ff118eef3a0acf0",
+  "upload_url": "http://127.0.0.1:29400/gelabber/att/00000000-0000-4000-8000-000000000028?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=gelabber%2F20261127%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261127T202626Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=5910ef74099e66a223ca1476ce56f2be328e71455086c130c163fede1970a8ff",
   "headers": {
-    "Content-Type": "text/plain",
-    "Content-Length": "5"
+    "Content-Length": "5",
+    "Content-Type": "text/plain"
   },
   "expires_in": 600,
   "attachment": {

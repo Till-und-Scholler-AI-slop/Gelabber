@@ -3,7 +3,7 @@
   "name": "Wohnzimmer",
   "owner_id": "00000000-0000-4000-8000-000000000004",
   "icon_url": null,
-  "created_at": "2030-01-01T00:00:02.000Z",
+  "created_at": "2030-01-01T00:00:02Z",
   "role": "owner",
   "permissions": [
     "manage_server",
@@ -28,19 +28,19 @@
       "id": "00000000-0000-4000-8000-000000000032",
       "server_id": "00000000-0000-4000-8000-000000000031",
       "name": "Textkanäle",
-      "created_at": "2030-01-01T00:00:03.000Z"
+      "created_at": "2030-01-01T00:00:03Z"
     },
     {
       "id": "00000000-0000-4000-8000-000000000033",
       "server_id": "00000000-0000-4000-8000-000000000031",
       "name": "Sprachkanäle",
-      "created_at": "2030-01-01T00:00:05.000Z"
+      "created_at": "2030-01-01T00:00:05Z"
     },
     {
       "id": "00000000-0000-4000-8000-000000000034",
       "server_id": "00000000-0000-4000-8000-000000000031",
       "name": "Plaudern",
-      "created_at": "2030-01-01T00:00:07.000Z"
+      "created_at": "2030-01-01T00:00:07Z"
     }
   ],
   "channels": [
@@ -50,7 +50,7 @@
       "category_id": "00000000-0000-4000-8000-000000000032",
       "name": "allgemein",
       "kind": "text",
-      "created_at": "2030-01-01T00:00:04.000Z",
+      "created_at": "2030-01-01T00:00:04Z",
       "limited": false,
       "role_ids": []
     },
@@ -60,7 +60,7 @@
       "category_id": "00000000-0000-4000-8000-000000000033",
       "name": "Wohnzimmer",
       "kind": "voice",
-      "created_at": "2030-01-01T00:00:06.000Z",
+      "created_at": "2030-01-01T00:00:06Z",
       "limited": false,
       "role_ids": []
     },
@@ -70,7 +70,7 @@
       "category_id": "00000000-0000-4000-8000-000000000034",
       "name": "spiele",
       "kind": "text",
-      "created_at": "2030-01-01T00:00:08.000Z",
+      "created_at": "2030-01-01T00:00:08Z",
       "limited": true,
       "role_ids": [
         "00000000-0000-4000-8000-000000000037",
@@ -83,7 +83,7 @@
       "category_id": "00000000-0000-4000-8000-000000000034",
       "name": "musik",
       "kind": "text",
-      "created_at": "2030-01-01T00:00:09.000Z",
+      "created_at": "2030-01-01T00:00:09Z",
       "limited": false,
       "role_ids": []
     },
@@ -93,7 +93,7 @@
       "category_id": "00000000-0000-4000-8000-000000000033",
       "name": "Sofa",
       "kind": "voice",
-      "created_at": "2030-01-01T00:00:10.000Z",
+      "created_at": "2030-01-01T00:00:10Z",
       "limited": false,
       "role_ids": []
     },
@@ -103,7 +103,7 @@
       "category_id": "00000000-0000-4000-8000-000000000033",
       "name": "Kino",
       "kind": "voice",
-      "created_at": "2030-01-01T00:00:11.000Z",
+      "created_at": "2030-01-01T00:00:11Z",
       "limited": false,
       "role_ids": []
     }
@@ -113,7 +113,7 @@
       "user_id": "00000000-0000-4000-8000-000000000004",
       "name": "Lena",
       "avatar_url": null,
-      "joined_at": "2030-01-01T00:00:02.000Z",
+      "joined_at": "2030-01-01T00:00:02Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,
@@ -124,7 +124,7 @@
       "user_id": "00000000-0000-4000-8000-000000000005",
       "name": "Jonas",
       "avatar_url": null,
-      "joined_at": "2030-01-01T00:00:12.000Z",
+      "joined_at": "2030-01-01T00:00:12Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,
@@ -138,7 +138,7 @@
       "user_id": "00000000-0000-4000-8000-000000000016",
       "name": "Mira",
       "avatar_url": null,
-      "joined_at": "2030-01-01T00:00:13.000Z",
+      "joined_at": "2030-01-01T00:00:13Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,
@@ -151,7 +151,7 @@
       "user_id": "00000000-0000-4000-8000-000000000018",
       "name": "Tom",
       "avatar_url": null,
-      "joined_at": "2030-01-01T00:00:14.000Z",
+      "joined_at": "2030-01-01T00:00:14Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,
@@ -164,7 +164,7 @@
       "user_id": "00000000-0000-4000-8000-000000000022",
       "name": "Ada",
       "avatar_url": null,
-      "joined_at": "2030-01-01T00:00:15.000Z",
+      "joined_at": "2030-01-01T00:00:15Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,
@@ -184,7 +184,7 @@
         "mention_everyone"
       ],
       "position": 0,
-      "created_at": "2030-01-01T00:00:31.000Z"
+      "created_at": "2030-01-01T00:00:31Z"
     },
     {
       "id": "00000000-0000-4000-8000-000000000038",
@@ -193,7 +193,7 @@
       "color": "green",
       "permissions": [],
       "position": 1,
-      "created_at": "2030-01-01T00:00:32.000Z"
+      "created_at": "2030-01-01T00:00:32Z"
     }
   ]
 }
