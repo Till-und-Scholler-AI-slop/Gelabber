@@ -11,12 +11,10 @@ is the order of the work; check each step's result before the next one.
 
 1. **Scope.** The Linear milestone vX.Y.Z has no open issue that should
    ship; move the rest to the next milestone. CI on the development line's head is
-   green. Compatibility code due in this release is gone:
-   `git grep -n 'remove in v'` on the development line lists every marked
-   place, and those naming vX.Y or an older version are due (AGENTS.md,
-   "Supported versions"). Remove each with its tests in a pull request of
-   its own to the development line before the release branch, or say in the
-   release PR that none was due.
+   green. Compatibility code due in vX.Y fails
+   `deploy/compose/tests/test_compat_markers.py` once the version is
+   bumped; remove it with its tests in a pull request of its own to the
+   development line first.
 2. **Branch.** `release/vX.Y.Z` from the development line, then
    `git merge origin/main`, so hotfixes on `main` stay in.
 3. **Version.** Bump the same files as the last release commit:

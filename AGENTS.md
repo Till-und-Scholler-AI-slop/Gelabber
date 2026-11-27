@@ -173,22 +173,32 @@ the rules on failing and flaky tests hold for all tests.
 ## Supported versions
 
 A minor version covers all its patch releases: v0.13.1 is v0.13. N is the
-minor version the development line ships, N-1 the one before it.
+minor version the development line ships, N-1 the one before it. Before
+1.0 a minor version is `0.Y`; 1.0 restates this section.
 
 - **Clients:** the server supports web and desktop clients of N and N-1.
   Code kept only for older clients is removed.
 - **Web and API** ship as one image set. The web client assumes a server of
   its own version and carries no tolerance for an older one.
-- **Desktop app and server:** the app works with servers of its own minor
-  version and the one before. An older server is not supported.
+- **Desktop app and server** may be one minor version apart, either way: an
+  app v0.14 works with servers v0.13, v0.14 and v0.15. Servers of any other
+  minor version are not supported. The apps follow the newest release (the
+  Windows app updates itself every 6 hours, Arch gets it with
+  `pacman -Syu`), and every server's download links point there, so a
+  server stays at most one minor version behind the newest release.
 - **Server upgrades** are supported from N-1 in one step. An operator on an
   older version upgrades through each minor version in between
   (`deploy/README.md`, "Supported upgrades").
 - **Expiry:** compatibility code names the first minor version that no
   longer supports what it serves: code for v0.13 clients or servers says
-  `remove in v0.15` (see "Tests"). The release procedure removes what is due.
+  `remove in v0.15` (see "Tests").
+  `deploy/compose/tests/test_compat_markers.py` fails once
+  `backend/Cargo.toml` reaches that version.
 - **Data:** the database migrations stay one chain; do not squash them.
-  Rows that old versions wrote and databases still hold stay readable.
+  Data in the database is changed by a migration, never by code that
+  expires: rows that old versions wrote stay readable. Code that reads what
+  an older version left outside the database (Redis, browser storage, the
+  app's settings files) is compatibility code with a marker.
 
 ## CI workflows (`.github/workflows`)
 
