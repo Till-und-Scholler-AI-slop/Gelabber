@@ -279,9 +279,9 @@ test("actual harness pending close paths time out visibly and still write the re
   assert.equal(r.reports[0].gate.passed, false);
 });
 
-// GEL-453: the actual harness with a fake browser. `page` overrides parts of
-// the fake page; `process` is the harness's own.
-async function harnessProbe({ page: overrides = {}, process }) {
+// GEL-453, GEL-423: the actual harness with a fake browser. `page` overrides
+// parts of the fake page, `fs` the file calls; `process` is the harness's own.
+async function harnessProbe({ page: overrides = {}, fs = {}, process }) {
   const locator = {
     fill: async () => {},
     click: async () => {},
@@ -354,6 +354,7 @@ async function harnessProbe({ page: overrides = {}, process }) {
       readFile: async () => "",
       mkdir: async () => {},
       writeFile: async () => {},
+      ...fs,
     },
   };
   const harnessUrl = new URL("./harness.mjs", import.meta.url);
@@ -416,26 +417,177 @@ test("a fixture whose channel click fails leaves no response waiter unheard", as
   }
   assert.deepEqual(unheard, []);
 });
+const strayRejection = () => {
+  const stray = new Error(
+    'page.waitForResponse: Timeout 12000ms exceeded while waiting for event "response" PRIVATE',
+  );
+  stray.name = "TimeoutError";
+  stray.stack = [
+    stray.message,
+    "    at responseTo (file:///w/web/scripts/e2e/harness.mjs:47:46)",
+    "    at async channel (file:///w/web/scripts/e2e/harness.mjs:331:24)",
+    "    at file:///w/web/scripts/e2e/core.mjs:55:41",
+  ].join("\n");
+  return stray;
+};
 test("a stray rejection fails by name and the run goes on", async () => {
   const process = harnessProcess();
   const h = await harnessProbe({ process });
   const before = await h.run("first-control", [], async () => ({}));
   assert.equal(before.status, "PASS");
-  // A promise first-control left behind rejects later, unheard.
-  const stray = new Error(
-    'page.waitForResponse: Timeout 12000ms exceeded while waiting for event "response" PRIVATE',
-  );
-  stray.name = "TimeoutError";
-  stray.stack = `${stray.message}\n    at file:///w/web/scripts/e2e/core.mjs:55:41`;
   assert.equal(typeof process.listeners.unhandledRejection, "function");
-  process.listeners.unhandledRejection(stray, Promise.resolve());
-  const after = await h.run("second-control", [], async () => ({}));
+  // A promise first-control left behind rejects while second-control runs.
+  const after = await h.run("second-control", [], async () => {
+    process.listeners.unhandledRejection(strayRejection(), Promise.resolve());
+    return {};
+  });
   assert.equal(after.status, "PASS");
   const row = h.report.results.find((r) => r.id === "stray-rejection");
   assert.equal(row.status, "FAIL");
   assert.equal(row.reason, "browser-deadline");
-  assert.equal(row.during, "first-control");
+  assert.equal(row.during, "second-control");
+  assert.equal(row.after, "first-control");
   assert.equal(row.site, "core.mjs:55:41");
+  assert.equal(row.harnessSite, "harness.mjs:331:24");
   assert.equal(process.exitCode, 1);
   assert.ok(!JSON.stringify(h.report.results).includes("PRIVATE"));
+});
+test("a stray while the report directory is made counts in the gate", async () => {
+  const process = harnessProcess();
+  const reports = [];
+  // run() makes the checkpoint's directory too; only finish()'s call counts.
+  let armed = false;
+  const h = await harnessProbe({
+    process,
+    fs: {
+      mkdir: async () => {
+        if (!armed) return;
+        armed = false;
+        process.listeners.unhandledRejection(
+          strayRejection(),
+          Promise.resolve(),
+        );
+      },
+      writeFile: async (path, body) => {
+        if (path === process.env.GELABBER_E2E_REPORT)
+          reports.push(JSON.parse(body));
+      },
+    },
+  });
+  assert.equal(
+    (await h.run("only-control", [], async () => ({}))).status,
+    "PASS",
+  );
+  armed = true;
+  await h.finish();
+  assert.equal(reports.length, 1);
+  assert.ok(reports[0].results.some((r) => r.id === "stray-rejection"));
+  assert.equal(reports[0].gate.passed, false);
+});
+test("a stray after the report is written goes beside it", async () => {
+  const process = harnessProcess();
+  const writes = {};
+  let late;
+  const h = await harnessProbe({
+    process,
+    fs: {
+      writeFile: async (path, body) => {
+        writes[path] = JSON.parse(body);
+        // The report is serialised; a stray arrives before the write ends.
+        if (path === process.env.GELABBER_E2E_REPORT)
+          process.listeners.unhandledRejection(
+            strayRejection(),
+            Promise.resolve(),
+          );
+        else late?.();
+      },
+    },
+  });
+  const stray = new Promise((resolve) => {
+    late = resolve;
+  });
+  assert.equal(
+    (await h.run("only-control", [], async () => ({}))).status,
+    "PASS",
+  );
+  await h.finish();
+  await stray;
+  const report = writes[process.env.GELABBER_E2E_REPORT];
+  assert.equal(report.gate.passed, true);
+  const beside = writes[`${process.env.GELABBER_E2E_REPORT}.stray.json`];
+  assert.equal(beside.status, "FAIL");
+  assert.equal(beside.results[0].id, "stray-rejection");
+  assert.equal(beside.results[0].after, "only-control");
+  assert.equal(process.exitCode, 1);
+  assert.ok(!JSON.stringify(beside).includes("PRIVATE"));
+});
+const fixtureSteps = [
+  "Publisher-register-page",
+  "Publisher-register-submit",
+  "server-create",
+  "invite-link",
+  "text-channel-open",
+  "voice-channel-a",
+  "voice-channel-b",
+  "Member-register-page",
+  "Member-register-submit",
+  "Watch-register-page",
+  "Watch-register-submit",
+  "Member-join",
+  "Watch-join",
+  "Publisher-voice-open",
+];
+test("a fixture that runs out of time lists its steps and the call that ran out", async () => {
+  // The second actor's (Member's) register page runs out of time.
+  let registers = 0;
+  const h = await harnessProbe({
+    process: harnessProcess(),
+    page: {
+      goto: async (url) => {
+        if (url.endsWith("/register") && ++registers === 2) {
+          const error = new Error(
+            `page.goto: Timeout 12000ms exceeded.\nCall log:\n  - navigating to "${url}?PRIVATE"`,
+          );
+          error.name = "TimeoutError";
+          throw error;
+        }
+      },
+    },
+  });
+  const row = await h.setup("isolated-app-fixture", [], () => h.fixture());
+  assert.equal(row.status, "FAIL");
+  assert.equal(row.reason, "browser-deadline");
+  assert.deepEqual(
+    Array.from(row.metrics.steps, (s) => s.step),
+    fixtureSteps.slice(0, fixtureSteps.indexOf("Member-register-page") + 1),
+  );
+  for (const s of row.metrics.steps) assert.ok(s.ms >= 0, s.step);
+  assert.equal(row.action, "page.goto");
+  // The line in actor() that opens /register.
+  const source = (
+    await readFile(new URL("./harness.mjs", import.meta.url), "utf8")
+  ).split("\n");
+  const line =
+    source.findIndex((text) =>
+      text.includes("await page.goto(`${base}/register`);"),
+    ) + 1;
+  assert.match(row.harnessSite, new RegExp(`^harness\\.mjs:${line}:\\d+$`));
+  assert.ok(!JSON.stringify(row).includes("PRIVATE"));
+});
+test("each fixture's row holds only its own steps", async () => {
+  const h = await harnessProbe({ process: harnessProcess() });
+  let first;
+  const row = await h.setup("isolated-app-fixture", [], async () => {
+    first = await h.fixture();
+    return { steps: first.steps };
+  });
+  assert.equal(row.status, "PASS");
+  // A scenario registers another actor and builds a second fixture.
+  await h.actor("RaceCandidate");
+  const second = await h.fixture();
+  for (const steps of [row.metrics.steps, second.steps])
+    assert.deepEqual(
+      Array.from(steps, (s) => s.step),
+      fixtureSteps,
+    );
 });
