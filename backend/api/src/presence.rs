@@ -317,7 +317,12 @@ pub fn start(state: AppState) {
             loop {
                 match sweep(&state).await {
                     Ok(n) if n as i64 >= SWEEP_BATCH => continue,
-                    Ok(_) => break,
+                    Ok(_) => {
+                        state
+                            .worker_passes
+                            .finished(crate::state::Worker::PresenceModes);
+                        break;
+                    }
                     Err(error) => {
                         tracing::warn!(error = error.code(), "presence mode sweep failed");
                         break;
