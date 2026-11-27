@@ -446,8 +446,17 @@ jobs:
           tar -xzf "$archive" -C /usr/local/bin --strip-components=1 age/age age/age-keygen
           test "$(age --version)" = "v${AGE_VERSION}"
 
+      # The deployment tests read the workflows with this PyYAML (GEL-403);
+      # --target leaves the runner's own Python packages alone.
+      - name: Install the deployment tests' PyYAML
+        run: |
+          python3 -m pip install --quiet --require-hashes --only-binary=:all: \
+            --target "$RUNNER_TEMP/python" -r deploy/compose/tests/requirements.txt
+
       # Also checks that every workflow action is pinned to a commit SHA.
       - name: Test deployment config
+        env:
+          PYTHONPATH: ${{ runner.temp }}/python
         run: python3 -m unittest discover -s deploy/compose/tests -v
 
       # The restore drill runs by hand; its own unit tests run here.
