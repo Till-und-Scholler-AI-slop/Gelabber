@@ -12,7 +12,7 @@ job summary and as warning annotations:
 It reads diff lines with patterns, so it can miss a rewrite and point at a
 sound change; it says where to look. It never fails the run.
 
-Usage: test_edits.py BASE HEAD
+Usage: edited_tests.py BASE HEAD
 """
 import difflib
 import os
@@ -149,6 +149,12 @@ def parse(diff):
     return files
 
 
+def code(text):
+    """A line with its string literals emptied: a skip or sleep named in a
+    string or a docstring is no skip or sleep."""
+    return re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`', '""', text)
+
+
 def language(path):
     if path.endswith('.rs'):
         return 'rs'
@@ -259,22 +265,24 @@ def check_file(file, read, removed_names, added_names):
         added = [line for line in test_lines if line.sign == '+']
         removed = [line for line in test_lines if line.sign == '-']
         new_test = bool(test_names(added, lang)) or any(TEST_DECL[lang].match(line.text) for line in added)
+        gone = [code(old.text) for old in removed]
         for line in added:
-            if COMMENT.match(line.text):
+            text = code(line.text)
+            if COMMENT.match(text):
                 continue
-            if SKIP.search(line.text) and not any(SKIP.search(old.text) for old in removed):
+            if SKIP.search(text) and not any(SKIP.search(old) for old in gone):
                 found.append(Finding(path, line.new, 'skip added', line.text.strip()))
             elif created or new_test:
                 continue
-            elif EARLY_RETURN.match(line.text):
+            elif EARLY_RETURN.match(text):
                 found.append(Finding(path, line.new, 'early return', line.text.strip()))
-            elif SLEEP.search(line.text) and not any(SLEEP.search(old.text) for old in removed):
+            elif SLEEP.search(text) and not any(SLEEP.search(old) for old in gone):
                 found.append(Finding(path, line.new, 'sleep added', line.text.strip()))
-            elif RETRY.search(line.text) and not any(RETRY.search(old.text) for old in removed):
+            elif RETRY.search(text) and not any(RETRY.search(old) for old in gone):
                 found.append(Finding(path, line.new, 'retry loop added', line.text.strip()))
-            elif WAIT.search(line.text) and not any(WAIT.search(old.text) for old in removed):
+            elif WAIT.search(text) and not any(WAIT.search(old) for old in gone):
                 found.append(Finding(path, line.new, 'wait added', line.text.strip()))
-            elif TIMEOUT.search(line.text) and not any(TIMEOUT.search(old.text) for old in removed):
+            elif TIMEOUT.search(text) and not any(TIMEOUT.search(old) for old in gone):
                 found.append(Finding(path, line.new, 'timeout added', line.text.strip()))
         if created or deleted:
             continue
