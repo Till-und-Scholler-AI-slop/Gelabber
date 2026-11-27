@@ -1,0 +1,5 @@
+# actionlint (deploy job in ci.yml, GEL-383). Its built-in list of
+# GitHub-hosted runners does not have ubuntu-26.04 yet.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

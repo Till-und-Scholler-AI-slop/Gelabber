@@ -6,15 +6,12 @@ with a native media core instead of a browser's WebRTC, and no web view.
 
 Status: the native app replaces the Tauri app from 0.9 on. The Tauri app
 (a Tauri 2 window around the web client, released from v0.5.0 to 0.8.x) was
-removed in 0.9 without a fallback; its installs update into the native app
-(Windows: its updater runs the native installer; Arch: the package
-`gelabber-desktop` is the native app from 0.9 on). The web client's settings
-come along in `legacy-settings.json`, which the Tauri app's export of 0.8.10
-writes; an update from 0.8.9 or older reads the same
-entries from the Tauri app's WebView storage instead (WebView2 on Windows,
-WebKitGTK on Linux). The web client has dropped its Tauri code; a Tauri
-app that still loads it only gets the notice to update
-(`web/src/tauriApp.ts`).
+removed in 0.9 without a fallback. On Arch the package `gelabber-desktop` is
+the native app from 0.9 on. On Windows the Tauri app's updater installed the
+native app up to 0.13; from 0.14.0 on no `latest.json` is uploaded, so it finds
+no update and the native app is installed by hand. Up to 0.14.0 the native app took over the Tauri
+app's settings on its first start; 0.14.1 dropped that import, and the web
+client dropped its Tauri code.
 
 ## Layout
 
@@ -63,10 +60,7 @@ Server and settings: in the Tauri app's config directory
 `%APPDATA%\io.github.till-und-scholler-ai-slop.gelabber`), with its
 `desktop.json` (docs/native/platform.md). Server choice, first match wins:
 `--server <url>`, `GELABBER_SERVER`, `server` in `desktop.json`, else the
-setup screen. On the first start, while it has no `settings.json` of its
-own, it takes over `legacy-settings.json` (the Tauri app's export) and the
-files of earlier native builds in `~/.config/gelabber/`
-(`ui/src/platform/legacy.rs`). `GELABBER_SMOKE=<seconds>` makes the app end
+setup screen. `GELABBER_SMOKE=<seconds>` makes the app end
 after that long, with 0 once it painted its setup or login screen; CI's
 smoke tests use it.
 
