@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearToasts, useToasts } from "../components/toasts.ts";
-import { desktopPlatform, offerDesktopApp } from "./desktopApp.ts";
+import {
+  ARCH_INSTALL_COMMAND,
+  desktopPlatform,
+  LINUX_TARBALL_URL,
+  offerDesktopApp,
+  WINDOWS_SETUP_URL,
+} from "./desktopApp.ts";
 import { trackInstallation, useInstallation } from "./install.ts";
 
 const UA = {
@@ -58,6 +64,18 @@ describe("desktop platform", () => {
     expect(desktop(UA.linux)).toBe("linux");
     expect(desktop(UA.android)).toBeNull();
     expect(desktop(UA.linux, true)).toBeNull();
+  });
+
+  it("links the newest release's packages and the published install script", () => {
+    const latest =
+      "https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/";
+    expect(WINDOWS_SETUP_URL).toBe(
+      `${latest}gelabber-native-windows-x64-setup.exe`,
+    );
+    expect(LINUX_TARBALL_URL).toBe(`${latest}gelabber-native-linux-x64.tar.gz`);
+    expect(ARCH_INSTALL_COMMAND).toBe(
+      "curl -fsSL https://till-und-scholler-ai-slop.github.io/Gelabber/install.sh | sudo sh",
+    );
   });
 });
 

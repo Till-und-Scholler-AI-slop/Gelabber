@@ -10,6 +10,7 @@ const remote = vi.hoisted(() => ({
   readFeedback: vi.fn(),
   replyFeedback: vi.fn(),
 }));
+const queryOptions = vi.hoisted(() => ({ last: null as unknown }));
 
 vi.mock("./api.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api.ts")>()),
@@ -22,12 +23,24 @@ vi.mock("../auth/scope.ts", async (importOriginal) => ({
   useUserId: () => stamp.userId,
   scopeGeneration: () => stamp.generation,
 }));
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-query")>();
+  return {
+    ...actual,
+    useQuery: (options: Parameters<typeof actual.useQuery>[0]) => {
+      queryOptions.last = options;
+      return actual.useQuery(options);
+    },
+  };
+});
 
 import {
+  STATUS_REFETCH_MS,
   ensureFeedbackStatus,
   feedbackKeys,
   markFeedbackRead,
   nextFeedbackOffset,
+  useFeedbackStatus,
   useReplyFeedback,
   useSendFeedback,
 } from "./queries.ts";
@@ -61,6 +74,18 @@ beforeEach(() => {
 });
 
 describe("the feedback status", () => {
+  it("is read again on focus and every five minutes, never retried", () => {
+    hookOf(new QueryClient(), useFeedbackStatus);
+    expect(queryOptions.last).toMatchObject({
+      queryKey: ["user", "tom", 3, "feedback", "status"],
+      enabled: true,
+      refetchInterval: 300_000,
+      refetchOnWindowFocus: true,
+      retry: false,
+    });
+    expect(STATUS_REFETCH_MS).toBe(5 * 60 * 1000);
+  });
+
   it("is fetched once for the route guard, then taken from the cache", async () => {
     const queryClient = new QueryClient();
     remote.feedbackStatus.mockResolvedValue({ enabled: true, unread: 1 });
