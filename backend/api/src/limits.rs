@@ -1149,20 +1149,32 @@ mod tests {
         assert!(count_guess(&limiter, &no_ceiling, "ada@example.com", other).is_err());
     }
 
-    /// The count of failed guesses runs for its whole window: an address
-    /// that used up its guesses is still refused minutes later, not after a
-    /// pause of a few seconds.
+    /// An address that used up its wrong passwords gets in again after 15
+    /// minutes, not earlier and not never (`deploy/README.md`, "Sign-in
+    /// protection").
     #[test]
-    fn a_guesser_out_of_guesses_stays_refused_for_minutes() {
+    fn a_guesser_out_of_guesses_is_refused_for_fifteen_minutes() {
         let limiter = Limiter::new();
         let limits = login_limits(2, 0);
+        let max = limits.login_failures_per_account;
         let guesser = Guesser::Address("203.0.113.9");
-        let own = count_guess(&limiter, &limits, "ada@example.com", guesser)
-            .unwrap()
-            .own;
+        let before = Instant::now();
+        let guess = count_guess(&limiter, &limits, "ada@example.com", guesser).unwrap();
         let _ = count_guess(&limiter, &limits, "ada@example.com", guesser).unwrap();
-        let later = Instant::now() + 10 * MINUTE;
-        assert!(limiter.blocked_at("login", &own, 2, later).is_some());
+        let after = Instant::now();
+        let refused = |at| {
+            limiter
+                .blocked_at(guess.bucket, &guess.own, max, at)
+                .is_some()
+        };
+        assert!(
+            refused(before + 15 * MINUTE - Duration::from_secs(1)),
+            "free again before 15 minutes"
+        );
+        assert!(
+            !refused(after + 15 * MINUTE),
+            "still refused after 15 minutes"
+        );
     }
 
     /// One delegated /56 is one guesser; another /56 is not.

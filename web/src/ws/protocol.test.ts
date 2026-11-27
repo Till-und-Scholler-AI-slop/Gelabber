@@ -184,6 +184,6 @@ describe("ws protocol", () => {
       topicKey({ s: "b" }),
       topicKey({ s: "a", c: "ch" }),
     ];
-    expect(new Set(keys).size).toBe(3);
+    expect(new Set(keys).size, JSON.stringify(keys)).toBe(3);
   });
 });

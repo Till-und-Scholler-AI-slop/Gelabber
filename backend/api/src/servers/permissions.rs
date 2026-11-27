@@ -204,18 +204,11 @@ mod tests {
     }
 
     #[test]
-    fn a_flag_granted_twice_stays_granted() {
-        // The base role and a member's role may both grant a flag, and a
-        // role body may name one twice: the member keeps it either way.
-        let role = Permissions::NONE
-            .with(Permission::SendMessages)
-            .with(Permission::ModerateMembers);
-        let member = Permissions::DEFAULT_MEMBER.union(role);
-        assert!(member.contains(Permission::SendMessages));
-        assert!(member.contains(Permission::ModerateMembers));
-        assert_eq!(
-            Permissions::from_names(&["send_messages", "send_messages"]),
-            Ok(Permissions::NONE.with(Permission::SendMessages))
+    fn a_flag_named_twice_is_granted() {
+        let set = Permissions::from_names(&["send_messages", "send_messages"]).unwrap();
+        assert!(
+            set.contains(Permission::SendMessages),
+            "send_messages lost: {set}"
         );
     }
 

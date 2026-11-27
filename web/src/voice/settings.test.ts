@@ -582,7 +582,7 @@ describe("every setting on its own", () => {
     expect(await reload()).toEqual(CHOSEN);
   });
 
-  it("keeps the sounds on and the upload unlimited for settings saved before them", async () => {
+  it("keeps the sounds on, the upload unlimited and no app or key chosen for settings saved before them", async () => {
     await storage().setItem("gelabber.media", { state: {} as never });
     await useMediaSettings.persist.rehydrate();
     expect(useMediaSettings.getState()).toMatchObject({
