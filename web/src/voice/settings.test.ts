@@ -408,16 +408,14 @@ describe("stream sound: the stored choice", () => {
     expect(useMediaSettings.getState().sourceAudioShare).toBe("auto");
   });
 
-  it("reads the old boolean: false was nobody's choice, true was", async () => {
-    // Up to v0.5 the default was stored as false like a deliberate "off".
-    expect(await reloadWith({ shareSourceAudio: false })).toBe("auto");
-    expect(await reloadWith({ shareSourceAudio: true })).toBe("on");
+  it("has no choice from the boolean that v0.5 and earlier saved", async () => {
+    expect(await reloadWith({ shareSourceAudio: true })).toBe("auto");
     expect(await reloadWith({ quality: "high" })).toBe("auto");
-    // The old key is storage only: it does not linger in the state.
+    // A key this version does not know does not reach the state.
     expect(useMediaSettings.getState()).not.toHaveProperty("shareSourceAudio");
   });
 
-  it("keeps an explicit off apart from the old default across reloads", async () => {
+  it("keeps an explicit off across reloads", async () => {
     useMediaSettings.getState().patch({ sourceAudioShare: "off" });
     const saved = (await storage().getItem("gelabber.media"))!;
     expect(saved.state).toMatchObject({ sourceAudioShare: "off" });
@@ -425,13 +423,6 @@ describe("stream sound: the stored choice", () => {
     await storage().setItem("gelabber.media", saved);
     await useMediaSettings.persist.rehydrate();
     expect(useMediaSettings.getState().sourceAudioShare).toBe("off");
-    // The new choice wins over a leftover of the old boolean.
-    expect(
-      await reloadWith({ sourceAudioShare: "off", shareSourceAudio: true }),
-    ).toBe("off");
-    expect(
-      await reloadWith({ sourceAudioShare: "on", shareSourceAudio: false }),
-    ).toBe("on");
   });
 
   it("takes anything else for no choice", async () => {

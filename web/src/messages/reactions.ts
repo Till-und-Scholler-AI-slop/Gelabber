@@ -6,12 +6,7 @@ import { translate } from "../i18n/catalog.ts";
 import { chat } from "../i18n/catalogs/chat.ts";
 import type { QueryClient, InfiniteData } from "@tanstack/react-query";
 import { applyMessageEdited, messageKeys } from "./queries.ts";
-import {
-  asReactionList,
-  type Message,
-  type MessagePage,
-  type Reaction,
-} from "./types.ts";
+import { type Message, type MessagePage, type Reaction } from "./types.ts";
 
 export type ReactionIntent = {
   emoji: string;
@@ -21,11 +16,11 @@ export type ReactionIntent = {
 
 /** Only the current user's vote is optimistic; content and other votes stay live. */
 export function displayedReactions(
-  reactions: Reaction[] | undefined,
+  reactions: Reaction[],
   userId: string,
   intent?: ReactionIntent,
 ): Reaction[] {
-  const result = asReactionList(reactions).map((reaction) => ({
+  const result = reactions.map((reaction) => ({
     ...reaction,
     user_ids: [...new Set(reaction.user_ids)],
   }));
