@@ -51,6 +51,7 @@ test("source identity reorder delivers authoritative Consumer messages without n
     "./media.mjs": {
       watchSource: async () => {},
       activePeers: () => [],
+      armPlaybackRetry: () => {},
       progress: async (_actor, options) => ({ kind: options.kind ?? "live" }),
     },
     "./native-evaluate.mjs": {
@@ -133,6 +134,7 @@ test("exact SDP scenario preserves failed bounded camera warmup and never inject
     "./media.mjs": {
       watchSource: async () => {},
       activePeers: () => [],
+      armPlaybackRetry: () => {},
       progress: async () => {
         progressCalls++;
       },
@@ -198,6 +200,8 @@ test("exact SDP scenario preserves failed bounded camera warmup and never inject
 });
 
 import { sessionAudioControl } from "./session-audio-control.mjs";
+import * as mediaExtra from "./media-extra.mjs";
+import { NativeInterfaceFailure } from "./native-evaluate.mjs";
 test("actual audio microphone fixture waits for the freshly joined connected sender and its own RTP", async () => {
   const r = await sessionAudioControl({ micReadyAfterPoll: true });
   assert.equal(r.error, undefined);
@@ -222,7 +226,7 @@ for (const option of [
       "fixture-session-positive-microphone-not-ready",
     );
     assert.equal(r.result, undefined);
-    assert.ok(r.actions.includes("other.context.close"));
+    assert.equal(r.watcherState.rejectPlayback, false);
     if (option.samePeerOtherSenderOnlyRtp) {
       assert.ok(r.watcherSenderStatsCalls > 0);
       assert.equal(r.error.metrics.last.outboundAudioPackets, 0);
@@ -231,14 +235,27 @@ for (const option of [
     }
   });
 }
-test("actual audio task retains the original expected microphone across mute/deafen/undeafen", async () => {
+test("actual audio task retries playback with the real click, then keeps the microphone across mute/deafen/undeafen", async () => {
   const r = await sessionAudioControl();
   assert.equal(r.error, undefined);
+  assert.equal(r.watcherState.retryArmed, true);
+  assert.equal(r.result.playing.retryShown, 0);
   assert.equal(r.result.muted.peers[0].audioSenders.length, 1);
   assert.equal(r.result.deafened.peers[0].audioSenders.length, 1);
   assert.equal(r.result.hearing.peers[0].audioSenders.length, 1);
-  assert.ok(r.actions.includes("other.context.close"));
+  assert.equal(r.watcherState.rejectPlayback, false);
 });
+for (const [option, code] of [
+  [{ retryStartsNothing: true }, "audio-click-retry-did-not-play-every-path"],
+  [{ deafenSparesOne: true }, "session-deafen-did-not-mute-every-path"],
+]) {
+  test(`actual audio task fails when the app breaks it ${JSON.stringify(option)}`, async () => {
+    const r = await sessionAudioControl(option);
+    assert.ok(r.error instanceof CheckFailure);
+    assert.equal(r.error.message, code);
+    assert.equal(r.watcherState.rejectPlayback, false);
+  });
+}
 for (const option of [
   { lostMicAt: "deafen" },
   { lostMicAt: "undeafen" },
@@ -248,42 +265,19 @@ for (const option of [
   test(`actual audio task rejects microphone loss/replacement ${JSON.stringify(option)}`, async () => {
     const r = await sessionAudioControl(option);
     assert.ok(r.error instanceof CheckFailure);
-    assert.ok(r.actions.includes("other.context.close"));
+    assert.equal(r.watcherState.rejectPlayback, false);
   });
 }
-
-import * as mediaExtra from "./media-extra.mjs";
-import { NativeInterfaceFailure } from "./native-evaluate.mjs";
-test("actual audio task restore rejection still closes other context with visible redacted failure", async () => {
+test("actual audio task restore rejection is a visible redacted failure", async () => {
   const r = await sessionAudioControl({ finalRestoreError: true });
-  assert.ok(r.error);
   assert.ok(r.actions.includes("final-restore-rejected"));
-  assert.ok(r.actions.includes("other.context.close"));
   assert.ok(r.error instanceof NativeInterfaceFailure);
   assert.equal(r.error.metrics.stage, "session-audio-owned-restore");
   assert.deepEqual(r.error.metrics.failedSteps, ["playback-restore"]);
   assert.ok(!JSON.stringify(r.error).includes("PRIVATE"));
 });
-test("actual audio task attempts both failed restore and failed independent close", async () => {
-  const r = await sessionAudioControl({
-    finalRestoreError: true,
-    otherCloseError: true,
-  });
-  assert.ok(r.actions.includes("other.context.close"));
-  assert.deepEqual(r.error.metrics.failedSteps, [
-    "playback-restore",
-    "other-context-close",
-  ]);
-});
-test("actual audio task independent close rejection remains visible after healthy restore", async () => {
-  const r = await sessionAudioControl({ otherCloseError: true });
-  assert.ok(r.error instanceof NativeInterfaceFailure);
-  assert.deepEqual(r.error.metrics.failedSteps, ["other-context-close"]);
-  assert.ok(!JSON.stringify(r.error).includes("PRIVATE"));
-});
-test("actual audio finally never evaluates quarantined page and bounds pending independent context close", async () => {
-  let evaluates = 0,
-    closes = 0;
+test("actual audio restore never evaluates a quarantined page", async () => {
+  let evaluates = 0;
   const watcher = {
     nativeEvaluationUnusable: true,
     page: {
@@ -292,28 +286,11 @@ test("actual audio finally never evaluates quarantined page and bounds pending i
       },
     },
   };
-  const other = {
-    context: {
-      close: () => {
-        closes++;
-        return new Promise(() => {});
-      },
-    },
-  };
-  assert.equal(typeof mediaExtra.closeSessionAudioActors, "function");
-  await assert.rejects(
-    mediaExtra.closeSessionAudioActors(watcher, other, 5),
-    (error) =>
-      error instanceof NativeInterfaceFailure &&
-      error.metrics.failedSteps.join(",") === "other-context-close",
-  );
+  await mediaExtra.restoreSessionPlayback(watcher, 5);
   assert.equal(evaluates, 0);
-  assert.equal(closes, 1);
 });
-
-test("actual audio finally bounds a pending restore, quarantines once and still attempts independent context close", async () => {
-  let abortCloses = 0,
-    otherCloses = 0;
+test("actual audio restore bounds a pending evaluation and quarantines the page once", async () => {
+  let abortCloses = 0;
   const watcher = {
     page: {
       evaluate: () => new Promise(() => {}),
@@ -323,16 +300,8 @@ test("actual audio finally bounds a pending restore, quarantines once and still 
       isClosed: () => false,
     },
   };
-  const other = {
-    context: {
-      close: async () => {
-        otherCloses++;
-      },
-    },
-  };
-  assert.equal(typeof mediaExtra.closeSessionAudioActors, "function");
   await assert.rejects(
-    mediaExtra.closeSessionAudioActors(watcher, other, 5),
+    mediaExtra.restoreSessionPlayback(watcher, 5),
     (error) =>
       error instanceof NativeInterfaceFailure &&
       error.metrics.failedSteps.join(",") === "playback-restore",
@@ -340,5 +309,4 @@ test("actual audio finally bounds a pending restore, quarantines once and still 
   await watcher.nativeAbortClose;
   assert.equal(watcher.nativeEvaluationUnusable, true);
   assert.equal(abortCloses, 1);
-  assert.equal(otherCloses, 1);
 });
