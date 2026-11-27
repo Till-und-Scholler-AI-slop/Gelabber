@@ -652,11 +652,6 @@ separate gate: even additive SQL changes can fail on the SQLx migration
 ledger. That is why an image change does not replace the tested restore of the
 matching old DB/object store pair.
 
-The full local drill is described in [Upgrade/Storage/Restore](../docs/upgrade-storage-restore.md).
-It uses only its own throwaway containers and runs a real rollback to an old
-API binary; the older `deploy/tools/check-chat-migration-restore.py` stays available
-as a quick schema/data drill without object store or binary acceptance.
-
 ## PostgreSQL major upgrade
 
 A release that moves the bundled PostgreSQL to a new major version (v0.12.1:

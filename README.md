@@ -106,7 +106,6 @@ web app: [installing Gelabber as a PWA](docs/v0.6-pwa.md).
 | The desktop app: building, tests, updates | [desktop/README.md](desktop/README.md) |
 | Protocols and UI reference for the native client | [docs/native/](docs/native/) |
 | The SFU: build, checks, rollback | [docs/v0.4-mediasoup-migration.md](docs/v0.4-mediasoup-migration.md) |
-| Upgrade and storage restore drill | [docs/upgrade-storage-restore.md](docs/upgrade-storage-restore.md) |
 | Rules for changes and for CI | [AGENTS.md](AGENTS.md), [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Repository layout
