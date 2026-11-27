@@ -32,8 +32,11 @@ import { MemberProfileDialog } from "../components/MemberProfileDialog.tsx";
 import {
   FocusIcon,
   GridIcon,
+  HeadsetIcon,
+  HeadsetOffIcon,
   LinkIcon,
   MicIcon,
+  MicOffIcon,
   SpeakerIcon,
   TheaterExitIcon,
   TheaterIcon,
@@ -44,7 +47,13 @@ import { IconButton } from "../components/ui/IconButton.tsx";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { setMemberPanelVideo } from "../components/memberPanelState.ts";
 import { useSession } from "../auth/session.ts";
-import { joinVoice, useVoice, toggleSourceWatch } from "./session.ts";
+import {
+  joinVoice,
+  toggleDeafen,
+  toggleMute,
+  useVoice,
+  toggleSourceWatch,
+} from "./session.ts";
 import {
   EMPTY_LIVE_PEOPLE,
   EMPTY_OCCUPANCY,
@@ -657,6 +666,7 @@ export function VoiceRoom({
               {t("room.noPermission")}
             </p>
           )}
+          {allowed ? <JoinAudioToggles /> : null}
           <IconButton
             variant="secondary"
             label={t("room.testMicrophone")}
@@ -759,6 +769,44 @@ export function VoiceRoom({
 
 /** The element's size in CSS pixels while `active`, followed as it
  * changes; null before the first measure. */
+/** Beside "Beitreten" (GEL-114): the microphone and headset the call starts
+ * with, as this device keeps them; in a call elsewhere, that call's, which a
+ * switch keeps. The call bar's names, icons and rule. */
+function JoinAudioToggles() {
+  const t = useT(texts);
+  const joined = useVoice((s) => s.status === "joined");
+  const callMuted = useVoice((s) => s.muted || s.deafened);
+  const callDeafened = useVoice((s) => s.deafened);
+  const keptMuted = useMediaSettings((s) => s.joinMuted || s.joinDeafened);
+  const keptDeafened = useMediaSettings((s) => s.joinDeafened);
+  const micOff = joined ? callMuted : keptMuted;
+  const deafened = joined ? callDeafened : keptDeafened;
+  return (
+    <>
+      <IconButton
+        variant="secondary"
+        label={t("controls.mute")}
+        pressed={micOff}
+        title={t(micOff ? "controls.unmute" : "controls.mute")}
+        icon={micOff ? <MicOffIcon size={18} /> : <MicIcon size={18} />}
+        onClick={() => toggleMute()}
+        className="voice-room-join-toggle"
+      />
+      <IconButton
+        variant="secondary"
+        label={t("controls.deafen")}
+        pressed={deafened}
+        title={t(deafened ? "controls.undeafen" : "controls.deafen")}
+        icon={
+          deafened ? <HeadsetOffIcon size={18} /> : <HeadsetIcon size={18} />
+        }
+        onClick={() => toggleDeafen()}
+        className="voice-room-join-toggle"
+      />
+    </>
+  );
+}
+
 function useBoxSize<T extends HTMLElement>(
   active: boolean,
 ): [RefObject<T | null>, { width: number; height: number } | null] {

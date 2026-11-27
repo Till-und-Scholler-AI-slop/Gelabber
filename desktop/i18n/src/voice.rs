@@ -164,6 +164,8 @@ crate::strings! {
         | "Watch";
     watch_to_channel = "Zum Kanal"
         | "Go to channel";
+    watch_joined_muted = "Stumm beigetreten"
+        | "Joined muted";
     people_member = "Mitglied"
         | "Member";
     room_sound_not_shared = "Kein Live-Ton freigegeben · Video läuft weiter"

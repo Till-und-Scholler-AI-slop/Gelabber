@@ -709,6 +709,12 @@ html[data-compact-rooms="true"] .voice-room-seat {
 .voice-room-join {
   min-width: 180px;
 }
+/* The microphone and headset to join with: closed reads as in the call bar. */
+.voice-room-join-toggle[aria-pressed="true"],
+.voice-room-join-toggle[aria-pressed="true"]:hover {
+  background: color-mix(in srgb, var(--lr-danger-bg) 16%, var(--lr-surface));
+  color: var(--lr-danger);
+}
 .voice-room-denied {
   font: var(--lr-type-ui);
   font-weight: 400;

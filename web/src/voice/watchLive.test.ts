@@ -16,6 +16,7 @@ vi.mock("./session.ts", () => ({
   toggleSourceWatch: voice.toggleSourceWatch,
 }));
 
+import { clearToasts, useToasts } from "../components/toasts.ts";
 import { currentCall, joinToWatch, watchLabel } from "./watchLive.ts";
 
 const live = {
@@ -46,16 +47,21 @@ describe("joinToWatch", () => {
     };
     voice.joinVoice.mockClear();
     voice.toggleSourceWatch.mockClear();
+    clearToasts();
   });
 
-  it("outside a call joins and watches from the start", () => {
+  const toasts = () => useToasts.getState().toasts.map((t) => t.message);
+
+  it("outside a call joins muted and watches from the start", () => {
     joinToWatch(live);
     expect(voice.joinVoice).toHaveBeenCalledExactlyOnceWith({
       serverId: "srv",
       channelId: "sofa",
       channelName: "Sofa",
       watch: ["jonas", "mira"],
+      muted: true,
     });
+    expect(toasts()).toEqual(["Stumm beigetreten"]);
     expect(voice.toggleSourceWatch).not.toHaveBeenCalled();
     expect(watchLabel(currentCall(voice.state), "srv", "sofa")).toBe(
       "Zuschauen",
@@ -65,7 +71,9 @@ describe("joinToWatch", () => {
   it("in that call watches only the Lives not yet watched", () => {
     inCall("sofa", ["jonas"]);
     joinToWatch(live);
+    // The microphone stays as it is: no join, no notice.
     expect(voice.joinVoice).not.toHaveBeenCalled();
+    expect(toasts()).toEqual([]);
     expect(voice.toggleSourceWatch).toHaveBeenCalledExactlyOnceWith(
       "mira",
       "s",

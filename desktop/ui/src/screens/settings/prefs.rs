@@ -98,6 +98,11 @@ pub struct Prefs {
     /// Input sensitivity (GEL-27): automatic, or below `gate_threshold_db`.
     pub gate_auto: bool,
     pub gate_threshold_db: f64,
+    /// How the next call starts (GEL-114): the microphone choice, kept apart
+    /// from deafen as in a call, and the headset. A call keeps them in step
+    /// (voice/sync.rs), so a join arrives as the last call left off.
+    pub join_muted: bool,
+    pub join_deafened: bool,
     /// The account's last theme, painted at start before /me/themes answers.
     pub theme: Option<gelabber_client::Theme>,
     /// The language the app showed last, for the next start and while
@@ -143,6 +148,8 @@ impl Default for Prefs {
             ptt_release_delay: 200.0,
             gate_auto: true,
             gate_threshold_db: gelabber_call::logic::GATE_THRESHOLD_DEFAULT,
+            join_muted: false,
+            join_deafened: false,
             theme: None,
             locale: None,
         }
@@ -216,6 +223,8 @@ impl Prefs {
                     gelabber_call::logic::GATE_THRESHOLD_MAX,
                 )
                 .round(),
+            join_muted: b("joinMuted", d.join_muted),
+            join_deafened: b("joinDeafened", d.join_deafened),
             theme: v
                 .get("theme")
                 .and_then(|t| serde_json::from_value(t.clone()).ok()),
@@ -264,6 +273,8 @@ impl Prefs {
         put("pttReleaseDelay", json!(self.ptt_release_delay));
         put("gateAuto", json!(self.gate_auto));
         put("gateThresholdDb", json!(self.gate_threshold_db));
+        put("joinMuted", json!(self.join_muted));
+        put("joinDeafened", json!(self.join_deafened));
         if let Some(theme) = &self.theme {
             put("theme", serde_json::to_value(theme).unwrap_or(Value::Null));
         }
@@ -373,6 +384,8 @@ mod tests {
             ui_scale: UiScale::Large,
             input_gain: 1.5,
             voice_input: "ptt".into(),
+            join_muted: true,
+            join_deafened: true,
             locale: Some(gelabber_i18n::Locale::En),
             ..Prefs::default()
         };

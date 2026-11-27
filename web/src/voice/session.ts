@@ -1254,17 +1254,28 @@ function onMediaFrame(frame: MediaServerFrame): void {
   reportStreamOnce(frame.e);
 }
 
+/** Keeps this device's start flags for the next join in step with the call
+ * (GEL-114): `muted` is the microphone choice without deafen. */
+function rememberJoinFlags(muted: boolean, deafened: boolean): void {
+  const stored = useMediaSettings.getState();
+  if (stored.joinMuted === muted && stored.joinDeafened === deafened) return;
+  stored.patch({ joinMuted: muted, joinDeafened: deafened });
+}
+
 /**
  * Join a voice channel. Local state flips first so the click feels instant;
  * the socket frame, ticket, and ICE run after. `watch`: people whose Live
  * to watch from the start ("Zuschauen" from outside the call); the media
- * connection asks for them once it stands.
+ * connection asks for them once it stands. From outside a call the
+ * microphone and headset start as this device keeps them (GEL-114);
+ * `muted` closes the microphone on top. A switch keeps the call's state.
  */
 export function joinVoice(input: {
   serverId: string;
   channelId: string;
   channelName: string;
   watch?: string[];
+  muted?: boolean;
 }): void {
   installDiagnosticsLogoutReset();
   ensureBound();
@@ -1274,10 +1285,20 @@ export function joinVoice(input: {
   voice.soundOnJoin =
     prev.serverId !== input.serverId || prev.channelId !== input.channelId;
   unlockCallSounds();
-  const muted = prev.status === "joined" && (prev.muted || prev.deafened);
-  const deafened = prev.status === "joined" && prev.deafened;
+  if (prev.status !== "joined") {
+    const stored = useMediaSettings.getState();
+    voice.preDeafenMuted = stored.joinMuted || input.muted === true;
+    rememberJoinFlags(voice.preDeafenMuted, stored.joinDeafened);
+  }
+  const deafened =
+    prev.status === "joined"
+      ? prev.deafened
+      : useMediaSettings.getState().joinDeafened;
+  const muted =
+    prev.status === "joined"
+      ? prev.muted || prev.deafened
+      : voice.preDeafenMuted || deafened;
   setCallSoundsDeafened(deafened);
-  if (prev.status !== "joined") voice.preDeafenMuted = false;
   resetDiagnostics();
   voice.streamReported = false;
   if (
@@ -1368,6 +1389,21 @@ export function leaveVoice(): void {
   }
 }
 
+/** Outside a call: the microphone for the next join, by the call bar's
+ * rule (opening it while deafened also turns the headset back on). */
+function toggleJoinMute(): void {
+  const { joinMuted, joinDeafened } = useMediaSettings.getState();
+  const muted = !(joinMuted || joinDeafened);
+  rememberJoinFlags(muted, muted ? joinDeafened : false);
+}
+
+/** Outside a call: the headset for the next join; the microphone choice
+ * comes back when it is turned on again. */
+function toggleJoinDeafen(): void {
+  const { joinMuted, joinDeafened } = useMediaSettings.getState();
+  rememberJoinFlags(joinMuted, !joinDeafened);
+}
+
 /**
  * Mute toggles immediately; the sig frame is the sync, not the wait.
  * Unmuting while deafened also undeafens so you can hear yourself speak.
@@ -1376,6 +1412,7 @@ export function toggleMute(): void {
   ensureBound();
   const state = useVoice.getState();
   if (state.status !== "joined" || !state.serverId || !state.channelId) {
+    toggleJoinMute();
     return;
   }
   const prevMuted = state.muted;
@@ -1384,6 +1421,7 @@ export function toggleMute(): void {
   const deafened = muted ? state.deafened : false;
   if (!deafened) voice.preDeafenMuted = muted;
   useVoice.setState({ muted, deafened });
+  rememberJoinFlags(voice.preDeafenMuted, deafened);
   setCallSoundsDeafened(deafened);
   playCallSound(muted ? "muteSelf" : "unmuteSelf");
   applyLocalAudio();
@@ -1404,6 +1442,7 @@ export function toggleDeafen(): void {
   ensureBound();
   const state = useVoice.getState();
   if (state.status !== "joined" || !state.serverId || !state.channelId) {
+    toggleJoinDeafen();
     return;
   }
   const prevMuted = state.muted;
@@ -1412,6 +1451,7 @@ export function toggleDeafen(): void {
   if (deafened) voice.preDeafenMuted = state.muted;
   const muted = deafened || voice.preDeafenMuted;
   useVoice.setState({ muted, deafened });
+  rememberJoinFlags(voice.preDeafenMuted, deafened);
   setCallSoundsDeafened(deafened);
   playCallSound(deafened ? "deafen" : "undeafen");
   applyLocalAudio();

@@ -37,10 +37,13 @@ pub fn settings(p: &Prefs) -> CallSettings {
         ptt_release_delay_ms: p.ptt_release_delay.max(0.0).round() as u64,
         gate_auto: p.gate_auto,
         gate_threshold_db: p.gate_threshold_db,
+        join_muted: p.join_muted,
+        join_deafened: p.join_deafened,
     }
 }
 
 pub fn sync(ctx: &egui::Context, call: &Call, toasts: &mut Toasts, signed_in: bool) {
+    keep_start(ctx, call);
     let wanted = settings(&prefs::get(ctx));
     if call.settings() != wanted {
         call.set_settings(wanted);
@@ -51,6 +54,19 @@ pub fn sync(ctx: &egui::Context, call: &Call, toasts: &mut Toasts, signed_in: bo
     if !signed_in && call.with_state(|s| s.channel.is_some()) {
         call.leave();
     }
+}
+
+/// In a call, the device keeps its mute choice and deafen for the next join
+/// (GEL-114), as `rememberJoinFlags` does on the web.
+fn keep_start(ctx: &egui::Context, call: &Call) {
+    let Some(kept) = call.with_state(|s| {
+        s.channel
+            .is_some()
+            .then_some((s.pre_deafen_muted, s.deafened))
+    }) else {
+        return;
+    };
+    prefs::update(ctx, |p| (p.join_muted, p.join_deafened) = kept);
 }
 
 #[cfg(test)]
@@ -67,5 +83,33 @@ mod tests {
         assert!(!settings(&Prefs::default()).push_to_talk);
         assert_eq!(settings(&p).ptt_release_delay_ms, 200);
         assert_eq!(settings(&p).call_sound_volume, 0.35);
+    }
+
+    /// GEL-114: what a call leaves is how the next one starts; outside a
+    /// call the kept start stays.
+    #[test]
+    fn a_call_keeps_its_mute_and_deafen_for_the_next_join() {
+        use gelabber_call::{CallState, CallStatus};
+        let _config = crate::platform::paths::testing::TempConfig::new("join-flags");
+        let ctx = egui::Context::default();
+        let call = Call::new(gelabber_client::Client::new("http://127.0.0.1:9").unwrap());
+        let mut toasts = Toasts::default();
+        call.set_state(CallState {
+            status: CallStatus::Connected,
+            server: Some(uuid::Uuid::from_u128(1)),
+            channel: Some(uuid::Uuid::from_u128(2)),
+            muted: true,
+            deafened: true,
+            pre_deafen_muted: false,
+            ..CallState::default()
+        });
+        sync(&ctx, &call, &mut toasts, true);
+        let p = prefs::get(&ctx);
+        assert_eq!((p.join_muted, p.join_deafened), (false, true));
+        assert!(call.settings().join_deafened && !call.settings().join_muted);
+        call.set_state(CallState::default());
+        sync(&ctx, &call, &mut toasts, true);
+        let p = prefs::get(&ctx);
+        assert_eq!((p.join_muted, p.join_deafened), (false, true));
     }
 }

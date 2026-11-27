@@ -1915,23 +1915,92 @@ describe("voice session", () => {
     });
   });
 
-  it("starts a fresh session after leave with default mute and deafen", () => {
-    install();
+  it("starts the next call after leave as the last one left off", () => {
+    const { sent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     toggleMute();
     toggleDeafen();
     leaveVoice();
+    expect(useMediaSettings.getState()).toMatchObject({
+      joinMuted: true,
+      joinDeafened: true,
+    });
+    const before = sent.length;
     joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
+    expect(useVoice.getState()).toMatchObject({ muted: true, deafened: true });
+    // The others see the flags from the seat on, in socket order.
+    expect(sent.slice(before)).toEqual([
+      { op: "sig", t: "j", s: "srv", c: "other" },
+      { op: "sig", t: "m", s: "srv", c: "other", on: true },
+      { op: "sig", t: "d", s: "srv", c: "other", on: true },
+    ]);
+    expect(
+      voiceOf(useVoiceRoster.getState().byServer, "srv", "u-self"),
+    ).toMatchObject({ muted: true, deafened: true });
+    // The mute choice under deafen came along too.
+    toggleDeafen();
+    expect(useVoice.getState()).toMatchObject({ muted: true, deafened: false });
+    toggleMute();
+    leaveVoice();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     expect(useVoice.getState()).toMatchObject({
       muted: false,
       deafened: false,
     });
+  });
+
+  it("sets the next call's microphone and headset from outside a call", () => {
+    const { sent } = install();
     toggleDeafen();
-    toggleDeafen();
-    expect(useVoice.getState()).toMatchObject({
-      muted: false,
-      deafened: false,
+    expect(useMediaSettings.getState()).toMatchObject({
+      joinMuted: false,
+      joinDeafened: true,
     });
+    // Opening the microphone while deafened turns the headset on, as in a call.
+    toggleMute();
+    expect(useMediaSettings.getState()).toMatchObject({
+      joinMuted: false,
+      joinDeafened: false,
+    });
+    toggleMute();
+    toggleDeafen();
+    toggleDeafen();
+    expect(useMediaSettings.getState()).toMatchObject({
+      joinMuted: true,
+      joinDeafened: false,
+    });
+    // Nothing to tell the server, and no call started.
+    expect(sent).toEqual([]);
+    expect(useVoice.getState().status).not.toBe("joined");
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    expect(useVoice.getState()).toMatchObject({ muted: true, deafened: false });
+    expect(sent).toEqual([
+      { op: "sig", t: "j", s: "srv", c: "voice" },
+      { op: "sig", t: "m", s: "srv", c: "voice", on: true },
+    ]);
+  });
+
+  it("joins muted to watch and keeps that for the next join", () => {
+    const { sent } = install();
+    joinVoice({
+      serverId: "srv",
+      channelId: "voice",
+      channelName: "Lounge",
+      watch: ["peer"],
+      muted: true,
+    });
+    expect(useVoice.getState()).toMatchObject({
+      muted: true,
+      deafened: false,
+      camera: false,
+    });
+    expect(sent).toEqual([
+      { op: "sig", t: "j", s: "srv", c: "voice" },
+      { op: "sig", t: "m", s: "srv", c: "voice", on: true },
+    ]);
+    leaveVoice();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    expect(useVoice.getState().muted).toBe(true);
   });
 
   it("disposes late old-room capture and keeps new-room capture muted", async () => {

@@ -1,9 +1,11 @@
 // "Zuschauen" from outside the voice channel (LiveHint, the live toast). A
-// Live is watched in its voice channel: outside a call this joins it with
-// the Lives there watched from the start; in the same call it watches them;
+// Live is watched in its voice channel: outside a call this joins it muted
+// (GEL-114), with the Lives there watched from the start and the camera off;
+// in the same call it watches them and leaves the microphone as it is;
 // in another call the room asks before it switches, so only the page opens
 // and the button says "Zum Kanal". The caller opens the channel's page.
 
+import { notify } from "../components/toasts.ts";
 import { translate } from "../i18n/catalog.ts";
 import { voice } from "../i18n/catalogs/voice.ts";
 import { joinVoice, toggleSourceWatch, useVoice } from "./session.ts";
@@ -48,7 +50,9 @@ export function joinToWatch(live: {
       channelId: live.channelId,
       channelName: live.channelName ?? translate(voice, "call.voiceChannel"),
       watch: live.people,
+      muted: true,
     });
+    notify(translate(voice, "watch.joinedMuted"));
     return;
   }
   if (call !== `${live.serverId}/${live.channelId}`) return;

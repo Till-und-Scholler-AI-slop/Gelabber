@@ -122,6 +122,18 @@ vi.mock("./pushToTalk.ts", async (original) => {
   };
 });
 
+vi.mock("./settings.ts", async (original) => {
+  const actual = await original<typeof import("./settings.ts")>();
+  const current = (select?: (state: unknown) => unknown) =>
+    select
+      ? select(actual.useMediaSettings.getState())
+      : actual.useMediaSettings.getState();
+  return {
+    ...actual,
+    useMediaSettings: Object.assign(current, actual.useMediaSettings),
+  };
+});
+
 vi.mock("./userVolume.ts", async (original) => {
   const actual = await original<typeof import("./userVolume.ts")>();
   const current = (select: (state: unknown) => unknown) =>
@@ -146,6 +158,7 @@ import { callAnnouncement } from "./callBar.ts";
 import { CallSound } from "./QuickCallSettings.tsx";
 import { resetPushToTalkForTests, usePushToTalk } from "./pushToTalk.ts";
 import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
+import { resetMediaSettingsForTests, useMediaSettings } from "./settings.ts";
 
 const stream = { id: "source-from-a" } as MediaStream;
 const server = {
@@ -212,6 +225,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   fixture.speaking = { call: null, users: {} };
+  resetMediaSettingsForTests();
 });
 
 describe("active media UI", () => {
@@ -367,6 +381,45 @@ describe("active media UI", () => {
     expect(html).not.toContain("Spricht gerade");
     expect(html).not.toContain("Zuschauen");
     expect(html).not.toContain("Mikrofonpegel");
+  });
+
+  it("offers the microphone and headset to join with beside Beitreten", () => {
+    const room = () =>
+      renderToStaticMarkup(
+        <VoiceRoom server={server} channelId="stage" channelName="Lounge" />,
+      );
+    let html = room();
+    const join = html.indexOf("Beitreten</button>");
+    expect(join).toBeGreaterThan(-1);
+    expect(html.indexOf('aria-label="Stummschalten"')).toBeGreaterThan(join);
+    expect(control(html, "Stummschalten")).toContain('aria-pressed="false"');
+    expect(control(html, "Taubschalten")).toContain('aria-pressed="false"');
+    // As this device keeps them; deafened closes the microphone too.
+    useMediaSettings.getState().patch({ joinDeafened: true });
+    html = room();
+    expect(control(html, "Stummschalten")).toContain('aria-pressed="true"');
+    expect(control(html, "Taubschalten")).toContain('aria-pressed="true"');
+    // In a call elsewhere they are that call's, which a switch keeps.
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "b",
+      channelId: "stage",
+      muted: true,
+      deafened: false,
+    });
+    html = room();
+    expect(html).toContain("Hierher wechseln</button>");
+    expect(control(html, "Stummschalten")).toContain('aria-pressed="true"');
+    expect(control(html, "Taubschalten")).toContain('aria-pressed="false"');
+    // Without the permission to join there is nothing to choose.
+    html = renderToStaticMarkup(
+      <VoiceRoom
+        server={{ ...server, permissions: [] }}
+        channelId="stage"
+        channelName="Lounge"
+      />,
+    );
+    expect(control(html, "Stummschalten")).toBeNull();
   });
 
   it("shows the immediately joined self once, before the roster echo", () => {

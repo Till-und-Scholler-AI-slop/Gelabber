@@ -205,6 +205,9 @@ pub struct CallState {
     pub channel: Option<Uuid>,
     pub muted: bool,
     pub deafened: bool,
+    /// The microphone choice under deafen: what undeafening returns to, and
+    /// what the next call starts with (GEL-114). Without deafen it is `muted`.
+    pub pre_deafen_muted: bool,
     pub camera: bool,
     pub live: bool,
     /// The own Live sends application sound.
@@ -314,6 +317,11 @@ pub struct CallSettings {
     pub gate_auto: bool,
     /// The threshold without `gate_auto`, in dB (-80..0).
     pub gate_threshold_db: f64,
+    /// How a call joined from outside one starts (GEL-114): the microphone
+    /// choice, kept apart from deafen as [`CallState::pre_deafen_muted`],
+    /// and the headset.
+    pub join_muted: bool,
+    pub join_deafened: bool,
 }
 
 impl Default for CallSettings {
@@ -345,6 +353,8 @@ impl Default for CallSettings {
             ptt_release_delay_ms: ptt::RELEASE_DELAY_DEFAULT_MS,
             gate_auto: true,
             gate_threshold_db: logic::GATE_THRESHOLD_DEFAULT,
+            join_muted: false,
+            join_deafened: false,
         }
     }
 }
@@ -417,6 +427,8 @@ pub(crate) struct Inner {
     retries: std::sync::atomic::AtomicU64,
     #[cfg(feature = "testing")]
     joins: std::sync::atomic::AtomicU64,
+    #[cfg(feature = "testing")]
+    last_join: Mutex<Option<(Uuid, Uuid, bool)>>,
     #[cfg(feature = "testing")]
     refreshes: std::sync::atomic::AtomicU64,
     runtime: OnceLock<tokio::runtime::Runtime>,
@@ -650,6 +662,8 @@ impl Call {
                 #[cfg(feature = "testing")]
                 joins: std::sync::atomic::AtomicU64::new(0),
                 #[cfg(feature = "testing")]
+                last_join: Mutex::new(None),
+                #[cfg(feature = "testing")]
                 refreshes: std::sync::atomic::AtomicU64::new(0),
                 runtime: OnceLock::new(),
                 #[cfg(feature = "media")]
@@ -717,18 +731,33 @@ impl Call {
     }
 
     /// Joins (or moves to) a voice channel: the gateway seat at once, the
-    /// media connection in the background.
+    /// media connection in the background. From outside a call it starts
+    /// with the settings' `join_muted`/`join_deafened`; a move keeps the
+    /// call's.
     pub fn join(&self, server: Uuid, channel: Uuid) {
+        self.join_as(server, channel, false);
+    }
+
+    /// [`Self::join`], with the microphone closed when it starts a call
+    /// ("Zuschauen" from outside one, GEL-114); a move keeps the call's.
+    pub fn join_muted(&self, server: Uuid, channel: Uuid) {
+        self.join_as(server, channel, true);
+    }
+
+    fn join_as(&self, server: Uuid, channel: Uuid, mute: bool) {
         #[cfg(feature = "testing")]
-        self.inner.joins.fetch_add(1, Ordering::AcqRel);
+        {
+            self.inner.joins.fetch_add(1, Ordering::AcqRel);
+            *self.inner.last_join.lock() = Some((server, channel, mute));
+        }
         #[cfg(feature = "media")]
         {
-            media::join(&self.inner, server, channel);
+            media::join(&self.inner, server, channel, mute);
             self.sync_push_to_talk();
         }
         #[cfg(not(feature = "media"))]
         {
-            let _ = (server, channel);
+            let _ = (server, channel, mute);
             self.inner
                 .write(|s| s.status = CallStatus::Failed(logic::no_media_core().into()));
             self.inner.notify(logic::no_media_core());
@@ -770,6 +799,13 @@ impl Call {
     #[cfg(feature = "testing")]
     pub fn join_attempts(&self) -> u64 {
         self.inner.joins.load(Ordering::Acquire)
+    }
+
+    /// Tests: the last join's channel, and whether it closed the microphone
+    /// ([`Self::join_muted`]).
+    #[cfg(feature = "testing")]
+    pub fn last_join(&self) -> Option<(Uuid, Uuid, bool)> {
+        *self.inner.last_join.lock()
     }
 
     /// Tests: how often [`Self::refresh_devices`] was called.

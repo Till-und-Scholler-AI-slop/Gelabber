@@ -785,6 +785,9 @@ fn watching_from_outside_joins_watches_or_only_opens() {
     assert_eq!(label(SOFA), "Zuschauen");
     hint::join_to_watch(&mut app, SERVER, SOFA, &[JONAS]);
     assert_eq!(call.join_attempts(), 1);
+    // Watching from outside never opens the microphone (GEL-114).
+    assert_eq!(call.last_join(), Some((SERVER, SOFA, true)));
+    assert_eq!(app.toasts.texts(), ["Stumm beigetreten"]);
     assert_eq!(app.nav.location().path, sofa_page);
 
     call.set_state(in_sofa(MicStatus::Live));
@@ -792,6 +795,7 @@ fn watching_from_outside_joins_watches_or_only_opens() {
     assert_eq!(label(SOFA), "Zuschauen");
     hint::join_to_watch(&mut app, SERVER, SOFA, &[JONAS]);
     assert_eq!(call.join_attempts(), 1, "already there: watch, no join");
+    assert_eq!(app.toasts.texts(), ["Stumm beigetreten"], "no new notice");
     assert_eq!(app.nav.location().path, sofa_page);
 
     assert_eq!(label(kino), "Zum Kanal");
@@ -869,6 +873,70 @@ fn only_a_room_nobody_else_is_in_asks_for_company() {
     let busy = draw(SOFA);
     busy.get_by_label("Beitreten");
     assert!(busy.query_by_label("Einladen").is_none());
+}
+
+/// GEL-114: beside "Beitreten" the microphone and headset to join with,
+/// kept on this device; in a call elsewhere they are that call's.
+#[test]
+fn the_room_sets_the_microphone_and_headset_to_join_with() {
+    use crate::screens::settings::prefs;
+    let _config = crate::platform::paths::testing::TempConfig::new("join-toggles");
+    let room =
+        crate::screens::voice::session::build(&super::state(), &CallState::default(), SERVER, SOFA)
+            .expect("room");
+    let (client, call) = offline();
+    let mut h = harness(client, call.clone(), move |ui, app| {
+        crate::screens::voice::page::room_content(ui, app, &room, 288.0, 52.0, 992.0);
+    });
+    h.run_steps(4);
+    let pressed = |h: &H, label: &str| {
+        h.get_by_label(label).accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+    };
+    let kept = |h: &H| {
+        let p = prefs::get(&h.ctx);
+        (p.join_muted, p.join_deafened)
+    };
+    assert!(!pressed(&h, "Stummschalten") && !pressed(&h, "Taubschalten"));
+    h.get_by_label("Taubschalten").click();
+    h.run_steps(4);
+    // Deafened closes the microphone too, and keeps the choice under it.
+    assert!(pressed(&h, "Stummschalten") && pressed(&h, "Taubschalten"));
+    assert_eq!(kept(&h), (false, true));
+    // Opening the microphone turns the headset back on, as in the call bar.
+    h.get_by_label("Stummschalten").click();
+    h.run_steps(4);
+    assert_eq!(kept(&h), (false, false));
+    h.get_by_label("Stummschalten").click();
+    h.run_steps(4);
+    assert_eq!(kept(&h), (true, false));
+    assert!(pressed(&h, "Stummschalten") && !pressed(&h, "Taubschalten"));
+    assert_eq!(call.join_attempts(), 0, "choosing joins nothing");
+    // The join takes them along (`sync` hands them to the call).
+    h.get_by_label("Beitreten").click();
+    h.run_steps(2);
+    assert_eq!(call.last_join(), Some((SERVER, SOFA, false)));
+    let settings = crate::screens::voice::sync::settings(&prefs::get(&h.ctx));
+    assert!(settings.join_muted && !settings.join_deafened);
+    drop(h);
+
+    // In the Sofa's call, the Kino shows the call's: deafened.
+    let in_call = CallState {
+        deafened: true,
+        muted: true,
+        ..in_sofa(MicStatus::Live)
+    };
+    let kino =
+        crate::screens::voice::session::build(&super::state(), &in_call, SERVER, super::KINO)
+            .expect("room");
+    assert!(kino.elsewhere);
+    let (client, call) = offline();
+    call.set_state(in_call);
+    let mut h = harness(client, call, move |ui, app| {
+        crate::screens::voice::page::room_content(ui, app, &kino, 288.0, 52.0, 992.0);
+    });
+    h.run_steps(4);
+    h.get_by_label("Hierher wechseln");
+    assert!(pressed(&h, "Stummschalten") && pressed(&h, "Taubschalten"));
 }
 
 /// With Jonas' camera in the large view, its tile on the stage under it

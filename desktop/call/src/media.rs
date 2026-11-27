@@ -112,24 +112,23 @@ async fn blocking<T: Send + 'static>(job: impl FnOnce() -> T + Send + 'static) -
 
 // ------------------------------------------------------------- commands
 
-pub(crate) fn join(inner: &Arc<Inner>, server: Uuid, channel: Uuid) {
+pub(crate) fn join(inner: &Arc<Inner>, server: Uuid, channel: Uuid, mute: bool) {
     let client = inner.client().clone();
     let Some(me) = me(&client) else { return };
     let previous = inner.media.session.lock().take();
-    let (was_joined, same) = inner.read(|s| {
+    let (current, same) = inner.read(|s| {
         (
-            s.channel.is_some(),
+            s.channel
+                .is_some()
+                .then_some((s.muted, s.deafened, s.pre_deafen_muted)),
             s.server == Some(server) && s.channel == Some(channel),
         )
     });
-    let (muted, deafened) = if was_joined {
-        inner.read(|s| (s.muted || s.deafened, s.deafened))
-    } else {
-        (false, false)
+    let kept = {
+        let settings = inner.settings();
+        (settings.join_muted, settings.join_deafened)
     };
-    let pre_deafen_muted = previous
-        .as_ref()
-        .is_some_and(|p| p.st.lock().pre_deafen_muted);
+    let (muted, deafened, pre_deafen_muted) = logic::join_flags(current, kept, mute);
     if let Some(previous) = previous {
         previous.stop();
     }
@@ -145,13 +144,14 @@ pub(crate) fn join(inner: &Arc<Inner>, server: Uuid, channel: Uuid) {
             channel: Some(channel),
             muted,
             deafened,
+            pre_deafen_muted,
             devices: std::mem::take(&mut s.devices),
             push_to_talk_open: s.push_to_talk_open,
             ..CallState::default()
         }
     });
     // The gateway seat first, in socket order before any media work.
-    client.voice_join_flags(server, channel, Some((muted, deafened)));
+    client.voice_join_flags(server, channel, Some((pre_deafen_muted, deafened)));
     let session = Arc::new(Session {
         call: Arc::downgrade(inner),
         server,
@@ -161,7 +161,6 @@ pub(crate) fn join(inner: &Arc<Inner>, server: Uuid, channel: Uuid) {
         st: Mutex::new(St {
             awaiting_join: true,
             sound_on_join: !same,
-            pre_deafen_muted,
             mic_epoch: Uuid::new_v4(),
             ..St::default()
         }),
@@ -227,10 +226,10 @@ pub(crate) fn set_muted(inner: &Arc<Inner>, muted: bool) {
     else {
         return;
     };
-    if !deafened {
-        session.st.lock().pre_deafen_muted = muted;
-    }
     inner.write(|s| {
+        if !deafened {
+            s.pre_deafen_muted = muted;
+        }
         s.muted = muted;
         s.deafened = deafened;
     });
@@ -245,19 +244,14 @@ pub(crate) fn set_deafened(inner: &Arc<Inner>, deafened: bool) {
     let Some(session) = inner.media.current() else {
         return;
     };
-    let (was_muted, was_deafened) = inner.read(|s| (s.muted, s.deafened));
-    if was_deafened == deafened {
+    if inner.read(|s| s.deafened) == deafened {
         return;
     }
-    let muted = {
-        let mut st = session.st.lock();
-        if deafened {
-            st.pre_deafen_muted = was_muted;
-        }
-        deafened || st.pre_deafen_muted
-    };
     inner.write(|s| {
-        s.muted = muted;
+        if deafened {
+            s.pre_deafen_muted = s.muted;
+        }
+        s.muted = deafened || s.pre_deafen_muted;
         s.deafened = deafened;
     });
     inner.set_sounds_deafened(deafened);
@@ -709,7 +703,6 @@ struct St {
     republish_on_join: bool,
     /// Awaiting the gateway's answer to `p s`.
     awaiting_screen: bool,
-    pre_deafen_muted: bool,
     peers: HashMap<Uuid, Peer>,
     /// What each person publishes, from the gateway.
     pubs: HashMap<Uuid, Vec<Kind>>,

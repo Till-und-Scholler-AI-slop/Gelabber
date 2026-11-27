@@ -200,6 +200,11 @@ export type MediaSettings = {
   gateAuto: boolean;
   /** The threshold without `gateAuto`, in dB (`GATE_THRESHOLD_MIN`..0). */
   gateThresholdDb: number;
+  /** How the next call starts (GEL-114): the microphone choice, kept apart
+   * from deafen as in a call, and whether the headset is off. The call keeps
+   * them up to date, so a join arrives as the last call left off. */
+  joinMuted: boolean;
+  joinDeafened: boolean;
 };
 
 /** The input sensitivity slider's range and start, in dB. */
@@ -246,6 +251,8 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
   gateAuto: true,
   gateThresholdDb: GATE_THRESHOLD_DEFAULT,
+  joinMuted: false,
+  joinDeafened: false,
 };
 
 type MediaSettingsState = MediaSettings & {
@@ -419,6 +426,8 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     pttReleaseDelay: state.pttReleaseDelay,
     gateAuto: state.gateAuto,
     gateThresholdDb: state.gateThresholdDb,
+    joinMuted: state.joinMuted,
+    joinDeafened: state.joinDeafened,
   };
 }
 
@@ -528,6 +537,8 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.gateThresholdDb !== undefined
               ? clampGateThreshold(partial.gateThresholdDb)
               : prev.gateThresholdDb,
+          joinMuted: partial.joinMuted ?? prev.joinMuted,
+          joinDeafened: partial.joinDeafened ?? prev.joinDeafened,
         });
         listener?.(prev, snapshot(get()));
       },
@@ -629,6 +640,8 @@ export const useMediaSettings = create<MediaSettingsState>()(
           ),
           gateAuto: flag(stored.gateAuto, current.gateAuto),
           gateThresholdDb: clampGateThreshold(stored.gateThresholdDb),
+          joinMuted: flag(stored.joinMuted, current.joinMuted),
+          joinDeafened: flag(stored.joinDeafened, current.joinDeafened),
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
         };

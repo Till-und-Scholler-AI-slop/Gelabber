@@ -24,7 +24,7 @@ use crate::icons::{self, Icon};
 use crate::screens::layout;
 use crate::screens::shell::common;
 use crate::text::{self, Block, TextStyle};
-use crate::theme::{Theme, corner};
+use crate::theme::{Theme, corner, mix};
 use crate::widgets::tooltip::{Side, Tooltip};
 use crate::widgets::{Button, IconButton, eased};
 
@@ -411,8 +411,9 @@ fn compact_card_height() -> f32 {
     1.0 + 14.0 + 64.0 + 2.0 + 6.0 + text::UI.line_px() + text::META.line_px() + 12.0 + 1.0
 }
 
-/// "Beitreten" (or the missing permission), the microphone test and the
-/// quick settings; returns the row's bottom.
+/// "Beitreten" (or the missing permission) with the microphone and headset
+/// to join with, the microphone test and the quick settings; returns the
+/// row's bottom.
 pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) -> f32 {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -434,7 +435,7 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
         if join.clicked() {
             app.call.join(room.server, room.channel);
         }
-        x = join.rect.right() + 8.0;
+        x = join_toggles(ui, app, join.rect.right() + 8.0, row.center().y);
     } else {
         let p = Block::single(
             ui,
@@ -469,6 +470,90 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     );
     quick::button(ui, app, response, gear);
     top + 44.0
+}
+
+/// The microphone and headset a join starts with, beside "Beitreten"
+/// (GEL-114, `JoinAudioToggles`): as this device keeps them; in a call
+/// elsewhere that call's, which a switch keeps. The call bar's names, icons
+/// and rule; closed reads as there. Returns where the row goes on.
+fn join_toggles(ui: &mut Ui, app: &mut AppCtx, mut x: f32, cy: f32) -> f32 {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let in_call = app.call.with_state(session::joined).is_some();
+    let (mic_off, deafened) = if in_call {
+        app.call.with_state(|s| (s.muted || s.deafened, s.deafened))
+    } else {
+        let p = crate::screens::settings::prefs::get(ui.ctx());
+        (p.join_muted || p.join_deafened, p.join_deafened)
+    };
+    for (key, icon, name, off) in [
+        (
+            super::call_bar::CallKey::Mute,
+            if mic_off { Icon::MicOff } else { Icon::Mic },
+            texts::controls_mute(),
+            mic_off,
+        ),
+        (
+            super::call_bar::CallKey::Deafen,
+            if deafened {
+                Icon::HeadsetOff
+            } else {
+                Icon::Headset
+            },
+            texts::controls_deafen(),
+            deafened,
+        ),
+    ] {
+        let mute = key == super::call_bar::CallKey::Mute;
+        let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
+        x += 36.0 + 8.0;
+        let response = common::click(ui, r, Id::unique(("voice-join-toggle", mute)));
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, off, name));
+        // Only the words: the shortcuts work in a call.
+        let (title, _) = super::call_bar::call_tip(ui.ctx(), key, off);
+        Tooltip::new(title).on_hover_or_focus(&response, Side::Above);
+        let (fill, fg) = if off {
+            (mix(c.surface, c.danger_bg, 0.16), c.danger)
+        } else if response.hovered() {
+            (c.hover, c.text)
+        } else {
+            (c.surface, c.text)
+        };
+        ui.painter().rect(
+            r,
+            corner(theme.radius.sm),
+            fill,
+            Stroke::new(1.0, c.border_strong),
+            egui::StrokeKind::Inside,
+        );
+        icons::paint_centered(ui.painter(), icon, r, 18.0, fg);
+        if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+            crate::widgets::focus_ring(ui.painter(), r, theme.radius.sm, &theme);
+        }
+        if response.clicked() {
+            match (in_call, mute) {
+                (true, true) => app.call.toggle_mute(),
+                (true, false) => app.call.toggle_deafen(),
+                (false, _) => crate::screens::settings::prefs::update(ui.ctx(), |p| {
+                    (p.join_muted, p.join_deafened) =
+                        toggled_start(p.join_muted, p.join_deafened, mute);
+                }),
+            }
+        }
+    }
+    x
+}
+
+/// The kept start after a press outside a call, by the call bar's rule:
+/// opening the microphone while deafened turns the headset on too; the
+/// headset leaves the microphone choice as it is.
+fn toggled_start(muted: bool, deafened: bool, mute: bool) -> (bool, bool) {
+    if mute {
+        let muted = !(muted || deafened);
+        (muted, deafened && muted)
+    } else {
+        (muted, !deafened)
+    }
 }
 
 /// The room with pictures: the stage, the people without a camera under

@@ -1068,6 +1068,26 @@ pub fn mute_change(muted: bool, deafened: bool, want: bool) -> Option<(bool, boo
     (next != (muted, deafened)).then_some(next)
 }
 
+/// Mute, deafen and the mute choice under deafen a join starts with
+/// (GEL-114, `joinVoice`): a move keeps the call's (`current`); from outside
+/// a call it is the kept start (`kept`: the choice and deafen), with the
+/// microphone closed on top when `mute` ("Zuschauen").
+pub fn join_flags(
+    current: Option<(bool, bool, bool)>,
+    kept: (bool, bool),
+    mute: bool,
+) -> (bool, bool, bool) {
+    match current {
+        Some((muted, deafened, pre_deafen_muted)) => {
+            (muted || deafened, deafened, pre_deafen_muted)
+        }
+        None => {
+            let (choice, deafened) = (kept.0 || mute, kept.1);
+            (choice || deafened, deafened, choice)
+        }
+    }
+}
+
 /// The microphone's two switches (`applyLocalAudio`): its track, which
 /// push-to-talk closes too, and the server's pause, which only mute and
 /// deafen set. The producer's own pause stays unused: it is the same track.
@@ -1509,6 +1529,28 @@ mod tests {
         // Deafened is muted: muting again is no change, unmuting undeafens.
         assert_eq!(mute_change(true, true, true), None);
         assert_eq!(mute_change(true, true, false), Some((false, false)));
+    }
+
+    /// GEL-114: a call from outside one starts as this device keeps it,
+    /// "Zuschauen" closes the microphone on top, a move keeps the call's.
+    #[test]
+    fn a_join_starts_as_kept_and_a_move_keeps_the_call() {
+        // (muted, deafened, mute choice under deafen)
+        assert_eq!(
+            join_flags(None, (false, false), false),
+            (false, false, false)
+        );
+        assert_eq!(join_flags(None, (true, false), false), (true, false, true));
+        assert_eq!(join_flags(None, (false, true), false), (true, true, false));
+        assert_eq!(join_flags(None, (false, false), true), (true, false, true));
+        assert_eq!(join_flags(None, (false, true), true), (true, true, true));
+        let call = Some((false, false, false));
+        assert_eq!(join_flags(call, (true, true), true), (false, false, false));
+        let deafened = Some((true, true, false));
+        assert_eq!(
+            join_flags(deafened, (false, false), false),
+            (true, true, false)
+        );
     }
 
     #[test]

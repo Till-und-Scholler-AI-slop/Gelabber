@@ -1397,17 +1397,16 @@ impl Client {
         self.voice_join_flags(server, channel, None);
     }
 
-    /// [`Self::voice_join`] with the mute and deafen flags to take into the
-    /// channel; `None` keeps the current ones.
+    /// [`Self::voice_join`] with the flags to take into the channel: the
+    /// mute choice (which undeafening returns to) and deafen; `None` keeps
+    /// the current ones.
     pub fn voice_join_flags(&self, server: Uuid, channel: Uuid, flags: Option<(bool, bool)>) {
         self.voice_queue(move |this| {
             let mut current = this.with_state(|s| s.voice_self);
             if let Some((muted, deafened)) = flags {
                 current.muted = muted || deafened;
                 current.deafened = deafened;
-                if !deafened {
-                    this.inner.local.lock().muted_before_deafen = muted;
-                }
+                this.inner.local.lock().muted_before_deafen = muted;
             }
             if let (Some(s), Some(c)) = (current.server, current.channel)
                 && (s, c) != (server, channel)
@@ -3419,6 +3418,52 @@ mod tests {
                 .iter()
                 .any(|l| l == &format!("POST /api/directory/listings/{filmclub}/join HTTP/1.1"))
         );
+    }
+
+    /// GEL-114: a call that starts deafened over an open microphone opens
+    /// it again on undeafen, whatever an earlier call left muted.
+    #[test]
+    fn a_join_takes_the_mute_choice_under_deafen_along() {
+        let client = Client::new("http://127.0.0.1:1").unwrap();
+        let sent = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let tap = sent.clone();
+        client.set_frame_tap(Some(Arc::new(move |frame: &ClientFrame| {
+            if let ClientFrame::Sig { t, on, .. } = frame {
+                tap.lock().push((*t, *on));
+            }
+        })));
+        let wait_for = |count: usize| {
+            let start = std::time::Instant::now();
+            while sent.lock().len() < count {
+                assert!(
+                    start.elapsed() < Duration::from_secs(5),
+                    "{:?}",
+                    sent.lock()
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let (server, channel) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        client.voice_join_flags(server, channel, Some((true, false)));
+        client.voice_leave();
+        wait_for(3);
+        sent.lock().clear();
+        client.voice_join_flags(server, channel, Some((false, true)));
+        client.set_voice_deafened(false);
+        wait_for(5);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            *sent.lock(),
+            [
+                (SigKind::J, None),
+                (SigKind::M, Some(true)),
+                (SigKind::D, Some(true)),
+                (SigKind::M, Some(false)),
+                (SigKind::D, Some(false)),
+            ]
+        );
+        let me = client.with_state(|s| s.voice_self);
+        assert!(!me.muted && !me.deafened);
     }
 
     /// A watch between a dropped socket and the next one's join is not sent:

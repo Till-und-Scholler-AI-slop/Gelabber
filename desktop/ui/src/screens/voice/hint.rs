@@ -201,12 +201,14 @@ pub(crate) fn watch_label(
 }
 
 /// Into the voice channel of a Live, as `joinToWatch` (watchLive.ts):
-/// outside a call it joins and watches `people` from the start.
+/// outside a call it joins muted (GEL-114) and watches `people` from the
+/// start; in that call the microphone stays as it is.
 pub fn join_to_watch(app: &mut AppCtx, server: Uuid, channel: Uuid, people: &[Uuid]) {
     app.nav.navigate(&format!("/s/{server}/c/{channel}"));
     match app.call.with_state(session::joined) {
         None => {
-            app.call.join(server, channel);
+            app.call.join_muted(server, channel);
+            app.toasts.notify(texts::watch_joined_muted());
             for user in people {
                 app.call.watch(*user, true);
             }

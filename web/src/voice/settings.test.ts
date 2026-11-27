@@ -558,6 +558,8 @@ describe("every setting on its own", () => {
     pttReleaseDelay: 400,
     gateAuto: false,
     gateThresholdDb: -62,
+    joinMuted: true,
+    joinDeafened: true,
   };
 
   it("changes the one setting it is given and keeps the others", () => {
