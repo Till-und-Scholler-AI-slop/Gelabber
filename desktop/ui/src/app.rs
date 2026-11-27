@@ -391,8 +391,8 @@ pub struct GelabberApp {
     workspace: bool,
     /// The client's own session was signed in last frame.
     client_signed_in: bool,
-    /// The server ended the session: the way to the login page says so.
-    expired: bool,
+    /// The server ended the session: the way to the login page says why.
+    ended: Option<gelabber_client::SessionEnd>,
     /// The video tiles' pipeline is installed in the renderer.
     video_ready: bool,
     /// The theme's page colour, for the window's clear colour.
@@ -440,7 +440,7 @@ impl GelabberApp {
             toasts: Toasts::default(),
             workspace: false,
             client_signed_in: false,
-            expired: false,
+            ended: None,
             video_ready: false,
             background: std::cell::Cell::new(Theme::dark().c.bg),
             account_locale: None,
@@ -489,11 +489,7 @@ impl GelabberApp {
             route if is_workspace(route) && !signed_in => {
                 let href = location.href();
                 let redirect = if href == "/" { String::new() } else { href };
-                let reason = if std::mem::take(&mut self.expired) {
-                    "expired"
-                } else {
-                    ""
-                };
+                let reason = self.ended.take().map_or("", |end| end.as_str());
                 self.nav.replace(&with_query(
                     "/login",
                     &[("redirect", &redirect), ("reason", reason)],
@@ -509,17 +505,17 @@ impl GelabberApp {
     /// and follows the client when the server ends the session.
     fn sync_workspace(&mut self) {
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
-        let (client_signed_in, expired, deleted) = self.client.with_state(|s| {
+        let (client_signed_in, ended, deleted) = self.client.with_state(|s| {
             (
                 matches!(s.session, gelabber_client::Session::Authenticated(_)),
-                s.session_expired,
+                s.session_ended,
                 s.account_deleted,
             )
         });
         if signed_in && self.client_signed_in && !client_signed_in {
             self.session.adopt(&Value::Null);
             self.workspace = false;
-            self.expired = expired;
+            self.ended = ended;
             // Deleted from Sicherheit (`deleteAndLeave`): the call ends and
             // the sign-in page says why.
             if deleted {
@@ -528,7 +524,7 @@ impl GelabberApp {
             }
         } else if signed_in && !self.workspace {
             self.workspace = true;
-            self.expired = false;
+            self.ended = None;
             if client_signed_in {
                 self.client.bootstrap();
             } else {

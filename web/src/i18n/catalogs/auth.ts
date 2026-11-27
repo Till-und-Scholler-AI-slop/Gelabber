@@ -207,6 +207,11 @@ export const auth = defineCatalog(
 
     // /login
     "login.sessionExpired": "Sitzung abgelaufen. Melde dich erneut an.",
+    "login.signedOut":
+      "Du wurdest auf einem anderen Gerät abgemeldet. Melde dich erneut an.",
+    "login.passwordChanged":
+      "Dein Passwort wurde geändert. Melde dich mit dem neuen Passwort an.",
+    "login.accountDisabled": "Dein Konto wurde vom Betreiber gesperrt.",
     "login.accountDeleted": "Dein Konto wurde gelöscht.",
     "login.title": "Anmelden",
     "login.newHere": "Neu bei Gelabber?",
@@ -493,6 +498,11 @@ export const auth = defineCatalog(
     "page.linkUsed": "This link has expired or has already been used.",
 
     "login.sessionExpired": "Session expired. Please sign in again.",
+    "login.signedOut":
+      "You were signed out from another device. Please sign in again.",
+    "login.passwordChanged":
+      "Your password was changed. Sign in with the new password.",
+    "login.accountDisabled": "The operator has disabled your account.",
     "login.accountDeleted": "Your account has been deleted.",
     "login.title": "Sign in",
     "login.newHere": "New to Gelabber?",

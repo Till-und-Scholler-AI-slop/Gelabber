@@ -360,7 +360,7 @@ async fn disable(
 
     // Closes at once what the deleted sessions still hold open; the sockets'
     // and leases' own session checks end them even if this is lost.
-    session::disconnect(&state, &revoked).await;
+    session::disconnect(&state, &revoked, session::EndReason::Disabled).await;
     let mut conn = state.db.acquire().await?;
     let account = load(&state, &mut conn, id)
         .await?

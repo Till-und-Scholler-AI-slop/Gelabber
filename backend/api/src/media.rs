@@ -80,7 +80,6 @@ async fn issue_ticket(
         },
         &session,
         state.media_ticket_ttl,
-        state.session_ttl,
         state.media_demand,
     )
     .await?;
@@ -109,14 +108,14 @@ async fn load_channel<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     .ok_or(ApiError::NotFound)
 }
 
-/// The session's absolute end (`created_at + ttl`). Its row's expiry slides
-/// with use (#195), so a copy of that taken at mint would end calls early.
-fn session_end(session: &CurrentSession, session_ttl: Duration) -> i64 {
-    chrono::Duration::from_std(session_ttl)
-        .ok()
-        .and_then(|ttl| session.created_at.checked_add_signed(ttl))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
-        .timestamp()
+/// The end of a ticket's authority envelope (`auth.expires_at`, Unix
+/// seconds): none. The session's row decides how long media may go on,
+/// through the lease [`maintain_session`] renews only while the row is
+/// live. Its end slides with use (#195) and waits while a voice seat holds
+/// it (GEL-83), so neither its expiry at mint nor the absolute end
+/// (`created_at + API_SESSION_TTL_HOURS`) may end a call.
+fn session_end() -> i64 {
+    chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp()
 }
 
 /// How long one ticket keeps the session's media authority renewed: media
@@ -128,7 +127,6 @@ async fn mint(
     claim: TicketClaim,
     session: &CurrentSession,
     ttl: Duration,
-    session_ttl: Duration,
     demand: Duration,
 ) -> Result<(String, u64), ApiError> {
     let mut conn = redis
@@ -143,8 +141,8 @@ async fn mint(
             .num_seconds()
             .max(0) as u64,
     );
-    let ends_at = session_end(session, session_ttl);
-    if secs == 0 || ends_at <= chrono::Utc::now().timestamp() {
+    let ends_at = session_end();
+    if secs == 0 {
         return Err(ApiError::Unauthenticated);
     }
     let base = serde_json::to_string(&claim)
@@ -306,7 +304,7 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
         state.gateway.untrack_media_session(&key, generation).await;
         return Err(ApiError::Internal("media session lease unavailable".into()));
     }
-    let ends_at = session_end(session, state.session_ttl);
+    let ends_at = session_end();
     let state = state.clone();
     let session = session.clone();
     tokio::spawn(async move {
@@ -559,7 +557,6 @@ mod tests {
             claim,
             &session,
             state.media_ticket_ttl,
-            state.session_ttl,
             state.media_demand,
         )
         .await
@@ -570,7 +567,8 @@ mod tests {
             .await
             .unwrap();
         let ticket: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let end = (session.created_at + chrono::Duration::hours(2)).timestamp();
+        // Not the absolute end either (GEL-83): a call never ends at it.
+        let end = chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp();
         assert_eq!(ticket["auth"]["expires_at"], end, "{ticket}");
 
         // The worker's copy is from mint; the row has slid on since.

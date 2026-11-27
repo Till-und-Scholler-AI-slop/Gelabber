@@ -15,7 +15,7 @@ use super::hub::ConnId;
 use super::protocol::{
     CatchUp, ClientFrame, PresenceMode, PresenceStatus, ServerFrame, SigKind, Topic, VoiceEntry,
 };
-use crate::auth::session::CurrentSession;
+use crate::auth::session::{CurrentSession, EndReason};
 use crate::auth::user::User;
 use crate::error::ApiError;
 use crate::servers::channel::{self, ChannelKind};
@@ -207,7 +207,13 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
     loop {
         tokio::select! {
             biased;
-            _ = revoked.changed() => break,
+            _ = revoked.changed() => {
+                let closing = *revoked.borrow();
+                if let Some(super::hub::Closing::Session(reason)) = closing {
+                    close = Some(session_ended(reason));
+                }
+                break;
+            }
             _ = async { drop(shutdown.wait_for(|on| *on).await) } => {
                 // 1012 Service Restart: the client reconnects to the next process.
                 close = Some(CloseFrame { code: 1012, reason: Utf8Bytes::from_static("restart") });
@@ -215,18 +221,36 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
             }
             _ = &mut expired => {
                 match current_expiry(&state, &session).await {
-                    Some(at) if at > chrono::Utc::now() => {
+                    Ok(Some(at)) if at > chrono::Utc::now() => {
                         expires_at = at;
                         expired.as_mut().reset(until(at));
                     }
-                    _ => break,
+                    // A row past its end, or gone: the session ended.
+                    Ok(_) => {
+                        close = Some(ended(&state, &session).await);
+                        break;
+                    }
+                    Err(()) => break,
                 }
             }
             _ = recheck.notified() => {
-                if !security_tick(&state, &session, conn, &mut checked, true).await { break; }
+                match security_tick(&state, &session, conn, &mut checked, true).await {
+                    Check::Passed => {}
+                    Check::Ended => { close = Some(ended(&state, &session).await); break; }
+                    Check::Failed => break,
+                }
             }
             _ = security.tick() => {
-                if !security_tick(&state, &session, conn, &mut checked, false).await { break; }
+                match security_tick(&state, &session, conn, &mut checked, false).await {
+                    Check::Passed => {}
+                    Check::Ended => { close = Some(ended(&state, &session).await); break; }
+                    Check::Failed => break,
+                }
+                // A voice seat holds the session past its end (GEL-83).
+                if let Some(at) = hold_for_seat(&state, &session, conn, expires_at).await {
+                    expires_at = at;
+                    expired.as_mut().reset(until(at));
+                }
             }
             // The budget comes before the session lock: a frame over it
             // costs no database or Redis work.
@@ -242,7 +266,11 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
                 let mut active = false;
                 let mut reply = Reply::default();
                 let mut pong = None;
-                let Ok(Some(mut session_guard)) = session.lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT).await else { break; };
+                let mut session_guard = match session.lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT).await {
+                    Ok(Some(guard)) => guard,
+                    Ok(None) => { close = Some(ended(&state, &session).await); break; }
+                    Err(_) => break,
+                };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
                 checked = Instant::now();
                 match incoming {
@@ -304,7 +332,11 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
                 }
             }
             _ = beat.tick() => {
-                let Ok(Some(mut session_guard)) = session.lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT).await else { break; };
+                let mut session_guard = match session.lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT).await {
+                    Ok(Some(guard)) => guard,
+                    Ok(None) => { close = Some(ended(&state, &session).await); break; }
+                    Err(_) => break,
+                };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
                 checked = Instant::now();
                 // Nothing below needs the transaction: return the connection
@@ -333,6 +365,10 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
                 match deliver(&state, &session, user.id, conn, &mut sink, batch, &mut rosters).await {
                     Ok(true) => checked = Instant::now(),
                     Ok(false) => {}
+                    Err(ApiError::Unauthenticated) => {
+                        close = Some(ended(&state, &session).await);
+                        break;
+                    }
                     Err(_) => break,
                 }
             }
@@ -379,12 +415,13 @@ fn until(at: chrono::DateTime<chrono::Utc>) -> tokio::time::Instant {
     tokio::time::Instant::now() + (at - chrono::Utc::now()).to_std().unwrap_or_default()
 }
 
-/// The session row's expiry now, or `None` once it is gone or unreadable.
+/// The session row's expiry now, `Ok(None)` once it is gone, `Err` when
+/// unreadable.
 async fn current_expiry(
     state: &AppState,
     session: &CurrentSession,
-) -> Option<chrono::DateTime<chrono::Utc>> {
-    tokio::time::timeout(
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, ()> {
+    match tokio::time::timeout(
         std::time::Duration::from_secs(1),
         sqlx::query_scalar(
             "SELECT expires_at FROM sessions WHERE token_hash = $1 AND user_id = $2",
@@ -394,8 +431,62 @@ async fn current_expiry(
         .fetch_optional(&state.db),
     )
     .await
+    {
+        Ok(Ok(at)) => Ok(at),
+        _ => Err(()),
+    }
+}
+
+/// The close code that tells a client its session ended (GEL-83); the
+/// close frame's reason says why (`EndReason::as_str`). Documented in
+/// `docs/native/protocol-gateway.md` §1.5.
+pub(crate) const SESSION_ENDED: u16 = 4401;
+
+fn session_ended(reason: EndReason) -> CloseFrame {
+    CloseFrame {
+        code: SESSION_ENDED,
+        reason: Utf8Bytes::from_static(reason.as_str()),
+    }
+}
+
+/// The close frame of a socket whose check found its session gone.
+async fn ended(state: &AppState, session: &CurrentSession) -> CloseFrame {
+    let reason = crate::auth::session::end_reason(state, &session.hash, session.user.id).await;
+    debug!(user_id = %session.user.id, reason = reason.as_str(), "ws session ended");
+    session_ended(reason)
+}
+
+/// While this socket holds a voice seat, keeps its session from ending
+/// (`session::hold_for_seat`). Writes only within the last half of
+/// `SEAT_HOLD`; `Some` with the row's new expiry when it moved. A failure
+/// is retried on the next tick, well before the end.
+async fn hold_for_seat(
+    state: &AppState,
+    session: &CurrentSession,
+    conn: ConnId,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let half = chrono::Duration::from_std(crate::auth::session::SEAT_HOLD / 2).ok()?;
+    if expires_at - chrono::Utc::now() > half || !state.gateway.holds_seat(conn).await {
+        return None;
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        crate::auth::session::hold_for_seat(&state.db, &session.hash),
+    )
+    .await
     .ok()?
     .ok()?
+}
+
+/// What a socket's check found.
+enum Check {
+    Passed,
+    /// The session is gone (revoked, expired, account disabled).
+    Ended,
+    /// The check could not run or the access update failed: the socket
+    /// ends and the client reconnects.
+    Failed,
 }
 
 /// User activity on the socket counts as a use of the session, heartbeats
@@ -439,15 +530,17 @@ async fn security_tick(
     conn: ConnId,
     checked: &mut Instant,
     forced: bool,
-) -> bool {
+) -> Check {
     if !forced && checked.elapsed() < SECURITY_BACKSTOP && !state.gateway.holds_seat(conn).await {
-        return true;
+        return Check::Passed;
     }
-    let Ok(Some(mut session_guard)) = session
+    let mut session_guard = match session
         .lock_live_within(&state.gateway_db, SESSION_LOCK_WAIT)
         .await
-    else {
-        return false;
+    {
+        Ok(Some(guard)) => guard,
+        Ok(None) => return Check::Ended,
+        Err(_) => return Check::Failed,
     };
     if state
         .gateway
@@ -455,20 +548,21 @@ async fn security_tick(
         .await
         .is_err()
     {
-        return false;
+        return Check::Failed;
     }
     if session_guard.rollback().await.is_err() {
-        return false;
+        return Check::Failed;
     }
     *checked = Instant::now();
-    matches!(
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            state.gateway.refresh_voice(conn),
-        )
-        .await,
-        Ok(Ok(()))
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        state.gateway.refresh_voice(conn),
     )
+    .await
+    {
+        Ok(Ok(())) => Check::Passed,
+        _ => Check::Failed,
+    }
 }
 
 async fn handle_text(
@@ -1334,7 +1428,7 @@ mod tests {
         drop(free);
         drop(busy);
         assert!(
-            tick.await.unwrap(),
+            matches!(tick.await.unwrap(), Check::Passed),
             "the tick renews once voice_ops is free"
         );
         assert!(state.gateway.in_voice(conn, server, voice).await);

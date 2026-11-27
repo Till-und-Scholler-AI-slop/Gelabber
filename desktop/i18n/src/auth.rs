@@ -143,6 +143,12 @@ crate::strings! {
     // /login
     login_session_expired = "Sitzung abgelaufen. Melde dich erneut an."
         | "Session expired. Please sign in again.";
+    login_signed_out = "Du wurdest auf einem anderen Gerät abgemeldet. Melde dich erneut an."
+        | "You were signed out from another device. Please sign in again.";
+    login_password_changed = "Dein Passwort wurde geändert. Melde dich mit dem neuen Passwort an."
+        | "Your password was changed. Sign in with the new password.";
+    login_account_disabled = "Dein Konto wurde vom Betreiber gesperrt."
+        | "The operator has disabled your account.";
     login_account_deleted = "Dein Konto wurde gelöscht." | "Your account has been deleted.";
     login_title = "Anmelden" | "Sign in";
     login_new_here = "Neu bei Gelabber?" | "New to Gelabber?";

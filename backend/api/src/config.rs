@@ -110,7 +110,6 @@ const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 20;
 const DEFAULT_DB_GATEWAY_CONNECTIONS: u32 = 10;
-const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
 const DEFAULT_SESSION_IDLE_HOURS: u64 = 24 * 14;
 /// Ten years. Far past any sensible lifetime, and small enough that the
 /// expiry arithmetic (`now + idle`, hours to seconds) cannot overflow.
@@ -151,12 +150,15 @@ pub struct Config {
     /// in clear text over any other network. This lets a trusted test
     /// network sign in over plain HTTP anyway.
     pub allow_plain_http: bool,
-    /// Absolute lifetime of a session, counted from sign-in: the cookie's
-    /// `Max-Age` and the latest its database row can ever expire.
-    pub session_ttl: Duration,
-    /// Sliding idle timeout: a session that goes unused this long ends
-    /// before `session_ttl`. Every use pushes the row's expiry to
-    /// `now + session_idle`, never past `created_at + session_ttl`
+    /// Absolute lifetime of a session, counted from sign-in: the latest its
+    /// database row expires through renewal. `None` (the default, GEL-83):
+    /// a session in use never ends on a schedule, only `session_idle` ends
+    /// it. A voice seat holds a session past either end
+    /// (`auth::session::hold_for_seat`).
+    pub session_ttl: Option<Duration>,
+    /// Sliding idle timeout: a session that goes unused this long ends.
+    /// Every use pushes the row's expiry to `now + session_idle`, never past
+    /// `created_at + session_ttl` when that is set
     /// (`auth::session::touch`). Never longer than `session_ttl`.
     pub session_idle: Duration,
     /// How often the gateway sends an application heartbeat (`{"op":"h"}`).
@@ -572,9 +574,9 @@ impl Config {
                         "must be at most 87600 (ten years)",
                     ));
                 }
-                hours
+                Some(hours)
             }
-            None => DEFAULT_SESSION_TTL_HOURS,
+            None => None,
         };
         // The default shrinks to a short configured TTL; an explicit idle
         // timeout longer than the TTL would never take effect, so it is a
@@ -582,7 +584,14 @@ impl Config {
         let session_idle_hours = match get(API_SESSION_IDLE_HOURS) {
             Some(raw) => {
                 let hours = parse_positive::<u64>(API_SESSION_IDLE_HOURS, &raw)?;
-                if hours > session_ttl_hours {
+                if hours > MAX_SESSION_HOURS {
+                    return Err(invalid(
+                        API_SESSION_IDLE_HOURS,
+                        &raw,
+                        "must be at most 87600 (ten years)",
+                    ));
+                }
+                if session_ttl_hours.is_some_and(|ttl| hours > ttl) {
                     return Err(invalid(
                         API_SESSION_IDLE_HOURS,
                         &raw,
@@ -591,7 +600,9 @@ impl Config {
                 }
                 hours
             }
-            None => DEFAULT_SESSION_IDLE_HOURS.min(session_ttl_hours),
+            None => session_ttl_hours.map_or(DEFAULT_SESSION_IDLE_HOURS, |ttl| {
+                DEFAULT_SESSION_IDLE_HOURS.min(ttl)
+            }),
         };
 
         let ws_heartbeat_ms = match get(API_WS_HEARTBEAT_MS) {
@@ -714,7 +725,7 @@ impl Config {
             db_gateway_connections,
             cookie_secure,
             allow_plain_http,
-            session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            session_ttl: session_ttl_hours.map(|hours| Duration::from_secs(hours * 3600)),
             session_idle: Duration::from_secs(session_idle_hours * 3600),
             ws_heartbeat: Duration::from_millis(ws_heartbeat_ms),
             ws_dead: Duration::from_millis(ws_dead_ms),
@@ -1345,7 +1356,8 @@ mod tests {
         assert_eq!(config.db_max_connections, 20);
         assert_eq!(config.db_gateway_connections, 10);
         assert!(!config.cookie_secure);
-        assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
+        // No absolute lifetime by default (GEL-83): a session in use stays.
+        assert_eq!(config.session_ttl, None);
         assert_eq!(config.session_idle, Duration::from_secs(14 * 24 * 3600));
         assert_eq!(config.ws_heartbeat, Duration::from_millis(15_000));
         assert_eq!(config.ws_dead, Duration::from_millis(30_000));
@@ -1714,7 +1726,7 @@ mod tests {
         .expect("valid config");
 
         assert!(config.cookie_secure);
-        assert_eq!(config.session_ttl, Duration::from_secs(12 * 3600));
+        assert_eq!(config.session_ttl, Some(Duration::from_secs(12 * 3600)));
         // The default idle timeout (14 days) shrinks to a shorter TTL.
         assert_eq!(config.session_idle, Duration::from_secs(12 * 3600));
     }
@@ -1727,7 +1739,7 @@ mod tests {
             (API_SESSION_IDLE_HOURS, "48"),
         ]))
         .expect("valid config");
-        assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
+        assert_eq!(config.session_ttl, None);
         assert_eq!(config.session_idle, Duration::from_secs(48 * 3600));
     }
 
@@ -1764,9 +1776,6 @@ mod tests {
                 (REDIS_URL, "redis://localhost"),
             ];
             pairs.push((key, value));
-            if key == API_SESSION_IDLE_HOURS {
-                pairs.push((API_SESSION_TTL_HOURS, "87600"));
-            }
             let err = Config::from_source(source(&pairs)).unwrap_err();
             assert!(
                 matches!(err, ConfigError::Invalid { key: k, .. } if k == key),
@@ -1780,7 +1789,7 @@ mod tests {
             (API_SESSION_IDLE_HOURS, "87600"),
         ]))
         .unwrap();
-        assert_eq!(config.session_ttl, Duration::from_secs(87600 * 3600));
+        assert_eq!(config.session_ttl, Some(Duration::from_secs(87600 * 3600)));
     }
 
     #[test]

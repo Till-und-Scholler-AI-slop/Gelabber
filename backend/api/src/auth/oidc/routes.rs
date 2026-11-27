@@ -729,7 +729,7 @@ async fn complete(
         }
     };
     tx.commit().await?;
-    session::disconnect(&state, &revoked).await;
+    session::disconnect(&state, &revoked, session::EndReason::SignedOut).await;
 
     let user = session::reload(&state.db, user_id).await?;
     if matches!(resolved, SignIn::Joined(_)) {

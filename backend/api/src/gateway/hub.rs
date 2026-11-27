@@ -19,6 +19,7 @@ use super::protocol::{
     CatchUp, Event, EventDraft, LiveTopic, REDIS_PREFIX, ServerFrame, SigEvent, Topic, TrackKind,
     VoiceEntry, plan_catch_up,
 };
+use crate::auth::session::EndReason;
 use crate::error::ApiError;
 use crate::servers::permissions::Permission;
 
@@ -104,7 +105,9 @@ pub(super) struct VoiceSeat {
 
 pub(super) struct Socket {
     pub(super) user_id: Uuid,
-    pub(super) session: Option<(String, tokio::sync::watch::Sender<bool>)>,
+    /// The session's fingerprint, and the signal that it was revoked: why,
+    /// once it was.
+    pub(super) session: Option<(String, tokio::sync::watch::Sender<Option<Closing>>)>,
     access: HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>,
     /// Servers this socket has subscribed to (channel or server topic).
     pub(super) servers: HashSet<Uuid>,
@@ -120,7 +123,8 @@ pub(super) struct Socket {
     typing: HashSet<(Uuid, Uuid)>,
     pub(super) topics: HashSet<Topic>,
     epochs: HashMap<Topic, Uuid>,
-    closed: tokio::sync::watch::Sender<bool>,
+    /// Set once the socket must end: why.
+    closed: tokio::sync::watch::Sender<Option<Closing>>,
     /// Wakes the socket for an immediate session and access check after a
     /// revocation on any API process ([`Recheck`]). Carries no authority;
     /// the check reads the DB.
@@ -136,14 +140,34 @@ pub(super) struct Socket {
     pub(super) tx: mpsc::Sender<ServerFrame>,
 }
 
+/// Why the hub ends a socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Closing {
+    /// Its outbound or catch-up queue overflowed: the client reconnects.
+    Overflow,
+    /// Its session was revoked.
+    Session(EndReason),
+}
+
 impl Socket {
     pub(super) fn send(&self, frame: ServerFrame) {
-        if *self.closed.borrow() {
+        if self.closed.borrow().is_some() {
             return;
         }
         if self.tx.try_send(frame).is_err() {
-            self.closed.send_replace(true);
+            self.overflowed();
         }
+    }
+
+    /// Ends the socket for an overflow, unless it is ending already.
+    pub(super) fn overflowed(&self) {
+        self.closed.send_if_modified(|closed| {
+            let first = closed.is_none();
+            if first {
+                *closed = Some(Closing::Overflow);
+            }
+            first
+        });
     }
 }
 
@@ -213,7 +237,7 @@ impl ConnTable {
                 typing: HashSet::new(),
                 topics: HashSet::new(),
                 epochs: HashMap::new(),
-                closed: tokio::sync::watch::channel(false).0,
+                closed: tokio::sync::watch::channel(None).0,
                 recheck: Arc::new(tokio::sync::Notify::new()),
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
@@ -673,7 +697,7 @@ impl Gateway {
         user_id: Uuid,
         hash: String,
         tx: mpsc::Sender<ServerFrame>,
-    ) -> (ConnId, tokio::sync::watch::Receiver<bool>) {
+    ) -> (ConnId, tokio::sync::watch::Receiver<Option<Closing>>) {
         let id = self.attach(user_id, tx).await;
         let cancel = self.connections.inner.sockets.read().await[&id]
             .closed
@@ -686,8 +710,9 @@ impl Gateway {
     }
 
     /// Close this process's sockets of a session whose row is already
-    /// deleted, then tell the other API processes to check theirs.
-    pub async fn revoke_session(&self, hash: &str) {
+    /// deleted, telling them `reason`, then tell the other API processes to
+    /// check theirs (they read the reason from Redis, `session::end_reason`).
+    pub async fn revoke_session(&self, hash: &str, reason: EndReason) {
         {
             let mut sockets = self.connections.inner.sockets.write().await;
             for socket in sockets.values_mut() {
@@ -696,7 +721,7 @@ impl Gateway {
                 {
                     socket.topics.clear();
                     socket.catching_up.clear();
-                    let _ = cancel.send(true);
+                    cancel.send_replace(Some(Closing::Session(reason)));
                 }
             }
         }
@@ -1376,8 +1401,8 @@ mod resilience_tests {
         for n in 1..=20 {
             g.connections.deliver(topic, event(s, c, n)).await;
         }
-        assert!(*closed.borrow());
-        assert!(!*fast_closed.borrow());
+        assert_eq!(*closed.borrow(), Some(Closing::Overflow));
+        assert!(fast_closed.borrow().is_none());
         assert!(rx.len() <= 2);
         assert_eq!(fast_rx.len(), 20);
         for n in 1..=20 {
@@ -1391,7 +1416,7 @@ mod resilience_tests {
         for n in 1..=256 {
             g.connections.deliver(topic, event(s, c, n)).await;
         }
-        assert!(*closed.borrow());
+        assert_eq!(*closed.borrow(), Some(Closing::Overflow));
         assert!(g.queued_len(catching, topic).await <= CATCH_UP_CAPACITY);
         g.detach(slow).await;
         g.detach(fast).await;

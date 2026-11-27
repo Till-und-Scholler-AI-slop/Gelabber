@@ -21,18 +21,26 @@ import {
 
 export type GatewayStatus = "idle" | "connecting" | "open" | "reconnecting";
 
+/** What a socket event carries: `data` on a message, `code` and `reason`
+ * on a close (`CloseEvent`). */
+export type SocketEvent = { data?: string; code?: number; reason?: string };
+
 export type SocketLike = {
   send(data: string): void;
   close(): void;
   addEventListener(
     type: "open" | "message" | "close" | "error",
-    handler: (event: { data?: string }) => void,
+    handler: (event: SocketEvent) => void,
   ): void;
   removeEventListener(
     type: "open" | "message" | "close" | "error",
-    handler: (event: { data?: string }) => void,
+    handler: (event: SocketEvent) => void,
   ): void;
 };
+
+/** The close code that says the session ended; the reason says why
+ * (GEL-83, `docs/native/protocol-gateway.md` §1.5). */
+export const SESSION_ENDED = 4401;
 
 export type GatewayOptions = {
   url?: string;
@@ -110,6 +118,7 @@ export class Gateway {
   private sigListeners = new Set<(event: SigEvent) => void>();
   private errListeners = new Set<(err: ErrFrame) => void>();
   private readyListeners = new Set<() => void>();
+  private sessionEndedListeners = new Set<(reason: string) => void>();
   private gapListeners = new Set<(gap: GapNotice) => void>();
   private presenceListeners = new Set<(frame: PresenceFrame) => void>();
   private resyncListeners = new Set<() => void>();
@@ -298,6 +307,18 @@ export class Gateway {
     };
   }
 
+  /**
+   * The server closed the socket because the session ended, with why
+   * (`expired`, `signed_out`, …). The socket still reconnects: a cookie
+   * that another sign-in in this browser replaced carries on.
+   */
+  onSessionEnded(listener: (reason: string) => void): () => void {
+    this.sessionEndedListeners.add(listener);
+    return () => {
+      this.sessionEndedListeners.delete(listener);
+    };
+  }
+
   onPresence(listener: (frame: PresenceFrame) => void): () => void {
     this.presenceListeners.add(listener);
     return () => {
@@ -480,10 +501,15 @@ export class Gateway {
         this.onFrame(frame);
       }
     };
-    const onClose = () => {
+    const onClose = (event: SocketEvent) => {
       const still = live();
       detach();
       if (!still) return;
+      if (event.code === SESSION_ENDED) {
+        for (const listener of this.sessionEndedListeners) {
+          listener(event.reason ?? "");
+        }
+      }
       this.socket = null;
       this.clearHeartbeat();
       const opened = this.openedAt !== null;

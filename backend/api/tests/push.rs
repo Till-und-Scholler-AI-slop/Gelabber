@@ -74,16 +74,17 @@ fn push_state(pool: PgPool, vapid_private: Option<&str>) -> AppState {
 
 /// As [`push_state`], for an instance that knows its public address.
 fn push_state_at(pool: PgPool, vapid_private: Option<&str>, public_url: Option<&str>) -> AppState {
-    push_state_for(pool, vapid_private, public_url, 2)
+    push_state_for(pool, vapid_private, public_url, Some(2))
 }
 
-/// As [`push_state_at`], with sessions that live `ttl_hours`; the idle
-/// window is the default one, or as long where that is shorter.
+/// As [`push_state_at`], with sessions that live `ttl_hours` (`None`: no
+/// absolute lifetime, the default); the idle window is the default one, or
+/// as long where that is shorter.
 fn push_state_for(
     pool: PgPool,
     vapid_private: Option<&str>,
     public_url: Option<&str>,
-    ttl_hours: u64,
+    ttl_hours: Option<u64>,
 ) -> AppState {
     let redis = common::redis_url();
     let private = vapid_private.map(str::to_owned);
@@ -92,7 +93,7 @@ fn push_state_for(
         "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
         "REDIS_URL" => Some(redis.clone()),
-        "API_SESSION_TTL_HOURS" => Some(ttl_hours.to_string()),
+        "API_SESSION_TTL_HOURS" => ttl_hours.map(|hours| hours.to_string()),
         "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
         "API_WS_DEAD_MS" => Some(common::WS_DEAD_MS.to_string()),
         "VAPID_PRIVATE_KEY" => private.clone(),
@@ -162,16 +163,21 @@ async fn setup(pool: PgPool) -> World {
 }
 
 async fn setup_at(pool: PgPool, public_url: Option<&str>) -> World {
-    setup_for(pool, public_url, 2).await
+    setup_for(pool, public_url, Some(2)).await
 }
 
 /// A world whose sessions live 30 days and end after 14 unused, as a real
 /// one's do.
 async fn setup_long(pool: PgPool) -> World {
-    setup_for(pool, None, 30 * 24).await
+    setup_for(pool, None, Some(30 * 24)).await
 }
 
-async fn setup_for(pool: PgPool, public_url: Option<&str>, ttl_hours: u64) -> World {
+/// The default lifetime (GEL-83): the idle window alone.
+async fn setup_idle_only(pool: PgPool) -> World {
+    setup_for(pool, None, None).await
+}
+
+async fn setup_for(pool: PgPool, public_url: Option<&str>, ttl_hours: Option<u64>) -> World {
     let (private, vapid_public) = Vapid::generate();
     let state = push_state_for(pool, Some(&private), public_url, ttl_hours);
     let (service, hits) = fake_service().await;
@@ -1702,6 +1708,39 @@ async fn at_the_end_of_its_life_a_session_asks_for_a_new_sign_in(pool: PgPool) {
     subscribe(&mut again, &bob_browser).await;
     assert_eq!(warned(&pool).await, 0);
     assert_eq!(sweep(&state).await.unwrap(), 0);
+}
+
+/// Without an absolute lifetime (the default, GEL-83) no session reaches
+/// the end of its life: however old, the notice says opening the app keeps
+/// it, which it does.
+#[sqlx::test]
+async fn without_an_absolute_lifetime_the_notice_says_to_open_the_app(pool: PgPool) {
+    use gelabber_api::push::last_call::sweep;
+    let World {
+        state,
+        mut b,
+        mut hits,
+        service,
+        ..
+    } = setup_idle_only(pool.clone()).await;
+    let bob_browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &bob_browser).await;
+    // Signed in a year ago, unused for 13 days.
+    sqlx::query(
+        "UPDATE sessions SET created_at = now() - interval '365 days', \
+         expires_at = now() + interval '1 day' WHERE user_id = $1::uuid",
+    )
+    .bind(b.user_id())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(sweep(&state).await.unwrap(), 1);
+    let payload = bob_browser.open(&next(&mut hits).await);
+    assert_eq!(
+        payload["body"],
+        "Du warst länger nicht hier. Öffne Gelabber, damit Benachrichtigungen auf diesem Gerät weiter ankommen."
+    );
 }
 
 /// Do not disturb (#590) holds the notice back until it ends; one no push

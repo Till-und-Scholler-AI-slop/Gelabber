@@ -1,6 +1,6 @@
 //! The last call (#616): a push subscription lives and dies with the session
 //! that made it, and a session nobody used for `API_SESSION_IDLE_HOURS`, or
-//! older than `API_SESSION_TTL_HOURS`, ends without a word. A phone whose app
+//! older than `API_SESSION_TTL_HOURS` when that is set, ends without a word. A phone whose app
 //! stayed closed that long would simply go silent. So shortly before, each
 //! subscription of such a session gets one push that says what keeps the
 //! notifications coming: opening the app, or, at the end of the session's
@@ -59,8 +59,8 @@ pub async fn sweep(state: &AppState) -> Result<usize, ApiError> {
     let due: Vec<Due> = sqlx::query_as(concat!(
         "WITH due AS (
             SELECT p.endpoint, s.expires_at,
-                   s.created_at + make_interval(secs => $2)
-                     <= now() + make_interval(secs => $3) AS last
+                   COALESCE(s.created_at + make_interval(secs => $2)
+                     <= now() + make_interval(secs => $3), false) AS last
             FROM push_subscriptions p
             JOIN sessions s ON s.token_hash=p.session_hash
             JOIN users u ON u.id=p.user_id
@@ -78,7 +78,9 @@ pub async fn sweep(state: &AppState) -> Result<usize, ApiError> {
                    due.expires_at, due.last"
     ))
     .bind(ahead(state.session_idle).as_secs_f64())
-    .bind(state.session_ttl.as_secs_f64())
+    // Without an absolute lifetime (the default, GEL-83) no session is at
+    // the end of its life: a use always renews it.
+    .bind(state.session_ttl.map(|ttl| ttl.as_secs_f64()))
     .bind(state.session_idle.as_secs_f64())
     .bind(SWEEP_BATCH)
     .fetch_all(&state.db)

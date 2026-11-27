@@ -15,7 +15,8 @@ fn assert_session_cookie_attributes(raw: &str) {
     for attr in ["HttpOnly", "SameSite=Lax", "Path=/"] {
         assert!(raw.contains(attr), "{attr} missing in {raw}");
     }
-    assert!(raw.contains("Max-Age=7200"), "ttl from config: {raw}");
+    // 400 days whatever the TTL: the row decides (GEL-83).
+    assert!(raw.contains("Max-Age=34560000"), "{raw}");
     assert!(!raw.contains("Secure"), "Secure is opt-in via env: {raw}");
 }
 

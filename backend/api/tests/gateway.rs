@@ -2560,3 +2560,151 @@ async fn frames_over_the_budget_wait_and_none_is_lost(pool: PgPool) {
     assert!(answered[2] >= Duration::from_secs(5), "{answered:?}");
     assert!(rate_limited(&state, "ws_frames") >= 1);
 }
+
+// ---- GEL-83: the close frame says why the session ended ----
+
+/// The close code when the session ended; the reason says why.
+const SESSION_ENDED: u16 = 4401;
+const ADA: &str = "ada@example.com";
+const ADA_PASSWORD: &str = "password123";
+
+/// Ada signed in on two devices of the same server: the first one's socket
+/// is open, the second one acts.
+async fn ada_on_two_devices(state: &AppState) -> (Ws, Client) {
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut first = Client::from_state(state.clone());
+    first.bootstrap().await;
+    let res = first.register(ADA, ADA_PASSWORD, "Ada").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let ws = ws::connect(addr, &first).await;
+    (ws, second_device(state).await)
+}
+
+async fn second_device(state: &AppState) -> Client {
+    let mut second = Client::from_state(state.clone());
+    second.bootstrap().await;
+    let res = second.login(ADA, ADA_PASSWORD).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    second
+}
+
+async fn assert_ended(ws: &mut Ws, reason: &str) {
+    assert_eq!(
+        ws::close_frame(ws).await,
+        Some((SESSION_ENDED, reason.to_owned()))
+    );
+}
+
+#[sqlx::test]
+async fn signing_out_everywhere_says_signed_out(pool: PgPool) {
+    let state = common::ws_state(pool);
+    let (mut ws, mut second) = ada_on_two_devices(&state).await;
+    ws::registered(&mut ws).await;
+    let res = second
+        .send(Method::POST, "/api/auth/logout-all", Some(json!({})))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_ended(&mut ws, "signed_out").await;
+}
+
+#[sqlx::test]
+async fn signing_out_a_device_says_signed_out(pool: PgPool) {
+    let state = common::ws_state(pool);
+    let (mut ws, mut second) = ada_on_two_devices(&state).await;
+    ws::registered(&mut ws).await;
+    let list = second.send(Method::GET, "/api/auth/sessions", None).await;
+    let other = list.body["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["current"] == false)
+        .expect("the first device")["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let res = second
+        .send(Method::DELETE, &format!("/api/auth/sessions/{other}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert_ended(&mut ws, "signed_out").await;
+}
+
+#[sqlx::test]
+async fn a_password_change_says_password_changed(pool: PgPool) {
+    let state = common::ws_state(pool);
+    let (mut ws, mut second) = ada_on_two_devices(&state).await;
+    ws::registered(&mut ws).await;
+    let res = second
+        .send(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "current_password": ADA_PASSWORD, "password": "another one 123" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_ended(&mut ws, "password_changed").await;
+}
+
+#[sqlx::test]
+async fn deleting_the_account_says_deleted(pool: PgPool) {
+    let state = common::ws_state(pool);
+    let (mut ws, mut second) = ada_on_two_devices(&state).await;
+    ws::registered(&mut ws).await;
+    let res = second
+        .send(
+            Method::DELETE,
+            "/api/me",
+            Some(json!({ "password": ADA_PASSWORD })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    assert_ended(&mut ws, "deleted").await;
+}
+
+#[sqlx::test]
+async fn the_operator_disabling_the_account_says_disabled(pool: PgPool) {
+    let mut state = common::ws_state(pool);
+    let operator = "op@example.com";
+    state.operators = std::sync::Arc::new(std::collections::HashSet::from([operator.to_owned()]));
+    let (mut ws, second) = ada_on_two_devices(&state).await;
+    ws::registered(&mut ws).await;
+    let mut op = Client::from_state(state.clone());
+    op.bootstrap().await;
+    let res = op.register(operator, ADA_PASSWORD, "Op").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = op
+        .send(
+            Method::POST,
+            &format!("/api/operator/accounts/{}/disable", second.user_id()),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_ended(&mut ws, "disabled").await;
+}
+
+/// A socket on another API process learns of the revocation only from the
+/// database; the reason reaches it through Redis.
+#[sqlx::test]
+async fn another_process_says_why_too(pool: PgPool) {
+    let here = common::ws_state(pool.clone());
+    let there = common::ws_state(pool);
+    let (_, mut second) = ada_on_two_devices(&here).await;
+    let there_addr = common::serve_ws_state(there.clone()).await;
+    let mut first = Client::from_state(there.clone());
+    first.bootstrap().await;
+    let res = first.login(ADA, ADA_PASSWORD).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let mut ws = ws::connect(there_addr, &first).await;
+    ws::registered(&mut ws).await;
+
+    let res = second
+        .send(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "current_password": ADA_PASSWORD, "password": "another one 123" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_ended(&mut ws, "password_changed").await;
+}

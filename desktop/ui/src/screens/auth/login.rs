@@ -102,18 +102,15 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     );
     let invited = is_invite_redirect(redirect.as_deref());
     let reason = app.nav.location().query("reason");
-    let expired = reason == Some("expired");
-    let deleted = reason == Some("deleted");
+    let ended = reason.and_then(session_end_notice);
     let pending = s.request.is_some();
 
     layout::frame(ui, app, "login", |ui, app| {
         if invited {
             invite_banner(ui);
         }
-        if expired {
-            banner(ui, auth::login_session_expired(), false);
-        } else if deleted {
-            banner(ui, auth::login_account_deleted(), false);
+        if let Some(notice) = ended {
+            banner(ui, notice, false);
         }
         layout::heading(ui, auth::login_title());
         let register = with_query(
@@ -340,4 +337,17 @@ pub fn errors_after(error: &ApiError) -> FormErrors {
     let mut errors = FormErrors::default();
     fail(&mut errors, error, &ORDER);
     errors
+}
+
+/// The sign-in page's notice for `reason=`: why the session ended (GEL-83),
+/// as on the web's login page.
+fn session_end_notice(reason: &str) -> Option<&'static str> {
+    Some(match reason {
+        "expired" => auth::login_session_expired(),
+        "signed_out" => auth::login_signed_out(),
+        "password_changed" => auth::login_password_changed(),
+        "disabled" => auth::login_account_disabled(),
+        "deleted" => auth::login_account_deleted(),
+        _ => return None,
+    })
 }

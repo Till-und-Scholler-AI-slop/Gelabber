@@ -24,6 +24,7 @@ import {
   logout,
   logoutEverywhere,
   loggedOutOnPurpose,
+  noteSessionEnd,
   OIDC_LEAVING_MS,
   oidcPending,
   register,
@@ -32,6 +33,7 @@ import {
   resetPassword,
   resetSessionForTests,
   retrySession,
+  sessionEndReason,
   sessionRetryDelay,
   setPassword,
   signInMethods,
@@ -224,6 +226,17 @@ describe("session store", () => {
     );
     expect(calls).toEqual(["GET /api/auth/session"]);
     expect(useSessionProblems.getState().retryAt).toBeNull();
+  });
+
+  it("keeps why the server ended the session until the next sign-in (GEL-83)", async () => {
+    noteSessionEnd("password_changed");
+    expect(sessionEndReason()).toBe("password_changed");
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+    });
+    await login("ada@example.com", "password123");
+    // A later end the gateway does not explain is an expiry again.
+    expect(sessionEndReason()).toBeNull();
   });
 
   it("login flips the store before the caller continues", async () => {

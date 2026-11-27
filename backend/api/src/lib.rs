@@ -100,6 +100,10 @@ pub fn app(state: AppState) -> Router {
         // the CSRF check; it makes its own checks (`feedback::public`).
         .merge(feedback::public::router())
         .merge(api)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::session::refresh_cookie,
+        ))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &Request<_>| {

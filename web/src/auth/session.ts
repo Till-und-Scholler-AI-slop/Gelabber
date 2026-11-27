@@ -125,6 +125,42 @@ export function loggedOutOnPurpose(): boolean {
   return loggedOutHere;
 }
 
+/** Why the server ended a session, as the gateway's close frame says
+ * (GEL-83, `docs/native/protocol-gateway.md` §1.5). */
+export type SessionEndReason =
+  "expired" | "signed_out" | "password_changed" | "disabled" | "deleted";
+
+export function isSessionEndReason(value: unknown): value is SessionEndReason {
+  return (
+    value === "expired" ||
+    value === "signed_out" ||
+    value === "password_changed" ||
+    value === "disabled" ||
+    value === "deleted"
+  );
+}
+
+let endReason: SessionEndReason | null = null;
+
+/**
+ * The gateway said the session ended, and why. Kept until the session
+ * check that follows: a sign-in elsewhere in this browser that replaced
+ * the cookie lets the socket reconnect instead ([`forgetSessionEnd`]).
+ */
+export function noteSessionEnd(reason: SessionEndReason): void {
+  endReason = reason;
+}
+
+/** A socket opened again: whatever it said before no longer holds. */
+export function forgetSessionEnd(): void {
+  endReason = null;
+}
+
+/** Why the last session ended, `null` when no close frame said so. */
+export function sessionEndReason(): SessionEndReason | null {
+  return endReason;
+}
+
 let deletedHere = false;
 
 /** Whether this tab's own account deletion ended the session (#519). */
@@ -152,6 +188,7 @@ function applySession(
   if (user) {
     loggedOutHere = false;
     deletedHere = false;
+    endReason = null;
   }
   stopSessionRetry();
   useSessionProblems.setState({ bootstrap: null });
@@ -675,6 +712,7 @@ export function resetSessionForTests(): void {
   failedLogoutUserId = null;
   loggedOutHere = false;
   deletedHere = false;
+  endReason = null;
   stopSessionRetry();
   useSessionProblems.setState({
     bootstrap: null,

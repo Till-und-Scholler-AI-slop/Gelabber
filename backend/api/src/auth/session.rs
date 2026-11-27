@@ -87,12 +87,12 @@ pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
 }
 
 /// Where a session used now should expire: `idle` from now, but never past
-/// its absolute end (`created_at + ttl`).
+/// its absolute end (`created_at + ttl`) when there is one.
 pub fn renewed_expiry(
     created_at: DateTime<Utc>,
     now: DateTime<Utc>,
     idle: Duration,
-    ttl: Duration,
+    ttl: Option<Duration>,
 ) -> DateTime<Utc> {
     let after = |from: DateTime<Utc>, d: Duration| {
         chrono::Duration::from_std(d)
@@ -100,7 +100,11 @@ pub fn renewed_expiry(
             .and_then(|d| from.checked_add_signed(d))
             .unwrap_or(DateTime::<Utc>::MAX_UTC)
     };
-    after(now, idle).min(after(created_at, ttl))
+    let idle_end = after(now, idle);
+    match ttl {
+        Some(ttl) => idle_end.min(after(created_at, ttl)),
+        None => idle_end,
+    }
 }
 
 /// How far the expiry must move before [`touch`] writes it: a twelfth of the
@@ -116,17 +120,54 @@ pub fn needs_renewal(
     created_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
     idle: Duration,
-    ttl: Duration,
+    ttl: Option<Duration>,
 ) -> bool {
     renewed_expiry(created_at, Utc::now(), idle, ttl) - expires_at >= renew_step(idle)
+}
+
+/// The session cookie's `Max-Age`: 400 days, the longest a browser keeps a
+/// cookie. The row alone decides whether the session is alive, and its end
+/// moves with use (GEL-83), so the cookie must outlive it; a request that
+/// renews the row sends the cookie again ([`refresh_cookie`]), so a session
+/// in use never loses it either.
+pub const COOKIE_MAX_AGE: Duration = Duration::from_secs(400 * 24 * 3600);
+
+/// The session cookie for `raw`, as sign-in and renewal send it.
+pub fn cookie(state: &AppState, raw: impl Into<String>) -> cookies::SetCookie {
+    cookies::SetCookie::new(SESSION_COOKIE, raw, COOKIE_MAX_AGE.as_secs())
+        .secure(state.cookie_secure)
+}
+
+/// How long a voice seat keeps its session alive past the session's end:
+/// the socket that holds the seat moves the end this far ahead whenever less
+/// than half of it is left ([`hold_for_seat`]). So the end waits until the
+/// call is left, and comes at most this long after.
+pub const SEAT_HOLD: Duration = Duration::from_secs(120);
+
+/// A socket that holds a voice seat keeps its session from ending
+/// mid-call (GEL-83): once less than half of [`SEAT_HOLD`] is left, it
+/// moves the row's end to `now + SEAT_HOLD`, past the idle window and the
+/// absolute end alike. Like [`touch`] it never moves an end back nor
+/// revives a row that already expired or was revoked. Returns the row's
+/// expiry afterwards, `None` when it is gone.
+pub async fn hold_for_seat(db: &PgPool, hash: &[u8]) -> Result<Option<DateTime<Utc>>, ApiError> {
+    Ok(sqlx::query_scalar(
+        "UPDATE sessions SET expires_at = GREATEST(expires_at, now() + make_interval(secs => $2)) \
+         WHERE token_hash = $1 AND expires_at > now() RETURNING expires_at",
+    )
+    .bind(hash)
+    .bind(SEAT_HOLD.as_secs_f64())
+    .fetch_optional(db)
+    .await?)
 }
 
 /// Sliding lifetime (#195): a use of the session pushes its expiry to
 /// [`renewed_expiry`]. Throttled by [`needs_renewal`]; only ever moves the
 /// expiry forward, and never revives a row that has already expired or was
 /// revoked meanwhile. Returns the expiry the row has afterwards, or `None`
-/// when it is gone. The cookie keeps its `Max-Age` of the absolute TTL; the
-/// row alone decides whether the session is still alive.
+/// when it is gone. A request whose renewal moved the row sends the cookie
+/// again ([`refresh_cookie`]); the row alone decides whether the session is
+/// still alive.
 ///
 /// The same write moves `last_used_at`, so "last active" is accurate to one
 /// renewal step. A row still on the `unknown` device (issued before devices
@@ -194,19 +235,30 @@ async fn renew(state: &AppState, session: &CurrentSession, device: Device) -> Da
 }
 
 /// Brings every live session within the current settings: no later than
-/// `idle` from now nor `ttl` after it began. Run at startup, so lowering
-/// `API_SESSION_IDLE_HOURS` or `API_SESSION_TTL_HOURS` also shortens the
-/// sessions that exist; renewal alone never moves an expiry back. Returns
-/// how many rows it shortened.
-pub async fn cap_to_settings(db: &PgPool, idle: Duration, ttl: Duration) -> Result<u64, ApiError> {
+/// `idle` from now nor `ttl` after it began (when set). Run at startup, so
+/// lowering `API_SESSION_IDLE_HOURS` or setting `API_SESSION_TTL_HOURS`
+/// also shortens the sessions that exist; renewal alone never moves an
+/// expiry back. A row keeps up to [`SEAT_HOLD`] from now, so a call held
+/// past the end ([`hold_for_seat`]) survives the restart that ran this.
+/// Returns how many rows it shortened.
+pub async fn cap_to_settings(
+    db: &PgPool,
+    idle: Duration,
+    ttl: Option<Duration>,
+) -> Result<u64, ApiError> {
+    // `LEAST` skips NULL: without a TTL only the idle window caps.
     let result = sqlx::query(
-        "UPDATE sessions SET expires_at = LEAST(expires_at, \
-             now() + make_interval(secs => $1), created_at + make_interval(secs => $2)) \
-         WHERE expires_at > now() AND expires_at > LEAST( \
-             now() + make_interval(secs => $1), created_at + make_interval(secs => $2))",
+        "WITH capped AS ( \
+             SELECT token_hash, GREATEST( \
+                 LEAST(now() + make_interval(secs => $1), created_at + make_interval(secs => $2)), \
+                 LEAST(expires_at, now() + make_interval(secs => $3))) AS until \
+             FROM sessions WHERE expires_at > now()) \
+         UPDATE sessions s SET expires_at = capped.until FROM capped \
+         WHERE s.token_hash = capped.token_hash AND s.expires_at > capped.until",
     )
     .bind(idle.as_secs_f64())
-    .bind(ttl.as_secs_f64())
+    .bind(ttl.map(|ttl| ttl.as_secs_f64()))
+    .bind(SEAT_HOLD.as_secs_f64())
     .execute(db)
     .await?;
     Ok(result.rows_affected())
@@ -386,7 +438,13 @@ async fn session_of(
     let Some(mut session) = session else {
         return Ok(None);
     };
-    session.expires_at = renew(state, &session, Device::from_headers(&parts.headers)).await;
+    let renewed = renew(state, &session, Device::from_headers(&parts.headers)).await;
+    if renewed > session.expires_at
+        && let Some(CookieRefresh(flag)) = parts.extensions.get::<CookieRefresh>()
+    {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    session.expires_at = renewed;
     if from_gate {
         parts.extensions.insert(Resolved(Some(session.clone())));
     }
@@ -398,23 +456,180 @@ pub fn fingerprint(hash: &[u8]) -> String {
     hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Set by [`session_of`] when this request moved the session's end, so
+/// [`refresh_cookie`] sends the cookie again.
+#[derive(Clone)]
+struct CookieRefresh(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+/// Sends the session cookie again, with a fresh `Max-Age`, on a response
+/// to a request that renewed its session (GEL-83). Renewals are throttled
+/// to one per step ([`needs_renewal`]), so most responses carry none. A
+/// response that sets or clears the cookie itself (sign-in, logout) keeps
+/// its own.
+pub async fn refresh_cookie(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let raw = cookies::get(request.headers(), SESSION_COOKIE).filter(|raw| token::is_valid(raw));
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if raw.is_some() {
+        request.extensions_mut().insert(CookieRefresh(flag.clone()));
+    }
+    let mut response = next.run(request).await;
+    let Some(raw) = raw else {
+        return response;
+    };
+    let prefix = format!("{SESSION_COOKIE}=");
+    let sets_own = response
+        .headers()
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .any(|value| value.as_bytes().starts_with(prefix.as_bytes()));
+    if flag.load(std::sync::atomic::Ordering::Relaxed) && !sets_own {
+        let (name, value) = cookie(&state, raw).header();
+        response.headers_mut().append(name, value);
+    }
+    response
+}
+
+/// Why a session ended, as the gateway's close frame tells the client
+/// (GEL-83, `docs/native/protocol-gateway.md` §1.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndReason {
+    /// Its time ran out (idle window or absolute end), or no other reason
+    /// is known.
+    Expired,
+    /// Another device (or this one) signed it out: a logout, "sign out
+    /// everywhere", the signed-in devices list.
+    SignedOut,
+    /// The account's password changed or was reset.
+    PasswordChanged,
+    /// The operator disabled the account.
+    Disabled,
+    /// The account was deleted.
+    Deleted,
+}
+
+impl EndReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Expired => "expired",
+            Self::SignedOut => "signed_out",
+            Self::PasswordChanged => "password_changed",
+            Self::Disabled => "disabled",
+            Self::Deleted => "deleted",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        [
+            Self::Expired,
+            Self::SignedOut,
+            Self::PasswordChanged,
+            Self::Disabled,
+            Self::Deleted,
+        ]
+        .into_iter()
+        .find(|reason| reason.as_str() == raw)
+    }
+}
+
+/// Where a revocation leaves its reason for sockets on other API processes,
+/// which learn of it only from the database ([`end_reason`]).
+fn end_key(fingerprint: &str) -> String {
+    format!("gb:session:end:{fingerprint}")
+}
+
+/// How long a revocation's reason stays readable: well past the sockets'
+/// own backstop check (10 s) and a lost notice.
+const END_REASON_TTL: Duration = Duration::from_secs(600);
+
+/// Why the session behind `hash` is gone, for the close frame of a socket
+/// that found it so. The reason its revocation left ([`disconnect`]); else
+/// a disabled or deleted account; else it expired. Best effort: without
+/// Redis or the database the answer is `Expired`.
+pub async fn end_reason(state: &AppState, hash: &[u8], user_id: Uuid) -> EndReason {
+    let key = end_key(&fingerprint(hash));
+    let stored = tokio::time::timeout(
+        Duration::from_millis(500),
+        state.gateway.with_redis(|mut conn| {
+            let key = key.clone();
+            async move {
+                redis::cmd("GET")
+                    .arg(key)
+                    .query_async::<Option<String>>(&mut conn)
+                    .await
+            }
+        }),
+    )
+    .await;
+    if let Ok(Ok(Some(raw))) = stored
+        && let Some(reason) = EndReason::parse(&raw)
+    {
+        return reason;
+    }
+    let account = tokio::time::timeout(
+        Duration::from_millis(500),
+        sqlx::query_as::<_, (bool, bool)>(
+            "SELECT disabled_at IS NOT NULL, deleted_at IS NOT NULL FROM users WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&state.db),
+    )
+    .await;
+    match account {
+        Ok(Ok(Some((_, true)))) => EndReason::Deleted,
+        Ok(Ok(Some((true, _)))) => EndReason::Disabled,
+        _ => EndReason::Expired,
+    }
+}
+
 /// Every session of `user_id`: "sign out everywhere". Same order as
 /// [`revoke_current`]: rows first, then the sockets and tickets they back.
-pub async fn revoke_all(state: &AppState, user_id: Uuid) -> Result<(), ApiError> {
+pub async fn revoke_all(
+    state: &AppState,
+    user_id: Uuid,
+    reason: EndReason,
+) -> Result<(), ApiError> {
     let revoked: Vec<Vec<u8>> =
         sqlx::query_scalar("DELETE FROM sessions WHERE user_id = $1 RETURNING token_hash")
             .bind(user_id)
             .fetch_all(&state.db)
             .await?;
-    disconnect(state, &revoked).await;
+    disconnect(state, &revoked, reason).await;
     Ok(())
 }
 
-/// Closes the sockets and media tickets of sessions already deleted.
-pub async fn disconnect(state: &AppState, hashes: &[Vec<u8>]) {
-    for hash in hashes {
-        let key = fingerprint(hash);
-        state.gateway.revoke_session(&key).await;
+/// Closes the sockets and media tickets of sessions already deleted, and
+/// tells them `reason`. The reason goes to Redis first, so sockets on other
+/// API processes read it once their check finds the row gone.
+pub async fn disconnect(state: &AppState, hashes: &[Vec<u8>], reason: EndReason) {
+    if hashes.is_empty() {
+        return;
+    }
+    let keys: Vec<String> = hashes.iter().map(|hash| fingerprint(hash)).collect();
+    let stored = tokio::time::timeout(
+        Duration::from_millis(500),
+        state.gateway.with_redis(|mut conn| {
+            let mut pipe = redis::pipe();
+            for key in &keys {
+                pipe.cmd("SET")
+                    .arg(end_key(key))
+                    .arg(reason.as_str())
+                    .arg("EX")
+                    .arg(END_REASON_TTL.as_secs())
+                    .ignore();
+            }
+            async move { pipe.query_async::<()>(&mut conn).await }
+        }),
+    )
+    .await;
+    if !matches!(stored, Ok(Ok(()))) {
+        warn!("session end reason not stored; other processes say expired");
+    }
+    for key in keys {
+        state.gateway.revoke_session(&key, reason).await;
         crate::media::cleanup_session(state.redis.clone(), key).await;
     }
 }
@@ -431,8 +646,6 @@ pub async fn revoke_current(state: &AppState, raw: Option<&str>) -> Result<(), A
         .bind(&hash)
         .execute(&state.db)
         .await?;
-    let key = fingerprint(&hash);
-    state.gateway.revoke_session(&key).await;
-    crate::media::cleanup_session(state.redis.clone(), key).await;
+    disconnect(state, std::slice::from_ref(&hash), EndReason::SignedOut).await;
     Ok(())
 }

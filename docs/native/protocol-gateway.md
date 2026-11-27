@@ -152,14 +152,36 @@ On every (re)open (`client.ts:400-422`), in this order:
 Frames sent while no socket is open are dropped silently (`client.ts:284-290`);
 everything needed is re-sent on open.
 
-### 1.5 Server-side close reasons (no close frame payload, no error frame unless noted)
+### 1.5 Server-side close reasons (no error frame unless noted)
 
-`backend/api/src/gateway/conn.rs:87-222`: session revoked/expired (v0.10: also when
+`backend/api/src/gateway/conn.rs` (`run`): session revoked/expired (v0.10: also when
 an operator disables the account, after which the reconnect gets 401); session lock or
 ACL recheck failed; 30 s silence; outbound queue overflow; client Close; send
-timeout (1 s per write). The server sends `Message::Close(None)`. The client
-treats every close identically → reconnect (§1.4). A 401 on reconnect (logged
-out elsewhere) is not special-cased by the gateway; REST 401s drive logout.
+timeout (1 s per write). The server sends `Message::Close(None)`, with two
+exceptions: a restart sends code `1012` reason `restart`, and (v0.15, GEL-83) a
+socket whose session ended sends code **`4401`** with the reason why:
+
+| Reason | Cause |
+|---|---|
+| `expired` | the idle window or the absolute TTL ran out, or no other reason is known (a lost Redis note, see below) |
+| `signed_out` | a logout, "sign out everywhere" (`POST /api/auth/logout-all`), the signed-in devices list (`DELETE /api/auth/sessions/{id}`), a new sign-in in the same browser, or a provider sign-in that took over an unconfirmed account |
+| `password_changed` | `POST /api/auth/password` or a password reset (`/password-reset/confirm`) |
+| `disabled` | an operator disabled the account |
+| `deleted` | the account was deleted |
+
+The API process that revokes a session closes its own sockets at once and
+stores the reason in Redis (`gb:session:end:<session fingerprint>`, 10 min);
+sockets on other API processes read it there once their check finds the
+session gone. Without it they say `disabled` or `deleted` from the account
+row, else `expired`. A session never ends while one of its sockets holds a
+voice seat (`docs/native/protocol-rest-auth.md` §1.3, "Voice seat hold").
+
+The client reconnects after every close (§1.4), `4401` included: a cookie that
+another sign-in in the same browser replaced carries on. A `4401` reason is
+kept until the 401 that follows (handshake or REST) signs the client out, and
+the sign-in page then says why (`/login?reason=<reason>`); a socket that
+opens again forgets it, and a 401 without one shows `expired`. Older clients
+treat `4401` like any other close. REST 401s still drive the logout.
 
 ---
 

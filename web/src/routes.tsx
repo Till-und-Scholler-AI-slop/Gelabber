@@ -12,6 +12,8 @@ import { currentUserId, takeStamp } from "./auth/scope.ts";
 import { SECURITY_PATH } from "./auth/signInMethods.ts";
 import {
   ensureSession,
+  isSessionEndReason,
+  type SessionEndReason,
   useSession,
   useSessionProblems,
 } from "./auth/session.ts";
@@ -84,9 +86,10 @@ const rootRoute = createRootRoute({
 
 export type AuthSearch = {
   redirect?: string;
-  /** "expired": the session ended while the app was open. "deleted": the
-   * account was just deleted (#519). */
-  reason?: "expired" | "deleted";
+  /** Why the session ended while the app was open (GEL-83), as the
+   * gateway's close frame said; "expired" when nothing said why.
+   * "deleted": the account was deleted (#519). */
+  reason?: SessionEndReason;
   /** Carried from sign-in to "Passwort vergessen", so it is not retyped. */
   email?: string;
   /** A beta invitation's code (`/register?invitation=…`), which pre-fills
@@ -102,8 +105,7 @@ export const validateAuthSearch = (
   const out: AuthSearch = {};
   const target = safeRedirect(search.redirect);
   if (target) out.redirect = target;
-  if (search.reason === "expired" || search.reason === "deleted")
-    out.reason = search.reason;
+  if (isSessionEndReason(search.reason)) out.reason = search.reason;
   if (
     typeof search.email === "string" &&
     search.email.length > 0 &&

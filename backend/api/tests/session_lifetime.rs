@@ -1,7 +1,9 @@
 //! Sliding session lifetime (issue #195): every use pushes the row's expiry
 //! to `now + API_SESSION_IDLE_HOURS`, never past `created_at` plus
-//! `API_SESSION_TTL_HOURS`. Requests renew through the session extractors,
-//! WebSocket activity through the gateway; heartbeats do not count.
+//! `API_SESSION_TTL_HOURS` when that is set (by default it is not, GEL-83).
+//! Requests renew through the session extractors, WebSocket activity
+//! through the gateway; heartbeats do not count. A voice seat holds the
+//! session past either end until the call is left.
 
 mod common;
 
@@ -20,13 +22,22 @@ use common::{Client, SESSION};
 
 /// 4 hours absolute, 1 hour idle: renewals are written in 5-minute steps.
 fn lifetime_state(pool: PgPool, ttl_hours: &str, idle_hours: &str) -> AppState {
+    lifetime_state_with(pool, Some(ttl_hours), idle_hours)
+}
+
+/// The default: no absolute lifetime, only the idle window.
+fn idle_only_state(pool: PgPool, idle_hours: &str) -> AppState {
+    lifetime_state_with(pool, None, idle_hours)
+}
+
+fn lifetime_state_with(pool: PgPool, ttl_hours: Option<&str>, idle_hours: &str) -> AppState {
     let redis = common::redis_url();
     let config = Config::from_source(|key| match key {
         "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
         "API_LINK_PREVIEWS" => Some("false".to_owned()),
         "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
         "REDIS_URL" => Some(redis.clone()),
-        "API_SESSION_TTL_HOURS" => Some(ttl_hours.to_owned()),
+        "API_SESSION_TTL_HOURS" => ttl_hours.map(str::to_owned),
         "API_SESSION_IDLE_HOURS" => Some(idle_hours.to_owned()),
         "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
         "API_WS_DEAD_MS" => Some(common::WS_DEAD_MS.to_string()),
@@ -70,15 +81,65 @@ fn assert_near(actual: DateTime<Utc>, expected: DateTime<Utc>) {
     assert!(off <= 5, "expected about {expected}, got {actual}");
 }
 
+/// 400 days, the longest a browser keeps a cookie: the row decides.
+const COOKIE_MAX_AGE: &str = "Max-Age=34560000";
+
+/// The cookie outlives the row, whose end moves with use and waits for a
+/// call (GEL-83), also with an absolute lifetime set.
 #[sqlx::test]
-async fn cookie_keeps_the_absolute_lifetime(pool: PgPool) {
+async fn cookie_outlives_the_row(pool: PgPool) {
     let mut client = Client::with_state(lifetime_state(pool, "4", "1"));
     client.bootstrap().await;
     let res = client
         .register("ada@example.com", "password123", "Ada")
         .await;
     let cookie = res.set_cookie(SESSION).expect("session cookie");
-    assert!(cookie.contains("Max-Age=14400"), "{cookie}");
+    assert!(cookie.contains(COOKIE_MAX_AGE), "{cookie}");
+}
+
+/// A request that moves the session's end sends the cookie again, so a
+/// session in use never loses it; one within the renewal step does not.
+#[sqlx::test]
+async fn a_renewal_sends_the_cookie_again(pool: PgPool) {
+    let mut client = signed_in(idle_only_state(pool.clone(), "1")).await;
+    let token = client.jar[SESSION].clone();
+    set_row(&pool, 600, 300).await;
+
+    let me = client.send(Method::GET, "/api/me", None).await;
+    assert_eq!(me.status, StatusCode::OK);
+    let cookie = me.set_cookie(SESSION).expect("cookie sent again");
+    assert!(
+        cookie.starts_with(&format!("{SESSION}={token};")),
+        "{cookie}"
+    );
+    assert!(cookie.contains(COOKIE_MAX_AGE), "{cookie}");
+
+    let again = client.send(Method::GET, "/api/me", None).await;
+    assert_eq!(again.status, StatusCode::OK);
+    assert_eq!(again.set_cookie(SESSION), None, "not renewed, not sent");
+}
+
+/// GEL-83: without `API_SESSION_TTL_HOURS` a session in use is never
+/// signed out on a schedule; one past the old 30-day mark still renews.
+#[sqlx::test]
+async fn an_active_session_passes_the_old_thirty_day_mark(pool: PgPool) {
+    let mut client = signed_in(idle_only_state(pool.clone(), "1")).await;
+    set_row(&pool, 31 * 24 * 3600, 300).await;
+
+    let me = client.send(Method::GET, "/api/me", None).await;
+    assert_eq!(me.status, StatusCode::OK);
+    let (_, expires_at) = row(&pool).await;
+    assert_near(expires_at, Utc::now() + chrono::Duration::hours(1));
+}
+
+/// Without an absolute lifetime the idle window still ends a session.
+#[sqlx::test]
+async fn an_idle_session_ends_without_an_absolute_lifetime(pool: PgPool) {
+    let mut client = signed_in(idle_only_state(pool.clone(), "1")).await;
+    set_row(&pool, 7200, -1).await;
+
+    let me = client.send(Method::GET, "/api/me", None).await;
+    assert_eq!(me.status, StatusCode::UNAUTHORIZED);
 }
 
 #[sqlx::test]
@@ -302,4 +363,94 @@ async fn socket_closes_when_the_session_runs_out(pool: PgPool) {
     })
     .await;
     assert!(closed.is_ok(), "socket must close once the session expired");
+}
+
+/// The close frame's code when the session ended (GEL-83).
+const SESSION_ENDED: u16 = 4401;
+
+#[sqlx::test]
+async fn the_close_frame_says_the_session_expired(pool: PgPool) {
+    let state = lifetime_state(pool.clone(), "1", "1");
+    let client = signed_in(state.clone()).await;
+    let addr = serve(state).await;
+    set_row(&pool, 3600 - 1, 1).await;
+    let mut ws = connect(addr, &client).await;
+
+    assert_eq!(
+        ws::close_frame(&mut ws).await,
+        Some((SESSION_ENDED, "expired".to_owned()))
+    );
+}
+
+async fn create_voice(client: &mut Client) -> (String, String) {
+    let res = client
+        .send(
+            Method::POST,
+            "/api/servers",
+            Some(json!({ "name": "Call" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let server = res.body["id"].as_str().unwrap().to_owned();
+    let res = client
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/channels"),
+            Some(json!({ "name": "Lounge", "kind": "voice" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    (server, res.body["id"].as_str().unwrap().to_owned())
+}
+
+/// GEL-83: a session never ends while its socket holds a voice seat, not
+/// even past the absolute end; the end waits until the call is left.
+#[sqlx::test]
+async fn a_voice_seat_holds_the_session_past_its_end(pool: PgPool) {
+    let state = lifetime_state(pool.clone(), "1", "1");
+    let mut client = signed_in(state.clone()).await;
+    let (server, voice) = create_voice(&mut client).await;
+    let addr = serve(state).await;
+    // Past the absolute end of one hour, 3 seconds left: no use renews it.
+    set_row(&pool, 3600 + 60, 3).await;
+    let (_, end) = row(&pool).await;
+    let mut ws = connect(addr, &client).await;
+    ws::send(
+        &mut ws,
+        json!({ "op": "sig", "t": "j", "s": server, "c": voice }),
+    )
+    .await;
+    ws::until(&mut ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+
+    // The seat moves the end ahead, and the call goes on past the old one.
+    let deadline = tokio::time::Instant::now() + ws::WAIT;
+    loop {
+        stay_connected(&mut ws, Duration::from_millis(100)).await;
+        let (_, held) = row(&pool).await;
+        if Utc::now() > end && held > Utc::now() + chrono::Duration::seconds(60) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the seat did not hold the session: it ends at {held}"
+        );
+    }
+    let me = client.send(Method::GET, "/api/me", None).await;
+    assert_eq!(me.status, StatusCode::OK);
+
+    // Left the call: nothing holds it any more, and the end comes.
+    // The leave sends nothing back; the error answer to the frame after it
+    // shows it was handled.
+    ws::send(
+        &mut ws,
+        json!({ "op": "sig", "t": "l", "s": server, "c": voice }),
+    )
+    .await;
+    ws::send(&mut ws, json!({ "op": "nope" })).await;
+    ws::until(&mut ws, |f| f["op"] == "err").await;
+    set_row(&pool, 3600 + 60, 1).await;
+    assert_eq!(
+        ws::close_frame(&mut ws).await,
+        Some((SESSION_ENDED, "expired".to_owned()))
+    );
 }

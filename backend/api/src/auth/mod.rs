@@ -51,7 +51,7 @@ use crate::password;
 use crate::state::AppState;
 use crate::token;
 
-use self::session::{CurrentSession, MaybeUser};
+use self::session::{CurrentSession, EndReason, MaybeUser};
 use self::tokens::Purpose;
 use self::user::User;
 
@@ -587,7 +587,7 @@ async fn signed_in_parts(
     // Expired-row housekeeping is separate from the targeted logout.
     session::revoke(&state.db, None).await?;
     // The row starts with the idle window and slides from there
-    // (`session::touch`); the cookie carries the absolute lifetime.
+    // (`session::touch`); the cookie outlives it (`session::COOKIE_MAX_AGE`).
     // The device is the client this answer reaches: the browser of a
     // provider's callback, the app of a desktop exchange.
     let device = device::Device::from_headers(headers);
@@ -595,9 +595,7 @@ async fn signed_in_parts(
     let csrf_token = token::generate();
 
     let cookies = [
-        SetCookie::new(SESSION_COOKIE, session_token, state.session_ttl.as_secs())
-            .secure(state.cookie_secure)
-            .header(),
+        session::cookie(state, session_token).header(),
         csrf_cookie(state, &csrf_token).header(),
     ];
     let body = SessionResponse {
@@ -680,7 +678,7 @@ async fn change_password(
 
     let hash = password::hash(new_password).await?;
     let revoked = user::set_password_hash(&state.db, user.id, &hash).await?;
-    session::disconnect(&state, &revoked).await;
+    session::disconnect(&state, &revoked, EndReason::PasswordChanged).await;
     info!(user_id = %user.id, sessions = revoked.len(), "password changed");
 
     let user = session::reload(&state.db, user.id).await?;
@@ -693,7 +691,7 @@ async fn logout_all(
     State(state): State<AppState>,
     current: CurrentSession,
 ) -> Result<Response, ApiError> {
-    session::revoke_all(&state, current.user.id).await?;
+    session::revoke_all(&state, current.user.id, EndReason::SignedOut).await?;
     info!(user_id = %current.user.id, "signed out everywhere");
     Ok(signed_out(&state))
 }
@@ -880,7 +878,7 @@ async fn confirm_password_reset(
     let (user_id, revoked) = tokens::reset_password(&state.db, &body.token, &hash)
         .await?
         .ok_or(ApiError::TokenInvalid)?;
-    session::disconnect(&state, &revoked).await;
+    session::disconnect(&state, &revoked, EndReason::PasswordChanged).await;
     info!(%user_id, sessions = revoked.len(), "password reset");
 
     let user = session::reload(&state.db, user_id).await?;

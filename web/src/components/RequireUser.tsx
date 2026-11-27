@@ -5,6 +5,7 @@ import {
   accountDeletedElsewhere,
   accountDeletedHere,
   loggedOutOnPurpose,
+  sessionEndReason,
   useSession,
   useSessionProblems,
 } from "../auth/session.ts";
@@ -16,7 +17,8 @@ import { Redirect } from "./Redirect.tsx";
  * already handles the first load; this covers a session that ends *while*
  * the page is open (401 from a mutation, logout in another tab) — the
  * store flips to anonymous and the page bounces to /login right away,
- * keeping the current URL as the post-login target and saying why.
+ * keeping the current URL as the post-login target and saying why: what
+ * the gateway's close frame said (GEL-83), else that it expired.
  */
 export function RequireUser({ children }: { children: ReactNode }) {
   const status = useSession((state) => state.status);
@@ -50,7 +52,7 @@ export function RequireUser({ children }: { children: ReactNode }) {
         ...(accountDeletedHere() || (wasSignedIn && accountDeletedElsewhere())
           ? { reason: "deleted" as const }
           : wasSignedIn && !loggedOutOnPurpose()
-            ? { reason: "expired" as const }
+            ? { reason: sessionEndReason() ?? ("expired" as const) }
             : {}),
       }}
     />

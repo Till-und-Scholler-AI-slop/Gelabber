@@ -936,6 +936,30 @@ fn a_refusal_for_a_code_brings_the_field_up() {
     });
 }
 
+/// The sign-in page says why the session ended (GEL-83), like the web's.
+#[test]
+fn the_login_page_says_why_the_session_ended() {
+    let _config = TempConfig::new("auth-session-ended");
+    let api = FakeApi::start(false, |_, _, _| None);
+    for (reason, text) in [
+        ("expired", "Sitzung abgelaufen. Melde dich erneut an."),
+        (
+            "signed_out",
+            "Du wurdest auf einem anderen Gerät abgemeldet. Melde dich erneut an.",
+        ),
+        (
+            "password_changed",
+            "Dein Passwort wurde geändert. Melde dich mit dem neuen Passwort an.",
+        ),
+        ("disabled", "Dein Konto wurde vom Betreiber gesperrt."),
+        ("deleted", "Dein Konto wurde gelöscht."),
+    ] {
+        let mut harness = launcher(&api, &format!("/login?reason={reason}"));
+        wait_for_label(&mut harness, "E-Mail-Adresse");
+        wait_for_label(&mut harness, text);
+    }
+}
+
 /// A disabled account's sign-in says so (`account_disabled`).
 #[test]
 fn a_disabled_account_is_told_at_sign_in() {

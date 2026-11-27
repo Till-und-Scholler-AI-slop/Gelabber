@@ -203,6 +203,33 @@ async fn closed_at(ws: &mut Ws, at: &'static Location<'static>) -> Vec<Value> {
     }
 }
 
+/// Like [`closed`], but returns the close frame's code and reason; `None`
+/// when the socket ended without one.
+#[track_caller]
+pub fn close_frame(ws: &mut Ws) -> impl Future<Output = Option<(u16, String)>> + '_ {
+    let at = Location::caller();
+    async move {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let message = match tokio::time::timeout_at(deadline, ws.next()).await {
+                Err(_) => panic!("the socket did not close within {WAIT:?} (waited at {at})"),
+                Ok(None) | Ok(Some(Err(_))) => return None,
+                Ok(Some(Ok(Message::Close(frame)))) => {
+                    return frame.map(|frame| (u16::from(frame.code), frame.reason.to_string()));
+                }
+                Ok(Some(Ok(message))) => message,
+            };
+            if let Message::Text(text) = message
+                && text.contains(r#""op":"h""#)
+            {
+                let _ = ws
+                    .send(Message::Text(json!({ "op": "h" }).to_string().into()))
+                    .await;
+            }
+        }
+    }
+}
+
 /// Answers a heartbeat and waits for the server's next one. A socket that
 /// has done this is registered with the gateway: frames published after it
 /// reach the socket.

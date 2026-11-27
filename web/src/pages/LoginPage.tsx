@@ -11,7 +11,7 @@ import {
   oidcErrorMessage,
   validateEmail,
 } from "../auth/rules.ts";
-import { login } from "../auth/session.ts";
+import { login, type SessionEndReason } from "../auth/session.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
@@ -25,6 +25,15 @@ import { InstallDisclosure } from "../pwa/InstallApp.tsx";
 import { installHintUseful, useInstallation } from "../pwa/install.ts";
 import { InviteContextBanner } from "./AuthLayout.tsx";
 import { ConfirmationHelp } from "./ConfirmationHelp.tsx";
+
+/** The banner for each way a session ends (GEL-83). */
+const REASON_TEXT = {
+  expired: "login.sessionExpired",
+  signed_out: "login.signedOut",
+  password_changed: "login.passwordChanged",
+  disabled: "login.accountDisabled",
+  deleted: "login.accountDeleted",
+} as const satisfies Record<SessionEndReason, string>;
 
 export function LoginPage() {
   const t = useT(auth);
@@ -87,13 +96,9 @@ export function LoginPage() {
   return (
     <section className="lr-auth-card">
       {invited ? <InviteContextBanner /> : null}
-      {reason === "expired" ? (
+      {reason ? (
         <p role="status" className="auth-banner">
-          {t("login.sessionExpired")}
-        </p>
-      ) : reason === "deleted" ? (
-        <p role="status" className="auth-banner">
-          {t("login.accountDeleted")}
+          {t(REASON_TEXT[reason])}
         </p>
       ) : null}
       <h1>{t("login.title")}</h1>

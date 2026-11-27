@@ -106,7 +106,7 @@ async fn delete_me(
     }
 
     let removed = deletion::mark_deleted(&state.db, user_id).await?;
-    session::disconnect(&state, &removed.sessions).await;
+    session::disconnect(&state, &removed.sessions, session::EndReason::Deleted).await;
     // Other members see the person leave each server at once (`k: "x"`).
     if !removed.servers.is_empty() {
         let mut conn = state.db.acquire().await?;

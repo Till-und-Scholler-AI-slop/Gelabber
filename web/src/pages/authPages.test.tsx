@@ -117,6 +117,24 @@ describe("login page", () => {
     expect(html).not.toContain("Sitzung abgelaufen");
   });
 
+  it("tells a routine expiry from a security event (GEL-83)", () => {
+    const banner = (reason: string) => {
+      fixture.search = { reason };
+      const html = render(<LoginPage />);
+      return /<p role="status" class="auth-banner">([^<]*)<\/p>/.exec(
+        html,
+      )?.[1];
+    };
+    expect(banner("signed_out")).toBe(
+      "Du wurdest auf einem anderen Gerät abgemeldet. Melde dich erneut an.",
+    );
+    expect(banner("password_changed")).toBe(
+      "Dein Passwort wurde geändert. Melde dich mit dem neuen Passwort an.",
+    );
+    expect(banner("disabled")).toBe("Dein Konto wurde vom Betreiber gesperrt.");
+    expect(banner("expired")).toBe("Sitzung abgelaufen. Melde dich erneut an.");
+  });
+
   it("offers a way back into a forgotten password, mail or not", () => {
     expect(render(<LoginPage />)).toContain('<p class="auth-recovery"></p>');
     fixture.mail = false;

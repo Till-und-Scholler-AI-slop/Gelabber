@@ -17,8 +17,8 @@ use crate::http::ApiError;
 use crate::models::*;
 use crate::presence;
 use crate::store::{
-    Notice, OpState, OutgoingFile, PAGE_SIZE, PendingMessage, SendStage, Session, State, View,
-    VoiceSelf,
+    Notice, OpState, OutgoingFile, PAGE_SIZE, PendingMessage, SendStage, Session, SessionEnd,
+    State, View, VoiceSelf,
 };
 
 /// Session check retries while the server is unreachable (`session.ts`).
@@ -306,9 +306,11 @@ impl Client {
             if !deleting && this.with_state(|s| matches!(s.session, Session::Authenticated(_))) {
                 this.stop_gateway();
                 this.write(|s| {
+                    // What the gateway said, else it expired (GEL-83).
+                    let why = s.session_end_said.take().unwrap_or(SessionEnd::Expired);
                     s.reset_account();
                     s.session = Session::Anonymous;
-                    s.session_expired = true;
+                    s.session_ended = Some(why);
                 });
             }
         });
@@ -2344,6 +2346,7 @@ impl Client {
                 self.write(|s| s.gateway = status);
             }
             GatewayEvent::Ready => {
+                self.write(|s| s.session_end_said = None);
                 let this = self.clone();
                 self.spawn(async move { this.reload_presence_mode().await });
                 // The server marks a new socket online; say so if we idle.
@@ -2407,6 +2410,9 @@ impl Client {
             GatewayEvent::Gap(_) => self.schedule_recovery(false),
             GatewayEvent::Resync => self.schedule_recovery(false),
             GatewayEvent::Refused(reason) => self.write(|s| s.gateway_refused = reason),
+            GatewayEvent::SessionEnded(reason) => {
+                self.write(|s| s.session_end_said = Some(SessionEnd::parse(&reason)));
+            }
             GatewayEvent::Frame(frame) => {
                 let voice = matches!(frame, ServerFrame::Sig(_) | ServerFrame::Err { .. });
                 let event = voice.then(|| GatewayEvent::Frame(frame.clone()));
@@ -3272,15 +3278,47 @@ mod tests {
         client.write(|s| s.ops.insert("delete_account".into(), OpState::Pending));
         client.signed_out_by_server();
         std::thread::sleep(Duration::from_millis(50));
-        assert!(client.with_state(|s| s.me().is_some() && !s.session_expired));
+        assert!(client.with_state(|s| s.me().is_some() && s.session_ended.is_none()));
         client.delete_account(DeleteConfirmation::Password("pw".into()));
         wait("not deleted", || client.with_state(|s| s.account_deleted));
         client.with_state(|s| {
             assert!(matches!(s.session, Session::Anonymous));
-            assert!(!s.session_expired);
+            assert!(s.session_ended.is_none());
             assert!(matches!(s.op("delete_account"), Some(OpState::Done)));
         });
         assert!(seen.lock().contains(&"DELETE /api/me HTTP/1.1".to_owned()));
+    }
+
+    /// The 401 that ends the session takes the reason the gateway's close
+    /// frame gave (GEL-83); a socket that opened again since forgets it,
+    /// and without one the session expired.
+    #[test]
+    fn a_session_end_keeps_the_reason_the_gateway_gave() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.on_gateway(GatewayEvent::SessionEnded("password_changed".into()));
+        client.signed_out_by_server();
+        wait("signed out", || {
+            client.with_state(|s| matches!(s.session, Session::Anonymous))
+        });
+        assert_eq!(
+            client.with_state(|s| s.session_ended),
+            Some(SessionEnd::PasswordChanged)
+        );
+
+        signed_in(&client, Uuid::from_u128(5));
+        client.on_gateway(GatewayEvent::SessionEnded("signed_out".into()));
+        // Another sign-in replaced the cookie: the socket opened again.
+        client.on_gateway(GatewayEvent::Ready);
+        client.signed_out_by_server();
+        wait("signed out", || {
+            client.with_state(|s| matches!(s.session, Session::Anonymous))
+        });
+        assert_eq!(
+            client.with_state(|s| s.session_ended),
+            Some(SessionEnd::Expired)
+        );
     }
 
     /// `409 owns_servers` keeps the session and names the servers.

@@ -46,7 +46,8 @@ pub struct AppState {
     pub ready_timeout: Duration,
     pub cookie_secure: bool,
     pub allow_plain_http: bool,
-    pub session_ttl: Duration,
+    /// `Config::session_ttl`: `None` without an absolute lifetime.
+    pub session_ttl: Option<Duration>,
     pub session_idle: Duration,
     /// Native WS gateway (issue #6). Facade over the three realtime jobs.
     pub gateway: Gateway,

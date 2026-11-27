@@ -7,7 +7,12 @@ import { useShallow } from "zustand/react/shallow";
 
 import { ApiError } from "../api/client.ts";
 import { scopeGeneration } from "../auth/scope.ts";
-import { checkSession } from "../auth/session.ts";
+import {
+  checkSession,
+  forgetSessionEnd,
+  isSessionEndReason,
+  noteSessionEnd,
+} from "../auth/session.ts";
 import { useDms } from "../dms/queries.ts";
 import type { DirectMessage } from "../dms/types.ts";
 import { useServer } from "../servers/queries.ts";
@@ -25,9 +30,18 @@ export function useGatewaySession(userId: string | null): void {
     if (userId) {
       // A 401 handshake (session ended elsewhere) only shows as a close.
       const offRefused = gateway.onRefused(() => void checkSession());
+      // The server says why it ended the session (GEL-83): the sign-in
+      // page shows that, once the check confirms the session is gone.
+      const offEnded = gateway.onSessionEnded((reason) => {
+        noteSessionEnd(isSessionEndReason(reason) ? reason : "expired");
+        void checkSession();
+      });
+      const offReady = gateway.onReady(forgetSessionEnd);
       gateway.start();
       return () => {
         offRefused();
+        offEnded();
+        offReady();
         gateway.resetSession();
       };
     }

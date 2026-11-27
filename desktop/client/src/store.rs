@@ -536,6 +536,42 @@ pub struct JoinRequestCount {
     pub changes: u64,
 }
 
+/// Why the server ended the session (GEL-83): the reason of the gateway's
+/// close frame `4401` (`docs/native/protocol-gateway.md` §1.5), or
+/// `Expired` when nothing said why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionEnd {
+    Expired,
+    SignedOut,
+    PasswordChanged,
+    Disabled,
+    Deleted,
+}
+
+impl SessionEnd {
+    /// The close reason; one this client does not know is an expiry.
+    pub fn parse(reason: &str) -> Self {
+        match reason {
+            "signed_out" => Self::SignedOut,
+            "password_changed" => Self::PasswordChanged,
+            "disabled" => Self::Disabled,
+            "deleted" => Self::Deleted,
+            _ => Self::Expired,
+        }
+    }
+
+    /// As the login page's `reason=` takes it, the same as the web's.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Expired => "expired",
+            Self::SignedOut => "signed_out",
+            Self::PasswordChanged => "password_changed",
+            Self::Disabled => "disabled",
+            Self::Deleted => "deleted",
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct State {
     pub session: Session,
@@ -590,8 +626,11 @@ pub struct State {
     pub failures: HashMap<String, u64>,
     /// Registration answered with a confirmation mail ("Postfach prüfen").
     pub verification_sent: bool,
-    /// The server ended the session (`Sitzung abgelaufen.` on the login page).
-    pub session_expired: bool,
+    /// The server ended the session, and why (the login page's notice).
+    pub session_ended: Option<SessionEnd>,
+    /// Why the gateway's close frame said the session ended (GEL-83), kept
+    /// for the 401 that confirms it; a socket that opens again forgets it.
+    pub session_end_said: Option<SessionEnd>,
     /// The last gateway `err` frame: code, server, channel (voice joins).
     pub gateway_error: Option<(String, Option<Uuid>, Option<Uuid>)>,
     /// The last server shown; its channels stay subscribed in DMs and

@@ -71,21 +71,22 @@ Response handling (`client.ts:591-604, 646-671`):
 
 | Cookie | Value | Attributes | Set by | Cleared by |
 |---|---|---|---|---|
-| `gelabber_session` | 64 lower-case hex chars (32 random bytes, `token.rs:9-13`). Server stores only SHA-256. | `Path=/; Max-Age=<session_ttl secs>; HttpOnly; SameSite=Lax` + `; Secure` when `API_COOKIE_SECURE=true` | login, register (no mail), change-password, verify-email, password-reset confirm; v0.10: the web callback, `oidc/complete` and `oidc/desktop/exchange` (§2.3) | logout, logout-all, register-with-mail (`Max-Age=0`, empty value) |
+| `gelabber_session` | 64 lower-case hex chars (32 random bytes, `token.rs:9-13`). Server stores only SHA-256. | `Path=/; Max-Age=34560000; HttpOnly; SameSite=Lax` + `; Secure` when `API_COOKIE_SECURE=true` (v0.15: 400 days whatever the session settings; before, `Max-Age` was the absolute TTL) | login, register (no mail), change-password, verify-email, password-reset confirm; v0.10: the web callback, `oidc/complete` and `oidc/desktop/exchange` (§2.3); v0.15: any response to a request that renewed the session, with the same value (GEL-83) | logout, logout-all, register-with-mail (`Max-Age=0`, empty value) |
 | `gelabber_csrf` | 64 hex chars | `Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax` (+`Secure`) | `GET /api/auth/session` when the browser has none or an invalid one; **rotated** by every sign-in/sign-out response above | never cleared, only replaced |
 | `gelabber_oidc` (v0.10) | 64 hex chars; the server stores only its SHA-256 in the flow | `Path=/api/auth/oidc; Max-Age=1800; HttpOnly; SameSite=Lax` (+`Secure`) | `POST /api/auth/oidc/{provider}/start` without `desktop` (§2.3) | every web callback answer except the redirect to the name step, and `oidc/complete` of a web result (`Max-Age=0`, same path) |
 
-Exact header text: `gelabber_session=<tok>; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax[; Secure]` (`cookies.rs:71-80`); a clear is `gelabber_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax[; Secure]` (`cookies.rs:62-64`, test `cookies.rs:149-155`). The CSRF cookie `Max-Age` is `365*24*3600 = 31536000` (`auth/mod.rs:51`). The "valid" check for an existing CSRF cookie is `len == 64 && all ASCII hex digits` (upper-case accepted; `token.rs:16-20`). Cookie parsing on the server: first occurrence of the name in any `Cookie` header wins; exact name match (`cookies.rs:13-24`).
+Exact header text: `gelabber_session=<tok>; Path=/; Max-Age=34560000; HttpOnly; SameSite=Lax[; Secure]` (`cookies.rs:71-80`); a clear is `gelabber_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax[; Secure]` (`cookies.rs:62-64`, test `cookies.rs:149-155`). The CSRF cookie `Max-Age` is `365*24*3600 = 31536000` (`auth/mod.rs:51`). The "valid" check for an existing CSRF cookie is `len == 64 && all ASCII hex digits` (upper-case accepted; `token.rs:16-20`). Cookie parsing on the server: first occurrence of the name in any `Cookie` header wins; exact name match (`cookies.rs:13-24`).
 
 Session lifetimes (`config.rs:80-81, 113-118`; `auth/session.rs:72-141`):
 
 | Setting | Env | Default |
 |---|---|---|
-| Absolute TTL (cookie `Max-Age`, row upper bound) | `API_SESSION_TTL_HOURS` | 720 h (30 days) |
-| Idle window (sliding) | `API_SESSION_IDLE_HOURS` | `min(336 h, TTL)` (14 days); an explicit value > TTL is a startup error (`config.rs:426-438`) |
-| Renewal step | — | `min(idle/12, 1 h)`: the row's `expires_at` is pushed to `min(now+idle, created_at+ttl)` on any authenticated request once it would move by ≥ that step |
+| Absolute TTL (row upper bound for renewals) | `API_SESSION_TTL_HOURS` | none (v0.15, GEL-83; 720 h before): a session in use never ends on a schedule |
+| Idle window (sliding) | `API_SESSION_IDLE_HOURS` | 336 h (14 days), `min(336 h, TTL)` with a TTL set; an explicit value > TTL is a startup error |
+| Renewal step | — | `min(idle/12, 1 h)`: the row's `expires_at` is pushed to `now+idle` (and no further than `created_at+ttl` with a TTL set) on any authenticated request once it would move by ≥ that step; such a response sends the session cookie again (§1.3) |
+| Voice seat hold (v0.15) | — | while a gateway socket of the session holds a voice seat, the row's `expires_at` is kept at least 60 s ahead (moved to `now+120 s`), past the idle window and the TTL alike; the session ends at most 120 s after the call is left |
 
-Any authenticated request (REST or `/ws` upgrade) renews the session; no explicit refresh call exists. An expired/revoked session answers `401 unauthenticated` on routes that need a user; `GET /api/auth/session` answers `user: null`.
+Any authenticated request (REST or `/ws` upgrade) renews the session; no explicit refresh call exists. An expired/revoked session answers `401 unauthenticated` on routes that need a user; `GET /api/auth/session` answers `user: null`. A client learns why its session ended from the gateway's close frame (`docs/native/protocol-gateway.md` §1.5); a 401 without one means it expired.
 
 ### 1.4 CSRF rule (`backend/api/src/csrf.rs:26-59`)
 
@@ -201,7 +202,7 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | `auth` | client IP (IPv6 /64; last `X-Forwarded-For` entry, else peer) | 20 / min | POST `/api/auth/login`, `/register`, `/verify-email`, `/password-reset`, `/password-reset/confirm` (`limits.rs:422-431`), and (v0.13) `/verify-email/resend`; v0.10: every non-GET under `/api/auth/oidc/` (start, pending, complete, desktop exchange, and `DELETE /api/auth/oidc/{provider}`), and the GET callback, which counts itself (`limits::anonymous_hit`) |
 | `login` (failures) | account e-mail and client IP (as `auth`, but IPv6 per /56, v0.13) | 10 failures / 15 min → 429, also for the right password | login, verify-email wrong password |
 | `login_session` (failures, v0.13) | account e-mail, shared by all of its sessions | 10 failures / 15 min → 429, also for the right password; sign-in is not affected | change-password, `DELETE /api/me`, linking a provider wrong password |
-| `login_all` (failures, v0.13) | account e-mail | 100 failures / 15 min from all IPs together → 429 (`API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING`) | login, verify-email wrong password; not counted for an IP that signed in to the account with its password within the session lifetime plus 30 days (`API_SESSION_TTL_HOURS` + 720 h, 60 days by default), counted from its latest such sign-in (in memory) |
+| `login_all` (failures, v0.13) | account e-mail | 100 failures / 15 min from all IPs together → 429 (`API_RATE_LOGIN_FAILURES_ACCOUNT_CEILING`) | login, verify-email wrong password; not counted for an IP that signed in to the account with its password within the session lifetime plus 30 days (`API_SESSION_TTL_HOURS`, 720 h when unset, + 720 h: 60 days by default), counted from its latest such sign-in (in memory) |
 | `api` | `u:{user_id}` if cookie is a live session, else IP | 180 / min | every other mutation |
 | `msg` | same | 60 / min (plus `api`) | `POST …/messages` |
 | `up` | same | 60 / hour (plus `api`) | `POST …/attachments`, `PUT /api/me/avatar`, `PUT /api/me/banner`, `PUT /api/servers/{id}/icon`, `POST /api/feedback/images` (v0.10) |

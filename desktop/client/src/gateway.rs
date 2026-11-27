@@ -71,9 +71,17 @@ pub enum GatewayEvent {
     /// The server or TLS turned the upgrade down (not a network error):
     /// why, until the next open (`None`). Retried only slowly meanwhile.
     Refused(Option<String>),
+    /// The server closed the socket because the session ended (close code
+    /// [`SESSION_ENDED`]), with why: `expired`, `signed_out`, … (GEL-83).
+    /// The socket reconnects; the 401 that follows signs the client out.
+    SessionEnded(String),
     /// Every other frame: `sig`, `p`, `y`, `err`, `ns`, `rd`, `dm`.
     Frame(ServerFrame),
 }
+
+/// The close code that says the session ended
+/// (`docs/native/protocol-gateway.md` §1.5).
+pub const SESSION_ENDED: u16 = 4401;
 
 pub type Handler = Arc<dyn Fn(GatewayEvent) + Send + Sync>;
 
@@ -604,7 +612,15 @@ impl Task {
                 message = stream.next() => {
                     let text = match message {
                         Some(Ok(WsMessage::Text(text))) => text,
-                        Some(Ok(WsMessage::Close(_))) | None | Some(Err(_)) => return Closed::Dropped,
+                        Some(Ok(WsMessage::Close(frame))) => {
+                            if let Some(frame) = frame
+                                && u16::from(frame.code) == SESSION_ENDED
+                            {
+                                (self.handler)(GatewayEvent::SessionEnded(frame.reason.to_string()));
+                            }
+                            return Closed::Dropped;
+                        }
+                        None | Some(Err(_)) => return Closed::Dropped,
                         Some(Ok(_)) => {
                             last_server = Instant::now();
                             continue;
@@ -1063,6 +1079,57 @@ mod tests {
         gateway.stop();
         let opens = opens.load(Ordering::SeqCst);
         assert!((2..10).contains(&opens), "{opens} opens in 1.5 s");
+    }
+
+    /// The close frame `4401` tells why the session ended (GEL-83); any
+    /// other close tells nothing.
+    #[test]
+    fn a_session_end_close_says_why() {
+        use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+        use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        runtime.spawn(async move {
+            let mut closes = [
+                (CloseCode::Restart, "restart"),
+                (CloseCode::from(SESSION_ENDED), "signed_out"),
+            ]
+            .into_iter();
+            while let Ok((stream, _)) = listener.accept().await {
+                let Some((code, reason)) = closes.next() else {
+                    return;
+                };
+                if let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await {
+                    let frame = CloseFrame {
+                        code,
+                        reason: reason.into(),
+                    };
+                    let _ = socket.close(Some(frame)).await;
+                }
+            }
+        });
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = events.clone();
+        let gateway = Gateway::start(
+            runtime.handle(),
+            Http::new(&format!("http://{addr}")).unwrap(),
+            GatewayConfig::default(),
+            Arc::new(move |event| {
+                if let GatewayEvent::SessionEnded(reason) = event {
+                    seen.lock().push(reason);
+                }
+            }),
+        );
+        let start = Instant::now();
+        while events.lock().is_empty() {
+            assert!(start.elapsed() < Duration::from_secs(5), "no session end");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        gateway.stop();
+        assert_eq!(*events.lock(), vec!["signed_out".to_owned()]);
     }
 
     /// An `ok` does not make a socket healthy: the server confirms one

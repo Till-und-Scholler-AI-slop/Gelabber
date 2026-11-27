@@ -131,6 +131,14 @@ describe("router", () => {
       reason: "expired",
       email: "ada@example.org",
     });
+    for (const reason of [
+      "signed_out",
+      "password_changed",
+      "disabled",
+      "deleted",
+    ]) {
+      expect(validateAuthSearch({ reason })).toEqual({ reason });
+    }
     expect(
       validateAuthSearch({
         redirect: "//evil.example",

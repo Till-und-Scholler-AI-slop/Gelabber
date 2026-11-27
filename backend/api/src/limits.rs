@@ -51,6 +51,10 @@ pub const LOGIN_FAILURES_ACCOUNT_CEILING: u32 = 100;
 /// ceiling for the session lifetime plus this long, counted from its latest
 /// such sign-in: the owner signs in there again when that session ends.
 pub const KNOWN_ADDRESS_GRACE: Duration = Duration::from_secs(30 * 24 * 3600);
+/// The session lifetime [`KNOWN_ADDRESS_GRACE`] adds to when
+/// `API_SESSION_TTL_HOURS` sets none (GEL-83): the 30 days that were the
+/// default before, so an address stays known for 60 days by default.
+pub const KNOWN_ADDRESS_LIFETIME: Duration = Duration::from_secs(30 * 24 * 3600);
 /// GIF search, trending and sends per user. Each one is a request against
 /// the operator's Klipy key, whose testing tier allows 100 per hour in total.
 pub const GIF_PER_MIN: u32 = 30;
@@ -704,7 +708,7 @@ pub fn login_succeeded(state: &AppState, guess: Guess) {
     guess_was_right(
         &state.limiter,
         guess,
-        state.session_ttl + KNOWN_ADDRESS_GRACE,
+        state.session_ttl.unwrap_or(KNOWN_ADDRESS_LIFETIME) + KNOWN_ADDRESS_GRACE,
     );
 }
 

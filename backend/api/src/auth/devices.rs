@@ -75,7 +75,12 @@ pub(super) async fn revoke(
     .fetch_optional(&state.db)
     .await?
     .ok_or(ApiError::NotFound)?;
-    session::disconnect(&state, std::slice::from_ref(&hash)).await;
+    session::disconnect(
+        &state,
+        std::slice::from_ref(&hash),
+        session::EndReason::SignedOut,
+    )
+    .await;
     info!(user_id = %current.user.id, session_id = %id, "device signed out");
     if hash == current.hash {
         return Ok(super::signed_out(&state));

@@ -222,14 +222,14 @@ impl ConnTable {
             if !socket.topics.contains(&topic) {
                 continue;
             }
-            if *socket.closed.borrow() {
+            if socket.closed.borrow().is_some() {
                 continue;
             }
             let buffered: usize = socket.catching_up.values().map(Vec::len).sum();
             if let Some(buf) = socket.catching_up.get_mut(&topic) {
                 if buffered >= CATCH_UP_CAPACITY {
                     socket.catching_up.clear();
-                    socket.closed.send_replace(true);
+                    socket.overflowed();
                     continue;
                 }
                 buf.push(event.clone());

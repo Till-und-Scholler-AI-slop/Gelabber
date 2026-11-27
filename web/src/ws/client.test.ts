@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Gateway, type SocketLike } from "./client.ts";
+import { Gateway, type SocketEvent, type SocketLike } from "./client.ts";
 import type { ChatEvent } from "./protocol.ts";
 
 class FakeSocket implements SocketLike {
@@ -8,10 +8,7 @@ class FakeSocket implements SocketLike {
   closed = false;
   /** A black-holed path: `close()` never completes its handshake. */
   holdClose = false;
-  private listeners = new Map<
-    string,
-    Set<(event: { data?: string }) => void>
-  >();
+  private listeners = new Map<string, Set<(event: SocketEvent) => void>>();
 
   send(data: string): void {
     this.sent.push(data);
@@ -24,7 +21,7 @@ class FakeSocket implements SocketLike {
 
   addEventListener(
     type: "open" | "message" | "close" | "error",
-    handler: (event: { data?: string }) => void,
+    handler: (event: SocketEvent) => void,
   ): void {
     const set = this.listeners.get(type) ?? new Set();
     set.add(handler);
@@ -33,7 +30,7 @@ class FakeSocket implements SocketLike {
 
   removeEventListener(
     type: "open" | "message" | "close" | "error",
-    handler: (event: { data?: string }) => void,
+    handler: (event: SocketEvent) => void,
   ): void {
     this.listeners.get(type)?.delete(handler);
   }
@@ -43,11 +40,50 @@ class FakeSocket implements SocketLike {
       handler({ data });
     }
   }
+
+  /** The server's close frame. */
+  closeWith(code: number, reason: string): void {
+    for (const handler of this.listeners.get("close") ?? []) {
+      handler({ code, reason });
+    }
+  }
 }
 
 describe("gateway client", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("tells why the server ended the session, and only then (GEL-83)", async () => {
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 10,
+      maxRetryMs: 10,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const ended: string[] = [];
+    gateway.onSessionEnded((reason) => ended.push(reason));
+    gateway.start();
+    sockets[0]?.emit("open");
+    // A restart is no end of the session.
+    sockets[0]?.closeWith(1012, "restart");
+    expect(ended).toEqual([]);
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(2);
+    });
+    sockets[1]?.emit("open");
+    sockets[1]?.closeWith(4401, "password_changed");
+    expect(ended).toEqual(["password_changed"]);
+    // It still reconnects: a cookie replaced meanwhile carries on.
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(3);
+    });
+    gateway.stop();
   });
 
   it("reports the page in front once, and again after a reconnect", async () => {
