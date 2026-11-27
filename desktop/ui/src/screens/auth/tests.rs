@@ -571,11 +571,11 @@ fn a_provider_sign_in_signs_in() {
             assert_eq!(exchange["code"], "c".repeat(64));
             flag.store(true, Ordering::SeqCst);
             Some(Reply::json(serde_json::json!({
-                "result": "signed_in", "user": crate::app::testkit::lena(), "csrf_token": "c2"
+                "result": "signed_in", "user": crate::app::testkit::lena(), "csrf_token": "c2", "operator": false
             })))
         }
         ("GET", "/auth/session") if flag.load(Ordering::SeqCst) => Some(Reply::json(
-            serde_json::json!({"user": crate::app::testkit::lena(), "csrf_token": "c2"}),
+            serde_json::json!({"user": crate::app::testkit::lena(), "csrf_token": "c2", "operator": false}),
         )),
         ("GET", "/me") if flag.load(Ordering::SeqCst) => {
             Some(Reply::json(crate::app::testkit::lena()))
@@ -724,12 +724,12 @@ fn a_first_provider_sign_in_picks_its_name() {
             Some(Reply::status(
                 201,
                 serde_json::json!({
-                    "user": crate::app::testkit::lena(), "csrf_token": "c3", "redirect": null
+                    "user": crate::app::testkit::lena(), "csrf_token": "c3", "operator": false, "redirect": null
                 }),
             ))
         }
         ("GET", "/auth/session") if flag.load(Ordering::SeqCst) => Some(Reply::json(
-            serde_json::json!({"user": crate::app::testkit::lena(), "csrf_token": "c3"}),
+            serde_json::json!({"user": crate::app::testkit::lena(), "csrf_token": "c3", "operator": false}),
         )),
         ("GET", "/me") if flag.load(Ordering::SeqCst) => {
             Some(Reply::json(crate::app::testkit::lena()))

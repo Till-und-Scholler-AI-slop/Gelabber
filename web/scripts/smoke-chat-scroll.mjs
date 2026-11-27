@@ -18,7 +18,7 @@
 // the newest message and its actions uncovered (#354).
 // Run in web/: node scripts/smoke-chat-scroll.mjs
 // GELABBER_CHAT_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
-/* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout */
+/* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout, localStorage */
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
@@ -83,12 +83,26 @@ const server = {
   id: SERVER,
   name: "Wohnzimmer",
   owner_id: JONAS,
+  icon_url: null,
   created_at: AT,
   role: "member",
   permissions,
   member_permissions: permissions,
+  blocked: false,
 };
 const person = (userId, name) => ({ id: userId, name, avatar_url: null });
+/** A member as `GET /api/servers/{id}` lists them. */
+const member = (userId, name, role) => ({
+  user_id: userId,
+  name,
+  avatar_url: null,
+  joined_at: AT,
+  status_text: null,
+  accent_color: null,
+  avatar_decoration: null,
+  role_ids: [],
+  role,
+});
 const detail = {
   ...server,
   categories: [],
@@ -100,12 +114,12 @@ const detail = {
       name: "allgemein",
       kind: "text",
       created_at: AT,
+      limited: false,
+      role_ids: [],
     },
   ],
-  members: [
-    { ...person(ME, "Lena"), user_id: ME, joined_at: AT, role: "member" },
-    { ...person(JONAS, "Jonas"), user_id: JONAS, joined_at: AT, role: "owner" },
-  ],
+  members: [member(ME, "Lena", "member"), member(JONAS, "Jonas", "owner")],
+  roles: [],
 };
 const WORDS =
   "Das ist ein ganz gewöhnlicher Satz in einer Unterhaltung, der eine Zeile füllt und dann weitergeht. ";
@@ -122,31 +136,66 @@ const message = (n) => ({
   edited_at: null,
   attachments: [],
   reactions: [],
+  mentions: [],
+  mention_everyone: false,
 });
 const all = Array.from({ length: 100 }, (_, n) => message(n));
+/** The channel's read state as `GET /api/messages/unread` and
+ * `PUT …/read` answer it, with `fields` over Lena's defaults. */
+const readRow = (fields) => ({
+  channel_id: TEXT,
+  server_id: SERVER,
+  read_message_id: null,
+  read_at: null,
+  read_order: null,
+  membership_at: AT,
+  latest_order: all.at(-1).created_order,
+  unread_count: 0,
+  mention_count: 0,
+  level: "all",
+  muted: false,
+  muted_until: null,
+  ...fields,
+});
 const newest = all.slice(50);
 const older = all.slice(0, 50);
 
 function answer(path, method, unread) {
   if (path === "/api/auth/session")
     return {
-      user: { ...person(ME, "Lena"), email: "lena@example.test" },
+      user: {
+        ...person(ME, "Lena"),
+        email: "lena@example.test",
+        created_at: AT,
+        bio: null,
+        pronouns: null,
+        status_text: null,
+        accent_color: null,
+        banner_color: null,
+        banner_url: null,
+        avatar_decoration: null,
+        locale: "de",
+      },
       csrf_token: "a".repeat(64),
+      operator: false,
     };
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
   if (path === "/api/messages/unread") return unread ? [unread] : [];
-  if (path === "/api/dms" || path === "/api/notification-settings") return [];
+  if (
+    path === "/api/dms" ||
+    path === "/api/notification-settings" ||
+    path === "/api/users/me/blocks"
+  )
+    return [];
   if (path === "/api/me/themes")
     return { version: 1, revision: 1, active: "dark", customThemes: [] };
   if (path.endsWith("/read") || method !== "GET")
-    return {
-      channel_id: TEXT,
-      server_id: SERVER,
+    return readRow({
       read_message_id: newest.at(-1).id,
+      read_order: newest.at(-1).created_order,
       read_at: AT,
-      unread_count: 0,
-    };
+    });
   return {};
 }
 
@@ -226,6 +275,12 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
   let releaseOlder;
   /** Read positions the app wrote. */
   const marks = [];
+  /** Waiters for a read position that names a message id. */
+  const markWaiters = [];
+  const markedRead = (id) =>
+    marks.some((body) => body?.includes(id))
+      ? Promise.resolve()
+      : new Promise((resolve) => markWaiters.push({ id, resolve }));
   const asked = new Promise((resolve) => {
     olderAsked = resolve;
   });
@@ -249,8 +304,12 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
         body: JSON.stringify({ messages: older, has_more: false }),
       });
     }
-    if (url.pathname.endsWith("/read") && request.method() === "PUT")
-      marks.push(request.postData());
+    if (url.pathname.endsWith("/read") && request.method() === "PUT") {
+      const body = request.postData();
+      marks.push(body);
+      for (const waiter of markWaiters)
+        if (body?.includes(waiter.id)) waiter.resolve();
+    }
     // A picture that loads, or the app shows its error card instead (#348).
     if (url.pathname.startsWith("/api/attachments/"))
       return route.fulfill(
@@ -279,7 +338,7 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
   const channelSubscribed = new Promise((resolve) => {
     subscribed = resolve;
   });
-  await context.routeWebSocket("**/ws", (socket) => {
+  await context.routeWebSocket(/\/ws(\?|$)/, (socket) => {
     gateway = socket;
     socket.onMessage((raw) => {
       const frame = JSON.parse(raw);
@@ -303,6 +362,9 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
       }),
     );
   await context.addInitScript(() => {
+    // This browser was already told about the desktop app; its one-time
+    // toast would sit where the toast case puts its own.
+    localStorage.setItem("gelabber.desktopApp.offered", "1");
     window.smokeErrors = [];
     window.addEventListener("error", (event) =>
       window.smokeErrors.push(event.message),
@@ -321,7 +383,7 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
     problems.push(...(await page.evaluate(() => window.smokeErrors)));
     await context.close();
   };
-  return { page, asked, releaseOlder, send, close, marks };
+  return { page, asked, releaseOlder, send, close, marks, markedRead };
 }
 
 /** An edit of message `n`: the same text (same length) or `content`. */
@@ -448,14 +510,12 @@ try {
     // list fetches before it opens at message 31.
     const label = "unread";
     const opened = await open({
-      unread: {
-        channel_id: TEXT,
-        server_id: SERVER,
+      unread: readRow({
         read_message_id: all[30].id,
         read_order: 31,
         read_at: AT,
         unread_count: 69,
-      },
+      }),
     });
     const { page, asked, releaseOlder, marks } = opened;
     await asked;
@@ -502,7 +562,12 @@ try {
       await page.mouse.wheel(0, 600);
       await new Promise((resolve) => setTimeout(resolve, 60));
     }
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    // The app sends the read position from a timer; wait for that request
+    // (the deadline only bounds a failure).
+    await Promise.race([
+      opened.markedRead(all[99].id),
+      new Promise((resolve) => setTimeout(resolve, 10_000)),
+    ]);
     assert.ok(
       marks.some((body) => body?.includes(all[99].id)),
       `${label}: reading to the end marked nothing read (${marks.join(", ")})`,
@@ -511,14 +576,12 @@ try {
     await opened.close();
 
     const again = await open({
-      unread: {
-        channel_id: TEXT,
-        server_id: SERVER,
+      unread: readRow({
         read_message_id: all[60].id,
         read_order: 61,
         read_at: AT,
         unread_count: 39,
-      },
+      }),
       shown: "Nachricht 61.",
     });
     await again.page.getByText("39 neue Nachrichten").waitFor();
@@ -541,14 +604,12 @@ try {
     // The last read message was deleted since: its order still finds the
     // first unread one, on the older page.
     const deleted = await open({
-      unread: {
-        channel_id: TEXT,
-        server_id: SERVER,
+      unread: readRow({
         read_message_id: id(999),
         read_order: 31,
         read_at: AT,
         unread_count: 69,
-      },
+      }),
     });
     await deleted.asked;
     deleted.releaseOlder();
@@ -829,8 +890,18 @@ try {
     await page.getByRole("menuitem", { name: "Text kopieren" }).click();
     const toast = page.locator(".ui-toast");
     await toast.waitFor();
-    // The toast's rise and the room it takes.
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    // The toast's rise, then the room it takes once measured (Toasts.tsx).
+    await toast.evaluate((card) =>
+      Promise.all(card.getAnimations().map((animation) => animation.finished)),
+    );
+    await page.waitForFunction(
+      () =>
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue(
+            "--lr-toast-space",
+          ),
+        ) > 0,
+    );
     await newest.hover();
     await frames(page, 4);
     const placed = await page.evaluate(() => {
@@ -862,7 +933,19 @@ try {
     );
     await toast.getByRole("button", { name: "Schließen" }).click();
     await toast.waitFor({ state: "detached" });
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    // The room goes back once the toast is gone; the deadline only bounds a
+    // failure, which the assertion below then describes.
+    await page
+      .waitForFunction(
+        () =>
+          getComputedStyle(document.documentElement)
+            .getPropertyValue("--lr-toast-space")
+            .trim() === "0px",
+        null,
+        { timeout: 5_000 },
+      )
+      .catch(() => {});
+    await frames(page, 2);
     const after = await page.evaluate(() => {
       const log = document.querySelector('[role="log"]');
       return {

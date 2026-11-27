@@ -56,6 +56,7 @@ pub fn harness(
         "banner_color": null,
         "banner_url": null,
         "avatar_decoration": null,
+        "locale": "de",
     }}));
     let world = Rc::new(RefCell::new(World {
         nav: Nav::new(href),

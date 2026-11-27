@@ -189,8 +189,7 @@ export function usePresenceModeBridge(userId: string | null): void {
         .then((saved) => {
           if (alive && call === latest) apply(userId, normalizeMode(saved));
         })
-        // Offline, or a server from before #590: automatic until the next
-        // load or frame says otherwise.
+        // Offline: automatic until the next load or frame says otherwise.
         .catch(() => {});
     };
     load();

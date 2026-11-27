@@ -64,7 +64,7 @@ export function badgeOf(row: Row, reading: string | null, now: number): Badge {
   const dot = !muted && !none && unread > 0;
   if (row.server_id === null) return { count: muted || none ? 0 : unread, dot };
   return {
-    count: none ? 0 : Math.max(0, row.mention_count ?? 0),
+    count: none ? 0 : Math.max(0, row.mention_count),
     dot,
   };
 }

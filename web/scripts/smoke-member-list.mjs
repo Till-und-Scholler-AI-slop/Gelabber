@@ -41,10 +41,12 @@ const server = {
   id: SERVER,
   name: "Lasttest",
   owner_id: ME,
+  icon_url: null,
   created_at: AT,
   role: "owner",
   permissions,
   member_permissions: permissions,
+  blocked: false,
 };
 /** Member `n`, named so that the list's order is theirs. */
 const member = (n) => ({
@@ -72,6 +74,8 @@ function detail(count) {
         name: "allgemein",
         kind: "text",
         created_at: AT,
+        limited: false,
+        role_ids: [],
       },
     ],
     members: [
@@ -82,9 +86,13 @@ function detail(count) {
         joined_at: AT,
         role: "owner",
         role_ids: [],
+        status_text: null,
+        accent_color: null,
+        avatar_decoration: null,
       },
       ...Array.from({ length: count }, (_, n) => member(n)),
     ],
+    roles: [],
   };
 }
 
@@ -93,11 +101,21 @@ function answer(path, count) {
     return {
       user: {
         id: ME,
+        email: "observer@example.test",
         name: "Beobachter",
         avatar_url: null,
-        email: "observer@example.test",
+        created_at: AT,
+        bio: null,
+        pronouns: null,
+        status_text: null,
+        accent_color: null,
+        banner_color: null,
+        banner_url: null,
+        avatar_decoration: null,
+        locale: "de",
       },
       csrf_token: "a".repeat(64),
+      operator: false,
     };
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail(count);
@@ -117,8 +135,20 @@ function answer(path, count) {
   const profile = /^\/api\/users\/([^/]+)$/.exec(path)?.[1];
   if (profile) {
     const n = Number(profile.slice(-12)) - 10_000;
-    const { user_id, name } = member(n);
-    return { id: user_id, name, avatar_url: null, created_at: AT };
+    const { user_id, name, status_text } = member(n);
+    return {
+      id: user_id,
+      name,
+      avatar_url: null,
+      created_at: AT,
+      bio: null,
+      pronouns: null,
+      status_text,
+      accent_color: null,
+      banner_color: null,
+      banner_url: null,
+      avatar_decoration: null,
+    };
   }
   return {};
 }
