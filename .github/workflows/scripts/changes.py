@@ -32,9 +32,12 @@ AREAS = {
                '.claude/', '.github/', 'web/docker-entrypoint.d/50-gelabber-public-pages.sh',
                'desktop/packaging/updater.pub'),
     'minio': ('deploy/compose/minio/', 'deploy/compose/mc/', 'deploy/compose/minio-init.sh',
-              'deploy/compose/compose.yaml', 'backend/Cargo.toml',
+              'deploy/compose/compose.yaml',
               CI, '.github/workflows/minio-images.yml', '.github/workflows/publish-minio.yml'),
 }
+# What the minio job builds MinIO and mc from; otherwise it checks the
+# published pinned images (minio-images.yml).
+MINIO_BUILD = ('deploy/compose/minio/', 'deploy/compose/mc/', '.github/workflows/minio-images.yml')
 # Read by no check: a change here alone starts nothing.
 NO_AREA = ('.github/ISSUE_TEMPLATE/', '.github/release-notes/')
 # The app images a pull request builds (without pushing). Each builds when
@@ -78,9 +81,10 @@ def images(paths):
             if any(touches(path, image['inputs']) for path in paths if path)}
 
 
-def outputs(touched, built):
+def outputs(touched, built, minio_build=False):
     """`name=value` lines for $GITHUB_OUTPUT; `images` is the build matrix."""
     lines = [f'{area}={"true" if area in touched else "false"}' for area in AREAS]
+    lines.append(f'minio-build={"true" if minio_build else "false"}')
     matrix = [{key: image[key] for key in ('name', 'context', 'file')}
               for image in IMAGES if image['name'] in built]
     lines.append('images=' + json.dumps(matrix, separators=(',', ':')))
@@ -89,11 +93,14 @@ def outputs(touched, built):
 
 def main(argv):
     if '--all' in argv:
-        touched, built = set(AREAS), {image['name'] for image in IMAGES}
+        # Release candidates build MinIO from source too: operators fall back
+        # to that build, and nobody waits on it beside the desktop jobs.
+        touched, built, minio_build = set(AREAS), {image['name'] for image in IMAGES}, True
     else:
         paths = sys.stdin.read().splitlines()
         touched, built = areas(paths), images(paths)
-    print('\n'.join(outputs(touched, built)))
+        minio_build = any(touches(path, MINIO_BUILD) for path in paths if path)
+    print('\n'.join(outputs(touched, built, minio_build)))
     print('areas: ' + (', '.join(sorted(touched)) or 'none')
           + '; images: ' + (', '.join(sorted(built)) or 'none'), file=sys.stderr)
 
