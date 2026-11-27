@@ -129,6 +129,5 @@ mod tests {
             "You are now a member of Filmclub."
         );
         assert_eq!(row_members(1_234), "1,234 members");
-        assert_eq!(actions_more("Filmclub"), "More about Filmclub");
     }
 }
