@@ -54,6 +54,9 @@ WORKFLOW = REPO / WORKFLOW_NAME
 # Runs WORKFLOW as a job (`uses:`) and attaches the apps to a release.
 RELEASE_WORKFLOW = REPO / ".github/workflows/desktop-release.yml"
 WINDOWS_JOB = "core-windows"
+# The script that job runs on what ships (exports, H264 names, dependencies).
+WINDOWS_CHECK_NAME = "desktop/packaging/native/windows/check-binaries.ps1"
+WINDOWS_CHECK = REPO / WINDOWS_CHECK_NAME
 WINDOWS_UPLOAD_JOB = "release-asset-windows"
 # Signs the installer that core-windows built in a release pull request's run
 # (desktop-native.yml `prebuilt_run`); it builds nothing itself.
@@ -406,17 +409,20 @@ def workflow_facts():
     environment = re.search(r"^    env:\n((?:      \S.*\n)+)", windows, re.M)
     variables = dict(re.findall(r"^      (\w+): (.*)$", environment[1] if environment else "", re.M))
     needs = re.search(r"^    needs: (.*)$", upload, re.M)
+    check = "".join(
+        f"{line}\n" for line in read(WINDOWS_CHECK).splitlines() if not line.lstrip().startswith("#")
+    ) if WINDOWS_CHECK.is_file() else ""
     return {
         "the Windows job builds the app with RUSTFLAGS -C target-feature=+crt-static": (
             variables.get("RUSTFLAGS", "").strip("\"'").split() == ["-C", "target-feature=+crt-static"]
             and windows.count("RUSTFLAGS") == 1
         ),
-        # The step "Check and measure the binaries".
-        "the Windows job fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": all(
-            mark in windows for mark in (
+        "the Windows job fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": (
+            re.search(rf"^        run: \./{re.escape(WINDOWS_CHECK_NAME)}\s*$", windows, re.M) is not None
+            and all(mark in check for mark in (
                 "'WelsInitEncoderExt'", "'avcodec_open2'", "$content.Contains($_)",
                 'if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg',
-            )
+            ))
         ),
         "a release takes the Windows installer from that job only": (
             bool(needs) and bool(builders & set(re.findall(r"[\w-]+", needs[1])))

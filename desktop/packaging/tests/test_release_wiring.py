@@ -98,7 +98,9 @@ class NativeWiring(unittest.TestCase):
         self.assertIn('name: gelabber-native-linux-x64\n', linux)
         self.assertIn('desktop/packaging/native/tarball.sh', linux)
         self.assertIn('name: gelabber-native-windows-x64\n', windows)
-        self.assertIn('desktop\\packaging\\native\\windows\\installer.nsi', windows)
+        self.assertIn('run: ./desktop/packaging/native/windows/build-installer.ps1\n', windows)
+        installer = (BUILD.parents[2] / 'desktop/packaging/native/windows/build-installer.ps1').read_text()
+        self.assertIn('desktop\\packaging\\native\\windows\\installer.nsi', installer)
         for job, step in ((linux, 'Package the native app'), (windows, 'Native installer')):
             with self.subTest(step=step):
                 block = job.split(f'- name: {step}\n', 1)[1].split('\n      - name:', 1)[0]
