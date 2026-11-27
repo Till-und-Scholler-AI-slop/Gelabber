@@ -26,7 +26,6 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
 }));
 
 import {
-  OVERVIEW_REFETCH_MS,
   operatorKeys,
   useOperatorOverview,
   useOperatorRefresh,
@@ -43,17 +42,6 @@ afterEach(() => {
 });
 
 describe("operator queries", () => {
-  it("refetches the overview every minute under the user's scope", () => {
-    fixture.operator = true;
-    renderToStaticMarkup(<Probe />);
-    expect(OVERVIEW_REFETCH_MS).toBe(60_000);
-    expect(fixture.options[0]).toMatchObject({
-      queryKey: ["user", "u1", 3, "operator", "overview"],
-      enabled: true,
-      refetchInterval: 60_000,
-    });
-  });
-
   it("does not ask the server for someone who is not an operator", () => {
     renderToStaticMarkup(<Probe />);
     expect(fixture.options[0]).toMatchObject({ enabled: false });

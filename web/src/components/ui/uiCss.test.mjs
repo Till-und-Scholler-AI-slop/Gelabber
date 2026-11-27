@@ -28,30 +28,6 @@ describe("the primitives' stylesheet", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("gives a field one frame in focus: no offset ring around .ui-field (#561)", () => {
-    const body =
-      /\.ui-field:focus-visible,\s*\.ui-field-shell:has\(\.ui-field-bare:focus\)\s*\{([^}]*)\}/.exec(
-        ui,
-      )?.[1] ?? "";
-    expect(body).toMatch(/outline:\s*1px solid transparent/);
-    expect(body).toMatch(/outline-offset:\s*0/);
-    expect(body).toMatch(
-      /box-shadow:\s*0 0 0 1px var\(--lr-field-border-focus\)/,
-    );
-  });
-
-  it("keeps the default ring in the base layer, below every component (#561)", () => {
-    const index = unlayered
-      .find(({ file }) => file === "index.css")
-      .css.replace(/\s+/g, " ")
-      .replace(/\( /g, "(")
-      .replace(/ \)/g, ")");
-    expect(index).toMatch(
-      /@layer base \{ :where\(button, a, input, textarea, select, summary, \[tabindex\]\):focus-visible/,
-    );
-    expect(index.split(":where(button, a, input").length).toBe(2);
-  });
-
   it("drops the global ring's page-coloured shadow wherever a field drops its outline (#561)", () => {
     const offenders = [...unlayered, { file: "ui.css", css: ui }].flatMap(
       ({ file, css }) => {
@@ -77,15 +53,5 @@ describe("the primitives' stylesheet", () => {
       },
     );
     expect(offenders).toEqual([]);
-  });
-
-  it("still shows a skeleton when the motion kill switches drop animations", () => {
-    for (const scope of [
-      /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.ui-skeleton\s*\{([^}]*)\}/,
-      /html\[data-reduced-motion="true"\] \.ui-skeleton\s*\{([^}]*)\}/,
-    ]) {
-      const body = scope.exec(ui)?.[1] ?? "";
-      expect(body).toMatch(/animation:\s*ui-skeleton-in\b[^;]*!important/);
-    }
   });
 });

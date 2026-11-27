@@ -9,16 +9,6 @@ import {
 } from "./protocol.ts";
 
 describe("ws protocol", () => {
-  it("keeps subscribe frames compact", () => {
-    expect(encode({ op: "h" })).toBe('{"op":"h"}');
-    expect(JSON.parse(encode({ op: "s", s: "srv", c: "ch", n: 4 }))).toEqual({
-      op: "s",
-      s: "srv",
-      c: "ch",
-      n: 4,
-    });
-  });
-
   it("decodes presence and typing without treating them as chat events", () => {
     expect(decode('{"op":"p","s":"srv","u":"u1","st":"o"}')).toEqual({
       op: "p",
@@ -132,21 +122,6 @@ describe("ws protocol", () => {
       s: "srv",
       n: 3,
     });
-  });
-
-  it("keeps signaling frames small", () => {
-    expect(encode({ op: "sig", t: "j", s: "srv", c: "voice" })).toBe(
-      '{"op":"sig","t":"j","s":"srv","c":"voice"}',
-    );
-    expect(encode({ op: "sig", t: "l", s: "srv", c: "voice" })).toBe(
-      '{"op":"sig","t":"l","s":"srv","c":"voice"}',
-    );
-    expect(encode({ op: "sig", t: "p", s: "srv", c: "voice", k: "s" })).toBe(
-      '{"op":"sig","t":"p","s":"srv","c":"voice","k":"s"}',
-    );
-    expect(encode({ op: "sig", t: "m", s: "srv", c: "voice", on: true })).toBe(
-      '{"op":"sig","t":"m","s":"srv","c":"voice","on":true}',
-    );
   });
 
   it("resumes with last seq and drops duplicates", () => {

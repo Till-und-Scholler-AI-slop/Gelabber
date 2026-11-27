@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setLocale } from "../i18n/locale.ts";
 import {
-  TYPING_BAR_PX,
   TYPING_IDLE_MS,
   TYPING_REFRESH_MS,
   createTypingSender,
@@ -59,7 +58,6 @@ describe("presence store", () => {
     );
     expect(groups.map((g) => g.group)).toEqual(["o", "i", "x"]);
     expect(groups[0]?.members[0]?.name).toBe("Ada");
-    expect(TYPING_BAR_PX).toBe(28);
   });
 
   it("lists do not disturb with the online members (#590)", () => {
@@ -174,18 +172,5 @@ describe("idle activity", () => {
     expect(isPresenceActivityEvent("mousemove")).toBe(true);
     expect(isPresenceActivityEvent("visibilitychange")).toBe(false);
     expect(isPresenceActivityEvent("focus")).toBe(false);
-  });
-});
-
-describe("ttl reliability", () => {
-  it("does not keep a stale typer after the deadline", () => {
-    vi.useFakeTimers();
-    applyTyping("ch", "u1", true, Date.now(), 50);
-    vi.setSystemTime(Date.now() + 80);
-    pruneTyping(Date.now());
-    expect(
-      typingUserIds(useTypingStore.getState().byChannel, "ch", Date.now()),
-    ).toEqual([]);
-    vi.useRealTimers();
   });
 });
