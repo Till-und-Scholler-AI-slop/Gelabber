@@ -345,17 +345,21 @@ fn settle(
     // A later write of the same value still on its way carries this one's
     // change too: the value stays ahead until the last one answers.
     let last = !r.writes.iter().any(|w| w.same_value(&write));
-    // Answers can come in out of order. A refusal that only older writes
-    // are still waiting on is kept: their success then does not say
-    // "Gespeichert" or keep the refused value (GEL-408).
-    let newer = r
-        .writes
-        .iter()
-        .any(|w| w.same_value(&write) && w.seq() > write.seq());
-    if outcome.is_err() && !last && !newer {
+    // Answers can come in out of order (GEL-408). Each write sends the whole
+    // value, so a newer write carries the changes of the older ones. A
+    // refusal that only older writes are still waiting on is kept: their
+    // success afterwards does not say "Gespeichert" or keep the value. A
+    // newer write's success carries the refused change again.
+    let same = |w: &&Write| w.same_value(&write);
+    let newer = |w: &&Write| w.seq() > write.seq();
+    let pending_newer = r.writes.iter().filter(same).any(|w| newer(&w));
+    if outcome.is_ok() {
+        r.refused
+            .retain(|w| !(w.same_value(&write) && w.seq() < write.seq()));
+    } else if !last && !pending_newer {
         r.refused.push(write.clone());
     }
-    let refused = r.refused.iter().any(|w| w.same_value(&write));
+    let refused = r.refused.iter().filter(same).any(|w| newer(&w));
     if last {
         r.refused.retain(|w| !w.same_value(&write));
     }

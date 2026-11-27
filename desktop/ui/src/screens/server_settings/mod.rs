@@ -1952,6 +1952,68 @@ mod tests {
         assert_eq!(channels, Some(egui::accesskit::Toggled::False));
     }
 
+    /// A refused write, then a newer one that carries its change again: the
+    /// newer one's success is said, though an older write answered between
+    /// them (GEL-408).
+    #[test]
+    fn a_later_write_saves_over_an_older_refusal() {
+        use crate::app::testkit::{
+            FakeApi, HOME, MODERATION, Reply, launcher, wait_for, wait_for_label,
+        };
+        use egui::accesskit::Role as A11y;
+        use egui_kittest::kittest::Queryable;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _config = crate::platform::paths::testing::TempConfig::new("roles-refused-then-later");
+        let inner = with_roles(Log::default());
+        let (first, third) = (
+            std::sync::Arc::new(AtomicBool::new(false)),
+            std::sync::Arc::new(AtomicBool::new(false)),
+        );
+        let (hold_first, hold_third) = (first.clone(), third.clone());
+        let api = FakeApi::start(true, move |method, path, body| {
+            if method == "PATCH" && path.starts_with("/roles/") {
+                let held = if body.contains("send_files") {
+                    &hold_third
+                } else if body.contains("manage_channels") {
+                    return Some(Reply::error(403, "forbidden"));
+                } else {
+                    &hold_first
+                };
+                while !held.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+            inner(method, path, body)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Neue Rolle");
+        click_role(&mut harness, A11y::Link, "Rollen");
+        click_node(&mut harness, "Server verwalten", |h| {
+            h.query_all_by_label("Server verwalten").next().map(id_of)
+        });
+        click_now(&mut harness, "Kanäle verwalten", |h| {
+            h.query_all_by_label("Kanäle verwalten").next().map(id_of)
+        });
+        wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+        click_now(&mut harness, "Dateien senden", |h| {
+            h.query_all_by_label("Dateien senden").next().map(id_of)
+        });
+        let patch = format!("PATCH /roles/{MODERATION}");
+        wait_for(&mut harness, "the third write", |_| {
+            api.seen.lock().iter().filter(|r| **r == patch).count() == 3
+        });
+        // The first is answered, then the third.
+        first.store(true, Ordering::SeqCst);
+        wait_for(&mut harness, "the first answer", |_| api.answering() == 1);
+        third.store(true, Ordering::SeqCst);
+        wait_for_label(&mut harness, common::saved());
+        assert!(
+            harness
+                .query_by_label("Nicht gespeichert – erneut versuchen")
+                .is_none()
+        );
+    }
+
     /// The "+" on a member row lists the roles; a checkbox saves the
     /// member's roles at once and the list stays open.
     #[test]
