@@ -181,6 +181,8 @@ function peerSnapshotFixture(peers) {
     document: { querySelectorAll: () => [] },
     setTimeout,
     clearTimeout,
+    // The sample reads the test's clock, mocked or not.
+    Date,
   });
   return vm.runInContext(`(${sample.toString()})`, context);
 }
@@ -213,7 +215,11 @@ test("actual sample skips native getters for an already closed peer", async () =
   assert.equal(calls, 0);
 });
 
-test("actual sample reports a close-racing pending getStats as unavailable and still samples the next live peer", async () => {
+test("actual sample reports a close-racing pending getStats as unavailable and still samples the next live peer", async (t) => {
+  // A mocked clock: the closing peer's stats wait runs out at exactly 45 of
+  // the 50 ms, and the live peer is sampled with 5 ms left, however slowly
+  // the machine runs.
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
   const retired = {
     connectionState: "connected",
     getStats: () => {
@@ -233,9 +239,12 @@ test("actual sample reports a close-racing pending getStats as unavailable and s
     getSenders: () => [],
     getReceivers: () => [],
   };
-  const snapshot = await peerSnapshotFixture([retired, live])({
+  const pending = peerSnapshotFixture([retired, live])({
     deadlineEpochMs: Date.now() + 50,
   });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  t.mock.timers.tick(45);
+  const snapshot = await pending;
   assertUnavailableClosedPeer(snapshot.peers[0]);
   assert.equal(snapshot.peers[1].connection, "connected");
   assert.equal(liveCalls, 1);

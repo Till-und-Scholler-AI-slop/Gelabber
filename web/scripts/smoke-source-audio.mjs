@@ -517,9 +517,11 @@ async function api(actor, path, method = "GET", body) {
 
 async function participant(name) {
   const chosen = actors.length ? receiverBrowser : browser;
-  const context = await chosen.newContext(
-    chosen === browser ? { permissions: ["camera", "microphone"] } : {},
-  );
+  const context = await chosen.newContext({
+    // The labels below are German; the app follows the browser's language.
+    locale: "de-DE",
+    ...(chosen === browser ? { permissions: ["camera", "microphone"] } : {}),
+  });
   await context.addInitScript(instrument);
   const actor = { context, page: await context.newPage(), name };
   actors.push(actor);
@@ -972,9 +974,8 @@ try {
     .click();
   const input = owner.page.locator("#audio-input");
   await input.waitFor();
-  await owner.page
-    .getByRole("button", { name: "Geräteliste aktualisieren", exact: true })
-    .click();
+  // The list reads the devices by itself and follows devicechange; there is
+  // no refresh button since 2026-10-21.
   const device = await until(
     () =>
       input

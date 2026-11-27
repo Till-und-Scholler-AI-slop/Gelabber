@@ -20,7 +20,10 @@ for (const engine of [chromium, firefox]) {
   try {
     const contexts = await Promise.all(
       [1280, 390, 320].map((width) =>
-        browser.newContext({ viewport: { width, height: 844 } }),
+        browser.newContext({
+          viewport: { width, height: 844 },
+          locale: "de-DE",
+        }),
       ),
     );
     const pages = await Promise.all(
@@ -489,6 +492,23 @@ for (const engine of [chromium, firefox]) {
     );
     await request(0, "DELETE", `/messages/${message.id}`, undefined, 204);
     await row(member).waitFor({ state: "detached" });
+    // Between people who are no friends a first DM is a message request
+    // (#563), which the recipient cannot react to before accepting.
+    await request(
+      0,
+      "POST",
+      "/friends/requests",
+      { user_id: accounts[1].id },
+      201,
+    );
+    const friends = await request(
+      1,
+      "POST",
+      "/friends/requests",
+      { user_id: accounts[0].id },
+      200,
+    );
+    assert.equal(friends.status, "friends");
     const dm = await request(
       0,
       "POST",
@@ -513,16 +533,29 @@ for (const engine of [chromium, firefox]) {
       .getByRole("button", { name: "Reaktion hinzufügen", exact: true })
       .click();
     await member.getByRole("dialog").getByRole("searchbox").fill("Daumen hoch");
-    await member
-      .getByRole("dialog")
-      .getByRole("button", { name: "Daumen hoch", exact: true })
-      .click();
-    await dmRow
-      .getByRole("button", {
-        name: "👍: 1 Reaktion, du hast reagiert",
-        exact: true,
-      })
-      .waitFor();
+    // The chip shows the pending vote while its request runs, and a reload
+    // aborts a request still running: the reload below waits for the answer.
+    // Waiter and action together: a failed click leaves no waiter unheard.
+    const [saved] = await Promise.all([
+      member.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          response.url().includes(`/api/messages/${dmMessage.id}/reactions/`),
+      ),
+      (async () => {
+        await member
+          .getByRole("dialog")
+          .getByRole("button", { name: "Daumen hoch", exact: true })
+          .click();
+        await dmRow
+          .getByRole("button", {
+            name: "👍: 1 Reaktion, du hast reagiert",
+            exact: true,
+          })
+          .waitFor();
+      })(),
+    ]);
+    assert.equal(saved.status(), 200, "the DM reaction was not saved");
     const foreign = await contexts[2].request.put(
       new URL(
         `/api/messages/${dmMessage.id}/reactions/${encodeURIComponent("👍")}`,

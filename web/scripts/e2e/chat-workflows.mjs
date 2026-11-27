@@ -1,4 +1,4 @@
-/* global process, document, window, fetch, Event, console, setTimeout, Buffer */
+/* global process, document, window, fetch, Event, console, setTimeout, Buffer, requestAnimationFrame, URL */
 // Local browser acceptance for read state, scoped search and composer drafts.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -72,6 +72,32 @@ const send = async (who, id, content) => {
 try {
   owner = await actor("owner");
   const member = await actor("member");
+  // The member's message requests still open: the list's query is fetching,
+  // and a read waits for it (useMarkRead's `ready`).
+  const memberFetches = new Set();
+  member.page.on("request", (request) => {
+    if (
+      request.method() === "GET" &&
+      /\/api\/channels\/[^/]+\/messages/.test(request.url())
+    )
+      memberFetches.add(request);
+  });
+  for (const event of ["requestfinished", "requestfailed"])
+    member.page.on(event, (request) => memberFetches.delete(request));
+  // The member's reads as sent: which message, and the server's answer.
+  // Never sent, rejected, or sent for an older row tell three causes apart.
+  const memberReads = [];
+  member.page.on("response", (response) => {
+    const request = response.request();
+    if (
+      request.method() === "PUT" &&
+      /\/api\/channels\/[^/]+\/read$/.test(new URL(request.url()).pathname)
+    )
+      memberReads.push({
+        messageId: request.postDataJSON()?.message_id ?? null,
+        status: response.status(),
+      });
+  });
   const created = await api(owner, "/servers", "POST", {
     name: `Chat ${suffix}`,
   });
@@ -120,7 +146,7 @@ try {
         el.scrollTop = 0;
         el.dispatchEvent(new Event("scroll"));
       });
-      await send(owner, channel, "history must stay unread");
+      const newest = await send(owner, channel, "history must stay unread");
       await until(
         () => channelState(member, channel),
         (row) => row.unread_count === 1,
@@ -128,12 +154,67 @@ try {
       );
       await new Promise((r) => setTimeout(r, 900));
       assert.equal((await channelState(member, channel)).unread_count, 1);
-      await log.evaluate((el) => {
-        el.scrollTop = el.scrollHeight;
-        el.dispatchEvent(new Event("scroll"));
-      });
+      // From the top, the jump lands at the end the virtual list estimates;
+      // rows measured there can move the end on. Scroll until the list holds
+      // at its end, as a reader keeps scrolling; after that only read it, so
+      // a drift away from the end shows in the sample.
+      const listState = (scroll) =>
+        log.evaluate(async (el, scroll) => {
+          if (scroll) el.scrollTop = el.scrollHeight;
+          const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
+          let still = 0;
+          let last = state();
+          // At most 2 s of frames: a list that never holds says so.
+          for (let frame = 0; still < 5 && frame < 120; frame++) {
+            await new Promise(requestAnimationFrame);
+            const now = state();
+            still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
+            last = now;
+          }
+          const box = el.getBoundingClientRect();
+          const newest = [...el.querySelectorAll("[data-index]")].find((row) =>
+            row.textContent.includes("history must stay unread"),
+          );
+          const rect = newest?.getBoundingClientRect();
+          return {
+            held: still >= 5,
+            gap: el.scrollHeight - el.scrollTop - el.clientHeight,
+            newestDrawn: !!newest,
+            newestOnScreen:
+              !!rect && rect.top >= box.top && rect.bottom <= box.bottom + 1,
+            // What else a read needs (mayMarkRead): the app's own "at
+            // latest" (its jump button shows while it is false), a focused,
+            // visible page, and a list that has opened.
+            jumpToLatestShown: !!document.querySelector(".lr-jump-latest"),
+            focused: document.hasFocus(),
+            visibility: document.visibilityState,
+            listBusy: el.getAttribute("aria-busy") === "true",
+            // A failed read shows this and stops further attempts.
+            readNotSaved: el
+              .closest("main, body")
+              .textContent.includes("Lesestatus nicht gespeichert."),
+          };
+        }, scroll);
       await until(
-        () => channelState(member, channel),
+        () => listState(true),
+        (state) => state.held && state.gap <= 1,
+        "scroll-to-end",
+      );
+      const readsBefore = memberReads.length;
+      // Its last sample says where the list stood and what the app made of
+      // it: at the end, the newest on screen, no jump button, focused and
+      // visible, and still unread is the app's fault; the reads sent since
+      // say whether it never sent one, was refused, or read an older row.
+      await until(
+        async () => ({
+          ...(await channelState(member, channel)),
+          list: {
+            ...(await listState(false)),
+            messageFetches: memberFetches.size,
+            reads: memberReads.slice(readsBefore),
+            newestId: newest.id,
+          },
+        }),
         (row) => row.unread_count === 0,
         "scroll-read",
       );
