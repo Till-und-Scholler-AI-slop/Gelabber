@@ -580,6 +580,8 @@ jobs:
       contents: read
     uses: ./.github/workflows/desktop-native.yml
     with:
+      # Packages after merge, for manual runs and for release candidates; never for other pull requests.
+      package: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || needs.changes.outputs.candidate == 'true' }}
       candidate: ${{ needs.changes.outputs.candidate == 'true' }}
 
   # A libwebrtc package that a push built goes into the libwebrtc-packages

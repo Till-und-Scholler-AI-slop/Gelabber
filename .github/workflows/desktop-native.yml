@@ -11,6 +11,12 @@ on:
         type: string
         required: false
         default: ""
+      # Packaging runs after merge (main/v*), for releases and their candidates.
+      package:
+        description: Build and test the packages (tarball, installer, pacman repository)
+        type: boolean
+        required: false
+        default: false
       # Release and hotfix pull requests to main (GEL-358): the release's
       # packages, signed only once the tag exists.
       candidate:
@@ -152,7 +158,7 @@ jobs:
 
       - name: Is the package stored?
         id: asset
-        if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && steps.stored.outputs.found != 'true'
+        if: inputs.package && !inputs.candidate && steps.stored.outputs.found != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
@@ -297,7 +303,7 @@ jobs:
 
       - name: Is the package stored?
         id: asset
-        if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && steps.stored.outputs.found != 'true'
+        if: inputs.package && !inputs.candidate && steps.stored.outputs.found != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -527,17 +533,16 @@ jobs:
           cargo build --locked --manifest-path desktop/Cargo.toml -p gelabber
           desktop/packaging/native/smoke.sh desktop/target/debug/gelabber 10
 
-      # Packaging runs after merge (main/v*), for releases and their candidates.
       # The script also checks both files (C++ runtime, exports, rpath).
       - name: Package the native app
-        if: (github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate
+        if: inputs.package
         run: |
           set -euo pipefail
           lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
           desktop/packaging/native/tarball.sh "$lib"
 
       - name: Upload the native app
-        if: (github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate
+        if: inputs.package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gelabber-native-linux-x64
@@ -681,11 +686,10 @@ jobs:
         id: native
         run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber
 
-      # The native app's installer from its own NSIS script, after merge and
-      # for releases only (as the Linux packages); NSIS of the image.
+      # The native app's installer from its own NSIS script; NSIS of the image.
       - name: Native installer
         id: native-installer
-        if: ${{ !cancelled() && ((github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate) && steps.native.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.package && steps.native.outcome == 'success' }}
         timeout-minutes: 15
         run: ./desktop/packaging/native/windows/build-installer.ps1
 
@@ -917,7 +921,7 @@ jobs:
   arch-repo:
     name: Arch package and repository
     if: >-
-      !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' &&
+      !cancelled() && inputs.package && !inputs.candidate &&
       (needs.core-linux.result == 'success' || needs.prebuilt.result == 'success')
     needs: [core-linux, prebuilt]
     runs-on: ubuntu-24.04
