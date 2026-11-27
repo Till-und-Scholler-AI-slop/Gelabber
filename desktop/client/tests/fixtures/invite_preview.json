@@ -1,11 +1,11 @@
 {
-  "code": "w7fsxv8n9br3",
+  "code": "fzgsmrstpwv4",
   "server": {
     "id": "00000000-0000-4000-8000-000000000007",
     "name": "Aufnahme",
     "icon_url": null,
     "member_count": 1
   },
-  "expires_at": "2030-01-01T00:00:44Z",
+  "expires_at": "2030-01-01T00:00:44.000001Z",
   "member": false
 }

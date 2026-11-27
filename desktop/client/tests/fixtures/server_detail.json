@@ -3,7 +3,7 @@
   "name": "Aufnahme",
   "owner_id": "00000000-0000-4000-8000-000000000004",
   "icon_url": null,
-  "created_at": "2030-01-01T00:00:33Z",
+  "created_at": "2030-01-01T00:00:33.000001Z",
   "role": "owner",
   "permissions": [
     "manage_server",
@@ -28,13 +28,13 @@
       "id": "00000000-0000-4000-8000-000000000029",
       "server_id": "00000000-0000-4000-8000-000000000007",
       "name": "Textkanäle",
-      "created_at": "2030-01-01T00:00:34Z"
+      "created_at": "2030-01-01T00:00:34.000001Z"
     },
     {
       "id": "00000000-0000-4000-8000-000000000030",
       "server_id": "00000000-0000-4000-8000-000000000007",
       "name": "Sprachkanäle",
-      "created_at": "2030-01-01T00:00:36Z"
+      "created_at": "2030-01-01T00:00:36.000001Z"
     }
   ],
   "channels": [
@@ -44,7 +44,7 @@
       "category_id": "00000000-0000-4000-8000-000000000029",
       "name": "allgemein",
       "kind": "text",
-      "created_at": "2030-01-01T00:00:35Z",
+      "created_at": "2030-01-01T00:00:35.000001Z",
       "limited": false,
       "role_ids": []
     },
@@ -54,7 +54,7 @@
       "category_id": "00000000-0000-4000-8000-000000000030",
       "name": "Wohnzimmer",
       "kind": "voice",
-      "created_at": "2030-01-01T00:00:37Z",
+      "created_at": "2030-01-01T00:00:37.000001Z",
       "limited": false,
       "role_ids": []
     }
@@ -64,7 +64,7 @@
       "user_id": "00000000-0000-4000-8000-000000000004",
       "name": "Lena",
       "avatar_url": null,
-      "joined_at": "2030-01-01T00:00:33Z",
+      "joined_at": "2030-01-01T00:00:33.000001Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,
@@ -75,7 +75,7 @@
       "user_id": "00000000-0000-4000-8000-000000000005",
       "name": "Jonas",
       "avatar_url": null,
-      "joined_at": "2030-01-01T00:00:39Z",
+      "joined_at": "2030-01-01T00:00:39.000001Z",
       "status_text": null,
       "accent_color": null,
       "avatar_decoration": null,

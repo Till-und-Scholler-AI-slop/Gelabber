@@ -9,7 +9,7 @@
         "avatar_url": null
       },
       "content": "Hey Lena, hast du die Fotos vom Wochenende noch?",
-      "created_at": "2030-01-01T00:00:29Z",
+      "created_at": "2030-01-01T00:00:29.000001Z",
       "edited_at": null,
       "revision": 18,
       "created_order": 14,
@@ -27,7 +27,7 @@
         "avatar_url": null
       },
       "content": "Ja, ich schicke sie dir heute Abend.",
-      "created_at": "2030-01-01T00:00:30Z",
+      "created_at": "2030-01-01T00:00:30.000001Z",
       "edited_at": null,
       "revision": 21,
       "created_order": 15,

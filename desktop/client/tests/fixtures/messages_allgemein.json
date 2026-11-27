@@ -9,7 +9,7 @@
         "avatar_url": null
       },
       "content": "Hallo zusammen! 👋",
-      "created_at": "2030-01-01T00:00:18Z",
+      "created_at": "2030-01-01T00:00:18.000001Z",
       "edited_at": null,
       "revision": 1,
       "created_order": 1,
@@ -27,7 +27,7 @@
         "avatar_url": null
       },
       "content": "Wer ist heute Abend dabei?",
-      "created_at": "2030-01-01T00:00:19Z",
+      "created_at": "2030-01-01T00:00:19.000001Z",
       "edited_at": null,
       "revision": 2,
       "created_order": 2,
@@ -45,7 +45,7 @@
         "avatar_url": null
       },
       "content": "Ich bin dabei. **Film oder Spiel?**",
-      "created_at": "2030-01-01T00:00:20Z",
+      "created_at": "2030-01-01T00:00:20.000001Z",
       "edited_at": null,
       "revision": 3,
       "created_order": 3,
@@ -63,7 +63,7 @@
         "avatar_url": null
       },
       "content": "Spiel! Ich hätte Lust auf *Brettspiele* oder etwas Kooperatives.",
-      "created_at": "2030-01-01T00:00:21Z",
+      "created_at": "2030-01-01T00:00:21.000001Z",
       "edited_at": null,
       "revision": 4,
       "created_order": 4,
@@ -81,7 +81,7 @@
         "avatar_url": null
       },
       "content": "Klingt gut, @Jonas bringst du die Snacks mit?",
-      "created_at": "2030-01-01T00:00:22Z",
+      "created_at": "2030-01-01T00:00:22.000001Z",
       "edited_at": null,
       "revision": 5,
       "created_order": 5,
@@ -99,7 +99,7 @@
         "avatar_url": null
       },
       "content": "Klar, ich bring Chips und Limo mit 🍿",
-      "created_at": "2030-01-01T00:00:23Z",
+      "created_at": "2030-01-01T00:00:23.000001Z",
       "edited_at": null,
       "revision": 6,
       "created_order": 6,
@@ -126,7 +126,7 @@
         "avatar_url": null
       },
       "content": "Ich habe die Regeln schon mal rausgesucht:\n> Jede Runde zieht jede Person zwei Karten.\n> Wer zuerst zehn Punkte hat, gewinnt.",
-      "created_at": "2030-01-01T00:00:24Z",
+      "created_at": "2030-01-01T00:00:24.000001Z",
       "edited_at": null,
       "revision": 7,
       "created_order": 7,
@@ -144,7 +144,7 @@
         "avatar_url": null
       },
       "content": "Für die Punkte habe ich ein kleines Skript:\n```\nfn punkte(karten: &[u8]) -> u32 {\n    karten.iter().map(|k| *k as u32).sum()\n}\n```",
-      "created_at": "2030-01-01T00:00:25Z",
+      "created_at": "2030-01-01T00:00:25.000001Z",
       "edited_at": null,
       "revision": 13,
       "created_order": 8,
@@ -176,7 +176,7 @@
         "avatar_url": null
       },
       "content": "Perfekt, dann treffen wir uns um `20:00` im Sofa.",
-      "created_at": "2030-01-01T00:00:26Z",
+      "created_at": "2030-01-01T00:00:26.000001Z",
       "edited_at": null,
       "revision": 9,
       "created_order": 9,
@@ -194,7 +194,7 @@
         "avatar_url": null
       },
       "content": "Bis später! 🎲",
-      "created_at": "2030-01-01T00:00:27Z",
+      "created_at": "2030-01-01T00:00:27.000001Z",
       "edited_at": null,
       "revision": 10,
       "created_order": 10,
