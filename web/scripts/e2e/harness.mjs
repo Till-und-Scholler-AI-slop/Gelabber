@@ -39,6 +39,14 @@ export async function pollPause(deadline) {
   while (Date.now() < wakeAt) await pause(Math.max(1, wakeAt - Date.now()));
   return another && Date.now() + probeBudgetMin <= deadline;
 }
+/** Runs `action` and returns the response `match` picks on `page`. A
+ * waiter started before an action that then throws rejects later with
+ * nobody listening, and that ends the whole runner before its teardown
+ * (GEL-453); waiting on both at once keeps its rejection handled. */
+export async function responseTo(page, match, action) {
+  const [response] = await Promise.all([page.waitForResponse(match), action()]);
+  return response;
+}
 export async function until(probe, accept, code, timeout = 10_000) {
   const deadline = Date.now() + timeout;
   let last;
@@ -500,16 +508,16 @@ export async function startHarness() {
         await page.goto(`${base}/login`);
         await page.getByLabel("E-Mail-Adresse").fill(owner.email);
         await page.getByLabel("Passwort", { exact: true }).fill(password);
-        const login = page.waitForResponse(
+        stage = "submit-login";
+        const login = await responseTo(
+          page,
           (r) =>
             new URL(r.url()).pathname === "/api/auth/login" &&
             r.request().method() === "POST",
+          () =>
+            page.getByRole("button", { name: "Anmelden", exact: true }).click(),
         );
-        stage = "submit-login";
-        await page
-          .getByRole("button", { name: "Anmelden", exact: true })
-          .click();
-        statuses.login = (await login).status();
+        statuses.login = login.status();
         stage = "wait-login-redirect";
         await page.waitForURL((url) => !url.pathname.includes("login"));
         stage = "delete-owned-server";
