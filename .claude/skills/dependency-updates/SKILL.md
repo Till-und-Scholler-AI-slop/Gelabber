@@ -192,7 +192,6 @@ git switch -c chore/gel-<n>-dependency-updates
 sh .claude/skills/dependency-updates/renew.sh
 git status --short   # changes: git commit -am "chore(deps): renew the generated files (GEL-<n>)"
 python3 desktop/packaging/third-party-notices.py --check
-python3 -m unittest discover -s desktop/packaging/tests
 ```
 
 Unless the branch changes `deploy/compose/tests/requirements.txt` (then CI
@@ -201,6 +200,7 @@ runs them with the new PyYAML), with a `python3` that has pip:
 ```sh
 python3 -m pip install --quiet --require-hashes --only-binary :all: --target <work>/pyyaml -r deploy/compose/tests/requirements.txt
 PYTHONPATH=<work>/pyyaml python3 -m unittest discover -s deploy/compose/tests
+PYTHONPATH=<work>/pyyaml python3 -m unittest discover -s desktop/packaging/tests
 ```
 
 A failure here is not an update's: push nothing, comment the failing output
