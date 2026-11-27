@@ -376,11 +376,11 @@ mod tests {
         let detail: ServerDetail = serde_json::from_value(serde_json::json!({
             "id": Uuid::nil(), "name": "Wohnzimmer", "owner_id": owner,
             "icon_url": null, "created_at": "2026-01-01T00:00:00Z", "role": "owner",
-            "member_permissions": [], "permissions": [],
-            "categories": [], "channels": [],
+            "blocked": false, "member_permissions": [], "permissions": [],
+            "roles": [], "categories": [], "channels": [],
             "members": [
                 {"user_id": owner, "name": "Lena", "avatar_url": null,
-                 "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
+                 "role_ids": [], "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
                  "accent_color": null, "avatar_decoration": null, "role": "owner"},
                 {"user_id": Uuid::from_u128(101), "name": "Jonas", "avatar_url": null,
                  "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
@@ -388,7 +388,8 @@ mod tests {
                  "role_ids": [id(1)]},
                 {"user_id": Uuid::from_u128(102), "name": "Ada", "avatar_url": null,
                  "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
-                 "accent_color": null, "avatar_decoration": null, "role": "member"},
+                 "accent_color": null, "avatar_decoration": null, "role": "member",
+                 "role_ids": []},
             ],
         }))
         .expect("detail");

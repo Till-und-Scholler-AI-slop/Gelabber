@@ -10,6 +10,7 @@ function Hello({ name }: { name: string }) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("lazy parts", () => {
@@ -73,9 +74,14 @@ describe("lazy parts", () => {
       cancelIdleCallback: vi.fn(),
     });
     const { EmojiPickerPart } = await import("./emojiPickerPart.ts");
+    // Waits for the load the idle preload started, however long the real
+    // chunk takes to import, instead of polling against a time limit.
+    const preload = vi.spyOn(EmojiPickerPart, "preload");
     const stop = preloadPartsWhenIdle();
     for (const run of idle) run();
-    await vi.waitFor(() => expect(EmojiPickerPart.loaded()).toBe(true));
+    expect(preload).toHaveBeenCalledOnce();
+    await preload.mock.results[0]?.value;
+    expect(EmojiPickerPart.loaded()).toBe(true);
     stop();
   });
 

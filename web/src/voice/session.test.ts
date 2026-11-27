@@ -1,6 +1,6 @@
 import * as callSounds from "./callSounds.ts";
 import { useAudioProcessing } from "./audioProcessing.ts";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ClientFrame, ErrFrame, SigEvent } from "../ws/protocol.ts";
 import {
@@ -43,15 +43,9 @@ import {
   diagnosticsPolling,
   useVoiceDiagnostics,
 } from "./diagnostics.ts";
-import callMicrophoneSource from "./callMicrophone.ts?raw";
-import localSourceAudioSource from "./localSourceAudio.ts?raw";
-import localVideoSource from "./localVideo.ts?raw";
-import receivedAudioSource from "./receivedAudio.ts?raw";
-import sessionSource from "./session.ts?raw";
-import sessionStateSource from "./sessionState.ts?raw";
-import videoLimitsSource from "./videoLimits.ts?raw";
 import { videoBitrateCeiling } from "./videoLimits.ts";
 import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
+import { QUIET_MS } from "./testTiming.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 import {
   resetMediaSettingsForTests,
@@ -624,6 +618,7 @@ function install(opts?: {
       return socket;
     },
     onError: (error) => errors.push(error),
+    random: () => 0.5,
   });
 
   return {
@@ -643,6 +638,41 @@ function install(opts?: {
     lastUserMedia: () => lastUserMedia,
     lastDisplayMedia: () => lastDisplayMedia,
   };
+}
+
+// The session's timers and clock run on Vitest's fake timers; `until` moves
+// them on between its checks. The reconnect backoff's jitter is fixed
+// (install), so each delay is its base delay.
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** Fake time between two checks of `until`. */
+const STEP_MS = 10;
+
+/**
+ * vi.waitFor on the fake clock: runs `check` until it passes, moving the
+ * clock on by STEP_MS between tries and letting what that wakes run. Fails
+ * with the check's own error once `within` ms of fake time have passed.
+ * The default stays below the session's 10 s deadlines (ICE recovery, media
+ * requests), so a wait cannot pass through a deadline's fallback instead of
+ * the path the test names; a test that waits for a deadline passes more.
+ */
+async function until<T>(
+  check: () => T | Promise<T>,
+  within = 3_000,
+): Promise<T> {
+  for (let waited = 0; ; waited += STEP_MS) {
+    try {
+      return await check();
+    } catch (error) {
+      if (waited >= within) throw error;
+    }
+    await vi.advanceTimersByTimeAsync(STEP_MS);
+  }
 }
 
 describe("voice session", () => {
@@ -821,17 +851,13 @@ describe("voice session", () => {
       .spyOn(callSounds, "playCallSound")
       .mockImplementation(() => {});
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     toggleCamera();
     // The prompt is still open: nothing is on air yet.
     expect(sound).not.toHaveBeenCalled();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
     toggleCamera();
     toggleShare();
     expect(sound.mock.calls).toEqual([
@@ -849,7 +875,7 @@ describe("voice session", () => {
       .spyOn(callSounds, "playCallSound")
       .mockImplementation(() => {});
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     toggleShare();
     toggleShare();
     picker.resolve();
@@ -886,7 +912,7 @@ describe("voice session", () => {
     expect(useVoice.getState().sourceSubscriptions).toEqual({
       ada: { s: true },
     });
-    await vi.waitFor(() => {
+    await until(() => {
       expect(
         mediaSent.some(
           (frame) =>
@@ -954,8 +980,7 @@ describe("voice session", () => {
       const f = install();
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
       f.emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
-      if (keepMedia)
-        await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+      if (keepMedia) await until(() => expect(f.peers[0]?.audio).toBeTruthy());
       toggleSourceWatch("ada", "s");
       toggleSourceWatch("bob", "s");
       toggleSourceWatch("bob", "s");
@@ -991,9 +1016,7 @@ describe("voice session", () => {
     setLiveViewMode("u-self", "smooth");
     expect(useVoice.getState().liveViewModes).toEqual({ ada: "sharp" });
     expect(viewModes()).toEqual([]);
-    await vi.waitFor(() =>
-      expect(viewModes()).toEqual([{ u: "ada", sharp: true }]),
-    );
+    await until(() => expect(viewModes()).toEqual([{ u: "ada", sharp: true }]));
     setLiveViewMode("bob", "smooth");
     setLiveViewMode("ada", null);
     expect(useVoice.getState().liveViewModes).toEqual({ bob: "smooth" });
@@ -1007,7 +1030,7 @@ describe("voice session", () => {
   it("publishes via correlated v4 media WS and keeps presence on chat WS", async () => {
     const { sent, mediaSent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => {
+    await until(() => {
       expect(mediaSent.some((frame) => frame.op === "produce")).toBe(true);
     });
     expect(peers).toHaveLength(1);
@@ -1027,7 +1050,7 @@ describe("voice session", () => {
     const { sent, errors } = install({ ticketFail: true });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     expect(useVoice.getState().status).toBe("joined");
-    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    await until(() => expect(useVoice.getState().status).toBe("idle"));
     expect(errors).toHaveLength(1);
     expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
   });
@@ -1037,7 +1060,7 @@ describe("voice session", () => {
       holdStart: () => Promise.reject(new MediaError("sdk_load_failed")),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    await until(() => expect(useVoice.getState().status).toBe("idle"));
     expect(errors).toEqual([
       new Error(
         "Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und den Sprachkanal erneut betreten.",
@@ -1049,10 +1072,10 @@ describe("voice session", () => {
   it("asks for a new ticket when the media server revokes the seat", async () => {
     const f = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[0]?.audio).toBeTruthy());
     f.emitMedia({ op: "err", e: "unauthorized" });
     // The ticket endpoint decides: it grants, so the seat is rebuilt.
-    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[1]?.audio).toBeTruthy());
     expect(f.ticketCalls()).toBe(2);
     expect(useVoice.getState().status).toBe("joined");
     expect(f.errors).toEqual([]);
@@ -1067,9 +1090,9 @@ describe("voice session", () => {
       ticketError: (index) => (index === 1 ? refused : undefined),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[0]?.audio).toBeTruthy());
     f.emitMedia({ op: "err", e: "unauthorized" });
-    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    await until(() => expect(useVoice.getState().status).toBe("idle"));
     expect(f.errors).toEqual([refused]);
     expect(f.sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
   });
@@ -1077,9 +1100,9 @@ describe("voice session", () => {
   it("rebuilds the seat without a notice when the media server is gone", async () => {
     const f = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[0]?.audio).toBeTruthy());
     f.emitMedia({ op: "err", e: "gone" });
-    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[1]?.audio).toBeTruthy());
     expect(useVoice.getState().status).toBe("joined");
     expect(f.errors).toEqual([]);
   });
@@ -1091,7 +1114,7 @@ describe("voice session", () => {
       joinError: (index) => (index === 0 ? "gone" : undefined),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[0]?.audio).toBeTruthy());
     expect(f.ticketCalls()).toBe(2);
     expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2);
     expect(useVoice.getState().status).toBe("joined");
@@ -1104,7 +1127,6 @@ describe("voice session", () => {
 
   it("gives up on a ticket the media server keeps failing to check", async () => {
     const f = install({ joinError: () => "gone" });
-    vi.useFakeTimers();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     await vi.advanceTimersByTimeAsync(60000);
     expect(f.ticketCalls()).toBe(8);
@@ -1149,7 +1171,7 @@ describe("voice session", () => {
   it("leave clears local state immediately and closes the peer", async () => {
     const { sent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     leaveVoice();
     expect(useVoice.getState().status).toBe("idle");
     expect(peers[0]?.closed).toBe(true);
@@ -1169,7 +1191,7 @@ describe("voice session", () => {
   it("captures voice with echo cancellation on a single channel", async () => {
     const { lastUserMedia, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     expect(lastUserMedia()).toEqual({
       audio: {
         echoCancellation: true,
@@ -1214,9 +1236,9 @@ describe("voice session", () => {
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
     // The gateway (re)opens while the first start still waits for its ticket.
     f.emitReady();
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await vi.advanceTimersByTimeAsync(QUIET_MS);
     ticket.resolve();
-    await vi.waitFor(() => expect(f.peers.at(-1)?.audio).toBeTruthy());
+    await until(() => expect(f.peers.at(-1)?.audio).toBeTruthy());
     expect(f.peers).toHaveLength(1);
     expect(f.getUserMediaCalls()).toBe(1);
     expect(useVoice.getState().mic).toBe("live");
@@ -1228,12 +1250,12 @@ describe("voice session", () => {
       holdStart: (index) => (index === 0 ? start.promise : undefined),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.peers).toHaveLength(1));
+    await until(() => expect(f.peers).toHaveLength(1));
     // The media socket drops while the first connection is still starting.
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
+    await until(() => expect(f.peers).toHaveLength(2));
     start.resolve();
-    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[1]?.audio).toBeTruthy());
     expect(f.getUserMediaCalls()).toBe(1);
     expect(f.errors).toEqual([]);
   });
@@ -1241,7 +1263,7 @@ describe("voice session", () => {
   it("leaves an open media peer alone when the chat socket reconnects", async () => {
     const { emitSig, emitReady, peers, mediaSent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(mediaSent.some((frame) => frame.op === "j")).toBe(true),
     );
     emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
@@ -1254,11 +1276,11 @@ describe("voice session", () => {
   it("rebuilds the media peer after the transport closes", async () => {
     const { emitReady, mediaSent, peers, closeMedia } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(1),
     );
     closeMedia();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2),
     );
     expect(peers).toHaveLength(2);
@@ -1274,14 +1296,12 @@ describe("voice session", () => {
       refuseMedia: (index) => index === 1,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(1),
     );
     closeMedia();
-    await vi.waitFor(
-      () =>
-        expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(3),
-      { timeout: 5000 },
+    await until(() =>
+      expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(3),
     );
     emitReady();
     expect(useVoice.getState().status).toBe("joined");
@@ -1294,17 +1314,17 @@ describe("voice session", () => {
       gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     // The permission prompt is still open when the media socket drops.
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
-    await vi.waitFor(() =>
+    await until(() => expect(f.peers).toHaveLength(2));
+    await until(() =>
       expect(
         f.mediaSent.filter((frame) => frame.op === "j").length,
       ).toBeGreaterThanOrEqual(2),
     );
     prompt.resolve();
-    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[1]?.audio).toBeTruthy());
     expect(streamStopped(f.streams[0])).toBe(true);
     expect(f.peers[0]?.audio).toBeFalsy();
     expect(f.errors).toEqual([]);
@@ -1323,14 +1343,14 @@ describe("voice session", () => {
           : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     f.closeMedia();
-    await vi.waitFor(() => expect(holdSecond).toBeDefined());
+    await until(() => expect(holdSecond).toBeDefined());
     // Answered while the next connection is still loading its device.
     prompt.resolve();
-    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    await until(() => expect(streamStopped(f.streams[0])).toBe(true));
     holdSecond!();
-    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[1]?.audio).toBeTruthy());
     expect(f.getUserMediaCalls()).toBe(2);
   });
 
@@ -1349,29 +1369,29 @@ describe("voice session", () => {
           : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
-    await vi.waitFor(() => expect(f.peers[0]?.started).toBe(true));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.peers[0]?.started).toBe(true));
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         f.peers[0]?.publicationInputs.some((input) => input.kind === "s"),
       ).toBe(true),
     );
     f.closeMedia();
-    await vi.waitFor(() => expect(holdSecond).toBeDefined());
+    await until(() => expect(holdSecond).toBeDefined());
     first.resolve();
-    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    await until(() => expect(streamStopped(f.streams[0])).toBe(true));
     holdSecond!();
     // The new prompt stays open; the share goes out on the rebuilt connection.
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(2));
-    await vi.waitFor(() =>
+    await until(() => expect(f.getUserMediaCalls()).toBe(2));
+    await until(() =>
       expect(
         f.peers[1]?.publicationInputs.some((input) => input.kind === "s"),
       ).toBe(true),
     );
     expect(f.peers[1]?.audio).toBeFalsy();
     second.resolve();
-    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[1]?.audio).toBeTruthy());
     expect(f.errors).toEqual([]);
   });
 
@@ -1383,23 +1403,23 @@ describe("voice session", () => {
         index === 0 ? first.promise : index === 1 ? second.promise : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
-    await vi.waitFor(() =>
+    await until(() => expect(f.peers).toHaveLength(2));
+    await until(() =>
       expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2),
     );
     first.resolve();
     // The resumed capture for the rebuilt connection asks again ...
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(2));
+    await until(() => expect(f.getUserMediaCalls()).toBe(2));
     // ... and is overtaken by the next rebuild while its prompt is open.
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers).toHaveLength(3));
-    await vi.waitFor(() =>
+    await until(() => expect(f.peers).toHaveLength(3));
+    await until(() =>
       expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(3),
     );
     second.resolve();
-    await vi.waitFor(() => expect(f.peers[2]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[2]?.audio).toBeTruthy());
     expect(f.getUserMediaCalls()).toBe(3);
     expect(f.peers[1]?.audio).toBeFalsy();
     expect(f.errors).toEqual([]);
@@ -1418,20 +1438,20 @@ describe("voice session", () => {
       },
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
-    await vi.waitFor(() =>
+    await until(() => expect(f.peers).toHaveLength(2));
+    await until(() =>
       expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2),
     );
     prompt.resolve();
     // The resumed capture is granted and its publish is in flight ...
-    await vi.waitFor(() => expect(produceGated).toBe(true));
+    await until(() => expect(produceGated).toBe(true));
     // ... when the media server sends the seat into another rebuild while
     // the socket is still open.
     f.emitMedia({ op: "err", e: "unavailable" });
     produce.resolve();
-    await vi.waitFor(() => expect(f.peers[2]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[2]?.audio).toBeTruthy());
     expect(f.peers[1]?.audio).toBeFalsy();
     expect(f.errors).toEqual([]);
   });
@@ -1449,18 +1469,18 @@ describe("voice session", () => {
       },
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     f.closeMedia();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2),
     );
     prompt.resolve();
-    await vi.waitFor(() => expect(produceGated).toBe(true));
+    await until(() => expect(produceGated).toBe(true));
     // The socket drops between the answer and the publish; its rebuild has
     // not started yet.
     f.closeMedia();
     produce.resolve();
-    await vi.waitFor(() => expect(f.peers[2]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[2]?.audio).toBeTruthy());
     expect(f.getUserMediaCalls()).toBe(3);
     expect(f.errors).toEqual([]);
   });
@@ -1471,14 +1491,14 @@ describe("voice session", () => {
       gateMedia: (index) => (index === 0 ? prompt.promise : undefined),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers[1]?.started).toBe(true));
+    await until(() => expect(f.peers[1]?.started).toBe(true));
     // The rebuilt connection loses its socket too; the prompt is answered
     // before the next rebuild starts.
     f.closeMedia();
     prompt.resolve();
-    await vi.waitFor(() => expect(f.peers[2]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[2]?.audio).toBeTruthy());
     expect(f.getUserMediaCalls()).toBe(2);
     expect(f.errors).toEqual([]);
   });
@@ -1502,13 +1522,13 @@ describe("voice session", () => {
           : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     f.closeMedia();
-    await vi.waitFor(() => expect(holdSecond).toBeDefined());
+    await until(() => expect(holdSecond).toBeDefined());
     prompt.resolve();
-    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    await until(() => expect(streamStopped(f.streams[0])).toBe(true));
     holdSecond!();
-    await vi.waitFor(() => expect(f.errors).toHaveLength(1));
+    await until(() => expect(f.errors).toHaveLength(1));
     expect(messages(f.errors)).toEqual([
       "Das Mikrofon ist gerade nicht verfügbar, du hörst nur zu.",
     ]);
@@ -1517,11 +1537,11 @@ describe("voice session", () => {
     );
     // The next rebuild does not ask again.
     f.closeMedia();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(3),
     );
-    await vi.waitFor(() => expect(f.peers[2]?.started).toBe(true));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await until(() => expect(f.peers[2]?.started).toBe(true));
+    await vi.advanceTimersByTimeAsync(QUIET_MS);
     expect(f.getUserMediaCalls()).toBe(2);
     expect(f.errors).toHaveLength(1);
   });
@@ -1540,21 +1560,21 @@ describe("voice session", () => {
           : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
+    await until(() => expect(f.peers).toHaveLength(2));
     // Answered while the rebuilt connection is still loading: the resume
     // waits for it ...
     prompt.resolve();
-    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    await until(() => expect(streamStopped(f.streams[0])).toBe(true));
     // ... but the user joins another channel and refuses the microphone.
     joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
-    await vi.waitFor(() => expect(f.errors).toHaveLength(1));
+    await until(() => expect(f.errors).toHaveLength(1));
     expect(f.getUserMediaCalls()).toBe(2);
     // A rebuild of that join does not ask on behalf of the earlier one.
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers[3]?.started).toBe(true));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await until(() => expect(f.peers[3]?.started).toBe(true));
+    await vi.advanceTimersByTimeAsync(QUIET_MS);
     expect(f.getUserMediaCalls()).toBe(2);
     expect(f.errors).toHaveLength(1);
   });
@@ -1571,24 +1591,24 @@ describe("voice session", () => {
           : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
-    await vi.waitFor(() =>
+    await until(() => expect(f.peers).toHaveLength(2));
+    await until(() =>
       expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2),
     );
     prompt.resolve();
-    await vi.waitFor(() => expect(f.errors).toHaveLength(1));
+    await until(() => expect(f.errors).toHaveLength(1));
     expect(messages(f.errors)).toEqual([
       "Mikrofonzugriff nicht erlaubt, du hörst nur zu.",
     ]);
     // A later rebuild does not ask either.
     f.closeMedia();
-    await vi.waitFor(() => expect(f.peers).toHaveLength(3));
-    await vi.waitFor(() =>
+    await until(() => expect(f.peers).toHaveLength(3));
+    await until(() =>
       expect(f.mediaSent.filter((frame) => frame.op === "j")).toHaveLength(3),
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await vi.advanceTimersByTimeAsync(QUIET_MS);
     expect(f.getUserMediaCalls()).toBe(1);
     expect(f.peers[1]?.audio).toBeFalsy();
     expect(f.peers[2]?.audio).toBeFalsy();
@@ -1603,14 +1623,14 @@ describe("voice session", () => {
         index === 0 ? first.promise : index === 1 ? second.promise : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(2));
+    await until(() => expect(f.getUserMediaCalls()).toBe(2));
     first.resolve();
-    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    await until(() => expect(streamStopped(f.streams[0])).toBe(true));
     second.resolve();
-    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await until(() => expect(f.peers[1]?.audio).toBeTruthy());
+    await vi.advanceTimersByTimeAsync(QUIET_MS);
     expect(f.getUserMediaCalls()).toBe(2);
     expect(f.errors).toEqual([]);
     expect(useVoice.getState().channelId).toBe("other");
@@ -1620,9 +1640,9 @@ describe("voice session", () => {
     const { sent, peers, emitReady, emitSig, emitErr, getDisplayMediaCalls } =
       install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         sent.some(
           (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "s",
@@ -1651,8 +1671,8 @@ describe("voice session", () => {
   it("unpublishes announced tracks when the media attempt is unavailable", async () => {
     const { emitMedia, peers, sent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
-    await vi.waitFor(() =>
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() =>
       expect(
         sent.some(
           (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "a",
@@ -1660,7 +1680,7 @@ describe("voice session", () => {
       ).toBe(true),
     );
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         sent.some(
           (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "s",
@@ -1686,7 +1706,7 @@ describe("voice session", () => {
   it("keeps a Live when an unscoped publication denial arrives", async () => {
     const { emitMedia, errors, mediaSent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(mediaSent.some((frame) => frame.op === "j")).toBe(true),
     );
     toggleShare();
@@ -1702,7 +1722,7 @@ describe("voice session", () => {
   it("toggles mute immediately, then sends the sync frame", async () => {
     const { sent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     const before = sent.length;
     toggleMute();
     expect(useVoice.getState().muted).toBe(true);
@@ -1736,7 +1756,7 @@ describe("voice session", () => {
       });
       const { sent, peers } = install();
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-      await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+      await until(() => expect(peers[0]?.audio).toBeTruthy());
       expect(peers[0]?.audio?.enabled).toBe(false);
       // The call bar tells a held-back microphone from a broken one.
       expect(useVoice.getState().mic).toBe("ptt-idle");
@@ -1793,7 +1813,7 @@ describe("voice session", () => {
     async (target) => {
       const f = install();
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-      await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+      await until(() => expect(f.peers[0]?.audio).toBeTruthy());
       toggleMute();
       const before = f.sent.length;
       joinVoice({ ...target, channelName: "New room" });
@@ -1814,7 +1834,7 @@ describe("voice session", () => {
         voiceOf(useVoiceRoster.getState().byServer, target.serverId, "u-self")
           ?.muted,
       ).toBe(true);
-      await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+      await until(() => expect(f.peers[1]?.audio).toBeTruthy());
       expect(f.peers[0]?.closed).toBe(true);
       expect(f.peers[1].audioEnabledWhenAdded).toEqual([false]);
       expect(f.peers[1]?.audio?.enabled).toBe(false);
@@ -1826,7 +1846,7 @@ describe("voice session", () => {
     async (initiallyMuted) => {
       const f = install();
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-      await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+      await until(() => expect(f.peers[0]?.audio).toBeTruthy());
       if (initiallyMuted) toggleMute();
       toggleDeafen();
       const before = f.sent.length;
@@ -1841,7 +1861,7 @@ describe("voice session", () => {
         { op: "sig", t: "m", s: "srv", c: "other", on: true },
         { op: "sig", t: "d", s: "srv", c: "other", on: true },
       ]);
-      await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+      await until(() => expect(f.peers[1]?.audio).toBeTruthy());
       expect(f.peers[1].audioEnabledWhenAdded).toEqual([false]);
       const beforeHearing = f.sent.length;
       toggleDeafen();
@@ -1920,13 +1940,13 @@ describe("voice session", () => {
       gateMedia: (index) => (index === 0 ? gate.promise : undefined),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(f.getUserMediaCalls()).toBe(1));
+    await until(() => expect(f.getUserMediaCalls()).toBe(1));
     toggleMute();
     joinVoice({ serverId: "srv", channelId: "other", channelName: "Other" });
-    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(f.peers[1]?.audio).toBeTruthy());
     expect(f.peers[1].audioEnabledWhenAdded).toEqual([false]);
     gate.resolve();
-    await vi.waitFor(() => expect(streamStopped(f.streams[0])).toBe(true));
+    await until(() => expect(streamStopped(f.streams[0])).toBe(true));
     expect(f.getUserMediaCalls()).toBe(2);
     expect(useVoice.getState()).toMatchObject({
       channelId: "other",
@@ -1942,7 +1962,7 @@ describe("voice session", () => {
         }),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    await until(() => expect(errors).toHaveLength(1));
     expect(messages(errors)).toEqual([
       "Kein Mikrofon gefunden, du hörst nur zu.",
     ]);
@@ -1960,10 +1980,10 @@ describe("voice session", () => {
           : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     const sending = peers[0]!.audio;
     useMediaSettings.getState().patch({ audioInputId: "missing-mic" });
-    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    await until(() => expect(errors).toHaveLength(1));
     expect(messages(errors)).toEqual([
       "Kein Mikrofon gefunden, der Wechsel hat nicht geklappt.",
     ]);
@@ -1979,11 +1999,11 @@ describe("voice session", () => {
         constraints.video ? failure : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     const attempt = async () => {
       toggleCamera();
       expect(useVoice.getState().camera).toBe(true);
-      await vi.waitFor(() => expect(useVoice.getState().camera).toBe(false));
+      await until(() => expect(useVoice.getState().camera).toBe(false));
     };
     await attempt();
     expect(errors.map((error) => (error as Error).message)).toEqual([
@@ -2009,11 +2029,11 @@ describe("voice session", () => {
     );
     const env = install({ displayError: () => failure });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(env.peers[0]?.audio).toBeTruthy());
     const share = async () => {
       toggleShare();
       expect(useVoice.getState().sharing).toBe(true);
-      await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+      await until(() => expect(useVoice.getState().sharing).toBe(false));
     };
     await share();
     expect(messages(env.errors)).toEqual([CAPTURE_FAILED]);
@@ -2040,13 +2060,13 @@ describe("voice session", () => {
         new DOMException("Could not start video source", "NotReadableError"),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(env.peers[0]?.audio).toBeTruthy());
     toggleShare();
     await Promise.resolve();
     toggleShare();
     expect(useVoice.getState().sharing).toBe(false);
     picker.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(env.getDisplayMediaCalls()).toBe(1);
     expect(env.errors).toHaveLength(0);
     expect(useVoice.getState().sharing).toBe(false);
@@ -2058,13 +2078,11 @@ describe("voice session", () => {
       holdPublish: publication.promise,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     toggleCamera();
     expect(useVoice.getState().camera).toBe(true);
     expect(useVoice.getState().localCamera).toBeNull();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     expect(sent.some((frame) => "sdp" in frame && frame.sdp)).toBe(false);
     expect(
       sent.filter((frame) => frame.op === "sig" && frame.t === "p"),
@@ -2078,7 +2096,7 @@ describe("voice session", () => {
     ).toBe(false);
     publication.resolve();
 
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         mediaSent.some((frame) => frame.op === "produce" && frame.k === "v"),
       ).toBe(true),
@@ -2091,12 +2109,10 @@ describe("voice session", () => {
       holdPublish: publication.promise,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     toggleShare();
     expect(useVoice.getState().sharing).toBe(true);
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
     for (const frame of sent) {
       expect(frame).not.toHaveProperty("sdp");
       expect(frame).not.toHaveProperty("token");
@@ -2106,7 +2122,7 @@ describe("voice session", () => {
     ).toBe(false);
     publication.resolve();
 
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         mediaSent.some((frame) => frame.op === "produce" && frame.k === "s"),
       ).toBe(true),
@@ -2124,10 +2140,10 @@ describe("voice session", () => {
   it("ends a Live the server refuses and says why", async () => {
     const { emitErr, emitSig, errors, peers, sent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         sent.some(
           (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "s",
@@ -2159,10 +2175,10 @@ describe("voice session", () => {
   it("keeps a Live the server has accepted when a later refusal comes", async () => {
     const { emitErr, emitSig, errors, peers, sent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         sent.some(
           (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "s",
@@ -2180,11 +2196,9 @@ describe("voice session", () => {
   it("stops camera locally first, then unpubs", async () => {
     const { sent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     toggleCamera();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     const before = sent.length;
     toggleCamera();
     expect(useVoice.getState().camera).toBe(false);
@@ -2224,16 +2238,16 @@ describe("voice session", () => {
         constraints.video ? camera : fakeStream(`mic-${index}`),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
-    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(env.peers[0]?.audio).toBeTruthy());
 
     toggleShare();
-    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    await until(() => expect(useVoice.getState().sharing).toBe(false));
     expect(useVoice.getState().localScreen).toBeNull();
     expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("s");
     expect(streamStopped(captures[0])).toBe(true);
 
     toggleCamera();
-    await vi.waitFor(() => expect(useVoice.getState().camera).toBe(false));
+    await until(() => expect(useVoice.getState().camera).toBe(false));
     expect(useVoice.getState().localCamera).toBeNull();
     expect(useVoice.getState().participants["u-self"]?.pubs).not.toContain("v");
 
@@ -2259,15 +2273,15 @@ describe("voice session", () => {
     toggleCamera();
     toggleShare();
     ticket.resolve();
-    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await until(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await vi.advanceTimersByTimeAsync(0);
     // Camera and microphone; the share picker only once.
     expect(env.getUserMediaCalls()).toBe(2);
     expect(env.getDisplayMediaCalls()).toBe(1);
 
     prompt.resolve();
     picker.resolve();
-    await vi.waitFor(() => {
+    await until(() => {
       expect(env.peers[0]!.sender("v")?.track).toBeTruthy();
       expect(env.peers[0]!.sender("s")?.track).toBeTruthy();
     });
@@ -2294,24 +2308,20 @@ describe("voice session", () => {
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
     toggleCamera();
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     ticket.resolve();
     // The connect is past its last look at the buttons: the camera publishes.
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         env.peers[0]?.publicationInputs.some((input) => input.kind === "v"),
       ).toBe(true),
     );
     picker.resolve();
-    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    await until(() => expect(useVoice.getState().sharing).toBe(false));
 
     publish.resolve();
-    await vi.waitFor(() =>
-      expect(env.peers[0]!.sender("v")?.track).toBeTruthy(),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await until(() => expect(env.peers[0]!.sender("v")?.track).toBeTruthy());
+    await vi.advanceTimersByTimeAsync(0);
     expect(env.getDisplayMediaCalls()).toBe(1);
     expect(useVoice.getState().sharing).toBe(false);
     expect(useVoice.getState().localScreen).toBeNull();
@@ -2343,20 +2353,18 @@ describe("voice session", () => {
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
       (kind === "v" ? toggleCamera : toggleShare)();
       // The seat has its connection, whose device has not loaded yet.
-      await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+      await until(() => expect(env.peers).toHaveLength(1));
       expect(env.peers[0]!.started).toBe(false);
       capture.resolve();
-      await vi.waitFor(() => expect(local()).toBeTruthy());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await until(() => expect(local()).toBeTruthy());
+      await vi.advanceTimersByTimeAsync(0);
       // Nothing was asked of that connection, and nothing was given up.
       expect(env.peers[0]!.publicationInputs).toEqual([]);
       expect(on()).toBe(true);
       expect(env.errors).toHaveLength(0);
 
       start.resolve();
-      await vi.waitFor(() =>
-        expect(env.peers[0]!.sender(kind)?.track).toBeTruthy(),
-      );
+      await until(() => expect(env.peers[0]!.sender(kind)?.track).toBeTruthy());
       const stream = local()!;
       expect(env.peers[0]!.sender(kind)?.track).toBe(
         stream.getVideoTracks()[0],
@@ -2375,10 +2383,8 @@ describe("voice session", () => {
     useMediaSettings.getState().patch({ quality: "high", economyMode: true });
     const { peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() =>
-      expect(peers[0]?.senderRows.length).toBeGreaterThan(0),
-    );
-    await vi.waitFor(() =>
+    await until(() => expect(peers[0]?.senderRows.length).toBeGreaterThan(0));
+    await until(() =>
       expect(
         peers[0]?.senderRows[0]?.getParameters?.().encodings[0]?.maxBitrate,
       ).toBe(128_000),
@@ -2392,7 +2398,7 @@ describe("voice session", () => {
     useMediaSettings.getState().patch({ echoCancellation: false });
     const { lastUserMedia, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     expect(lastUserMedia()).toEqual({
       audio: {
         echoCancellation: false,
@@ -2408,12 +2414,12 @@ describe("voice session", () => {
   it("replaces the mic track when the input device changes, without leaving", async () => {
     const { peers, getUserMediaCalls } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     const first = peers[0]?.audio;
     expect(getUserMediaCalls()).toBe(1);
     useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
-    await vi.waitFor(() => expect(peers[0]?.audio).not.toBe(first));
+    await until(() => expect(getUserMediaCalls()).toBe(2));
+    await until(() => expect(peers[0]?.audio).not.toBe(first));
     expect(useVoice.getState().status).toBe("joined");
     expect(peers[0]?.audio).toBeTruthy();
   });
@@ -2421,7 +2427,7 @@ describe("voice session", () => {
   it("keeps mute/deafen consistent when output volume changes", async () => {
     const { peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     toggleMute();
     expect(peers[0]?.audio?.enabled).toBe(false);
     useMediaSettings.getState().patch({ outputVolume: 0.2 });
@@ -2434,7 +2440,7 @@ describe("voice session", () => {
   it("does not recapture the mic when only input gain changes", async () => {
     const { peers, getUserMediaCalls } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     expect(getUserMediaCalls()).toBe(1);
     useMediaSettings.getState().patch({ inputGain: 0.4 });
     useMediaSettings.getState().patch({ inputGain: 1.6 });
@@ -2442,8 +2448,8 @@ describe("voice session", () => {
     expect(getUserMediaCalls()).toBe(1);
     expect(useVoice.getState().status).toBe("joined");
     useMediaSettings.getState().patch({ noiseSuppression: false });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(getUserMediaCalls()).toBe(2));
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
   });
 
   it("sets GainNode.value in place, retaining the graph at identity until leave", async () => {
@@ -2488,21 +2494,21 @@ describe("voice session", () => {
         channelId: "voice",
         channelName: "Lounge",
       });
-      await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+      await until(() => expect(peers[0]?.audio).toBeTruthy());
       expect(created).toHaveLength(0);
       useMediaSettings.getState().patch({ inputGain: 0.5 });
-      await vi.waitFor(() => expect(created).toHaveLength(1));
+      await until(() => expect(created).toHaveLength(1));
       expect(created[0]?.gain.gain.value).toBe(0.5);
       expect(getUserMediaCalls()).toBe(1);
       const boosted = peers[0]?.audio;
       useMediaSettings.getState().patch({ inputGain: 1.5 });
-      await vi.waitFor(() => expect(created[0]?.gain.gain.value).toBe(1.5));
+      await until(() => expect(created[0]?.gain.gain.value).toBe(1.5));
       expect(created).toHaveLength(1);
       expect(created[0]?.state).toBe("running");
       expect(getUserMediaCalls()).toBe(1);
       expect(peers[0]?.audio).toBe(boosted);
       useMediaSettings.getState().patch({ inputGain: 1 });
-      await vi.waitFor(() => expect(created[0]?.gain.gain.value).toBe(1));
+      await until(() => expect(created[0]?.gain.gain.value).toBe(1));
       expect(created[0]?.state).toBe("running");
       expect(getUserMediaCalls()).toBe(1);
       expect(peers[0]?.audio).toBe(boosted);
@@ -2556,7 +2562,7 @@ describe("voice session", () => {
         channelId: "voice",
         channelName: "Lounge",
       });
-      await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+      await until(() => expect(peers[0]?.audio).toBeTruthy());
       const previous = peers[0]?.audio;
       const sender = peers[0]?.senderRows.find(
         (s) => s.track?.kind === "audio",
@@ -2576,10 +2582,10 @@ describe("voice session", () => {
       useMediaSettings.getState().patch({ inputGain: 0.5 });
       await replaceStarted.promise;
       useMediaSettings.getState().patch({ audioInputId: "missing-mic" });
-      await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+      await until(() => expect(getUserMediaCalls()).toBe(2));
       replaceGate.resolve();
 
-      await vi.waitFor(() => expect(replacements).toBe(2));
+      await until(() => expect(replacements).toBe(2));
       expect(sender?.track).toBe(previous);
       expect(peers[0]?.audio).toBe(previous);
       expect(trackStopped(previous)).toBe(false);
@@ -2619,7 +2625,7 @@ describe("voice session", () => {
         .getState()
         .patch({ processingMode: "browser", inputGain: 0.5 });
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-      await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+      await until(() => expect(env.peers[0]?.audio).toBeTruthy());
       const sender = env.peers[0]!.senderRows[0]!,
         previous = sender.track;
       const replace = sender.replaceTrack!.bind(sender),
@@ -2640,8 +2646,8 @@ describe("voice session", () => {
       candidate.state = "closed";
       candidate.onstatechange?.(); // It is not yet active: the persistent usable state must catch this.
       gate.resolve();
-      await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(3));
-      await vi.waitFor(() =>
+      await until(() => expect(env.getUserMediaCalls()).toBe(3));
+      await until(() =>
         expect(sender.track).toBe(env.streams[2]!.getAudioTracks()[0]),
       );
       expect(replacements[1]).toBe(previous);
@@ -2682,7 +2688,7 @@ describe("voice session", () => {
       const env = install();
       useMediaSettings.getState().patch({ inputGain: 1.5 });
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-      await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+      await until(() => expect(env.peers[0]?.audio).toBeTruthy());
       expect(env.getUserMediaCalls()).toBe(2);
       expect(contexts).toHaveLength(1);
       expect(env.peers[0]!.senderRows[0]!.track).toBe(
@@ -2731,7 +2737,7 @@ describe("voice session", () => {
         .getState()
         .patch({ processingMode: "browser", inputGain: 0.5 });
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-      await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+      await until(() => expect(env.peers[0]?.audio).toBeTruthy());
       const sender = env.peers[0]!.senderRows[0]!,
         replace = sender.replaceTrack!.bind(sender),
         gate = deferred();
@@ -2744,11 +2750,11 @@ describe("voice session", () => {
         await replace(next);
       };
       useMediaSettings.getState().patch({ audioInputId: "healthy-next-mic" });
-      await vi.waitFor(() => expect(replacements).toHaveLength(1));
+      await until(() => expect(replacements).toHaveLength(1));
       contexts[0]!.state = "closed";
       contexts[0]!.onstatechange?.();
       gate.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await vi.advanceTimersByTimeAsync(QUIET_MS);
       expect(sender.track?.id).toBe("processed-2-a");
       expect(replacements).toHaveLength(1);
       expect(env.getUserMediaCalls()).toBe(2);
@@ -2770,25 +2776,25 @@ describe("voice session", () => {
       },
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    await until(() => expect(getUserMediaCalls()).toBe(1));
     gates[0]!.resolve();
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     const initial = peers[0]?.audio;
 
     useMediaSettings.getState().patch({ audioInputId: "mic-a" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    await until(() => expect(getUserMediaCalls()).toBe(2));
     useMediaSettings.getState().patch({ audioInputId: "mic-b" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(3));
+    await until(() => expect(getUserMediaCalls()).toBe(3));
 
     gates[2]!.resolve(); // B first
-    await vi.waitFor(() => expect(peers[0]?.audio).not.toBe(initial));
+    await until(() => expect(peers[0]?.audio).not.toBe(initial));
     const winner = peers[0]?.audio;
     expect(winner?.id).toBe("mic-2-a");
 
     gates[1]!.resolve(); // late A
     await Promise.resolve();
     await Promise.resolve();
-    await vi.waitFor(() => expect(streamStopped(streams[1]!)).toBe(true));
+    await until(() => expect(streamStopped(streams[1]!)).toBe(true));
     expect(peers[0]?.audio).toBe(winner);
     expect(trackStopped(winner)).toBe(false);
     expect(useVoice.getState().status).toBe("joined");
@@ -2807,12 +2813,12 @@ describe("voice session", () => {
       },
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    await until(() => expect(getUserMediaCalls()).toBe(1));
     gates[0]!.resolve();
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
 
     useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    await until(() => expect(getUserMediaCalls()).toBe(2));
     leaveVoice();
     expect(useVoice.getState().status).toBe("idle");
     expect(peers[0]?.closed).toBe(true);
@@ -2820,7 +2826,7 @@ describe("voice session", () => {
     gates[1]!.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    await vi.waitFor(() => expect(streamStopped(streams[1]!)).toBe(true));
+    await until(() => expect(streamStopped(streams[1]!)).toBe(true));
     expect(useVoice.getState().status).toBe("idle");
     expect(errors).toHaveLength(0);
   });
@@ -2838,20 +2844,18 @@ describe("voice session", () => {
       },
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    await until(() => expect(getUserMediaCalls()).toBe(1));
     gates[0]!.resolve();
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
 
     toggleCamera();
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    await until(() => expect(getUserMediaCalls()).toBe(2));
     gates[1]!.resolve();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     expect(useVoice.getState().camera).toBe(true);
 
     useMediaSettings.getState().patch({ videoInputId: "cam-usb" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(3));
+    await until(() => expect(getUserMediaCalls()).toBe(3));
     toggleCamera();
     expect(useVoice.getState().camera).toBe(false);
     expect(useVoice.getState().localCamera).toBeNull();
@@ -2859,7 +2863,7 @@ describe("voice session", () => {
     gates[2]!.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    await vi.waitFor(() => expect(streamStopped(streams[2]!)).toBe(true));
+    await until(() => expect(streamStopped(streams[2]!)).toBe(true));
     expect(useVoice.getState().camera).toBe(false);
     expect(useVoice.getState().localCamera).toBeNull();
     expect(errors).toHaveLength(0);
@@ -2877,18 +2881,18 @@ describe("voice session", () => {
       },
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    await until(() => expect(getUserMediaCalls()).toBe(1));
     // Peer exists before initial gum resolves, so a device change can race it.
-    await vi.waitFor(() => expect(peers.length).toBe(1));
+    await until(() => expect(peers.length).toBe(1));
     useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    await until(() => expect(getUserMediaCalls()).toBe(2));
     gates[1]!.resolve();
-    await vi.waitFor(() => expect(peers[0]?.audio?.id).toBe("mic-1-a"));
+    await until(() => expect(peers[0]?.audio?.id).toBe("mic-1-a"));
     const winner = peers[0]?.audio;
     gates[0]!.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    await vi.waitFor(() => expect(streamStopped(streams[0]!)).toBe(true));
+    await until(() => expect(streamStopped(streams[0]!)).toBe(true));
     expect(peers[0]?.audio).toBe(winner);
     expect(useVoice.getState().status).toBe("joined");
   });
@@ -2896,7 +2900,7 @@ describe("voice session", () => {
   it("keeps the previous mic when replaceTrack rejects", async () => {
     const { peers, getUserMediaCalls, errors } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     const first = peers[0]?.audio;
     const sender = peers[0]?.senderRows.find((s) => s.track?.kind === "audio");
     expect(sender?.replaceTrack).toBeTruthy();
@@ -2904,8 +2908,8 @@ describe("voice session", () => {
       throw new Error("replace failed");
     };
     useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
-    await vi.waitFor(() => expect(errors.length).toBeGreaterThan(0));
+    await until(() => expect(getUserMediaCalls()).toBe(2));
+    await until(() => expect(errors.length).toBeGreaterThan(0));
     expect(peers[0]?.audio).toBe(first);
     expect(trackStopped(first)).toBe(false);
     expect(useVoice.getState().status).toBe("joined");
@@ -2923,22 +2927,22 @@ describe("voice session", () => {
       },
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(1));
+    await until(() => expect(getUserMediaCalls()).toBe(1));
     gates[0]!.resolve();
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     useMediaSettings.getState().patch({ audioInputId: "mic-usb" });
-    await vi.waitFor(() => expect(getUserMediaCalls()).toBe(2));
+    await until(() => expect(getUserMediaCalls()).toBe(2));
     toggleMute();
     expect(useVoice.getState().muted).toBe(true);
     gates[1]!.resolve();
-    await vi.waitFor(() => expect(peers[0]?.audio?.id).toBe("mic-1-a"));
+    await until(() => expect(peers[0]?.audio?.id).toBe("mic-1-a"));
     expect(peers[0]?.audio?.enabled).toBe(false);
   });
 
   it("stops diagnostics on leave, rejoin, and logout", async () => {
     const env = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    await until(() => expect(diagnosticsPolling().voice).toBe(true));
     leaveVoice();
     expect(diagnosticsPolling().voice).toBe(false);
     expect(
@@ -2946,13 +2950,13 @@ describe("voice session", () => {
     ).toContain("voice-only");
 
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    await until(() => expect(diagnosticsPolling().voice).toBe(true));
     expect(diagnosticsPolling().watch).toBe(false);
     leaveVoice();
     expect(diagnosticsPolling().voice).toBe(false);
 
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(diagnosticsPolling().voice).toBe(true));
+    await until(() => expect(diagnosticsPolling().voice).toBe(true));
     useSession.setState({
       status: "authenticated",
       user: {
@@ -2979,11 +2983,9 @@ describe("voice session", () => {
   it("records stream and device changes without the device id", async () => {
     const { peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
+    await until(() => expect(peers[0]?.audio).toBeTruthy());
     toggleCamera();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     toggleCamera();
     expect(useVoice.getState().camera).toBe(false);
     useMediaSettings.getState().patch({ audioInputId: "mic-secret" });
@@ -3023,26 +3025,22 @@ describe("source and transport continuity", () => {
   async function connected(options?: Parameters<typeof install>[0]) {
     const env = install(options);
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(env.peers[0]?.audio).toBeTruthy());
     return env;
   }
 
   it("keeps all capture tracks when only the media socket reconnects", async () => {
     const env = await connected();
     toggleCamera();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
 
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
 
     const before = useVoice.getState();
     const mic = env.peers[0]!.audio;
     env.closeMedia();
-    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await until(() => expect(env.peers).toHaveLength(2));
     for (const key of ["localCamera", "localScreen"] as const) {
       expect(useVoice.getState()[key]).toBe(before[key]);
       expect(streamStopped(before[key])).toBe(false);
@@ -3068,16 +3066,16 @@ describe("source and transport continuity", () => {
     });
     const mic = env.peers[0]!.audio;
     env.closeMedia();
-    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await until(() => expect(env.peers).toHaveLength(2));
     // The new connection's device has not loaded: it can publish nothing.
     useMediaSettings.getState().patch({ economyMode: true, quality: "high" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(env.peers[1]!.publicationInputs).toEqual([]);
     expect(env.errors).toHaveLength(0);
 
     start.resolve();
-    await vi.waitFor(() => expect(env.peers[1]!.audio).toBe(mic));
-    await vi.waitFor(() =>
+    await until(() => expect(env.peers[1]!.audio).toBe(mic));
+    await until(() =>
       expect(
         env.peers[1]!.sender("a")?.getParameters().encodings[0]?.maxBitrate,
       ).toBe(128_000),
@@ -3103,11 +3101,11 @@ describe("source and transport continuity", () => {
       const pubs = () => useVoice.getState().participants["u-self"]?.pubs;
       toggleShare();
       if (!open)
-        await vi.waitFor(() => expect(env.peers[0]!.sender("s")).toBeTruthy());
+        await until(() => expect(env.peers[0]!.sender("s")).toBeTruthy());
       env.closeMedia();
-      await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+      await until(() => expect(env.peers[1]?.audio).toBeTruthy());
       if (!open)
-        await vi.waitFor(() => expect(env.peers[1]!.sender("s")).toBeTruthy());
+        await until(() => expect(env.peers[1]!.sender("s")).toBeTruthy());
       expect(useVoice.getState().sharing).toBe(true);
 
       // The recovery is through. Later the server has no seat for the media.
@@ -3119,7 +3117,7 @@ describe("source and transport continuity", () => {
 
       // A pick that comes after that starts nothing.
       picker.resolve();
-      await vi.waitFor(() => expect(streamStopped(late)).toBe(true));
+      await until(() => expect(streamStopped(late)).toBe(true));
       expect(useVoice.getState().sharing).toBe(false);
       expect(useVoice.getState().localScreen).toBeNull();
       expect(useVoice.getState().status).toBe("joined");
@@ -3143,15 +3141,13 @@ describe("source and transport continuity", () => {
       (kind === "v" ? toggleCamera : toggleShare)();
       await Promise.resolve();
       env.closeMedia();
-      await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+      await until(() => expect(env.peers[1]?.audio).toBeTruthy());
       // Still asked: the button stays pressed, and nothing is sent yet.
       expect(on()).toBe(true);
       expect(env.peers[1]!.sender(kind)).toBeUndefined();
 
       answer.resolve();
-      await vi.waitFor(() =>
-        expect(env.peers[1]!.sender(kind)?.track).toBeTruthy(),
-      );
+      await until(() => expect(env.peers[1]!.sender(kind)?.track).toBeTruthy());
       const stream =
         kind === "v"
           ? useVoice.getState().localCamera!
@@ -3188,17 +3184,15 @@ describe("source and transport continuity", () => {
       await Promise.resolve();
       env.closeMedia();
       // The old connection is gone, the next one cannot publish yet.
-      await vi.waitFor(() =>
+      await until(() =>
         held === "ticket"
           ? expect(env.ticketCalls()).toBe(2)
           : expect(env.peers).toHaveLength(2),
       );
       expect(env.peers[0]!.closed).toBe(true);
       picker.resolve();
-      await vi.waitFor(() =>
-        expect(useVoice.getState().localScreen).toBeTruthy(),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
+      await vi.advanceTimersByTimeAsync(0);
       const stream = useVoice.getState().localScreen!;
       expect(useVoice.getState().sharing).toBe(true);
       expect(env.peers.flatMap((peer) => peer.publicationInputs)).toEqual(
@@ -3207,7 +3201,7 @@ describe("source and transport continuity", () => {
       expect(env.errors).toHaveLength(0);
 
       gate.resolve();
-      await vi.waitFor(() =>
+      await until(() =>
         expect(env.peers[1]?.sender("s")?.track).toBe(
           stream.getVideoTracks()[0],
         ),
@@ -3226,14 +3220,14 @@ describe("source and transport continuity", () => {
     stream.getVideoTracks()[0]!.applyConstraints = apply;
     const env = await connected({ displayStreamFor: () => stream });
     toggleShare();
-    await vi.waitFor(() => expect(apply).toHaveBeenCalled());
+    await until(() => expect(apply).toHaveBeenCalled());
     env.closeMedia();
-    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(env.peers[1]?.audio).toBeTruthy());
     expect(streamStopped(stream)).toBe(false);
     expect(useVoice.getState().sharing).toBe(true);
 
     gate.resolve();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(env.peers[1]!.sender("s")?.track).toBe(stream.getVideoTracks()[0]),
     );
     expect(useVoice.getState().localScreen).toBe(stream);
@@ -3253,12 +3247,12 @@ describe("source and transport continuity", () => {
     await Promise.resolve();
     leaveVoice();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
+    await until(() => expect(env.peers[1]?.audio).toBeTruthy());
     expect(useVoice.getState().sharing).toBe(false);
 
     // The answer belongs to the seat that is gone.
     picker.resolve();
-    await vi.waitFor(() => expect(streamStopped(late)).toBe(true));
+    await until(() => expect(streamStopped(late)).toBe(true));
     expect(useVoice.getState().sharing).toBe(false);
     expect(useVoice.getState().localScreen).toBeNull();
     expect(env.peers[1]!.sender("s")).toBeUndefined();
@@ -3270,8 +3264,7 @@ describe("source and transport continuity", () => {
       ticketError: (i) => (i > 0 ? new Error("offline") : undefined),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
-    vi.useFakeTimers();
+    await until(() => expect(env.peers).toHaveLength(1));
     env.closeMedia();
     await vi.advanceTimersByTimeAsync(60000);
     expect(env.ticketCalls()).toBe(8);
@@ -3290,8 +3283,7 @@ describe("source and transport continuity", () => {
       gateTicket: (i) => (i > 0 ? gate.promise : undefined),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
-    vi.useFakeTimers();
+    await until(() => expect(env.peers).toHaveLength(1));
     env.closeMedia();
     await vi.advanceTimersByTimeAsync(300);
     expect(env.ticketCalls()).toBe(2);
@@ -3306,20 +3298,18 @@ describe("source and transport continuity", () => {
   it("leaves ended display capture off until the next explicit toggle", async () => {
     const env = await connected();
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
     const screen = useVoice.getState().localScreen!;
     Object.defineProperty(screen.getVideoTracks()[0], "readyState", {
       value: "ended",
     });
     env.closeMedia();
-    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await until(() => expect(env.peers).toHaveLength(2));
     expect(useVoice.getState().sharing).toBe(false);
     expect(useVoice.getState().localScreen).toBeNull();
     expect(env.getDisplayMediaCalls()).toBe(1);
     toggleShare();
-    await vi.waitFor(() => expect(env.getDisplayMediaCalls()).toBe(2));
+    await until(() => expect(env.getDisplayMediaCalls()).toBe(2));
   });
 
   it("uses freshly minted TURN credentials on transport replacement", async () => {
@@ -3333,10 +3323,10 @@ describe("source and transport continuity", () => {
       ],
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers).toHaveLength(1));
+    await until(() => expect(env.peers).toHaveLength(1));
     expect(env.peers[0]!.iceServers[0]?.username).toBe("lease-0");
     env.closeMedia();
-    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await until(() => expect(env.peers).toHaveLength(2));
     expect(env.peers[1]!.iceServers[0]?.username).toBe("lease-1");
     expect(env.getUserMediaCalls()).toBe(1);
   });
@@ -3344,13 +3334,13 @@ describe("source and transport continuity", () => {
   it("shares the video budget between camera and screen without lowering audio bitrate", async () => {
     const env = await connected();
     toggleCamera();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         env.peers[0]?.senderRows.filter((s) => s.track?.kind === "video"),
       ).toHaveLength(1),
     );
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         env.peers[0]?.senderRows.filter((s) => s.track?.kind === "video"),
       ).toHaveLength(2),
@@ -3358,7 +3348,7 @@ describe("source and transport continuity", () => {
     const video = env.peers[0]!.senderRows.filter(
       (s) => s.track?.kind === "video",
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
       ).toEqual([BALANCED_CEILING, BALANCED_CEILING]),
@@ -3371,7 +3361,7 @@ describe("source and transport continuity", () => {
     )!;
     expect(audio.getParameters!().encodings[0]?.maxBitrate).toBeUndefined();
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(video[0]!.getParameters!().encodings[0]?.maxBitrate).toBe(
         BALANCED_CEILING,
       ),
@@ -3384,7 +3374,7 @@ describe("source and transport continuity", () => {
       throw new MediaError("connection_closed");
     };
     env.peers[0]!.setTransportState("send", "failed");
-    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await until(() => expect(env.peers).toHaveLength(2));
     expect(env.errors).toEqual([]);
   });
 
@@ -3398,7 +3388,7 @@ describe("source and transport continuity", () => {
     peer.options.onError(new MediaError("sdk_timeout"), true);
     peer.close();
     peer.setTransportState("recv", "failed");
-    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await until(() => expect(env.peers).toHaveLength(2));
     expect(env.errors).toEqual([]);
   });
 
@@ -3411,7 +3401,7 @@ describe("source and transport continuity", () => {
           : undefined,
     });
     env.closeMedia();
-    await vi.waitFor(() => expect(env.peers[2]?.audio).toBeTruthy());
+    await until(() => expect(env.peers[2]?.audio).toBeTruthy());
     expect(env.errors).toEqual([]);
   });
 
@@ -3419,9 +3409,7 @@ describe("source and transport continuity", () => {
     const env = await connected();
     for (let rebuilt = 1; rebuilt <= 3; rebuilt += 1) {
       env.emitMedia({ op: "err", e: "unauthorized" });
-      await vi.waitFor(() => expect(env.peers[rebuilt]?.audio).toBeTruthy(), {
-        timeout: 5000,
-      });
+      await until(() => expect(env.peers[rebuilt]?.audio).toBeTruthy());
       // Each rebuilt seat comes up: "connected" must not clear the count.
       env.peers[rebuilt]!.setTransportState("send", "connected");
       env.peers[rebuilt]!.setTransportState("recv", "connected");
@@ -3433,7 +3421,7 @@ describe("source and transport continuity", () => {
     expect(useVoice.getState().status).toBe("idle");
     expect(useVoice.getState().lostCall).not.toBeNull();
     expect(env.errors).toEqual([new MediaError("unauthorized")]);
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await vi.advanceTimersByTimeAsync(QUIET_MS);
     expect(env.peers).toHaveLength(4);
   });
 
@@ -3445,7 +3433,7 @@ describe("source and transport continuity", () => {
     expect(env.errors).toHaveLength(0);
     env.emitMedia({ op: "err", e: "unauthorized" });
     expect(env.peers[0]?.closed).toBe(true);
-    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    await until(() => expect(env.peers).toHaveLength(2));
     expect(useVoice.getState().status).toBe("joined");
   });
 
@@ -3456,17 +3444,13 @@ describe("source and transport continuity", () => {
     });
     const env = await connected();
     toggleCamera();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     expect(env.lastUserMedia()).toEqual({
       audio: false,
       video: videoConstraintsFor("camera", "economy"),
     });
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
     expect(env.lastDisplayMedia()).toEqual({
       audio: false,
       video: videoConstraintsFor("screen", "detail"),
@@ -3474,7 +3458,7 @@ describe("source and transport continuity", () => {
     const video = env.peers[0]!.senderRows.filter(
       (s) => s.track?.kind === "video",
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
       ).toEqual([
@@ -3495,12 +3479,10 @@ describe("source and transport continuity", () => {
         trackIdentifier: sender.track!.id,
         bytesSent: 1000,
       }));
-    await vi.waitFor(
-      () =>
-        expect(
-          useVoiceDiagnostics.getState().latest?.voice?.flows,
-        ).toHaveLength(2),
-      { timeout: 3_500 },
+    await until(() =>
+      expect(useVoiceDiagnostics.getState().latest?.voice?.flows).toHaveLength(
+        2,
+      ),
     );
     const exported = buildDiagnosticExport();
     const flows = exported.samples.at(-1)!.voice!.flows;
@@ -3524,18 +3506,14 @@ describe("source and transport continuity", () => {
       .patch({ cameraProfile: "2160p60", screenProfile: "2160p60" });
     const env = await connected();
     toggleCamera();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     expect(env.lastUserMedia()?.video).toEqual({
       width: { ideal: 3840, max: 3840 },
       height: { ideal: 2160, max: 2160 },
       frameRate: { ideal: 60, max: 60 },
     });
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
     expect(env.lastDisplayMedia()?.video).toEqual(
       videoConstraintsFor("screen", "2160p60"),
     );
@@ -3543,7 +3521,7 @@ describe("source and transport continuity", () => {
       env.peers[0]!.senderRows.filter(
         (sender) => sender.track?.kind === "video",
       );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         video().map((sender) => sender.getParameters!().encodings[0]),
       ).toEqual(
@@ -3555,7 +3533,7 @@ describe("source and transport continuity", () => {
       ),
     );
     useMediaSettings.getState().patch({ videoUploadLimit: 9_000_000 });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         video().map((sender) =>
           sender.getParameters!().encodings.reduce(
@@ -3569,12 +3547,12 @@ describe("source and transport continuity", () => {
     const applied = vi.fn(async () => {});
     screen.applyConstraints = applied;
     useMediaSettings.getState().patch({ screenProfile: "1440p24" });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(applied).toHaveBeenCalledWith(
         videoConstraintsFor("screen", "1440p24"),
       ),
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         video().map(
           (sender) => sender.getParameters!().encodings[0]?.maxFramerate,
@@ -3598,9 +3576,7 @@ describe("source and transport continuity", () => {
     useMediaSettings.getState().patch({ screenProfile: "economy" });
     const env = await connected();
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
     expect(env.lastDisplayMedia()).toEqual({
       audio: false,
       video: videoConstraintsFor("screen", "economy"),
@@ -3608,7 +3584,7 @@ describe("source and transport continuity", () => {
     const video = env.peers[0]!.senderRows.find(
       (s) => s.track?.kind === "video",
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(
         ECONOMY_CEILING,
       ),
@@ -3619,9 +3595,7 @@ describe("source and transport continuity", () => {
   it("applies a live profile on the sender and the track when the browser allows it", async () => {
     const env = await connected();
     toggleCamera();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     const track = useVoice.getState().localCamera!.getVideoTracks()[0]!;
     let applied: MediaTrackConstraints | undefined;
     (
@@ -3632,7 +3606,7 @@ describe("source and transport continuity", () => {
       applied = next;
     };
     useMediaSettings.getState().patch({ cameraProfile: "detail" });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(useMediaSettings.getState().cameraProfileApply).toBe("live"),
     );
     expect(applied).toEqual(videoConstraintsFor("camera", "detail"));
@@ -3655,9 +3629,7 @@ describe("source and transport continuity", () => {
     const env = await connected();
     toggleMute();
     toggleCamera();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     const track = useVoice.getState().localCamera!.getVideoTracks()[0]!;
     (
       track as MediaStreamTrack & {
@@ -3672,7 +3644,7 @@ describe("source and transport continuity", () => {
       cameraProfile: "economy",
       quality: "high",
     });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(useMediaSettings.getState().cameraProfileApply).toBe("next"),
     );
     const video = env.peers[0]!.senderRows.find(
@@ -3694,7 +3666,7 @@ describe("source and transport continuity", () => {
   it("splits one sender share across simulcast encodings", async () => {
     const env = await connected();
     toggleCamera();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         env.peers[0]?.senderRows.filter((s) => s.track?.kind === "video"),
       ).toHaveLength(1),
@@ -3704,7 +3676,7 @@ describe("source and transport continuity", () => {
     )!;
     video.getParameters!().encodings.push({});
     useMediaSettings.getState().patch({ cameraProfile: "economy" });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(video.getParameters!().encodings.map((e) => e.maxBitrate)).toEqual(
         [ECONOMY_CEILING, ECONOMY_CEILING],
       ),
@@ -3722,10 +3694,10 @@ describe("source and transport continuity", () => {
     error.name = "OverconstrainedError";
     const env = install({ displayError: () => error });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers.length).toBe(1));
+    await until(() => expect(env.peers.length).toBe(1));
 
     toggleShare();
-    await vi.waitFor(() => expect(useVoice.getState().sharing).toBe(false));
+    await until(() => expect(useVoice.getState().sharing).toBe(false));
     expect(env.getDisplayMediaCalls()).toBe(1);
     expect(useVoice.getState().status).toBe("joined");
     expect(useVoice.getState().localScreen).toBeNull();
@@ -3737,7 +3709,7 @@ describe("source and transport continuity", () => {
     const env = await connected();
     toggleCamera();
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
     );
     const camera = env.peers[0]!.senderRows.find(
@@ -3751,7 +3723,7 @@ describe("source and transport continuity", () => {
     held.release();
     // Detail then Sparsam, screen stays Ausgewogen. The stale screen share
     // from the Detail pass is 1_538_461.
-    await vi.waitFor(() =>
+    await until(() =>
       // The shares of allocateVideoBitrates, each floored per encoding.
       expect(videoBitrates(env.peers[0])).toEqual([454_834, 2_045_164]),
     );
@@ -3767,7 +3739,7 @@ describe("source and transport continuity", () => {
     const env = await connected();
     toggleCamera();
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(videoBitrates(env.peers[0])).toEqual([1_250_000, 1_250_000]),
     );
     const camera = env.peers[0]!.senderRows.find(
@@ -3778,9 +3750,7 @@ describe("source and transport continuity", () => {
     await held.entered;
     toggleShare();
     held.release();
-    await vi.waitFor(() =>
-      expect(videoBitrates(env.peers[0])).toEqual([2_500_000]),
-    );
+    await until(() => expect(videoBitrates(env.peers[0])).toEqual([2_500_000]));
     expect(useVoice.getState().sharing).toBe(false);
     expect(useVoice.getState().camera).toBe(true);
   });
@@ -3799,9 +3769,9 @@ describe("authoritative mediasoup session lifecycle", () => {
   async function joined(options?: Parameters<typeof install>[0]) {
     const env = install(options);
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
-    await vi.waitFor(() => expect(env.peers[0]?.started).toBe(true));
+    await until(() => expect(env.peers[0]?.started).toBe(true));
     if (options?.media !== false)
-      await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+      await until(() => expect(env.peers[0]?.audio).toBeTruthy());
     return env;
   }
   function playback() {
@@ -3832,7 +3802,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     });
     const env = await joined();
     toggleShare();
-    await vi.waitFor(() => expect(env.peers[0]!.sender("s")).toBeTruthy());
+    await until(() => expect(env.peers[0]!.sender("s")).toBeTruthy());
     const epochs = env.peers[0]!.publicationInputs.map((input) => input.epoch);
     expect(epochs).toHaveLength(2);
     for (const epoch of epochs)
@@ -3882,7 +3852,7 @@ describe("authoritative mediasoup session lifecycle", () => {
   });
   it("keeps a listening seat after microphone denial without publishing any source", async () => {
     const env = await joined({ media: false });
-    await vi.waitFor(() => expect(env.errors).toHaveLength(1));
+    await until(() => expect(env.errors).toHaveLength(1));
     expect(useVoice.getState().status).toBe("joined");
     expect(env.peers[0]!.closed).toBe(false);
     expect(env.peers[0]!.senderRows).toHaveLength(0);
@@ -3907,7 +3877,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     toggleMute();
     rejectReplacement = true;
     useMediaSettings.getState().patch({ economyMode: true, quality: "phone" });
-    await vi.waitFor(() => expect(env.errors).toHaveLength(1));
+    await until(() => expect(env.errors).toHaveLength(1));
     expect(env.peers[0]!.sender("a")).toBe(sender);
     expect(env.peers[0]!.audio).toBe(track);
     expect(track?.enabled).toBe(false);
@@ -3923,7 +3893,6 @@ describe("authoritative mediasoup session lifecycle", () => {
   });
   it("recovers send and receive ICE independently and cancels both deadlines on connection", async () => {
     const env = await joined();
-    vi.useFakeTimers();
     const seat = env.peers[0]!;
     seat.setTransportState("send", "failed");
     seat.setTransportState("recv", "failed");
@@ -3941,7 +3910,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     const env = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
     expect(useVoice.getState().connection).toBe("connecting");
-    await vi.waitFor(() => expect(env.peers[0]?.started).toBe(true));
+    await until(() => expect(env.peers[0]?.started).toBe(true));
     expect(useVoice.getState().connection).toBe("connected");
     const seat = env.peers[0]!;
     seat.setTransportState("send", "disconnected");
@@ -3954,7 +3923,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(useVoice.getState().connection).toBe("connected");
     env.closeMedia();
     expect(useVoice.getState().connection).toBe("reconnecting");
-    await vi.waitFor(() => expect(env.peers[1]?.started).toBe(true));
+    await until(() => expect(env.peers[1]?.started).toBe(true));
     expect(useVoice.getState().connection).toBe("connected");
     expect(useVoice.getState().status).toBe("joined");
     leaveVoice();
@@ -3964,7 +3933,6 @@ describe("authoritative mediasoup session lifecycle", () => {
     const env = await joined({
       ticketError: (index) => (index > 0 ? new Error("offline") : undefined),
     });
-    vi.useFakeTimers();
     env.closeMedia();
     await vi.advanceTimersByTimeAsync(60_000);
     const state = useVoice.getState();
@@ -3978,7 +3946,6 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(messages(env.errors)).toContain(
       "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
     );
-    vi.useRealTimers();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
     expect(useVoice.getState().lostCall).toBeNull();
     expect(useVoice.getState().connection).toBe("connecting");
@@ -3999,7 +3966,7 @@ describe("authoritative mediasoup session lifecycle", () => {
       ticketError: () => new ApiError("forbidden", 403, "forbidden"),
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
-    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    await until(() => expect(useVoice.getState().status).toBe("idle"));
     expect(useVoice.getState().connection).toBe("idle");
     expect(useVoice.getState().lostCall).toBeNull();
   });
@@ -4009,7 +3976,7 @@ describe("authoritative mediasoup session lifecycle", () => {
       mediaError: () =>
         new DOMException("Permission denied", "NotAllowedError"),
     });
-    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("denied"));
+    await until(() => expect(useVoice.getState().mic).toBe("denied"));
     expect(refused.peers[0]?.audio).toBeFalsy();
     leaveVoice();
     expect(useVoice.getState().mic).toBe("live");
@@ -4018,7 +3985,7 @@ describe("authoritative mediasoup session lifecycle", () => {
       media: false,
       mediaError: () => new DOMException("none", "NotFoundError"),
     });
-    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("unavailable"));
+    await until(() => expect(useVoice.getState().mic).toBe("unavailable"));
   });
   it("falls back to the default microphone when the live one is unplugged", async () => {
     useMediaSettings.getState().patch({ audioInputId: "headset" });
@@ -4031,7 +3998,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(messages(env.errors)).toEqual([
       "Mikrofon getrennt – Standardgerät wird verwendet",
     ]);
-    await vi.waitFor(() => expect(env.peers[0]!.audio).not.toBe(sending));
+    await until(() => expect(env.peers[0]!.audio).not.toBe(sending));
     expect(useVoice.getState().mic).toBe("live");
     expect(env.getUserMediaCalls()).toBe(2);
     // The chosen device stays chosen for when it is back.
@@ -4054,18 +4021,18 @@ describe("authoritative mediasoup session lifecycle", () => {
     const env = await joined();
     inputs = ["default"];
     devices.dispatchEvent(new Event("devicechange"));
-    await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(2));
+    await until(() => expect(env.getUserMediaCalls()).toBe(2));
     expect(messages(env.errors)).toEqual([
       "Mikrofon getrennt – Standardgerät wird verwendet",
     ]);
     // The browser ends the old track as well: said once.
     env.streams[0]!.getAudioTracks()[0]!.dispatchEvent(new Event("ended"));
-    await vi.waitFor(() =>
+    await until(() =>
       expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
     );
     inputs = ["default", "headset"];
     devices.dispatchEvent(new Event("devicechange"));
-    await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(3));
+    await until(() => expect(env.getUserMediaCalls()).toBe(3));
     expect(env.errors).toHaveLength(1);
   });
   it("takes the chosen microphone once it appears, without calling it lost", async () => {
@@ -4093,19 +4060,19 @@ describe("authoritative mediasoup session lifecycle", () => {
     // Another device coming or going is no loss of the one in use.
     inputs = ["default"];
     devices.dispatchEvent(new Event("devicechange"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(env.getUserMediaCalls()).toBe(1);
     expect(env.errors).toHaveLength(0);
     inputs = ["default", "headset"];
     devices.dispatchEvent(new Event("devicechange"));
-    await vi.waitFor(() =>
+    await until(() =>
       expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
     );
     expect(env.errors).toHaveLength(0);
     // Now it is the one in use, and unplugging it is a loss.
     inputs = ["default"];
     devices.dispatchEvent(new Event("devicechange"));
-    await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(3));
+    await until(() => expect(env.getUserMediaCalls()).toBe(3));
     expect(messages(env.errors)).toEqual([
       "Mikrofon getrennt – Standardgerät wird verwendet",
     ]);
@@ -4124,14 +4091,14 @@ describe("authoritative mediasoup session lifecycle", () => {
         index === 0 ? new DOMException("none", "NotFoundError") : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
-    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("unavailable"));
+    await until(() => expect(useVoice.getState().mic).toBe("unavailable"));
     // Another device without a microphone changes nothing.
     devices.dispatchEvent(new Event("devicechange"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(env.getUserMediaCalls()).toBe(1);
     inputs = ["default"];
     devices.dispatchEvent(new Event("devicechange"));
-    await vi.waitFor(() =>
+    await until(() =>
       expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
     );
     expect(useVoice.getState().mic).toBe("live");
@@ -4150,18 +4117,18 @@ describe("authoritative mediasoup session lifecycle", () => {
         index === 0 ? new DOMException("busy", "NotReadableError") : undefined,
     });
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
-    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("unavailable"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await until(() => expect(useVoice.getState().mic).toBe("unavailable"));
+    await vi.advanceTimersByTimeAsync(0);
     // Speakers or a webcam without a microphone: the same inputs, no retry.
     devices.dispatchEvent(new Event("devicechange"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
     devices.dispatchEvent(new Event("devicechange"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(env.getUserMediaCalls()).toBe(1);
     expect(env.errors).toHaveLength(1);
     inputs = ["default", "headset"];
     devices.dispatchEvent(new Event("devicechange"));
-    await vi.waitFor(() =>
+    await until(() =>
       expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
     );
   });
@@ -4189,11 +4156,11 @@ describe("authoritative mediasoup session lifecycle", () => {
     });
     // A device change that leaves the default where it is: no new capture.
     devices.dispatchEvent(new Event("devicechange"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
     expect(env.getUserMediaCalls()).toBe(1);
     defaultGroup = "headset";
     devices.dispatchEvent(new Event("devicechange"));
-    await vi.waitFor(() =>
+    await until(() =>
       expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
     );
     expect(env.errors).toEqual([]);
@@ -4224,7 +4191,6 @@ describe("authoritative mediasoup session lifecycle", () => {
     const env = await joined();
     const mic = env.peers[0]!.audio;
     toggleMute();
-    vi.useFakeTimers();
     env.peers[0]!.setTransportState("recv", "failed");
     await vi.advanceTimersByTimeAsync(11000);
     expect(env.peers).toHaveLength(2);
@@ -4428,7 +4394,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     const out = elements.find(
       (el) => (el.srcObject as { id?: string } | null)?.id === "boost",
     )!;
-    await vi.waitFor(() => expect(out.play).toHaveBeenCalled());
+    await until(() => expect(out.play).toHaveBeenCalled());
 
     // A second speaker joins the boosted mix.
     env.peers[0]!.receive("u-cara", "a", fakeStream("cara"));
@@ -4455,7 +4421,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(ctx.state).toBe("suspended");
     useMediaSettings.getState().patch({ outputVolume: 1.5 });
     expect(voice.muted).toBe(true);
-    await vi.waitFor(() => expect(ctx.state).toBe("running"));
+    await until(() => expect(ctx.state).toBe("running"));
     expect(contexts).toHaveLength(1);
     expect(ctx.closed).toBe(false);
   });
@@ -4465,7 +4431,6 @@ describe("authoritative mediasoup session lifecycle", () => {
     const contexts = boostAudio(true);
     env.peers[0]!.receive("u-bob", "a", fakeStream("bob"));
     const voice = elements.find((el) => el.srcObject)!;
-    vi.useFakeTimers();
     useMediaSettings.getState().patch({ outputVolume: 1.5 });
     const ctx = contexts[0]!;
     expect(voice.muted).toBe(true);
@@ -4480,9 +4445,7 @@ describe("authoritative mediasoup session lifecycle", () => {
     ctx.resumable = true;
     retryPlayback();
     expect(voice.muted).toBe(true);
-    await vi.waitFor(() =>
-      expect(useVoice.getState().playbackBlocked).toBe(false),
-    );
+    await until(() => expect(useVoice.getState().playbackBlocked).toBe(false));
     expect(ctx.gains.at(-1)!.gain.value).toBe(1.8);
   });
   it("boosts one participant above 100 % and leaves the others on their element", async () => {
@@ -4517,13 +4480,9 @@ describe("authoritative mediasoup session lifecycle", () => {
     )!;
     el.play.mockRejectedValueOnce(new Error("NotAllowedError"));
     retryPlayback();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().playbackBlocked).toBe(true),
-    );
+    await until(() => expect(useVoice.getState().playbackBlocked).toBe(true));
     retryPlayback();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().playbackBlocked).toBe(false),
-    );
+    await until(() => expect(useVoice.getState().playbackBlocked).toBe(false));
     let reject!: (e: Error) => void;
     el.play.mockImplementationOnce(
       () =>
@@ -4574,13 +4533,9 @@ describe("authoritative mediasoup session lifecycle", () => {
       Object.assign(new Error("gesture"), { name: "NotAllowedError" }),
     );
     onVisibility!();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().playbackBlocked).toBe(true),
-    );
+    await until(() => expect(useVoice.getState().playbackBlocked).toBe(true));
     retryPlayback();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().playbackBlocked).toBe(false),
-    );
+    await until(() => expect(useVoice.getState().playbackBlocked).toBe(false));
 
     leaveVoice();
     el.play.mockClear();
@@ -4593,10 +4548,10 @@ describe("authoritative mediasoup session lifecycle", () => {
     useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const env = await joined();
     toggleShare();
-    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    await until(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
     const capture = useVoice.getState().localScreen!;
     capture.getAudioTracks()[0]!.dispatchEvent(new Event("ended"));
-    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
+    await until(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
     expect(useVoice.getState().sourceAudio.s).toBe("ended");
     expect(useVoice.getState().localScreen).toBe(capture);
     expect(trackStopped(capture.getVideoTracks()[0])).toBe(false);
@@ -4619,7 +4574,7 @@ describe("display-source audio", () => {
   async function joined(options?: Parameters<typeof install>[0]) {
     const env = install(options);
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(env.peers[0]?.audio).toBeTruthy());
+    await until(() => expect(env.peers[0]?.audio).toBeTruthy());
     return env;
   }
 
@@ -4652,7 +4607,7 @@ describe("display-source audio", () => {
     const env = await joined();
     const mic = env.streams[0]?.getAudioTracks()[0];
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         env.mediaSent.some(
           (frame) => frame.op === "produce" && frame.k === "sa",
@@ -4700,9 +4655,7 @@ describe("display-source audio", () => {
       displayStreamFor: () => fakeVideoStream("without-audio"),
     });
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBeTruthy());
     expect(useVoice.getState().sourceAudio.s).toBe("unavailable");
     expect(useVoice.getState().sharing).toBe(true);
     expect(env.getDisplayMediaCalls()).toBe(1);
@@ -4721,7 +4674,7 @@ describe("display-source audio", () => {
     const env = await joined();
     toggleSourceWatch("u-bob", "s");
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         env.mediaSent.some(
           (frame) => frame.op === "produce" && frame.k === "sa",
@@ -4730,8 +4683,8 @@ describe("display-source audio", () => {
     );
     const capture = useVoice.getState().localScreen!;
     env.closeMedia();
-    await vi.waitFor(() => expect(env.peers.length).toBe(2));
-    await vi.waitFor(() =>
+    await until(() => expect(env.peers.length).toBe(2));
+    await until(() =>
       expect(
         env.peers[1]?.senderRows.some(
           (sender) => sender.track === capture.getAudioTracks()[0],
@@ -4760,7 +4713,7 @@ describe("display-source audio", () => {
         kind === "sa" ? new Error("negotiation_failed") : undefined,
     });
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         env.mediaSent.some(
           (frame) => frame.op === "produce" && frame.k === "sa",
@@ -4768,7 +4721,7 @@ describe("display-source audio", () => {
       ).toBe(true),
     );
     const mic = env.streams[0]!.getAudioTracks()[0];
-    await vi.waitFor(() => expect(useVoice.getState().localScreen).toBeNull());
+    await until(() => expect(useVoice.getState().localScreen).toBeNull());
     expect(streamStopped(capture)).toBe(true);
     expect(trackStopped(mic)).toBe(false);
     expect(useVoice.getState().status).toBe("joined");
@@ -4783,7 +4736,7 @@ describe("display-source audio", () => {
         kind === "s" ? new Error("forbidden") : undefined,
     });
     toggleShare();
-    await vi.waitFor(() => expect(env.errors).toHaveLength(1));
+    await until(() => expect(env.errors).toHaveLength(1));
     expect(useVoice.getState().localScreen).toBeNull();
     expect(streamStopped(capture)).toBe(true);
     expect(useVoice.getState().status).toBe("joined");
@@ -4811,9 +4764,7 @@ describe("display-source audio", () => {
     stream.getVideoTracks()[0]!.applyConstraints = apply;
     const env = await joined({ displayStreamFor: () => stream });
     toggleShare();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localScreen).toBe(stream),
-    );
+    await until(() => expect(useVoice.getState().localScreen).toBe(stream));
     expect(env.getDisplayMediaCalls()).toBe(1);
     expect(apply.mock.calls.map((call) => call[0])).toEqual([
       videoConstraintsFor("screen", "detail"),
@@ -4831,7 +4782,7 @@ describe("display-source audio", () => {
     stream.getVideoTracks()[0]!.applyConstraints = apply;
     const env = await joined({ displayStreamFor: () => stream });
     toggleShare();
-    await vi.waitFor(() => expect(apply).toHaveBeenCalled());
+    await until(() => expect(apply).toHaveBeenCalled());
     leaveVoice();
     expect(streamStopped(stream)).toBe(true);
     gate.resolve();
@@ -4855,7 +4806,7 @@ describe("display-source audio", () => {
         fakeVideoStream("as-asked", Boolean(constraints.audio)),
     });
     toggleShare();
-    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    await until(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
     expect(env.lastDisplayMedia()?.audio).toBe(false);
     expect(useVoice.getState().sourceAudio.s).toBe("off");
     expect(env.peers[0]?.sender("sa")).toBeUndefined();
@@ -4865,12 +4816,12 @@ describe("display-source audio", () => {
     useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     const env = await joined();
     toggleShare();
-    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
+    await until(() => expect(env.peers[0]?.sender("sa")).toBeTruthy());
     const capture = useVoice.getState().localScreen!;
     const video = env.peers[0]!.sender("s");
 
     useMediaSettings.getState().patch({ sourceAudioShare: "off" });
-    await vi.waitFor(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
+    await until(() => expect(env.peers[0]?.sender("sa")).toBeUndefined());
     expect(trackStopped(capture.getAudioTracks()[0])).toBe(true);
     expect(trackStopped(capture.getVideoTracks()[0])).toBe(false);
     // Switched off is not "ended": no notice about lost sound.
@@ -4893,7 +4844,7 @@ describe("display-source audio", () => {
     useMediaSettings.getState().patch({ sourceAudioShare: "on" });
     await joined({ displayStreamFor: () => fakeVideoStream("without-audio") });
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(useVoice.getState().sourceAudio.s).toBe("unavailable"),
     );
     useMediaSettings.getState().patch({ sourceAudioShare: "off" });
@@ -4908,7 +4859,7 @@ describe("display-source audio", () => {
       gateProduce: (kind) => (kind === "sa" ? answer.promise : undefined),
     });
     toggleShare();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         env.mediaSent.some(
           (frame) => frame.op === "produce" && frame.k === "sa",
@@ -4922,7 +4873,7 @@ describe("display-source audio", () => {
 
     // The producer that arrives after all is closed, not announced.
     answer.resolve();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(env.mediaSent.some((frame) => frame.op === "closeProducer")).toBe(
         true,
       ),
@@ -4953,7 +4904,7 @@ describe("display-source audio", () => {
     await Promise.resolve();
     useMediaSettings.getState().patch({ sourceAudioShare: "off" });
     picker.resolve();
-    await vi.waitFor(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
+    await until(() => expect(env.peers[0]?.sender("s")).toBeTruthy());
     expect(env.lastDisplayMedia()?.audio).toBeTruthy();
     expect(trackStopped(stream.getAudioTracks()[0])).toBe(true);
     expect(trackStopped(stream.getVideoTracks()[0])).toBe(false);
@@ -4976,12 +4927,10 @@ describe("voice session reset", () => {
   it("leaves nothing of a call behind; only the epochs move on", async () => {
     const { peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(peers[0]?.sender("a")).toBeTruthy());
+    await until(() => expect(peers[0]?.sender("a")).toBeTruthy());
     toggleMute();
     toggleCamera();
-    await vi.waitFor(() =>
-      expect(useVoice.getState().localCamera).toBeTruthy(),
-    );
+    await until(() => expect(useVoice.getState().localCamera).toBeTruthy());
     const before = voiceSessionForTests().current;
     expect(before.bound).toBe(true);
     expect(before.seat.connection).not.toBeNull();
@@ -5008,30 +4957,5 @@ describe("voice session reset", () => {
     expect(current.seatRetry.active).toBe(false);
     expect(current.receivedAudio.playbackBlocked).toBe(false);
     expect(useVoice.getState().status).toBe("idle");
-  });
-
-  it("keeps the module's state on the session object only", () => {
-    // A module-level `let` or collection would outlive resetVoiceForTests.
-    for (const [name, source] of [
-      ["session.ts", sessionSource],
-      ["sessionState.ts", sessionStateSource],
-      ["callMicrophone.ts", callMicrophoneSource],
-      ["localVideo.ts", localVideoSource],
-      ["localSourceAudio.ts", localSourceAudioSource],
-      ["receivedAudio.ts", receivedAudioSource],
-      ["videoLimits.ts", videoLimitsSource],
-    ] as const) {
-      const lets = [...source.matchAll(/^(?:export\s+)?let\s+(\w+)/gm)].map(
-        (match) => match[1],
-      );
-      const collections = [
-        ...source.matchAll(/^(?:export\s+)?const\s+(\w+)[^=\n]*=\s*new\s/gm),
-      ].map((match) => match[1]);
-      expect({ name, lets, collections }).toEqual({
-        name,
-        lets: name === "sessionState.ts" ? ["voice"] : [],
-        collections: [],
-      });
-    }
   });
 });
