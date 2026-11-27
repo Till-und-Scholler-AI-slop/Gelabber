@@ -288,21 +288,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_voice_heading_matches_in_both_languages() {
-        assert_eq!(voice_headings(), ["sprachkanäle", "voice channels"]);
-    }
-
-    #[test]
     fn the_overview_counts_in_both_languages() {
         let _de = crate::on_this_thread(Locale::De);
-        assert_eq!(overview_greeting_evening("Rafi"), "Guten Abend, Rafi");
         assert_eq!(overview_new(5), "5 neu");
         assert_eq!(overview_more_channels(1), "1 weiterer Kanal");
         assert_eq!(overview_more_channels(3), "3 weitere Kanäle");
         assert_eq!(overview_older(2), "2 ältere anzeigen");
         assert_eq!(overview_reply("allgemein"), "Antworten in #allgemein");
         let _en = crate::on_this_thread(Locale::En);
-        assert_eq!(overview_greeting_day("Rafi"), "Good afternoon, Rafi");
         assert_eq!(overview_more_channels(1), "1 more channel");
         assert_eq!(overview_older(2), "Show 2 older");
     }

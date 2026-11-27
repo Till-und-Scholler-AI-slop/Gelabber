@@ -1,7 +1,7 @@
 """The workflows under .github/workflows as parsed data, for the tests.
 
-PyYAML comes with the runner's system Python; the deploy job installs
-nothing for it. It reads YAML 1.1, where a bare `on` is the boolean true;
+PyYAML is the version requirements.txt pins (GEL-403), which the deploy and
+notices jobs install and AGENTS.md shows how to install. It reads YAML 1.1, where a bare `on` is the boolean true;
 `load` puts the triggers back under 'on'.
 """
 import functools

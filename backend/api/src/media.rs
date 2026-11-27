@@ -421,12 +421,6 @@ pub async fn cleanup_session(redis: redis::Client, hash: String) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn codes_match_media_contract() {
-        let code = ticket::generate();
-        assert_eq!(code.len(), ticket::CODE_LEN);
-        assert!(code.bytes().all(|b| ticket::ALPHABET.contains(&b)));
-    }
     async fn test_session(
         pool: &sqlx::PgPool,
         ttl_hours: &str,

@@ -1462,6 +1462,7 @@ mod tests {
         wait_for(&mut harness, "the replaced link's revoke", |_| {
             api.saw("DELETE /invites/siebentage22")
         });
+        crate::app::testkit::wait_until_idle(&mut harness);
         assert!(!api.saw("DELETE /invites/vierundzwanz"));
     }
 

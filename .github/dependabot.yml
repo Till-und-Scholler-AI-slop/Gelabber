@@ -56,8 +56,10 @@ updates:
       - dependency-name: tract*
         versions: [">= 0.22"]
 
+  # web/scripts/mutation: Stryker for mutation-web.yml, kept out of web's
+  # own install (GEL-388).
   - package-ecosystem: npm
-    directory: /web
+    directories: [/web, /web/scripts/mutation]
     schedule:
       interval: weekly
       day: monday

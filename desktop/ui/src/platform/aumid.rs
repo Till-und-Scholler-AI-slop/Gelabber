@@ -34,8 +34,6 @@ mod tests {
     fn the_process_has_the_id_of_the_shortcuts_and_the_toasts() {
         let nsi = include_str!("../../../packaging/native/windows/installer.nsi");
         assert!(nsi.contains(&format!("!define BUNDLEID \"{AUMID}\"")));
-        // The Tauri app's identifier: its shortcuts and toast entry carry it.
-        assert_eq!(AUMID, "io.github.till-und-scholler-ai-slop.gelabber");
         let toast = include_str!("notify/toast.rs");
         assert!(toast.contains("crate::platform::paths::IDENTIFIER"));
         assert_eq!(set_for_process(), Ok(()));

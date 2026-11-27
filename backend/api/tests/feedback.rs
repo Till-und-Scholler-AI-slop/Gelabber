@@ -102,21 +102,21 @@ async fn create(client: &mut Client, body: Value) -> Value {
     res.body
 }
 
-/// An operator reply as the operator routes will write it.
-async fn operator_reply(pool: &PgPool, id: &str, text: &str) {
-    let id = Uuid::parse_str(id).unwrap();
-    // One statement, so the message and the unread mark share `now()`.
-    sqlx::query(
-        "WITH message AS (INSERT INTO feedback_messages (feedback_id, author_kind, body) \
-         VALUES ($1, 'operator', $2)) \
-         UPDATE feedback SET last_activity_at = now(), \
-         person_unread_since = COALESCE(person_unread_since, now()) WHERE id = $1",
-    )
-    .bind(id)
-    .bind(text)
-    .execute(pool)
-    .await
-    .unwrap();
+/// Lena, the operator of `feedback_state`.
+async fn operator(state: &AppState) -> Client {
+    signed_in(state, "lena@example.test").await
+}
+
+/// An operator reply through the operator route.
+async fn operator_reply(lena: &mut Client, id: &str, text: &str) {
+    let res = lena
+        .send(
+            Method::POST,
+            &format!("/api/operator/feedback/{id}/messages"),
+            Some(json!({ "text": text })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
 }
 
 /// A visitor's entry from the public form, not confirmed yet.
@@ -500,7 +500,7 @@ async fn the_list_holds_own_entries_newest_activity_first(pool: PgPool) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    operator_reply(&pool, &oldest.to_string(), "Danke!").await;
+    operator_reply(&mut operator(&state).await, &oldest.to_string(), "Danke!").await;
     let res = ada.send(Method::GET, "/api/feedback?offset=20", None).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     let texts: Vec<&str> = res.body["entries"]
@@ -539,7 +539,7 @@ async fn replies_build_the_thread_and_reopen_a_done_entry(pool: PgPool) {
     let id = created["id"].as_str().unwrap().to_owned();
     let uuid = Uuid::parse_str(&id).unwrap();
 
-    operator_reply(&pool, &id, "Was genau?").await;
+    operator_reply(&mut operator(&state).await, &id, "Was genau?").await;
     sqlx::query("UPDATE feedback SET status = 'done', done_at = now() WHERE id = $1")
         .bind(uuid)
         .execute(&pool)
@@ -661,8 +661,9 @@ async fn reading_clears_unread(pool: PgPool) {
         .as_str()
         .unwrap()
         .to_owned();
-    operator_reply(&pool, &id, "Eins").await;
-    operator_reply(&pool, &id, "Zwei").await;
+    let mut lena = operator(&state).await;
+    operator_reply(&mut lena, &id, "Eins").await;
+    operator_reply(&mut lena, &id, "Zwei").await;
     let res = ada.send(Method::GET, "/api/feedback/status", None).await;
     assert_eq!(res.body, json!({ "enabled": true, "unread": 1 }));
 
@@ -893,15 +894,16 @@ async fn a_read_keeps_replies_the_list_never_held(pool: PgPool) {
         .as_str()
         .unwrap()
         .to_owned();
-    operator_reply(&pool, &id, "Eins").await;
-    operator_reply(&pool, &other, "Fremd").await;
+    let mut lena = operator(&state).await;
+    operator_reply(&mut lena, &id, "Eins").await;
+    operator_reply(&mut lena, &other, "Fremd").await;
     let shown = ada.send(Method::GET, "/api/feedback", None).await.body;
     let seen = shown["entries"][0]["messages"][0]["id"]
         .as_str()
         .unwrap()
         .to_owned();
     // A reply lands between the list and the read call.
-    operator_reply(&pool, &id, "Zwei").await;
+    operator_reply(&mut lena, &id, "Zwei").await;
 
     let path = format!("/api/feedback/{id}/read");
     // What was seen is named: without it nothing is read.
