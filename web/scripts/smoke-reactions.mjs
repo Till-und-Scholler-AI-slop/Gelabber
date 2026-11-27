@@ -535,22 +535,27 @@ for (const engine of [chromium, firefox]) {
     await member.getByRole("dialog").getByRole("searchbox").fill("Daumen hoch");
     // The chip shows the pending vote while its request runs, and a reload
     // aborts a request still running: the reload below waits for the answer.
-    const saved = member.waitForResponse(
-      (response) =>
-        response.request().method() === "PUT" &&
-        response.url().includes(`/api/messages/${dmMessage.id}/reactions/`),
-    );
-    await member
-      .getByRole("dialog")
-      .getByRole("button", { name: "Daumen hoch", exact: true })
-      .click();
-    await dmRow
-      .getByRole("button", {
-        name: "👍: 1 Reaktion, du hast reagiert",
-        exact: true,
-      })
-      .waitFor();
-    assert.equal((await saved).status(), 200, "the DM reaction was not saved");
+    // Waiter and action together: a failed click leaves no waiter unheard.
+    const [saved] = await Promise.all([
+      member.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" &&
+          response.url().includes(`/api/messages/${dmMessage.id}/reactions/`),
+      ),
+      (async () => {
+        await member
+          .getByRole("dialog")
+          .getByRole("button", { name: "Daumen hoch", exact: true })
+          .click();
+        await dmRow
+          .getByRole("button", {
+            name: "👍: 1 Reaktion, du hast reagiert",
+            exact: true,
+          })
+          .waitFor();
+      })(),
+    ]);
+    assert.equal(saved.status(), 200, "the DM reaction was not saved");
     const foreign = await contexts[2].request.put(
       new URL(
         `/api/messages/${dmMessage.id}/reactions/${encodeURIComponent("👍")}`,

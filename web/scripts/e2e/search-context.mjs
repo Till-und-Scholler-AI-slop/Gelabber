@@ -538,14 +538,17 @@ try {
     "changing chat cancels private context and keeps drafts",
     async () => {
       const release = await beginBlocked();
-      const canceled = member.page.waitForEvent("requestfailed", {
-        predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
-      });
-      await member.page
-        .locator(`.channel-sidebar a[href="${other}"]`)
-        .first()
-        .click();
-      await canceled;
+      // The waiter and its action together, so a failed action leaves no
+      // waiter to reject unheard (as responseTo in harness.mjs).
+      await Promise.all([
+        member.page.waitForEvent("requestfailed", {
+          predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
+        }),
+        member.page
+          .locator(`.channel-sidebar a[href="${other}"]`)
+          .first()
+          .click(),
+      ]);
       await release();
       assert.equal(await contextRegion().count(), 0);
       assert.equal(
@@ -568,15 +571,18 @@ try {
     "account replacement cancels the private request and releases drafts",
     async () => {
       const release = await beginBlocked();
-      const canceled = member.page.waitForEvent("requestfailed", {
-        predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
-      });
-      await member.page.locator(".user-panel-profile").first().click();
-      await member.page
-        .getByRole("menuitem", { name: "Abmelden", exact: true })
-        .click();
-      await member.page.waitForURL((url) => url.pathname === "/login");
-      await canceled;
+      await Promise.all([
+        member.page.waitForEvent("requestfailed", {
+          predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
+        }),
+        (async () => {
+          await member.page.locator(".user-panel-profile").first().click();
+          await member.page
+            .getByRole("menuitem", { name: "Abmelden", exact: true })
+            .click();
+          await member.page.waitForURL((url) => url.pathname === "/login");
+        })(),
+      ]);
       await member.page.getByLabel("E-Mail-Adresse").fill(replacement.email);
       await member.page.getByLabel("Passwort", { exact: true }).fill(password);
       await member.page
