@@ -92,7 +92,15 @@ export async function concurrentLive(h, f, { reset, options }) {
     simultaneousLives: 2,
     settled,
     tiles: shown,
-    first: await progress(f.watcher, options),
+    // Two Lives in the room: each one is measured by name (GEL-33).
+    first: await progress(f.watcher, {
+      ...options,
+      publisher: `E2E ${f.owner.label}`,
+    }),
+    second: await progress(f.watcher, {
+      ...options,
+      publisher: `E2E ${f.member.label}`,
+    }),
   };
 }
 
@@ -441,7 +449,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           selected.watchVideoSources.selectedLive === 1 &&
           selected.watchVideoSources.foreign === 0 &&
           selected.duplicateAudioPlaybackTracks === 0 &&
-          selected.micCalls === 0,
+          // A Live is watched inside the call, which takes the microphone
+          // once (since 2026-10-22); watching takes no second capture.
+          selected.micCalls === 1,
         "watch-foreign-source-or-duplicate-audio",
         { selected },
       );
