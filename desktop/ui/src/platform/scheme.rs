@@ -156,8 +156,7 @@ mod tests {
     #[test]
     fn the_desktop_preference_is_followed() {
         let Some((_daemon, address)) = private_bus("scheme") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let portal = connection::Builder::address(address.as_str())
             .unwrap()

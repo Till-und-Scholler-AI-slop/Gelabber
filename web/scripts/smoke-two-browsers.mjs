@@ -10,6 +10,7 @@ import { setTimeout as pause } from "node:timers/promises";
 import { promisify } from "node:util";
 import { chromium } from "playwright";
 import { withUdpLoss } from "./smoke-netem.mjs";
+import { missing } from "./prerequisite.mjs";
 
 const base = process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1";
 const suffix = `${Date.now()}-${process.pid}`;
@@ -355,8 +356,8 @@ try {
       `TURN-relayed Opus audio flowed through 8% SFU UDP netem packet loss and recovered (${dropped} UDP packets dropped; receiver reported ${duringLoss.lost - beforeLoss.lost} lost packets).`,
     );
   } else {
-    console.log(
-      "Packet-loss segment skipped: no media container PID supplied.",
+    missing(
+      "GELABBER_SMOKE_MEDIA_PID (the media container's PID) for the packet-loss part",
     );
   }
 

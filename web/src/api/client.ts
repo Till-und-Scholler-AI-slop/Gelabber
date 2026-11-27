@@ -736,7 +736,7 @@ function isSessionPayload(payload: unknown): payload is {
   );
 }
 
-/** `operator` of a session payload (v0.10); older servers send none. */
+/** `operator` of a session payload: anything but `true` is no operator. */
 function operatorFlag(payload: unknown): boolean {
   return (
     payload !== null &&

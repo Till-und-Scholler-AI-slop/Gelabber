@@ -1,7 +1,7 @@
 // Lazy parts in a real engine, without a server: headless Chromium runs the
 // built app from a made-up origin; its files, /api and the gateway are
 // answered from here. It checks what the unit tests cannot see:
-//  - the first screen loads none of the lazy chunks, and the workspace
+//  - the first screen asks for none of the lazy chunks, and the workspace
 //    fetches all of them once the browser is idle;
 //  - voice room, a settings area and the server settings render through
 //    their parts;
@@ -9,9 +9,9 @@
 //    place, with no automatic reload, and "Seite neu laden" recovers.
 // Run in web/: node scripts/smoke-lazy-parts.mjs
 // GELABBER_LAZY_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
-/* global process, console, window, URL */
+/* global process, console, window, URL, performance */
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,19 @@ import { chromium } from "playwright";
 import { build } from "vite";
 
 const web = fileURLToPath(new URL("..", import.meta.url));
+// Every lazy part of the app, by the module its chunk is named after: each
+// `lazyPart(() => import("./X.tsx")...)` in src. A new part joins by itself.
+const parts = [];
+for (const file of await readdir(join(web, "src"), { recursive: true })) {
+  if (!/\.tsx?$/.test(file) || /\.test\.tsx?$/.test(file)) continue;
+  const text = await readFile(join(web, "src", file), "utf8");
+  for (const [, module] of text.matchAll(
+    /lazyPart\(\s*\(\)\s*=>\s*import\("[^"]*\/(\w+)\.tsx?"\)/g,
+  ))
+    parts.push(module);
+}
+assert.ok(parts.length > 0, "found no lazyPart() in src");
+const partChunk = new RegExp(`/(${parts.join("|")})-[^/]*\\.js$`);
 const ORIGIN = "https://lazy.test";
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ME = id(6),
@@ -37,10 +50,12 @@ const server = {
   id: SERVER,
   name: "Wohnzimmer",
   owner_id: ME,
+  icon_url: null,
   created_at: AT,
   role: "owner",
   permissions,
   member_permissions: permissions,
+  blocked: false,
 };
 const channel = (cid, name, kind) => ({
   id: cid,
@@ -49,8 +64,22 @@ const channel = (cid, name, kind) => ({
   name,
   kind,
   created_at: AT,
+  limited: false,
+  role_ids: [],
 });
 const person = (uid, name) => ({ id: uid, name, avatar_url: null });
+/** A member as `GET /api/servers/{id}` lists them. */
+const member = (userId, name, role) => ({
+  user_id: userId,
+  name,
+  avatar_url: null,
+  joined_at: AT,
+  status_text: null,
+  accent_color: null,
+  avatar_decoration: null,
+  role_ids: [],
+  role,
+});
 const detail = {
   ...server,
   categories: [],
@@ -58,35 +87,35 @@ const detail = {
     channel(TEXT, "allgemein", "text"),
     channel(VOICE, "Sofa", "voice"),
   ],
-  members: [
-    {
-      user_id: ME,
-      name: "Lena",
-      avatar_url: null,
-      joined_at: AT,
-      role: "owner",
-    },
-    {
-      user_id: JONAS,
-      name: "Jonas",
-      avatar_url: null,
-      joined_at: AT,
-      role: "member",
-    },
-  ],
+  members: [member(ME, "Lena", "owner"), member(JONAS, "Jonas", "member")],
+  roles: [],
 };
 function answer(path) {
   if (path === "/api/auth/session")
     return {
-      user: { ...person(ME, "Lena"), email: "lena@example.test" },
+      user: {
+        ...person(ME, "Lena"),
+        email: "lena@example.test",
+        created_at: AT,
+        bio: null,
+        pronouns: null,
+        status_text: null,
+        accent_color: null,
+        banner_color: null,
+        banner_url: null,
+        avatar_decoration: null,
+        locale: "de",
+      },
       csrf_token: "a".repeat(64),
+      operator: false,
     };
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
   if (
     path === "/api/dms" ||
     path === "/api/messages/unread" ||
-    path === "/api/notification-settings"
+    path === "/api/notification-settings" ||
+    path === "/api/users/me/blocks"
   )
     return [];
   if (path === "/api/notification-privacy") return { hide_content: false };
@@ -112,7 +141,7 @@ try {
     executablePath: process.env.GELABBER_LAZY_BROWSER_EXECUTABLE || undefined,
     headless: true,
   });
-  async function open(path, block) {
+  async function open(path, block, { queueIdle = false } = {}) {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       locale: "de-DE",
@@ -120,7 +149,7 @@ try {
     });
     const requested = [];
     const blocked = { on: !!block };
-    await context.route("**/*", (route) => {
+    await context.route("**/*", async (route) => {
       const url = new URL(route.request().url());
       if (url.origin !== ORIGIN) return route.abort();
       if (url.pathname.startsWith("/api/"))
@@ -129,47 +158,82 @@ try {
           body: JSON.stringify(answer(url.pathname)),
         });
       requested.push(url.pathname);
-      if (blocked.on && block.test(url.pathname))
+      if (blocked.on && block?.test(url.pathname))
         return route.fulfill({ status: 404, body: "gone" });
       return route.fulfill({
         path: join(out, files.has(url.pathname) ? url.pathname : "index.html"),
       });
     });
-    await context.routeWebSocket("**/ws", (socket) =>
+    await context.routeWebSocket(/\/ws(\?|$)/, (socket) =>
       socket.onMessage((raw) => {
         const f = JSON.parse(raw);
         if (f.op === "s")
           socket.send(JSON.stringify({ op: "ok", s: f.s, c: f.c, n: 0 }));
       }),
     );
+    // The browser's idle callbacks wait until the test lets them run, so
+    // what the first screen asks for is told apart from the idle preload.
+    if (queueIdle)
+      await context.addInitScript(() => {
+        const queued = new Map();
+        let next = 0;
+        window.requestIdleCallback = (callback) => {
+          queued.set(++next, callback);
+          return next;
+        };
+        window.cancelIdleCallback = (id) => queued.delete(id);
+        window.releaseIdle = () => {
+          const callbacks = [...queued.values()];
+          queued.clear();
+          for (const callback of callbacks)
+            callback({ didTimeout: false, timeRemaining: () => 50 });
+        };
+      });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
     page.on("pageerror", (e) => problems.push(e.message));
     await page.goto(`${ORIGIN}${path}`);
     return { context, page, requested, blocked };
   }
-  // 1. Text channel: no lazy chunk on the first screen, all of them once idle.
+  // 1. Text channel: the first screen asks for no lazy chunk, and the
+  // workspace fetches all of them once the browser is idle.
   {
-    const { context, page, requested } = await open(`/s/${SERVER}/c/${TEXT}`);
+    const { context, page, requested } = await open(
+      `/s/${SERVER}/c/${TEXT}`,
+      undefined,
+      { queueIdle: true },
+    );
     await page.locator(".lr-composer textarea").waitFor();
-    const early = requested.filter(
-      (p) =>
-        /VoiceRoom-|SettingsAreaContent-|ServerSettingsPage-|VoiceSettingsPanel-|EmojiPicker-/.test(
-          p,
-        ) && p.endsWith(".js"),
+    assert.deepEqual(
+      requested.filter((p) => partChunk.test(p)),
+      [],
+      "the first screen asked for lazy chunks",
     );
-    assert.deepEqual(early, [], "the first screen loaded lazy chunks");
-    await page.waitForTimeout(6000);
-    const late = requested.filter(
-      (p) =>
-        /VoiceRoom-|SettingsAreaContent-|ServerSettingsPage-|VoiceSettingsPanel-|EmojiPicker-/.test(
-          p,
-        ) && p.endsWith(".js"),
+    await page.evaluate(() => window.releaseIdle());
+    // The workspace preloads every part once the browser is idle. On a
+    // timeout the comparison below names the parts that did not come.
+    await page
+      .waitForFunction(
+        (names) =>
+          names.every((name) =>
+            performance
+              .getEntriesByType("resource")
+              .some((entry) =>
+                new RegExp(`/${name}-[^/]*\\.js$`).test(entry.name),
+              ),
+          ),
+        parts,
+      )
+      .catch(() => {});
+    const late = requested.filter((p) => partChunk.test(p));
+    assert.deepEqual(
+      late.map((p) => /\/(\w+)-[^/]*$/.exec(p)[1]).sort(),
+      [...parts].sort(),
+      `idle preload fetched ${late}`,
     );
-    assert.equal(late.length, 5, `idle preload fetched ${late}`);
     console.log(
       "PASS: idle preload fetched",
-      late.map((p) => p.replace(/-.*/, "")).join(", "),
+      late.map((p) => /\/(\w+)-[^/]*$/.exec(p)[1]).join(", "),
     );
     await context.close();
   }

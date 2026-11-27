@@ -159,6 +159,7 @@ function detail(
     role: "member",
     permissions,
     member_permissions: [],
+    blocked: false,
     categories: [],
     channels: [],
     members: [],
@@ -659,9 +660,9 @@ describe("server settings Verzeichnis", () => {
     // Each button names whose request it answers.
     const id = html.match(/<span id="([^"]+)">Kai<\/span>/)?.[1];
     expect(id).toBeTruthy();
-    expect(html.match(new RegExp(`aria-describedby="${id}"`, "g"))).toHaveLength(
-      2,
-    );
+    expect(
+      html.match(new RegExp(`aria-describedby="${id}"`, "g")),
+    ).toHaveLength(2);
   });
 
   it("says when no request waits", () => {

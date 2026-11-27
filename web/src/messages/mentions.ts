@@ -20,7 +20,7 @@ export function mentionsMe(
   me: string | undefined,
 ): boolean {
   if (!me) return false;
-  return Boolean(message.mention_everyone || message.mentions?.includes(me));
+  return Boolean(message.mention_everyone || message.mentions.includes(me));
 }
 
 export type TextPart =
@@ -79,7 +79,7 @@ export function splitMentions(
 /** Where `text` has links, as `[start, end)` pairs. */
 function linkSpans(text: string): [number, number][] {
   const spans: [number, number][] = [];
-  for (let i = 0; i < text.length; ) {
+  for (let i = 0; i < text.length;) {
     const length = linkLengthAt(text, i);
     if (length) spans.push([i, i + length]);
     i += length || 1;

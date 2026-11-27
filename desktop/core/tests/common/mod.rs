@@ -497,7 +497,7 @@ pub fn check_decoder(name: &str, stats: &Value, variable: &str, codec: &str, ele
 
 /// Builds `desktop/native/tests/<name>.cc`, plain C++ without the core's
 /// libraries, with the host's compiler (GELABBER_HOST_CXX, else c++) and
-/// runs it. False when there is no compiler.
+/// runs it. False when there is no compiler, which fails in CI.
 pub fn run_host_test(name: &str, what: &str) -> bool {
     let native = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../native");
     let compiler = std::env::var("GELABBER_HOST_CXX").unwrap_or_else(|_| "c++".to_owned());
@@ -512,7 +512,7 @@ pub fn run_host_test(name: &str, what: &str) -> bool {
     let built = match built {
         Ok(built) => built,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("skipped: no C++ compiler {compiler:?} on this machine");
+            gelabber_testing::missing(&format!("the C++ compiler {compiler:?}"));
             return false;
         }
         Err(error) => panic!("{compiler}: {error}"),

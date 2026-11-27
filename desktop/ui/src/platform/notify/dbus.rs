@@ -479,8 +479,7 @@ mod tests {
     #[test]
     fn notifications_replace_report_the_click_and_close() {
         let Some((_daemon, address)): Option<(Daemon, String)> = private_bus("notify") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let (calls, called) = mpsc::channel();
         let service = serve(&address, calls);
@@ -535,8 +534,7 @@ mod tests {
     #[test]
     fn without_a_service_notifications_are_unavailable() {
         let Some((_daemon, address)) = private_bus("notify-none") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let backend = Backend::start(Some(address), Arc::new(|_| {}));
         assert!(!backend.available());

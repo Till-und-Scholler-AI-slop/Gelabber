@@ -116,53 +116,8 @@ Core/Storage/Epoch, concurrent attempts and row rollback, real slow raw TCP read
 
 The coordinator authorized 11b/c automation after the separate 11a fix; runtime prerequisites and final 11d gates remain explicit. No product edits or self-deployment.
 
-## Continuous call and resource return
-
-The user excluded the one-hour call test and new load tests for this v0.4 work.
-Do not execute the runner below as a current acceptance requirement or record it
-as passed. Its invocation and dated reports are retained for historical reference.
-
-The long local check joins two voice publishers and a third viewer in the call,
-goes live, and samples native duplex audio and decoded video every 30 seconds.
-It requires advancing media, stable peers/transceivers/captures/playback tracks,
-no duplicate audio playback and no ICE failures. Stop/Leave must release all
-client media tracks and bring the dedicated SFU room/peer gauges back to zero.
-The runner uses the existing real app fixture and deletes only its own server.
-It requires an otherwise idle, dedicated loopback SFU and a static built web
-candidate without HMR. Other calls must use a separate SFU instance.
-
-```bash
-GELABBER_SMOKE_URL=http://127.0.0.1:5177 \
-GELABBER_SOAK_MEDIA_URL=http://127.0.0.1:8081 \
-GELABBER_E2E_CASES=continuous-call-and-resource-return \
-GELABBER_E2E_REPORT=/tmp/gelabber-call-soak.json \
-npm run test:call-soak
-```
-
-The default duration is 3600 seconds; `GELABBER_SOAK_SECONDS=30` runs a fixture
-control and explicitly reports `oneHour:false`. Durations over two hours are
-rejected. `GELABBER_SOAK_CHECKPOINT` sets the intermediate report path. Optional
-Linux `GELABBER_SOAK_API_PID` and `GELABBER_SOAK_MEDIA_PID` record RSS and thread
-counts from the supplied Gelabber processes; executable names and process start
-identity are checked on every sample. No process is killed or restarted.
-The report records the mapped executable SHA256 and cumulative process CPU time.
-CPU percentage uses monotonic sample intervals and the system's `CLK_TCK`;
-100% means one fully occupied CPU core, and the first sample has no percentage.
-RSS is retained as measured: closed tracks do not prove an allocator returned
-memory. The app/runtime SHA declarations retain the standard harness attribution
-limits. Fake capture, a local network and a simulated display do not establish
-physical microphone quality, real iOS suspend/resume or WAN/TURN acceptance.
-This long check stays local and is not added to CI.
-
 The separate [iOS and Omarchy acceptance sheet](../../../docs/v0.4-device-acceptance.md)
 records the physical hearing, device, background/resume and TURN checks. It starts
 as not performed and requires the exact candidate and actual browser/device evidence.
 
-The 2026-10-05 local hour report
-(`web/scripts/e2e/evidence/v04-one-hour-call-2026-10-05.json`, removed in
-GEL-368) records 3600.106 seconds and 120 samples on an earlier frozen
-candidate. It
-used the temporary predecessor of this portable runner. The current portable
-runner has two separate 30-second controls. The recorded hour proves advancing
-media and released tracks/rooms, while shared API activity confounds its RAM
-comparison; viewer layers, physical devices and WAN/TURN remain separate gates.
+The one-hour call runner (`call-soak.mjs`) was removed in GEL-377.

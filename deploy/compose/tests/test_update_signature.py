@@ -8,6 +8,8 @@ import importlib.util
 from pathlib import Path
 import unittest
 
+from prerequisites import requires
+
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / '.github/workflows/scripts/update_signature.py'
 FIXTURES = Path(__file__).resolve().parent / 'fixtures/update-signature'
@@ -20,7 +22,7 @@ except ModuleNotFoundError:  # cryptography; desktop-native.yml installs python3
     update_signature = None
 
 
-@unittest.skipIf(update_signature is None, 'needs the cryptography package')
+@requires(update_signature is not None, 'the cryptography package')
 class VerifyTest(unittest.TestCase):
     def setUp(self):
         self.data = (FIXTURES / 'installer.exe').read_bytes()

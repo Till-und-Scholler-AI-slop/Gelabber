@@ -87,6 +87,7 @@ const server: ServerDetail = {
   role: "owner",
   permissions: ["manage_channels"],
   member_permissions: [],
+  blocked: false,
   categories: [category("cat", "Planung")],
   channels: [
     channel("allgemein", null),
@@ -169,14 +170,6 @@ describe("channel list", () => {
     expect(html).toContain('aria-posinset="5"');
   });
 
-  it("marks categories and the voice group up as headings", () => {
-    const html = list();
-    expect(html).toContain(
-      '<h3 class="sidebar-section-heading">Sprachkanäle</h3>',
-    );
-    expect(html).toContain('<h3 class="sidebar-category-name">Planung</h3>');
-  });
-
   it("leaves the long-press hint to touch screens", () => {
     expect(list()).not.toContain("Gedrückt halten");
   });
@@ -192,20 +185,15 @@ describe("channel list", () => {
 });
 
 describe("channel row", () => {
-  it("marks unread channels and shows a draft", () => {
+  // Bold only: no role or text says it (the browser test reads the draft).
+  it("marks unread channels", () => {
     fixture.badges = { termine: { count: 0, dot: true } };
-    fixture.drafts = ["termine"];
-    const html = row({ coarse: false });
-    expect(html).toContain("channel-row is-unread");
-    expect(html).toContain('<span class="sr-only">Entwurf</span>');
+    expect(row({ coarse: false })).toContain("channel-row is-unread");
   });
 
   it("says who is live in a voice channel", () => {
     const html = row({ coarse: false, voice: true, live: ["Mia", "Lena"] });
     expect(html).toContain('title="Mia und Lena sind live"');
-    expect(html).toContain(
-      '<span class="sr-only">Mia und Lena sind live</span>',
-    );
     expect(row({ coarse: false, voice: true, live: ["Mia"] })).toContain(
       "Mia ist live",
     );
@@ -266,20 +254,6 @@ describe("channel row", () => {
     const html = row({ coarse: false, manage: false, voice: true });
     expect(html).not.toContain("Aktionen für");
   });
-
-  it("shows a lock on a channel limited to roles, before the actions", () => {
-    for (const voice of [false, true]) {
-      const html = row({ coarse: false, voice, limited: true });
-      expect(html).toMatch(
-        /<a [^>]*>.*<span class="channel-row-lock" role="img" aria-label="Nur für bestimmte Rollen"><svg/,
-      );
-      // The hover actions follow the link and lie over the lock.
-      expect(html.indexOf("channel-row-lock")).toBeLessThan(
-        html.indexOf("sidebar-row-actions"),
-      );
-    }
-    expect(row({ coarse: false })).not.toContain("channel-row-lock");
-  });
 });
 
 const participant = {
@@ -290,11 +264,9 @@ const participant = {
   live: false,
 };
 
-// Markup only: node has no DOM to click. The row is a button so a tap,
-// the keyboard and iOS (no contextmenu on long-press) all open the profile
-// with its volume controls.
+// What a speaker looks like; what is read out is in the browser test.
 describe("sidebar voice participant", () => {
-  it("is a button that names what it opens and keeps the voice state", () => {
+  it("leaves a local mute out of the row", () => {
     const html = renderToStaticMarkup(
       <ParticipantRowView
         row={participant}
@@ -302,11 +274,6 @@ describe("sidebar voice participant", () => {
         onOpenProfile={() => {}}
       />,
     );
-    expect(html).toMatch(
-      /^<button type="button" class="sidebar-participant" title="Profil und Lautstärke"/,
-    );
-    expect(html).toContain("Bob");
-    expect(html).toContain('<span class="sr-only">stumm</span>');
     expect(html).not.toContain("Lokal stummgeschaltet");
   });
 
@@ -321,19 +288,16 @@ describe("sidebar voice participant", () => {
     );
   };
 
-  it("says speaking in shape and in words, not by the ring alone", () => {
+  it("shows speaking by bars as well as the ring", () => {
     const html = speaker({ muted: false });
     expect(html).toContain('class="sidebar-participant is-speaking"');
-    expect(html).toMatch(
-      /<span class="speaking-bars" aria-hidden="true"><span><\/span><span><\/span><span><\/span><\/span><span class="sr-only">spricht<\/span>/,
-    );
+    expect(html).toContain('<span class="speaking-bars" aria-hidden="true">');
   });
 
-  it("says nobody speaks who is muted or deafened", () => {
+  it("shows nobody speaking who is muted or deafened", () => {
     for (const flags of [{ muted: true }, { muted: false, deafened: true }]) {
       const html = speaker(flags);
       expect(html).not.toContain("speaking-bars");
-      expect(html).not.toContain("spricht");
       expect(html).not.toContain("is-speaking");
     }
   });

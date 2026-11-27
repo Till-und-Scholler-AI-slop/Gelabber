@@ -32,6 +32,7 @@ client dropped its Tauri code.
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, DeepFilterNet3, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
 | `i18n/` | Rust crate `gelabber-i18n`: the interface text in German and English, one catalog per namespace, and the check that no text is left outside them (docs/i18n.md) |
+| `testing/` | Rust crate `gelabber-testing`, for tests only: `missing` skips a test whose tool or service the machine lacks, and fails it in CI (GEL-375) |
 | `client/`, `call/`, `ui/`, `gelabber/` | The app (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
 | `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the setup page (in the sign-in pages' frame), the Tauri app's update notice, its "Server wechseln …" in the user menu and the install offers it left out, the references of the scenes `setup*`, `update-*` and those with `desktop` |
 | `packaging/native/` | The packages: `tarball.sh` (Linux), `windows/installer.nsi` (NSIS), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
@@ -70,10 +71,8 @@ else the system's (Linux: `LC_ALL`, then `LC_MESSAGES`, then `LANG`;
 Windows: the user's locale), else English. Signed in, it follows the
 account's language (`user.locale`): on sign-in, on the gateway frame `lc`
 and after a change under Einstellungen → Darstellung → Sprache, and keeps
-it in `settings.json` for the next start. Against a server older than
-v0.10 the account has no language, so the Sprache section is hidden and
-the device's choice stays. The text lives in the `gelabber-i18n` crate
-(`i18n/`); tests and the parity tool start in German.
+it in `settings.json` for the next start. The text lives in the
+`gelabber-i18n` crate (`i18n/`); tests and the parity tool start in German.
 
 Parity with the web client, against a seeded local stack (in `web/`:
 `node scripts/parity/seed.mjs`, then `node scripts/parity/shots.mjs <web-dir>`):

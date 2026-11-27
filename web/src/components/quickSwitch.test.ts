@@ -29,6 +29,7 @@ const server: ServerDetail = {
   role: "member",
   permissions: [],
   member_permissions: [],
+  blocked: false,
   categories: [],
   channels: [channel("allgemein"), channel("wohnzimmer", "voice")],
   members: [],

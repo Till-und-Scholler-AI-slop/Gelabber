@@ -69,6 +69,7 @@ const server = (id: string, name = id): Server => ({
   role: "member",
   permissions: ["moderate_members", "manage_channels", "send_messages"],
   member_permissions: ["send_messages"],
+  blocked: false,
 });
 const listItem = server("s1", "Spieleabend");
 const detail: ServerDetail = {
