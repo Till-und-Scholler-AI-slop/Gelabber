@@ -22,6 +22,7 @@ beforeEach(async () => {
             user: {
               id: "sync-user",
               email: "sync@example.test",
+              locale: "de",
               name: "Sync",
               avatar_url: null,
               created_at: "2026-10-05T00:00:00Z",

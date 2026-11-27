@@ -365,9 +365,22 @@ try {
     assert.equal(await focusedName(page), "Profil von Beobachter");
 
     // ↓ walks past the rows mounted at first.
+    // ↓ moves to the next mounted row; past the last one the virtual list
+    // has to render more first, and a key pressed before that is lost (a
+    // busy CI runner did: #1159). Each press waits for that row.
     const steps = 150;
-    for (let step = 0; step < steps; step++)
+    for (let step = 0; step < steps; step++) {
+      await page.waitForFunction(() => {
+        const rows = [
+          ...document.querySelectorAll(".member-panel [data-list-row]"),
+        ];
+        const at = rows.findIndex((row) =>
+          row.contains(document.activeElement),
+        );
+        return at >= 0 && at < rows.length - 1;
+      });
       await page.keyboard.press("ArrowDown");
+    }
     await frames(page);
     const walked = `Profil von Mitglied ${String(steps - 1).padStart(5, "0")}`;
     assert.equal(await focusedName(page), walked);

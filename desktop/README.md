@@ -35,7 +35,8 @@ client dropped its Tauri code.
 | `testing/` | Rust crate `gelabber-testing`, for tests only: `missing` skips a test whose tool or service the machine lacks, and fails it in CI (GEL-375) |
 | `client/`, `call/`, `ui/`, `gelabber/` | The app (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
 | `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the setup page (in the sign-in pages' frame), the Tauri app's update notice, its "Server wechseln …" in the user menu and the install offers it left out, the references of the scenes `setup*`, `update-*` and those with `desktop` |
-| `packaging/native/` | The packages: `tarball.sh` (Linux), `windows/installer.nsi` (NSIS), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
+| `packaging/native/` | The packages: `tarball.sh` and `check-core.sh` (Linux), `windows/installer.nsi` (NSIS) and the scripts `desktop-native.yml` runs on Windows (`windows/*.ps1`: `updater-key.ps1`, `build-installer.ps1`, `sign-update.ps1`, `install-test.ps1`, `check-binaries.ps1`, `loopback-address.ps1`), `version.sh` (the app's version for them and `release.yml`), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
+| `packaging/lint.sh` | shellcheck and PSScriptAnalyzer over the packaging scripts, as CI runs them (`--install <dir>` fetches the pinned versions) |
 | `packaging/arch/` | The pacman package `gelabber-desktop` (`arch/native/PKGBUILD`) and repository; see its README |
 | `packaging/icons/` | The app icon (`icon.png`, `icon.ico`) for the packages and the installer |
 | `packaging/updater.pub` | The public key updates are checked with (see "Updates") |
@@ -179,8 +180,8 @@ pwsh desktop\native\scripts\build-libwebrtc-windows.ps1 -Work C:\webrtc -Package
 $env:GELABBER_LIBWEBRTC_DIR = 'C:\libwebrtc-package'
 # MSVC's tools stop at 260 characters; the CMake and Meson trees are deep.
 $env:CARGO_TARGET_DIR = 'C:\t'
-# The C runtime linked statically, as in the release: without it the app
-# needs the Visual C++ redistributable.
+# The C runtime linked statically, as in the release (desktop/native/windows-build.env):
+# without it the app needs the Visual C++ redistributable.
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber-media-core
 cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber
@@ -203,6 +204,13 @@ The installer, from what was just built, with NSIS (`makensis`): stage
 ```powershell
 makensis /DVERSION=<version> /DFILEVERSION=<x.y.z.0> /DSOURCE=<folder> /DOUTFILE=gelabber-native-windows-x64-setup.exe desktop\packaging\native\windows\installer.nsi
 ```
+
+`desktop\packaging\native\windows\build-installer.ps1` does both, as CI
+does, with `CARGO_TARGET_DIR`, `RUNNER_TEMP` (the staging folder's parent),
+`GITHUB_STEP_SUMMARY` and `DESKTOP_VERSION`
+(`desktop/packaging/native/version.sh`) set. The other scripts there are
+CI's checks of what was built: `check-binaries.ps1` (dumpbin), and
+`install-test.ps1`, which installs into the account it runs in.
 
 `<version>` is the one of `desktop/Cargo.toml`. CI builds a release only
 when its tag is that version (`v<version>`). The smoke test starts
