@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import { render } from "vitest-browser-react";
 
+const clipboard = vi.hoisted(() => ({
+  copyText: vi.fn<(text: string) => Promise<boolean>>(async () => true),
+}));
+vi.mock("../servers/clipboard.ts", () => clipboard);
+
 import { useSession } from "../auth/store.ts";
 import { resetReplyTargets, useReplyTargets } from "../messages/replyTarget.ts";
 import type { Message } from "../messages/types.ts";
@@ -20,6 +25,7 @@ const message: Message = {
 };
 
 beforeEach(() => {
+  clipboard.copyText.mockClear();
   // Both outlive the row, as they do when it scrolls out of view.
   resetReplyTargets();
   resetEditDrafts();
@@ -104,14 +110,26 @@ describe("message menu", () => {
     expect(document.activeElement).toBe(editor.element());
   });
 
-  it("deletes after asking", async () => {
+  it("copies the message's text from „Text kopieren“", async () => {
+    const { more, menu } = await renderRow();
+    await userEvent.click(more);
+    await userEvent.click(
+      menu.getByRole("menuitem", { name: "Text kopieren" }),
+    );
+    expect(clipboard.copyText).toHaveBeenCalledExactlyOnceWith(
+      "Treffen wir uns um acht?",
+    );
+    expect(useReplyTargets.getState().byChannel.c1).toBeUndefined();
+  });
+
+  it("deletes with the confirmation left on without Shift", async () => {
     const { more, menu, onDelete } = await renderRow();
     await userEvent.click(more);
     await userEvent.click(menu.getByRole("menuitem", { name: "Löschen" }));
     expect(onDelete).toHaveBeenCalledExactlyOnceWith(false);
   });
 
-  it("deletes without asking when Shift is held", async () => {
+  it("deletes with the confirmation skipped when Shift is held", async () => {
     const { more, menu, onDelete } = await renderRow();
     await userEvent.click(more);
     await userEvent.keyboard("{Shift>}");

@@ -1,8 +1,9 @@
 #!/bin/bash
 # Prepares a Claude Code cloud container for Gelabber work: the Node version
-# web/package.json asks for, web dependencies, the Rust toolchain with fmt and
-# clippy, backend crates, and the test database. The environment's setup
-# script runs it from the repository root; it is safe to run again.
+# web/package.json asks for, web dependencies and Chromium, the Rust
+# toolchain with fmt and clippy, backend crates, and the test database. The
+# environment's setup script runs it from the repository root; it is safe to
+# run again.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,6 +25,8 @@ mkdir -p "$HOME/.local/bin"
 for tool in node npm npx; do ln -sf "$node_dir/bin/$tool" "$HOME/.local/bin/$tool"; done
 export PATH="$HOME/.local/bin:$PATH"
 (cd web && npm ci --no-audit --no-fund)
+# npm test mounts components in Chromium (*.browser.test.tsx).
+(cd web && npx playwright install --with-deps chromium-headless-shell)
 
 # Rust: rust-toolchain.toml picks the version; CI's lint job uses fmt and clippy.
 rustup component add rustfmt clippy

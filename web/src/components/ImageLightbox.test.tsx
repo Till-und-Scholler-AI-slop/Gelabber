@@ -71,7 +71,8 @@ describe("image lightbox with a gallery", () => {
   it("offers previous, next and the count for several pictures", () => {
     expect(html).toMatch(/<button [^>]*aria-label="Vorheriges Bild"/);
     expect(html).toMatch(/<button [^>]*aria-label="Nächstes Bild"/);
-    expect(html).toContain(">2 / 3<");
+    // Read out in the dialog's name already ("Bild 2 von 3").
+    expect(html).toMatch(/aria-hidden="true">2 \/ 3</);
   });
 
   it("opens on the picture asked for, not on the gallery's first", () => {

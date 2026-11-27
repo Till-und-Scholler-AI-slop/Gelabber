@@ -134,8 +134,10 @@ describe("channel list keyboard", () => {
     expect(document.activeElement).toBe(link("allgemein"));
     await userEvent.keyboard("{ArrowUp}");
     expect(document.activeElement).toBe(link("allgemein"));
-    // So is "Planung"; the last row keeps focus.
-    await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+    // One row per key, past "Planung"; the last row keeps focus.
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(link("wohnzimmer"));
+    await userEvent.keyboard("{ArrowDown}");
     expect(document.activeElement).toBe(link("termine"));
     await userEvent.keyboard("{ArrowDown}");
     expect(document.activeElement).toBe(link("termine"));
@@ -143,7 +145,11 @@ describe("channel list keyboard", () => {
 
   it("returns Tab to the row left last", async () => {
     const link = await renderList();
-    await userEvent.keyboard("{Tab}{ArrowDown}");
+    await userEvent.keyboard("{Tab}{ArrowUp}");
+    expect(document.activeElement).toBe(link("allgemein"));
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(link("wohnzimmer"));
+    await userEvent.keyboard("{ArrowDown}");
     expect(document.activeElement).toBe(link("termine"));
     await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
     expect(document.activeElement).not.toBe(link("termine"));

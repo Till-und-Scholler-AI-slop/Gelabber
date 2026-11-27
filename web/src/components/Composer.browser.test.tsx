@@ -13,6 +13,8 @@ vi.mock("../gifs/queries.ts", () => ({
 }));
 
 import { useSession } from "../auth/store.ts";
+import { setReplyTarget } from "../messages/replyTarget.ts";
+import type { Message } from "../messages/types.ts";
 import { Composer } from "./Composer.tsx";
 
 let channel = 0;
@@ -93,6 +95,48 @@ describe("composer sending", () => {
     await expect.element(field).toHaveValue("");
     // The keyboard stays in the field for the next message.
     expect(document.activeElement).toBe(field.element());
+  });
+
+  it("does not send on the Enter that ends an input method's composition", async () => {
+    const { field } = await renderComposer();
+    await userEvent.click(field);
+    await userEvent.keyboard("Kanji");
+    field.element().dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(sent.mutate).not.toHaveBeenCalled();
+    // The next, plain Enter does send: the handler was listening.
+    await userEvent.keyboard("{Enter}");
+    expect(sent.mutate).toHaveBeenCalledOnce();
+  });
+
+  it("sends a reply to the message answered and closes its banner", async () => {
+    const answered: Message = {
+      id: "m1",
+      channel_id: `c${channel}`,
+      author: { id: "u2", name: "Bea", avatar_url: null },
+      content: "Wer kommt mit?",
+      created_at: "2026-11-27T18:00:00Z",
+      edited_at: null,
+      attachments: [],
+    };
+    setReplyTarget(`c${channel}`, answered);
+    const { screen, field } = await renderComposer();
+    const banner = screen.getByText(/^Antwort an/);
+    await expect.element(banner).toBeVisible();
+    expect(banner.element().textContent).toMatch(/^Antwort an Bea\b/);
+    await userEvent.click(field);
+    await userEvent.keyboard("Ich{Enter}");
+    expect(sent.mutate.mock.calls[0]![0]).toMatchObject({
+      content: "Ich",
+      replyTo: answered,
+    });
+    await expect.element(banner).not.toBeInTheDocument();
   });
 
   it("sends nothing while the field is empty or blank", async () => {

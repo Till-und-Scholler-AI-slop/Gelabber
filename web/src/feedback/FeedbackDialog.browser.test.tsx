@@ -79,11 +79,14 @@ describe("feedback dialog", () => {
   it("sends nothing without a text and says why at the field", async () => {
     const { opener, dialog, text } = await renderDialog();
     await userEvent.click(opener);
-    await userEvent.click(dialog.getByRole("button", { name: "Senden" }));
-    await expect
-      .element(text)
-      .toHaveAccessibleDescription(/Schreib ein paar Worte\./);
-    await expect.element(text).toHaveAttribute("aria-invalid", "true");
+    for (const typed of ["", "   "]) {
+      await userEvent.fill(text, typed);
+      await userEvent.click(dialog.getByRole("button", { name: "Senden" }));
+      await expect
+        .element(text)
+        .toHaveAccessibleDescription(/Schreib ein paar Worte\./);
+      await expect.element(text).toHaveAttribute("aria-invalid", "true");
+    }
     expect(sending.mutate).not.toHaveBeenCalled();
   });
 
@@ -163,21 +166,23 @@ describe("feedback dialog, as read out", () => {
   });
 
   it("offers the three kinds as one radio group, Idee chosen and the one Tab stop", async () => {
-    const { dialog } = await opened();
-    const kinds = dialog
-      .getByRole("radiogroup", { name: "Worum geht es?" })
+    const { dialog, text } = await opened();
+    const group = dialog.getByRole("radiogroup", { name: "Worum geht es?" });
+    const kinds = group
       .getByRole("radio")
       .elements()
-      .map((chip) => [
-        chip.textContent,
-        chip.getAttribute("aria-checked"),
-        chip.tabIndex,
-      ]);
+      .map((chip) => [chip.textContent, chip.getAttribute("aria-checked")]);
     expect(kinds).toEqual([
-      ["Idee", "true", 0],
-      ["Problem", "false", -1],
-      ["Lob", "false", -1],
+      ["Idee", "true"],
+      ["Problem", "false"],
+      ["Lob", "false"],
     ]);
+    // Back from the text field, Tab passes the group once, at the chosen kind.
+    await userEvent.click(text);
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(document.activeElement).toBe(
+      group.getByRole("radio", { name: "Idee" }).element(),
+    );
   });
 
   it("asks for the text with the kind's placeholder and the limits", async () => {
