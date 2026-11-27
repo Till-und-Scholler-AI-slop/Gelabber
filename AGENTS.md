@@ -156,6 +156,26 @@ the rules on failing and flaky tests hold for all tests.
 - **Flaky tests:** when a test your change does not touch fails, add a link
   to the failing run to its open issue, or open one, before you re-run it.
 
+## Supported versions
+
+A minor version covers all its patch releases: v0.13.1 is v0.13. N is the
+minor version the development line ships, N-1 the one before it.
+
+- **Clients:** the server supports web and desktop clients of N and N-1.
+  Code kept only for older clients is removed.
+- **Web and API** ship as one image set. The web client assumes a server of
+  its own version and carries no tolerance for an older one.
+- **Desktop app and server:** the app works with servers of its own minor
+  version and the one before. An older server is not supported.
+- **Server upgrades** are supported from N-1 in one step. An operator on an
+  older version upgrades through each minor version in between
+  (`deploy/README.md`, "Supported upgrades").
+- **Expiry:** compatibility code names the first minor version that no
+  longer supports what it serves: code for v0.13 clients or servers says
+  `remove in v0.15` (see "Tests"). The release procedure removes what is due.
+- **Data:** the database migrations stay one chain; do not squash them.
+  Rows that old versions wrote and databases still hold stay readable.
+
 ## CI workflows (`.github/workflows`)
 
 The rules for workflows are in `.claude/rules/ci-workflows.md`. Read them

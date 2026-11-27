@@ -742,6 +742,22 @@ Candidate sets are **not releases**. A finished hotfix gets a new workspace/Comp
 
 If an alias update was interrupted or was missing for an older release: start `Release` on **main** with its `tag` and `image_run_id` and turn on **refresh_latest_only**. That repairs only the aliases of the stable GitHub release currently published as latest, without builds, new releases or changes to fixed tags. For v0.2.5: `tag=v0.2.5`, `image_run_id=36549037951`. All four aliases are written one by one; on an error the workflow stays red and can be started again.
 
+## Supported upgrades
+
+An upgrade is supported from the previous minor version in one step: a
+v0.14 release from any v0.13 release (all patch releases of a minor version
+count as one). On an older version, upgrade through each minor version in
+between, to its latest patch release, and wait until the API answers
+`/ready` before the next step: the API applies the step's migrations when it
+starts, and code that carries data or settings across a step stays only as
+long as that step is supported. From v0.12.1, for example: v0.13.1, then
+v0.14. Read the upgrade notes of every release on the way.
+
+A server supports the web client and desktop apps of its own minor version
+and of the one before. The web client comes with the server's image set. A
+desktop app works with servers of its own minor version and the one before,
+not with older ones: update the server first, then the apps.
+
 ## Rollout and rollback with exact digests
 
 After acceptance, download the set from the released release and archive it permanently with the deployment. For the first migration, record the previous set **actually running**: capture `docker compose images` / container inspect and registry digests; do not assume that an old mutable tag matches the running container. Save this old set as `previous.env` (all four image variables). Credentials stay in `.env` only, not in the manifest.

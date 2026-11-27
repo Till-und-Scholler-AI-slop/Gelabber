@@ -11,7 +11,12 @@ is the order of the work; check each step's result before the next one.
 
 1. **Scope.** The Linear milestone vX.Y.Z has no open issue that should
    ship; move the rest to the next milestone. CI on the development line's head is
-   green.
+   green. Compatibility code due in this release is gone:
+   `git grep -n 'remove in v'` on the development line lists every marked
+   place, and those naming vX.Y or an older version are due (AGENTS.md,
+   "Supported versions"). Remove each with its tests in a pull request of
+   its own to the development line before the release branch, or say in the
+   release PR that none was due.
 2. **Branch.** `release/vX.Y.Z` from the development line, then
    `git merge origin/main`, so hotfixes on `main` stay in.
 3. **Version.** Bump the same files as the last release commit:
@@ -28,9 +33,11 @@ is the order of the work; check each step's result before the next one.
      saying what changed for people using it and ending with its PRs and
      Linear IDs, e.g. `#651 (GEL-27)`. A change without a PR names its
      commit. The detail stays in the PR.
-   - `## Upgrade notes`: backup, migrations by number, new or changed
-     `.env` variables, image pins, rollback, order (server, then clients)
-     and what breaks older clients.
+   - `## Upgrade notes`: the versions it upgrades from in one step (the
+     previous minor version, see `deploy/README.md` "Supported upgrades"),
+     backup, migrations by number, new or changed `.env` variables, image
+     pins, rollback, order (server, then clients) and what breaks older
+     clients.
    - A last line linking the compare view `vPREV...vX.Y.Z`.
 
    The notes describe what ships. Pending tests and follow-ups go into
