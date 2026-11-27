@@ -226,58 +226,49 @@ try {
       mimeType: "text/plain",
       buffer: Buffer.from("unsent"),
     });
-  // Establish real history-reading intent after row and composer measurement.
-  // The phone viewport below is 64px taller and clamps this small gap to end;
-  // that geometry change must not turn an upward wheel into a read of latest.
-  await new Promise((r) => setTimeout(r, 500));
-  const logBox = await log.boundingBox();
-  assert.ok(logBox);
-  await member.page.mouse.move(
-    logBox.x + logBox.width / 2,
-    logBox.y + logBox.height / 2,
-  );
-  await log.evaluate((el) => {
-    el.scrollTop = el.scrollHeight;
-  });
+  // Establish real history-reading intent once rows and composer are
+  // measured: the draft's file chip makes the composer taller and the list
+  // shorter, so the list is placed only after it is drawn and the list holds
+  // still. The phone viewport below is 64px taller and clamps this small gap
+  // to end; that geometry change must not turn an upward scroll into a read
+  // of latest.
+  await member.page
+    .locator("form")
+    .last()
+    .getByText("context-draft.txt", { exact: true })
+    .waitFor();
+  // Sets the list's position (when given), waits until its height, visible
+  // height and position hold for 5 frames, and reads where it stands.
+  const settleList = (offsetFromEnd) =>
+    log.evaluate(async (el, offset) => {
+      if (offset !== null)
+        el.scrollTop = el.scrollHeight - el.clientHeight - offset;
+      const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
+      let still = 0;
+      let last = state();
+      while (still < 5) {
+        await new Promise(requestAnimationFrame);
+        const now = state();
+        still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
+        last = now;
+      }
+      const [height, visible, top] = last;
+      return { height, visible, top, gap: height - top - visible };
+    }, offsetFromEnd);
   await until(
-    () =>
-      log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
-    (distance) => distance <= 16,
+    () => settleList(0),
+    (state) => state.gap <= 1,
     "canonical-end-before-native-up",
   );
-  await new Promise((r) => setTimeout(r, 500));
   // The reader leaves the end: the list reads any scroll up as that intent
   // (scrollEndIntent), and a scroll down that ends near the end as the
   // reader coming back. A wheel moves 25 px here and 85 to 105 px on a CI
-  // runner, too far for this place, so the list is scrolled up directly.
-  const restingGap = () =>
-    log.evaluate(async (el) => {
-      let still = 0;
-      let last = el.scrollTop;
-      while (still < 5) {
-        await new Promise(requestAnimationFrame);
-        still = el.scrollTop === last ? still + 1 : 0;
-        last = el.scrollTop;
-      }
-      return el.scrollHeight - el.scrollTop - el.clientHeight;
-    });
-  await log.evaluate((el) => {
-    el.scrollTop = el.scrollHeight - el.clientHeight - 40;
-  });
-  await restingGap();
-  await until(
-    () =>
-      log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
-    (distance) => distance > 16 && distance < 64,
-    "history-wheel-before-search",
-  );
-  await new Promise((r) => setTimeout(r, 300));
-  const historyGap = await log.evaluate(
-    (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
-  );
+  // runner, too far for this place, so the list is scrolled up directly,
+  // 40 px from its end, and read back once it holds.
+  const placed = await settleList(40);
   assert.ok(
-    historyGap > 16 && historyGap < 64,
-    `fixture must be reading near-end history before search, gap=${historyGap}`,
+    placed.gap > 16 && placed.gap < 64,
+    `the list does not hold 40 px above its end before the search: ${JSON.stringify(placed)}`,
   );
   const beforeUnread = (await channelState(member, channel)).unread_count;
   const search = async (value) => {

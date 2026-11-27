@@ -128,12 +128,41 @@ try {
       );
       await new Promise((r) => setTimeout(r, 900));
       assert.equal((await channelState(member, channel)).unread_count, 1);
-      await log.evaluate((el) => {
-        el.scrollTop = el.scrollHeight;
-        el.dispatchEvent(new Event("scroll"));
-      });
+      // From the top, the jump lands at the end the virtual list estimates;
+      // rows measured there can move the end on. Scroll until the list holds
+      // at its end, as a reader keeps scrolling, then the newest is read.
+      const atEnd = () =>
+        log.evaluate(async (el) => {
+          el.scrollTop = el.scrollHeight;
+          const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
+          let still = 0;
+          let last = state();
+          while (still < 5) {
+            await new Promise(requestAnimationFrame);
+            const now = state();
+            still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
+            last = now;
+          }
+          const box = el.getBoundingClientRect();
+          const newest = [...el.querySelectorAll("[data-index]")].find((row) =>
+            row.textContent.includes("history must stay unread"),
+          );
+          const rect = newest?.getBoundingClientRect();
+          return {
+            gap: el.scrollHeight - el.scrollTop - el.clientHeight,
+            newestDrawn: !!newest,
+            newestOnScreen:
+              !!rect && rect.top >= box.top && rect.bottom <= box.bottom + 1,
+          };
+        });
+      await until(atEnd, (state) => state.gap <= 1, "scroll-to-end");
+      // Its last sample says where the list stood: at the end with the newest
+      // on screen and still unread is the app's fault.
       await until(
-        () => channelState(member, channel),
+        async () => ({
+          ...(await channelState(member, channel)),
+          list: await atEnd(),
+        }),
         (row) => row.unread_count === 0,
         "scroll-read",
       );
