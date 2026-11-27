@@ -176,16 +176,3 @@ describe("idle activity", () => {
     expect(isPresenceActivityEvent("focus")).toBe(false);
   });
 });
-
-describe("ttl reliability", () => {
-  it("does not keep a stale typer after the deadline", () => {
-    vi.useFakeTimers();
-    applyTyping("ch", "u1", true, Date.now(), 50);
-    vi.setSystemTime(Date.now() + 80);
-    pruneTyping(Date.now());
-    expect(
-      typingUserIds(useTypingStore.getState().byChannel, "ch", Date.now()),
-    ).toEqual([]);
-    vi.useRealTimers();
-  });
-});

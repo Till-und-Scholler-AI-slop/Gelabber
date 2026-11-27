@@ -78,7 +78,7 @@ check.
 A few habits of this repository:
 
 - A fix comes with a test that fails without it, where the code can be
-  tested.
+  tested. The other rules for tests are in [AGENTS.md](AGENTS.md#tests).
 - Both clients speak German and English: interface text goes into the
   catalogs in both languages ([docs/i18n.md](docs/i18n.md)). The German is
   informal ("du"); match the wording around it.
