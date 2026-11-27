@@ -4,7 +4,8 @@
 minio_source.py runs as CI runs it, in a scratch repository with real git and
 a fake docker that keeps a registry: it accepts only the calls the script
 should make, pushes only what was tagged, and a pushed image carries the
-label of the build it was tagged from.
+label of the build it was tagged from. A bare repository is its origin, with
+main.
 """
 import importlib.util
 import json
@@ -21,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / '.github/workflows/scripts/minio_source.py'
 ENV = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GITHUB_REPOSITORY': 'O/R'}
 MINIO, MC = 'ghcr.io/o/r/minio:R1', 'ghcr.io/o/r/mc:R2'
-FORMAT = '{{.Manifest.Digest}} {{json .Image.Config.Labels}}'
+FORMAT = '{{.Manifest.Digest}} {{.Manifest.MediaType}} {{json .Image.Config.Labels}}'
 
 FAKE_DOCKER = textwrap.dedent('''\
     #!/usr/bin/env python3
@@ -40,7 +41,9 @@ FAKE_DOCKER = textwrap.dedent('''\
         if found is None:
             print(f'ERROR: {args[3]}: not found', file=sys.stderr); done(1)
         labels = {'org.gelabber.source-tree': found['tree']} if found['tree'] else None
-        print(found['digest'], json.dumps(labels)); done()
+        kind = 'application/vnd.oci.image.index.v1+json' if found.get('index') else \
+            'application/vnd.docker.distribution.manifest.v2+json'
+        print(found['digest'], kind, json.dumps(None if found.get('index') else labels)); done()
     if args[0] == 'tag' and len(args) == 3 and args[1] in state['local']:
         state['tagged'][args[2]] = args[1]; done()
     if args[0] == 'push' and len(args) == 2 and args[1] in state['tagged']:
@@ -66,11 +69,16 @@ class Registry:
                              ('deploy/compose/mc', 'FROM golang AS mc\n')):
             (self.root / folder).mkdir(parents=True)
             (self.root / folder / 'Dockerfile').write_text(text)
+        (self.root / '.github/workflows').mkdir(parents=True)
+        (self.root / '.github/workflows/minio-images.yml').write_text('name: build\n')
         (self.root / 'deploy/compose/compose.yaml').write_text(
             'services:\n'
             '  minio:\n    image: ${GELABBER_MINIO_IMAGE:-' + MINIO + '}\n'
             '  minio-init:\n    image: ${GELABBER_MC_IMAGE:-' + MC + '}\n')
-        self.git('init', '-q')
+        origin = Path(self.tmp.name) / 'origin.git'
+        subprocess.run(['git', 'init', '-q', '--bare', str(origin)], env=ENV, check=True)
+        self.git('init', '-q', '-b', 'main')
+        self.git('remote', 'add', 'origin', str(origin))
         self.commit()
         bin_dir = Path(self.tmp.name) / 'bin'
         bin_dir.mkdir()
@@ -86,12 +94,18 @@ class Registry:
         return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *args], cwd=self.root,
                               env=ENV, check=True, capture_output=True, text=True).stdout.strip()
 
-    def commit(self):
+    def commit(self, push=True):
+        """A commit on main, pushed to origin unless `push` is false."""
         self.git('add', '-A')
         self.git('commit', '-q', '--allow-empty', '-m', 'x')
+        if push:
+            self.git('push', '-q', 'origin', 'HEAD:main')
+        return self.git('rev-parse', 'HEAD')
 
-    def tree(self, name):
-        return self.git('rev-parse', f'HEAD:deploy/compose/{name}')
+    def tree(self, name, rev='HEAD'):
+        """What the label holds: the folder's tree and the build workflow's blob."""
+        return '+'.join(self.git('rev-parse', f'{rev}:deploy/compose/{name}',
+                                 f'{rev}:.github/workflows/minio-images.yml').split())
 
     def save(self, state):
         self.state_path.write_text(json.dumps(state))
@@ -133,7 +147,6 @@ class Plan(unittest.TestCase):
         self.repo.publish_registry(**{MINIO: built(self.repo.tree('minio')), MC: built(self.repo.tree('mc'))})
         code, plan = self.repo.plan()
         self.assertEqual((code, plan['minio'], plan['mc'], plan['build']), (0, 'keep', 'keep', 'false'))
-        self.assertEqual(plan['minio-tree'], self.repo.tree('minio'))
 
     def test_a_changed_folder_or_a_missing_label_is_replaced(self):
         old_minio = self.repo.tree('minio')
@@ -142,6 +155,35 @@ class Plan(unittest.TestCase):
         self.repo.publish_registry(**{MINIO: built(old_minio), MC: built('')})
         code, plan = self.repo.plan()
         self.assertEqual((code, plan['minio'], plan['mc'], plan['build']), (0, 'replace', 'replace', 'true'))
+
+    def test_a_changed_build_workflow_rebuilds_both(self):
+        self.repo.publish_registry(**{MINIO: built(self.repo.tree('minio')), MC: built(self.repo.tree('mc'))})
+        (self.repo.root / '.github/workflows/minio-images.yml').write_text('name: build\n# platforms\n')
+        self.repo.commit()
+        code, plan = self.repo.plan()
+        self.assertEqual((code, plan['minio'], plan['mc']), (0, 'replace', 'replace'))
+
+    def test_an_older_commit_publishes_nothing(self):
+        # A re-run of an older publish-minio run must not roll the tag back.
+        older = self.repo.commit()
+        (self.repo.root / 'deploy/compose/minio/Dockerfile').write_text('FROM golang:newer AS minio\n')
+        self.repo.commit()
+        self.repo.publish_registry(**{MINIO: built(self.repo.tree('minio')), MC: built(self.repo.tree('mc'))})
+        self.repo.git('checkout', '-q', older)
+        code, err = self.repo.plan()
+        self.assertNotEqual(code, 0)
+        self.assertIn('main has moved on', err)
+        code, _, err = self.repo.run('publish', 'replace', 'keep')
+        self.assertNotEqual(code, 0)
+        self.assertIn('main has moved on', err)
+        self.assertEqual([call for call in self.repo.state()['calls'] if call[0] in ('tag', 'push')], [])
+
+    def test_a_multi_platform_index_is_an_error_not_a_missing_label(self):
+        self.repo.publish_registry(**{MINIO: dict(built(self.repo.tree('minio')), index=True),
+                                      MC: built(self.repo.tree('mc'))})
+        code, err = self.repo.plan()
+        self.assertNotEqual(code, 0)
+        self.assertIn('multi-platform index', err)
 
     def test_a_registry_error_on_either_image_stops_the_plan(self):
         for broken in (MINIO, MC):
@@ -169,6 +211,15 @@ class Publish(unittest.TestCase):
         self.assertEqual(self.calls('push'), [['push', MINIO], ['push', MC]])
         registry = self.repo.state()['registry']
         self.assertEqual((registry[MINIO]['tree'], registry[MC]['tree']), (self.repo.tree('minio'), self.repo.tree('mc')))
+
+    def test_a_build_from_other_sources_fails_after_the_push(self):
+        # A stale artifact or a wrong labels: input: the tag must not stay quiet.
+        state = self.repo.state()
+        state['local']['gelabber/minio:R1'] = 'stale+sources'
+        self.repo.save(state)
+        code, _, err = self.repo.run('publish', 'push', 'keep')
+        self.assertNotEqual(code, 0)
+        self.assertIn("does not carry this commit's sources", err)
 
     def test_keep_pushes_nothing(self):
         code, _, _ = self.repo.run('publish', 'keep', 'keep')
@@ -222,8 +273,12 @@ class WaitFor(unittest.TestCase):
         self.assertEqual(self.wait([('sha256:' + '2' * 64, 'tree')]), ('sha256:' + '2' * 64, []))
 
     def test_it_gives_up_after_the_bound_naming_the_workflow(self):
-        with self.assertRaisesRegex(ValueError, 'publish-minio.yml'):
+        with self.assertRaisesRegex(ValueError, 'run publish-minio.yml on main'):
             self.wait([('sha256:' + '1' * 64, 'old')] * 10, bound=60)
+
+    def test_a_registry_error_is_retried_within_the_bound(self):
+        self.assertEqual(self.wait([RuntimeError('unauthorized'), ('sha256:' + '2' * 64, 'tree')]),
+                         ('sha256:' + '2' * 64, [30]))
 
 
 if __name__ == '__main__':

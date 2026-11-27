@@ -115,7 +115,8 @@ class Promotion(unittest.TestCase):
         self.api.start()
         # The MinIO tag's build: test_minio_source.py tests the waiting itself.
         self.waited = []
-        self.minio = [patch.object(m.minio_source, 'source_tree', side_effect=lambda name, rev='HEAD': f'{name}@{rev}'),
+        self.minio = [patch.object(m.minio_source, 'source', side_effect=lambda name, rev='HEAD': f'{name}-sources'),
+                      patch.object(m.minio_source, 'main_head', return_value='main-head'),
                       patch.object(m.minio_source, 'wait_for',
                                    side_effect=lambda ref, tree: self.waited.append((ref, tree)) or DIGEST)]
         for patcher in self.minio:
@@ -314,8 +315,17 @@ class Promotion(unittest.TestCase):
         with patch.object(m, 'tag_sha', return_value=None), patch.object(m, 'registry_digest', return_value=DIGEST), \
                 patch.object(m, 'run'), patch.object(m.minio_source, 'wait_for', return_value=OTHER) as wait:
             m.promote()
-        wait.assert_called_once_with(f'ghcr.io/{REPO}/minio:{m.MINIO_PIN}', f'minio@{SHA}')
+        wait.assert_called_once_with(f'ghcr.io/{REPO}/minio:{m.MINIO_PIN}', 'minio-sources')
         self.assertEqual(json.loads(Path('image-set.json').read_text())['minio']['digest'], OTHER)
+
+    def test_promote_fails_at_once_when_main_has_other_minio_sources(self):
+        # publish-minio.yml builds only main's sources: waiting for these could not end.
+        sources = {SHA: 'old', 'main-head': 'new'}
+        with patch.object(m, 'tag_sha', return_value=None), patch.object(m, 'registry_digest', return_value=DIGEST), \
+                patch.object(m, 'run'), patch.object(m.minio_source, 'source', side_effect=lambda name, rev: sources[rev]), \
+                patch.object(m.minio_source, 'wait_for') as wait, self.assertRaisesRegex(ValueError, 'main has moved on'):
+            m.promote()
+        wait.assert_not_called()
 
     def test_latest_keeps_the_released_minio_build_after_its_tag_was_rebuilt(self):
         # publish-minio.yml replaces the pinned tag when its build image changes (GEL-402).

@@ -42,19 +42,18 @@ class MinioImages(unittest.TestCase):
                 self.assertNotIn('if', self.steps[name])
 
 
-
-
 class SourceLabel(unittest.TestCase):
     """Every build carries the tree its tag is compared with (GEL-402)."""
 
     def test_each_build_is_labelled_with_its_folders_tree(self):
         steps = {step['name']: step for step in load('minio-images.yml')['jobs']['build']['steps']}
-        self.assertEqual(steps['Source trees']['if'], NOT_FOUND)
+        self.assertEqual(steps['Sources']['if'], NOT_FOUND)
         for build, name in (('Build', 'minio'), ('Build mc', 'mc')):
             with self.subTest(build=build):
                 self.assertEqual(steps[build]['with']['labels'],
                                  f'org.gelabber.source-tree=${{{{ steps.trees.outputs.{name} }}}}')
-                self.assertIn(f'git rev-parse HEAD:deploy/compose/{name})', steps['Source trees']['run'])
+                self.assertIn(f'minio_source.py source {name})', steps['Sources']['run'])
+
 
 if __name__ == '__main__':
     unittest.main()

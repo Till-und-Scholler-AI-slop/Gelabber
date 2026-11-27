@@ -78,8 +78,12 @@ def promote():
             raise ValueError('SHA image digest changed')
     minio = f'ghcr.io/{repo.lower()}/minio'
     # publish-minio.yml may still be rebuilding the tag from this commit's
-    # sources (GEL-402); the set records that build, never an older one.
-    minio_digest = minio_source.wait_for(f'{minio}:{MINIO_PIN}', minio_source.source_tree('minio', sha))
+    # sources (GEL-402); the set records that build, never an older one. It
+    # builds only main's sources, so for other ones there is nothing to wait for.
+    sources = minio_source.source('minio', sha)
+    if sources != minio_source.source('minio', minio_source.main_head()):
+        raise ValueError(f'{minio_source.MOVED_ON}; {sha} has other MinIO sources than main')
+    minio_digest = minio_source.wait_for(f'{minio}:{MINIO_PIN}', sources)
     # Do not mutate the shipped version on an unchanged-version main commit.
     allowed = promotion_allowed(sha, api('git/ref/heads/main')['object']['sha'], tag_sha(version))
     if allowed:

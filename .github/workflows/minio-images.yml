@@ -65,8 +65,8 @@ jobs:
           grep -F "MC_RELEASE: ${MC_RELEASE}" deploy/compose/compose.yaml
           grep -F "ARG MC_RELEASE=${MC_RELEASE}" deploy/compose/mc/Dockerfile
 
-      # Unless its Dockerfiles changed, check the images operators pull; the
-      # source build (3 to 5 minutes, no cache) runs only for a missing tag.
+      # Unless asked to build, check the images operators pull; the source
+      # build (3 to 5 minutes, no cache) runs when asked or for a missing tag.
       - name: Published images
         id: published
         if: ${{ !inputs.build }}
@@ -82,13 +82,13 @@ jobs:
           fi
 
       # The label publish-minio.yml compares to decide what to replace (GEL-402).
-      - name: Source trees
+      - name: Sources
         id: trees
         if: steps.published.outputs.found != 'true'
         run: |
           set -euo pipefail
-          echo "minio=$(git rev-parse HEAD:deploy/compose/minio)" >> "$GITHUB_OUTPUT"
-          echo "mc=$(git rev-parse HEAD:deploy/compose/mc)" >> "$GITHUB_OUTPUT"
+          echo "minio=$(python3 .github/workflows/scripts/minio_source.py source minio)" >> "$GITHUB_OUTPUT"
+          echo "mc=$(python3 .github/workflows/scripts/minio_source.py source mc)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
         if: steps.published.outputs.found != 'true'
