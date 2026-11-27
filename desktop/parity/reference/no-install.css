@@ -1,0 +1,11 @@
+/* What the web client never showed inside the Tauri app (up to 0.8.x), whose
+   install state said `native`: Settings → App in the settings list (unless it
+   is the open area) and that area's desktop app and web app panels. The
+   native app has no such install offers. The reference of the parity scenes
+   with `desktop` (web/scripts/parity/shots.mjs), now that the web client no
+   longer knows the Tauri app. */
+.settings-nav li:has(> a[href="/settings/app"]:not([aria-current="page"])),
+.pwa-install,
+.pwa-install-disclosure {
+  display: none !important;
+}

@@ -5,7 +5,8 @@ its tree (`record`). When that pull request is merged into `main` and
 `main` has not moved since the run, the merge commit on `main` has the same
 tree, so CI on the push need not check it again: `find` prints the run
 whose result stands for it. Anything else (no pull request, another tree,
-fewer areas checked, an error) prints nothing, and CI runs every check.
+fewer areas checked, an error) prints nothing: CI on `main` then checks
+every area, and desktop-release.yml (`--candidate`) builds the packages.
 
 `find --candidate` finds the same for a release tag, from a run that also
 packaged the apps as the release ships them (desktop-native.yml `candidate`):
@@ -47,7 +48,8 @@ def record(areas, sha, tree, candidate=False, base=None):
     """What a pull request's or merge queue's run passed, as stored in the
     artifact; `base` is the commit it was tested on."""
     return {'schema': 1, 'sha': sha, 'tree': tree, 'candidate': candidate, 'base': base,
-            'areas': sorted(area for area, touched in areas.items() if touched == 'true')}
+            'areas': sorted(area for area, touched in areas.items()
+                            if touched == 'true' and area != 'minio-build')}
 
 
 def touches_cache_inputs(paths):
@@ -192,8 +194,8 @@ def main(argv):
         try:
             run = find(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'], git('rev-parse', 'HEAD^{tree}'),
                        '--candidate' in argv)
-        except Exception as error:  # noqa: BLE001 - any doubt runs every check
-            print(f'::warning::no reuse, running every check: {error}', file=sys.stderr)
+        except Exception as error:  # noqa: BLE001 - any doubt means no reuse
+            print(f'::warning::no reuse: {error}', file=sys.stderr)
             run = None
         print(f'run={run or ""}')
     elif argv[:1] == ['find-queue']:
