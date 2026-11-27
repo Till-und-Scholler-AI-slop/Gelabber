@@ -410,18 +410,22 @@ mod tests {
     use std::sync::mpsc;
 
     /// The wake-ups of `instance`, as the UI gets them.
-    fn wake_ups(instance: &Instance) -> mpsc::Receiver<()> {
+    fn wake_ups(instance: &Instance) -> mpsc::Receiver<bool> {
         let (woke, wake_ups) = mpsc::channel();
+        let show = instance.show.clone();
         instance.set_wake(Arc::new(move || {
-            let _ = woke.send(());
+            let _ = woke.send(show.load(Ordering::Acquire));
         }));
         wake_ups
     }
 
     /// Waits for the wake-up a second start causes; the frame it asks for
     /// must find `show` set, once (the UI shows the window then).
-    fn shown(instance: &Instance, wake_ups: &mpsc::Receiver<()>) {
-        wake_ups.recv().expect("the instance woke the UI");
+    fn shown(instance: &Instance, wake_ups: &mpsc::Receiver<bool>) {
+        let set = wake_ups
+            .recv_timeout(Duration::from_secs(30))
+            .expect("no wake-up within 30 s");
+        assert!(set, "woken before show was set");
         assert!(instance.take_show(), "woken, but nothing to show");
         assert!(!instance.take_show());
     }
@@ -465,9 +469,6 @@ mod tests {
         let text = std::fs::read_to_string(&file).unwrap();
         let port: u16 = text.split(' ').next().unwrap().parse().unwrap();
         let stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_millis(500)))
-            .unwrap();
         // It ends once the app closed the connection, past its decision.
         assert!(!ask(stream, "show nope"));
         assert!(!first.take_show());
@@ -496,7 +497,8 @@ mod tests {
         shown(&first, &wake_ups);
         // Answered while the held client is still connected: an app that
         // served one client at a time would first have given up on it and
-        // closed its connection (a read would then end, Ok(0)).
+        // closed its connection (a read would then end, Ok(0)). Only if all
+        // this took longer than the app's WAIT could it fail on sound code.
         held.set_nonblocking(true).unwrap();
         let read = held.read(&mut [0u8; 1]);
         assert!(
@@ -518,7 +520,10 @@ mod tests {
         let (count, stop) = (sent.clone(), done.clone());
         let writer = std::thread::spawn(move || {
             let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-            while !stop.load(Ordering::Acquire) && stream.write_all(b"x").is_ok() {
+            for _ in 0..2 * MAX_LINE {
+                if stop.load(Ordering::Acquire) || stream.write_all(b"x").is_err() {
+                    return;
+                }
                 count.fetch_add(1, Ordering::AcqRel);
                 // A slow client, not a synchronisation.
                 std::thread::sleep(Duration::from_millis(25));
@@ -541,7 +546,8 @@ mod tests {
     #[test]
     fn a_start_waits_for_the_running_app_before_giving_up() {
         let pause = Duration::from_millis(5);
-        let soon = || Instant::now() + Duration::from_millis(200);
+        let window = Duration::from_millis(200);
+        let soon = || Instant::now() + window;
         let mut tries = 0;
         let answers = wait_for_running(
             || {
@@ -566,7 +572,7 @@ mod tests {
         assert_eq!(ends, Waited::Free);
         // Silent only once the next pause would pass the deadline.
         let deadline = soon();
-        let mut asked = 0;
+        let mut asked: u128 = 0;
         let silent = wait_for_running(
             || {
                 asked += 1;
@@ -579,6 +585,9 @@ mod tests {
         assert_eq!(silent, Waited::Silent);
         assert!(Instant::now() + pause >= deadline, "gave up early");
         assert!(asked > 1, "asked only once");
+        // A pause between tries: no more of them fit before the deadline.
+        let most = window.as_millis() / pause.as_millis() + 1;
+        assert!(asked <= most, "asked {asked} times, past the deadline");
     }
 
     /// Only a socket nobody listens on is stale; one whose app is slow to
