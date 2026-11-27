@@ -19,10 +19,8 @@ struct SeatRecord {
     c: Uuid,
     m: bool,
     d: bool,
-    #[serde(deserialize_with = "known_kinds")]
     p: HashSet<TrackKind>,
-    /// Owners whose Live this seat watches. Seats written before #521 have none.
-    #[serde(default)]
+    /// Owners whose Live this seat watches.
     w: HashSet<Uuid>,
 }
 
@@ -33,16 +31,6 @@ pub struct VoiceJoin {
     /// The channel held no seat before, none of this user's other sockets
     /// either: a call begins.
     pub opened: bool,
-}
-
-/// A seat an API from before #353 wrote can still list the old Go Live
-/// (`l`/`la`) until its lease runs out; those kinds are skipped, not an error.
-fn known_kinds<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HashSet<TrackKind>, D::Error> {
-    let raw = Vec::<serde_json::Value>::deserialize(d)?;
-    Ok(raw
-        .into_iter()
-        .filter_map(|kind| serde_json::from_value(kind).ok())
-        .collect())
 }
 
 // All indexes are leases too. Reads atomically prune expired/missing seats;
@@ -1111,32 +1099,6 @@ mod tests {
         assert_eq!(seat.pubs, HashSet::from([TrackKind::A]));
         g.detach(owner).await;
         g.detach(other_tab).await;
-    }
-
-    #[tokio::test]
-    async fn seats_written_with_the_old_go_live_still_read() {
-        let g = gateway();
-        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        let id = Uuid::new_v4();
-        let raw = serde_json::json!({
-            "id": id, "u": u, "s": s, "c": c, "m": false, "d": false,
-            "p": ["a", "l", "la"],
-        });
-        redis::Script::new(WRITE_SEAT)
-            .key(seat_key(id))
-            .key(room_key(c))
-            .key(server_key(s))
-            .arg(raw.to_string())
-            .arg(VOICE_LEASE_MS)
-            .invoke_async::<i32>(&mut redis().await)
-            .await
-            .unwrap();
-        let rows = g.voice.records(room_key(c)).await.unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].p, HashSet::from([TrackKind::A]));
-        // Written before watches were kept: it watches nothing.
-        assert!(rows[0].w.is_empty());
-        assert_eq!(g.voice_snapshot(s).await.unwrap().len(), 1);
     }
 
     /// Everything a join replays to the newcomer is marked as replay, the
