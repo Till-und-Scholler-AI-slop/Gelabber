@@ -31,6 +31,10 @@ INDEXES = ('application/vnd.oci.image.index.v1+json',
 MOVED_ON = 'main has moved on to other MinIO sources: run publish-minio.yml on main'
 
 
+class MultiPlatformIndex(RuntimeError):
+    """A tag that is an index: waiting does not change that."""
+
+
 def run(*args):
     return subprocess.run(args, capture_output=True, text=True)
 
@@ -87,7 +91,7 @@ def published(ref):
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
         raise RuntimeError(f'Invalid digest for {ref}: {digest}')
     if media_type in INDEXES:
-        raise RuntimeError(f'{ref} is a multi-platform index ({media_type}); its labels are per platform, '
+        raise MultiPlatformIndex(f'{ref} is a multi-platform index ({media_type}); its labels are per platform, '
                            'and publish-minio.yml pushes single images')
     return digest, (json.loads(labels or 'null') or {}).get(LABEL, '')
 
@@ -135,6 +139,8 @@ def wait_for(ref, sources, bound=15 * 60, every=30, clock=time.monotonic, sleep=
     while True:
         try:
             found = published(ref)
+        except MultiPlatformIndex:
+            raise
         except RuntimeError as error:
             found, problem = None, str(error)
         else:

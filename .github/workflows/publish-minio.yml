@@ -41,7 +41,9 @@ jobs:
 
       - name: Plan
         id: plan
-        run: python3 .github/workflows/scripts/minio_source.py plan | tee -a "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          python3 .github/workflows/scripts/minio_source.py plan | tee -a "$GITHUB_OUTPUT"
 
   images:
     name: MinIO images

@@ -276,6 +276,19 @@ class WaitFor(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'run publish-minio.yml on main'):
             self.wait([('sha256:' + '1' * 64, 'old')] * 10, bound=60)
 
+    def test_an_index_ends_the_wait_at_once(self):
+        # Waiting does not turn an index into a single image: no 15 minutes.
+        source = load()
+        now, slept = [0], []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds
+        with patch.object(source, 'published', side_effect=[source.MultiPlatformIndex('an index')] * 10), \
+                self.assertRaises(source.MultiPlatformIndex):
+            source.wait_for(MINIO, 'tree', bound=60, every=30, clock=lambda: now[0], sleep=sleep)
+        self.assertEqual(slept, [])
+
     def test_a_registry_error_is_retried_within_the_bound(self):
         self.assertEqual(self.wait([RuntimeError('unauthorized'), ('sha256:' + '2' * 64, 'tree')]),
                          ('sha256:' + '2' * 64, [30]))

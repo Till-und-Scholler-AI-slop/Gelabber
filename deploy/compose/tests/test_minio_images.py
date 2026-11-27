@@ -1,7 +1,10 @@
 """When the minio job builds MinIO and mc from source, and when it checks the
 published pinned images instead (GEL-392). If the switch breaks, a pull
 request that breaks a MinIO Dockerfile is checked against the old image."""
+import os
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -53,6 +56,35 @@ class SourceLabel(unittest.TestCase):
                 self.assertEqual(steps[build]['with']['labels'],
                                  f'org.gelabber.source-tree=${{{{ steps.trees.outputs.{name} }}}}')
                 self.assertIn(f'minio_source.py source {name})', steps['Sources']['run'])
+
+
+def run_step(workflow, job, name, python):
+    """A step's own run: text under bash -e, as GitHub runs it without a
+    shell:, with `python` as the body of a fake python3: (exit code, outputs)."""
+    script = next(step for step in load(workflow)['jobs'][job]['steps'] if step.get('name') == name)['run']
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp) / 'python3'
+        fake.write_text('#!/bin/sh\n' + python)
+        fake.chmod(0o755)
+        output = Path(tmp) / 'output'
+        result = subprocess.run(['bash', '--noprofile', '--norc', '-e', '-c', script], capture_output=True,
+                                env={**os.environ, 'GITHUB_OUTPUT': str(output),
+                                     'PATH': f'{tmp}{os.pathsep}{os.environ["PATH"]}'})
+        return result.returncode, output.read_text() if output.exists() else ''
+
+
+class StepsFail(unittest.TestCase):
+    """A failing minio_source.py fails its step, not an empty output (review of #1116)."""
+
+    def test_a_failing_plan_fails_the_plan_step(self):
+        self.assertNotEqual(run_step('publish-minio.yml', 'plan', 'Plan', 'exit 3\n')[0], 0)
+        self.assertEqual(run_step('publish-minio.yml', 'plan', 'Plan', 'echo minio=keep\necho build=false\n'),
+                         (0, 'minio=keep\nbuild=false\n'))
+
+    def test_failing_sources_fail_the_step_instead_of_an_empty_label(self):
+        self.assertNotEqual(run_step('minio-images.yml', 'build', 'Sources', 'exit 3\n')[0], 0)
+        self.assertEqual(run_step('minio-images.yml', 'build', 'Sources', 'echo "$3"\n'),
+                         (0, 'minio=minio\nmc=mc\n'))
 
 
 if __name__ == '__main__':

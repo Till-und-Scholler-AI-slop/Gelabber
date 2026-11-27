@@ -87,8 +87,11 @@ jobs:
         if: steps.published.outputs.found != 'true'
         run: |
           set -euo pipefail
-          echo "minio=$(python3 .github/workflows/scripts/minio_source.py source minio)" >> "$GITHUB_OUTPUT"
-          echo "mc=$(python3 .github/workflows/scripts/minio_source.py source mc)" >> "$GITHUB_OUTPUT"
+          # Assigned first: a failing $(...) inside echo would leave an empty label.
+          minio="$(python3 .github/workflows/scripts/minio_source.py source minio)"
+          mc="$(python3 .github/workflows/scripts/minio_source.py source mc)"
+          echo "minio=$minio" >> "$GITHUB_OUTPUT"
+          echo "mc=$mc" >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
         if: steps.published.outputs.found != 'true'
