@@ -1,0 +1,97 @@
+# The desktop app's whole-app tests with every stand-in API answer held back
+# (GELABBER_TEST_API_DELAY_MS, desktop/ui/src/app/testkit.rs): a test that
+# clicks before an answer moved the layout fails here every time, not once in
+# a while in CI (GEL-369). Not a PR gate; weekly and by hand.
+name: Desktop UI tests with slow answers
+
+on:
+  schedule:
+    - cron: "41 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  delayed:
+    name: Whole-app tests, answers ${{ matrix.delay_ms }} ms late
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        delay_ms: [50, 400]
+    env:
+      GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
+      CARGO_PROFILE_DEV_BUILD_OVERRIDE_DEBUG: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache key
+        id: key
+        run: |
+          echo "key=libwebrtc-linux-x64-${{ hashFiles('desktop/native/libwebrtc.env', 'desktop/native/scripts/build-libwebrtc-linux.sh', 'desktop/native/patches/*.patch') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare package directory
+        run: sudo mkdir -p /mnt/libwebrtc-package && sudo chown -R "$USER" /mnt/libwebrtc-package
+
+      - name: Restore libwebrtc package
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /mnt/libwebrtc-package
+          key: ${{ steps.key.outputs.key }}
+
+      # As desktop-native.yml: a package the repository lists by SHA-256.
+      - name: Fetch the stored package
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /mnt/libwebrtc-fetch
+          sudo chown -R "$USER" /mnt/libwebrtc-fetch
+          pin=$(grep -F "  $KEY.tar.zst" desktop/native/libwebrtc-packages.sha256 || true)
+          if [ -z "$pin" ]; then
+            echo "::error::desktop/native/libwebrtc-packages.sha256 lists no $KEY.tar.zst; run CI on the branch first."
+            exit 1
+          fi
+          gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" \
+            --pattern "$KEY.tar.zst" --dir /mnt/libwebrtc-fetch
+          (cd /mnt/libwebrtc-fetch && printf '%s\n' "$pin" | sha256sum --check --strict)
+          tar --zstd -xf "/mnt/libwebrtc-fetch/$KEY.tar.zst" -C /mnt/libwebrtc-package
+          test -f /mnt/libwebrtc-package/lib/libwebrtc.a
+          sudo rm -rf /mnt/libwebrtc-fetch
+
+      - name: Build tools
+        timeout-minutes: 15
+        run: |
+          .github/workflows/scripts/apt-install.sh ninja-build python3-venv
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
+
+      # Reads the caches pushes write; saves none of its own.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: desktop
+          save-if: false
+
+      - name: Install cargo-nextest
+        timeout-minutes: 5
+        run: .github/workflows/scripts/install-nextest.sh
+
+      # The default profile: no retry, so a late click fails the run.
+      - name: UI tests
+        env:
+          GELABBER_TEST_API_DELAY_MS: ${{ matrix.delay_ms }}
+        run: cargo nextest run --locked --manifest-path desktop/Cargo.toml -p gelabber-ui --lib --no-fail-fast

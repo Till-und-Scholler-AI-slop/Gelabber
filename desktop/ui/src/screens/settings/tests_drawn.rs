@@ -92,8 +92,10 @@ pub fn harness(
     (h, world, client, call)
 }
 
-/// Runs `test` on its own thread and fails if it has not finished in
-/// time: a hung UI thread fails the test instead of hanging the run.
+/// Runs `test` on its own thread and ends the whole run if it has not
+/// finished in time: a hung UI thread cannot be stopped, and it holds the
+/// config lock (`TempConfig`), so a plain failure would leave every later
+/// test that takes the lock waiting for it.
 pub fn within(secs: u64, test: impl FnOnce() + Send + 'static) {
     let (tx, rx) = std::sync::mpsc::channel();
     let handle = std::thread::spawn(move || {
@@ -108,7 +110,8 @@ pub fn within(secs: u64, test: impl FnOnce() + Send + 'static) {
             }
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            panic!("the UI thread hung for {secs} s")
+            eprintln!("the UI thread hung for {secs} s; ending the test run");
+            std::process::abort();
         }
     }
 }

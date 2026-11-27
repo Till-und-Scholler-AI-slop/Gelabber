@@ -689,6 +689,7 @@ fn format_until(until: DateTime<Utc>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::testkit::click;
     use crate::app::testkit::{
         ALLGEMEIN, FakeApi, HOME, Reply, launcher, wait_for_label, wait_for_text, workspace,
     };
@@ -709,11 +710,9 @@ mod tests {
         });
         let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
         wait_for_label(&mut harness, "Benachrichtigungen für #allgemein");
-        harness
-            .get_by_label("Benachrichtigungen für #allgemein")
-            .click();
+        click(&mut harness, "Benachrichtigungen für #allgemein");
         wait_for_label(&mut harness, "15 Minuten");
-        harness.get_by_label("15 Minuten").click();
+        click(&mut harness, "15 Minuten");
         wait_for_text(
             &mut harness,
             "Diese Stufe kennt diese Version von Gelabber nicht.",
@@ -774,9 +773,7 @@ mod tests {
         let api = FakeApi::start(true, |method, path, _| workspace(method, path));
         let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
         wait_for_label(&mut harness, "Benachrichtigungen für #allgemein");
-        harness
-            .get_by_label("Benachrichtigungen für #allgemein")
-            .click();
+        click(&mut harness, "Benachrichtigungen für #allgemein");
         wait_for_label(&mut harness, "15 Minuten");
         harness.run_steps(4);
         let chips: Vec<egui::Rect> = [

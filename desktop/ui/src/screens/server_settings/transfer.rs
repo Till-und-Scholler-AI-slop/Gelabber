@@ -188,6 +188,7 @@ impl Dialog {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::testkit::{click, click_last, click_role, wait_until_idle};
     use std::sync::Arc;
 
     use egui::accesskit::Role;
@@ -263,27 +264,14 @@ mod tests {
         harness.get_by_label("Ein anderes Mitglied wird Eigentümer. Du bleibst Mitglied.");
         // Down the page first, as the scene does: a row out of view takes
         // no click.
-        harness
-            .get_by_role_and_label(Role::Link, "Gefahrenzone")
-            .click();
-        for _ in 0..30 {
-            harness.step();
-        }
-        harness
-            .get_by_role_and_label(Role::Button, "Übergeben…")
-            .click();
+        click_role(&mut harness, Role::Link, "Gefahrenzone");
+        click_role(&mut harness, Role::Button, "Übergeben…");
         wait_for_label(&mut harness, "Neuer Eigentümer");
-        harness
-            .get_by_role_and_label(Role::Button, "Übergeben")
-            .click();
+        click_role(&mut harness, Role::Button, "Übergeben");
         wait_for_label(&mut harness, "„Wohnzimmer“ an Jonas übergeben?");
         harness.get_by_label("Du kannst das nicht selbst rückgängig machen.");
         assert!(!api.saw(&format!("POST /servers/{HOME}/transfer")));
-        let confirm = harness
-            .query_all_by_label("Übergeben")
-            .rfind(|n| n.accesskit_node().role() == Role::Button)
-            .expect("the question's button");
-        confirm.click();
+        click_last(&mut harness, Role::Button, "Übergeben");
         let transfer = format!("POST /servers/{HOME}/transfer");
         wait_for(&mut harness, "the transfer", |_| api.saw(&transfer));
         let body: Value = serde_json::from_str(&sent.lock()[0]).expect("json body");
@@ -302,28 +290,17 @@ mod tests {
         let api = api("owner", others, Arc::default());
         let mut harness = launcher(&api, &route());
         wait_for_label(&mut harness, "Übergeben…");
-        harness
-            .get_by_role_and_label(Role::Link, "Gefahrenzone")
-            .click();
-        for _ in 0..30 {
-            harness.step();
-        }
-        harness
-            .get_by_role_and_label(Role::Button, "Übergeben…")
-            .click();
+        click_role(&mut harness, Role::Link, "Gefahrenzone");
+        click_role(&mut harness, Role::Button, "Übergeben…");
         wait_for_label(&mut harness, "Neuer Eigentümer");
-        harness.get_by_label("Neuer Eigentümer").click();
-        for _ in 0..5 {
-            harness.step();
-        }
+        click(&mut harness, "Neuer Eigentümer");
+        wait_until_idle(&mut harness);
         assert!(super::controls::select_open(
             &harness.ctx,
             "transfer-member"
         ));
         harness.key_press(egui::Key::Escape);
-        for _ in 0..5 {
-            harness.step();
-        }
+        wait_until_idle(&mut harness);
         assert!(!super::controls::select_open(
             &harness.ctx,
             "transfer-member"
