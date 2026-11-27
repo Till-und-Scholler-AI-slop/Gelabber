@@ -56,7 +56,6 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 import { ApiError } from "../api/client.ts";
 import { restoreFocus } from "../components/modalClose.ts";
 import { uploadTimeoutMs } from "../messages/api.ts";
-import { APP_VERSION } from "../version.ts";
 import { sendFeedback } from "./api.ts";
 import { EMPTY_DRAFT } from "./dialogStore.ts";
 import { FeedbackDialog } from "./FeedbackDialog.tsx";
@@ -80,6 +79,8 @@ function reset() {
   fixture.dialog = { open: true, generation: 0, draft: { ...EMPTY_DRAFT } };
 }
 
+// What is read out, and the typing and sending, are in
+// FeedbackDialog.browser.test.tsx.
 describe("the dialog", () => {
   beforeEach(reset);
   const updateFeedbackDraft = (patch: Partial<typeof fixture.dialog.draft>) => {
@@ -91,73 +92,6 @@ describe("the dialog", () => {
     fixture.pending = false;
   });
   const html = () => renderToStaticMarkup(<FeedbackDialog />);
-
-  it("is titled and described", () => {
-    const markup = html();
-    expect(markup).toMatch(/<h2 id="[^"]+">Feedback geben<\/h2>/);
-    const described = /aria-describedby="([^"]+)"/.exec(markup)?.[1];
-    expect(markup).toContain(
-      `<p id="${described}" class="feedback-form__lead">Sag den Betreibern dieser Instanz, was dir auffällt.</p>`,
-    );
-  });
-
-  it("offers the three kinds as one radio group, Idee chosen", () => {
-    const markup = html();
-    expect(markup).toContain(
-      '<div role="radiogroup" aria-label="Worum geht es?" class="ui-chip-group">',
-    );
-    const chips = [
-      ...markup.matchAll(
-        /role="radio" aria-checked="(true|false)" tabindex="(-?\d)"[^>]*>([^<]+)</g,
-      ),
-    ].map(([, checked, tab, label]) => [label, checked, tab]);
-    expect(chips).toEqual([
-      ["Idee", "true", "0"],
-      ["Problem", "false", "-1"],
-      ["Lob", "false", "-1"],
-    ]);
-  });
-
-  it("asks for the text with the kind's placeholder and the limits", () => {
-    expect(html()).toMatch(
-      /<textarea class="ui-field feedback-form__text" id="feedback-text" rows="6" required="" maxLength="4000" placeholder="Was würdest du dir wünschen\?">/,
-    );
-    updateFeedbackDraft({ kind: "problem" });
-    expect(html()).toContain(
-      'placeholder="Was ist passiert, und was hättest du erwartet?"',
-    );
-    updateFeedbackDraft({ kind: "praise" });
-    expect(html()).toContain('placeholder="Was gefällt dir?"');
-  });
-
-  it("counts down from 3,600 characters, announced under 100 left", () => {
-    updateFeedbackDraft({ text: "a".repeat(3599) });
-    expect(html()).not.toContain("Zeichen</p>");
-    updateFeedbackDraft({ text: "a".repeat(3600) });
-    let markup = html();
-    expect(markup).toContain(
-      '<p id="feedback-text-counter" class="ui-hint feedback-form__counter">Noch 400 Zeichen</p>',
-    );
-    expect(markup).toMatch(/aria-describedby="feedback-text-counter"/);
-    updateFeedbackDraft({ text: "a".repeat(3950) });
-    markup = html();
-    expect(markup).toContain(
-      'class="ui-hint feedback-form__counter" aria-live="polite">Noch 50 Zeichen</p>',
-    );
-  });
-
-  it("shows exactly what is sent along", () => {
-    const markup = html();
-    expect(markup).toContain(
-      '<details open="" class="feedback-context"><summary>Wird mitgeschickt</summary>' +
-        "<dl><dt>App</dt><dd>Web-App</dd>" +
-        "<dt>System</dt><dd>Unbekannt</dd>" +
-        `<dt>Version</dt><dd>${APP_VERSION}</dd>` +
-        "<dt>Sprache</dt><dd>Deutsch</dd>" +
-        "<dt>Seite</dt><dd><code>/</code></dd></dl>" +
-        "<p>Sonst nichts: keine Protokolle, keine weiteren Daten.</p></details>",
-    );
-  });
 
   it("offers an image with its hint, and shows an attached one", () => {
     let markup = html();

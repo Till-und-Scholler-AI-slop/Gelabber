@@ -114,12 +114,20 @@ Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
   `backend/api/.env.example`); storage and avatar tests fail without the MinIO
   ones. The database role needs `CREATEDB` for `sqlx::test`.
 
-Deployment tests: `python3 -m unittest discover -s deploy/compose/tests` (and
-`-s deploy/tools/tests`); they need PyYAML, which the CI runner's system
-Python has.
+Deployment tests need the PyYAML that `deploy/compose/tests/requirements.txt`
+pins, installed with a Python that has `pip` (Debian's needs `python3-pip`):
+
+```
+python3 -m pip install --require-hashes --target ~/.cache/gelabber-pyyaml -r deploy/compose/tests/requirements.txt
+PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests
+```
+
+`deploy/tools/tests` runs the same way.
 
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
-`npm test`, `npm run test:checks`, `npm run build`.
+`npm test`, `npm run test:checks`, `npm run build`. `npm test` mounts the
+components of `*.browser.test.tsx` in Chromium; install it once with
+`npx playwright install chromium-headless-shell`.
 
 Desktop (`desktop/`) is its own Cargo workspace and needs a prebuilt libwebrtc
 package; see `desktop/README.md` ("Native app" for the native egui app's build,
