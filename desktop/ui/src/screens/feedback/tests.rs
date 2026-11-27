@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 use serde_json::json;
 
 use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace};
+use crate::app::testkit::{click_node, click_now, click_role, click_role_now, id_of};
 use crate::platform::paths::testing::TempConfig;
 use crate::screens::auth::tests::type_into;
 
@@ -46,7 +47,9 @@ fn api(unread: u32, posts: Arc<Mutex<Vec<(String, String)>>>) -> FakeApi {
     })
 }
 
-fn feedback_item(harness: &egui_kittest::Harness<'_, crate::Launcher>) -> Option<egui::Rect> {
+fn feedback_item(
+    harness: &egui_kittest::Harness<'_, crate::Launcher>,
+) -> Option<egui::accesskit::NodeId> {
     harness
         .query_all_by_role(Role::MenuItem)
         .find(|n| {
@@ -54,30 +57,42 @@ fn feedback_item(harness: &egui_kittest::Harness<'_, crate::Launcher>) -> Option
                 .label()
                 .is_some_and(|l| l.starts_with("Feedback geben"))
         })
-        .map(|n| n.rect())
+        .map(id_of)
 }
 
 fn open_dialog(harness: &mut App) {
     crate::app::testkit::open_account(harness, "Lena");
-    // The account popover opens above the avatar at the height of the frame
-    // before. The frame in which "Feedback geben" first shows (once
-    // /feedback/status answered) can still draw the menu one row too low
-    // when egui has no pass left to redo it, and a click there lands on
-    // "Server wechseln …" (GEL-41). Clicked once it stays where it is.
-    let last = std::cell::Cell::new(None);
-    wait_for(harness, "Feedback geben in place", |h| {
-        let rect = feedback_item(h);
-        rect.is_some() && last.replace(rect) == rect
+    // The item shows once /feedback/status answered; the popover may still
+    // be drawn one row off in that frame (GEL-41), which the click waits out.
+    click_node(harness, "Feedback geben", feedback_item);
+    wait_for_label(harness, "Wird mitgeschickt");
+}
+
+/// [`open_dialog`] while a send is on its way: the clicks cannot wait for
+/// an idle app, so each waits for its target to lie still.
+fn open_dialog_while_sending(harness: &mut App) {
+    type Pick = fn(&egui_kittest::Harness<'_, crate::Launcher>) -> Option<egui::Rect>;
+    let still = |harness: &mut App, what: &str, pick: Pick| {
+        let last = std::cell::Cell::new(None);
+        wait_for(harness, what, |h| {
+            let rect = pick(h);
+            rect.is_some() && last.replace(rect) == rect
+        });
+    };
+    let avatar: Pick = |h| crate::app::testkit::account_button(h, "Lena").map(|n| n.rect());
+    still(harness, "the avatar", avatar);
+    click_now(harness, "the avatar", |h| {
+        crate::app::testkit::account_button(h, "Lena").map(id_of)
     });
-    harness
-        .query_all_by_role(Role::MenuItem)
-        .find(|n| {
-            n.accesskit_node()
-                .label()
-                .is_some_and(|l| l.starts_with("Feedback geben"))
+    let item: Pick = |h| {
+        feedback_item(h).and_then(|id| {
+            h.query_all_by_role(Role::MenuItem)
+                .find(|n| id_of(*n) == id)
+                .map(|n| n.rect())
         })
-        .expect("the item")
-        .click();
+    };
+    still(harness, "Feedback geben", item);
+    click_now(harness, "Feedback geben", feedback_item);
     wait_for_label(harness, "Wird mitgeschickt");
 }
 
@@ -156,9 +171,7 @@ fn the_dialog_lists_what_goes_along() {
     assert_eq!(idea.accesskit_node().toggled(), Some(Toggled::True));
     assert!(harness.query_by_label("Ansehen").is_none());
     // The list closes and opens again.
-    harness
-        .get_by_role_and_label(Role::DisclosureTriangle, "Wird mitgeschickt")
-        .click();
+    click_role(&mut harness, Role::DisclosureTriangle, "Wird mitgeschickt");
     harness.run_steps(2);
     assert!(harness.query_by_label("Desktop-App").is_none());
 }
@@ -171,21 +184,22 @@ fn an_unread_reply_shows_in_the_menu_and_the_dialog() {
     let api = api(1, Arc::default());
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
     wait_for_label(&mut harness, "Lena, neue Antwort auf dein Feedback");
-    harness
-        .get_by_role_and_label(Role::Button, "Lena, neue Antwort auf dein Feedback")
-        .click();
+    click_role(
+        &mut harness,
+        Role::Button,
+        "Lena, neue Antwort auf dein Feedback",
+    );
     wait_for_label(
         &mut harness,
         "Feedback geben, neue Antwort auf dein Feedback",
     );
-    harness
-        .get_by_role_and_label(
-            Role::MenuItem,
-            "Feedback geben, neue Antwort auf dein Feedback",
-        )
-        .click();
+    click_role(
+        &mut harness,
+        Role::MenuItem,
+        "Feedback geben, neue Antwort auf dein Feedback",
+    );
     wait_for_label(&mut harness, "Ansehen");
-    harness.get_by_role_and_label(Role::Link, "Ansehen").click();
+    click_role(&mut harness, Role::Link, "Ansehen");
     wait_for(&mut harness, "the settings", |h| {
         h.query_by_label("Wird mitgeschickt").is_none()
     });
@@ -208,15 +222,11 @@ fn sending_uploads_the_image_first_then_creates_the_entry() {
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
     open_dialog(&mut harness);
 
-    harness
-        .get_by_role_and_label(Role::Button, "Senden")
-        .click();
+    click_role(&mut harness, Role::Button, "Senden");
     wait_for_label(&mut harness, "Schreib ein paar Worte.");
     assert!(posts.lock().is_empty());
 
-    harness
-        .get_by_role_and_label(Role::RadioButton, "Problem")
-        .click();
+    click_role(&mut harness, Role::RadioButton, "Problem");
     type_text(&mut harness, "Das Vorschaubild bleibt schwarz.");
     assert!(harness.query_by_label("Schreib ein paar Worte.").is_none());
 
@@ -246,9 +256,7 @@ fn sending_uploads_the_image_first_then_creates_the_entry() {
             .is_none()
     );
 
-    harness
-        .get_by_role_and_label(Role::Button, "Senden")
-        .click();
+    click_role(&mut harness, Role::Button, "Senden");
     wait_for_label(&mut harness, "Danke! Dein Feedback ist angekommen.");
     assert!(harness.query_by_label("Wird mitgeschickt").is_none());
     let posts = posts.lock().clone();
@@ -291,13 +299,9 @@ fn closing_keeps_the_draft_and_errors_go_under_their_field() {
     });
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
     open_dialog(&mut harness);
-    harness
-        .get_by_role_and_label(Role::RadioButton, "Lob")
-        .click();
+    click_role(&mut harness, Role::RadioButton, "Lob");
     type_text(&mut harness, "Schön hier.");
-    harness
-        .get_by_role_and_label(Role::Button, "Abbrechen")
-        .click();
+    click_role(&mut harness, Role::Button, "Abbrechen");
     wait_for(&mut harness, "closed", |h| {
         h.query_by_label("Wird mitgeschickt").is_none()
     });
@@ -308,9 +312,7 @@ fn closing_keeps_the_draft_and_errors_go_under_their_field() {
     );
     let praise = harness.get_by_role_and_label(Role::RadioButton, "Lob");
     assert_eq!(praise.accesskit_node().toggled(), Some(Toggled::True));
-    harness
-        .get_by_role_and_label(Role::Button, "Senden")
-        .click();
+    click_role(&mut harness, Role::Button, "Senden");
     wait_for_label(&mut harness, "Höchstens 4.000 Zeichen.");
     assert_eq!(
         text_field(&harness).accesskit_node().value().as_deref(),
@@ -398,9 +400,7 @@ fn a_drop_on_the_dialog_does_not_reach_the_composer_under_it() {
     drop_file(&mut harness, png);
     wait_for_label(&mut harness, "Bild entfernen");
     harness.run_steps(20);
-    harness
-        .get_by_role_and_label(Role::Button, "Abbrechen")
-        .click();
+    click_role(&mut harness, Role::Button, "Abbrechen");
     wait_for(&mut harness, "closed", |h| {
         h.query_by_label("Wird mitgeschickt").is_none()
     });
@@ -431,32 +431,25 @@ fn a_send_finishes_after_the_dialog_closed() {
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
     open_dialog(&mut harness);
     type_text(&mut harness, "Bitte dunkler.");
-    harness
-        .get_by_role_and_label(Role::Button, "Senden")
-        .click();
+    click_role(&mut harness, Role::Button, "Senden");
     wait_for(&mut harness, "the send", |_| api.saw("POST /feedback"));
     // "Wird gesendet…" is wider: "Abbrechen" moves once it shows.
     wait_for(&mut harness, "pending", |h| {
         submit_label(h).as_deref() == Some("Wird gesendet…")
     });
-    harness
-        .get_by_role_and_label(Role::Button, "Abbrechen")
-        .click();
+    // The send stays on its way (held by the stand-in) from here on.
+    click_role_now(&mut harness, Role::Button, "Abbrechen");
     wait_for(&mut harness, "closed while sending", |h| {
         h.query_by_label("Wird mitgeschickt").is_none()
     });
 
     // Opened again while it sends: "Wird gesendet…", and a press sends
     // nothing more.
-    open_dialog(&mut harness);
+    open_dialog_while_sending(&mut harness);
     assert_eq!(submit_label(&harness).as_deref(), Some("Wird gesendet…"));
-    harness
-        .get_by_role_and_label(Role::Button, "Wird gesendet…")
-        .click();
+    click_role_now(&mut harness, Role::Button, "Wird gesendet…");
     harness.run_steps(5);
-    harness
-        .get_by_role_and_label(Role::Button, "Abbrechen")
-        .click();
+    click_role_now(&mut harness, Role::Button, "Abbrechen");
     wait_for(&mut harness, "closed again", |h| {
         h.query_by_label("Wird mitgeschickt").is_none()
     });
@@ -528,9 +521,7 @@ fn a_dialog_left_open_stays_with_its_sign_in() {
     assert!(harness.query_by_label("Wird mitgeschickt").is_none());
     type_into(&mut harness, "E-Mail-Adresse", "lena@example.test");
     type_into(&mut harness, "Passwort", "parity-pass-123");
-    harness
-        .get_by_role_and_label(Role::Button, "Anmelden")
-        .click();
+    click_role(&mut harness, Role::Button, "Anmelden");
     wait_for(&mut harness, "the workspace", |h| {
         crate::app::testkit::account_button(h, "Lena").is_some()
     });
@@ -563,16 +554,12 @@ fn refusals_without_a_field_show_for_the_form() {
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
     open_dialog(&mut harness);
     type_text(&mut harness, "Hallo.");
-    harness
-        .get_by_role_and_label(Role::Button, "Senden")
-        .click();
+    click_role(&mut harness, Role::Button, "Senden");
     let page = crate::rules::field_message("page", "invalid");
     wait_for_label(&mut harness, &page);
 
     *refusal.lock() = json!({"image": "invalid"});
-    harness
-        .get_by_role_and_label(Role::Button, "Senden")
-        .click();
+    click_role(&mut harness, Role::Button, "Senden");
     wait_for_refusal(
         &mut harness,
         "Das Bild ließ sich nicht verwenden. Versuch ein anderes.",

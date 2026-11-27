@@ -1006,13 +1006,7 @@ mod tests {
         });
         let client = gelabber_client::Client::new(&api.origin).expect("client");
         let watched = client.clone();
-        let mut harness = egui_kittest::Harness::builder()
-            .with_size(egui::vec2(1280.0, 800.0))
-            .with_max_steps(10_000)
-            .with_step_dt(1.0 / 60.0)
-            .build_eframe(move |cc| {
-                crate::Launcher::with_app(cc, client.clone(), Some("/settings/profilkarte".into()))
-            });
+        let mut harness = crate::app::testkit::launcher_with(&api, client, "/settings/profilkarte");
         wait_for(&mut harness, "the card", |h| {
             use egui_kittest::kittest::Queryable;
             h.query_by_label("Bannerbild hochladen").is_some()

@@ -3,7 +3,9 @@
 // forever, and the API's error envelope surfaced as `ApiError`.
 
 import type { SessionStamp } from "../auth/scope.ts";
+import type { User } from "../auth/types.ts";
 import { randomUuid } from "../lib/uuid.ts";
+import { isUser, reportMalformed } from "./shapes.ts";
 
 export type FieldCode =
   | "required"
@@ -46,6 +48,9 @@ export type ApiErrorCode =
   | "upstream_unavailable"
   | "upstream_quota"
   | "internal"
+  /** Client-side: the answer is not what the server sends (GEL-420); the
+   * request may still have done its work. */
+  | "malformed_answer"
   | "network"
   | "timeout"
   | "invitation_required"
@@ -553,6 +558,9 @@ async function performAuthApi<T>(
     }
     requireAuthRequest(options, stamp);
     if (!response.ok) throwResponseError(response, payload);
+    // An account the client cannot read is a failed answer, not "nobody
+    // signed in": sign-in shows its error, the bootstrap its retry (GEL-420).
+    if (!logout && hasMalformedAccount(payload)) throw malformedAccount();
     rememberCsrf(payload);
     if (user !== undefined && !(logout && sessionScope().userId === null)) {
       sessionSink?.(user, {
@@ -710,7 +718,7 @@ async function retryWithSession(
 }
 
 function isSessionPayload(payload: unknown): payload is {
-  user: { id: string; email: string; name: string } | null;
+  user: User | null;
   csrf_token: string;
 } {
   if (
@@ -722,18 +730,25 @@ function isSessionPayload(payload: unknown): payload is {
     !payload.csrf_token
   )
     return false;
-  const user = payload.user;
-  return (
-    user === null ||
-    (typeof user === "object" &&
-      "id" in user &&
-      typeof user.id === "string" &&
-      user.id.length > 0 &&
-      "email" in user &&
-      typeof user.email === "string" &&
-      "name" in user &&
-      typeof user.name === "string")
-  );
+  return payload.user === null || isUser(payload.user);
+}
+
+/** A session answer whose account is there but not whole. */
+function hasMalformedAccount(payload: unknown): boolean {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    !("user" in payload) ||
+    payload.user === null ||
+    isUser(payload.user)
+  )
+    return false;
+  reportMalformed("session user", payload.user);
+  return true;
+}
+
+function malformedAccount(): ApiError {
+  return new ApiError("internal", 0, "The server sent a malformed account.");
 }
 
 /** `operator` of a session payload: anything but `true` is no operator. */

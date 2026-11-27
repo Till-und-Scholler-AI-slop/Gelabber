@@ -11,6 +11,12 @@ on:
         type: string
         required: false
         default: ""
+      # Packaging runs after merge (main/v*), for releases and their candidates.
+      package:
+        description: Build and test the packages (tarball, installer, pacman repository)
+        type: boolean
+        required: false
+        default: false
       # Release and hotfix pull requests to main (GEL-358): the release's
       # packages, signed only once the tag exists.
       candidate:
@@ -152,7 +158,7 @@ jobs:
 
       - name: Is the package stored?
         id: asset
-        if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && steps.stored.outputs.found != 'true'
+        if: inputs.package && !inputs.candidate && steps.stored.outputs.found != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
@@ -297,7 +303,7 @@ jobs:
 
       - name: Is the package stored?
         id: asset
-        if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && steps.stored.outputs.found != 'true'
+        if: inputs.package && !inputs.candidate && steps.stored.outputs.found != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -527,17 +533,16 @@ jobs:
           cargo build --locked --manifest-path desktop/Cargo.toml -p gelabber
           desktop/packaging/native/smoke.sh desktop/target/debug/gelabber 10
 
-      # Packaging runs after merge (main/v*), for releases and their candidates.
       # The script also checks both files (C++ runtime, exports, rpath).
       - name: Package the native app
-        if: (github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate
+        if: inputs.package
         run: |
           set -euo pipefail
           lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
           desktop/packaging/native/tarball.sh "$lib"
 
       - name: Upload the native app
-        if: (github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate
+        if: inputs.package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gelabber-native-linux-x64
@@ -549,39 +554,7 @@ jobs:
           set -euo pipefail
           # Absolute: cargo runs rustc from the workspace, not from here.
           lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
-          test -f "$lib"
-          test -n "$lib"
-          echo "Dynamic dependencies:"
-          readelf -d "$lib" | grep NEEDED | tee /tmp/needed.txt
-          # Chromium's libc++ is linked in and hidden; no system C++ runtime.
-          if grep -E 'libstdc\+\+|libc\+\+' /tmp/needed.txt; then
-            echo "core must not depend on a shared C++ runtime"; exit 1
-          fi
-          exported="$(nm -D --defined-only "$lib" | awk '{print $3}' | sort)"
-          echo "$exported"
-          if echo "$exported" | grep -v '^gm_'; then
-            echo "only gm_* symbols may be exported"; exit 1
-          fi
-          # libwebrtc is built with rtc_use_h264=false: no OpenH264, FFmpeg or
-          # libwebrtc's wrappers around them in the symbol table.
-          if nm -C "$lib" | grep -E 'WelsInitEncoderExt|CWelsH264SVCEncoder|H264EncoderImpl|H264DecoderImpl|avcodec_open2|ff_h264_decoder'; then
-            echo "the core carries H264 code of OpenH264 or FFmpeg"; exit 1
-          fi
-          stripped="$(mktemp)"
-          strip --strip-unneeded -o "$stripped" "$lib"
-          {
-            echo "### Native core (Linux x64)"
-            echo
-            echo "| file | size |"
-            echo "|---|---|"
-            echo "| libgelabber_media.so | $(du -h "$lib" | cut -f1) |"
-            echo "| libgelabber_media.so (stripped) | $(du -h "$stripped" | cut -f1) |"
-            echo "| gzip (stripped) | $(gzip -9 -c "$stripped" | wc -c | numfmt --to=iec) |"
-            echo
-            echo '```'
-            cat /tmp/needed.txt
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          desktop/packaging/native/check-core.sh --summary "$GITHUB_STEP_SUMMARY" "$lib"
 
   # The app's THIRD-PARTY-NOTICES.txt must match desktop/Cargo.lock and the
   # build configuration (desktop/packaging/third-party-notices.py writes
@@ -615,6 +588,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s desktop/packaging/tests -v
 
+      # shellcheck and PSScriptAnalyzer at the versions lint.sh pins (SHA-256), not the runner image's.
+      - name: Lint the packaging scripts
+        if: ${{ !cancelled() }}
+        run: desktop/packaging/lint.sh --install "$RUNNER_TEMP/lint-tools"
+
   # Windows in the release profile (the DLL that ships): core, app and checks;
   # after merge also the installer, installed, updated and removed.
   core-windows:
@@ -630,15 +608,21 @@ jobs:
       GELABBER_LIBWEBRTC_DIR: C:\libwebrtc-package
       # mediasoup-sys (the worker the core's tests call) runs "$PYTHON -m invoke".
       PYTHON: python
-      # Static C runtime, so the app starts without the VC++ redistributable;
-      # --vsenv is mediasoup's default and must stay when MESON_ARGS is set.
-      RUSTFLAGS: -C target-feature=+crt-static
-      MESON_ARGS: --vsenv -Db_vscrt=mt
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The version for the installer (a release must carry its tag's), and the
+      # build settings (static C runtime) before anything is built or cached.
+      - name: Version and build settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(desktop/packaging/native/version.sh --tag "$RELEASE_TAG")"
+          echo "DESKTOP_VERSION=$version" | tee -a "$GITHUB_ENV"
+          tr -d '\r' < desktop/native/windows-build.env | grep -Ev '^(#|$)' | tee -a "$GITHUB_ENV"
 
       - name: Restore libwebrtc package
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -697,29 +681,7 @@ jobs:
       # Release runs use desktop/packaging/updater.pub; every other run makes
       # its own key, so its installer is signed and checked the same way.
       - name: Updater key
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          if ($env:RELEASE_TAG) {
-            # Before anything is signed with the release key: only the
-            # released source gets its signature, one installer per version.
-            if ($env:GITHUB_REF -ne "refs/tags/$($env:RELEASE_TAG)") {
-              throw "release $($env:RELEASE_TAG) must be built from its tag, not $($env:GITHUB_REF)"
-            }
-            $pub = 'desktop\packaging\updater.pub'
-            if (-not (Test-Path $pub) -or -not (Get-Content -Raw $pub).Trim()) {
-              throw "release $($env:RELEASE_TAG): $pub is missing, and with it the key the app checks updates with (desktop/README.md, Updates)"
-            }
-            "release: the key of $pub"
-          } elseif ($env:CANDIDATE -eq 'true') {
-            # The release's installer, with the key of updater.pub; desktop-release.yml signs it.
-            "candidate: the key of desktop\packaging\updater.pub, signed once the tag exists"
-          } else {
-            $key = Join-Path $env:RUNNER_TEMP 'updater-test.key'
-            npx.cmd --yes '@tauri-apps/cli@2.12.3' signer generate --ci --password test --write-keys $key --force
-            Add-Content $env:GITHUB_ENV "GELABBER_UPDATER_PUBKEY=$((Get-Content -Raw "$key.pub").Trim())"
-            Add-Content $env:GITHUB_ENV "GELABBER_UPDATER_TEST_KEY=$key"
-            "test key: $key"
-          }
+        run: ./desktop/packaging/native/windows/updater-key.ps1
 
       # The C++ core alone first: its compile and link errors come up before
       # the long Rust builds.
@@ -733,41 +695,12 @@ jobs:
         id: native
         run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber
 
-      # The native app's installer from its own NSIS script, after merge and
-      # for releases only (as the Linux packages); NSIS of the image.
+      # The native app's installer from its own NSIS script; NSIS of the image.
       - name: Native installer
         id: native-installer
-        if: ${{ !cancelled() && ((github.event_name != 'pull_request' && github.event_name != 'merge_group') || inputs.candidate) && steps.native.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.package && steps.native.outcome == 'success' }}
         timeout-minutes: 15
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source
-          if (-not $makensis) { $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe' }
-          if (-not (Test-Path $makensis)) {
-            choco install nsis --yes --no-progress
-            $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
-          }
-          & $makensis /VERSION
-          $version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
-          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -ne "v$version") {
-            throw "release $($env:RELEASE_TAG): desktop\Cargo.toml, and with it the app, says $version"
-          }
-          $release = Join-Path $env:CARGO_TARGET_DIR 'release'
-          $stage = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'native-installer')).FullName
-          Copy-Item (Join-Path $release 'gelabber.exe'), (Join-Path $release 'gelabber_media.dll') $stage
-          Copy-Item desktop\packaging\icons\icon.ico, desktop\packaging\icons\icon.png, desktop\packaging\native\THIRD-PARTY-NOTICES.txt $stage
-          Copy-Item desktop\packaging\native\README-windows.txt (Join-Path $stage 'README.txt')
-          $name = 'gelabber-native-windows-x64-setup.exe'
-          # Windows wants four numbers in the file version: no pre-release part.
-          $numeric = "$(($version -split '[-+]')[0]).0"
-          & $makensis /V3 "/DVERSION=$version" "/DFILEVERSION=$numeric" "/DSOURCE=$stage" "/DOUTFILE=$(Join-Path $PWD $name)" desktop\packaging\native\windows\installer.nsi
-          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
-          [IO.File]::WriteAllText((Join-Path $PWD "$name.sha256"), "$hash  $name`n")
-          @(
-            '### Native app (Windows x64)', '',
-            '| file | size | sha256 |', '|---|---|---|',
-            "| $name | $([math]::Round((Get-Item $name).Length / 1MB, 1)) MiB | $hash |"
-          ) | Add-Content $env:GITHUB_STEP_SUMMARY
+        run: ./desktop/packaging/native/windows/build-installer.ps1
 
       # The updater signature (<installer>.sig, bound to the version), with the
       # key in desktop/packaging/updater.pub. Only release runs from the tag see it.
@@ -778,20 +711,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release_tag != '' && github.ref == format('refs/tags/{0}', inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release_tag != '' && github.ref == format('refs/tags/{0}', inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $name = 'gelabber-native-windows-x64-setup.exe'
-          $version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
-          if ($env:RELEASE_TAG) {
-            if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-              throw "release $($env:RELEASE_TAG): the secret TAURI_SIGNING_PRIVATE_KEY is not set, so the update cannot be signed (desktop/README.md, Updates)"
-            }
-            npx.cmd --yes '@tauri-apps/cli@2.12.3' signer sign --app-version $version $name
-          } else {
-            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
-            npx.cmd --yes '@tauri-apps/cli@2.12.3' signer sign --app-version $version --private-key-path $env:GELABBER_UPDATER_TEST_KEY --password test $name
-          }
-          if (-not (Test-Path "$name.sig")) { throw "no signature $name.sig" }
+        run: ./desktop/packaging/native/windows/sign-update.ps1
 
       # The native app's own check of that signature, with the key it was
       # built with: a release key that is not updater.pub stops the release.
@@ -808,83 +728,7 @@ jobs:
         id: native-install
         if: ${{ !cancelled() && steps.native-installer.outcome == 'success' }}
         timeout-minutes: 15
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $id = 'io.github.till-und-scholler-ai-slop.gelabber'
-          $install = Join-Path $env:LOCALAPPDATA 'Gelabber'
-          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Gelabber.lnk'
-          $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Gelabber.lnk'
-          $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gelabber'
-          $version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
-          function Run($file, [string[]]$arguments, $minutes) {
-            $process = Start-Process -FilePath $file -ArgumentList $arguments -PassThru
-            # Without the handle taken now, the exit code is gone once the process ends.
-            $null = $process.Handle
-            if (-not $process.WaitForExit($minutes * 60 * 1000)) {
-              $process.Kill()
-              throw "$file $arguments did not end within $minutes minutes"
-            }
-            if ($process.ExitCode -ne 0) { throw "$file $arguments ended with exit code $($process.ExitCode)" }
-          }
-          # The app this setup installed, with the shortcuts that lead to it.
-          function Installed($shortcuts) {
-            foreach ($file in 'gelabber.exe', 'gelabber_media.dll', 'icon.png', 'icon.ico', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'uninstall.exe') {
-              if (-not (Test-Path (Join-Path $install $file))) { throw "missing after the install: $file" }
-            }
-            $built = Get-FileHash (Join-Path $env:CARGO_TARGET_DIR 'release\gelabber.exe')
-            if ((Get-FileHash (Join-Path $install 'gelabber.exe')).Hash -ne $built.Hash) {
-              throw 'the installed gelabber.exe is not the one built here'
-            }
-            $entry = Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction SilentlyContinue
-            if (-not $entry) { throw 'no entry among the installed apps (uninstall key of the account)' }
-            if ($entry.DisplayVersion -ne $version) { throw "the installed apps list version $($entry.DisplayVersion), not $version" }
-            "installed: $($entry.DisplayName) $($entry.DisplayVersion) in $install"
-            foreach ($shortcut in $shortcuts) {
-              if (-not (Test-Path $shortcut)) { throw "no shortcut $shortcut" }
-              $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
-              if ($target -ne (Join-Path $install 'gelabber.exe')) { throw "$shortcut leads to $target" }
-              $item = (New-Object -ComObject Shell.Application).NameSpace((Split-Path $shortcut)).ParseName((Split-Path $shortcut -Leaf))
-              $aumid = $item.ExtendedProperty('System.AppUserModel.ID')
-              if ($aumid -ne $id) { throw "$shortcut has the AppUserModelId '$aumid', not $id" }
-            }
-          }
-          function Removed {
-            $started = (Get-Date).ToUniversalTime()
-            Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
-            $left = {
-              @($install, $lnk, $desktop, $uninstallKey, "HKCU:\Software\Classes\AppUserModelId\$id") |
-                Where-Object { Test-Path -LiteralPath $_ }
-            }
-            $deadline = (Get-Date).AddMinutes(3)
-            while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
-            $rest = @(& $left)
-            # A write after the uninstaller's start means written again; else it could not delete the file, still held or held then (GEL-374).
-            foreach ($file in @($rest | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
-              $item = Get-Item -LiteralPath $file
-              "${file}: written $($item.LastWriteTimeUtc.ToString('o')), uninstaller started $($started.ToString('o'))"
-              try { Remove-Item -LiteralPath $file -ErrorAction Stop; "${file}: deletes now" } catch { "${file}: does not delete now: $($_.Exception.Message)" }
-            }
-            if ($rest) { throw "left behind by the uninstaller: $($rest -join ', ')" }
-            if (-not (Test-Path -LiteralPath 'HKCU:\Software\Gelabber\Gelabber')) {
-              throw "the uninstaller removed the installer's note of the folder without being asked"
-            }
-          }
-          $setup = (Resolve-Path gelabber-native-windows-x64-setup.exe).Path
-          Run $setup '/S' 10
-          Installed @($lnk, $desktop)
-          # The updater's arguments (update.rs): the restarted app ends by itself once it painted (GELABBER_SMOKE).
-          $env:GELABBER_SMOKE = '10'
-          Run $setup '/P', '/UPDATE', '/R', '/ARGS', '--server', '"https://gelabber.invalid"' 10
-          $restarted = @(Get-Process -Name gelabber -ErrorAction SilentlyContinue)
-          if (-not $restarted) { throw 'the update did not start gelabber.exe (/R)' }
-          foreach ($process in $restarted) { $null = $process.Handle }
-          foreach ($process in $restarted) {
-            if (-not $process.WaitForExit(120 * 1000)) { throw 'the restarted gelabber.exe did not end within 2 minutes' }
-            if ($process.ExitCode -ne 0) { throw "the restarted gelabber.exe ended with exit code $($process.ExitCode), not 0 (painted)" }
-          }
-          Remove-Item Env:GELABBER_SMOKE
-          Installed @($lnk, $desktop)
-          Removed
+        run: ./desktop/packaging/native/windows/install-test.ps1
 
       - name: Upload the native app
         if: ${{ !cancelled() && steps.native-installer.outcome == 'success' && (steps.native-sign.outcome == 'success' || inputs.candidate) }}
@@ -914,84 +758,11 @@ jobs:
           }
           if ($app.ExitCode -ne 0) { throw "the native app ended with exit code $($app.ExitCode) instead of painting its setup screen" }
 
-      # What ships, read with dumpbin: the DLL exports gm_* only, holds no
-      # OpenH264/FFmpeg H264 code, and no binary needs more than a clean
-      # Windows 10/11 has (System32 DLLs, API sets, UCRT; no VC++ runtime, no
-      # debug CRT).
+      # What ships, read with dumpbin: exports, H264 code and what a clean
+      # Windows lacks (the script says which).
       - name: Check and measure the binaries
         if: ${{ !cancelled() && steps.native.outcome == 'success' }}
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $release = Join-Path $env:CARGO_TARGET_DIR 'release'
-          $dll = Get-Item (Join-Path $release 'gelabber_media.dll')
-          $exe = Get-Item (Join-Path $release 'gelabber.exe')
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $dumpbin = & $vswhere -latest -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' |
-            Sort-Object | Select-Object -Last 1
-          if (-not $dumpbin) { throw 'no dumpbin.exe in the Visual Studio installation' }
-
-          # Rows "ordinal hint RVA name" of the export table.
-          $listing = & $dumpbin /nologo /exports $dll.FullName
-          $exports = @($listing | ForEach-Object {
-              if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]{8}\s+(\S+)') { $Matches[1] }
-            })
-          $names = $listing | Select-String '^\s+(\d+) number of names' | Select-Object -First 1
-          if (-not $names -or $exports.Count -ne [int]$names.Matches[0].Groups[1].Value) {
-            $listing
-            throw "could not read the export table of gelabber_media.dll ($($exports.Count) names found)"
-          }
-          $foreign = @($exports | Where-Object { $_ -notmatch '^gm_' })
-
-          function Needs($file) {
-            & $dumpbin /nologo /dependents $file |
-              ForEach-Object { if ($_ -match '^\s+(\S+\.(dll|drv))\s*$') { $Matches[1].ToLowerInvariant() } } |
-              Sort-Object -Unique
-          }
-          $redistributable = '^(vcruntime|msvcp|msvcr|concrt|vccorlib|vcomp|vcamp|mfc|atl)\d|^ucrtbased\.'
-          function Missing($needs, $shipped) {
-            $needs | Where-Object {
-              $_ -match $redistributable -or -not (
-                $_ -match '^(api|ext)-ms-win-' -or $shipped -contains $_ -or
-                (Test-Path -LiteralPath (Join-Path $env:SystemRoot "System32\$_")))
-            }
-          }
-          $dllNeeds = @(Needs $dll.FullName)
-          $exeNeeds = @(Needs $exe.FullName)
-          $dllMissing = @(Missing $dllNeeds @())
-          # Windows N lacks mfplat.dll without the Media Feature Pack: the
-          # core loads it only when it looks for H264 (/DELAYLOAD).
-          $delayed = (& $dumpbin /nologo /dependents $dll.FullName | Out-String) -match '(?s)delay load dependencies:.*\bmfplat\.dll'
-          $exeMissing = @(Missing $exeNeeds @('gelabber_media.dll'))
-
-          $content = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($dll.FullName))
-          # Names from OpenH264, from libwebrtc's wrappers around it and FFmpeg,
-          # and from FFmpeg. "OpenH264" alone is no sign: the encoder factory's
-          # type name has it in every build.
-          $h264 = @('CWelsH264SVCEncoder', 'WelsInitEncoderExt', 'H264EncoderImpl', 'H264DecoderImpl',
-              'libavcodec', 'avcodec_open2', 'third_party/ffmpeg') |
-            Where-Object { $content.Contains($_) }
-
-          @(
-            '### Native core and app (Windows x64)', '',
-            '| file | size | needs |', '|---|---|---|',
-            "| gelabber_media.dll | $([math]::Round($dll.Length / 1MB, 1)) MiB | $($dllNeeds -join ', ') |",
-            "| gelabber.exe | $([math]::Round($exe.Length / 1MB, 1)) MiB | $($exeNeeds -join ', ') |", '',
-            "Exports of gelabber_media.dll: $($exports.Count)"
-          ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-
-          $problems = @(
-            if ($foreign) { "gelabber_media.dll exports more than gm_*: $($foreign -join ', ')" }
-            if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $($h264 -join ', ')" }
-            if (-not $dllNeeds -or $exeNeeds -notcontains 'gelabber_media.dll') { 'could not read the dependencies with dumpbin' }
-            if ($dllMissing) { "gelabber_media.dll needs what a clean Windows lacks: $($dllMissing -join ', ')" }
-            if (-not $delayed) { 'gelabber_media.dll does not delay-load mfplat.dll' }
-            if ($exeMissing) { "gelabber.exe needs what a clean Windows lacks: $($exeMissing -join ', ')" }
-          )
-          if ($problems) {
-            # One annotation each: PowerShell folds a long error message.
-            $problems | ForEach-Object { "::error::$_" }
-            throw "$($problems.Count) of the checks on the binaries failed"
-          }
+        run: ./desktop/packaging/native/windows/check-binaries.ps1
 
       # The core's tests, built and not yet run: the mediasoup worker they
       # call (a dev-dependency; Meson and C++, some ten minutes) and the test
@@ -1010,64 +781,10 @@ jobs:
         run: Add-Content $env:GITHUB_ENV 'CACHE_ON_FAILURE=true'
 
       # libwebrtc sends from the machine's address, which Windows may not route
-      # to 127.0.0.1: probe it, and move the tests' server to the machine's
-      # address if needed (GELABBER_TEST_LISTEN_IP).
+      # to 127.0.0.1: the script moves the tests' server if needed.
       - name: Address for the loopback call
         if: ${{ !cancelled() && steps.core.outcome == 'success' }}
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          # Whether a datagram from a socket on $from reaches one on $to, and as coming from $from.
-          function Reaches($from, $to) {
-            $sender = $null
-            $receiver = $null
-            try {
-              $sender = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new($from, 0))
-              $receiver = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new($to, 0))
-              $receiver.Client.ReceiveTimeout = 2000
-              $null = $sender.Send([byte[]]@(1), 1, [Net.IPEndPoint]$receiver.Client.LocalEndPoint)
-              $source = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0)
-              $null = $receiver.Receive([ref]$source)
-              Write-Host "UDP from $from to ${to}: arrives, sent by $($source.Address)"
-              return $source.Address.Equals($from)
-            } catch {
-              Write-Host "UDP from $from to ${to}: $($_.Exception.Message)"
-              return $false
-            } finally {
-              if ($sender) { $sender.Dispose() }
-              if ($receiver) { $receiver.Dispose() }
-            }
-          }
-          # The address this machine sends from: a UDP socket takes it on when
-          # it is connected, without sending anything.
-          $own = $null
-          $route = [Net.Sockets.UdpClient]::new([Net.Sockets.AddressFamily]::InterNetwork)
-          try {
-            $route.Connect('192.0.2.1', 9)
-            $own = ([Net.IPEndPoint]$route.Client.LocalEndPoint).Address
-          } catch {
-            Write-Host "no route to tell this machine's address by: $($_.Exception.Message)"
-          } finally {
-            $route.Dispose()
-          }
-          $loopback = [Net.IPAddress]::Loopback
-          $listen = $null
-          if ($own -and -not [Net.IPAddress]::IsLoopback($own)) {
-            $there = Reaches $own $loopback
-            $back = Reaches $loopback $own
-            if ($there -and $back) {
-              $listen = $loopback
-            } elseif (Reaches $own $own) {
-              $listen = $own
-            }
-          }
-          if (-not $listen) {
-            '::warning::No address was found that this machine reaches from its own: the tests keep their server on 127.0.0.1'
-          } elseif ($listen.Equals($loopback)) {
-            'the server of the tests stays on 127.0.0.1'
-          } else {
-            "the server of the tests listens on ${listen}: 127.0.0.1 is out of reach from there"
-            Add-Content $env:GITHUB_ENV "GELABBER_TEST_LISTEN_IP=$listen"
-          }
+        run: ./desktop/packaging/native/windows/loopback-address.ps1
 
       # The Linux job's call through an in-process mediasoup worker. H264 only
       # where Media Foundation has codecs, so no GELABBER_EXPECT_H264.
@@ -1109,9 +826,8 @@ jobs:
         run: |
           cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-ui -p gelabber-call --lib -- platform:: tests::without_the_core_a_call_says_why --test-threads=1
 
-      # The core alone, as above: a call with the app would unify other
-      # features and rebuild the worker. The empty core directory keeps Clippy's
-      # build scripts from compiling the C++ again.
+      # The core alone: with the app, features unify and the worker rebuilds.
+      # The empty core directory keeps the build scripts from compiling the C++ again.
       - name: Clippy
         if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
         timeout-minutes: 45
@@ -1165,10 +881,7 @@ jobs:
           if [ -z "$RELEASE_TAG" ] || [ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]; then
             echo "release ${RELEASE_TAG:-?} must be signed from its tag, not $GITHUB_REF"; exit 1
           fi
-          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1)"
-          if [ "v$version" != "$RELEASE_TAG" ]; then
-            echo "release $RELEASE_TAG: desktop/Cargo.toml, and with it the app, says $version"; exit 1
-          fi
+          version="$(desktop/packaging/native/version.sh --tag "$RELEASE_TAG")"
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "release $RELEASE_TAG: the secret TAURI_SIGNING_PRIVATE_KEY is not set, so the update cannot be signed (desktop/README.md, Updates)"; exit 1
           fi
@@ -1214,7 +927,7 @@ jobs:
   arch-repo:
     name: Arch package and repository
     if: >-
-      !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' &&
+      !cancelled() && inputs.package && !inputs.candidate &&
       (needs.core-linux.result == 'success' || needs.prebuilt.result == 'success')
     needs: [core-linux, prebuilt]
     runs-on: ubuntu-24.04
@@ -1260,18 +973,14 @@ jobs:
             if [ "$PUBLISH" = true ] && [ -z "$ARCH_REPO_GPG_KEY" ]; then
               echo "ARCH_REPO_PUBLISH is on but the ARCH_REPO_GPG_KEY secret is missing"; exit 1
             fi
-            # The package gets its version from the tag, the app in it (what
-            # media_info reports) from the desktop workspace: the same, or
-            # the release is not built.
-            app="v$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1)"
-            if [ "$app" != "$TAG" ]; then
-              echo "release $TAG: desktop/Cargo.toml, and with it the app, says $app"; exit 1
-            fi
+            # The package gets its version from the tag, the app in it from the
+            # desktop workspace: the same, or the release is not built.
+            desktop/packaging/native/version.sh --tag "$TAG" >/dev/null
             version="$TAG"
             url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-native-linux-x64.tar.gz"
           else
             # Test builds: the workspace version plus the run number.
-            version="$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1).r${GITHUB_RUN_NUMBER}"
+            version="$(desktop/packaging/native/version.sh).r${GITHUB_RUN_NUMBER}"
             url=""
           fi
           desktop/packaging/arch/repo.sh build "$version" gelabber-native-linux-x64.tar.gz site $url

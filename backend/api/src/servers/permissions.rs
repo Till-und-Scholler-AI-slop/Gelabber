@@ -204,6 +204,15 @@ mod tests {
     }
 
     #[test]
+    fn a_flag_named_twice_is_granted() {
+        let set = Permissions::from_names(&["send_messages", "send_messages"]).unwrap();
+        assert!(
+            set.contains(Permission::SendMessages),
+            "send_messages lost: {set}"
+        );
+    }
+
+    #[test]
     fn serialises_as_name_array_and_masks_unknown_bits() {
         let json = serde_json::to_value(Permissions::from(1 | 4 | 1024)).unwrap();
         assert_eq!(json, serde_json::json!(["manage_server", "send_messages"]));

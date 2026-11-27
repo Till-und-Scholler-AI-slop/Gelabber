@@ -7,14 +7,13 @@ mod common;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
 use gelabber_api::AppState;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
 use common::Client;
+use common::ws::{self, Ws, until};
 
 const PASSWORD: &str = "correct horse";
 
@@ -1479,68 +1478,22 @@ async fn a_join_or_request_racing_the_deletion_is_refused(pool: PgPool) {
     assert!(request_rows(&pool, keller).await.is_empty());
 }
 
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 /// A socket of `client`, registered once it answered a heartbeat.
 async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    use tokio_tungstenite::tungstenite::http::header::COOKIE;
-    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
-    let cookie = client.jar.get(common::SESSION).expect("session cookie");
-    request.headers_mut().insert(
-        COOKIE,
-        format!("{}={cookie}", common::SESSION).parse().unwrap(),
-    );
-    let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
-    ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
-        .await
-        .unwrap();
-    recv_until(&mut ws, |f| f["op"] == "h").await;
+    let mut ws = ws::connect(addr, client).await;
+    ws::registered(&mut ws).await;
     ws
-}
-
-/// The next frame; server heartbeats are answered on the way, like a client.
-async fn recv(ws: &mut Ws) -> Value {
-    loop {
-        let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
-            .await
-            .expect("ws recv timeout")
-            .expect("ws closed")
-            .expect("ws error");
-        if let Message::Text(text) = msg {
-            let frame: Value = serde_json::from_str(text.as_str()).unwrap();
-            if frame["op"] == "h" {
-                ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
-                    .await
-                    .unwrap();
-            }
-            return frame;
-        }
-    }
-}
-
-async fn recv_until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
-    loop {
-        let frame = recv(ws).await;
-        if pred(&frame) {
-            return frame;
-        }
-    }
 }
 
 /// The next `jq` frame on the socket.
 async fn next_count(ws: &mut Ws) -> Value {
-    recv_until(ws, |f| f["op"] == "jq").await
+    until(ws, |f| f["op"] == "jq").await
 }
 
 /// Fails if a frame with `op` arrives within 300 ms.
 async fn hears_no(ws: &mut Ws, op: &str) {
-    let heard = tokio::time::timeout(Duration::from_millis(300), async {
-        recv_until(ws, |f| f["op"] == op).await
-    })
-    .await;
-    assert!(heard.is_err(), "unexpected {op}: {heard:?}");
+    let heard = ws::within(ws, Duration::from_millis(300), |f| f["op"] == op).await;
+    assert!(heard.is_none(), "unexpected {op}: {heard:?}");
 }
 
 #[sqlx::test]
@@ -1591,7 +1544,7 @@ async fn the_queue_handlers_hear_the_count_and_the_accepted_hear_jn(pool: PgPool
     // The moderator accepts Lena: she hears jn, the handlers the new count.
     let res = answer(&mut mira, keller, id_of(&lena), "accept").await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
-    let joined = recv_until(&mut lena_ws, |f| f["op"] == "jn").await;
+    let joined = until(&mut lena_ws, |f| f["op"] == "jn").await;
     assert_eq!(joined, json!({ "op": "jn", "s": s }));
     assert_eq!(next_count(&mut owner_ws).await, count(1));
     assert_eq!(next_count(&mut moderator_ws).await, count(1));

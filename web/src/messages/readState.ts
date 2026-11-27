@@ -6,6 +6,13 @@ import {
 import { useEffect, useState } from "react";
 import { api } from "../api/client.ts";
 import {
+  isReadState,
+  isReadSync,
+  reportMalformed,
+  whole,
+  wholeRows,
+} from "../api/wire.ts";
+import {
   scopeGeneration,
   stampHolds,
   useUserId,
@@ -39,23 +46,30 @@ export type ReadState = {
 };
 export const readKey = (stamp: ScopeStamp) =>
   ["user", stamp.userId, stamp.generation, "unread"] as const;
+const readRows = (value: unknown) =>
+  wholeRows(value, isReadState, "read state");
+const readRow = (value: unknown) => whole(value, isReadState, "read state");
 export const listReadState = (signal?: AbortSignal) =>
-  api<ReadState[]>("/messages/unread", { signal });
+  api<unknown>("/messages/unread", { signal }).then(readRows);
 /** Every text channel of a server read to its newest message (#245). The
  * answer is the rows that moved. */
 export const markServerRead = (serverId: string) =>
-  api<ReadState[]>(`/servers/${serverId}/read`, { method: "PUT" });
+  api<unknown>(`/servers/${serverId}/read`, { method: "PUT" }).then(readRows);
 /** One conversation up to its newest message, wherever the view is. */
 export const markChannelRead = (channelId: string) =>
-  api<ReadState>(`/channels/${channelId}/read`, { method: "PUT", body: {} });
+  api<unknown>(`/channels/${channelId}/read`, { method: "PUT", body: {} }).then(
+    readRow,
+  );
 /** Everything, or only the direct messages. */
 export const markAllRead = (scope: "all" | "dms") =>
-  api<ReadState[]>("/messages/read-all", { method: "PUT", body: { scope } });
+  api<unknown>("/messages/read-all", { method: "PUT", body: { scope } }).then(
+    readRows,
+  );
 export const markRead = (channelId: string, messageId: string) =>
-  api<ReadState>(`/channels/${channelId}/read`, {
+  api<unknown>(`/channels/${channelId}/read`, {
     method: "PUT",
     body: { message_id: messageId },
-  });
+  }).then(readRow);
 
 const readingView = create<{
   channel: string | null;
@@ -289,7 +303,8 @@ export function useReadBridge() {
     // Read on another device or tab (#244): the badge and the notification
     // go here too, without waiting for the next snapshot.
     const stopSync = gateway.onAccount((frame) => {
-      if (frame.op === "rd") applyReadSync(client, stamp, frame.d);
+      if (frame.op === "rd")
+        applyReadSync(client, stamp, wholeSyncRows(frame.d));
     });
     return () => {
       stopRecovery();
@@ -313,6 +328,20 @@ function compare(next: Position, current: Position): number {
   if (order(next.read_order) !== order(current.read_order))
     return order(next.read_order) > order(current.read_order) ? 1 : -1;
   return order(next.latest_order) >= order(current.latest_order) ? 0 : -1;
+}
+
+/** The whole rows of a read-sync frame; the others are reported and left
+ *  out. */
+function wholeSyncRows(value: unknown): ReadSync[] {
+  if (!Array.isArray(value)) {
+    reportMalformed("read sync", value);
+    return [];
+  }
+  return value.filter((row): row is ReadSync => {
+    if (isReadSync(row)) return true;
+    reportMalformed("read sync", row);
+    return false;
+  });
 }
 
 /** Read positions from elsewhere into the cached rows. Forward only: a row

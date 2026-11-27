@@ -6,6 +6,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { ApiError } from "../api/client.ts";
+import { isMember, reportMalformed } from "../api/wire.ts";
 import { scopeGeneration, stampHolds, type ScopeStamp } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { isDecoration } from "../components/profileStyle.ts";
@@ -423,29 +424,16 @@ export function joinedMember(event: ChatEvent): Member | null {
   if (d === null || typeof d !== "object" || !("k" in d) || d.k !== "j")
     return null;
   const raw = "member" in d ? d.member : null;
-  if (raw === null || typeof raw !== "object") return null;
-  const row = raw as Record<string, unknown>;
-  const text = (value: unknown) => (typeof value === "string" ? value : null);
-  if (
-    row.user_id !== event.i ||
-    typeof row.name !== "string" ||
-    typeof row.joined_at !== "string"
-  )
+  if (!isMember(raw) || raw.user_id !== event.i) {
+    reportMalformed("member join", raw);
     return null;
+  }
   return {
-    user_id: event.i,
-    name: row.name,
-    avatar_url: text(row.avatar_url),
-    joined_at: row.joined_at,
+    ...raw,
     // Joining never makes the owner.
     role: "member",
-    role_ids: Array.isArray(row.role_ids)
-      ? row.role_ids.filter((id): id is string => typeof id === "string")
-      : [],
-    status_text: text(row.status_text),
-    accent_color: text(row.accent_color),
-    avatar_decoration: isDecoration(row.avatar_decoration)
-      ? row.avatar_decoration
+    avatar_decoration: isDecoration(raw.avatar_decoration)
+      ? raw.avatar_decoration
       : null,
   };
 }
