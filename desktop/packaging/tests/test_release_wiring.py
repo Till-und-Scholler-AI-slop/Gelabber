@@ -74,8 +74,8 @@ class ReleaseWiring(unittest.TestCase):
         mark = job_text(WORKFLOW.read_text(), 'mark-latest')
         self.assertIn('gh release edit "$TAG" --latest', mark)
         self.assertIn('sort -V', mark)
-        image_set = (WORKFLOWS / 'scripts/image_set.py').read_text()
-        self.assertIn("args += ['--latest=false']\n", image_set)
+        # That image_set.py creates the release with --latest=false is
+        # test_image_set.py's (deploy), which runs when image_set.py changes.
 
 
 def job_text(text, name):

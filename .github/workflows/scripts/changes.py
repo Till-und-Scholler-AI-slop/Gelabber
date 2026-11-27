@@ -14,9 +14,10 @@ AREAS = {
     'backend': ('backend/', 'rust-toolchain.toml', '.dockerignore', CI),
     # The emoji data is generated into the backend, the web client and the
     # desktop app, and checked in the web job; landingImage.test.mjs reads the
-    # drawn preview the landing page must not show.
+    # drawn preview the landing page must not show; ci-fault-loop.checks.mjs
+    # runs a step of e2e-extended.yml.
     'web': ('web/', 'backend/shared/data/', 'desktop/ui/assets/emoji/',
-            'docs/design/v0.10/landing-preview-en.png', CI),
+            'docs/design/v0.10/landing-preview-en.png', CI, '.github/workflows/e2e-extended.yml'),
     # The legacy import's test reads the web client's storage keys (legacy.rs).
     'desktop': ('desktop/', 'rust-toolchain.toml', 'web/src/voice/settings.ts',
                 'web/src/interface/preferences.ts', 'web/src/voice/userVolume.ts',
@@ -95,8 +96,9 @@ def outputs(touched, built, minio_build=False):
 
 def main(argv):
     if '--all' in argv:
-        # The MinIO images are built only when missing from the registry.
-        touched, built, minio_build = set(AREAS), {image['name'] for image in IMAGES}, False
+        # Release candidates build MinIO from source too: operators fall back
+        # to that build, and nobody waits on it beside the desktop jobs.
+        touched, built, minio_build = set(AREAS), {image['name'] for image in IMAGES}, True
     else:
         paths = sys.stdin.read().splitlines()
         touched, built = areas(paths), images(paths)
