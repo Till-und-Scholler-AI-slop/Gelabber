@@ -5,9 +5,9 @@
 //! member and channel generation, exact session user, expiry against Redis
 //! time), so an invalid ticket is used up as well. Join checks the authority
 //! again after the room's router exists, and every joined peer checks it once
-//! a second; each Redis call has a 500 ms deadline. Only a successful check
-//! refreshes demand (EX 35); media never renews the session lease and never
-//! deletes demand when one tab leaves.
+//! a second; each of these Redis calls has a 500 ms deadline. Only a
+//! successful check refreshes demand (EX 35); media never renews the session
+//! lease and never deletes demand when one tab leaves.
 //!
 //! A missing authority, a stale generation or an expired session removes the
 //! peer and its publications with `unauthorized`. A check that fails (Redis

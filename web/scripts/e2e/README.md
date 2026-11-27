@@ -11,7 +11,7 @@ dated media test docs and historical reports are not v4 acceptance gates. See
 [SOURCE_AUDIO.md](../../../backend/media/SOURCE_AUDIO.md) and the
 [migration document](../../../docs/v0.4-mediasoup-migration.md).
 
-The v0.4 hand-offs (`docs/e2e-handoffs/`) and run reports (`evidence/`) that this file used to link were removed in GEL-368; `git show v0.14.0:<path>` shows them as recorded. Those results carry their recorded runtime hashes and do not establish acceptance of the new v4 engine. How to start an owned fault run is under [Owned fault runs](#owned-fault-runs).
+The v0.4 hand-offs (`docs/e2e-handoffs/`) and run reports (`web/scripts/e2e/evidence/`) that this file used to link were removed in GEL-368; `git show v0.14.0:<path>` shows them as recorded. Those results carry their recorded runtime hashes and do not establish acceptance of the new v4 engine. How to start an owned fault run is under [Owned fault runs](#owned-fault-runs).
 
 This runner provides scenario construction and automated local/CI subset gates. Complete acceptance also requires the documented manual, HTTPS/WAN and production gates. The runner creates isolated `example.test` accounts and its own server through the UI, uses the actual API, Gateway, SFU and object store, and deletes only its own server. Accounts remain as test fixtures; no shared Redis keys, services or existing data are reset. A fresh browser cookie jar is used for each participant. Core scenarios verify and restore each fixture account before and after every check; failed restoration blocks following scenarios.
 
@@ -40,7 +40,7 @@ The new runner deliberately accepts only loopback HTTP/HTTPS origins and rejects
 
 Native interface deadlines distinguish native-getStats from outer-page-evaluate. Observation budgets are absolute and shared by all probes; late success and already-expired work cannot pass. Timeout produces test-error/FAIL, quarantines the page, closes it once and blocks later cases in that group. Finally never evaluates quarantined pages; native restore, context/browser close and owned runtime/cache teardown are bounded or independently attempted and visible red on failure. No missing stats or rendered frames are converted to a pass.
 
-The local Firefox TURN exception requires explicit `GELABBER_E2E_FIREFOX_LOOPBACK_ICE=true` plus `GELABBER_E2E_SFU_LOOPBACK_ICE=true`, Firefox forced relay and the private own `media-fault-loopback-control.env`. Both flags default off. Scope guards reject unsupported combinations before acquiring runtime resources; no automatic retry override. Actual process/binary/config categories and baseline hashes are reported. This exception changes only the isolated local test profile/SFU topology and provides no Firefox-default/WAN acceptance.
+The local Firefox TURN exception requires explicit `GELABBER_E2E_FIREFOX_LOOPBACK_ICE=true` plus `GELABBER_E2E_SFU_LOOPBACK_ICE=true`, Firefox forced relay and the private own `media-fault-loopback-control.env`, with `media-fault.env` in the same folder (the runner hashes both; without it startup ends `BLOCKED`). Both flags default off. Scope guards reject unsupported combinations before acquiring runtime resources; no automatic retry override. Actual process/binary/config categories and baseline hashes are reported. This exception changes only the isolated local test profile/SFU topology and provides no Firefox-default/WAN acceptance.
 
 ## Owned fault runs
 
@@ -49,8 +49,14 @@ proxies on 16386 and 19086), for `media`, `access` and `media-faults` its own
 SFU (18087), and a Vite server on 15186 that serves the web snapshot and sets
 `GELABBER_SMOKE_URL` itself. `.github/workflows/e2e-extended.yml` is the
 reference run: `ci-fault-prepare.mjs` (CI only) creates the dedicated fault
-database and bucket, copies the built API and SFU binaries and writes the
-private env files and manifests. From the repository root:
+database, names a fresh bucket (`gb-fault-<hex>`, which the API creates on
+start), copies the built API and SFU binaries and writes the private env files
+and manifests. The preparer refuses to run unless `CI=true`; locally, write
+the same files by hand: `fault.env` in `KEY="value"` lines with
+`DATABASE_URL` (database `gelabber_fault_<hex>`), `REDIS_URL`,
+`MINIO_ENDPOINT`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` and `MINIO_BUCKET`,
+all on loopback, and a manifest JSON with `sourceSha`, `binaryPath` and the
+binary's `sha256`. From the repository root:
 
 ```bash
 GELABBER_E2E_PROFILE=core-faults \
@@ -70,8 +76,9 @@ refuses an env file readable by others, a database not named
 `gelabber_fault_<hex>` and a binary whose SHA-256 differs from its manifest.
 Ports are bound exclusively and existing services are never stopped. A Redis
 reset deletes only four exact topic keys, never `FLUSH`. Proxies are restored
-and owned processes closed in `finally`, and each failure there stays visible
-in the report and the exit code.
+and owned processes closed in `finally`. A startup or teardown failure makes
+the exit code nonzero and is written, redacted, beside the report as
+`$GELABBER_E2E_REPORT.startup.json` or `.teardown.json`.
 
 ## Scenario contracts
 
@@ -101,7 +108,7 @@ GELABBER_E2E_BROWSER=chromium npm run test:e2e-held-renderer-control
 
 Repeat with `GELABBER_E2E_BROWSER=firefox` for the second native browser. Keep actual runtime attribution and report paths in the surrounding environment as described above. These native controls remain local; CI runs the fast ownership/counter regressions.
 
-The final local Chromium153/Firefox155 controls on clean test freeze `d2fd0f6` pass for both deletion scopes and reject a false stop with hidden RTP reports. Its compact renderer report (`held-renderer-validation.json`, removed in GEL-368) recorded immutable runtime/test hashes, unchanged live/enabled ownership, real counter values, fixture cleanup and explicit remaining gates. It does not validate the later source-restart fix.
+The final local Chromium153/Firefox155 controls on clean test freeze `d2fd0f6` pass for both deletion scopes and reject a false stop with hidden RTP reports. Its compact renderer report (`web/scripts/e2e/evidence/held-renderer-validation.json`, removed in GEL-368) recorded immutable runtime/test hashes, unchanged live/enabled ownership, real counter values, fixture cleanup and explicit remaining gates. It does not validate the later source-restart fix.
 
 ## Open acceptance
 
@@ -151,8 +158,9 @@ The separate [iOS and Omarchy acceptance sheet](../../../docs/v0.4-device-accept
 records the physical hearing, device, background/resume and TURN checks. It starts
 as not performed and requires the exact candidate and actual browser/device evidence.
 
-The 2026-10-05 local hour report (`v04-one-hour-call-2026-10-05.json`, removed
-in GEL-368) records 3600.106 seconds and 120 samples on an earlier frozen
+The 2026-10-05 local hour report
+(`web/scripts/e2e/evidence/v04-one-hour-call-2026-10-05.json`, removed in
+GEL-368) records 3600.106 seconds and 120 samples on an earlier frozen
 candidate. It
 used the temporary predecessor of this portable runner. The current portable
 runner has two separate 30-second controls. The recorded hour proves advancing
