@@ -3,13 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { takeStamp } from "../auth/scope.ts";
 import { login, resetSessionForTests } from "../auth/session.ts";
+import { clearToasts, useToasts } from "../components/toasts.ts";
 import {
+  createChannelOptions,
   createRoleOptions,
   deleteRoleOptions,
   isPendingId,
   refetchOnAccessChange,
   serverKeys,
   setMemberRolesOptions,
+  updateChannelOptions,
   updateRoleOptions,
 } from "./queries.ts";
 import type {
@@ -402,5 +405,83 @@ describe("useSetMemberRoles", () => {
       .mutate({ userId: "mira", roleIds: ["r-reg"] })
       .catch(() => null);
     expect(cachedDetail()).toEqual(detail);
+  });
+});
+
+describe("a role deleted in the meantime (GEL-135)", () => {
+  // Another admin deleted a chosen role before this tab heard of it: the
+  // server's roles are read again and the toast says what to do.
+  const stale = () =>
+    json(
+      {
+        error: "validation_failed",
+        message: "role_ids invalid",
+        fields: { role_ids: "invalid" },
+      },
+      422,
+    );
+  const detailStale = () => client.getQueryState(keys().detail)?.isInvalidated;
+  const toasts = () =>
+    useToasts.getState().toasts.map((toast) => toast.message);
+  const told = (failed: string) => [
+    `${failed} Eine Rolle wurde inzwischen gelöscht. Prüfe die Auswahl und speichere noch einmal.`,
+  ];
+
+  beforeEach(() => {
+    clearToasts();
+    respond = stale;
+  });
+
+  it("reads the roles again after a channel edit", async () => {
+    const observer = new MutationObserver(
+      client,
+      updateChannelOptions(client, "s1"),
+    );
+    await observer
+      .mutate({ id: "spiele", patch: { role_ids: ["r-gone"] } })
+      .catch(() => null);
+    expect(detailStale()).toBe(true);
+    expect(toasts()).toEqual(told("Kanal nicht gespeichert."));
+  });
+
+  it("reads the roles again after a channel create", async () => {
+    const observer = new MutationObserver(
+      client,
+      createChannelOptions(client, "s1"),
+    );
+    await observer
+      .mutate({
+        name: "neu",
+        kind: "text",
+        category_id: null,
+        role_ids: ["r-gone"],
+      })
+      .catch(() => null);
+    expect(detailStale()).toBe(true);
+    expect(toasts()).toEqual(told("Kanal nicht erstellt."));
+  });
+
+  it("reads the roles again after a member's roles", async () => {
+    const observer = new MutationObserver(
+      client,
+      setMemberRolesOptions(client, me.id, "s1"),
+    );
+    await observer
+      .mutate({ userId: "mira", roleIds: ["r-gone"] })
+      .catch(() => null);
+    expect(detailStale()).toBe(true);
+    expect(toasts()).toEqual(told("Rollen nicht gespeichert."));
+  });
+
+  it("leaves the server alone after any other refusal", async () => {
+    respond = failure;
+    const observer = new MutationObserver(
+      client,
+      updateChannelOptions(client, "s1"),
+    );
+    await observer
+      .mutate({ id: "spiele", patch: { role_ids: ["r-reg"] } })
+      .catch(() => null);
+    expect(detailStale()).toBeFalsy();
   });
 });

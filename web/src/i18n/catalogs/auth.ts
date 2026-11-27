@@ -161,7 +161,7 @@ export const auth = defineCatalog(
     "fieldError.roleNameTaken": "Diesen Namen hat schon eine Rolle.",
     "fieldError.tooManyRoles": "Ein Server hat höchstens 50 Rollen.",
     "fieldError.roleIdsInvalid":
-      "Eine der Rollen gibt es nicht mehr. Lade die Seite neu.",
+      "Eine Rolle wurde inzwischen gelöscht. Prüfe die Auswahl und speichere noch einmal.",
 
     // A rate limit with a known wait (auth/useFormErrors.ts).
     "form.rateLimited": {
@@ -456,7 +456,7 @@ export const auth = defineCatalog(
     "fieldError.roleNameTaken": "A role already has this name.",
     "fieldError.tooManyRoles": "A server has at most 50 roles.",
     "fieldError.roleIdsInvalid":
-      "One of the roles no longer exists. Reload the page.",
+      "A role was deleted in the meantime. Check the selection and save again.",
 
     "form.rateLimited": {
       one: "Too many attempts. Please wait {count} second.",

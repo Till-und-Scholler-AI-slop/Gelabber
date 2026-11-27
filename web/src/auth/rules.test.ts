@@ -120,7 +120,9 @@ describe("copy", () => {
     expect(fieldMessage("roles", "too_many")).toBe(
       "Ein Server hat höchstens 50 Rollen.",
     );
-    expect(fieldMessage("role_ids", "invalid")).toMatch(/gibt es nicht mehr/);
+    expect(fieldMessage("role_ids", "invalid")).toBe(
+      "Eine Rolle wurde inzwischen gelöscht. Prüfe die Auswahl und speichere noch einmal.",
+    );
     expect(fieldMessage("color", "invalid")).toBe("Farbe ist ungültig.");
     expect(fieldMessage("permissions", "invalid")).toBe("Rechte ist ungültig.");
     expect(fieldMessage("name", "too_long")).toBe("Name ist zu lang.");
@@ -210,6 +212,9 @@ describe("copy in English", () => {
       "At least 8 characters.",
     );
     expect(fieldMessage("whatever", "invalid")).toBe("Input is invalid.");
+    expect(fieldMessage("role_ids", "invalid")).toBe(
+      "A role was deleted in the meantime. Check the selection and save again.",
+    );
     expect(errorMessage("invalid_credentials")).toBe(
       "Wrong email or password.",
     );

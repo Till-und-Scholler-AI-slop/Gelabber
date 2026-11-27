@@ -547,8 +547,15 @@ mod tests {
         );
         assert_eq!(
             field_message("role_ids", "invalid"),
-            "Eine der Rollen gibt es nicht mehr. Lade die Seite neu."
+            "Eine Rolle wurde inzwischen gelöscht. Prüfe die Auswahl und speichere noch einmal."
         );
+        {
+            let _locale = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+            assert_eq!(
+                field_message("role_ids", "invalid"),
+                "A role was deleted in the meantime. Check the selection and save again."
+            );
+        }
         assert_eq!(field_message("color", "invalid"), "Farbe ist ungültig.");
         assert_eq!(
             field_message("permissions", "invalid"),

@@ -110,8 +110,8 @@ crate::strings! {
         | "A role already has this name.";
     field_error_too_many_roles = "Ein Server hat höchstens 50 Rollen."
         | "A server has at most 50 roles.";
-    field_error_role_ids_invalid = "Eine der Rollen gibt es nicht mehr. Lade die Seite neu."
-        | "One of the roles no longer exists. Reload the page.";
+    field_error_role_ids_invalid = "Eine Rolle wurde inzwischen gelöscht. Prüfe die Auswahl und speichere noch einmal."
+        | "A role was deleted in the meantime. Check the selection and save again.";
 
     // Problems the sign-out strip shows (auth/session.ts).
     session_logout_unconfirmed = "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut."

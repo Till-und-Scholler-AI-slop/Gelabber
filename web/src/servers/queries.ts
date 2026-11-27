@@ -837,6 +837,9 @@ export function createChannelOptions(client: QueryClient, serverId: string) {
         notifyError(error);
         return;
       }
+      // Read the roles again, so the dialog offers only those that exist.
+      if (staleRoles(error))
+        refetchServer(client, ctx.userId, ctx.generation, serverId);
       notifyError(error, translate(servers, "error.channelNotCreated"));
     },
   });
@@ -915,6 +918,8 @@ export function updateChannelOptions(client: QueryClient, serverId: string) {
             ch.id === id ? unpatchChannel(ch, was, patch) : ch,
           ),
         }));
+      if (staleRoles(error))
+        refetchServer(client, ctx.userId, ctx.generation, serverId);
       notifyError(error, translate(servers, "error.channelNotSaved"));
     },
     onSuccess: (channel, _vars, ctx) => {
@@ -1304,6 +1309,16 @@ function refetchServer(
   });
 }
 
+/** The API refused roles that no longer exist: another admin deleted one
+ * before this client heard of it (GEL-135). */
+function staleRoles(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.code === "validation_failed" &&
+    error.fields.role_ids === "invalid"
+  );
+}
+
 /** The caller's role and server writes of a server still in flight. */
 function writesInFlight(
   client: QueryClient,
@@ -1588,6 +1603,8 @@ export function setMemberRolesOptions(
       if (!stampHolds(ctx)) return;
       if (burst.failed())
         restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
+      if (staleRoles(error))
+        refetchServer(client, ctx.userId, ctx.generation, serverId);
       notifyError(error, translate(servers, "error.memberRolesNotSaved"));
     },
     onSuccess: (result, _vars, ctx) => {

@@ -1735,6 +1735,7 @@ impl Client {
     }
 
     /// Changes on a server, then its detail is fetched again. Op key `op`.
+    /// A refusal for a role deleted in the meantime reads it again as well.
     pub fn server_change<T, F>(&self, op: impl Into<String>, server: Uuid, work: F)
     where
         T: Send + 'static,
@@ -1743,10 +1744,24 @@ impl Client {
         let this = self.clone();
         let op = op.into();
         self.spawn(async move {
-            if this.op(&op, work).await.is_some() {
+            if this.op(&op, work).await.is_some() || this.failed_on_stale_roles(&op) {
                 let _ = this.reload_server(server).await;
             }
         });
+    }
+
+    /// Whether the op `key` failed because one of the roles it sent no
+    /// longer exists: another admin deleted it before this client heard of
+    /// it, and the server's roles are read again (GEL-135).
+    fn failed_on_stale_roles(&self, key: &str) -> bool {
+        self.with_state(|s| {
+            matches!(
+                s.op(key),
+                Some(OpState::Failed(error))
+                    if error.code() == "validation_failed"
+                        && error.field("role_ids") == Some("invalid")
+            )
+        })
     }
 
     /// `role_ids` limits the new channel to those roles; `None`: everyone.
@@ -1828,6 +1843,8 @@ impl Client {
         self.spawn(async move {
             if this.op(&op, work).await.is_some() {
                 this.reload_servers().await;
+                let _ = this.reload_server(server).await;
+            } else if this.failed_on_stale_roles(&op) {
                 let _ = this.reload_server(server).await;
             }
         });
@@ -3576,5 +3593,104 @@ mod tests {
         assert!(answer.is_none());
         assert!(client.with_state(|s| s.op(&key).is_none()));
         assert!(seen.lock().is_empty(), "{:?}", seen.lock());
+    }
+
+    /// Answers every write with the refusal for a role deleted in the
+    /// meantime (`422`, `role_ids: invalid`), the session with its CSRF
+    /// token and every other read with 500; keeps the request lines.
+    fn refusing_deleted_roles() -> (String, Arc<parking_lot::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    let line = head.lines().next().unwrap_or("").to_owned();
+                    log.lock().push(line.clone());
+                    let answer = if line.starts_with("GET /api/auth/session ") {
+                        let body = r#"{"user":null,"csrf_token":"t"}"#;
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    } else if line.starts_with("GET ") {
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                    } else {
+                        let body = r#"{"error":"validation_failed","message":"role_ids invalid","fields":{"role_ids":"invalid"}}"#;
+                        format!(
+                            "HTTP/1.1 422 Unprocessable Entity\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    };
+                    let _ = stream.write_all(answer.as_bytes());
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    /// A channel's access or a member's roles naming a role another admin
+    /// deleted in the meantime: the server is read again, so its roles no
+    /// longer offer the deleted one (GEL-135).
+    #[test]
+    fn a_refusal_for_a_deleted_role_reads_the_server_again() {
+        let server = Uuid::from_u128(3);
+        let gone = Uuid::from_u128(4);
+        let channel = Uuid::from_u128(6);
+        let user = Uuid::from_u128(7);
+        type Send = Box<dyn Fn(&Client)>;
+        let writes: [(&str, Send); 3] = [
+            (
+                "PATCH /api/channels/",
+                Box::new(move |c: &Client| {
+                    c.update_channel(
+                        server,
+                        channel,
+                        ChannelPatch {
+                            role_ids: Some(vec![gone]),
+                            ..ChannelPatch::default()
+                        },
+                    )
+                }),
+            ),
+            (
+                "POST /api/servers/",
+                Box::new(move |c: &Client| {
+                    c.create_channel(server, "neu", ChannelKind::Text, None, Some(vec![gone]))
+                }),
+            ),
+            (
+                "PUT /api/servers/",
+                Box::new(move |c: &Client| c.set_member_roles(server, user, vec![gone], 1)),
+            ),
+        ];
+        for (write, send) in writes {
+            let (url, seen) = refusing_deleted_roles();
+            let client = Client::new(&url).unwrap();
+            signed_in(&client, Uuid::from_u128(5));
+            send(&client);
+            let reload = format!("GET /api/servers/{server} ");
+            let start = std::time::Instant::now();
+            while !seen.lock().iter().any(|l| l.starts_with(&reload)) {
+                assert!(
+                    start.elapsed() < Duration::from_secs(5),
+                    "{write}: {:?}",
+                    seen.lock()
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                seen.lock().iter().any(|l| l.starts_with(write)),
+                "{:?}",
+                seen.lock()
+            );
+        }
     }
 }
