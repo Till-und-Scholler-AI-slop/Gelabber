@@ -19,7 +19,7 @@ between commands, so start each command that uses `$base` with this line:
 base=$(git branch -r --list 'origin/v[0-9]*' --sort=-version:refname | head -1 | sed 's#^ *origin/##')
 ```
 
-`$base` is the development line (`v0.14` at the time of writing).
+`$base` is the development line.
 
 ## 1. Take stock
 
@@ -36,9 +36,18 @@ gh pr list --state open --json number,headRefName,url --jq '.[] | select(.headRe
 - Two open Dependabot pull requests that update the same dependency in the
   same directory: keep the higher number; close the other with
   `gh pr close <n> --comment "Superseded by #<higher>."`.
+- A Dependabot pull request that an earlier run left out and that has not
+  changed since: its last comment starting `Left out at <sha>` names its
+  current head. It stays out of the batch without being built again; list
+  it as left out in step 7 with the reason that comment gives.
 
-The rest are **the batch**. For each, note its updates from its commit
-message: one line `Updates \`<name>\` from <old> to <new>` per update, and
+  ```sh
+  gh pr view <n> --json headRefOid,comments --jq '[.headRefOid, ([.comments[].body | select(startswith("Left out at "))] | last)]'
+  ```
+
+The rest are **the batch**. An empty batch: stop before step 2; report the
+pull requests left out again and their reasons. For each pull request of the
+batch, note its updates from its commit message: one line `Updates \`<name>\` from <old> to <new>` per update, and
 the directory from the title or the "Bumps ... in the /<dir> directory" lines.
 
 ```sh
@@ -140,9 +149,11 @@ Run the checks of each area listed (they are CI's; `AGENTS.md` "Commands"):
   `DOCS_RS=1 cargo clippy --locked --workspace --all-targets -- -D warnings`,
   then the tests as in AGENTS.md (services: the `test-services` skill).
 - **desktop**: needs `GELABBER_LIBWEBRTC_DIR` set to a libwebrtc package (a
-  directory with a `VERSIONS` file) and 30 GB free on the disk of the
-  checkout (`df -h .`). Without either, skip these and write "desktop Rust
-  checks: not run locally (no libwebrtc package / disk), CI runs them" in the
+  directory with a `VERSIONS` file), `cmake --version` and `ninja --version`
+  working (the media core's build script runs both; a version-manager shim
+  without a version set fails there), and 30 GB free on the disk of the
+  checkout (`df -h .`). Without any of these, skip these and write "desktop
+  Rust checks: not run locally (<what was missing>), CI runs them" in the
   pull request. Otherwise, with `CARGO_BUILD_JOBS=2` on a shared machine:
   `cargo fmt --manifest-path desktop/Cargo.toml --all -- --check`,
   `cargo clippy --locked --manifest-path desktop/Cargo.toml --all-targets -- -D warnings`,
@@ -192,11 +203,15 @@ zizmor" and "Check workflows with actionlint" of the job `deploy` in
 `.github/workflows/ci.yml`, their `run:` scripts with their `env:` values,
 and `GH_TOKEN=$(gh auth token)` for zizmor.
 
-`test_makensis_compiles_it` fails without `makensis` (`apt-get install nsis`);
-where it cannot be installed, write it down as not run. Everything else must
-pass. Done when it does.
+Done when all pass.
 
 ## 7. Pull request
+
+When the branch carries nothing (`git diff --quiet "origin/$base"...HEAD`
+exits 0: every update left out or already on the development line), open no
+pull request and push nothing: comment on the Linear issue with what was left
+out and why, set it to `Canceled`, delete the branch
+(`git switch --detach && git branch -D <branch>`), and go on with step 8.
 
 ```sh
 git push -u origin HEAD
@@ -241,14 +256,22 @@ Each pull request of the batch whose updates are all in the new pull request
 gh pr close <n> --comment "Replaced by <URL of the new pull request>, which carries this update onto the development line."
 ```
 
-A pull request with an update left out stays open; comment on it instead:
-`gh pr comment <n> --body "<URL> carries <the updates taken>; <left-out update> is left out: <reason>."`.
+A pull request with an update left out stays open; comment on it instead,
+starting with its head commit, which step 1 of the next run reads:
+
+```sh
+gh pr comment <n> --body "Left out at $(gh pr view <n> --json headRefOid --jq .headRefOid) by GEL-<n>: <left-out update>: <first error line>. <URL of the new pull request, if any> carries <the updates taken, if any>."
+```
+
 Close nothing else.
 
 ## 9. Report
 
-The new pull request's URL, the updates taken and left out, the checks with
-their results, and the Dependabot pull requests closed and left open.
+The new pull request's URL (or "no pull request: nothing to carry"), the
+updates taken and left out, the checks with their results, and the
+Dependabot pull requests closed and left open. An update left out for a
+reason that will not go away by itself (such as a dependency that must match
+another crate's version) needs a maintainer's decision: say so.
 
 ## Leaving an update out
 
@@ -260,7 +283,10 @@ ahead.
    or a path `…/registry/src/…/<name>-<new>/`). No name or several names
    match: drop whole Dependabot pull requests instead, last picked first,
    rerunning the failing check after each, until it passes; the last one
-   dropped is left out.
+   dropped is left out, and the others dropped on the way are picked again
+   (step 3). Still failing with every pull request dropped: the failure is
+   the development line's own; pick them all again, record the check as
+   `failed, also on <base>`, and go on.
 2. **Drop it.**
    - The update is its pull request's only one (or the whole pull request
      goes): remove its commits, `git rebase --onto <first commit>^ <last commit>`
