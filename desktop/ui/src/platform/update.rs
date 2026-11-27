@@ -1675,7 +1675,12 @@ mod tests {
         // The PKGBUILD's folder.
         let pkgbuild = include_str!("../../../packaging/arch/native/PKGBUILD");
         assert!(pkgbuild.contains(&format!("\"${{pkgdir}}{PACMAN_DIR}/gelabber\"")));
-        assert!(pkgbuild.contains(&format!("pkgname={PACMAN_PACKAGE}\n")));
+        // By line: a Windows checkout may end them with CRLF.
+        assert!(
+            pkgbuild
+                .lines()
+                .any(|l| l == format!("pkgname={PACMAN_PACKAGE}"))
+        );
 
         let found = Found {
             version: "0.9.1".into(),
