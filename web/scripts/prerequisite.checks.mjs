@@ -1,7 +1,7 @@
 /* global console */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inCi, missing } from "./prerequisite.mjs";
+import { ciFrom, missing } from "./prerequisite.mjs";
 
 test("outside CI a missing prerequisite is skipped and says so", (t) => {
   const log = t.mock.method(console, "log", () => {});
@@ -29,5 +29,5 @@ test("CI counts unless it is unset, empty, 0 or false", () => {
     ["False", false],
     [undefined, false],
   ])
-    assert.equal(inCi(value), ci, `CI=${value}`);
+    assert.equal(ciFrom(value), ci, `CI=${value}`);
 });

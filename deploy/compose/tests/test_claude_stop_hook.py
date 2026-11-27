@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from prerequisites import missing
 
@@ -66,10 +67,20 @@ class Checks(unittest.TestCase):
     def test_workflows_run_the_pin_test(self):
         self.assertEqual(self.names('.github/workflows/ci.yml'), ['workflows: action pins'])
 
+    def rustfmt(self, installed):
+        """The hook's own look for cargo fmt, answered by the test."""
+        which = mock.patch.object(hook.shutil, 'which', return_value='/usr/bin/cargo')
+        run = mock.patch.object(hook, 'run', return_value=(0 if installed else 1, ''))
+        return which, run
+
     def test_a_rust_change_formats_its_own_workspace(self):
-        if not (shutil.which('cargo') and hook.run(['cargo', 'fmt', '--version'], ROOT, 30)[0] == 0):
-            missing('cargo fmt')
-        self.assertEqual(self.names('backend/api/src/main.rs'), ['backend: cargo fmt'])
+        which, run = self.rustfmt(installed=True)
+        with which, run:
+            self.assertEqual(self.names('backend/api/src/main.rs'), ['backend: cargo fmt'])
+            self.assertEqual(self.names('desktop/ui/src/main.rs'), ['desktop: cargo fmt'])
+        which, run = self.rustfmt(installed=False)
+        with which, run:
+            self.assertEqual(self.names('backend/api/src/main.rs'), [])
 
     def test_web_changes_pick_their_checks(self):
         root = self.web_root()

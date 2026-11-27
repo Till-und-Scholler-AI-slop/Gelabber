@@ -19,6 +19,11 @@ export function missing(what, { ci = inCi() } = {}) {
 }
 
 /** `CI` is set, and not to "", "0" or "false" (in any case). */
-export function inCi(value = process.env.CI) {
+export function inCi() {
+  return ciFrom(process.env.CI);
+}
+
+/** Whether a value of `CI` means CI; `undefined` when it is unset. */
+export function ciFrom(value) {
   return !["", "0", "false"].includes((value ?? "").trim().toLowerCase());
 }
