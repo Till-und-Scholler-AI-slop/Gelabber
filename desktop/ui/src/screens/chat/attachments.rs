@@ -2063,20 +2063,17 @@ mod tests {
         settle(&mut harness, &images);
         harness.get_by_label("Bild konnte nicht geladen werden.");
         harness.get_by_label("Herunterladen");
-        // "Erneut laden" asks again; here it fails again.
-        harness.get_by_label("Erneut laden").click();
-        for _ in 0..300 {
-            harness.step();
-            if harness
-                .query_by_label("Bild konnte nicht geladen werden.")
-                .is_some()
-            {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        harness.get_by_label("Bild konnte nicht geladen werden.");
+        // "Erneut laden" asks again; here it fails again, a failure of its own.
         let url = attachment_url(Uuid::from_u128(1));
+        let first = images.failed_at(&url);
+        assert!(first.is_some());
+        harness.get_by_label("Erneut laden").click();
+        crate::app::testkit::eventually("the picture to fail again", || {
+            harness.step();
+            images.failed_at(&url).is_some_and(|at| Some(at) != first)
+        });
+        harness.run_steps(2);
+        harness.get_by_label("Bild konnte nicht geladen werden.");
         images.retry(&url);
         assert!(matches!(
             images.get(&harness.ctx, &url),

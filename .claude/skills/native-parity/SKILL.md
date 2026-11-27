@@ -16,7 +16,11 @@ app", the parity part). What the README does not say:
   `GELABBER_DEV_PUBLIC_PAGES`, then in `web/`: `node scripts/parity/seed.mjs`
   and `node scripts/parity/shots.mjs <web-dir>`. `GELABBER_PARITY_BROWSER`
   names the Chromium binary, `GELABBER_PARITY_PSQL` the `psql` command for
-  the parity database.
+  the parity database. Both shot tools and `gelabber-parity` run
+  `scripts/parity/reset.mjs` before every scene (back to the seeded state)
+  and `scripts/parity/say.mjs` for a scene's `before` and `after` words (a
+  message from someone else, a theme); run them by hand only to repair the
+  fixture.
 - **One script.** Start the API, Vite, seed, shots, render and compare from
   one script run in the background (`nohup`). Processes started in an
   earlier tool call may be gone by the next one.
