@@ -1,7 +1,7 @@
 // Lazy parts in a real engine, without a server: headless Chromium runs the
 // built app from a made-up origin; its files, /api and the gateway are
 // answered from here. It checks what the unit tests cannot see:
-//  - the first screen needs none of the lazy chunks, and the workspace
+//  - the first screen asks for none of the lazy chunks, and the workspace
 //    fetches all of them once the browser is idle;
 //  - voice room, a settings area and the server settings render through
 //    their parts;
@@ -126,7 +126,7 @@ try {
     executablePath: process.env.GELABBER_LAZY_BROWSER_EXECUTABLE || undefined,
     headless: true,
   });
-  async function open(path, block, hold) {
+  async function open(path, block, { queueIdle = false } = {}) {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       locale: "de-DE",
@@ -134,10 +134,6 @@ try {
     });
     const requested = [];
     const blocked = { on: !!block };
-    let release;
-    const released = new Promise((resolve) => {
-      release = resolve;
-    });
     await context.route("**/*", async (route) => {
       const url = new URL(route.request().url());
       if (url.origin !== ORIGIN) return route.abort();
@@ -149,7 +145,6 @@ try {
       requested.push(url.pathname);
       if (blocked.on && block?.test(url.pathname))
         return route.fulfill({ status: 404, body: "gone" });
-      if (hold?.test(url.pathname)) await released;
       return route.fulfill({
         path: join(out, files.has(url.pathname) ? url.pathname : "index.html"),
       });
@@ -161,31 +156,45 @@ try {
           socket.send(JSON.stringify({ op: "ok", s: f.s, c: f.c, n: 0 }));
       }),
     );
+    // The browser's idle callbacks wait until the test lets them run, so
+    // what the first screen asks for is told apart from the idle preload.
+    if (queueIdle)
+      await context.addInitScript(() => {
+        const queued = new Map();
+        let next = 0;
+        window.requestIdleCallback = (callback) => {
+          queued.set(++next, callback);
+          return next;
+        };
+        window.cancelIdleCallback = (id) => queued.delete(id);
+        window.releaseIdle = () => {
+          const callbacks = [...queued.values()];
+          queued.clear();
+          for (const callback of callbacks)
+            callback({ didTimeout: false, timeRemaining: () => 50 });
+        };
+      });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
     page.on("pageerror", (e) => problems.push(e.message));
     await page.goto(`${ORIGIN}${path}`);
-    return { context, page, requested, blocked, release };
+    return { context, page, requested, blocked };
   }
-  // 1. Text channel: the first screen needs no lazy chunk, and the
-  // workspace fetches all of them. The chunks are held back until the first
-  // screen is up; the idle preload may ask for them before that.
+  // 1. Text channel: the first screen asks for no lazy chunk, and the
+  // workspace fetches all of them once the browser is idle.
   {
-    const { context, page, requested, release } = await open(
+    const { context, page, requested } = await open(
       `/s/${SERVER}/c/${TEXT}`,
       undefined,
-      partChunk,
+      { queueIdle: true },
     );
-    await page
-      .locator(".lr-composer textarea")
-      .waitFor()
-      .catch((error) => {
-        throw new Error(
-          `the first screen waits for a lazy chunk (asked for: ${requested.filter((p) => partChunk.test(p))})`,
-          { cause: error },
-        );
-      });
-    release();
+    await page.locator(".lr-composer textarea").waitFor();
+    assert.deepEqual(
+      requested.filter((p) => partChunk.test(p)),
+      [],
+      "the first screen asked for lazy chunks",
+    );
+    await page.evaluate(() => window.releaseIdle());
     // The workspace preloads every part once the browser is idle. On a
     // timeout the comparison below names the parts that did not come.
     await page

@@ -145,7 +145,9 @@ let browser;
 
 const UPRIGHT = { width: 390, height: 664 };
 const SIDEWAYS = { width: 844, height: 390 };
+/** What the pages reported, as [step, message]. */
 const problems = [];
+let step = "start";
 
 /** A signed-in browser on the text channel. `inits` run before the app. */
 async function browse(options, ...inits) {
@@ -187,7 +189,7 @@ async function browse(options, ...inits) {
   for (const init of inits) if (init) await context.addInitScript(init);
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
-  page.on("pageerror", (error) => problems.push(error.message));
+  page.on("pageerror", (error) => problems.push([step, error.message]));
   await page.goto(`${ORIGIN}/s/${SERVER}/c/${TEXT}`);
   await page.locator(".lr-composer textarea").waitFor();
   await page.getByText(history.at(-1).content).waitFor();
@@ -227,7 +229,8 @@ const frames = (page, count = 4) =>
   }, count);
 
 async function done({ context, page }) {
-  problems.push(...(await page.evaluate(() => window.smokeErrors)));
+  for (const message of await page.evaluate(() => window.smokeErrors))
+    problems.push([step, message]);
   await context.close();
 }
 
@@ -552,10 +555,12 @@ try {
     env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: "disabled:" },
   });
 
+  step = "draft";
   const stylesheet = await draft(false);
   console.log(
     `PASS: sized by the stylesheet, the list stays at its end (field up to ${Math.max(...stylesheet)}px)`,
   );
+  step = "draft turning the phone";
   const script = await draft(true);
   console.log(
     "PASS: sized by script, the list stays at its end while a draft wraps, the phone turns and the message is sent",
@@ -566,25 +571,31 @@ try {
     "the script sizes the field differently from the stylesheet",
   );
   console.log("PASS: the script's heights are the stylesheet's at every step");
+  step = "phone on its side";
   await blockedSound();
   console.log(
     'PASS: "Ton starten" is on screen on a phone on its side, in the call bar',
   );
+  step = "desk";
   await deskStrip();
   console.log(
     "PASS: on a desktop the user panel and the call bar form one strip, its controls equally high",
   );
-  // Turning the phone resizes the page; on a busy machine Chromium may then
-  // report a ResizeObserver loop, as in smoke-chat-scroll. Said, not failed.
+  // With the phone on its side Chromium may report a ResizeObserver loop
+  // (seen locally and in CI, job 140532111325, so not a matter of load).
+  // Said there, not failed; anywhere else it fails.
   const loop = "ResizeObserver loop completed with undelivered notifications.";
-  const loops = problems.filter((problem) => problem === loop).length;
+  const sideways = ["draft turning the phone", "phone on its side"];
+  const said = ([where, message]) =>
+    message === loop && sideways.includes(where);
+  const loops = problems.filter(said).length;
   assert.deepEqual(
-    problems.filter((problem) => problem !== loop),
+    problems.filter((problem) => !said(problem)),
     [],
     "the page reported errors",
   );
   console.log(
-    `PASS: no page errors${loops ? ` (besides ${loops} ResizeObserver loop notices)` : ""}, ${browser.browserType().name()} ${browser.version()}`,
+    `PASS: no page errors${loops ? ` (besides ${loops} ResizeObserver loop notices with the phone on its side)` : ""}, ${browser.browserType().name()} ${browser.version()}`,
   );
 } finally {
   await browser?.close();
