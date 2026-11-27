@@ -276,6 +276,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       const warmupStart = Date.now();
       const cameraFixtureWarmup = { deadlineMs: 20_000, status: "FAIL" };
       let camera, before;
+      let retryClickedAt = null;
       try {
         const ready = await until(
           () => snapshot(f.member),
@@ -369,6 +370,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "rejected-sdp-ghost-live-display",
           { controlConfirmed: true, after: afterCamera.last },
         );
+        retryClickedAt = Date.now();
         await click(f.owner, "Live gehen");
         // The retry is the second display capture, drawn green.
         const retry = await progress(f.member, {
@@ -391,6 +393,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const observed = await snapshot(f.owner).catch(() => null);
         const diagnostics = {
           cameraFixtureWarmup,
+          // With the RPC and consumer times below, where a slow retry spent
+          // its time (GEL-460).
+          retryClickedAt,
           faultExercised: observed?.rejectedSdp > 0,
           sdpRejectionErrors: observed?.rejectedSdpErrors ?? [],
           publisherLive: await nativeEvaluate(f.owner, samplePublicationFlow, {

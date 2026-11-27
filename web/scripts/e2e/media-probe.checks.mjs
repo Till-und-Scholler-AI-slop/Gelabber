@@ -517,6 +517,7 @@ test("delayed Consumer announcements preserve exact frames and allow reversed de
 test("publication diagnostics correlate only actual RPC outcomes and retain no protocol bodies or native IDs", async () => {
   const { window } = consumerProbeFixture();
   const media = new window.WebSocket("ws://127.0.0.1/media/ws");
+  const before = Date.now();
   media.send(
     JSON.stringify({
       op: "produce",
@@ -535,16 +536,36 @@ test("publication diagnostics correlate only actual RPC outcomes and retain no p
     createContext({ window }),
   );
   assert.equal(flow.producer.present, false);
-  assert.deepEqual(JSON.parse(JSON.stringify(flow.rpc)), [
-    {
-      method: "produce",
-      kind: "s",
-      on: null,
-      status: "FAIL",
-      error: "forbidden",
-    },
-    { method: "w", kind: "s", on: true, status: "PASS", error: null },
-  ]);
+  // Each call says when it was sent and answered (GEL-460).
+  const after = Date.now();
+  for (const call of flow.rpc)
+    assert.ok(
+      before <= call.sentAt &&
+        call.sentAt <= call.answeredAt &&
+        call.answeredAt <= after,
+      JSON.stringify(call),
+    );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(flow.rpc)).map(
+      ({ method, kind, on, status, error }) => ({
+        method,
+        kind,
+        on,
+        status,
+        error,
+      }),
+    ),
+    [
+      {
+        method: "produce",
+        kind: "s",
+        on: null,
+        status: "FAIL",
+        error: "forbidden",
+      },
+      { method: "w", kind: "s", on: true, status: "PASS", error: null },
+    ],
+  );
   assert.ok(!JSON.stringify(flow).includes("PRIVATE"));
   for (let id = 3; id < 200; id++)
     media.send(JSON.stringify({ op: "produce", id, k: "s", rtp: "PRIVATE" }));
@@ -627,4 +648,92 @@ test("a socket records when it opened, for waits on the app's recovery round", (
   const before = Date.now();
   for (const listener of socket.listeners.get("open") ?? []) listener({});
   assert.ok(item.openedAt >= before && item.openedAt <= Date.now());
+});
+test("received streams say which source they are, and consumers when they came and on which layer", async () => {
+  const stats = (rows) =>
+    new Map(rows.map((row, i) => [String(i), { type: "inbound-rtp", ...row }]));
+  const live = { id: "live-track", kind: "video", readyState: "live" };
+  const receiver = {
+    track: live,
+    getStats: async () =>
+      stats([
+        { kind: "video", ssrc: 111, packetsReceived: 4, framesDecoded: 4 },
+      ]),
+  };
+  const peer = {
+    connectionState: "connected",
+    iceConnectionState: "connected",
+    getStats: async () =>
+      stats([
+        // The SDK's padding-only probation stream: it never decodes.
+        {
+          kind: "video",
+          ssrc: 1234,
+          trackIdentifier: "probator",
+          packetsReceived: 123,
+        },
+        { kind: "video", ssrc: 111, packetsReceived: 4, framesDecoded: 4 },
+        { kind: "video", ssrc: 999, packetsReceived: 15, framesDecoded: 15 },
+      ]),
+    getTransceivers: () => [],
+    getSenders: () => [],
+    getReceivers: () => [receiver],
+    localDescription: null,
+  };
+  const state = {
+    peers: [peer],
+    incomingTracks: [
+      {
+        pc: peer,
+        track: live,
+        receiver,
+        publisher: "a",
+        sourceKind: "s",
+        consumerId: "PRIVATE-consumer",
+        producerId: "PRIVATE-producer",
+        epoch: "e",
+        generation: "g",
+        rtpParameters: { encodings: [{ ssrc: 111 }] },
+        arrivedAt: 1_000,
+      },
+    ],
+    layers: new Map([
+      [
+        "PRIVATE-consumer",
+        {
+          consumerId: "PRIVATE-consumer",
+          spatialLayer: 0,
+          temporalLayer: 2,
+          at: 1_400,
+        },
+      ],
+    ]),
+    outgoingSources: new Map(),
+    mediaElements: new Set(),
+    heldTracks: [],
+    voiceRoster: [],
+    sockets: [],
+    captures: [],
+    renderedVideos: new WeakMap(),
+  };
+  const context = createContext({
+    window: { __e2e: state },
+    document: { querySelectorAll: () => [] },
+  });
+  const snapshot = await runInContext(`(${sample.toString()})()`, context);
+  assert.deepEqual(
+    Array.from(snapshot.peers[0].inbound, (row) => row.source),
+    ["probator", "s", null],
+  );
+  const flow = await runInContext(
+    `(${samplePublicationFlow.toString()})({kind:"s"})`,
+    context,
+  );
+  assert.equal(flow.consumers[0].arrivedAt, 1_000);
+  assert.deepEqual(JSON.parse(JSON.stringify(flow.consumers[0].layers)), {
+    spatial: 0,
+    temporal: 2,
+    at: 1_400,
+  });
+  assert.ok(!JSON.stringify([snapshot, flow]).includes("PRIVATE"));
 });
