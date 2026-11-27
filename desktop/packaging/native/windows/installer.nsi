@@ -279,6 +279,23 @@ Function .onInstSuccess
   ${EndIf}
 FunctionEnd
 
+; Deletes a shortcut that another program may hold open for a moment. A
+; program that reads a link (as the desktop shell can after it changes) opens
+; it without delete sharing, and a Delete in that moment fails quietly and
+; leaves the link behind (GEL-374). Tries again for up to 5 s.
+!macro DELETE_LINK lnk
+  StrCpy $0 0
+  ${Do}
+    Delete "${lnk}"
+    ${IfNot} ${FileExists} "${lnk}"
+    ${OrIf} $0 >= 20
+      ${ExitDo}
+    ${EndIf}
+    IntOp $0 $0 + 1
+    Sleep 250
+  ${Loop}
+!macroend
+
 Function un.onInit
   SetRegView 64
   StrCpy $PassiveMode 0
@@ -298,8 +315,8 @@ Section "Uninstall"
   Delete "$INSTDIR\uninstall.exe"
   ; Only when empty: the folder may have been chosen with /D.
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\${PRODUCTNAME}.lnk"
-  Delete "$DESKTOP\${PRODUCTNAME}.lnk"
+  !insertmacro DELETE_LINK "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+  !insertmacro DELETE_LINK "$DESKTOP\${PRODUCTNAME}.lnk"
   DeleteRegKey HKCU "${UNINSTKEY}"
   ; Written by the app at every start; gone with the app, as Tauri's hook did.
   DeleteRegKey HKCU "${AUMIDKEY}"
