@@ -25,7 +25,7 @@ import { discardAttempt, type SendAttempt } from "../messages/pending.ts";
 import { isPendingId } from "../messages/queries.ts";
 import { validateContent } from "../messages/rules.ts";
 import type { Gif, Message, Reply } from "../messages/types.ts";
-import { asGif, asReactionList, asReply } from "../messages/types.ts";
+import { asGif, asReply } from "../messages/types.ts";
 import { asSystem, systemText } from "../messages/system.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
 import { GifMessageButton } from "./GifPicker.tsx";
@@ -290,7 +290,7 @@ function MessageRowContent({
       showEdit ||
       showDelete ||
       Boolean(message.content));
-  const myReactions = asReactionList(message.reactions)
+  const myReactions = message.reactions
     .filter((entry) => entry.user_ids.includes(reaction.userId))
     .map((entry) => entry.emoji);
 

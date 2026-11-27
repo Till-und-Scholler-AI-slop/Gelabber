@@ -37,7 +37,6 @@ import {
   applyMessageChanges,
   combineMessageChange,
   encodeCursor,
-  newerMessage,
   olderCursor,
   refreshReplies,
   stampOlder,
@@ -818,32 +817,25 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
       const versionMatches =
         rowVersion(client, ctx.userId, ctx.generation, channelId, ctx.id) ===
         ctx.version;
-      // Legacy replies cannot order themselves against a newer mutation/event.
-      if (message.revision === undefined && !versionMatches) return;
       const current = client
         .getQueryData<Cache>(
           messageKeys.channel(ctx.userId, ctx.generation, channelId),
         )
         ?.pages.flatMap((page) => page.messages)
         .find((row) => row.id === ctx.id);
-      if (message.revision === undefined && !current) return;
       const ownsOptimistic =
         versionMatches &&
         current !== undefined &&
         current.content === ctx.optimistic?.content &&
         current.edited_at === ctx.optimistic.edited_at;
-      // REST may replace the optimistic row with either an older or newer
-      // snapshot. Compare canonical values, never the local optimistic clock.
-      const canonical =
-        message.revision === undefined && current && !ownsOptimistic
-          ? newerMessage(current, message)
-          : message;
+      // The answer carries its revision (the server always sends one), which
+      // orders it against a newer edit or event that arrived meanwhile.
       const change = recordChange(
         client,
         ctx.userId,
         ctx.generation,
         channelId,
-        { id: message.id, message: canonical, created: false },
+        { id: message.id, message, created: false },
       );
       patchPages(client, ctx.userId, ctx.generation, channelId, (pages) =>
         ownsOptimistic

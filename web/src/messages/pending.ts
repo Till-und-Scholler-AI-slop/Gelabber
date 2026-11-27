@@ -6,7 +6,7 @@ import { create } from "zustand";
 import type { ScopeStamp } from "../auth/scope.ts";
 import type { GifPick } from "../gifs/api.ts";
 
-import { asAttachmentList, type Message, type Reply } from "./types.ts";
+import type { Message, Reply } from "./types.ts";
 
 /** Stable empty list so a Zustand selector does not return a new `[]` every
  *  time a channel has no in-flight send (that looped MessagePane on mount). */
@@ -33,7 +33,7 @@ export type SendAttempt = {
 export const noneAttempts: SendAttempt[] = [];
 
 function revoke(message: Message): void {
-  for (const attachment of asAttachmentList(message.attachments)) {
+  for (const attachment of message.attachments) {
     if (attachment.preview_url?.startsWith("blob:"))
       URL.revokeObjectURL(attachment.preview_url);
   }
@@ -83,12 +83,10 @@ export const usePendingMessages = create<PendingState>((set) => ({
           return [
             {
               ...message,
-              attachments: asAttachmentList(message.attachments).map(
-                (attachment, index) => ({
-                  ...attachment,
-                  preview_url: row.attachments[index]?.preview_url,
-                }),
-              ),
+              attachments: message.attachments.map((attachment, index) => ({
+                ...attachment,
+                preview_url: row.attachments[index]?.preview_url,
+              })),
             },
           ];
         }),

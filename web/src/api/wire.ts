@@ -64,7 +64,10 @@ export const isMessage: Check<Message> = (value): value is Message =>
   listOf(value.reactions, isReaction) &&
   texts(value.mentions) &&
   flag(value.mention_everyone) &&
-  absentOr(value.revision, count) &&
+  // Every message the server sends carries its revision, which orders it
+  // against edits and events; only an unsent message lacks one, and that is
+  // built here, never checked.
+  count(value.revision) &&
   absentOr(value.created_order, count);
 
 export const isServer: Check<Server> = (value): value is Server =>
