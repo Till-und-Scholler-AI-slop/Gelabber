@@ -140,7 +140,7 @@ export function useNotificationActions(target: NotificationTarget) {
           : {}),
       }),
     /** The server's voice push (#616); level and mute stay as they are. */
-    voice: own.voice === true,
+    voice: own.voice,
     setVoice: (voice: boolean) =>
       change(target.scope, target.id, {
         level: own.level,

@@ -24,6 +24,7 @@ const server = (id: string, extra: Partial<Server> = {}): Server => ({
   role: "member",
   permissions: [],
   member_permissions: [],
+  blocked: false,
   ...extra,
 });
 
