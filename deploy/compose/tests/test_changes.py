@@ -153,22 +153,33 @@ class Outputs(unittest.TestCase):
         self.assertEqual(len(json.loads(out['images'])), 3)
 
 
-def copied(dockerfile, context):
-    """What a Dockerfile's COPY and ADD lines take from the build context, as
-    repository paths; a folder ends in '/'."""
-    text = re.sub(r'\\\n', ' ', (ROOT / dockerfile).read_text())
+def copied(dockerfile, context, text=None):
+    """What a Dockerfile's COPY and ADD lines and RUN bind mounts take from
+    the build context, as repository paths; a folder ends in '/'."""
+    text = re.sub(r'\\\n', ' ', text if text is not None else (ROOT / dockerfile).read_text())
     found = set()
+
+    def add(source):
+        path = (ROOT / context / source).resolve().relative_to(ROOT).as_posix()
+        found.add(path + '/' if (ROOT / path).is_dir() else path)
+
     for line in text.splitlines():
         words = line.split()
-        if not words or words[0].upper() not in ('COPY', 'ADD'):
+        if not words:
+            continue
+        if words[0].upper() == 'RUN':
+            for mount in re.findall(r'--mount=(\S+)', line):
+                options = dict(option.partition('=')[::2] for option in mount.split(','))
+                if options.get('type') == 'bind' and 'from' not in options:
+                    add(options.get('source', '.'))
+            continue
+        if words[0].upper() not in ('COPY', 'ADD'):
             continue
         args = words[1:]
         if any(arg.startswith('--from=') for arg in args):
             continue
-        sources = [arg for arg in args if not arg.startswith('--')][:-1]
-        for source in sources:
-            path = (ROOT / context / source).resolve().relative_to(ROOT).as_posix()
-            found.add(path + '/' if (ROOT / path).is_dir() else path)
+        for source in [arg for arg in args if not arg.startswith('--')][:-1]:
+            add(source)
     return found
 
 
@@ -204,6 +215,11 @@ class Images(unittest.TestCase):
                 self.assertEqual(set(image['inputs']),
                                  outermost(sources | {image['file'], ignore, changes.CI}
                                            | checks.get(image['name'], set())))
+
+    def test_a_bind_mount_is_an_input(self):
+        found = copied('backend/api/Dockerfile', '.', 'RUN --mount=type=bind,source=backend/build,target=/b \\\n'
+                       '    --mount=type=cache,target=/c --mount=type=bind,from=x,source=/y,target=/z true\n')
+        self.assertEqual(found, {'backend/build/'})
 
     def test_an_api_change_builds_only_the_api_image(self):
         self.assertEqual(changes.images(['backend/api/src/main.rs']), {'api'})
