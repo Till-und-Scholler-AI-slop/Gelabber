@@ -10,8 +10,9 @@
 // through) whose API runs with the parity environment only: a GIF key,
 // mail, TURN or other operators change gifs, mail, ticket and session.
 //
-// Recording writes fixtures/*.json and fixtures/recorded.json, with the
-// recorder's tree and each file's hash: models.rs fails on a fixture that
+// Recording writes fixtures/*.json, with ids and times as stable
+// placeholders, and fixtures/recorded.json, with the recorder's tree, the
+// API's build (GELABBER_API_BUILD, when given) and each file's hash: models.rs fails on a fixture that
 // differs from its hash, a guard against stray edits, not a lock. --check
 // records into a scratch folder and compares keys and value types, not
 // values: it fails when the API no longer sends a key or type a fixture
@@ -185,7 +186,7 @@ async function record(out) {
   const home = seeded.servers.home;
 
   // Account and settings, as the app reads them at start.
-  keep("me", await lena.call("GET", "/me"));
+  const me = keep("me", await lena.call("GET", "/me"));
   keep(
     "user_profile",
     await lena.call("GET", `/users/${seeded.users.jonas.id}`),
@@ -402,12 +403,16 @@ async function record(out) {
       (f) => f.op === "e" && f.t === "d" && !f.c,
       { seen: true },
     );
-    await lena.call("PUT", "/me/locale", { locale: "en" });
+    const other = me.locale === "en" ? "de" : "en";
+    await lena.call("PUT", "/me/locale", { locale: other });
     await socket.until("locale", (f) => f.op === "lc", { seen: true });
-    await lena.call("PUT", "/me/locale", { locale: "de" });
     await socket.close();
     keep("frames", socket.kept);
   } finally {
+    // The live tests run on this stack next: Lena as she was.
+    await lena
+      .call("PUT", "/me/locale", { locale: me.locale })
+      .catch((error) => console.error(String(error)));
     await lena
       .call("DELETE", `/servers/${scratch}`)
       .catch((error) => console.error(String(error)));
@@ -423,13 +428,22 @@ async function record(out) {
 
 /**
  * Keys and value types, not values: what the client's models depend on.
- * Every path with the type found there (`.messages[].author.name string`);
- * the elements of an array count together, whatever their number.
+ * Every path with the type found there (`.messages[].author.name string`).
+ * The elements of an array count together, whatever their number, except
+ * gateway frames: their paths go by `op` and `t` (`[e:d].c string`), so one
+ * kind of frame losing a key another kind keeps still shows. Other mixed
+ * lists (messages with and without a reply) are pooled.
  */
 function shape(value, path = "", out = new Set()) {
   if (Array.isArray(value)) {
     out.add(`${path} array`);
-    for (const element of value) shape(element, `${path}[]`, out);
+    for (const element of value) {
+      const kind =
+        element && typeof element.op === "string"
+          ? `${element.op}${typeof element.t === "string" ? `:${element.t}` : ""}`
+          : "";
+      shape(element, `${path}[${kind}]`, out);
+    }
   } else if (value && typeof value === "object") {
     out.add(`${path} object`);
     for (const [key, child] of Object.entries(value))
@@ -438,6 +452,62 @@ function shape(value, path = "", out = new Set()) {
     out.add(`${path} ${value === null ? "null" : typeof value}`);
   }
   return out;
+}
+
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+const TIME =
+  /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
+
+/**
+ * Ids and times as stable placeholders, so a recording again changes only
+ * what changed: every id by its first appearance (files by name), every
+ * time by its rank, so their order stays as recorded. Ids inside strings
+ * (links) change with them.
+ */
+async function normalize(dir) {
+  const names = (await readdir(dir)).filter((f) => f.endsWith(".json")).sort();
+  const texts = Object.fromEntries(
+    await Promise.all(
+      names.map(async (n) => [n, await readFile(join(dir, n), "utf8")]),
+    ),
+  );
+  const ids = new Map();
+  const times = new Set();
+  for (const name of names) {
+    for (const [id] of texts[name].matchAll(UUID))
+      if (!ids.has(id))
+        ids.set(
+          id,
+          `00000000-0000-4000-8000-${String(ids.size + 1).padStart(12, "0")}`,
+        );
+    for (const [time] of texts[name].matchAll(TIME)) times.add(time);
+  }
+  // Same instant, other spelling: by the digits after the second, then text.
+  const instant = (t) => [
+    Date.parse(t),
+    (t.match(/\.(\d+)/)?.[1] ?? "").padEnd(9, "0"),
+  ];
+  const ranked = [...times].sort((a, b) => {
+    const [x, y] = [instant(a), instant(b)];
+    return x[0] - y[0] || x[1].localeCompare(y[1]) || a.localeCompare(b);
+  });
+  const base = Date.parse("2030-01-01T00:00:00Z");
+  const at = new Map();
+  let rank = -1;
+  let last;
+  for (const time of ranked) {
+    const key = instant(time).join(".");
+    if (key !== last) rank += 1;
+    last = key;
+    at.set(time, new Date(base + rank * 1000).toISOString());
+  }
+  for (const name of names)
+    await writeFile(
+      join(dir, name),
+      texts[name]
+        .replace(UUID, (id) => ids.get(id))
+        .replace(TIME, (t) => at.get(t)),
+    );
 }
 
 /** FNV-1a, 64 bits, as hex: models.rs computes the same without a crate. */
@@ -502,6 +572,7 @@ if (check) {
   const fresh = await mkdtemp(join(tmpdir(), "gelabber-fixtures-"));
   try {
     await record(fresh);
+    await normalize(fresh);
     for (const file of (await readdir(committed)).filter((f) =>
       f.endsWith(".json"),
     ))
@@ -516,8 +587,13 @@ if (check) {
     .filter((f) => f.endsWith(".json"))
     .sort())
     files[file] = fnv1a(await readFile(join(committed, file)));
-  // The tree of this script; the API's build is whatever served BASE.
-  const manifest = { recorder_tree: describe, files };
+  // The tree of this script, and the API's build when the one recording
+  // says it (GELABBER_API_BUILD): the recorder cannot ask the API.
+  const manifest = {
+    recorder_tree: describe,
+    api_build: process.env.GELABBER_API_BUILD || "not given",
+    files,
+  };
   await writeFile(
     join(committed, "recorded.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
