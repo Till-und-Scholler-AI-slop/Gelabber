@@ -3,7 +3,8 @@
 The real script runs with fake sudo, timeout and apt-get on PATH and a
 temporary /etc/apt (APT_INSTALL_ETC). The fake apt-get reads the sources apt
 would read, honouring Dir::Etc::SourceList and Dir::Etc::SourceParts, and
-fails an update when one of them is in BROKEN, as apt does.
+fails an update when one of them is in BROKEN, as apt does. Like apt, it
+finds no package when it reads no Ubuntu source (the mirror list).
 """
 import os
 from pathlib import Path
@@ -53,7 +54,8 @@ if rest[0] == 'update':
         print(f'E: Failed to fetch {u}InRelease  403  Forbidden')
     sys.exit(100 if failed else 0)
 if rest[0] == 'install':
-    unknown = [p for p in rest[1:] if not p.startswith('-') and p in missing]
+    ubuntu = first_mirror(etc / 'apt-mirrors.txt') in uris()
+    unknown = [p for p in rest[1:] if not p.startswith('-') and (p in missing or not ubuntu)]
     for p in unknown:
         print(f'E: Unable to locate package {p}')
     if unknown:
@@ -84,11 +86,13 @@ class AptInstall(unittest.TestCase):
         mirrors = etc / 'apt-mirrors.txt'
         mirrors.write_text(f'{AZURE}\tpriority:1\n{ARCHIVE}\tpriority:2\n')
         ubuntu = f'mirror+file:{mirrors}'
-        # The runner images' layouts: deb822 on 24.04 and 26.04, classic on 22.04.
-        if layout == 'deb822':
+        # The runner images' layouts: deb822 on 24.04 and 26.04, classic on 22.04;
+        # 'elsewhere' keeps Ubuntu's entries in a file the script does not know.
+        deb822 = f'Types: deb\nURIs: {ubuntu}\nSuites: noble noble-updates\nComponents: main\n'
+        if layout in ('deb822', 'elsewhere'):
             (etc / 'sources.list').write_text('# Ubuntu sources have moved to ubuntu.sources\n')
-            (etc / 'sources.list.d/ubuntu.sources').write_text(
-                f'Types: deb\nURIs: {ubuntu}\nSuites: noble noble-updates\nComponents: main\n')
+            name = 'ubuntu.sources' if layout == 'deb822' else 'cloud-archive.sources'
+            (etc / 'sources.list.d' / name).write_text(deb822)
         else:
             (etc / 'sources.list').write_text(f'deb {ubuntu} jammy main\n')
         (etc / 'sources.list.d/microsoft-prod.list').write_text(f'deb [arch=amd64] {MICROSOFT} noble main\n')
@@ -113,6 +117,12 @@ class AptInstall(unittest.TestCase):
                 self.assertIn('install -y --no-install-recommends --no-download nsis', calls)
                 self.assertNotIn('switching', result.stdout)
                 self.assertEqual(first, AZURE)
+
+    def test_without_a_known_ubuntu_source_every_source_is_used(self):
+        result, calls, _ = self.run_script('nsis', layout='elsewhere')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('::warning::apt-install: no Ubuntu sources', result.stdout)
+        self.assertIn('install -y --no-install-recommends --no-download nsis', calls)
 
     def test_a_failing_first_mirror_leads_to_the_next(self):
         result, calls, first = self.run_script('nsis', broken=[AZURE, MICROSOFT])
