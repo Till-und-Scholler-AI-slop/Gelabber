@@ -2,11 +2,14 @@
 the web image's start script reads and mounts the operator's texts, those
 texts stay out of commits, and both Caddyfiles hand the pages' paths to web."""
 import fnmatch
+import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import unittest
+
+import yaml
 
 from compose_config import config
 from test_homelab_caddy import _adapt, _find_caddy
@@ -79,7 +82,12 @@ class Compose(unittest.TestCase):
                 self.assertEqual(given['services']['web']['environment'].get(key), f'set-{key}')
 
     def test_web_learns_only_whether_mail_and_operators_are_on(self):
-        secret = {'SMTP_HOST': 'smtp.example.test', 'API_OPERATOR_EMAILS': 'op@example.test'}
+        # Every mail and operator setting the API reads, filled in: none of
+        # their values may reach web.
+        api = json.dumps(yaml.safe_load((ROOT / 'compose.yaml').read_text())['services']['api']['environment'])
+        secret = {key: f'{key.lower()}.example.test' for key in set(re.findall(r'\$\{(\w+)', api))
+                  if key.startswith('SMTP_') or key == 'API_OPERATOR_EMAILS'}
+        self.assertLessEqual({'SMTP_HOST', 'SMTP_PASSWORD', 'API_OPERATOR_EMAILS'}, set(secret))
         unset, given = web()['environment'], config(secret)['services']['web']['environment']
         for key in DERIVED:
             with self.subTest(key=key):

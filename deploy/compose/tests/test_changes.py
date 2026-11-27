@@ -290,7 +290,8 @@ class Workflow(unittest.TestCase):
     def test_a_push_runs_the_areas_since_its_starting_point(self):
         # GEL-360: a merge into a version branch no longer runs every area;
         # GEL-363: it starts at the last commit whose push run passed.
-        self.assertTrue(areas_step()['env']['BEFORE'].startswith('${{ steps.reuse.outputs.since ||'))
+        self.assertEqual(areas_step()['env']['BEFORE'], '${{ steps.reuse.outputs.since || github.event.before '
+                                                        '|| github.event.merge_group.base_sha }}')
         before = 'a' * 40
         ran, commands = run_areas({'EVENT': 'push', 'BEFORE': before}, ['backend/api/src/main.rs'])
         self.assertEqual(ran, {'backend', 'deploy'})

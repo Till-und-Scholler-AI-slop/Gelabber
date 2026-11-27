@@ -40,6 +40,11 @@ class NativeBootstrap(unittest.TestCase):
             self.assertEqual(len(python), 1, "one Python, not a mix of point releases")
             selected[architecture] = {name.replace(triplet, "TRIPLET"): version for name, version in packages.items()}
         self.assertEqual(selected["x86_64"], selected["aarch64"])
+        # What the mediasoup worker's build needs, whatever the versions.
+        self.assertEqual(set(selected["x86_64"]), {
+            "build-essential", "gcc", "g++", "gcc-14", "g++-14", "gcc-14-TRIPLET", "g++-14-TRIPLET",
+            "python3", "python3-minimal", "python3-venv", "libpython3-stdlib", "python3.13",
+            "python3.13-minimal", "python3.13-venv", "libpython3.13-minimal", "libpython3.13-stdlib"})
         with self.assertRaisesRegex(ValueError, "unsupported"):
             build.debian_packages("armv7l")
 

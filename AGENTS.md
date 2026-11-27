@@ -114,6 +114,10 @@ Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
   `backend/api/.env.example`); storage and avatar tests fail without the MinIO
   ones. The database role needs `CREATEDB` for `sqlx::test`.
 
+Deployment tests: `python3 -m unittest discover -s deploy/compose/tests` (and
+`-s deploy/tools/tests`); they need PyYAML, which the CI runner's system
+Python has.
+
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
 `npm test`, `npm run test:checks`, `npm run build`.
 
