@@ -8,9 +8,7 @@ import { api, until, safeTarget } from "./harness.mjs";
 import { settle } from "./expected-failures.mjs";
 
 // Known failures, each under the issue that ends it (expected-failures.mjs).
-const EXPECTED_FAILURES = {
-  "returning to the chat keeps the reader's place": "GEL-416",
-};
+const EXPECTED_FAILURES = {};
 const base = safeTarget(
   process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1:5174",
 );
@@ -23,7 +21,29 @@ const suffix = randomBytes(6).toString("hex");
 const password = randomBytes(20).toString("base64url");
 const checks = [];
 const failures = [];
-let server, owner, memberDebug, returnedScroll;
+let server, owner, memberDebug;
+/** The top row of the chat's list and its offset, once it holds still. */
+const place = (page) =>
+  page.locator('[role="log"]').evaluate(async (el) => {
+    let still = 0;
+    let last = el.scrollTop;
+    while (still < 5) {
+      await new Promise(requestAnimationFrame);
+      still = el.scrollTop === last ? still + 1 : 0;
+      last = el.scrollTop;
+    }
+    const box = el.getBoundingClientRect();
+    const top = [...el.querySelectorAll("[data-index]")]
+      .map((row) => ({ row, rect: row.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.bottom > box.top + 1)
+      .sort((a, b) => a.rect.top - b.rect.top)[0];
+    return top
+      ? {
+          first: top.row.querySelector(".lr-message-text")?.textContent ?? "",
+          offset: Math.round(top.rect.top - box.top),
+        }
+      : null;
+  });
 const check = async (name, run) => {
   try {
     await run();
@@ -226,10 +246,10 @@ try {
     "canonical-end-before-native-up",
   );
   await new Promise((r) => setTimeout(r, 500));
-  // How far a wheel scrolls differs between machines (25 px here, 85 to 105
-  // on a CI runner, whatever the delta). The upward wheel is the reader's
-  // intent: it lets the list go from its end, and only the reader takes it
-  // back there. The page then sets the place, just off the end.
+  // The reader leaves the end: the list reads any scroll up as that intent
+  // (scrollEndIntent), and a scroll down that ends near the end as the
+  // reader coming back. A wheel moves 25 px here and 85 to 105 px on a CI
+  // runner, too far for this place, so the list is scrolled up directly.
   const restingGap = () =>
     log.evaluate(async (el) => {
       let still = 0;
@@ -241,8 +261,6 @@ try {
       }
       return el.scrollHeight - el.scrollTop - el.clientHeight;
     });
-  await member.page.mouse.wheel(0, -25);
-  await until(restingGap, (gap) => gap > 16, "history-wheel-up");
   await log.evaluate((el) => {
     el.scrollTop = el.scrollHeight - el.clientHeight - 40;
   });
@@ -261,7 +279,6 @@ try {
     historyGap > 16 && historyGap < 64,
     `fixture must be reading near-end history before search, gap=${historyGap}`,
   );
-  const beforeScroll = await log.evaluate((el) => el.scrollTop);
   const beforeUnread = (await channelState(member, channel)).unread_count;
   const search = async (value) => {
     // Typing filters in place (#377); there is no submit button.
@@ -417,7 +434,6 @@ try {
       await member.page
         .getByText("context-draft.txt", { exact: true })
         .waitFor();
-      returnedScroll = await log.evaluate((el) => el.scrollTop);
       await new Promise((r) => setTimeout(r, 900));
       assert.equal(
         (await channelState(member, channel)).unread_count,
@@ -425,11 +441,40 @@ try {
       );
     },
   );
+  // A reader in the history opens a search result's context and comes back:
+  // the chat shows the same rows, the top one at the same height. At one
+  // window size: a change of size moves the rows by design.
   await check("returning to the chat keeps the reader's place", async () => {
-    assert.ok(returnedScroll !== undefined, "the chat was not reached again");
+    const marker = `${needle} place`;
+    await send(owner, channel, marker);
+    await member.page.getByText(marker, { exact: true }).waitFor();
+    // Up from the end, as a reader leaves it (scrollEndIntent).
+    await log.evaluate((el) => {
+      el.scrollTop = el.scrollHeight - el.clientHeight - 200;
+    });
+    const before = await place(member.page);
+    await search(marker);
+    await member.page
+      .getByRole("button", {
+        name: `Zur Nachricht von Chat owner: ${marker}`,
+        exact: true,
+      })
+      .click();
+    await contextRegion().locator("[data-message-id]").first().waitFor();
+    await contextRegion()
+      .getByRole("button", { name: "Zurück zu den Treffern" })
+      .click();
+    await member.page
+      .getByRole("button", { name: "Zurück zum Chat", exact: true })
+      .click();
+    await log.waitFor();
+    const after = await place(member.page);
     assert.ok(
-      Math.abs(returnedScroll - beforeScroll) < 100,
-      `history scroll was changed ${beforeScroll}->${returnedScroll}`,
+      before &&
+        after &&
+        after.first === before.first &&
+        Math.abs(after.offset - before.offset) <= 2,
+      `the top row was ${before?.first} at ${before?.offset} px, is ${after?.first} at ${after?.offset} px`,
     );
   });
   const cancelTarget = await send(
