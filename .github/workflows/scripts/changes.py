@@ -17,7 +17,9 @@ AREAS = {
                 'web/src/interface/preferences.ts', 'web/src/voice/userVolume.ts',
                 'web/src/messages/drafts.ts',
                 # theme.rs checks its tokens against the web's (#561).
-                'web/src/theme/tokens.fixture.json'),
+                'web/src/theme/tokens.fixture.json',
+                # The packaging tests skip or fail through it (GEL-375).
+                'deploy/compose/tests/prerequisites.py'),
     # The deployment tests also read the backend's build, both versions and
     # the workflows. They test the Claude Code hooks too, so .claude/ is here.
     'deploy': ('deploy/', 'backend/', 'desktop/Cargo.toml', 'rust-toolchain.toml', '.dockerignore',

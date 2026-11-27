@@ -81,7 +81,7 @@ fn signed_in(base: &str, email: &str, password: &str, server: Uuid) -> Client {
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER) and call.mjs"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER) and call.mjs; GEL-376 decides where it runs"]
 fn lena_joins_sofa_with_jonas_and_mira() {
     let base =
         std::env::var("GELABBER_TEST_SERVER").expect("GELABBER_TEST_SERVER, the seeded stack");

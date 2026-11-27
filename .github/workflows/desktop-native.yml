@@ -1040,7 +1040,7 @@ jobs:
       # The Linux job's call through an in-process mediasoup worker. H264 only
       # where Media Foundation has codecs, so no GELABBER_EXPECT_H264.
       # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
-      # picker; the test skips where Windows cannot capture. A release build
+      # picker; where Windows cannot capture, the test fails in CI. A release build
       # makes the call alone, without the tests that measure frame rates.
       - name: Loopback call against mediasoup 0.33
         id: tests

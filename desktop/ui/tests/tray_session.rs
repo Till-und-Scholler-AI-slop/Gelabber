@@ -56,6 +56,11 @@ fn private_bus() -> Option<(Daemon, String)> {
     BufReader::new(output)
         .read_line(&mut address)
         .expect("the bus address");
+    assert!(
+        !address.trim().is_empty(),
+        "dbus-daemon printed no address (it exited, or rejected {})",
+        config.display()
+    );
     let _ = std::fs::remove_file(config);
     Some((daemon, address.trim().to_owned()))
 }

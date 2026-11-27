@@ -103,7 +103,7 @@ class PublicPages(unittest.TestCase):
             with self.subTest(example=example):
                 self.assertEqual(sorted(SETTINGS - keys), [])
 
-    @unittest.skipUnless(shutil.which('git') and (REPO / '.git').exists(), 'no git checkout')
+    @__import__('prerequisites').requires(shutil.which('git') and (REPO / '.git').exists(), 'a git checkout')
     def test_operator_texts_stay_out_of_commits(self):
         def ignored(path):
             return subprocess.run(['git', '-C', str(REPO), 'check-ignore', '-q', '--no-index',
