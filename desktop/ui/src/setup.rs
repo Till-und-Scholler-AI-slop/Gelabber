@@ -707,7 +707,7 @@ mod tests {
         Failure, Launcher, check_gelabber, classify, host_of, redirect_allowed, request_failure,
         server_origin,
     };
-    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
+    use crate::app::testkit::{FakeApi, Reply, click_role, launcher, wait_for, wait_for_label};
     use crate::platform::paths::testing::TempConfig;
     use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT, Queryable};
@@ -724,9 +724,7 @@ mod tests {
         let api = FakeApi::start(true, |_, _, _| None);
         let mut harness = launcher(&api, "/");
         crate::app::testkit::open_account(&mut harness, "Lena");
-        harness
-            .get_by_role_and_label(Role::MenuItem, "Server wechseln …")
-            .click();
+        click_role(&mut harness, Role::MenuItem, "Server wechseln …");
         wait_for(&mut harness, "the setup", |h| h.state().in_setup());
         let back = format!("Zurück zu {}", host(&api));
         wait_for_label(&mut harness, &back);
@@ -734,7 +732,7 @@ mod tests {
         assert_eq!(field.value().as_deref(), Some(api.origin.as_str()));
         // Back: checked, then the app on the same server again.
         let asked = api.seen.lock().len();
-        harness.get_by_role_and_label(Role::Button, &back).click();
+        click_role(&mut harness, Role::Button, &back);
         wait_for(&mut harness, "the app", |h| !h.state().in_setup());
         wait_for_label(&mut harness, "Einstellungen");
         assert!(

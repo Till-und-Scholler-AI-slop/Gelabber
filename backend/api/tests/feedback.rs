@@ -668,11 +668,18 @@ async fn reading_clears_unread(pool: PgPool) {
     let res = ada.send(Method::GET, "/api/feedback/status", None).await;
     assert_eq!(res.body, json!({ "enabled": true, "unread": 1 }));
 
+    let shown = ada.send(Method::GET, "/api/feedback", None).await.body;
+    let newest = shown["entries"][0]["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    let through = json!({ "through": newest["id"] });
     let path = format!("/api/feedback/{id}/read");
-    let res = tom.send(Method::POST, &path, None).await;
+    let res = tom.send(Method::POST, &path, Some(through.clone())).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
-    let res = ada.send(Method::POST, &path, None).await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let res = ada.send(Method::POST, &path, Some(through.clone())).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     let res = ada.send(Method::GET, "/api/feedback/status", None).await;
     assert_eq!(res.body["unread"], 0);
     let res = ada.send(Method::GET, "/api/feedback", None).await;
@@ -689,7 +696,7 @@ async fn reading_clears_unread(pool: PgPool) {
         .send(
             Method::POST,
             &format!("/api/feedback/{}/read", Uuid::new_v4()),
-            None,
+            Some(through),
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -907,6 +914,12 @@ async fn a_read_keeps_replies_the_list_never_held(pool: PgPool) {
     operator_reply(&mut lena, &id, "Zwei").await;
 
     let path = format!("/api/feedback/{id}/read");
+    // What was seen is named: without it nothing is read.
+    for body in [None, Some(json!({}))] {
+        let res = ada.send(Method::POST, &path, body).await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+        assert_eq!(res.body["fields"], json!({ "through": "required" }));
+    }
     let res = ada
         .send(Method::POST, &path, Some(json!({ "through": "x" })))
         .await;
