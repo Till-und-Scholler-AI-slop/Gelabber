@@ -18,7 +18,7 @@
 // the newest message and its actions uncovered (#354).
 // Run in web/: node scripts/smoke-chat-scroll.mjs
 // GELABBER_CHAT_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
-/* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout */
+/* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout, localStorage */
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
@@ -136,7 +136,12 @@ function answer(path, method, unread) {
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
   if (path === "/api/messages/unread") return unread ? [unread] : [];
-  if (path === "/api/dms" || path === "/api/notification-settings") return [];
+  if (
+    path === "/api/dms" ||
+    path === "/api/notification-settings" ||
+    path === "/api/users/me/blocks"
+  )
+    return [];
   if (path === "/api/me/themes")
     return { version: 1, revision: 1, active: "dark", customThemes: [] };
   if (path.endsWith("/read") || method !== "GET")
@@ -226,6 +231,12 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
   let releaseOlder;
   /** Read positions the app wrote. */
   const marks = [];
+  /** Waiters for a read position that names a message id. */
+  const markWaiters = [];
+  const markedRead = (id) =>
+    marks.some((body) => body?.includes(id))
+      ? Promise.resolve()
+      : new Promise((resolve) => markWaiters.push({ id, resolve }));
   const asked = new Promise((resolve) => {
     olderAsked = resolve;
   });
@@ -249,8 +260,12 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
         body: JSON.stringify({ messages: older, has_more: false }),
       });
     }
-    if (url.pathname.endsWith("/read") && request.method() === "PUT")
-      marks.push(request.postData());
+    if (url.pathname.endsWith("/read") && request.method() === "PUT") {
+      const body = request.postData();
+      marks.push(body);
+      for (const waiter of markWaiters)
+        if (body?.includes(waiter.id)) waiter.resolve();
+    }
     // A picture that loads, or the app shows its error card instead (#348).
     if (url.pathname.startsWith("/api/attachments/"))
       return route.fulfill(
@@ -279,7 +294,7 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
   const channelSubscribed = new Promise((resolve) => {
     subscribed = resolve;
   });
-  await context.routeWebSocket("**/ws", (socket) => {
+  await context.routeWebSocket(/\/ws(\?|$)/, (socket) => {
     gateway = socket;
     socket.onMessage((raw) => {
       const frame = JSON.parse(raw);
@@ -303,6 +318,9 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
       }),
     );
   await context.addInitScript(() => {
+    // This browser was already told about the desktop app; its one-time
+    // toast would sit where the toast case puts its own.
+    localStorage.setItem("gelabber.desktopApp.offered", "1");
     window.smokeErrors = [];
     window.addEventListener("error", (event) =>
       window.smokeErrors.push(event.message),
@@ -321,7 +339,7 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
     problems.push(...(await page.evaluate(() => window.smokeErrors)));
     await context.close();
   };
-  return { page, asked, releaseOlder, send, close, marks };
+  return { page, asked, releaseOlder, send, close, marks, markedRead };
 }
 
 /** An edit of message `n`: the same text (same length) or `content`. */
@@ -502,7 +520,12 @@ try {
       await page.mouse.wheel(0, 600);
       await new Promise((resolve) => setTimeout(resolve, 60));
     }
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    // The app sends the read position from a timer; wait for that request
+    // (the deadline only bounds a failure).
+    await Promise.race([
+      opened.markedRead(all[99].id),
+      new Promise((resolve) => setTimeout(resolve, 10_000)),
+    ]);
     assert.ok(
       marks.some((body) => body?.includes(all[99].id)),
       `${label}: reading to the end marked nothing read (${marks.join(", ")})`,
@@ -829,8 +852,18 @@ try {
     await page.getByRole("menuitem", { name: "Text kopieren" }).click();
     const toast = page.locator(".ui-toast");
     await toast.waitFor();
-    // The toast's rise and the room it takes.
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    // The toast's rise, then the room it takes once measured (Toasts.tsx).
+    await toast.evaluate((card) =>
+      Promise.all(card.getAnimations().map((animation) => animation.finished)),
+    );
+    await page.waitForFunction(
+      () =>
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue(
+            "--lr-toast-space",
+          ),
+        ) > 0,
+    );
     await newest.hover();
     await frames(page, 4);
     const placed = await page.evaluate(() => {
@@ -862,7 +895,19 @@ try {
     );
     await toast.getByRole("button", { name: "Schließen" }).click();
     await toast.waitFor({ state: "detached" });
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    // The room goes back once the toast is gone; the deadline only bounds a
+    // failure, which the assertion below then describes.
+    await page
+      .waitForFunction(
+        () =>
+          getComputedStyle(document.documentElement)
+            .getPropertyValue("--lr-toast-space")
+            .trim() === "0px",
+        null,
+        { timeout: 5_000 },
+      )
+      .catch(() => {});
+    await frames(page, 2);
     const after = await page.evaluate(() => {
       const log = document.querySelector('[role="log"]');
       return {

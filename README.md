@@ -95,7 +95,11 @@ metrics, upgrades and rollbacks) read the
 | Arch Linux | `curl -fsSL https://till-und-scholler-ai-slop.github.io/Gelabber/install.sh \| sudo sh` adds the signed pacman repository and installs `gelabber-desktop`. Details and the key fingerprint: [desktop/packaging/arch/README.md](desktop/packaging/arch/README.md). |
 | Other Linux | `gelabber-native-linux-x64.tar.gz` from the latest release. |
 
-On its first start the app asks for your server's address. Phones use the
+On its first start the app asks for your server's address. The app
+follows the newest release and works with a server at most one
+minor version apart (app v0.14 with a server v0.13, v0.14 or v0.15), so a
+server should stay at most one minor version behind the newest release; see
+[Supported upgrades](deploy/README.md#supported-upgrades). Phones use the
 web app: [installing Gelabber as a PWA](docs/v0.6-pwa.md).
 
 ## Documentation
@@ -144,7 +148,7 @@ Checks, as CI runs them:
 | Area | Commands |
 |---|---|
 | Backend (`backend/`) | `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`, tests through `backend/build/run-native-ci.sh` (see [AGENTS.md](AGENTS.md)) |
-| Web (`web/`) | `npm run lint`, `npm test`, `npm run test:checks`, `npm run build` |
+| Web (`web/`) | `npx playwright install chromium-headless-shell` once, then `npm run lint`, `npm test`, `npm run test:checks`, `npm run build` |
 | Desktop (`desktop/`) | see [desktop/README.md](desktop/README.md); it needs a prebuilt libwebrtc package |
 | Deployment | `python3 -m unittest discover -s deploy/compose/tests` |
 
