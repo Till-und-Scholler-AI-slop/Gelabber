@@ -82,12 +82,6 @@ export function failureSite(stack = "") {
     sites.find((site) => !site.startsWith("harness.mjs:")) ?? sites[0] ?? null
   );
 }
-/** The innermost line in scripts/e2e. `failureSite` skips harness.mjs, so
- * for a step of the fixture, which lives there, it names only the caller
- * (run.mjs); for a set-up row this names the step that failed. */
-export function failureStep(stack = "") {
-  return stack.match(/scripts\/e2e\/([a-z.-]+:\d+:\d+)/)?.[1] ?? null;
-}
 export function safeError(error) {
   // Playwright errors contain URLs, form values and call logs: never persist them.
   return error instanceof CheckFailure ||
@@ -389,7 +383,6 @@ export async function startHarness() {
                 : "unconfirmed-failure",
         // The scenario's own line, not the harness helper that threw.
         site: failureSite(error.stack),
-        ...(setup ? { step: failureStep(error.stack) } : {}),
         ...(error instanceof CheckFailure ||
         error instanceof NativeInterfaceFailure
           ? { metrics: error.metrics }
