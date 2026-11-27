@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 import { CheckFailure } from "./harness.mjs";
+import { sample, voiceOnlyControl } from "./voice-only-control.mjs";
 
 test("source identity reorder delivers authoritative Consumer messages without native track events", async () => {
   const delivered = [];
@@ -314,3 +315,65 @@ test("actual audio restore bounds a pending evaluation and quarantines the page 
   assert.equal(watcher.nativeEvaluationUnusable, true);
   assert.equal(abortCloses, 1);
 });
+
+// The scenario takes four samples per side: before, progress, attached,
+// judged (the audio moved on past the attached one).
+const four = (late = {}) => [
+  sample({ packets: 10 }),
+  sample({ packets: 20, ...late }),
+  sample({ packets: 20, ...late }),
+  sample({ packets: 30, ...late }),
+];
+const member = four();
+test("voice-only waits for the owner's playback that attaches after its packets", async () => {
+  const r = await voiceOnlyControl({
+    owner: [
+      sample({ packets: 10 }),
+      // The packets grew, the playback is not attached yet: one sample later.
+      sample({ packets: 20, plays: 0 }),
+      sample({ packets: 20 }),
+      sample({ packets: 30 }),
+    ],
+    member,
+  });
+  assert.equal(r.error, undefined);
+  assert.deepEqual(r.result.judged[0].roomAudio.perSource, [1]);
+});
+for (const [name, owner, code] of [
+  [
+    "a second path for the source",
+    four({ plays: 2 }),
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "a second path that comes after the first",
+    [
+      sample({ packets: 10 }),
+      sample({ packets: 20 }),
+      // Attached with one path; the second comes as the audio moves on.
+      sample({ packets: 20 }),
+      sample({ packets: 30, plays: 2 }),
+    ],
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "two sources",
+    four({ perSource: [1, 1] }),
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "a foreign source",
+    four({ foreign: 1 }),
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "no playback ever",
+    four({ plays: 0 }),
+    "voice-only-duplex-playback-not-attached",
+  ],
+])
+  test(`voice-only fails on ${name}`, async () => {
+    const r = await voiceOnlyControl({ owner, member });
+    assert.ok(r.error instanceof CheckFailure, String(r.error));
+    assert.equal(r.error.message, code);
+  });

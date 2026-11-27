@@ -131,7 +131,25 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       "voice-only-duplex-audio-did-not-progress",
       options.budget,
     );
-    for (const s of after) {
+    // Packets arrive before the browser has attached the received track to
+    // its audio element: wait until each side plays something. How many
+    // sources and paths is the check's to judge, on a later sample: a second
+    // path for the same source can come a moment after the first, so it
+    // judges the sample in which the audio has moved on past this one.
+    const attached = await until(
+      () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
+      (states) => states.every((s) => s.roomAudio.perSource.some((n) => n > 0)),
+      "voice-only-duplex-playback-not-attached",
+      options.budget,
+    );
+    const judged = await until(
+      () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
+      (states) =>
+        states.every((s, i) => audioPackets(s) > audioPackets(attached[i])),
+      "voice-only-duplex-audio-stopped-after-attach",
+      options.budget,
+    );
+    for (const s of judged) {
       check(
         s.roomAudio.perSource.length === 1 &&
           s.roomAudio.perSource[0] === 1 &&
@@ -142,7 +160,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           audioSenders(s).length === 1 &&
           audioSenders(s)[0].enabled,
         "voice-only-source-duplicate-or-unexpected-capture",
-        { before, after },
+        { before, after, attached, judged },
       );
       const paths = activePeers(s).flatMap((p) => p.selected);
       check(
@@ -161,6 +179,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
     return {
       before,
       after,
+      attached,
+      judged,
       limitation: "native duplex transport, not human intelligibility",
     };
   });
