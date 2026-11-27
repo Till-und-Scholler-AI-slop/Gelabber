@@ -56,7 +56,24 @@ def read(name):
 
 def pull_request_jobs(text):
     """The jobs of a workflow that a pull request can run, by job id."""
-    return {job: body for job, body in jobs(text).items() if SKIPS_PULL_REQUESTS not in job_if(body)}
+    return {job: body for job, body in jobs(text).items()
+            if SKIPS_PULL_REQUESTS not in job_if(body) and not only_pushes(job_if(body))}
+
+
+def only_pushes(condition):
+    """Whether a job's `if:` holds only for pushes: `github.event_name ==
+    'push'` is one of its top-level `&&` terms and nothing is `||`-ed at
+    the top level."""
+    terms, depth, start = [], 0, 0
+    for index, char in enumerate(condition):
+        depth += {'(': 1, ')': -1}.get(char, 0)
+        if depth == 0 and condition.startswith(('&&', '||'), index):
+            if condition.startswith('||', index):
+                return False
+            terms.append(condition[start:index])
+            start = index + 2
+    terms.append(condition[start:])
+    return "github.event_name == 'push'" in (term.strip() for term in terms)
 
 
 def pull_request_workflows():
@@ -154,6 +171,13 @@ class Helpers(unittest.TestCase):
         self.assertFalse(runs_on_pull_requests('on:\n  push:\njobs:\n'))
         self.assertEqual(LOCAL_CALL.findall(found['call']), ['other.yml'])
 
+    def test_a_push_only_condition_skips_pull_requests(self):
+        self.assertTrue(only_pushes("!cancelled() && github.event_name == 'push' && (a || b)"))
+        self.assertTrue(only_pushes("github.event_name == 'push'"))
+        self.assertFalse(only_pushes("github.event_name == 'push' || always()"))
+        self.assertFalse(only_pushes("github.event_name == 'pushed'"))
+        self.assertFalse(only_pushes("always()"))
+
     def test_reads_checkouts_and_scripts(self):
         steps = checkout_steps(self.SAMPLE)
         self.assertEqual(sorted(steps), [15, 18])
@@ -201,7 +225,7 @@ class PullRequestTokens(unittest.TestCase):
                 continue
             for job, body in jobs(text).items():
                 if WRITE.search(section(body, 'permissions', 4)) and \
-                        "github.event_name != 'merge_group'" not in job_if(body):
+                        "github.event_name != 'merge_group'" not in job_if(body) and not only_pushes(job_if(body)):
                     found.append(f'{name}: job {job}')
         self.assertEqual(found, [], "grant writes only to jobs whose `if:` also has "
                          "github.event_name != 'merge_group'")
