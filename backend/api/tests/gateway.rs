@@ -1909,14 +1909,18 @@ async fn edit_and_delete_rewrite_the_messages_earlier_log_entries(pool: PgPool) 
 #[sqlx::test]
 async fn committed_message_retries_after_redis_failure_and_ack_retry_is_deduplicated(pool: PgPool) {
     use gelabber_api::gateway::{Topic, delivery};
-    let (mut owner, _) = two_users(pool.clone()).await;
-    let server = create_server(&mut owner, "Outbox").await;
-    let (s, c) = ids(&server);
     // Only the test's own passes deliver: no app's worker takes the row.
     let mut state = common::ws_state(pool.clone());
     state.workers.delivery = None;
+    let mut owner = Client::from_state(state.clone());
+    owner.bootstrap().await;
+    let res = owner
+        .register("owner@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let server = create_server(&mut owner, "Outbox").await;
+    let (s, c) = ids(&server);
     let addr = common::serve_ws_state(state.clone()).await;
-    owner.app = gelabber_api::app(state.clone());
     let mut ws = connect(addr, &session_cookie(&owner), None).await;
     send(&mut ws, json!({"op":"s","s":s,"c":c})).await;
     until(&mut ws, |f| f["op"] == "ok").await;
@@ -2488,8 +2492,10 @@ async fn a_presence_flood_reaches_others_only_within_the_budget(pool: PgPool) {
     join_member(&mut owner, &mut member, &server_id.to_string()).await;
 
     let mut state = common::ws_state(pool);
+    // Three at once, then one a minute: none refills during the test, and
+    // the rest of the flood waits, unread.
     state.limits.ws_presence = FrameRate {
-        per_min: 60,
+        per_min: 1,
         burst: 3,
     };
     let addr = common::serve_ws_state(state.clone()).await;
@@ -2511,20 +2517,29 @@ async fn a_presence_flood_reaches_others_only_within_the_budget(pool: PgPool) {
         };
         send(&mut member_ws, frame).await;
     }
-
-    let mut seen = 0;
-    let window = tokio::time::Instant::now() + Duration::from_millis(500);
-    while let Ok(frame) = tokio::time::timeout_at(window, recv(&mut owner_ws)).await {
-        if frame["op"] == "p" && frame["u"] == member.user_id() && frame.get("snap").is_none() {
-            seen += 1;
-        }
+    // The fourth change waits for the budget, and the wait is counted.
+    let deadline = tokio::time::Instant::now() + ws::WAIT;
+    while rate_limited(&state, "ws_presence") == 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the flood never waited"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    // The burst, and at most one more frame refilled meanwhile.
-    assert!(
-        (1..=4).contains(&seen),
-        "{seen} presence changes reached the owner"
-    );
-    assert!(rate_limited(&state, "ws_presence") >= 1);
+
+    // The burst reaches the owner, and nothing refills to add to it. A late
+    // frame missed by the window would only make the count smaller.
+    let change =
+        |f: &Value| f["op"] == "p" && f["u"] == member.user_id() && f.get("snap").is_none();
+    until(&mut owner_ws, change).await;
+    let mut seen = 1;
+    while ws::within(&mut owner_ws, Duration::from_millis(500), change)
+        .await
+        .is_some()
+    {
+        seen += 1;
+    }
+    assert!(seen <= 3, "{seen} presence changes reached the owner");
 }
 
 /// GEL-55: frames over a socket's frame budget wait for it, unread, and
