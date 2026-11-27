@@ -483,16 +483,42 @@ mod tests {
         (state, session, conn)
     }
 
-    /// Holds the session row so the worker's `FOR SHARE` waits, for `hold`.
-    async fn block_session_row(pool: &sqlx::PgPool, session: &CurrentSession, hold: Duration) {
+    /// Holds the session row, so the worker's `FOR SHARE` waits, until the
+    /// transaction ends.
+    async fn hold_session_row<'a>(
+        pool: &'a sqlx::PgPool,
+        session: &CurrentSession,
+    ) -> sqlx::Transaction<'a, sqlx::Postgres> {
         let mut tx = pool.begin().await.unwrap();
         sqlx::query("SELECT 1 FROM sessions WHERE token_hash = $1 FOR UPDATE")
             .bind(&session.hash)
             .execute(&mut *tx)
             .await
             .unwrap();
-        tokio::time::sleep(hold).await;
-        tx.commit().await.unwrap();
+        tx
+    }
+
+    /// Waits until the worker renews the lease: its PTTL rises between two
+    /// reads (a renewal sets it to 3 s again). Fails after 10 s.
+    async fn renewed(conn: &mut redis::aio::MultiplexedConnection, key: &str) {
+        let lease = session_authority_key(key);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut last = i64::MAX;
+            loop {
+                let ttl: i64 = redis::cmd("PTTL")
+                    .arg(&lease)
+                    .query_async(&mut *conn)
+                    .await
+                    .unwrap();
+                if ttl > last {
+                    return;
+                }
+                last = ttl;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the worker renews the lease");
     }
 
     #[sqlx::test]
@@ -519,8 +545,11 @@ mod tests {
             .unwrap();
         maintain_session(&state, &session).await.unwrap();
         // The first refresh (at 1 s) times out at 2 s; the retry gets the row.
-        block_session_row(&pool, &session, Duration::from_millis(2300)).await;
-        tokio::time::sleep(Duration::from_millis(1200)).await;
+        // The hold is the fault under test: it has to outlast that timeout.
+        let held = hold_session_row(&pool, &session).await;
+        tokio::time::sleep(Duration::from_millis(2300)).await;
+        held.commit().await.unwrap();
+        renewed(&mut conn, &key).await;
         let lease: Option<String> = redis::cmd("GET")
             .arg(session_authority_key(&key))
             .query_async(&mut conn)
@@ -533,15 +562,16 @@ mod tests {
         );
 
         // The worker untracks the session when it gives up, so a new mint
-        // would start another one.
-        let blocked = block_session_row(&pool, &session, Duration::from_secs(7));
-        let ended = tokio::time::timeout(Duration::from_secs(6), async {
+        // would start another one. The row stays held until then.
+        let held = hold_session_row(&pool, &session).await;
+        tokio::time::timeout(Duration::from_secs(20), async {
             while state.gateway.track_media_session(&key).await.is_none() {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        });
-        let (_, ended) = tokio::join!(blocked, ended);
-        ended.expect("the worker gives up once failures used the lease up");
+        })
+        .await
+        .expect("the worker gives up once failures used the lease up");
+        held.commit().await.unwrap();
     }
 
     #[sqlx::test]
@@ -584,7 +614,15 @@ mod tests {
             .await
             .unwrap();
         maintain_session(&state, &session).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(3500)).await;
+        // Renewals go on past the copy's expiry: the worker goes by the row,
+        // not by what it was handed at mint.
+        let copy_expired = tokio::time::Instant::now() + Duration::from_millis(500);
+        loop {
+            renewed(&mut conn, &key).await;
+            if tokio::time::Instant::now() > copy_expired {
+                break;
+            }
+        }
         let lease: Option<String> = redis::cmd("GET")
             .arg(session_authority_key(&key))
             .query_async(&mut conn)

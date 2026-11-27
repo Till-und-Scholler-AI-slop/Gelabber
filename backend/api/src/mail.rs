@@ -11,6 +11,7 @@
 //! per kind for `/metrics` (`gelabber_mail_failed_total`, GEL-40).
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -36,6 +37,8 @@ pub struct Mailer {
     instance: String,
     transport: Transport,
     health: Arc<Health>,
+    /// Mail tasks of this process still running ([`Self::spawn`]).
+    running: Arc<tokio::sync::watch::Sender<usize>>,
 }
 
 #[derive(Clone)]
@@ -54,6 +57,23 @@ enum Transport {
 struct Health {
     failed: Mutex<BTreeMap<&'static str, u64>>,
     last_failed: AtomicBool,
+}
+
+/// One count in [`Mailer::running`], taken back when the task ends, also
+/// by a panic.
+struct Running(Arc<tokio::sync::watch::Sender<usize>>);
+
+impl Running {
+    fn start(running: Arc<tokio::sync::watch::Sender<usize>>) -> Self {
+        running.send_modify(|count| *count += 1);
+        Self(running)
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.send_modify(|count| *count -= 1);
+    }
 }
 
 /// A mail as the memory transport keeps it.
@@ -182,7 +202,26 @@ impl Mailer {
             instance: public_url.host_str().unwrap_or("Gelabber").to_owned(),
             transport,
             health: Arc::default(),
+            running: Arc::new(tokio::sync::watch::Sender::new(0)),
         }
+    }
+
+    /// Runs `task`, which decides on and sends mail, after the response.
+    /// It counts as running from this call until it ends, sent or not.
+    pub fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) {
+        let running = Running::start(self.running.clone());
+        tokio::spawn(async move {
+            let _running = running;
+            task.await;
+        });
+    }
+
+    /// Waits until every task spawned so far has ended, including those
+    /// they spawned: a mail not sent by then is not sent at all.
+    pub async fn settled(&self) {
+        let mut running = self.running.subscribe();
+        // The sender lives in `self`, so the wait cannot end without zero.
+        let _ = running.wait_for(|count| *count == 0).await;
     }
 
     /// The public URL links in mails start with, without a trailing slash.
