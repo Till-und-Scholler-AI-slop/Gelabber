@@ -113,7 +113,9 @@ Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
   ones. The database role needs `CREATEDB` for `sqlx::test`.
 
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
-`npm test`, `npm run test:checks`, `npm run build`.
+`npm test`, `npm run test:checks`, `npm run build`. `npm test` mounts the
+components of `*.browser.test.tsx` in Chromium; install it once with
+`npx playwright install chromium-headless-shell`.
 
 Desktop (`desktop/`) is its own Cargo workspace and needs a prebuilt libwebrtc
 package; see `desktop/README.md` ("Native app" for the native egui app's build,

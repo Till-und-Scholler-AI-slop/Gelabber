@@ -405,6 +405,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # npm test mounts components in it (*.browser.test.tsx, GEL-385).
+      - name: Chromium
+        run: npx playwright install --with-deps chromium-headless-shell
+
       - name: Test
         run: npm test
 
@@ -413,9 +417,7 @@ jobs:
 
       # Every field state in four themes against its pictures (#561).
       - name: Field gallery
-        run: |
-          npx playwright install --with-deps chromium-headless-shell
-          npm run test:field-gallery
+        run: npm run test:field-gallery
 
       - name: Field gallery pictures
         if: failure()
