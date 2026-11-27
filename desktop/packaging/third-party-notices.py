@@ -378,19 +378,25 @@ def build_facts():
 
 
 def code_lines(path):
-    """A file's lines without comment lines (# in KEY=value files and PowerShell)."""
+    """A PowerShell file's lines without comment lines."""
     return [line for line in read(path).splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 
+def build_settings(path):
+    """(name, value) of the lines desktop-native.yml writes to GITHUB_ENV from
+    a settings file: carriage returns dropped, lines that are empty or start
+    with # left out, split at the first =, nothing stripped or unquoted."""
+    lines = read(path).replace("\r", "").split("\n")
+    return [line.partition("=")[::2] for line in lines if line and not line.startswith("#")]
+
+
 def package_facts():
-    rustflags = [
-        value.strip() for key, _, value in (line.partition("=") for line in code_lines(WINDOWS_BUILD))
-        if key.strip() == "RUSTFLAGS"
-    ]
+    # Cargo splits RUSTFLAGS at whitespace and passes quotes on to rustc.
+    rustflags = [value for name, value in build_settings(WINDOWS_BUILD) if name == "RUSTFLAGS"]
     check = "\n".join(code_lines(WINDOWS_CHECK)) if WINDOWS_CHECK.is_file() else ""
     return {
         "the Windows build links the app with RUSTFLAGS -C target-feature=+crt-static": (
-            len(rustflags) == 1 and rustflags[0].strip("\"'").split() == ["-C", "target-feature=+crt-static"]
+            len(rustflags) == 1 and rustflags[0].split() == ["-C", "target-feature=+crt-static"]
         ),
         "the Windows check fails when gelabber_media.dll holds names of OpenH264 or FFmpeg": all(
             mark in check for mark in (

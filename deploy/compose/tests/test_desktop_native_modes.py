@@ -9,7 +9,7 @@ the table here too.
 """
 import unittest
 
-from workflow_data import load, names
+from workflow_data import ROOT, load, names
 from workflow_expressions import condition, evaluate
 
 WORKFLOW = 'desktop-native.yml'
@@ -225,10 +225,22 @@ class WindowsPackage(unittest.TestCase):
         for step in steps[loads[0] + 1:]:
             with self.subTest(step=step['name']):
                 self.assertNotRegex(str(step.get('run', '')), r'RUSTFLAGS|MESON_ARGS')
+        # Nor do the scripts the job runs (outside comments).
+        called = [ROOT / run.removeprefix('./') for run in (str(step.get('run', '')) for step in steps)
+                  if run.startswith('./desktop/') and run.endswith('.ps1')]
+        self.assertTrue(called)
+        for script in called:
+            code = '\n'.join(line for line in script.read_text().splitlines() if not line.lstrip().startswith('#'))
+            with self.subTest(script=script.name):
+                self.assertNotRegex(code, r'RUSTFLAGS|MESON_ARGS')
 
     def test_every_build_runs_the_check_of_the_binaries(self):
-        named = [step['name'] for step in self.windows['steps'] if step.get('run') == self.CHECK]
-        self.assertEqual(len(named), 1)
+        checks = [step for step in self.windows['steps'] if step.get('run') == self.CHECK]
+        self.assertEqual(len(checks), 1)
+        named = [checks[0]['name']]
+        # A failed check fails the job.
+        self.assertFalse(checks[0].get('continue-on-error', False))
+        self.assertFalse(self.windows.get('continue-on-error', False))
         for mode in JOBS['core-windows']:
             with self.subTest(mode=mode):
                 self.assertIn(named[0], runs(mode)['core-windows'])

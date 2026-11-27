@@ -301,8 +301,7 @@ class PackageFactTests(unittest.TestCase):
 
     def test_files_like_the_described_ones_are_recognised(self):
         self.assertEqual(self.untrue(), [])
-        quoted = self.SETTINGS.replace('-C target-feature=+crt-static', '"-C target-feature=+crt-static"')
-        self.assertEqual(self.untrue(settings=quoted), [])
+        self.assertEqual(self.untrue(settings=self.SETTINGS.replace('\n', '\r\n')), [])
 
     def test_another_c_runtime_for_the_app_is_noticed(self):
         flags = 'RUSTFLAGS=-C target-feature=+crt-static\n'
@@ -312,6 +311,10 @@ class PackageFactTests(unittest.TestCase):
             self.SETTINGS.replace(flags, 'RUSTFLAGS=-C target-feature=-crt-static\n'),
             self.SETTINGS.replace(flags, 'RUSTFLAGS=-C target-cpu=x86-64-v2\n'),
             self.SETTINGS.replace(flags, '# ' + flags),
+            # As GITHUB_ENV takes them: rustc would get the quotes, or another variable is set.
+            self.SETTINGS.replace(flags, 'RUSTFLAGS="-C target-feature=+crt-static"\n'),
+            self.SETTINGS.replace(flags, 'RUSTFLAGS = -C target-feature=+crt-static\n'),
+            self.SETTINGS.replace(flags, ' RUSTFLAGS=-C target-feature=+crt-static\n'),
             # A second line sets the variable again.
             self.SETTINGS + 'RUSTFLAGS=\n',
         ):
