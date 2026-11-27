@@ -772,6 +772,13 @@ mod tests {
         let (id, _) = g.attach_session(u, Uuid::new_v4().to_string(), tx).await;
         (id, rx)
     }
+    /// The next frame for a socket, within 5 s.
+    async fn roster(rx: &mut mpsc::Receiver<ServerFrame>) -> ServerFrame {
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a roster frame within 5 s")
+            .expect("socket channel open")
+    }
     /// Until no seat in channel `c` is left, within `wait`: their lease ran
     /// out.
     async fn until_no_seat_in(g: &Gateway, c: Uuid, wait: Duration) {
@@ -936,12 +943,12 @@ mod tests {
         b.watch_server(watcher, s).await;
         b.refresh_rosters().await;
         assert!(
-            matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.len()==1)
+            matches!(roster(&mut rx).await, ServerFrame::Sig { snap: Some(rows), .. } if rows.len()==1)
         );
         until_no_seat_in(&b, c, Duration::from_secs(4)).await;
         b.refresh_rosters().await;
         assert!(
-            matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.is_empty())
+            matches!(roster(&mut rx).await, ServerFrame::Sig { snap: Some(rows), .. } if rows.is_empty())
         );
         a.detach(id).await;
         b.detach(watcher).await;

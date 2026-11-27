@@ -115,6 +115,19 @@ pub struct Push {
 }
 
 impl Push {
+    /// Message and request pushes still being decided or sent on this
+    /// process. Tests wait for none before they check what went out.
+    pub fn deliveries_under_way(&self) -> usize {
+        [
+            &self.dm_deliveries,
+            &self.server_deliveries,
+            &self.channel_deliveries,
+        ]
+        .iter()
+        .map(|deliveries| MAX_DELIVERIES - deliveries.available_permits())
+        .sum()
+    }
+
     pub fn new(config: &PushConfig) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))

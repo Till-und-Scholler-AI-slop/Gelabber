@@ -77,8 +77,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, page: Rect, server: &Server) {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::testkit::{click_last, click_role};
     use egui::accesskit::Role;
-    use egui_kittest::kittest::{NodeT, Queryable};
+    use egui_kittest::kittest::Queryable;
 
     use crate::app::testkit::{FakeApi, HOME, LENA, Reply, launcher, wait_for, wait_for_label};
     use crate::platform::paths::testing::TempConfig;
@@ -110,15 +111,9 @@ mod tests {
         let mut harness = launcher(&api, &format!("/s/{HOME}"));
         wait_for_label(&mut harness, "Server löschen");
         assert!(harness.query_by_label("Server verlassen").is_none());
-        harness
-            .get_by_role_and_label(Role::Button, "Server löschen")
-            .click();
+        click_role(&mut harness, Role::Button, "Server löschen");
         wait_for_label(&mut harness, "Server „Wohnzimmer“ endgültig löschen?");
-        let confirm = harness
-            .query_all_by_label("Server löschen")
-            .rfind(|n| n.accesskit_node().role() == Role::Button)
-            .expect("the dialog's button");
-        confirm.click();
+        click_last(&mut harness, Role::Button, "Server löschen");
         let delete = format!("DELETE /servers/{HOME}");
         wait_for(&mut harness, "the delete", |_| api.saw(&delete));
     }

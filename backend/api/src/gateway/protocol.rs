@@ -1040,18 +1040,49 @@ mod tests {
     fn topic_keys_round_trip() {
         let id = Uuid::from_u128(1);
         let topic = Topic::Channel(id);
-        assert_eq!(
-            Topic::from_redis_channel(&topic.redis_channel()),
-            Some(topic)
-        );
+        for topic in [topic, Topic::Server(id)] {
+            assert_eq!(
+                Topic::from_redis_channel(&topic.redis_channel()),
+                Some(topic)
+            );
+        }
         assert!(topic.seq_key().starts_with("gb:n:c:"));
         assert!(topic.log_key().starts_with("gb:l:c:"));
-        let live = LiveTopic::Presence(id);
-        assert_eq!(
-            LiveTopic::from_redis_channel(&live.redis_channel()),
-            Some(live)
-        );
-        assert!(Topic::from_redis_channel(&live.redis_channel()).is_none());
+        for live in [LiveTopic::Presence(id), LiveTopic::Typing(id)] {
+            assert_eq!(
+                LiveTopic::from_redis_channel(&live.redis_channel()),
+                Some(live)
+            );
+            assert!(Topic::from_redis_channel(&live.redis_channel()).is_none());
+        }
+    }
+
+    #[test]
+    fn every_topic_keeps_its_own_redis_keys() {
+        // Two topics sharing a key would share a cursor, an epoch or a log:
+        // a reset of one would send every client of the other a gap.
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut keys = std::collections::HashSet::new();
+        for topic in [
+            Topic::Server(a),
+            Topic::Server(b),
+            Topic::Channel(a),
+            Topic::Channel(b),
+        ] {
+            for key in [
+                topic.redis_channel(),
+                topic.seq_key(),
+                topic.epoch_key(),
+                topic.delivery_key(),
+                topic.log_key(),
+            ] {
+                assert!(keys.insert(key.clone()), "{key:?} of {topic:?} is shared");
+            }
+        }
+        for live in [LiveTopic::Presence(a), LiveTopic::Typing(a)] {
+            let key = live.redis_channel();
+            assert!(keys.insert(key.clone()), "{key:?} of {live:?} is shared");
+        }
     }
 
     #[test]

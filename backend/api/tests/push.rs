@@ -8,16 +8,13 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::{Router, routing};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
-use common::{Client, SESSION};
-use futures_util::{SinkExt, StreamExt};
+use common::Client;
+use common::ws::{self, Ws};
 use gelabber_api::push::webpush::{Vapid, decrypt};
 use gelabber_api::{AppState, Config, app};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::COOKIE;
 use uuid::Uuid;
 
 struct Hit {
@@ -97,7 +94,7 @@ fn push_state_for(
         "REDIS_URL" => Some(redis.clone()),
         "API_SESSION_TTL_HOURS" => Some(ttl_hours.to_string()),
         "API_WS_HEARTBEAT_MS" => Some("40".to_owned()),
-        "API_WS_DEAD_MS" => Some("5000".to_owned()),
+        "API_WS_DEAD_MS" => Some(common::WS_DEAD_MS.to_string()),
         "VAPID_PRIVATE_KEY" => private.clone(),
         "VAPID_SUBJECT" => Some("mailto:admin@test.example".to_owned()),
         "PUSH_ALLOWED_HOSTS" => Some("127.0.0.1".to_owned()),
@@ -502,6 +499,7 @@ async fn a_declared_notification_leads_to_the_public_address(pool: PgPool) {
 #[sqlx::test]
 async fn in_a_server_the_level_decides_what_pushes(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         server,
@@ -528,6 +526,7 @@ async fn in_a_server_the_level_decides_what_pushes(pool: PgPool) {
     let second = self::channel(&mut a, &server, "zwei").await;
     level(&mut b, "servers", &server, json!("mentions")).await;
     post(&mut a, &second, "plain").await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 1").await;
     let hit = next(&mut hits).await;
     assert_eq!(hit.headers["urgency"], "high");
@@ -563,6 +562,7 @@ async fn in_a_server_the_level_decides_what_pushes(pool: PgPool) {
     post(&mut a, &channel, &format!("<@{bob}> stumm")).await;
     // The push is sent in the background; let it pass the mute check
     // before the mute is lifted.
+    settled(&state).await;
     post(&mut a, &dm, "marker 1b").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1b");
     b.send(
@@ -578,6 +578,7 @@ async fn in_a_server_the_level_decides_what_pushes(pool: PgPool) {
     )
     .await;
     post(&mut a, &channel, &format!("<@{bob}> nichts")).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 2").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 2");
 }
@@ -866,6 +867,7 @@ async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
 #[sqlx::test]
 async fn a_lively_channel_pushes_once_in_a_while(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         channel,
@@ -883,6 +885,7 @@ async fn a_lively_channel_pushes_once_in_a_while(pool: PgPool) {
     // push to arrive.
     post(&mut a, &channel, "zwei").await;
     post(&mut a, &channel, "drei").await;
+    settled(&state).await;
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
     // A mention is not held back by the lines before it.
@@ -913,6 +916,7 @@ async fn crowd(pool: &PgPool, server: &str, total: i64) {
 #[sqlx::test]
 async fn a_large_server_pushes_ordinary_messages_only_where_someone_chose_all(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         server,
@@ -935,6 +939,7 @@ async fn a_large_server_pushes_ordinary_messages_only_where_someone_chose_all(po
     crowd(&pool, &server, 51).await;
     let second = self::channel(&mut a, &server, "zwei").await;
     post(&mut a, &second, "gross").await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 1").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1");
     // A mention still does.
@@ -950,6 +955,7 @@ async fn a_large_server_pushes_ordinary_messages_only_where_someone_chose_all(po
     let fourth = self::channel(&mut a, &server, "vier").await;
     level(&mut b, "channels", &fourth, json!("mentions")).await;
     post(&mut a, &fourth, "nicht hier").await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 2").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 2");
     // An "all" on one channel alone is enough for that channel.
@@ -960,18 +966,18 @@ async fn a_large_server_pushes_ordinary_messages_only_where_someone_chose_all(po
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "nur hier");
 }
 
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
-    request.headers_mut().insert(
-        COOKIE,
-        format!("{SESSION}={}", client.jar[SESSION])
-            .parse()
-            .unwrap(),
-    );
-    tokio_tungstenite::connect_async(request).await.unwrap().0
+/// Until every push decided so far has gone out or been dropped: what
+/// was not pushed by then is not pushed at all.
+async fn settled(state: &AppState) {
+    let push = state.push.as_ref().expect("push on");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while push.deliveries_under_way() > 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "pushes still under way after 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 async fn focus_is(state: &AppState, user: &str, on: bool) {
@@ -1009,12 +1015,8 @@ async fn a_page_in_front_holds_pushes_back(pool: PgPool) {
         .await
         .unwrap();
 
-    let mut ws = connect(addr, &b).await;
-    ws.send(Message::Text(
-        json!({"op":"f","on":true}).to_string().into(),
-    ))
-    .await
-    .unwrap();
+    let mut ws = ws::connect(addr, &b).await;
+    ws::send(&mut ws, json!({"op":"f","on":true})).await;
     focus_is(&state, b.user_id(), true).await;
     // In front, but showing something else: the page does not subscribe to
     // this conversation, so the push still goes.
@@ -1022,37 +1024,19 @@ async fn a_page_in_front_holds_pushes_back(pool: PgPool) {
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "anderswo");
 
     // A page in front that follows the conversation holds the push back.
-    ws.send(Message::Text(
-        json!({"op":"s","s":dm,"c":dm}).to_string().into(),
-    ))
-    .await
-    .unwrap();
-    loop {
-        let frame = ws.next().await.expect("socket open").expect("frame");
-        if let Message::Text(text) = frame
-            && serde_json::from_str::<Value>(text.as_str()).unwrap()["op"] == "ok"
-        {
-            break;
-        }
-    }
+    ws::send(&mut ws, json!({"op":"s","s":dm,"c":dm})).await;
+    ws::until(&mut ws, |f| f["op"] == "ok").await;
     post(&mut a, &dm, "gesehen").await;
-    // The push runs after the answer; let it look at the focus first.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    ws.send(Message::Text(
-        json!({"op":"f","on":false}).to_string().into(),
-    ))
-    .await
-    .unwrap();
+    // The push runs after the answer; it has looked at the focus once it
+    // is settled.
+    settled(&state).await;
+    ws::send(&mut ws, json!({"op":"f","on":false})).await;
     focus_is(&state, b.user_id(), false).await;
     post(&mut a, &dm, "weg").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "weg");
 
     // A closed socket gives its focus up.
-    ws.send(Message::Text(
-        json!({"op":"f","on":true}).to_string().into(),
-    ))
-    .await
-    .unwrap();
+    ws::send(&mut ws, json!({"op":"f","on":true})).await;
     focus_is(&state, b.user_id(), true).await;
     // While it is in front, wherever: an ordinary message of a server
     // channel stays off the phone, a mention there does not.
@@ -1241,6 +1225,7 @@ async fn a_push_speaks_the_recipient_language(pool: PgPool) {
 #[sqlx::test]
 async fn a_hidden_channel_pushes_nothing(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         server,
@@ -1273,6 +1258,7 @@ async fn a_hidden_channel_pushes_nothing(pool: PgPool) {
     let bob = b.user_id().to_owned();
     post(&mut a, &channel, "@everyone Essen").await;
     post(&mut a, &channel, &format!("<@{bob}> schau mal")).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
 }
@@ -1341,6 +1327,7 @@ async fn requests_ring_once(pool: PgPool) {
         .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
 
+    settled(&state).await;
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
 }
@@ -1386,6 +1373,7 @@ async fn nothing_pushes_from_someone_blocked(pool: PgPool) {
 
     post(&mut a, &channel, &format!("<@{bob}> hallo")).await;
     post(&mut a, &channel, "@everyone Essen").await;
+    settled(&state).await;
     post(&mut c, &channel, &format!("<@{bob}> marker")).await;
     let payload = browser.open(&next(&mut hits).await);
     assert_eq!(payload["body"], "@Bob marker");
@@ -1402,6 +1390,7 @@ async fn nothing_pushes_from_someone_blocked(pool: PgPool) {
 #[sqlx::test]
 async fn do_not_disturb_holds_back_every_push_until_it_ends(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         channel,
@@ -1429,6 +1418,7 @@ async fn do_not_disturb_holds_back_every_push_until_it_ends(pool: PgPool) {
     post(&mut a, &channel, "@everyone leise alle").await;
     // Bob's pushes are decided in the background; Ada's marker lets them
     // pass the check before the mode ends.
+    settled(&state).await;
     post(&mut b, &dm, "marker").await;
     let hit = next(&mut hits).await;
     assert_eq!(hit.path, "sub/ada");
@@ -1453,6 +1443,7 @@ async fn do_not_disturb_holds_back_every_push_until_it_ends(pool: PgPool) {
     )
     .await;
     post(&mut a, &dm, "wieder leise").await;
+    settled(&state).await;
     post(&mut b, &dm, "marker 2").await;
     assert_eq!(ada_browser.open(&next(&mut hits).await)["body"], "marker 2");
     let r = b
@@ -1504,12 +1495,8 @@ async fn here_pushes_to_an_invisible_member(pool: PgPool) {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    let mut ws = connect(addr, &b).await;
-    ws.send(Message::Text(
-        json!({"op":"s","s":server}).to_string().into(),
-    ))
-    .await
-    .unwrap();
+    let mut ws = ws::connect(addr, &b).await;
+    ws::send(&mut ws, json!({"op":"s","s":server})).await;
     let server_id = Uuid::parse_str(&server).unwrap();
     let bob = Uuid::parse_str(b.user_id()).unwrap();
     for _ in 0..100 {
@@ -1582,6 +1569,7 @@ async fn do_not_disturb_holds_back_requests(pool: PgPool) {
     let request = request.body["id"].as_str().unwrap().to_owned();
     post(&mut cara, &request, "hallo").await;
     // Bob's marker reaches Ada; nothing reached Bob before it.
+    settled(&state).await;
     post(&mut b, &dm, "marker").await;
     let hit = next(&mut hits).await;
     assert_eq!(hit.path, "sub/ada");
@@ -1831,26 +1819,14 @@ async fn sig(ws: &mut Ws, server: &str, channel: &str, t: &str, k: Option<&str>)
     if let Some(k) = k {
         frame["k"] = json!(k);
     }
-    ws.send(Message::Text(frame.to_string().into()))
-        .await
-        .unwrap();
-    loop {
-        let heard = tokio::time::timeout(Duration::from_secs(5), ws.next())
-            .await
-            .expect("the voice frame comes back")
-            .expect("socket open")
-            .expect("frame");
-        if let Message::Text(text) = heard {
-            let heard: Value = serde_json::from_str(text.as_str()).unwrap();
-            if heard["op"] == "sig"
-                && heard["t"] == t
-                && heard["c"] == channel
-                && k.is_none_or(|k| heard["k"] == k)
-            {
-                return;
-            }
-        }
-    }
+    ws::send(ws, frame).await;
+    ws::until(ws, |heard| {
+        heard["op"] == "sig"
+            && heard["t"] == t
+            && heard["c"] == channel
+            && k.is_none_or(|k| heard["k"] == k)
+    })
+    .await;
 }
 
 /// Joins the voice channel and goes live there.
@@ -1886,7 +1862,7 @@ async fn a_live_pushes_at_the_level_all(pool: PgPool) {
         .wait_ready(Duration::from_secs(2))
         .await
         .unwrap();
-    let mut ada = connect(addr, &a).await;
+    let mut ada = ws::connect(addr, &a).await;
 
     go_live(&mut ada, &server, &lounge).await;
     let hit = next(&mut hits).await;
@@ -1903,6 +1879,7 @@ async fn a_live_pushes_at_the_level_all(pool: PgPool) {
     // Off and on again within the cooldown: not again.
     sig(&mut ada, &server, &lounge, "u", Some("s")).await;
     sig(&mut ada, &server, &lounge, "p", Some("s")).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 1").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1");
 
@@ -1910,6 +1887,7 @@ async fn a_live_pushes_at_the_level_all(pool: PgPool) {
     level(&mut b, "servers", &server, json!("mentions")).await;
     let second = voice(&mut a, &server, "Zwei").await;
     go_live(&mut ada, &server, &second).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 2").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 2");
 
@@ -1926,10 +1904,11 @@ async fn a_live_pushes_at_the_level_all(pool: PgPool) {
     assert_eq!(payload["body"], "");
 
     // Bob sits in a voice channel of the server: his app shows it.
-    let mut bob = connect(addr, &b).await;
+    let mut bob = ws::connect(addr, &b).await;
     sig(&mut bob, &server, &lounge, "j", None).await;
     let fourth = voice(&mut a, &server, "Vier").await;
     go_live(&mut ada, &server, &fourth).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 3").await;
     assert_eq!(
         browser.open(&next(&mut hits).await)["title"],
@@ -1965,12 +1944,13 @@ async fn a_call_that_begins_pushes_who_asked(pool: PgPool) {
         .wait_ready(Duration::from_secs(2))
         .await
         .unwrap();
-    let mut ada = connect(addr, &a).await;
+    let mut ada = ws::connect(addr, &a).await;
     let asks = |voice: bool, level: Value| json!({"level": level, "muted": false, "voice": voice});
     let server_path = format!("/api/servers/{server}/notification-settings");
 
     // Nobody asked: quiet, whatever the level.
     sig(&mut ada, &server, &lounge, "j", None).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 1").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 1");
 
@@ -1993,13 +1973,11 @@ async fn a_call_that_begins_pushes_who_asked(pool: PgPool) {
 
     // Out and back in within the cooldown: no second ring.
     // (Frames are handled in order: the join's echo says the leave is done.)
-    ada.send(Message::Text(
-        json!({"op": "sig", "t": "l", "s": server, "c": second})
-            .to_string()
-            .into(),
-    ))
-    .await
-    .unwrap();
+    ws::send(
+        &mut ada,
+        json!({"op": "sig", "t": "l", "s": server, "c": second}),
+    )
+    .await;
     sig(&mut ada, &server, &second, "j", None).await;
     // Someone who joins a call under way starts none: Cara sits down in a
     // channel of her own, which rings, and Ada joining her rings nobody.
@@ -2017,11 +1995,12 @@ async fn a_call_that_begins_pushes_who_asked(pool: PgPool) {
         .await;
     assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
     let third = voice(&mut a, &server, "Drei").await;
-    let mut cara_ws = connect(addr, &cara).await;
+    let mut cara_ws = ws::connect(addr, &cara).await;
     sig(&mut cara_ws, &server, &third, "j", None).await;
     let payload = browser.open(&next(&mut hits).await);
     assert_eq!(payload["body"], "Cara ist im Sprachkanal Drei.");
     sig(&mut ada, &server, &third, "j", None).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 2").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker 2");
 
@@ -2043,6 +2022,7 @@ async fn a_call_that_begins_pushes_who_asked(pool: PgPool) {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let fifth = voice(&mut a, &server, "Fuenf").await;
     sig(&mut ada, &server, &fifth, "j", None).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker 3").await;
     assert_eq!(
         browser.open(&next(&mut hits).await)["title"],
@@ -2087,7 +2067,7 @@ async fn a_second_seat_in_the_call_rings_nobody(pool: PgPool) {
         .await
         .unwrap();
 
-    let mut phone = connect(addr, &a).await;
+    let mut phone = ws::connect(addr, &a).await;
     sig(&mut phone, &server, &lounge, "j", None).await;
     let payload = browser.open(&next(&mut hits).await);
     assert_eq!(payload["body"], "Ada ist im Sprachkanal Lounge.");
@@ -2095,8 +2075,9 @@ async fn a_second_seat_in_the_call_rings_nobody(pool: PgPool) {
     // As if the cooldown had run out: Ada's second device sits down beside
     // the first, and nobody hears of a call beginning.
     state.limiter.refund("push-call", &lounge);
-    let mut laptop = connect(addr, &a).await;
+    let mut laptop = ws::connect(addr, &a).await;
     sig(&mut laptop, &server, &lounge, "j", None).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
     assert!(hits.try_recv().is_err());
@@ -2152,6 +2133,7 @@ async fn crowd_settings_left(pool: &PgPool, server: &str, left: i64) {
 #[sqlx::test]
 async fn an_ordinary_message_pages_no_crowd(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         server,
@@ -2167,6 +2149,7 @@ async fn an_ordinary_message_pages_no_crowd(pool: PgPool) {
     crowd_settings(&pool, &server, "all", false).await;
     let first = self::channel(&mut a, &server, "eins").await;
     post(&mut a, &first, "an alle").await;
+    settled(&state).await;
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
     post(&mut a, &first, &format!("<@{bob}> du")).await;
@@ -2207,10 +2190,11 @@ async fn a_call_rings_no_crowd(pool: PgPool) {
         .wait_ready(Duration::from_secs(2))
         .await
         .unwrap();
-    let mut ada = connect(addr, &a).await;
+    let mut ada = ws::connect(addr, &a).await;
 
     let lounge = voice(&mut a, &server, "Lounge").await;
     sig(&mut ada, &server, &lounge, "j", None).await;
+    settled(&state).await;
     post(&mut a, &dm, "marker").await;
     assert_eq!(browser.open(&next(&mut hits).await)["body"], "marker");
 

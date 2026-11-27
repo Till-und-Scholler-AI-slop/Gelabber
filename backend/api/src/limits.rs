@@ -1006,6 +1006,7 @@ mod tests {
             (Method::PUT, "/api/feedback/images"),
             (Method::POST, "/api/feedback/x/messages"),
             (Method::POST, "/api/me/avatar"),
+            (Method::PUT, "/api/servers/x/read"),
         ] {
             assert!(!is_upload(&method, path), "{method} {path}");
         }
@@ -1146,6 +1147,34 @@ mod tests {
             let _ = count_guess(&limiter, &no_ceiling, "ada@example.com", other).unwrap();
         }
         assert!(count_guess(&limiter, &no_ceiling, "ada@example.com", other).is_err());
+    }
+
+    /// An address that used up its wrong passwords gets in again after 15
+    /// minutes, not earlier and not never (`deploy/README.md`, "Sign-in
+    /// protection").
+    #[test]
+    fn a_guesser_out_of_guesses_is_refused_for_fifteen_minutes() {
+        let limiter = Limiter::new();
+        let limits = login_limits(2, 0);
+        let max = limits.login_failures_per_account;
+        let guesser = Guesser::Address("203.0.113.9");
+        let before = Instant::now();
+        let guess = count_guess(&limiter, &limits, "ada@example.com", guesser).unwrap();
+        let _ = count_guess(&limiter, &limits, "ada@example.com", guesser).unwrap();
+        let after = Instant::now();
+        let refused = |at| {
+            limiter
+                .blocked_at(guess.bucket, &guess.own, max, at)
+                .is_some()
+        };
+        assert!(
+            refused(before + 15 * MINUTE - Duration::from_secs(1)),
+            "free again before 15 minutes"
+        );
+        assert!(
+            !refused(after + 15 * MINUTE),
+            "still refused after 15 minutes"
+        );
     }
 
     /// One delegated /56 is one guesser; another /56 is not.

@@ -778,6 +778,7 @@ mod tests {
     //! Einstellungen → Feedback against the stand-in API
     //! (FeedbackArea.test.tsx).
 
+    use crate::app::testkit::{click_node, click_role, id_of};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -911,11 +912,11 @@ mod tests {
         // The mark stays for the visit.
         assert!(harness.query_by_label("Neu").is_some());
         // "Mitgeschickt" opens on the line of what went along.
-        harness
-            .query_all_by_role_and_label(Role::DisclosureTriangle, "Mitgeschickt")
-            .next()
-            .expect("Mitgeschickt")
-            .click();
+        click_node(&mut harness, "Mitgeschickt", |h| {
+            h.query_all_by_role_and_label(Role::DisclosureTriangle, "Mitgeschickt")
+                .next()
+                .map(id_of)
+        });
         wait_for_label(&mut harness, "Web-App · Linux · 0.10.0 · Deutsch · /s/x");
     }
 
@@ -941,9 +942,7 @@ mod tests {
                 .query_by_role_and_label(Role::Link, "Feedback")
                 .is_some()
         );
-        harness
-            .get_by_role_and_label(Role::Button, "Feedback geben")
-            .click();
+        click_role(&mut harness, Role::Button, "Feedback geben");
         wait_for_label(&mut harness, "Wird mitgeschickt");
     }
 
@@ -965,9 +964,11 @@ mod tests {
         );
         let mut harness = launcher(&api, "/settings/feedback");
         wait_for_label(&mut harness, "Feedback konnte nicht geladen werden.");
-        harness
-            .get_by_role_and_label(Role::Button, gelabber_i18n::common::try_again())
-            .click();
+        click_role(
+            &mut harness,
+            Role::Button,
+            gelabber_i18n::common::try_again(),
+        );
         wait_for_label(&mut harness, "Du hast noch kein Feedback geschickt.");
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
@@ -982,15 +983,13 @@ mod tests {
         let mut harness = launcher(&api, "/settings/feedback");
         wait_for_label(&mut harness, "Erledigt");
         // The second entry's "Antworten" (the done one).
-        harness
-            .query_all_by_role_and_label(Role::Button, "Antworten")
-            .nth(1)
-            .expect("Antworten")
-            .click();
+        click_node(&mut harness, "Antworten", |h| {
+            h.query_all_by_role_and_label(Role::Button, "Antworten")
+                .nth(1)
+                .map(id_of)
+        });
         wait_for_label(&mut harness, "Deine Antwort");
-        harness
-            .get_by_role_and_label(Role::Button, "Senden")
-            .click();
+        click_role(&mut harness, Role::Button, "Senden");
         wait_for_label(&mut harness, "Schreib ein paar Worte.");
         let field = || {
             harness
@@ -1006,9 +1005,7 @@ mod tests {
             .expect("the field")
             .type_text("Firefox.");
         harness.run_steps(2);
-        harness
-            .get_by_role_and_label(Role::Button, "Senden")
-            .click();
+        click_role(&mut harness, Role::Button, "Senden");
         wait_for_label(&mut harness, "Firefox.");
         wait_for(&mut harness, "the form closes", |h| {
             h.query_by_label("Deine Antwort").is_none()
@@ -1076,10 +1073,7 @@ mod tests {
         wait_for(&mut harness, "the read call", |_| {
             reads.load(Ordering::SeqCst) > 0
         });
-        for _ in 0..30 {
-            harness.step();
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        crate::app::testkit::wait_until_idle(&mut harness);
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         assert!(harness.query_by_label("Neu").is_some());
     }
@@ -1111,11 +1105,11 @@ mod tests {
         let mut harness = launcher(&api, "/settings/feedback");
         wait_for_label(&mut harness, "Erledigt");
         let write = |harness: &mut egui_kittest::Harness<'_, crate::Launcher>, nth: usize| {
-            harness
-                .query_all_by_role_and_label(Role::Button, "Antworten")
-                .nth(nth)
-                .expect("Antworten")
-                .click();
+            click_node(harness, "Antworten", |h| {
+                h.query_all_by_role_and_label(Role::Button, "Antworten")
+                    .nth(nth)
+                    .map(id_of)
+            });
             wait_for_label(harness, "Deine Antwort");
             harness
                 .query_all_by_label("Deine Antwort")
@@ -1129,15 +1123,11 @@ mod tests {
                 .expect("the field")
                 .type_text("Noch etwas.");
             harness.run_steps(2);
-            harness
-                .get_by_role_and_label(Role::Button, "Senden")
-                .click();
+            click_role(harness, Role::Button, "Senden");
         };
         write(&mut harness, 0);
         wait_for_label(&mut harness, "Dieser Verlauf ist voll (200 Nachrichten).");
-        harness
-            .get_by_role_and_label(Role::Button, "Abbrechen")
-            .click();
+        click_role(&mut harness, Role::Button, "Abbrechen");
         wait_for(&mut harness, "the form closes", |h| {
             h.query_by_label("Deine Antwort").is_none()
         });
@@ -1161,16 +1151,7 @@ mod tests {
         wait_for(&mut harness, "the status", |_| {
             api.saw("GET /feedback/status")
         });
-        let start = std::time::Instant::now();
-        loop {
-            harness.step();
-            let route = harness.state_mut().app().unwrap().nav().route().path();
-            if route == "/settings/darstellung" {
-                break;
-            }
-            assert!(start.elapsed().as_secs() < 15, "still at {route}");
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        crate::app::testkit::wait_for_path(&mut harness, "/settings/darstellung");
         assert!(
             harness
                 .query_by_role_and_label(Role::Link, "Feedback")
