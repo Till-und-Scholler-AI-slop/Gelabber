@@ -149,9 +149,7 @@ async fn next_inbound(
     }
 }
 
-/// `dnd`: the client knows the presence status `d` (#590); other clients
-/// hear Do not disturb as online.
-pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dnd: bool) {
+pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let user = &session.user;
     let (tx, mut rx) = mpsc::channel(super::hub::OUTBOUND_CAPACITY);
     let (conn, mut revoked) = state
@@ -161,9 +159,6 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
     let Some(recheck) = state.gateway.recheck_signal(conn).await else {
         return;
     };
-    if dnd {
-        state.gateway.allow_dnd(conn).await;
-    }
     // The upgrade itself just checked the session.
     let mut checked = Instant::now();
     // Fast path for the session's end; `lock_live` enforces it as well. The
@@ -329,7 +324,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession, dn
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
-                let Ok(batch) = take_batch(frame, &mut rx, dnd, user.id) else { break };
+                let Ok(batch) = take_batch(frame, &mut rx, user.id) else { break };
                 match deliver(&state, &session, user.id, conn, &mut sink, batch, &mut rosters).await {
                     Ok(true) => checked = Instant::now(),
                     Ok(false) => {}
@@ -616,13 +611,7 @@ async fn subscribe(
         warn!(error = err.code(), "presence announce on subscribe failed");
     }
     let presence = match state.gateway.presence_snapshot(server_id).await {
-        Ok(snap) => {
-            let dnd = state.gateway.knows_dnd(conn).await;
-            Some(client_frame(
-                ServerFrame::presence_snap(server_id, snap),
-                dnd,
-            ))
-        }
+        Ok(snap) => Some(ServerFrame::presence_snap(server_id, snap)),
         Err(err) => {
             warn!(error = err.code(), "presence snapshot on subscribe failed");
             None
@@ -848,24 +837,18 @@ type Scope = (Uuid, Option<Uuid>);
 /// something happened there.
 type Rosters = HashMap<Uuid, Vec<VoiceEntry>>;
 
-/// The frame as this client can take it (see [`run`]'s `dnd`).
-fn client_frame(frame: ServerFrame, dnd: bool) -> ServerFrame {
-    if dnd { frame } else { frame.without_dnd() }
-}
-
 /// Frames queued for the socket of `user`, each as they may read it,
 /// without those not for them ([`ServerFrame::for_user`]): possibly none.
 fn take_batch(
     first: ServerFrame,
     rx: &mut mpsc::Receiver<ServerFrame>,
-    dnd: bool,
     user: Uuid,
 ) -> Result<Vec<(ServerFrame, String)>, ApiError> {
     let mut batch = Vec::new();
     let mut bytes = 0;
     let mut next = Some(first);
     while let Some(frame) = next {
-        if let Some(frame) = client_frame(frame, dnd).for_user(user) {
+        if let Some(frame) = frame.for_user(user) {
             let json = to_json(&frame)?;
             bytes += json.len();
             batch.push((frame, json));

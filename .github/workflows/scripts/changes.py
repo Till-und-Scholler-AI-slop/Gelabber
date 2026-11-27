@@ -11,7 +11,9 @@ import sys
 
 CI = '.github/workflows/ci.yml'
 AREAS = {
-    'backend': ('backend/', 'rust-toolchain.toml', '.dockerignore', CI),
+    # previous_release.sh picks and checks the upgrade test's release in the rust job.
+    'backend': ('backend/', 'rust-toolchain.toml', '.dockerignore', CI,
+                '.github/workflows/scripts/previous_release.sh'),
     # The emoji data is generated into the backend, the web client and the
     # desktop app, and checked in the web job; landingImage.test.mjs reads the
     # drawn preview the landing page must not show; ci-fault-loop.checks.mjs
