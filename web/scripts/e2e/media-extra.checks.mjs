@@ -380,7 +380,7 @@ for (const [name, owner, code] of [
 
 // GEL-460: a passing retry keeps its step times, so a slow one that still
 // passes says which step took its time.
-async function sdpRetryRow(firstFrameMs) {
+async function sdpRetryRow(firstFrameMs, { evidenceFails = false } = {}) {
   const clock = { now: 10_000 };
   const flows = {
     owner: {
@@ -407,8 +407,11 @@ async function sdpRetryRow(firstFrameMs) {
   };
   const actor = (name) => ({
     page: {
-      evaluate: async (fn) =>
-        fn.name === "samplePublicationFlow" ? flows[name] : undefined,
+      evaluate: async (fn) => {
+        if (fn.name !== "samplePublicationFlow") return undefined;
+        if (evidenceFails) throw new Error("evidence-read-failed");
+        return flows[name];
+      },
     },
   });
   const snapshot = {
@@ -504,4 +507,11 @@ test("a passing Live retry keeps its step times, and a slow one its raw records 
   assert.equal(slow.retrySteps.firstFrame, 4_465);
   assert.equal(slow.publisherLive.rpc.length, 2);
   assert.equal(slow.subscriberLive.consumers.length, 1);
+});
+test("a Live retry whose evidence cannot be read still passes, with null steps", async () => {
+  const row = await sdpRetryRow(4_465, { evidenceFails: true });
+  assert.equal(row.retrySteps.produceSent, null);
+  assert.equal(row.retrySteps.consumerArrived, null);
+  assert.equal(row.retrySteps.firstFrame, 4_465);
+  assert.equal(row.publisherLive, null);
 });

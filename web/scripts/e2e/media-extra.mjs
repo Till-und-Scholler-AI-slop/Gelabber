@@ -421,16 +421,17 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           ...options,
           color: [30, 220, 30],
         });
+        // Evidence only: a read that fails leaves nulls, never a failed row.
         const publisherLive = await nativeEvaluate(
           f.owner,
           samplePublicationFlow,
           { kind: "s" },
-        );
+        ).catch(() => null);
         const subscriberLive = await nativeEvaluate(
           f.member,
           samplePublicationFlow,
           { kind: "s" },
-        );
+        ).catch(() => null);
         return {
           retrySteps: retrySteps(
             retryClickedAt,
