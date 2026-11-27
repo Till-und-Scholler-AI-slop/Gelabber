@@ -193,8 +193,8 @@ def main(argv):
         try:
             run = find(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'], git('rev-parse', 'HEAD^{tree}'),
                        '--candidate' in argv)
-        except Exception as error:  # noqa: BLE001 - any doubt runs the changed areas
-            print(f'::warning::no reuse, running the changed areas: {error}', file=sys.stderr)
+        except Exception as error:  # noqa: BLE001 - any doubt means no reuse
+            print(f'::warning::no reuse: {error}', file=sys.stderr)
             run = None
         print(f'run={run or ""}')
     elif argv[:1] == ['find-queue']:

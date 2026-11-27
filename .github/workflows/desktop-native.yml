@@ -144,7 +144,7 @@ jobs:
           df -h / /mnt
 
       - name: Save libwebrtc package
-        if: steps.cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /mnt/libwebrtc-package
@@ -289,7 +289,7 @@ jobs:
           ) | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Save libwebrtc package
-        if: steps.cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: C:\libwebrtc-package
@@ -317,8 +317,6 @@ jobs:
     name: Native core (Linux x64)
     needs: libwebrtc-linux
     if: inputs.prebuilt_run == ''
-    # A newer push to a pull request cancels this job of the older run (ci.yml
-    # cancels the whole run, libwebrtc included). Branch runs are never cancelled.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -592,7 +590,6 @@ jobs:
     name: Native core and app (Windows x64)
     needs: libwebrtc-windows
     if: inputs.prebuilt_run == ''
-    # As core-linux: a newer push to a pull request cancels the older run's.
     runs-on: windows-2022
     timeout-minutes: 120
     defaults:
