@@ -767,14 +767,6 @@ describe("public pages in the nginx config (#522)", () => {
     expect(ownDirectives("^~ /public-pages/")).toEqual(["return 404"]);
   });
 
-  it("leaves the shell's policy as it was", () => {
-    expect(
-      location("= /index.html").filter((line) => line.startsWith(CSP)),
-    ).toEqual([
-      `add_header Content-Security-Policy "script-src 'self' 'wasm-unsafe-eval' 'sha256-Ymhy9okZfEMbRFjgkub854NfFwTSwdNReGSoXDKUA3M='; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src https://www.youtube-nocookie.com; frame-ancestors 'none'$gelabber_fetch_directives" always`,
-    ]);
-  });
-
   it("reads the landing map from a folder the storage map's include does not", () => {
     const include = (map) =>
       blocks

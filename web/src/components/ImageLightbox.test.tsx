@@ -5,8 +5,8 @@ import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import { ImageLightbox } from "./ImageLightbox.tsx";
 import { isPlainClick } from "./plainClick.ts";
 
-// Markup only. Stepping through a gallery, Esc and the focus on
-// "Schließen" are in ImageLightbox.browser.test.tsx.
+// Markup only. Esc and the focus on "Schließen" are in
+// ImageLightbox.browser.test.tsx; the backdrop click has no test.
 describe("image lightbox", () => {
   const html = renderToStaticMarkup(
     <ImageLightbox
@@ -41,6 +41,46 @@ describe("image lightbox", () => {
     );
     expect(preview).toContain('src="/api/previews/p/i"');
     expect(preview).not.toContain("Herunterladen");
+  });
+
+  it("shows no stepping for a single picture", () => {
+    expect(html).not.toContain("Vorheriges");
+    expect(html).not.toContain("Nächstes");
+    expect(html).not.toMatch(/\d+ \/ \d+/);
+  });
+});
+
+// The first render only: stepping itself (← / →, the buttons) is in
+// ImageLightbox.browser.test.tsx; a swipe has no test.
+describe("image lightbox with a gallery", () => {
+  const picture = (id: string, filename: string) => ({
+    id,
+    src: attachmentUrl(id),
+    filename,
+    download: attachmentDownloadUrl(id),
+  });
+  const gallery = [
+    picture("a", "erstes.png"),
+    picture("b", "zweites.png"),
+    picture("c", "drittes.png"),
+  ];
+  const html = renderToStaticMarkup(
+    <ImageLightbox image={gallery[1]!} gallery={gallery} onClose={() => {}} />,
+  );
+
+  it("offers previous, next and the count for several pictures", () => {
+    expect(html).toMatch(/<button [^>]*aria-label="Vorheriges Bild"/);
+    expect(html).toMatch(/<button [^>]*aria-label="Nächstes Bild"/);
+    expect(html).toContain(">2 / 3<");
+  });
+
+  it("opens on the picture asked for, not on the gallery's first", () => {
+    expect(html).toContain('aria-label="Bild 2 von 3: zweites.png"');
+    expect(html.match(/<img [^>]*>/g)).toHaveLength(1);
+    expect(html).toContain('src="/api/attachments/b"');
+    expect(html).toContain('alt="zweites.png"');
+    expect(html).toContain('href="/api/attachments/b?download=1"');
+    expect(html).not.toMatch(/erstes\.png|drittes\.png/);
   });
 });
 
