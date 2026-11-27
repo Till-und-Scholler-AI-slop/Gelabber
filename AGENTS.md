@@ -115,8 +115,10 @@ Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
   ones. The database role needs `CREATEDB` for `sqlx::test`.
 
 Deployment tests: `python3 -m unittest discover -s deploy/compose/tests` (and
-`-s deploy/tools/tests`); they need PyYAML, which the CI runner's system
-Python has.
+`-s deploy/tools/tests`); they need the PyYAML that
+`deploy/compose/tests/requirements.txt` pins. CI installs it with
+`python3 -m pip install --require-hashes --target <dir> -r deploy/compose/tests/requirements.txt`
+and runs the tests with `PYTHONPATH=<dir>`; a virtual environment does the same.
 
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
 `npm test`, `npm run test:checks`, `npm run build`.
