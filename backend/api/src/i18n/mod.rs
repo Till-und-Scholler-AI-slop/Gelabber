@@ -24,8 +24,9 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
-/// The language an account reads: `de` or `en`. Existing accounts and
-/// clients older than v0.10 are German.
+/// The language an account reads: `de` or `en`. Accounts from before the
+/// choice existed, and sign-ups with neither a language nor a usable
+/// `Accept-Language`, are German.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "text", rename_all = "lowercase")]

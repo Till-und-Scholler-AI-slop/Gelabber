@@ -86,8 +86,7 @@ impl Device {
     }
 }
 
-/// The parenthesis after the native app's version; an app older than v0.10
-/// sends none.
+/// The parenthesis after the native app's version.
 fn desktop_os(rest: &str) -> DeviceOs {
     let named = rest
         .split_once('(')
@@ -268,14 +267,6 @@ mod tests {
         ] {
             assert_eq!(device(agent), (DeviceClient::Desktop, os), "{agent}");
         }
-    }
-
-    #[test]
-    fn an_older_native_app_has_no_system() {
-        assert_eq!(
-            device("Gelabber-Desktop/0.9.3"),
-            (DeviceClient::Desktop, DeviceOs::Other)
-        );
     }
 
     #[test]
