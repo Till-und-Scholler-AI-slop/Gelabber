@@ -427,21 +427,32 @@ async function record(out) {
 }
 
 /**
+ * A gateway frame's kind: `op`, its `t`, and where one `op` and `t` stand
+ * for two frames, what tells them apart: an `e` on a channel (`c`) or on the
+ * server (a member removed), a `p` snapshot (`snap`) or a single update.
+ */
+function frameKind(frame) {
+  let kind = frame.op;
+  if (typeof frame.t === "string") kind += `:${frame.t}`;
+  if (frame.op === "e") kind += "c" in frame ? ":channel" : ":server";
+  if (frame.op === "p") kind += "snap" in frame ? ":snapshot" : ":update";
+  return kind;
+}
+
+/**
  * Keys and value types, not values: what the client's models depend on.
  * Every path with the type found there (`.messages[].author.name string`).
  * The elements of an array count together, whatever their number, except
- * gateway frames: their paths go by `op` and `t` (`[e:d].c string`), so one
- * kind of frame losing a key another kind keeps still shows. Other mixed
- * lists (messages with and without a reply) are pooled.
+ * gateway frames: their paths go by kind (`frameKind`, `[e:d:channel].c
+ * string`), so one kind of frame losing a key another kind keeps still
+ * shows. Other mixed lists (messages with and without a reply) are pooled.
  */
 function shape(value, path = "", out = new Set()) {
   if (Array.isArray(value)) {
     out.add(`${path} array`);
     for (const element of value) {
       const kind =
-        element && typeof element.op === "string"
-          ? `${element.op}${typeof element.t === "string" ? `:${element.t}` : ""}`
-          : "";
+        element && typeof element.op === "string" ? frameKind(element) : "";
       shape(element, `${path}[${kind}]`, out);
     }
   } else if (value && typeof value === "object") {
@@ -499,10 +510,11 @@ async function normalize(dir) {
     const key = instant(time).join(".");
     if (key !== last) rank += 1;
     last = key;
-    // Whole seconds, as the client writes them back.
+    // With microseconds, as the server sends times (the client writes a
+    // fraction back as it came, and drops only a fraction of zero).
     at.set(
       time,
-      new Date(base + rank * 1000).toISOString().replace(".000Z", "Z"),
+      new Date(base + rank * 1000).toISOString().replace(".000Z", ".000001Z"),
     );
   }
   for (const name of names)
@@ -564,6 +576,14 @@ if (check) {
     await rm(fresh, { recursive: true, force: true });
   }
 } else {
+  // A commit of this repository, or nothing claimed.
+  const apiBuild = process.env.GELABBER_API_BUILD
+    ? execFileSync(
+        "git",
+        ["rev-parse", "--verify", `${process.env.GELABBER_API_BUILD}^{commit}`],
+        { cwd: here, encoding: "utf8" },
+      ).trim()
+    : "not given";
   // Before the fixtures change: the recorder's own tree.
   const describe = execFileSync(
     "git",
@@ -591,13 +611,10 @@ if (check) {
     .filter((f) => f.endsWith(".json"))
     .sort())
     files[file] = fnv1a(await readFile(join(committed, file)));
-  // The tree of this script, and the API's build when the one recording
-  // says it (GELABBER_API_BUILD): the recorder cannot ask the API.
-  const manifest = {
-    recorder_tree: describe,
-    api_build: process.env.GELABBER_API_BUILD || "not given",
-    files,
-  };
+  // The tree of this script, and the commit the API was built from when
+  // the one recording names it (GELABBER_API_BUILD): the recorder cannot
+  // ask the API.
+  const manifest = { recorder_tree: describe, api_build: apiBuild, files };
   await writeFile(
     join(committed, "recorded.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
