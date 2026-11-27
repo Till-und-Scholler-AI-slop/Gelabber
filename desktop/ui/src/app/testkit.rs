@@ -593,19 +593,26 @@ pub fn click_now(
         "{what} at {rect:?} lies outside the window {window:?}"
     );
     harness.hover_at(rect.center());
-    harness.step();
+    // egui gives a press to what its hit test found for the pointer, from
+    // the frame before. Read that hit in a frame whose tree is the one of
+    // the frame before it, so it comes from the widgets the press meets.
+    // (After the press it cannot be read: a click that closes a menu runs a
+    // second pass without the press.)
+    let mut last = None;
+    step_until(harness, |h| {
+        let print = fingerprint(h);
+        if last.replace(print) == Some(print) {
+            Ok(())
+        } else {
+            Err(format!("{what} to lie still under the pointer"))
+        }
+    });
     let node = node_by_id(harness, id)
         .unwrap_or_else(|| panic!("{what} at {rect:?} went away under the pointer"));
     assert_eq!(node.rect(), rect, "{what} moved under the pointer");
     let around = with_ancestors(&node);
     let disabled = node.accesskit_node().is_disabled();
-    let inside: Vec<egui::accesskit::NodeId> = harness
-        .query_all(By::new())
-        .filter(|n| with_ancestors(n)[1..].contains(&id))
-        .map(id_of)
-        .collect();
-    // Whether the node takes a click itself, in the frame the press is
-    // checked against.
+    // Whether the node takes a click itself.
     let clickable = harness.ctx.viewport(|v| {
         v.prev_pass.widgets.layers().any(|(_, widgets)| {
             widgets
@@ -613,25 +620,26 @@ pub fn click_now(
                 .any(|w| w.id.accesskit_id() == id && w.sense.senses_click())
         })
     });
-    node.click();
-    harness.step();
-    // What egui gave the press: the node or one in it; one it lies in only
-    // when the node takes no click itself (a label in a row, a disabled
-    // button).
     let hit = harness
         .ctx
         .viewport(|v| v.hits.click.map(|w| w.id.accesskit_id()));
-    let lands = hit.is_some_and(|hit| {
-        hit == id || inside.contains(&hit) || ((!clickable || disabled) && around.contains(&hit))
-    });
     let hit_node = hit.and_then(|hit| node_by_id(harness, hit));
+    // The node or one in it; one it lies in only when the node takes no
+    // click itself (a label in a row); for a disabled node, which takes
+    // none, what lies around it (a dialog's backdrop), not a neighbour.
+    let lands = hit == Some(id)
+        || hit_node.is_some_and(|n| with_ancestors(&n)[1..].contains(&id))
+        || (!clickable && hit.is_some_and(|hit| around.contains(&hit)))
+        || (disabled && hit_node.is_some_and(|n| n.rect().contains_rect(rect)));
     if !lands {
         let other = hit_node.map(|n| format!("{:?} at {:?}", n.accesskit_node().label(), n.rect()));
         panic!(
-            "the click on {what} at {rect:?} landed on {}",
+            "a click on {what} at {rect:?} would land on {}",
             other.unwrap_or_else(|| format!("{hit:?}"))
         );
     }
+    node.click();
+    harness.step();
 }
 
 /// The accesskit id of `node`, for a [`click_node`] pick.
