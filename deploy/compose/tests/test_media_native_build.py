@@ -28,15 +28,18 @@ smoke = load_script("check-media-image")
 
 class NativeBootstrap(unittest.TestCase):
     def test_canonical_debian_lock_selects_existing_compiler_and_python_payloads(self):
+        # The versions come from the lock; a lock update must not need a test edit.
+        selected = {}
         for architecture, triplet in (("x86_64", "x86-64-linux-gnu"), ("aarch64", "aarch64-linux-gnu")):
             packages = dict(value.split("=", 1) for value in build.debian_packages(architecture))
-            self.assertEqual(len(packages), 16)
-            self.assertEqual(packages["gcc"], "4:14.2.0-1")
+            self.assertTrue(all(packages.values()), packages)
             self.assertEqual(packages["gcc-14-" + triplet], packages["gcc-14"])
             self.assertEqual(packages["g++-14-" + triplet], packages["g++-14"])
-            for package in ("python3.13", "python3.13-minimal", "python3.13-venv",
-                            "libpython3.13-minimal", "libpython3.13-stdlib"):
-                self.assertEqual(packages[package], "3.13.5-2+deb13u5")
+            python = {packages[package] for package in ("python3.13", "python3.13-minimal", "python3.13-venv",
+                                                         "libpython3.13-minimal", "libpython3.13-stdlib")}
+            self.assertEqual(len(python), 1, "one Python, not a mix of point releases")
+            selected[architecture] = {name.replace(triplet, "TRIPLET"): version for name, version in packages.items()}
+        self.assertEqual(selected["x86_64"], selected["aarch64"])
         with self.assertRaisesRegex(ValueError, "unsupported"):
             build.debian_packages("armv7l")
 

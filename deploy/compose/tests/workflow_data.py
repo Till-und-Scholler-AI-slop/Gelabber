@@ -1,7 +1,8 @@
 """The workflows under .github/workflows as parsed data, for the tests.
 
-PyYAML reads YAML 1.1, where a bare `on` is the boolean true; `load` puts
-the triggers back under 'on'.
+PyYAML comes with the runner's system Python; the deploy job installs
+nothing for it. It reads YAML 1.1, where a bare `on` is the boolean true;
+`load` puts the triggers back under 'on'.
 """
 import functools
 from pathlib import Path
