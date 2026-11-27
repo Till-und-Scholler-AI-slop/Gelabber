@@ -131,7 +131,20 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       "voice-only-duplex-audio-did-not-progress",
       options.budget,
     );
-    for (const s of after) {
+    // Packets arrive before the browser has attached the received track to
+    // its audio element: wait until each side plays its one source, then
+    // check that sample once (a second path for the source still fails).
+    const attached = await until(
+      () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
+      (states) =>
+        states.every(
+          (s) =>
+            s.roomAudio.perSource.length === 1 && s.roomAudio.perSource[0] > 0,
+        ),
+      "voice-only-duplex-playback-not-attached",
+      options.budget,
+    );
+    for (const s of attached) {
       check(
         s.roomAudio.perSource.length === 1 &&
           s.roomAudio.perSource[0] === 1 &&
@@ -142,7 +155,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           audioSenders(s).length === 1 &&
           audioSenders(s)[0].enabled,
         "voice-only-source-duplicate-or-unexpected-capture",
-        { before, after },
+        { before, after, attached },
       );
       const paths = activePeers(s).flatMap((p) => p.selected);
       check(
@@ -161,6 +174,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
     return {
       before,
       after,
+      attached,
       limitation: "native duplex transport, not human intelligibility",
     };
   });

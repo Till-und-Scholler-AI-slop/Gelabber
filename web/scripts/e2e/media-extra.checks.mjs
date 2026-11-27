@@ -314,3 +314,40 @@ test("actual audio restore bounds a pending evaluation and quarantines the page 
   assert.equal(watcher.nativeEvaluationUnusable, true);
   assert.equal(abortCloses, 1);
 });
+
+import { sample, voiceOnlyControl } from "./voice-only-control.mjs";
+const member = [sample({ packets: 10 }), sample({ packets: 20 })];
+test("voice-only waits for the owner's playback that attaches after its packets", async () => {
+  const r = await voiceOnlyControl({
+    owner: [
+      sample({ packets: 10 }),
+      // The packets grew, the playback is not attached yet: one sample later.
+      sample({ packets: 20, plays: 0 }),
+      sample({ packets: 20 }),
+    ],
+    member,
+  });
+  assert.equal(r.error, undefined);
+  assert.deepEqual(r.result.attached[0].roomAudio.perSource, [1]);
+});
+for (const [name, late, code] of [
+  [
+    "a second path for the source",
+    { plays: 2 },
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "a foreign source",
+    { foreign: 1 },
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  ["no playback ever", { plays: 0 }, "voice-only-duplex-playback-not-attached"],
+])
+  test(`voice-only fails on ${name}`, async () => {
+    const r = await voiceOnlyControl({
+      owner: [sample({ packets: 10 }), sample({ packets: 20, ...late })],
+      member,
+    });
+    assert.ok(r.error instanceof CheckFailure, String(r.error));
+    assert.equal(r.error.message, code);
+  });
