@@ -400,8 +400,11 @@ jobs:
           rm -rf "$fetch"
           test -f /mnt/libwebrtc-package/lib/libwebrtc.a
 
+      # rustfmt: mediasoup-sys formats the code it generates.
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
+        with:
+          components: rustfmt
 
       - name: Native build tools
         run: |
