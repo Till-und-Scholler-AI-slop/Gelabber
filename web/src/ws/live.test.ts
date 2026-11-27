@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setLocale } from "../i18n/locale.ts";
 import {
+  TYPING_BAR_PX,
   TYPING_IDLE_MS,
   TYPING_REFRESH_MS,
   createTypingSender,
@@ -58,6 +59,7 @@ describe("presence store", () => {
     );
     expect(groups.map((g) => g.group)).toEqual(["o", "i", "x"]);
     expect(groups[0]?.members[0]?.name).toBe("Ada");
+    expect(TYPING_BAR_PX).toBe(28);
   });
 
   it("lists do not disturb with the online members (#590)", () => {
