@@ -35,10 +35,16 @@ options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::T
 updated="${RUNNER_TEMP:-/tmp}/apt-install-updated"
 
 # Ubuntu 24.04 and later keep the Ubuntu sources in deb822 form, 22.04 in the
-# classic list. The other repositories' package lists stay where they are.
-ubuntu_sources=$apt_etc/sources.list.d/ubuntu.sources
-[ -f "$ubuntu_sources" ] || ubuntu_sources=$apt_etc/sources.list
-if [ -f "$ubuntu_sources" ]; then
+# classic list. A file without entries (24.04's sources.list holds only a
+# comment) does not count. The other repositories' package lists stay.
+ubuntu_sources=
+for source in "$apt_etc/sources.list.d/ubuntu.sources" "$apt_etc/sources.list"; do
+  if [ -f "$source" ] && grep -Eq '^[[:space:]]*(deb[[:space:]]|URIs:)' "$source"; then
+    ubuntu_sources=$source
+    break
+  fi
+done
+if [ -n "$ubuntu_sources" ]; then
   options+=(-o "Dir::Etc::SourceList=$ubuntu_sources" -o Dir::Etc::SourceParts=/dev/null
             -o APT::Get::List-Cleanup=false)
   left_out=()
