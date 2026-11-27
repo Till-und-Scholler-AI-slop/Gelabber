@@ -1,4 +1,4 @@
-/* global process, document, window, console, getComputedStyle, requestAnimationFrame */
+/* global process, document, window, console, getComputedStyle, requestAnimationFrame, setTimeout */
 // Local native-browser keyboard and viewport acceptance. Fake capture is used
 // for the real local call; this does not prove physical iOS/Omarchy behavior.
 import assert from "node:assert/strict";
@@ -391,68 +391,77 @@ try {
         viewport: { width: 1280, height: 720 },
       });
       contexts.push(desk);
-      const page = await desk.newPage();
-      page.setDefaultTimeout(12_000);
-      page.on("pageerror", (error) => errors.push(error.message));
-      await page.goto(`${base}${chatPath}`);
-      const link = page.locator(`a.channel-row-link[href="${chatPath}"]`);
-      const entry = (name) => page.getByRole("menuitem", { name, exact: true });
-      const menu = page.getByRole("menu", { name: /^#/ });
-      await link.focus();
-      await page.keyboard.press("Shift+F10");
-      await menu.waitFor();
-      await until(
-        () => focused(entry("Als gelesen markieren")),
-        Boolean,
-        "row-menu-first-entry",
-      );
-      await page.keyboard.press("ArrowDown");
-      const mute = entry("Stummschalten");
-      assert.ok(await focused(mute), "↓ did not reach Stummschalten");
-      await page.keyboard.press("ArrowRight");
-      await until(
-        () => focused(entry("15 Minuten")),
-        Boolean,
-        "row-submenu-first-entry",
-      );
-      await page.keyboard.press("ArrowDown");
-      assert.ok(await focused(entry("1 Stunde")), "↓ in the submenu");
-      // Beside the menu, not held and clipped by it while it still grows.
-      const [box, sub] = await Promise.all([
-        menu.boundingBox(),
-        page.getByRole("menu", { name: "Stummschalten" }).boundingBox(),
-      ]);
-      assert.ok(
-        box && sub && sub.x >= box.x + box.width,
-        "the submenu is not beside the menu",
-      );
-      await page.screenshot({ path: `${output}/06c-row-submenu-keyboard.png` });
-      // Esc closes the submenu first, back on its entry; Ende and ↓ wrap.
-      await page.keyboard.press("Escape");
-      await entry("15 Minuten").waitFor({ state: "hidden" });
-      assert.ok(await focused(mute), "Esc lost the submenu's entry");
-      await page.keyboard.press("End");
-      assert.ok(
-        await focused(entry("Benachrichtigungseinstellungen…")),
-        "Ende did not reach the last entry",
-      );
-      await page.keyboard.press("ArrowDown");
-      assert.ok(
-        await focused(entry("Als gelesen markieren")),
-        "↓ did not wrap to the first entry",
-      );
-      await page.keyboard.press("Escape");
-      await menu.waitFor({ state: "hidden" });
-      assert.ok(await focused(link), "Esc did not return focus to the row");
-      // From the row's "…" too: the menu keys work anywhere in the row.
-      await link.hover();
-      const more = page.getByRole("button", { name: /^Aktionen für #/ });
-      await more.focus();
-      await page.keyboard.press("Shift+F10");
-      await menu.waitFor();
-      await page.keyboard.press("Escape");
-      await menu.waitFor({ state: "hidden" });
-      assert.ok(await focused(more), "Esc did not return focus to the …");
+      // A second device of the member's: closed with its check, or it stays
+      // at the chat's end and reads what later checks need unread.
+      try {
+        const page = await desk.newPage();
+        page.setDefaultTimeout(12_000);
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto(`${base}${chatPath}`);
+        const link = page.locator(`a.channel-row-link[href="${chatPath}"]`);
+        const entry = (name) =>
+          page.getByRole("menuitem", { name, exact: true });
+        const menu = page.getByRole("menu", { name: /^#/ });
+        await link.focus();
+        await page.keyboard.press("Shift+F10");
+        await menu.waitFor();
+        await until(
+          () => focused(entry("Als gelesen markieren")),
+          Boolean,
+          "row-menu-first-entry",
+        );
+        await page.keyboard.press("ArrowDown");
+        const mute = entry("Stummschalten");
+        assert.ok(await focused(mute), "↓ did not reach Stummschalten");
+        await page.keyboard.press("ArrowRight");
+        await until(
+          () => focused(entry("15 Minuten")),
+          Boolean,
+          "row-submenu-first-entry",
+        );
+        await page.keyboard.press("ArrowDown");
+        assert.ok(await focused(entry("1 Stunde")), "↓ in the submenu");
+        // Beside the menu, not held and clipped by it while it still grows.
+        const [box, sub] = await Promise.all([
+          menu.boundingBox(),
+          page.getByRole("menu", { name: "Stummschalten" }).boundingBox(),
+        ]);
+        assert.ok(
+          box && sub && sub.x >= box.x + box.width,
+          "the submenu is not beside the menu",
+        );
+        await page.screenshot({
+          path: `${output}/06c-row-submenu-keyboard.png`,
+        });
+        // Esc closes the submenu first, back on its entry; Ende and ↓ wrap.
+        await page.keyboard.press("Escape");
+        await entry("15 Minuten").waitFor({ state: "hidden" });
+        assert.ok(await focused(mute), "Esc lost the submenu's entry");
+        await page.keyboard.press("End");
+        assert.ok(
+          await focused(entry("Benachrichtigungseinstellungen…")),
+          "Ende did not reach the last entry",
+        );
+        await page.keyboard.press("ArrowDown");
+        assert.ok(
+          await focused(entry("Als gelesen markieren")),
+          "↓ did not wrap to the first entry",
+        );
+        await page.keyboard.press("Escape");
+        await menu.waitFor({ state: "hidden" });
+        assert.ok(await focused(link), "Esc did not return focus to the row");
+        // From the row's "…" too: the menu keys work anywhere in the row.
+        await link.hover();
+        const more = page.getByRole("button", { name: /^Aktionen für #/ });
+        await more.focus();
+        await page.keyboard.press("Shift+F10");
+        await menu.waitFor();
+        await page.keyboard.press("Escape");
+        await menu.waitFor({ state: "hidden" });
+        assert.ok(await focused(more), "Esc did not return focus to the …");
+      } finally {
+        await desk.close();
+      }
     },
   );
 
@@ -768,6 +777,17 @@ try {
         (count) => count === unreadBefore + 1,
         "clipped-message-viewport-remains-unread",
       );
+      // A read goes out 600 ms after the list sees the newest
+      // (useMarkRead), and nothing signals one that does not: hold the
+      // clipped list 900 ms, the window search-context uses, and count again.
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      assert.equal(
+        (await api(member, "/messages/unread")).body.find(
+          (row) => row.channel_id === textId,
+        ).unread_count,
+        unreadBefore + 1,
+        "clipped-message-viewport-remains-unread: read while clipped",
+      );
       await page.setViewportSize({ width: 390, height: 400 });
       await composer.fill("unsent short-height draft");
       const searchInput = page.getByRole("searchbox", {
@@ -929,6 +949,12 @@ try {
 // settle() also fails a run in which no check passed, such as a filter that
 // matches only an expected failure, or none.
 assert.deepEqual(
-  settle(EXPECTED_FAILURES, { passed: checks, failed: failures }),
+  settle(EXPECTED_FAILURES, {
+    passed: checks,
+    failed: failures,
+    included: (name) =>
+      !process.env.GELABBER_A11Y_ONLY ||
+      name.includes(process.env.GELABBER_A11Y_ONLY),
+  }),
   [],
 );

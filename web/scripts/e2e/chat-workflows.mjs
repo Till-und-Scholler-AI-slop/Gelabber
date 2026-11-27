@@ -153,11 +153,19 @@ try {
             newestDrawn: !!newest,
             newestOnScreen:
               !!rect && rect.top >= box.top && rect.bottom <= box.bottom + 1,
+            // What else a read needs (mayMarkRead): the app's own "at
+            // latest" (its jump button shows while it is false), a focused,
+            // visible page, and a list that has opened.
+            jumpToLatestShown: !!document.querySelector(".lr-jump-latest"),
+            focused: document.hasFocus(),
+            visibility: document.visibilityState,
+            listBusy: el.getAttribute("aria-busy") === "true",
           };
         });
       await until(atEnd, (state) => state.gap <= 1, "scroll-to-end");
-      // Its last sample says where the list stood: at the end with the newest
-      // on screen and still unread is the app's fault.
+      // Its last sample says where the list stood and what the app made of
+      // it: at the end, the newest on screen, no jump button, focused and
+      // visible, and still unread is the app's fault.
       await until(
         async () => ({
           ...(await channelState(member, channel)),

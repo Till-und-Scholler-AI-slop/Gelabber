@@ -56,3 +56,17 @@ test("a run in which no check passed fails, even with only expected failures", (
     ["no check passed"],
   );
 });
+
+test("a listed check that did not run fails the run, unless a filter left it out", () => {
+  assert.deepEqual(settle(expected, { passed: ["other check"], failed: [] }), [
+    "known check did not run: its expected failure (GEL-1) names no check of this run",
+  ]);
+  assert.deepEqual(
+    settle(expected, {
+      passed: ["other check"],
+      failed: [],
+      included: (name) => name.includes("other"),
+    }),
+    [],
+  );
+});

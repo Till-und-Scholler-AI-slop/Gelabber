@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runWithin } from "./run-within.mjs";
+/* global process, setTimeout */
 
 const never = () => new Promise(() => {});
 
@@ -37,3 +38,38 @@ test("a child that ends in time is not killed, and its exit code and output come
     { killed: false, code: 3, output: "broken\n" },
   );
 });
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test(
+  "a child killed when its time runs out takes the processes it started with it",
+  { skip: process.platform === "win32" && "process groups: Linux and macOS" },
+  async () => {
+    // The grandchild stands for a browser the check started; the child
+    // writes its pid first, and its time runs out on that.
+    const result = await runWithin(
+      [
+        "-e",
+        `const { spawn } = require("node:child_process");
+         const browser = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+         console.log("browser " + browser.pid);
+         setInterval(() => {}, 1000);`,
+      ],
+      { expired: ({ started }) => started },
+    );
+    assert.equal(result.killed, true);
+    const pid = Number(/browser (\d+)/.exec(String(result.output))?.[1]);
+    assert.ok(pid > 0, String(result.output));
+    // SIGKILL to the group is sent; wait until the kernel has taken it.
+    for (let i = 0; i < 500 && alive(pid); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(alive(pid), false, `pid ${pid} outlived its check`);
+  },
+);
