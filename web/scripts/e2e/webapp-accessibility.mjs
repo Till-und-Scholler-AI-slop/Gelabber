@@ -1,4 +1,4 @@
-/* global process, document, window, console, getComputedStyle */
+/* global process, document, window, console, getComputedStyle, requestAnimationFrame */
 // Local native-browser keyboard and viewport acceptance. Fake capture is used
 // for the real local call; this does not prove physical iOS/Omarchy behavior.
 import assert from "node:assert/strict";
@@ -31,7 +31,11 @@ const contexts = [],
 let owner, member, server;
 
 async function actor(label) {
-  const context = await browser.newContext({ hasTouch: engine === "chromium" });
+  // The labels below are German; the app follows the browser's language.
+  const context = await browser.newContext({
+    hasTouch: engine === "chromium",
+    locale: "de-DE",
+  });
   contexts.push(context);
   const page = await context.newPage();
   page.setDefaultTimeout(12_000);
@@ -501,25 +505,33 @@ try {
           .getByRole("heading", { name: "Darstellung", exact: true })
           .waitFor(),
       );
+      // A phone: the areas are a list, each area a page of its own with a
+      // way back to the list.
       await page.setViewportSize({ width: 390, height: 400 });
-      const appearance = nav.getByRole("button", {
-        name: "Darstellung",
+      await page.goto(`${base}/settings`);
+      const back = page.getByRole("button", {
+        name: "Alle Einstellungen",
         exact: true,
       });
-      await appearance.focus();
       for (const area of ["Themes", "Audio", "Video", "Benachrichtigungen"]) {
-        const button = nav.getByRole("button", { name: area, exact: true });
-        await tabTo(button);
+        const link = nav.getByRole("link", { name: area, exact: true });
+        await link.waitFor();
+        await tabTo(link);
         await page.keyboard.press("Enter");
         const heading = page.getByRole("heading", { name: area, exact: true });
         await heading.waitFor();
-        await heading.scrollIntoViewIfNeeded();
         await capture(`11-settings-${area}`);
-        assert.equal(await button.getAttribute("aria-current"), "page");
+        assert.ok(
+          await focused(heading),
+          `${area}: focus did not move to the area's heading`,
+        );
+        if (area === "Benachrichtigungen") break;
+        await tabTo(back);
+        await page.keyboard.press("Enter");
       }
       const firstControl = page
         .locator(
-          "#settings-content input, #settings-content select, #settings-content button",
+          ".settings-area input, .settings-area select, .settings-area button",
         )
         .first();
       await tabTo(firstControl);
@@ -603,7 +615,18 @@ try {
       await page.keyboard.press("Enter");
       const input = ownedRow.locator("textarea");
       await until(() => focused(input), Boolean, "own-message-edit-focus");
-      const editTop = await log.evaluate((el) => el.scrollTop);
+      // The row grows into the editor and the list keeps its anchor: read
+      // the position once it has held still for a few frames.
+      const editTop = await log.evaluate(async (el) => {
+        let still = 0;
+        let last = el.scrollTop;
+        while (still < 5) {
+          await new Promise(requestAnimationFrame);
+          still = el.scrollTop === last ? still + 1 : 0;
+          last = el.scrollTop;
+        }
+        return last;
+      });
       await page.keyboard.press("End");
       await page.keyboard.press("PageDown");
       assert.equal(
@@ -649,8 +672,9 @@ try {
         name: "Aktive Medien",
         exact: true,
       });
+      // The link names the state, the channel and, after it, the server.
       await dock
-        .getByRole("link", { name: "Verbunden: keyboard-call", exact: true })
+        .getByRole("link", { name: /^Verbunden: keyboard-call( · |$)/ })
         .waitFor();
       // SPA navigation preserves the actual call and its dock ownership.
       await page.setViewportSize({ width: 1280, height: 720 });
@@ -677,8 +701,14 @@ try {
         Boolean,
         "native-composer-send-with-call-dock",
       );
-      assert.ok(
-        (await log.evaluate((el) => el.clientHeight)) <= 16,
+      // The next step needs a history with no room to show a message: take
+      // the room the call bar and the composer leave it off the window.
+      const room = await log.evaluate((el) => el.clientHeight);
+      if (room > 16)
+        await page.setViewportSize({ width: 390, height: 400 - room + 8 });
+      await until(
+        () => log.evaluate((el) => el.clientHeight),
+        (height) => height <= 16,
         "fixture must have a clipped canonical viewport",
       );
       const unreadBefore = (await api(member, "/messages/unread")).body.find(
@@ -700,6 +730,7 @@ try {
         (count) => count === unreadBefore + 1,
         "clipped-message-viewport-remains-unread",
       );
+      await page.setViewportSize({ width: 390, height: 400 });
       await composer.fill("unsent short-height draft");
       const searchInput = page.getByRole("searchbox", {
         name: "In dieser Unterhaltung suchen",
@@ -767,31 +798,37 @@ try {
         exact: true,
       });
       await account.waitFor();
-      assert.ok(await focused(account.locator("#user-status-text")));
+      const field = account.locator("#user-status-text");
+      if (!(await focused(field))) {
+        // A touch screen (Chromium here has one) gets the bottom sheet,
+        // which starts on its title; Tab leads into the status field.
+        assert.ok(
+          await focused(
+            account.getByRole("heading", {
+              name: "Benutzerkonto",
+              exact: true,
+            }),
+          ),
+          "the account sheet does not start on its title",
+        );
+        await page.keyboard.press("Tab");
+      }
+      assert.ok(await focused(field), "the status field has no focus");
+      // The entries: the presence modes (#590), then the account's own.
+      const first = account
+        .locator('[role="menuitem"], [role="menuitemradio"]')
+        .first();
       await page.keyboard.press("ArrowDown");
-      assert.ok(
-        await focused(
-          account.getByRole("menuitem", {
-            name: "Profil bearbeiten",
-            exact: true,
-          }),
-        ),
-      );
+      assert.ok(await focused(first), "↓ from the status field");
       await page.keyboard.press("End");
       assert.ok(
         await focused(
           account.getByRole("menuitem", { name: "Abmelden", exact: true }),
         ),
+        "End",
       );
       await page.keyboard.press("ArrowDown");
-      assert.ok(
-        await focused(
-          account.getByRole("menuitem", {
-            name: "Profil bearbeiten",
-            exact: true,
-          }),
-        ),
-      );
+      assert.ok(await focused(first), "↓ round the end");
       await capture("14-account-popover");
       await page.keyboard.press("Escape");
       await account.waitFor({ state: "hidden" });
@@ -853,3 +890,5 @@ try {
   );
 }
 assert.deepEqual(failures, []);
+// A filter that matches no check must not pass with nothing run.
+assert.ok(checks.length > 0, "no check ran");

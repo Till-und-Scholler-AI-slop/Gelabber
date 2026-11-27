@@ -107,7 +107,8 @@ function answer(path, method, body) {
   if (
     path === "/api/dms" ||
     path === "/api/messages/unread" ||
-    path === "/api/notification-settings"
+    path === "/api/notification-settings" ||
+    path === "/api/users/me/blocks"
   )
     return [];
   if (path === "/api/notification-privacy") return { hide_content: false };
@@ -169,7 +170,7 @@ async function browse(options, ...inits) {
       path: join(out, files.has(url.pathname) ? url.pathname : "index.html"),
     });
   });
-  await context.routeWebSocket("**/ws", (socket) => {
+  await context.routeWebSocket(/\/ws(\?|$)/, (socket) => {
     socket.onMessage((raw) => {
       const frame = JSON.parse(raw);
       if (frame.op === "s")
@@ -445,11 +446,15 @@ const callBar = (page) =>
       colours: [document.querySelector(".user-panel"), dock].map(
         (element) => getComputedStyle(element).backgroundColor,
       ),
-      controls: [...dock.querySelectorAll("button")].map((button) => [
-        button.getAttribute("aria-label") ?? button.textContent,
-        button.getBoundingClientRect().height,
-        getComputedStyle(button).borderRadius,
-      ]),
+      // The status left of them is text that opens the connection (#521),
+      // not one of the controls.
+      controls: [...dock.querySelectorAll("button")]
+        .filter((button) => !button.closest(".voice-session-head"))
+        .map((button) => [
+          button.getAttribute("aria-label") ?? button.textContent,
+          button.getBoundingClientRect().height,
+          getComputedStyle(button).borderRadius,
+        ]),
     };
   });
 
@@ -569,9 +574,17 @@ try {
   console.log(
     "PASS: on a desktop the user panel and the call bar form one strip, its controls equally high",
   );
-  assert.deepEqual(problems, [], "the page reported errors");
+  // Turning the phone resizes the page; on a busy machine Chromium may then
+  // report a ResizeObserver loop, as in smoke-chat-scroll. Said, not failed.
+  const loop = "ResizeObserver loop completed with undelivered notifications.";
+  const loops = problems.filter((problem) => problem === loop).length;
+  assert.deepEqual(
+    problems.filter((problem) => problem !== loop),
+    [],
+    "the page reported errors",
+  );
   console.log(
-    `PASS: no page errors, ${browser.browserType().name()} ${browser.version()}`,
+    `PASS: no page errors${loops ? ` (besides ${loops} ResizeObserver loop notices)` : ""}, ${browser.browserType().name()} ${browser.version()}`,
   );
 } finally {
   await browser?.close();

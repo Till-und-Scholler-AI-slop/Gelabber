@@ -18,7 +18,7 @@
 // the newest message and its actions uncovered (#354).
 // Run in web/: node scripts/smoke-chat-scroll.mjs
 // GELABBER_CHAT_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
-/* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout */
+/* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout, localStorage */
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
@@ -136,7 +136,12 @@ function answer(path, method, unread) {
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
   if (path === "/api/messages/unread") return unread ? [unread] : [];
-  if (path === "/api/dms" || path === "/api/notification-settings") return [];
+  if (
+    path === "/api/dms" ||
+    path === "/api/notification-settings" ||
+    path === "/api/users/me/blocks"
+  )
+    return [];
   if (path === "/api/me/themes")
     return { version: 1, revision: 1, active: "dark", customThemes: [] };
   if (path.endsWith("/read") || method !== "GET")
@@ -279,7 +284,7 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
   const channelSubscribed = new Promise((resolve) => {
     subscribed = resolve;
   });
-  await context.routeWebSocket("**/ws", (socket) => {
+  await context.routeWebSocket(/\/ws(\?|$)/, (socket) => {
     gateway = socket;
     socket.onMessage((raw) => {
       const frame = JSON.parse(raw);
@@ -303,6 +308,9 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
       }),
     );
   await context.addInitScript(() => {
+    // This browser was already told about the desktop app; its one-time
+    // toast would sit where the toast case puts its own.
+    localStorage.setItem("gelabber.desktopApp.offered", "1");
     window.smokeErrors = [];
     window.addEventListener("error", (event) =>
       window.smokeErrors.push(event.message),

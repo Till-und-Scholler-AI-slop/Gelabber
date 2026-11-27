@@ -2,10 +2,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { nativeEvaluate, NativeInterfaceFailure } from "./native-evaluate.mjs";
-test("pending native evaluation is bounded, fails visibly, and never yields fabricated media data", async () => {
+test("pending native evaluation is bounded, fails visibly, and never yields fabricated media data", async (t) => {
+  // The mocked clock moves only on tick(): the evaluation stays pending for
+  // its whole budget and fails the moment the budget is spent, however
+  // slowly the machine runs.
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const actor = { page: { evaluate: () => new Promise(() => {}) } };
+  let outcome = "pending";
+  const evaluation = nativeEvaluate(actor, function sample() {}, undefined, 50);
+  evaluation.then(
+    () => (outcome = "resolved"),
+    () => (outcome = "rejected"),
+  );
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+  await settle();
+  t.mock.timers.tick(49);
+  await settle();
+  assert.equal(outcome, "pending", "the evaluation ended before its budget");
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(outcome, "rejected", "the evaluation outlived its budget");
   await assert.rejects(
-    nativeEvaluate(actor, function sample() {}, undefined, 2),
+    evaluation,
     (e) =>
       e instanceof NativeInterfaceFailure &&
       e.metrics.testError &&

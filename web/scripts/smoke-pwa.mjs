@@ -82,6 +82,8 @@ async function contextFor(
 ) {
   const context = await browser.newContext({
     ...device,
+    // The labels below are German; the app follows the browser's language.
+    locale: "de-DE",
     serviceWorkers: "allow",
   });
   // Isolated fixture responses; this smoke neither connects to a database nor
@@ -112,13 +114,21 @@ async function contextFor(
         ? { user, csrf_token: "a".repeat(64) }
         : path === "/api/dms"
           ? dms
-          : path === "/api/servers" || path === "/api/messages/unread"
+          : path === "/api/servers" ||
+              path === "/api/messages/unread" ||
+              path === "/api/dms/requests" ||
+              path === "/api/notification-settings" ||
+              path === "/api/users/me/blocks"
             ? []
-            : path === "/api/me/themes"
-              ? themes
-              : /^\/api\/channels\/[^/]+\/messages$/.test(path)
-                ? { messages: [], has_more: false }
-                : (dms.find((row) => path === `/api/dms/${row.id}`) ?? {});
+            : path === "/api/friends"
+              ? { friends: [], incoming: [], outgoing: [] }
+              : path === "/api/notification-privacy"
+                ? { hide_content: false }
+                : path === "/api/me/themes"
+                  ? themes
+                  : /^\/api\/channels\/[^/]+\/messages$/.test(path)
+                    ? { messages: [], has_more: false }
+                    : (dms.find((row) => path === `/api/dms/${row.id}`) ?? {});
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -157,6 +167,13 @@ const controlled = (page) =>
   );
 const installHeading = (page) =>
   page.getByRole("heading", { name: "Gelabber als App" });
+// Where signing in comes first, the panel sits behind this one line.
+const installEntry = (page) =>
+  page.getByText("Gelabber als App installieren", { exact: true });
+const openInstall = async (page) => {
+  await installEntry(page).click();
+  await installHeading(page).waitFor();
+};
 const installButton = (page) =>
   page.getByRole("button", { name: "App installieren", exact: true });
 const offerInstallation = (page) =>
@@ -348,7 +365,7 @@ async function androidInstallAndOffline() {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(url("/login"));
-  await installHeading(page).waitFor();
+  await openInstall(page);
   await controlled(page);
   assert.deepEqual(
     await violations(page),
@@ -504,7 +521,7 @@ async function manifestBehindAccessProxy() {
   try {
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${proxy.address().port}/login`);
-    await installHeading(page).waitFor();
+    await openInstall(page);
     await controlled(page);
     const cdp = await context.newCDPSession(page);
     const manifest = await cdp.send("Page.getAppManifest");
@@ -540,6 +557,7 @@ async function installPanelPlacement() {
   const ios = await contextFor(devices["iPhone 13"]);
   const iphone = await ios.newPage();
   await iphone.goto(url("/login"));
+  await openInstall(iphone);
   await iphone
     .getByText("Öffne Gelabber in Safari.", { exact: true })
     .waitFor();
@@ -568,11 +586,11 @@ async function installPanelPlacement() {
   const standalonePage = await installed.newPage();
   await standalonePage.goto(url("/settings"));
   await standalonePage
-    .getByRole("button", { name: "Darstellung", exact: true })
+    .getByRole("link", { name: "Darstellung", exact: true })
     .waitFor();
   assert.equal(
     await standalonePage
-      .getByRole("button", { name: "App", exact: true })
+      .getByRole("link", { name: "App", exact: true })
       .count(),
     0,
   );
@@ -585,7 +603,7 @@ async function installPanelPlacement() {
   await standaloneLogin
     .getByRole("heading", { name: "Anmelden", exact: true })
     .waitFor();
-  assert.equal(await installHeading(standaloneLogin).count(), 0);
+  assert.equal(await installEntry(standaloneLogin).count(), 0);
   await installedAnonymous.close();
   console.log("PASS: standalone mode shows no install UI");
 
@@ -597,8 +615,9 @@ async function installPanelPlacement() {
   await desktopPage
     .getByRole("heading", { name: "Anmelden", exact: true })
     .waitFor();
-  assert.equal(await installHeading(desktopPage).count(), 0);
+  assert.equal(await installEntry(desktopPage).count(), 0);
   await offerInstallation(desktopPage);
+  await openInstall(desktopPage);
   await installButton(desktopPage).waitFor();
   assert.equal(await desktopPage.getByText("Startbildschirm").count(), 0);
   await desktop.close();
@@ -609,7 +628,7 @@ async function installPanelPlacement() {
   });
   const settingsPage = await settings.newPage();
   await settingsPage.goto(url("/settings"));
-  await settingsPage.getByRole("button", { name: "App", exact: true }).click();
+  await settingsPage.getByRole("link", { name: "App", exact: true }).click();
   await installHeading(settingsPage).waitFor();
   assert.equal(
     await settingsPage.evaluate(
@@ -718,7 +737,9 @@ async function gatewayFor(context) {
   const sockets = new Set();
   const subscribed = new Set();
   const heads = new Map();
-  await context.routeWebSocket("**/ws", (socket) => {
+  // When each message was written, by its id: notifications carry it.
+  const written = new Map();
+  await context.routeWebSocket(/\/ws(\?|$)/, (socket) => {
     sockets.add(socket);
     socket.onMessage((raw) => {
       const frame = JSON.parse(raw);
@@ -745,6 +766,7 @@ async function gatewayFor(context) {
       const n = (heads.get(conversation.id) ?? 0) + 1;
       heads.set(conversation.id, n);
       const id = `00000000-0000-4000-8000-${String(n).padStart(8, "0")}${conversation.id.slice(-4)}`;
+      written.set(id, new Date().toISOString());
       const frame = JSON.stringify({
         op: "e",
         t: "c",
@@ -756,7 +778,7 @@ async function gatewayFor(context) {
           channel_id: conversation.id,
           author: conversation.peer,
           content,
-          created_at: new Date().toISOString(),
+          created_at: written.get(id),
           edited_at: null,
           attachments: [],
         },
@@ -764,6 +786,8 @@ async function gatewayFor(context) {
       for (const socket of sockets) socket.send(frame);
       return id;
     },
+    /** When message `id` was written. */
+    at: (id) => written.get(id),
   };
 }
 
@@ -855,18 +879,28 @@ async function messageNotifications() {
   await left(2);
   assert.deepEqual(await shown(), [
     {
-      title: "Ada · Ada",
+      title: "Ada · Direktnachricht",
       body: "Hallo",
       tag: `gelabber:${USER}:${ADA.id}`,
-      data: { path: `/d/${ADA.id}`, user: USER, message: hallo },
+      data: {
+        path: `/d/${ADA.id}`,
+        user: USER,
+        message: hallo,
+        at: gateway.at(hallo),
+      },
       silent: false,
       renotify: true,
     },
     {
-      title: "Grace · Grace",
+      title: "Grace · Direktnachricht",
       body: "Noch da?",
       tag: `gelabber:${USER}:${GRACE.id}`,
-      data: { path: `/d/${GRACE.id}`, user: USER, message: nochDa },
+      data: {
+        path: `/d/${GRACE.id}`,
+        user: USER,
+        message: nochDa,
+        at: gateway.at(nochDa),
+      },
       silent: false,
       renotify: true,
     },
@@ -878,8 +912,10 @@ async function messageNotifications() {
   const both = [`gelabber:${USER}:${ADA.id}`, `gelabber:${USER}:${GRACE.id}`];
   const second = await context.newPage();
   second.on("pageerror", (error) => errors.push(error.message));
-  await second.goto(url("/"));
-  await second.getByRole("heading", { name: "Hallo PWA" }).waitFor();
+  // Not the start page: signed in, it opens the last conversation, and a
+  // conversation on screen takes its notification away (checked below).
+  await second.goto(url("/settings/darstellung"));
+  await second.getByText("Kompakt", { exact: true }).first().waitFor();
   await second.waitForTimeout(500);
   assert.deepEqual(
     await tags(),
@@ -887,8 +923,9 @@ async function messageNotifications() {
     "a starting app window must not close the notifications on screen",
   );
   await second.goto(url("/settings"));
-  const signOut = second.getByRole("button", { name: "Abmelden", exact: true });
-  await signOut.waitFor();
+  await second
+    .getByRole("link", { name: "Darstellung", exact: true })
+    .waitFor();
   await second.waitForTimeout(500);
   assert.deepEqual(await tags(), both);
 
@@ -965,7 +1002,11 @@ async function messageNotifications() {
   assert.deepEqual(await violations(second), []);
 
   // Signing out in any window takes the account's notifications along.
-  await signOut.click();
+  // Sign-out is an entry of the menu under the avatar, which a phone keeps
+  // in the navigation drawer.
+  await second.getByRole("button", { name: /^Navigation öffnen/ }).click();
+  await second.locator(".user-panel-profile").first().click();
+  await second.getByRole("menuitem", { name: "Abmelden", exact: true }).click();
   await second
     .getByRole("heading", { name: "Anmelden", exact: true })
     .waitFor();

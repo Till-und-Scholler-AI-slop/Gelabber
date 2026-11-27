@@ -1,7 +1,7 @@
 // Lazy parts in a real engine, without a server: headless Chromium runs the
 // built app from a made-up origin; its files, /api and the gateway are
 // answered from here. It checks what the unit tests cannot see:
-//  - the first screen loads none of the lazy chunks, and the workspace
+//  - the first screen needs none of the lazy chunks, and the workspace
 //    fetches all of them once the browser is idle;
 //  - voice room, a settings area and the server settings render through
 //    their parts;
@@ -9,9 +9,9 @@
 //    place, with no automatic reload, and "Seite neu laden" recovers.
 // Run in web/: node scripts/smoke-lazy-parts.mjs
 // GELABBER_LAZY_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
-/* global process, console, window, URL */
+/* global process, console, window, URL, performance */
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,19 @@ import { chromium } from "playwright";
 import { build } from "vite";
 
 const web = fileURLToPath(new URL("..", import.meta.url));
+// Every lazy part of the app, by the module its chunk is named after: each
+// `lazyPart(() => import("./X.tsx")...)` in src. A new part joins by itself.
+const parts = [];
+for (const file of await readdir(join(web, "src"), { recursive: true })) {
+  if (!/\.tsx?$/.test(file) || /\.test\.tsx?$/.test(file)) continue;
+  const text = await readFile(join(web, "src", file), "utf8");
+  for (const [, module] of text.matchAll(
+    /lazyPart\(\s*\(\)\s*=>\s*import\("[^"]*\/(\w+)\.tsx?"\)/g,
+  ))
+    parts.push(module);
+}
+assert.ok(parts.length > 0, "found no lazyPart() in src");
+const partChunk = new RegExp(`/(${parts.join("|")})-[^/]*\\.js$`);
 const ORIGIN = "https://lazy.test";
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ME = id(6),
@@ -86,7 +99,8 @@ function answer(path) {
   if (
     path === "/api/dms" ||
     path === "/api/messages/unread" ||
-    path === "/api/notification-settings"
+    path === "/api/notification-settings" ||
+    path === "/api/users/me/blocks"
   )
     return [];
   if (path === "/api/notification-privacy") return { hide_content: false };
@@ -112,7 +126,7 @@ try {
     executablePath: process.env.GELABBER_LAZY_BROWSER_EXECUTABLE || undefined,
     headless: true,
   });
-  async function open(path, block) {
+  async function open(path, block, hold) {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       locale: "de-DE",
@@ -120,7 +134,11 @@ try {
     });
     const requested = [];
     const blocked = { on: !!block };
-    await context.route("**/*", (route) => {
+    let release;
+    const released = new Promise((resolve) => {
+      release = resolve;
+    });
+    await context.route("**/*", async (route) => {
       const url = new URL(route.request().url());
       if (url.origin !== ORIGIN) return route.abort();
       if (url.pathname.startsWith("/api/"))
@@ -129,13 +147,14 @@ try {
           body: JSON.stringify(answer(url.pathname)),
         });
       requested.push(url.pathname);
-      if (blocked.on && block.test(url.pathname))
+      if (blocked.on && block?.test(url.pathname))
         return route.fulfill({ status: 404, body: "gone" });
+      if (hold?.test(url.pathname)) await released;
       return route.fulfill({
         path: join(out, files.has(url.pathname) ? url.pathname : "index.html"),
       });
     });
-    await context.routeWebSocket("**/ws", (socket) =>
+    await context.routeWebSocket(/\/ws(\?|$)/, (socket) =>
       socket.onMessage((raw) => {
         const f = JSON.parse(raw);
         if (f.op === "s")
@@ -146,30 +165,51 @@ try {
     page.setDefaultTimeout(15_000);
     page.on("pageerror", (e) => problems.push(e.message));
     await page.goto(`${ORIGIN}${path}`);
-    return { context, page, requested, blocked };
+    return { context, page, requested, blocked, release };
   }
-  // 1. Text channel: no lazy chunk on the first screen, all of them once idle.
+  // 1. Text channel: the first screen needs no lazy chunk, and the
+  // workspace fetches all of them. The chunks are held back until the first
+  // screen is up; the idle preload may ask for them before that.
   {
-    const { context, page, requested } = await open(`/s/${SERVER}/c/${TEXT}`);
-    await page.locator(".lr-composer textarea").waitFor();
-    const early = requested.filter(
-      (p) =>
-        /VoiceRoom-|SettingsAreaContent-|ServerSettingsPage-|VoiceSettingsPanel-|EmojiPicker-/.test(
-          p,
-        ) && p.endsWith(".js"),
+    const { context, page, requested, release } = await open(
+      `/s/${SERVER}/c/${TEXT}`,
+      undefined,
+      partChunk,
     );
-    assert.deepEqual(early, [], "the first screen loaded lazy chunks");
-    await page.waitForTimeout(6000);
-    const late = requested.filter(
-      (p) =>
-        /VoiceRoom-|SettingsAreaContent-|ServerSettingsPage-|VoiceSettingsPanel-|EmojiPicker-/.test(
-          p,
-        ) && p.endsWith(".js"),
+    await page
+      .locator(".lr-composer textarea")
+      .waitFor()
+      .catch((error) => {
+        throw new Error(
+          `the first screen waits for a lazy chunk (asked for: ${requested.filter((p) => partChunk.test(p))})`,
+          { cause: error },
+        );
+      });
+    release();
+    // The workspace preloads every part once the browser is idle. On a
+    // timeout the comparison below names the parts that did not come.
+    await page
+      .waitForFunction(
+        (names) =>
+          names.every((name) =>
+            performance
+              .getEntriesByType("resource")
+              .some((entry) =>
+                new RegExp(`/${name}-[^/]*\\.js$`).test(entry.name),
+              ),
+          ),
+        parts,
+      )
+      .catch(() => {});
+    const late = requested.filter((p) => partChunk.test(p));
+    assert.deepEqual(
+      late.map((p) => /\/(\w+)-[^/]*$/.exec(p)[1]).sort(),
+      [...parts].sort(),
+      `idle preload fetched ${late}`,
     );
-    assert.equal(late.length, 5, `idle preload fetched ${late}`);
     console.log(
       "PASS: idle preload fetched",
-      late.map((p) => p.replace(/-.*/, "")).join(", "),
+      late.map((p) => /\/(\w+)-[^/]*$/.exec(p)[1]).join(", "),
     );
     await context.close();
   }
