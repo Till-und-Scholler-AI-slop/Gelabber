@@ -132,7 +132,7 @@ pub mod secret {
     const COLLECTION: &str = "org.freedesktop.Secret.Collection";
     const ITEM: &str = "org.freedesktop.Secret.Item";
     /// The longest a keyring call may take.
-    const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+    pub(super) const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 
     /// `(session, parameters, value, content type)`.
     type Secret = (OwnedObjectPath, Vec<u8>, Vec<u8>, String);
@@ -635,8 +635,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_hung_keyring_is_given_up() {
+        use std::sync::mpsc;
         use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
-        struct Hung;
+        /// Answers no OpenSession until the test is over.
+        struct Hung(std::sync::Mutex<mpsc::Receiver<()>>);
         #[zbus::interface(name = "org.freedesktop.Secret.Service")]
         impl Hung {
             fn open_session(
@@ -644,7 +646,7 @@ mod tests {
                 _algorithm: String,
                 _input: OwnedValue,
             ) -> (OwnedValue, OwnedObjectPath) {
-                std::thread::sleep(std::time::Duration::from_secs(8));
+                let _ = self.0.lock().unwrap().recv();
                 (
                     OwnedValue::try_from(Value::from("")).unwrap(),
                     ObjectPath::try_from("/s/1").unwrap().into(),
@@ -654,17 +656,31 @@ mod tests {
         let Some((_daemon, address)) = crate::platform::testing::private_bus("secrets-hung") else {
             return gelabber_testing::missing("dbus-daemon");
         };
+        let (release, held) = mpsc::channel::<()>();
         let _service = zbus::blocking::connection::Builder::address(address.as_str())
             .unwrap()
             .name("org.freedesktop.secrets")
             .unwrap()
-            .serve_at("/org/freedesktop/secrets", Hung)
+            .serve_at(
+                "/org/freedesktop/secrets",
+                Hung(std::sync::Mutex::new(held)),
+            )
             .unwrap()
             .build()
             .unwrap();
-        let start = std::time::Instant::now();
-        assert!(secret::SecretService::connect(Some(&address)).is_none());
-        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        // Dropped before the service: the held call ends with the test.
+        let _release = release;
+        // The give-up is the event: connecting returns after its own call
+        // timeout, with room for a busy machine, or the test fails here.
+        let give_up = secret::CALL_TIMEOUT * 5;
+        let (done, connected) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(secret::SecretService::connect(Some(&address)).is_some());
+        });
+        let connected = connected
+            .recv_timeout(give_up)
+            .expect("connecting to a hung keyring gave up");
+        assert!(!connected);
     }
 
     /// A keyring whose items can be locked away, like the Secret Service.

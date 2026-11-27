@@ -25,6 +25,9 @@ enum Command {
     Show(Notice),
     Close(String, bool),
     Clear(mpsc::Sender<()>),
+    /// Answered once the commands before it are done.
+    #[cfg(test)]
+    Settled(mpsc::Sender<()>),
 }
 
 #[derive(Default)]
@@ -320,6 +323,10 @@ fn work(
                 }
                 let _ = done.send(());
             }
+            #[cfg(test)]
+            Command::Settled(done) => {
+                let _ = done.send(());
+            }
         }
     }
 }
@@ -438,10 +445,15 @@ mod tests {
         }
     }
 
-    /// The user clicks notification 7, after another app's notification 3.
-    fn click(service: &Connection) {
-        // After the answer to Notify, as a real click comes.
-        std::thread::sleep(Duration::from_millis(200));
+    /// The user clicks notification 7, after another app's notification 3,
+    /// once the backend has taken the answer to Notify, as a real click
+    /// comes after the notification is shown.
+    fn click(backend: &Backend, service: &Connection) {
+        let (done, settled) = mpsc::channel();
+        backend.send(Command::Settled(done));
+        settled
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the backend took the answer to Notify");
         let emit = |member: &str, id: u32, text: &str| {
             service
                 .emit_signal(None::<&str>, PATH, SERVICE, member, &(id, text))
@@ -512,7 +524,7 @@ mod tests {
             panic!("not a notification");
         };
         assert_eq!(replaces, 7);
-        click(&service);
+        click(&backend, &service);
         assert_eq!(
             reported.recv_timeout(wait).unwrap(),
             ("gelabber:u1:c1".to_owned(), Some("token-1".to_owned()))

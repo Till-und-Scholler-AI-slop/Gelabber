@@ -733,7 +733,9 @@ mod tests {
         };
         pass(&mut platform, &mut app, egui::vec2(900.0, 700.0));
         assert_eq!(platform.stored.window.unwrap().width, 900.0);
-        std::thread::sleep(Duration::from_millis(600));
+        // Half a second later on the platform's own clock; the input's time
+        // stays at 10 s.
+        platform.next_tick = Some(Instant::now());
         pass(&mut platform, &mut app, egui::vec2(1000.0, 700.0));
         assert_eq!(platform.stored.window.unwrap().width, 1000.0);
         drop(config);
