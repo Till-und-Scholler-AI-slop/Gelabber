@@ -201,6 +201,53 @@ export async function coreScenarios(h, f) {
       return { discoveredWithoutReload: true, firstMessageVisible: true };
     },
   );
+  // A first DM from a server member who is no friend is a message request
+  // (#563): the connected recipient must see it arrive without a reload.
+  await h.run(
+    "new-message-request-connected-recipient-discovers-without-refetch",
+    ["05a", "06b"],
+    async () => {
+      await navigate(f.member, "/d/requests", f.base);
+      await f.member.page
+        .getByRole("heading", { name: "Nachrichtenanfragen", exact: true })
+        .waitFor();
+      const dm = await api(f.watcher, "/dms", "POST", {
+        user_id: f.member.id,
+      });
+      check([200, 201].includes(dm.status), "message-request-dm-failed", {
+        status: dm.status,
+      });
+      const sent = await api(
+        f.watcher,
+        `/channels/${dm.body.id}/messages`,
+        "POST",
+        {
+          content: "E2E synthetic message request",
+        },
+      );
+      check([200, 201].includes(sent.status), "message-request-send-failed", {
+        status: sent.status,
+      });
+      // No reload, navigation or manual fetch on the recipient.
+      const request = f.member.page
+        .getByRole("list", { name: "Nachrichtenanfragen" })
+        .getByRole("link", { name: "E2E Watch", exact: true });
+      let live = true;
+      try {
+        await request.waitFor({ state: "visible", timeout: 8_000 });
+      } catch {
+        live = false;
+        // A reload is a control probe only: the missed live arrival stays FAIL.
+        await f.member.page.reload();
+        await request.waitFor({ state: "visible" });
+      }
+      check(live, "connected-recipient-missed-message-request", {
+        controlConfirmed: true,
+        discoveredAfterReload: true,
+      });
+      return { discoveredWithoutReload: true };
+    },
+  );
   // DM creation can succeed even while discovery is correctly red. Verify attachments independently.
   if (!f.dmPath && h.wants("dm-jpeg-png-webp-bind-reload-byte-equal"))
     await h.setup("dm-attachment-fixture", [], async () => {
@@ -297,9 +344,7 @@ export async function coreScenarios(h, f) {
               "attachment-not-rendered-after-reload",
               15_000,
             );
-            const src = await f.member.page
-              .locator(`img[alt="${filename}"]`)
-              .getAttribute("src");
+            const src = await picture.getAttribute("src");
             // After the reload the picture may show its thumbnail
             // (`?size=400`, made by the media worker); the bytes sent are
             // the original's.

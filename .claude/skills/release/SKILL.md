@@ -11,8 +11,8 @@ is the order of the work; check each step's result before the next one.
 
 1. **Scope.** The Linear milestone vX.Y.Z has no open issue that should
    ship; move the rest to the next milestone. CI on the development line's head is
-   green, and so is its last Extended E2E run (no open issue "Extended E2E
-   fails on vX.Y").
+   green, and so is the last Extended E2E push run on it (its issue "Extended
+   E2E fails on vX.Y" is closed).
 2. **Branch.** `release/vX.Y.Z` from the development line, then
    `git merge origin/main`, so hotfixes on `main` stay in.
 3. **Version.** Bump the same files as the last release commit:
