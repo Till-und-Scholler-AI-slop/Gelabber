@@ -120,15 +120,13 @@ async fn serve(pool: PgPool) -> (std::net::SocketAddr, AppState) {
 
 /// Waits until `mailer` has taken `count` mails, and returns them.
 async fn mails(mailer: &Mailer, count: usize) -> Vec<gelabber_api::mail::Sent> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while mailer.outbox().len() < count {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "{:?}",
-            mailer.outbox()
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while mailer.outbox().len() < count {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{count} mails expected: {:?}", mailer.outbox()));
     let sent = mailer.outbox();
     assert_eq!(sent.len(), count, "{sent:?}");
     sent

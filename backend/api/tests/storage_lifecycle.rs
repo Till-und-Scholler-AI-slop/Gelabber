@@ -234,6 +234,46 @@ async fn pending_expiry_refunds_missing_uploads_but_charges_uploaded_bytes(pool:
     presign(&mut client, &channel).await; // released missing-object reservation is reusable
 }
 
+/// The app's own cleanup worker, as a server runs it (the other tests here
+/// switch it off and run its passes by hand): a deleted message's file is
+/// gone from the store without anything else asking for it.
+#[sqlx::test]
+async fn the_running_cleanup_worker_deletes_a_queued_object(pool: PgPool) {
+    let mut state = common::state(pool.clone());
+    // As on a server, only sooner.
+    state.workers.storage_cleanup = state
+        .workers
+        .storage_cleanup
+        .map(|_| Duration::from_millis(50));
+    let (mut client, _, channel) = owner(&state).await;
+    let signed = presign(&mut client, &channel).await;
+    let id = signed["id"].as_str().unwrap();
+    let key = format!("att/{id}");
+    state
+        .store
+        .put(&key, "text/plain", vec![1, 2, 3, 4])
+        .await
+        .unwrap();
+    let msg = message(&mut client, &channel, id).await;
+    let deleted = client
+        .send(
+            Method::DELETE,
+            &format!("/api/messages/{}", msg["id"].as_str().unwrap()),
+            None,
+        )
+        .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+    // Past the time the upload link could still be replayed.
+    due(&state).await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !matches!(state.store.head(&key).await, Err(StoreError::NotFound)) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the cleanup worker deletes the queued object");
+}
+
 #[sqlx::test]
 async fn cascades_enqueue_objects_and_rollback_never_deletes_bytes(pool: PgPool) {
     let state = state(pool.clone(), 0);

@@ -69,7 +69,11 @@ async fn post(client: &mut Client, channel_id: &str, body: Value) -> Value {
 /// Runs the worker's passes until none finds work, then returns the state
 /// the account's export ended in.
 async fn built(state: &AppState, user_id: Uuid) -> String {
-    while export::run_once(state).await.unwrap() {}
+    let mut passes = 0;
+    while export::run_once(state).await.unwrap() {
+        passes += 1;
+        assert!(passes < 10, "the export worker keeps finding work");
+    }
     let current: String =
         sqlx::query_scalar("SELECT state FROM account_exports WHERE user_id = $1")
             .bind(user_id)
