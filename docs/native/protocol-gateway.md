@@ -557,13 +557,16 @@ Client (`web/src/ws/idlePresence.ts`, `web/src/ws/useLive.ts`; native:
 | Constant | Value |
 |---|---|
 | `CLIENT_IDLE_MS` | 300 000 (5 min) |
+| `BROWSER_IDLE_MS` (web only) | 900 000 (15 min) |
 | `PRESENCE_PULSE_MS` | 10 000 |
-| `CALL_PULSE_MS` | 60 000 |
+| `ONLINE_PULSE_MS` (native: `CALL_PULSE`) | 60 000 |
 | activity events | `pointerdown`, `keydown`, `mousemove` (not visibility) |
 
-- On sign-in and on each activity event: if idle → send `{"op":"p","st":"o"}`; else send it at most every 10 s. Re-arm a 5 min timer that sends `{"op":"p","st":"i"}` once.
-- In a voice channel and not deafened (#566): never send `i`; send `{"op":"p","st":"o"}` at once if idle, then every 60 s. Leaving or deafening re-arms the 5 min timer from that moment.
+- On sign-in and on each activity event: if idle → send `{"op":"p","st":"o"}`; else send it at most every 10 s. Re-arm a timer that sends `{"op":"p","st":"i"}` once: 5 min in the native app, 15 min in the web (GEL-105; a browser tab cannot see input in other programs).
+- In a voice channel and not deafened (#566): never send `i`; send `{"op":"p","st":"o"}` at once if idle, then every 60 s. Leaving or deafening re-arms the timer from that moment.
 - Native app only: input anywhere on the computer counts as activity (system idle time read every 30 s: Windows `GetLastInputInfo`, Wayland `ext-idle-notify-v1`, X11 MIT-SCREEN-SAVER, GNOME `org.gnome.Mutter.IdleMonitor`; without one, window input only). `f` (in front) still follows window input alone.
+- Web only (GEL-105): input in one tab counts for every tab of the account in that browser (`BroadcastChannel` `gelabber:input:<user>`, at most one message per 10 s; `web/src/ws/inputShare.ts`). A tab that hears another tab's input re-arms its timer and sends `o` only if it was idle. While online without own input the web repeats `o` every 60 s, so the server's own 5 min timer (`API_WS_IDLE_MS`) does not mark the socket idle first.
+- Web only, opt-in (Settings → Benachrichtigungen → Abwesend; `web/src/presence/systemIdle.ts`): where the browser has `IdleDetector` and the user allowed it on a click, its `userState` decides instead of the timer: `idle` (5 min threshold) sends `i`, `active` sends `o` if idle. Without the permission it falls back to the 15 min timer.
 - Store `byServer[s][u] = st`; `x` deletes the key. Snapshot replaces the server's map (dropping `x`). Unknown user ⇒ `x`.
 - Member list groups (`live.ts:157-177`): order `o` "Online" (with `d`), `i` "Abwesend", `x` "Offline"; each sorted by `name.localeCompare(b, "de")`; empty groups hidden.
 - Wire form: `sendPresence("o")` sends `{"op":"p","st":"o"}`, `sendPresence("i")` sends `{"op":"p","st":"i"}` (`client.ts:292-294`); frames while the socket is closed are dropped.

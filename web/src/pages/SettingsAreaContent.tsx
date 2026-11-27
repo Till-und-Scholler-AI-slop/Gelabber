@@ -5,6 +5,7 @@ import { BlockedArea } from "../blocks/BlockedArea.tsx";
 import { FeedbackArea } from "../feedback/FeedbackArea.tsx";
 import { MessageAlertSettings } from "../components/MessageAlertSettings.tsx";
 import { NotificationPrivacySetting } from "../components/NotificationPrivacy.tsx";
+import { PresenceSetting } from "../components/PresenceSetting.tsx";
 import { InstallApp } from "../pwa/InstallApp.tsx";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
 import { DiagnosticsSection } from "../voice/DiagnosticsSection.tsx";
@@ -44,6 +45,7 @@ export function SettingsAreaContent({ area }: { area: SettingsArea }) {
         <>
           <MessageAlertSettings />
           <NotificationPrivacySetting />
+          <PresenceSetting />
         </>
       );
     case "app":

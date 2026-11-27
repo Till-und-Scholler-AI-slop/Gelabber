@@ -1,6 +1,6 @@
 // Personal settings: the settings frame and its areas (Profil, Profilkarte,
-// Sicherheit, Darstellung). Themes, notifications and installing the app
-// have namespaces of their own.
+// Sicherheit, Darstellung, and when one counts as away). Themes,
+// notifications and installing the app have namespaces of their own.
 import { defineCatalog } from "../catalog.ts";
 
 export const settings = defineCatalog(
@@ -36,7 +36,8 @@ export const settings = defineCatalog(
     "area.video.label": "Video",
     "area.video.description": "Kamera, Live gehen und Bildqualität.",
     "area.benachrichtigungen.label": "Benachrichtigungen",
-    "area.benachrichtigungen.description": "Hinweise auf neue Nachrichten.",
+    "area.benachrichtigungen.description":
+      "Hinweise auf neue Nachrichten und wann du als abwesend giltst.",
     "area.app.label": "App",
     "area.app.description": "Desktop-App und Web-App installieren.",
 
@@ -150,6 +151,17 @@ export const settings = defineCatalog(
     "card.bio": "Über mich",
     "card.bio.count": "{length} / {max} Zeichen",
     "card.unsaved": "Ungespeicherte Änderungen",
+
+    "presence.title": "Abwesend",
+    "presence.system": "Eingaben am ganzen Computer zählen",
+    "presence.systemHint":
+      "Dann giltst du nach 5 Minuten ohne Eingabe am Computer als abwesend, wie in der Desktop-App. Der Browser fragt dafür einmal um Erlaubnis.",
+    "presence.withoutSystem":
+      "Sonst sieht der Browser nur Eingaben in Gelabber, nicht in anderen Programmen. Du giltst dann erst nach 15 Minuten ohne Eingabe in einem Gelabber-Tab als abwesend.",
+    "presence.browserOnly":
+      "Browser sehen keine Eingaben in anderen Programmen. Du giltst deshalb erst nach 15 Minuten ohne Eingabe in einem Gelabber-Tab als abwesend. In einem Sprachkanal bleibst du online.",
+    "presence.denied":
+      "Der Browser hat die Erlaubnis nicht gegeben. Erlaube sie in den Website-Einstellungen des Browsers und schalte es dann erneut ein.",
   },
   {
     title: "Settings",
@@ -181,7 +193,8 @@ export const settings = defineCatalog(
     "area.video.label": "Video",
     "area.video.description": "Camera, Go Live and picture quality.",
     "area.benachrichtigungen.label": "Notifications",
-    "area.benachrichtigungen.description": "Alerts for new messages.",
+    "area.benachrichtigungen.description":
+      "Alerts for new messages and when you count as away.",
     "area.app.label": "App",
     "area.app.description": "Install the desktop app and the web app.",
 
@@ -291,5 +304,16 @@ export const settings = defineCatalog(
     "card.bio": "About me",
     "card.bio.count": "{length} / {max} characters",
     "card.unsaved": "Unsaved changes",
+
+    "presence.title": "Away",
+    "presence.system": "Count input anywhere on the computer",
+    "presence.systemHint":
+      "You then count as away after 5 minutes without input anywhere on the computer, as in the desktop app. The browser asks for permission once.",
+    "presence.withoutSystem":
+      "Otherwise the browser only sees input in Gelabber, not in other programs. You then count as away only after 15 minutes without input in any Gelabber tab.",
+    "presence.browserOnly":
+      "Browsers cannot see input in other programs. So you count as away only after 15 minutes without input in any Gelabber tab. In a voice channel you stay online.",
+    "presence.denied":
+      "The browser did not give permission. Allow it in the browser’s site settings, then turn this on again.",
   },
 );

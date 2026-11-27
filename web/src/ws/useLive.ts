@@ -1,4 +1,4 @@
-// Bridge gateway frames into the live stores, plus per-tab idle + typing.
+// Bridge gateway frames into the live stores, plus idle presence + typing.
 
 import { useEffect, useRef } from "react";
 
@@ -15,6 +15,8 @@ import {
   resetLiveStores,
 } from "./live.ts";
 import { createIdlePresence } from "./idlePresence.ts";
+import { shareInput } from "./inputShare.ts";
+import { useSystemIdle, watchSystemIdle } from "../presence/systemIdle.ts";
 import { isInvisible } from "../presence/mode.ts";
 import { applyVoiceSig, resetVoiceRoster } from "../voice/roster.ts";
 import { useVoice, type VoiceState } from "../voice/voiceStore.ts";
@@ -63,11 +65,39 @@ export function useIdlePresence(userId: string | null): void {
     const offVoice = useVoice.subscribe((voice) =>
       presence.setInCall(inCall(voice)),
     );
-    const onActivity = () => presence.input();
+    const share = shareInput(userId, () => presence.otherTabInput());
+    const onActivity = () => {
+      presence.input();
+      share.post();
+    };
     for (const type of PRESENCE_ACTIVITY_EVENTS) {
       window.addEventListener(type, onActivity);
     }
+    // The system's idle detection, while the user has it turned on.
+    let watching: AbortController | null = null;
+    const followSystem = (enabled: boolean) => {
+      if (enabled === (watching !== null)) return;
+      watching?.abort();
+      watching = null;
+      if (enabled) {
+        const current = new AbortController();
+        watching = current;
+        void watchSystemIdle(
+          (state) => presence.setSystem(state),
+          current.signal,
+        );
+      } else {
+        presence.setSystem(null);
+      }
+    };
+    followSystem(useSystemIdle.getState().enabled);
+    const offSystem = useSystemIdle.subscribe((state) =>
+      followSystem(state.enabled),
+    );
     return () => {
+      offSystem();
+      watching?.abort();
+      share.close();
       presence.stop();
       offVoice();
       for (const type of PRESENCE_ACTIVITY_EVENTS) {
