@@ -21,6 +21,9 @@ function message(id: string): Message {
     content: id,
     created_at: "2026-09-28T09:00:00Z",
     edited_at: null,
+    reactions: [],
+    mentions: [],
+    mention_everyone: false,
     attachments: [],
   };
 }

@@ -24,6 +24,9 @@ const message = (
   author: { id: user.id, name: user.name, avatar_url: null },
   created_at: "2026-09-28T00:00:00Z",
   edited_at: null,
+  reactions: [],
+  mentions: [],
+  mention_everyone: false,
   attachments: [],
 });
 const json = (body: unknown) =>

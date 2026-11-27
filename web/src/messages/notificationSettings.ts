@@ -30,9 +30,8 @@ export type NotificationSetting = {
   level: NotifyLevel | null;
   muted: boolean;
   muted_until: string | null;
-  /** A server's only (#616): push when someone starts a call there.
-   * Missing from a server older than v0.12. */
-  voice?: boolean;
+  /** A server's only (#616): push when someone starts a call there. */
+  voice: boolean;
 };
 
 export type SettingChange = {
@@ -84,6 +83,7 @@ export function settingOf(
       level: null,
       muted: false,
       muted_until: null,
+      voice: false,
     }
   );
 }

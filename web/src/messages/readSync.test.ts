@@ -45,6 +45,10 @@ const row = (channel_id: string, read_at: string | null, unread: number) =>
     server_id: "s",
     read_message_id: read_at ? `m-${read_at}` : null,
     read_at,
+    // Positions by the hour of the read: a later read is further along.
+    read_order: read_at ? Number(read_at.slice(11, 13)) : null,
+    membership_at: "2026-10-01T00:00:00Z",
+    latest_order: 20,
     unread_count: unread,
     mention_count: unread ? 1 : 0,
     level: "mentions",
