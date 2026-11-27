@@ -33,6 +33,9 @@ function row(channel: string, n: number): Message {
     content: "x".repeat(1000),
     created_at: new Date(Date.UTC(2026, 8, 28, 9, 0, 0, n)).toISOString(),
     edited_at: null,
+    reactions: [],
+    mentions: [],
+    mention_everyone: false,
     attachments: [],
   };
 }

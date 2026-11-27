@@ -23,13 +23,13 @@ export type ReadState = {
   read_message_id: string | null;
   read_at: string | null;
   /** Read position and the membership it belongs to; the newest message
-   * when the counts were taken. Absent from older APIs. */
-  read_order?: number | null;
-  membership_at?: string;
-  latest_order?: number | null;
+   * when the counts were taken. */
+  read_order: number | null;
+  membership_at: string;
+  latest_order: number | null;
   unread_count: number;
-  /** Unread messages that mention the user. Absent from older APIs. */
-  mention_count?: number;
+  /** Unread messages that mention the user. */
+  mention_count: number;
   /** Effective notification level of the conversation (notifyLevel.ts). */
   level?: "all" | "mentions" | "none";
   /** A mute of the conversation or its server; see `muted_until`. */
@@ -300,25 +300,19 @@ export function useReadBridge() {
 
 type Position = Pick<
   ReadState,
-  "read_at" | "read_order" | "membership_at" | "latest_order"
+  "read_order" | "membership_at" | "latest_order"
 >;
-const order = (value: number | null | undefined) => value ?? -Infinity;
-const readAt = (row: Position) =>
-  row.read_at ? Date.parse(row.read_at) : -Infinity;
+const order = (value: number | null) => value ?? -Infinity;
 
 /** How `next` relates to `current`, ordered as the server orders cursors:
- * a newer membership wins, then the further position, then the later count.
- * Older APIs carry no orders; their read time decides. */
+ * a newer membership wins, then the further position, then the later count. */
 function compare(next: Position, current: Position): number {
-  if (next.membership_at && current.membership_at) {
-    const joined =
-      Date.parse(next.membership_at) - Date.parse(current.membership_at);
-    if (joined) return joined;
-    if (order(next.read_order) !== order(current.read_order))
-      return order(next.read_order) > order(current.read_order) ? 1 : -1;
-    return order(next.latest_order) >= order(current.latest_order) ? 0 : -1;
-  }
-  return readAt(next) >= readAt(current) ? 0 : -1;
+  const joined =
+    Date.parse(next.membership_at) - Date.parse(current.membership_at);
+  if (joined) return joined;
+  if (order(next.read_order) !== order(current.read_order))
+    return order(next.read_order) > order(current.read_order) ? 1 : -1;
+  return order(next.latest_order) >= order(current.latest_order) ? 0 : -1;
 }
 
 /** Read positions from elsewhere into the cached rows. Forward only: a row
@@ -328,9 +322,7 @@ function compare(next: Position, current: Position): number {
 export function applyReadSync(
   client: QueryClient,
   stamp: ScopeStamp,
-  rows: readonly (Omit<ReadSync, "mention_count"> & {
-    mention_count?: number;
-  })[],
+  rows: readonly ReadSync[],
 ): void {
   if (!stampHolds(stamp) || rows.length === 0) return;
   const byChannel = new Map(rows.map((row) => [row.channel_id, row]));
@@ -358,7 +350,7 @@ export function applyReadSync(
         membership_at: next.membership_at,
         latest_order: next.latest_order,
         unread_count: next.unread_count,
-        mention_count: next.mention_count ?? 0,
+        mention_count: next.mention_count,
       };
     }),
   );

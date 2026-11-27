@@ -124,6 +124,9 @@ describe("composer sending", () => {
       created_at: "2026-11-27T18:00:00Z",
       edited_at: null,
       attachments: [],
+      reactions: [],
+      mentions: [],
+      mention_everyone: false,
     };
     setReplyTarget(`c${channel}`, answered);
     const { screen, field } = await renderComposer();

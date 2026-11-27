@@ -28,6 +28,7 @@ const dm = (over: object = {}) => ({
   channel_id: "d",
   server_id: null,
   unread_count: 2,
+  mention_count: 0,
   ...over,
 });
 
@@ -124,6 +125,7 @@ describe("a conversation without an unread row", () => {
     level: null,
     muted: false,
     muted_until: null,
+    voice: false,
     ...change,
   });
 

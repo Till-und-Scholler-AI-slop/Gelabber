@@ -108,7 +108,8 @@ export interface MediaConnection {
   setSourcePaused(kind: TrackKind, paused: boolean): Promise<void>;
   /** Whether the Live keeps text sharp (GEL-32): the server then holds its
    * viewers at full size on a weak download. Applies to later screen
-   * producers too. Best-effort: an older server refuses the frame. */
+   * producers too. Best-effort: a failed request is sent again with the
+   * next call. */
   setScreenMode(sharp: boolean): Promise<void>;
   sender(kind: TrackKind): MediaSender | undefined;
   senders(): MediaSender[];
@@ -347,8 +348,9 @@ export class MediasoupConnection implements MediaConnection {
       rtp: receivableCapabilities(device.recvRtpCapabilities, av1Decoding),
     });
     this.live();
-    if (isVideoCodecs(announced?.codecs))
-      this.noteVideoCodecs(announced.codecs);
+    if (!isVideoCodecs(announced?.codecs))
+      throw new MediaError("negotiation_failed");
+    this.noteVideoCodecs(announced.codecs);
     this.recv = await this.makeTransport("recv");
     this.live();
     for (const event of this.queued.splice(0)) this.handleEvent(event);
@@ -761,12 +763,12 @@ export class MediasoupConnection implements MediaConnection {
   }
 
   private async videoCodec(device: Device) {
-    const allowed = this.videoCodecs?.video ?? null;
+    const allowed = this.videoCodecs?.video ?? [];
     // Asked only where it can change the choice.
     const asked =
-      allowed?.includes("video/h264") ||
-      allowed?.includes("video/av1") ||
-      allowed?.includes("video/vp9");
+      allowed.includes("video/h264") ||
+      allowed.includes("video/av1") ||
+      allowed.includes("video/vp9");
     const hardware = asked
       ? await (this.options.hardwareVideo ?? hardwareVideo)()
       : SOFTWARE_VIDEO;
@@ -930,13 +932,10 @@ export class MediasoupConnection implements MediaConnection {
         { producerId: held.producer.id, sharp },
         this.sendDeadlineEpochMs,
       );
-    } catch (error) {
-      // A server without GEL-32 cannot parse the frame and answers
-      // `bad_request`; the Live works as before, so that counts as told.
-      // Anything else (a timeout, a closed connection) leaves the mode
+    } catch {
+      // A failed request (a timeout, a closed connection) leaves the mode
       // untold, and the next call sends it again.
-      if (!(error instanceof MediaError && error.code === "bad_request"))
-        return;
+      return;
     }
     if (this.publications.get("s") === held) held.sharp = sharp;
   }
