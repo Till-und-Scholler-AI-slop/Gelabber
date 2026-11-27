@@ -202,9 +202,7 @@ class CoreCheck(unittest.TestCase):
     def library(self, source):
         compiler = shutil.which('cc')
         if not compiler or not shutil.which('nm') or not shutil.which('readelf'):
-            if os.environ.get('CI'):
-                self.fail('cc, nm or readelf is not installed')
-            self.skipTest('cc, nm or readelf is not installed')
+            prerequisites.missing('cc, nm or readelf')
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         # libc's puts, so that the library has a dependency to list, as the core has.
