@@ -10,6 +10,8 @@ export function instrument({ relay }) {
     displayCalls: 0,
     cameraCalls: 0,
     playRejected: 0,
+    // Audio play() calls on a stream that resolved: what a retry starts.
+    audioPlayStarted: 0,
     mediaElements: new Set(),
     heldTracks: [],
     incomingTracks: [],
@@ -270,7 +272,13 @@ export function instrument({ relay }) {
             new DOMException("synthetic blocked play", "NotAllowedError"),
           )
         : play.apply(this, args);
-    result?.catch(() => state.playRejected++);
+    result?.then(
+      () => {
+        if (this.srcObject && this instanceof window.HTMLAudioElement)
+          state.audioPlayStarted++;
+      },
+      () => state.playRejected++,
+    );
     return result;
   };
   function canvasSource(kind, slot) {
@@ -878,6 +886,7 @@ export async function sample({ deadlineEpochMs } = {}) {
     displayCalls: state.displayCalls,
     cameraCalls: state.cameraCalls,
     playRejected: state.playRejected,
+    audioPlayStarted: state.audioPlayStarted,
     voiceRosterSnapshots: state.voiceRosterSnapshots,
     voiceOccupancy: state.voiceRoster.filter(
       (entry) => entry.c === state.expectedVoiceChannel,

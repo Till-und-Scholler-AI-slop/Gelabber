@@ -52,6 +52,7 @@ try {
       registration: "UI",
       invitation: "UI",
       services: "real API/Gateway; SFU joined only in media/access scenarios",
+      steps: f.steps,
     };
   });
   if (setup.status === "PASS") {

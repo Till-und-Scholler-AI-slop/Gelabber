@@ -15,6 +15,12 @@ import { decoded, interrupt } from "./media.mjs";
 import { profiles } from "./profiles.mjs";
 import { instrument } from "./probe.mjs";
 import { createContext, runInContext } from "node:vm";
+import {
+  failureEvidence,
+  harnessSite,
+  stepLog,
+  timedOutAction,
+} from "./harness.mjs";
 
 test("bytes and closed receivers cannot pass decoded-frame acceptance", () => {
   assert.equal(
@@ -251,6 +257,93 @@ test("explicit exclusions are NOT_RUN, required failures and incomplete selectio
   assert.equal(gate([], [], []).passed, false);
   assert.throws(() => selection("good-case,good-case"));
   assert.throws(() => selection("bad/secret"));
+});
+test("a browser deadline names the Playwright call that ran out, nothing else", () => {
+  const e = new Error(
+    'page.goto: Timeout 12000ms exceeded.\nCall log:\n  - navigating to "http://127.0.0.1:15186/register?token=SECRET"',
+  );
+  e.name = "TimeoutError";
+  assert.equal(timedOutAction(e), "page.goto");
+  e.message = "locator.click: Timeout 12000ms exceeded.\nCall log: SECRET";
+  assert.equal(timedOutAction(e), "locator.click");
+  // The API's class name can be camelCase.
+  e.message = "browserType.connect: Timeout 1ms exceeded.";
+  assert.equal(timedOutAction(e), "browserType.connect");
+  e.message = "browserContext.newPage: Timeout 12000ms exceeded.";
+  assert.equal(timedOutAction(e), "browserContext.newPage");
+  e.message = "https://host/?token=SECRET: Timeout 1ms exceeded";
+  assert.equal(timedOutAction(e), null);
+  assert.equal(
+    timedOutAction(new Error("page.goto: Timeout 12000ms exceeded.")),
+    null,
+  );
+  // The harness line too: one scenario line can call several harness steps.
+  const stack = [
+    "TimeoutError: x",
+    "    at channel (file:///w/web/scripts/e2e/harness.mjs:297:7)",
+    "    at async fresh (file:///w/web/scripts/e2e/chat-faults.mjs:43:16)",
+  ].join("\n");
+  assert.equal(harnessSite(stack), "harness.mjs:297:7");
+  // A waiter's timeout starts in responseTo (GEL-453); its caller is the step.
+  const waiter = [
+    "TimeoutError: page.waitForResponse: Timeout 12000ms exceeded",
+    "    at responseTo (file:///w/web/scripts/e2e/harness.mjs:47:46)",
+    "    at async channel (file:///w/web/scripts/e2e/harness.mjs:331:24)",
+    "    at async fresh (file:///w/web/scripts/e2e/chat-faults.mjs:43:16)",
+  ].join("\n");
+  assert.equal(harnessSite(waiter), "harness.mjs:331:24");
+  assert.equal(
+    harnessSite(
+      "    at async step (file:///w/web/scripts/e2e/harness.mjs:105:14)",
+    ),
+    null,
+  );
+  assert.equal(harnessSite(undefined), null);
+});
+test("a failed step is listed with its time; its row names the call that ran out", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
+  const { steps, step } = stepLog();
+  assert.equal(
+    await step("Publisher-register-page", async () => {
+      t.mock.timers.setTime(1_500);
+      return "page";
+    }),
+    "page",
+  );
+  const deadline = new Error(
+    'page.waitForURL: Timeout 12000ms exceeded.\nCall log:\n  - waiting for "http://127.0.0.1:15186/s/1?invite=SECRET"',
+  );
+  deadline.name = "TimeoutError";
+  deadline.stack = [
+    "TimeoutError: page.waitForURL: Timeout 12000ms exceeded.",
+    "    at file:///w/web/scripts/e2e/harness.mjs:262:18",
+    "    at async step (file:///w/web/scripts/e2e/harness.mjs:105:14)",
+    "    at async fixture (file:///w/web/scripts/e2e/harness.mjs:286:7)",
+    "    at async file:///w/web/scripts/e2e/run.mjs:42:9",
+  ].join("\n");
+  await assert.rejects(
+    step("server-create", async () => {
+      t.mock.timers.setTime(13_600);
+      throw deadline;
+    }),
+    (error) => error === deadline,
+  );
+  assert.deepEqual(steps, [
+    { step: "Publisher-register-page", ms: 1_500 },
+    { step: "server-create", ms: 12_100 },
+  ]);
+  const evidence = failureEvidence(deadline);
+  assert.deepEqual(evidence, {
+    site: "run.mjs:42:9",
+    action: "page.waitForURL",
+    harnessSite: "harness.mjs:262:18",
+  });
+  assert.ok(!JSON.stringify(evidence).includes("SECRET"));
+  // A check's own failure names no Playwright call.
+  assert.deepEqual(
+    Object.keys(failureEvidence(new CheckFailure("fixture-x"))),
+    ["site"],
+  );
 });
 test("a listed expected failure keeps the gate green only while it fails for its reason", () => {
   const expected = {

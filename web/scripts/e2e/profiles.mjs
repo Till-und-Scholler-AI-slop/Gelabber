@@ -17,14 +17,12 @@ export const profiles = {
       "autoplay-rejection-visible-click-retry",
       "forced-track-arrival-reorder-source-identity",
       "rejected-native-sdp-keeps-voice-other-source-no-ghost",
+      "session-audio-mute-deafen-volume-playback-retry",
       "active-call-responsive-controls",
     ],
     // Scenarios of the suite this profile leaves out, each with its reason;
-    // run.mjs prints them at the start of the run.
-    leftOut: {
-      "session-audio-mute-deafen-volume-playback-retry":
-        "#1186: it keeps watching in one voice room while joining another, which ends the watch since a Live is watched inside its call",
-    },
+    // run.mjs prints them at the start of the run. None at present.
+    leftOut: {},
     // Known to fail, each with the issue that ends it and its reason (and
     // site): such a FAIL keeps the gate green; another FAIL or a PASS turns
     // it red, a PASS until the entry goes (selection.mjs).

@@ -90,6 +90,48 @@ export function failureSite(stack = "") {
     sites.find((site) => !site.startsWith("harness.mjs:")) ?? sites[0] ?? null
   );
 }
+// The harness line too: the same scenario line can call several of its steps.
+// Helpers that only pass a call through name no step; their caller does.
+const passThrough = /^\s+at (?:async )?(?:step|responseTo) /;
+export function harnessSite(stack = "") {
+  for (const line of stack.split("\n")) {
+    if (passThrough.test(line)) continue;
+    const site = /scripts\/e2e\/(harness\.mjs:\d+:\d+)/.exec(line)?.[1];
+    if (site) return site;
+  }
+  return null;
+}
+// Only Playwright's method name ("page.goto"), never the rest of its message.
+export function timedOutAction(error) {
+  return error?.name === "TimeoutError"
+    ? (/^([a-z][a-zA-Z]*\.[a-zA-Z]+): Timeout \d+ms exceeded/.exec(
+        error.message,
+      )?.[1] ?? null)
+    : null;
+}
+// Each step's name and time in order, a failed step included.
+export function stepLog() {
+  const steps = [];
+  async function step(name, action) {
+    const start = Date.now();
+    try {
+      return await action();
+    } finally {
+      steps.push({ step: name, ms: Date.now() - start });
+    }
+  }
+  return { steps, step };
+}
+// Where a failure happened, for its report row: the scenario's own line, not
+// the harness helper that threw; for a Playwright timeout also the call that
+// ran out and the harness line.
+export function failureEvidence(error) {
+  const action = timedOutAction(error);
+  return {
+    site: failureSite(error?.stack),
+    ...(action ? { action, harnessSite: harnessSite(error.stack) } : {}),
+  };
+}
 export function safeError(error) {
   // Playwright errors contain URLs, form values and call logs: never persist them.
   return error instanceof CheckFailure ||
@@ -199,6 +241,12 @@ export async function startHarness() {
     results: [],
     cleanup: [],
   };
+  // How long each fixture step took, in the fixture's row (GEL-423).
+  const { steps: fixtureSteps, step } = stepLog();
+  const reportPath =
+    process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
+  let lastFinished = null;
+  const lateStrays = [];
   // A promise a scenario left behind can reject after its row is written.
   // Node would end the run on it, before the report and the runner's
   // teardown, and every later profile would find the ports taken (GEL-453).
@@ -206,17 +254,31 @@ export async function startHarness() {
   process.on("unhandledRejection", (error) => {
     const reason = safeError(error);
     process.exitCode = 1;
-    report.results.push({
+    const row = {
       id: "stray-rejection",
       status: "FAIL",
       reason,
       classification: "test-error",
-      // The case that was running, not necessarily the one that left it.
-      during: report.checkpoint?.case ?? null,
+      // Where it came from; `during` and `after` only say when it arrived.
       site: failureSite(error?.stack),
+      harnessSite: harnessSite(error?.stack),
+      during: report.checkpoint?.case ?? null,
+      after: lastFinished,
       at: new Date().toISOString(),
-    });
+    };
     console.log(`FAIL stray-rejection (${reason})`);
+    if (!report.finishedAt) {
+      report.results.push(row);
+      return;
+    }
+    // The report is written: such a row goes beside it, as .startup.json
+    // and .teardown.json do.
+    lateStrays.push(row);
+    writeFile(
+      `${reportPath}.stray.json`,
+      `${JSON.stringify({ status: "FAIL", results: lateStrays }, null, 2)}\n`,
+      { mode: 0o600 },
+    ).catch(() => console.log("FAIL stray-rejection-report-write-error"));
   });
   async function actor(label) {
     // The scenarios find controls by their German names, and the
@@ -239,52 +301,74 @@ export async function startHarness() {
       completedActorContextCloses.add(context);
     };
     actors.push(result);
-    await page.goto(`${base}/register`);
-    await page.getByLabel("Name", { exact: true }).fill(`E2E ${label}`);
-    await page.getByLabel("E-Mail-Adresse").fill(email);
-    await page.getByLabel("Passwort", { exact: true }).fill(password);
-    await page
-      .getByRole("button", { name: "Registrieren", exact: true })
-      .click();
-    await page.waitForURL((url) => !url.pathname.includes("register"));
+    await step(`${label}-register-page`, async () => {
+      await page.goto(`${base}/register`);
+      await page.getByLabel("Name", { exact: true }).fill(`E2E ${label}`);
+    });
+    await step(`${label}-register-submit`, async () => {
+      await page.getByLabel("E-Mail-Adresse").fill(email);
+      await page.getByLabel("Passwort", { exact: true }).fill(password);
+      await page
+        .getByRole("button", { name: "Registrieren", exact: true })
+        .click();
+      await page.waitForURL((url) => !url.pathname.includes("register"));
+    });
     const session = await api(result, "/auth/session");
     check(session.body?.user?.id, "registration-session-missing");
     result.id = session.body.user.id;
     return result;
   }
+  // Only this fixture's steps: scenarios register more actors, and build
+  // more fixtures, through the same log.
   async function fixture() {
+    const from = fixtureSteps.length;
+    try {
+      return { ...(await buildFixture()), steps: fixtureSteps.slice(from) };
+    } catch (error) {
+      if (error && typeof error === "object")
+        error.fixtureSteps = fixtureSteps.slice(from);
+      throw error;
+    }
+  }
+  async function buildFixture() {
     const owner = await actor("Publisher");
-    await owner.page
-      .getByRole("button", { name: "Server erstellen", exact: true })
-      .first()
-      .click();
-    let dialog = owner.page.getByRole("dialog", { name: "Server erstellen" });
-    await dialog.getByLabel("Name", { exact: true }).fill(`E2E ${suffix}`);
-    await dialog
-      .getByRole("button", { name: "Erstellen", exact: true })
-      .click();
-    // Creating a community opens its overview with an invite link already
-    // made. Keep the link, then select the actual text channel through the
-    // UI before continuing the message scenarios.
-    await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
+    let dialog;
+    await step("server-create", async () => {
+      await owner.page
+        .getByRole("button", { name: "Server erstellen", exact: true })
+        .first()
+        .click();
+      dialog = owner.page.getByRole("dialog", { name: "Server erstellen" });
+      await dialog.getByLabel("Name", { exact: true }).fill(`E2E ${suffix}`);
+      await dialog
+        .getByRole("button", { name: "Erstellen", exact: true })
+        .click();
+      // Creating a community opens its overview with an invite link already
+      // made. Keep the link, then select the actual text channel through the
+      // UI before continuing the message scenarios.
+      await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
+    });
     const serverId = new URL(owner.page.url()).pathname.split("/")[2];
-    dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
-    await owner.page.waitForFunction(() =>
-      document
-        .querySelector('input[aria-label="Einladungslink"]')
-        ?.value.includes("/invite/"),
-    );
-    const invite = await dialog
-      .getByRole("textbox", { name: "Einladungslink" })
-      .inputValue();
-    // Closing the dialog revokes a link nobody copied or shared
-    // (inviteSession.ts), so take it the way a user would first.
-    await dialog
-      .getByRole("button", { name: "Link kopieren", exact: true })
-      .click();
-    await dialog
-      .getByRole("button", { name: "Schließen", exact: true })
-      .click();
+    const invite = await step("invite-link", async () => {
+      dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
+      await owner.page.waitForFunction(() =>
+        document
+          .querySelector('input[aria-label="Einladungslink"]')
+          ?.value.includes("/invite/"),
+      );
+      const link = await dialog
+        .getByRole("textbox", { name: "Einladungslink" })
+        .inputValue();
+      // Closing the dialog revokes a link nobody copied or shared
+      // (inviteSession.ts), so take it the way a user would first.
+      await dialog
+        .getByRole("button", { name: "Link kopieren", exact: true })
+        .click();
+      await dialog
+        .getByRole("button", { name: "Schließen", exact: true })
+        .click();
+      return link;
+    });
     servers.push({ owner, id: serverId });
     const detail = await api(owner, `/servers/${serverId}`);
     check(detail.status === 200, "fixture-server-detail-missing");
@@ -293,8 +377,12 @@ export async function startHarness() {
     );
     check(textChannel?.id, "fixture-text-channel-missing");
     const textPath = `/s/${serverId}/c/${textChannel.id}`;
-    await owner.page.locator(`a.channel-row-link[href="${textPath}"]`).click();
-    await owner.page.waitForURL((url) => url.pathname === textPath);
+    await step("text-channel-open", async () => {
+      await owner.page
+        .locator(`a.channel-row-link[href="${textPath}"]`)
+        .click();
+      await owner.page.waitForURL((url) => url.pathname === textPath);
+    });
     async function channel(name, kind = "Sprache") {
       await owner.page.locator("summary.server-sidebar-menu-button").click();
       await owner.page
@@ -323,8 +411,11 @@ export async function startHarness() {
       await owner.page.locator(`.channel-sidebar a[href="${path}"]`).click();
       return path;
     }
-    const voicePath = await channel("E2E Voice A");
-    const otherPath = await channel("E2E Voice B");
+    const voicePath = await step("voice-channel-a", () =>
+      channel("E2E Voice A"),
+    );
+    // Other scenarios open it by its name.
+    await step("voice-channel-b", () => channel("E2E Voice B"));
     async function join(who) {
       await who.page.goto(invite);
       await who.page
@@ -335,9 +426,11 @@ export async function startHarness() {
     }
     const member = await actor("Member");
     const watcher = await actor("Watch");
-    await join(member);
-    await join(watcher);
-    await owner.page.goto(`${base}${voicePath}`);
+    await step("Member-join", () => join(member));
+    await step("Watch-join", () => join(watcher));
+    await step("Publisher-voice-open", () =>
+      owner.page.goto(`${base}${voicePath}`),
+    );
     return {
       owner,
       member,
@@ -347,7 +440,6 @@ export async function startHarness() {
       serverId,
       textPath,
       voicePath,
-      otherPath,
       base,
     };
   }
@@ -409,13 +501,15 @@ export async function startHarness() {
               : error instanceof CheckFailure && /fixture/.test(error.message)
                 ? "test-error"
                 : "unconfirmed-failure",
-        // The scenario's own line, not the harness helper that threw.
-        site: failureSite(error.stack),
+        ...failureEvidence(error),
         ...(error instanceof CheckFailure ||
         error instanceof NativeInterfaceFailure
           ? { metrics: error.metrics }
           : {}),
       };
+      // A failed fixture's step times sit where its PASS row has them.
+      if (Array.isArray(error?.fixtureSteps))
+        row.metrics = { ...row.metrics, steps: error.fixtureSteps };
     }
     if (isolation && !nativeInterfaceBlocked) {
       try {
@@ -429,6 +523,7 @@ export async function startHarness() {
     row.durationMs = Date.now() - start;
     row.predecessors = predecessors;
     report.results.push(row);
+    lastFinished = id;
     console.log(`${row.status} ${id}${row.reason ? ` (${row.reason})` : ""}`);
     return row;
   }
@@ -596,6 +691,9 @@ export async function startHarness() {
         reason: "cleanup-browser-close-failed",
       });
     });
+    // No await between finishedAt, the gate and serialising the report: a
+    // stray rejection lands either in both or in .stray.json.
+    await mkdir(dirname(reportPath), { recursive: true });
     report.finishedAt = new Date().toISOString();
     for (const id of gate(report.results, selected, report.cleanup).absent)
       blocked(id, "selected-case-unknown-or-not-reached");
@@ -613,10 +711,7 @@ export async function startHarness() {
       console.log(
         `PASS of an expected failure: remove ${id} from its profile's list (${issue})`,
       );
-    const path =
-      process.env.GELABBER_E2E_REPORT ?? "/tmp/gelabber-e2e/report.json";
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, {
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, {
       mode: 0o600,
     });
     if (!report.gate.passed) process.exitCode = 1;
