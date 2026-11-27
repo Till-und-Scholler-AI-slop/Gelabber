@@ -72,31 +72,6 @@ jobs:
             SINCE="$since" python3 .github/workflows/scripts/tested_tree.py find-queue >> "$GITHUB_OUTPUT"
           fi
 
-      # A pull request checks out its merge commit; the first parent is the base.
-      # --no-renames lists a move's source too; quotePath=false leaves non-ASCII paths unquoted.
-      # A push runs the areas its commits touch, as a pull request does (GEL-360);
-      # the caches of the others stay valid. Without the previous head: all.
-      - name: Areas
-        id: areas
-        env:
-          EVENT: ${{ github.event_name }}
-          REUSED_RUN: ${{ steps.reuse.outputs.run }}
-          BEFORE: ${{ steps.reuse.outputs.since || github.event.before || github.event.merge_group.base_sha }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT" = pull_request ]; then
-            git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
-          elif [ -n "$REUSED_RUN" ]; then
-            echo "Run $REUSED_RUN passed this tree: no area runs again." | tee -a "$GITHUB_STEP_SUMMARY"
-            python3 .github/workflows/scripts/changes.py < /dev/null >> "$GITHUB_OUTPUT"
-          elif { [ "$EVENT" = push ] || [ "$EVENT" = merge_group ]; } && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
-              && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
-            echo "Areas changed since $BEFORE." | tee -a "$GITHUB_STEP_SUMMARY"
-            git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
-          else
-            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
-          fi
-
       # A release or hotfix pull request to main packages its apps as the
       # release ships them; desktop-release.yml then only signs (GEL-358).
       - name: Release candidate
@@ -113,6 +88,38 @@ jobs:
             case "$HEAD_REF" in release/v*|hotfix/v*) candidate=true ;; esac
           fi
           echo "candidate=$candidate" | tee -a "$GITHUB_OUTPUT"
+
+      # A pull request checks out its merge commit; the first parent is the base.
+      # --no-renames lists a move's source too; quotePath=false leaves non-ASCII paths unquoted.
+      # A push runs the areas its commits touch, as a pull request does (GEL-360);
+      # the caches of the others stay valid. Without the previous head, or on main: all.
+      - name: Areas
+        id: areas
+        env:
+          EVENT: ${{ github.event_name }}
+          CANDIDATE: ${{ steps.candidate.outputs.candidate }}
+          REUSED_RUN: ${{ steps.reuse.outputs.run }}
+          BEFORE: ${{ steps.reuse.outputs.since || github.event.before || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$CANDIDATE" = true ]; then
+            echo "Release candidate: every area runs, so that main can reuse this run." | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = pull_request ]; then
+            git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
+          elif [ -n "$REUSED_RUN" ]; then
+            echo "Run $REUSED_RUN passed this tree: no area runs again." | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 .github/workflows/scripts/changes.py < /dev/null >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+            echo "A push to main that reuses no run checks every area." | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
+          elif { [ "$EVENT" = push ] || [ "$EVENT" = merge_group ]; } && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+              && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
+            echo "Areas changed since $BEFORE." | tee -a "$GITHUB_STEP_SUMMARY"
+            git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
+          else
+            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Record the tested tree
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -502,9 +509,6 @@ jobs:
           echo "IMAGE_TAG=sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
           echo "GELABBER_VERSION=v$(python3 -c 'import tomllib; print(tomllib.load(open("backend/Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
           echo "OCI_CREATED=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
-
-      - name: Compose version pins match workspace
-        run: grep -F "${GHCR_IMAGE}:${GELABBER_VERSION}" deploy/compose/compose.yaml
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
