@@ -258,6 +258,8 @@ function fixture(
           iceCandidates: [],
           dtlsParameters: { fingerprints: [] },
         };
+      if (method === "capabilities")
+        return { codecs: { video: ["video/vp8"], revision: 0 } };
       if (method === "produce")
         return { producerId: "producer-" + ++producerNumber };
       if (method === "restartIce")
@@ -1454,27 +1456,15 @@ describe("public mediasoup connection lifecycle", () => {
     ]);
   });
 
-  it("says nothing for a smooth Live and survives a server without screen modes", async () => {
+  it("says nothing for a smooth Live", async () => {
     const f = fixture();
     await f.start();
     await f.connection.setScreenMode(false);
     await f.connection.publish(publication("s", new Capture("live", "video")));
     expect(f.calls("screenMode")).toEqual([]);
-    // A server without GEL-32 cannot parse the frame and answers bad_request.
-    f.intercept((method) =>
-      method === "screenMode"
-        ? Promise.reject(new MediaError("bad_request"))
-        : undefined,
-    );
-    await expect(f.connection.setScreenMode(true)).resolves.toBeUndefined();
-    expect(f.connection.sender("s")).toBeDefined();
-    expect(f.onError).not.toHaveBeenCalled();
-    // The Live works as before: the refusal counts as told, no retries.
-    await f.connection.setScreenMode(true);
-    expect(f.calls("screenMode")).toHaveLength(1);
   });
 
-  it.each(["request_timeout", "connection_closed"])(
+  it.each(["request_timeout", "connection_closed", "bad_request"])(
     "tells a sharp Live's mode again after a %s",
     async (code) => {
       const f = fixture();
@@ -1488,6 +1478,9 @@ describe("public mediasoup connection lifecycle", () => {
           : undefined,
       );
       await expect(f.connection.setScreenMode(true)).resolves.toBeUndefined();
+      // The Live goes on as it was; the refusal is no error of the call.
+      expect(f.connection.sender("s")).toBeDefined();
+      expect(f.onError).not.toHaveBeenCalled();
       f.intercept(undefined);
       await f.connection.setScreenMode(true);
       await f.connection.setScreenMode(true);
@@ -2046,14 +2039,15 @@ describe("video codec negotiation", () => {
       .flatMap((transport) => transport.produce.mock.calls)
       .map(([options]) => options);
 
-  it("keeps VP8 when the server does not name codecs", async () => {
-    const f = fixture("voice", undefined, {
-      hardwareVideo: async () => ({ av1: true, h264: true, vp9Svc: false }),
+  it("fails to start when the server names no codecs", async () => {
+    const f = fixture();
+    f.intercept((method) =>
+      method === "capabilities" ? Promise.resolve({}) : undefined,
+    );
+    await expect(f.start()).rejects.toMatchObject({
+      code: "negotiation_failed",
     });
-    f.device.sendRtpCapabilities = withH264;
-    await f.start();
-    await f.connection.publish(publication("v", new Capture("cam", "video")));
-    expect(sent(f)[0].codec?.mimeType).toBe("video/VP8");
+    expect(f.calls("transport")).toEqual([]);
   });
 
   it("sends Constrained Baseline H.264 in three layers with hardware, else VP8", async () => {

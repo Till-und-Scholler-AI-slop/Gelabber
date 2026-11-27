@@ -27,6 +27,7 @@ const server: ServerDetail = {
   role: "member",
   permissions: ["join_voice", "send_messages"],
   member_permissions: ["join_voice", "send_messages"],
+  blocked: false,
   categories: [],
   channels: [
     {
@@ -99,6 +100,7 @@ const unset: NotificationSetting = {
   level: null,
   muted: false,
   muted_until: null,
+  voice: false,
 };
 
 /** A handler with a hidden window, toasts and desktop notifications on, and
