@@ -9,8 +9,14 @@ import * as teardown from "./teardown.mjs";
 import { activePeers } from "./media.mjs";
 
 /** One snapshot: `packets` received, `plays` playback paths of the one
- * expected source, `foreign` paths of any other. */
-export function sample({ packets, plays = 1, foreign = 0 }) {
+ * expected source (or `perSource`, one count per source), `foreign` paths
+ * of any other. */
+export function sample({
+  packets,
+  plays = 1,
+  perSource = [plays],
+  foreign = 0,
+}) {
   return {
     peers: [
       {
@@ -21,7 +27,7 @@ export function sample({ packets, plays = 1, foreign = 0 }) {
         selected: [{ state: "succeeded", local: "host", remote: "host" }],
       },
     ],
-    roomAudio: { perSource: [plays], foreign },
+    roomAudio: { perSource, foreign },
     duplicateAudioPlaybackTracks: 0,
     displayCalls: 0,
     cameraCalls: 0,
