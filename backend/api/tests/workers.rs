@@ -58,8 +58,9 @@ async fn a_server_runs_every_background_worker(pool: PgPool) {
         ("last_call", last_call, &[Worker::LastCall]),
         ("feedback_sweep", feedback_sweep, &[Worker::FeedbackSweep]),
     ];
-    for (name, every, _) in &expected {
+    for (name, every, passes) in &expected {
         assert!(every.is_some(), "Workers::default() leaves {name} off");
+        assert!(!passes.is_empty(), "{name} lists no passes");
     }
 
     let mut state = server_state(pool);

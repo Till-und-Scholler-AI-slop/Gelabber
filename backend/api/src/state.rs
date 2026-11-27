@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -113,7 +113,8 @@ pub struct AppState {
     /// Which background workers `app()` starts and how often each looks for
     /// work on its own.
     pub workers: Workers,
-    /// The passes those workers finished.
+    /// Which of those workers have finished a pass, for the start-up check
+    /// in `tests/workers.rs` (GEL-434).
     pub worker_passes: Arc<WorkerPasses>,
 }
 
@@ -181,7 +182,7 @@ impl Default for Workers {
     }
 }
 
-/// A background worker's loop, as [`WorkerPasses`] counts it. Storage
+/// A background worker's loop, as [`WorkerPasses`] records it. Storage
 /// cleanup runs two; link previews count their sweep (their jobs wait for a
 /// message, not a timer).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -198,29 +199,29 @@ pub enum Worker {
     FeedbackSweep,
 }
 
-/// The passes each background worker finished in this process; a pass counts
-/// once its work ran without an error. `tests/workers.rs` waits on it to
-/// check that a server starts every worker (GEL-434).
+/// The background workers that finished a pass in this process; a pass
+/// counts once its work ran without an error. `tests/workers.rs` waits on it
+/// to check that a server starts every worker (GEL-434). After a worker's
+/// first pass, its later ones change nothing and wake nobody.
 #[derive(Debug)]
-pub struct WorkerPasses(tokio::sync::watch::Sender<HashMap<Worker, u64>>);
+pub struct WorkerPasses(tokio::sync::watch::Sender<HashSet<Worker>>);
 
 impl Default for WorkerPasses {
     fn default() -> Self {
-        Self(tokio::sync::watch::Sender::new(HashMap::new()))
+        Self(tokio::sync::watch::Sender::new(HashSet::new()))
     }
 }
 
 impl WorkerPasses {
     pub(crate) fn finished(&self, worker: Worker) {
-        self.0
-            .send_modify(|passes| *passes.entry(worker).or_default() += 1);
+        self.0.send_if_modified(|passed| passed.insert(worker));
     }
 
     /// Returns once `worker` has finished a pass.
     pub async fn first(&self, worker: Worker) {
-        let mut passes = self.0.subscribe();
+        let mut passed = self.0.subscribe();
         // The sender lives as long as `self`, so the wait cannot fail.
-        let _ = passes.wait_for(|passes| passes.contains_key(&worker)).await;
+        let _ = passed.wait_for(|passed| passed.contains(&worker)).await;
     }
 }
 

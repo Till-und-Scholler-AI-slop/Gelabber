@@ -31,7 +31,7 @@ use crate::auth::validate;
 use crate::error::{ApiError, FieldErrors};
 use crate::gateway::protocol::{PresenceMode, UserFrame};
 use crate::json::Body;
-use crate::state::AppState;
+use crate::state::{AppState, Worker};
 
 /// SQL: user `u` is in Do not disturb right now. Every push query filters
 /// on it, as `concat!("…", dnd_active!())` (a literal, for sqlx).
@@ -318,9 +318,7 @@ pub fn start(state: AppState) {
                 match sweep(&state).await {
                     Ok(n) if n as i64 >= SWEEP_BATCH => continue,
                     Ok(_) => {
-                        state
-                            .worker_passes
-                            .finished(crate::state::Worker::PresenceModes);
+                        state.worker_passes.finished(Worker::PresenceModes);
                         break;
                     }
                     Err(error) => {
