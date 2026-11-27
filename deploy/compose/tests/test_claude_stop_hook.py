@@ -88,6 +88,12 @@ class Checks(unittest.TestCase):
         self.assertEqual(self.names('web/scripts/checks.mjs', root=root), ['web: eslint'])
         self.assertEqual(self.names('desktop/notes.tsx', root=root), [])
 
+    def test_without_web_dependencies_there_are_no_web_checks(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        (Path(tmp.name) / 'web/src').mkdir(parents=True)
+        self.assertEqual(self.names('web/src/main.tsx', root=Path(tmp.name)), [])
+
     def test_web_eslint_gets_paths_relative_to_web(self):
         root = self.web_root()
         found = {name: (args, cwd) for name, args, cwd in hook.checks(root, ['web/src/main.tsx'])}

@@ -186,7 +186,7 @@ fn picture_change(a: &image::RgbaImage, b: &image::RgbaImage, rect: egui::Rect) 
 }
 
 #[test]
-#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER) and Chromium"]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER) and Chromium; GEL-376 decides where it runs"]
 fn voice_end_to_end() {
     let server = std::env::var("GELABBER_TEST_SERVER").expect("GELABBER_TEST_SERVER");
     let fixture: Value = serde_json::from_str(

@@ -21,12 +21,14 @@ test("in CI a missing prerequisite fails", () => {
 test("CI counts unless it is unset, empty, 0 or false", () => {
   for (const [value, ci] of [
     ["true", true],
+    ["TRUE", true],
     ["1", true],
     ["yes", true],
     ["", false],
     ["0", false],
     ["false", false],
     ["False", false],
+    [" false ", false],
     [undefined, false],
   ])
     assert.equal(ciFrom(value), ci, `CI=${value}`);

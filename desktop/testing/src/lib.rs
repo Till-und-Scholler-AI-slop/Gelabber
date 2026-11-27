@@ -57,12 +57,14 @@ mod tests {
     fn ci_counts_unless_unset_empty_0_or_false() {
         for (value, ci) in [
             (Some("true"), true),
+            (Some("TRUE"), true),
             (Some("1"), true),
             (Some("yes"), true),
             (Some(""), false),
             (Some("0"), false),
             (Some("false"), false),
             (Some("False"), false),
+            (Some(" false "), false),
             (None, false),
         ] {
             assert_eq!(ci_from(value), ci, "CI={value:?}");
