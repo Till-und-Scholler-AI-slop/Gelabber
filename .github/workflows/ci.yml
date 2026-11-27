@@ -505,7 +505,8 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Test E2E harness and scripts
+      # The E2E harness checks, then the smokes that need only Chromium (GEL-377).
+      - name: Script checks and browser smokes
         run: npm run test:checks
 
       # Every field state in four themes against its pictures (#561).
