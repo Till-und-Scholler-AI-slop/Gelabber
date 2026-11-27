@@ -29,7 +29,9 @@ const checks = [
   [vm, "scripts/e2e/ci-fault-prepare.checks.mjs"],
   ["scripts/e2e/ci-fault-loop.checks.mjs"],
   ["scripts/e2e/extended-issue.checks.mjs"],
+  ["scripts/e2e/expected-failures.checks.mjs"],
   ["scripts/load/load.checks.mjs"],
+  ["scripts/audio/benchmark-rnnoise.mjs"],
   ["scripts/run-within.checks.mjs"],
 ];
 // Longest first, so the slowest one does not start last.

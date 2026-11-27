@@ -18,7 +18,7 @@
     "test:phone-smoke": "node scripts/smoke-phone-layout.mjs",
     "test:chat-scroll-smoke": "node scripts/smoke-chat-scroll.mjs",
     "test:member-list-smoke": "node scripts/smoke-member-list.mjs",
-    "test:screen-sharpness-smoke": "node scripts/smoke-screen-sharpness.mjs",
+    "measure:screen-sharpness": "node scripts/smoke-screen-sharpness.mjs",
     "test:lazy-parts-smoke": "node scripts/smoke-lazy-parts.mjs",
     "test:browser-smoke": "node scripts/smoke-two-browsers.mjs",
     "test:e2e-app": "node scripts/e2e/run.mjs",
