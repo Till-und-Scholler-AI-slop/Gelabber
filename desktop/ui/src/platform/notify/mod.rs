@@ -555,7 +555,7 @@ mod tests {
     fn state(me: Uuid) -> State {
         let user: User = serde_json::from_value(json!({
             "id": me, "email": "lena@example.org", "name": "Lena",
-            "created_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00Z", "locale": "de",
         }))
         .unwrap();
         let mut state = State::default();
@@ -619,15 +619,15 @@ mod tests {
         let detail = serde_json::from_value(json!({
             "id": server, "name": "Runde", "owner_id": Uuid::new_v4(), "icon_url": null,
             "created_at": "2026-10-01T00:00:00Z", "role": "member",
-            "permissions": ["join_voice"], "member_permissions": ["join_voice"],
-            "categories": [],
+            "permissions": ["join_voice"], "blocked": false, "member_permissions": ["join_voice"],
+            "roles": [], "categories": [],
             "channels": [{
-                "id": lounge, "server_id": server, "category_id": null, "name": "Lounge",
+                "id": lounge, "server_id": server, "limited": false, "role_ids": [], "category_id": null, "name": "Lounge",
                 "kind": "voice", "created_at": "2026-10-01T00:00:00Z",
             }],
             "members": [{
                 "user_id": ada, "name": "Ada", "avatar_url": null,
-                "joined_at": "2026-10-01T00:00:00Z", "role": "member",
+                "role_ids": [], "joined_at": "2026-10-01T00:00:00Z", "role": "member",
             }],
         }))
         .unwrap();

@@ -797,13 +797,17 @@ mod tests {
     /// panel and the server's overview.
     #[test]
     fn the_shell_speaks_english() {
-        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label, workspace};
+        use crate::app::testkit::{
+            FakeApi, HOME, english_account, launcher, wait_for_label, workspace,
+        };
         use crate::platform::paths::testing::TempConfig;
         use egui_kittest::kittest::Queryable;
 
         let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
         let _config = TempConfig::new("shell-english");
-        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let api = FakeApi::start(true, |method, path, _| {
+            english_account(method, path).or_else(|| workspace(method, path))
+        });
         let mut harness = launcher(&api, &format!("/s/{HOME}"));
         wait_for_label(&mut harness, "Overview");
         for label in ["Direct messages", "Add server", "Invite", "Settings"] {

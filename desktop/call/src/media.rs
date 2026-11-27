@@ -1055,8 +1055,8 @@ impl Session {
                 .request("w", json!({ "u": user, "k": "s", "on": true }))
                 .await;
         }
-        // A gateway from before GEL-32 refuses the choice: the Lives then
-        // play as their owners set them.
+        // Best effort: without an answer the Lives play as their owners set
+        // them.
         let view_modes: Vec<(Uuid, bool)> = self
             .st
             .lock()
@@ -3378,8 +3378,8 @@ impl Seat {
     }
 
     /// Tells the server whether the Live keeps text sharp (GEL-32), so it
-    /// holds viewers on a weak download at full size. A server without it
-    /// refuses the frame; the Live works as before.
+    /// holds viewers on a weak download at full size. Best effort: a failed
+    /// request is not repeated, and the Live works as before.
     async fn sync_screen_mode(&self, sharp: bool) {
         let id = {
             let mut producers = self.producers.lock();
