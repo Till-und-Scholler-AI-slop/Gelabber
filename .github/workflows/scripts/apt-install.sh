@@ -8,6 +8,10 @@
 # limit; when one runs out, the next mirror goes first and the fetch resumes,
 # keeping the files it already has.
 #
+# apt reads only Ubuntu's own sources here: the image also lists third-party
+# repositories (Microsoft's answered 403 on 2026-11-27, GEL-404), none of the
+# packages comes from one, and one failing fails the whole update.
+#
 # Usage: apt-install.sh PACKAGE...
 set -euo pipefail
 
@@ -20,7 +24,8 @@ fi
 # kernel.org's mirror. Fetch limits per attempt in seconds: a healthy mirror
 # needs a fraction (the desktop job's 90 MB took 7 s), and all attempts with
 # their list updates stay within the callers' 15 minute step limit.
-mirror_list=/etc/apt/apt-mirrors.txt
+apt_etc=${APT_INSTALL_ETC:-/etc/apt}  # tests point it at a temporary copy
+mirror_list=$apt_etc/apt-mirrors.txt
 fallbacks=(https://archive.ubuntu.com/ubuntu/ https://mirrors.edge.kernel.org/ubuntu/)
 limits=(90 240 240)
 update_limit=60
@@ -28,6 +33,24 @@ options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::T
          -o DPkg::Lock::Timeout=120)
 # The package lists are fetched once per job and again after a mirror switch.
 updated="${RUNNER_TEMP:-/tmp}/apt-install-updated"
+
+# Ubuntu 24.04 and later keep the Ubuntu sources in deb822 form, 22.04 in the
+# classic list. The other repositories' package lists stay where they are.
+ubuntu_sources=$apt_etc/sources.list.d/ubuntu.sources
+[ -f "$ubuntu_sources" ] || ubuntu_sources=$apt_etc/sources.list
+if [ -f "$ubuntu_sources" ]; then
+  options+=(-o "Dir::Etc::SourceList=$ubuntu_sources" -o Dir::Etc::SourceParts=/dev/null
+            -o APT::Get::List-Cleanup=false)
+  left_out=()
+  for source in "$apt_etc/sources.list" "$apt_etc"/sources.list.d/*; do
+    if [ -f "$source" ] && [ "$source" != "$ubuntu_sources" ]; then
+      left_out+=("${source#"$apt_etc"/}")
+    fi
+  done
+  echo "apt-install: using $ubuntu_sources only; left out: ${left_out[*]:-nothing}"
+else
+  echo "::warning::apt-install: no Ubuntu sources at $apt_etc, using every configured source"
+fi
 
 apt_get() {
   sudo env DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" "$@"
