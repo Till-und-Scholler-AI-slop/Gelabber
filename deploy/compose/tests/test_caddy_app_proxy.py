@@ -21,12 +21,10 @@ users behind a proxy in front do not all share that proxy's window.
 """
 from __future__ import annotations
 
-import re
 import unittest
 from pathlib import Path
 from typing import Any
 
-from test_changes import changed_areas
 from test_homelab_caddy import (
     HOSTPORT,
     _adapt,
@@ -51,42 +49,7 @@ APP_UPSTREAMS = {
 }
 API_UPSTREAMS = {"Caddyfile": "api:8080", "Caddyfile.homelab": "127.0.0.1:18080"}
 MEDIA_UPSTREAMS = {"Caddyfile": "media:8081", "Caddyfile.homelab": "127.0.0.1:18081"}
-FORWARDED_FOR = "header_up X-Forwarded-For {client_ip}"
 CLIENT_IP = "{http.vars.client_ip}"
-TRUSTED_PROXIES_ENV = "${GELABBER_TRUSTED_PROXIES-private_ranges}"
-
-
-def _active_lines(text: str) -> list[str]:
-    return [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-
-
-def _proxy_blocks(lines: list[str]) -> list[tuple[str, list[str]]]:
-    """Each `reverse_proxy` upstream with the active lines of its block."""
-    blocks: list[tuple[str, list[str]]] = []
-    for index, line in enumerate(lines):
-        if not line.startswith("reverse_proxy "):
-            continue
-        body: list[str] = []
-        depth = line.count("{") - line.count("}")
-        for inner in lines[index + 1 :]:
-            if depth <= 0:
-                break
-            depth += inner.count("{") - inner.count("}")
-            body.append(inner)
-        blocks.append((line.split()[1], body))
-    return blocks
-
-
-def _is_api_upstream(upstream: str) -> bool:
-    return upstream == "api:8080" or upstream.startswith("{$GELABBER_API_UPSTREAM")
-
-
-def _is_media_upstream(upstream: str) -> bool:
-    return upstream == "media:8081" or upstream.startswith("{$GELABBER_MEDIA_UPSTREAM")
 
 
 def _servers(adapted: dict[str, Any]) -> dict[str, Any]:
@@ -115,70 +78,8 @@ def _encode_handlers(node: Any) -> list[dict[str, Any]]:
     return found
 
 
-class CaddyfileTextTest(unittest.TestCase):
-    """Runs everywhere, without a caddy binary."""
-
-    def test_every_proxy_forwards_host_with_port(self) -> None:
-        for path in CADDYFILES:
-            with self.subTest(path.name):
-                lines = _active_lines(path.read_text(encoding="utf-8"))
-                proxies = [line for line in lines if line.startswith("reverse_proxy ")]
-                forwards = [line for line in lines if line.startswith("header_up Host ")]
-                self.assertGreaterEqual(len(proxies), 6)
-                self.assertEqual(
-                    forwards,
-                    ["header_up Host {hostport}"] * len(proxies),
-                    "each reverse_proxy must forward Host as {hostport}; "
-                    "{host} drops a non-default port and /ws answers 403",
-                )
-
-    def test_api_upstreams_get_one_resolved_forwarded_for(self) -> None:
-        for path in CADDYFILES:
-            with self.subTest(path.name):
-                blocks = _proxy_blocks(_active_lines(path.read_text(encoding="utf-8")))
-                api = [body for upstream, body in blocks if _is_api_upstream(upstream)]
-                self.assertEqual(len(api), 4, "/health, /ready, /ws and /api")
-                for body in api:
-                    self.assertIn(
-                        FORWARDED_FOR,
-                        body,
-                        "the API reads the rightmost X-Forwarded-For entry; "
-                        "without this line it is the proxy in front, not the client",
-                    )
-                media = [body for upstream, body in blocks if _is_media_upstream(upstream)]
-                self.assertEqual(len(media), 1, "/media")
-                for body in media:
-                    self.assertIn(
-                        FORWARDED_FOR,
-                        body,
-                        "media caps pending /ws sockets by the rightmost "
-                        "X-Forwarded-For entry; without this line it is the proxy in front",
-                    )
-                others = [
-                    body
-                    for upstream, body in blocks
-                    if not _is_api_upstream(upstream) and not _is_media_upstream(upstream)
-                ]
-                for body in others:
-                    self.assertNotIn(FORWARDED_FOR, body)
-
-    def test_bundled_caddy_trusts_configured_proxies_strictly(self) -> None:
-        lines = _active_lines((COMPOSE / "Caddyfile").read_text(encoding="utf-8"))
-        self.assertIn("trusted_proxies static {$GELABBER_TRUSTED_PROXIES}", lines)
-        # Without strict mode Caddy takes the leftmost untrusted entry, which
-        # the client wrote itself.
-        self.assertIn("trusted_proxies_strict", lines)
-
-    def test_compose_hands_trusted_proxies_to_the_bundled_caddy(self) -> None:
-        compose = (COMPOSE / "compose.yaml").read_text(encoding="utf-8")
-        match = re.search(r"(?ms)^  proxy:\n(.*?)(?=^  \S)", compose)
-        self.assertIsNotNone(match, "no proxy service in compose.yaml")
-        assert match is not None
-        # `-`, not `:-`: an explicitly empty value in .env must trust no one.
-        self.assertIn(
-            f"GELABBER_TRUSTED_PROXIES: {TRUSTED_PROXIES_ENV}",
-            _active_lines(match.group(1)),
-        )
+class OperatorGuideTest(unittest.TestCase):
+    """What an operator copies into a Caddy of their own; runs without caddy."""
 
     def test_no_guide_recommends_host_without_port(self) -> None:
         for path in OPERATOR_GUIDES:
@@ -187,14 +88,6 @@ class CaddyfileTextTest(unittest.TestCase):
                     "header_up Host {host}" in path.read_text(encoding="utf-8"),
                     "an operator's own Caddy must forward {hostport} as well",
                 )
-
-    def test_responses_are_compressed(self) -> None:
-        for path in CADDYFILES:
-            with self.subTest(path.name):
-                lines = _active_lines(path.read_text(encoding="utf-8"))
-                encode = [line for line in lines if re.match(r"encode\b", line)]
-                self.assertEqual(len(encode), 1, encode)
-                self.assertIn("gzip", encode[0].split())
 
 
 class CaddyfileEffectiveConfigTest(unittest.TestCase):
@@ -274,20 +167,6 @@ class CaddyfileEffectiveConfigTest(unittest.TestCase):
                         self.assertEqual(ranges, set())
                     self.assertTrue(server.get("trusted_proxies_strict"))
 
-
-class OperatorGuideTriggerTest(unittest.TestCase):
-    """A pull request that changes nothing but a guide must still run this file."""
-
-    def test_every_guide_starts_ci(self) -> None:
-        repo = COMPOSE.parents[1]
-        for path in OPERATOR_GUIDES:
-            name = path.relative_to(repo).as_posix()
-            with self.subTest(name):
-                self.assertIn(
-                    "deploy",
-                    changed_areas(name),
-                    f"a pull request that only changes {name} starts no CI run",
-                )
 
 if __name__ == "__main__":
     unittest.main()

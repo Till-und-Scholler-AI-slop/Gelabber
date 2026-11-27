@@ -43,9 +43,6 @@ tokio = { version = "1.53.2", features = ["rt"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
-# The Tauri app's WebKitGTK localStorage (src/platform/webview/webkit.rs);
-# bundled, so the package needs no libsqlite3 of its own.
-rusqlite = { version = "0.43.0", default-features = false, features = ["bundled"] }
 # The system's idle time for presence (src/platform/idle.rs), the versions
 # winit already brings: ext-idle-notify-v1 on Wayland, MIT-SCREEN-SAVER on X11.
 wayland-client = "0.31.15"

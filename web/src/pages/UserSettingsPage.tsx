@@ -36,10 +36,9 @@ import { SettingsAreaPart } from "./settingsAreaPart.ts";
 import "./settings.css";
 
 function useInstallable() {
-  // Nothing to install inside the Tauri app; the installed web app can
-  // still get the desktop app.
+  // The installed web app can still get the desktop app.
   return useInstallation(
-    (state) => !state.native && (!state.standalone || state.desktop !== null),
+    (state) => !state.standalone || state.desktop !== null,
   );
 }
 

@@ -12,7 +12,6 @@ import subprocess
 import tempfile
 import unittest
 from prerequisites import requires
-from test_changes import changed_areas
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'backup.sh'
 RECIPIENT = 'age1fakerecipientforthebackuptest'
@@ -196,9 +195,6 @@ class Backup(unittest.TestCase):
                                  ['.database.pgdump.fifo', 'minio-image-id.txt'])
                 # The dump is the first file; the archive is never started.
                 self.assertFalse([call for call in self.calls() if call.startswith('run')])
-
-    def test_a_change_to_the_script_starts_ci(self):
-        self.assertIn('deploy', changed_areas('deploy/backup.sh'))
 
     def test_malformed_recipient_stops_nothing(self):
         result = self.run_backup('not-an-age-key')

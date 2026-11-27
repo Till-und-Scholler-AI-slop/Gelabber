@@ -8,7 +8,6 @@ pub mod aumid;
 pub mod files;
 pub mod idle;
 pub mod instance;
-pub mod legacy;
 pub mod notify;
 mod open;
 pub mod paths;
@@ -22,7 +21,6 @@ pub mod state;
 pub mod system_colors;
 pub mod tray;
 pub mod update;
-pub mod webview;
 
 #[cfg(test)]
 pub(crate) use open::testing as open_testing;

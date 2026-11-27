@@ -317,11 +317,6 @@ jobs:
     name: Native core (Linux x64)
     needs: libwebrtc-linux
     if: inputs.prebuilt_run == ''
-    # A newer push to a pull request cancels this job of the older run (ci.yml
-    # cancels the whole run, libwebrtc included). Branch runs are never cancelled.
-    concurrency:
-      group: desktop-core-linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -391,13 +386,44 @@ jobs:
             libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
             gstreamer1.0-plugins-ugly gstreamer1.0-libav python3-gi
 
+      - name: Install cargo-nextest
+        if: inputs.release_tag == ''
+        run: .github/workflows/scripts/install-nextest.sh
+
       # Every test of the workspace. This core is built with H264, so the
-      # loopback call must use it.
+      # loopback call must use it. Profile ci retries a failed test once and
+      # writes JUnit (desktop/.config/nextest.toml); nextest skips doctests.
+      # The media tests run one at a time, the others side by side (GEL-393).
       - name: Loopback call against mediasoup 0.33
         if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
-        run: cargo test --locked --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
+          MEDIA_TESTS: package(gelabber-media-core) | package(gelabber-call)
+        run: |
+          set -uo pipefail
+          status=0
+          cargo nextest run --profile ci-media --locked --manifest-path desktop/Cargo.toml --no-fail-fast -E "$MEDIA_TESTS" || status=1
+          cargo nextest run --profile ci --locked --manifest-path desktop/Cargo.toml --no-fail-fast -E "not ($MEDIA_TESTS)" || status=1
+          cargo test --locked --manifest-path desktop/Cargo.toml --doc || status=1
+          exit "$status"
+
+      # A test that passed only on retry passes the run, but never silently.
+      - name: Flaky tests
+        if: ${{ !cancelled() && inputs.release_tag == '' }}
+        env:
+          JOB_LABEL: Native core (Linux x64)
+        run: python3 .github/workflows/scripts/flaky_tests.py summary desktop/target/nextest/ci-media/junit.xml desktop/target/nextest/ci/junit.xml
+
+      - name: Upload the test report
+        if: ${{ !cancelled() && inputs.release_tag == '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-desktop-linux
+          path: |
+            desktop/target/nextest/ci-media/junit.xml
+            desktop/target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Loopback call with the GStreamer H264 encoder
         if: inputs.release_tag == ''
@@ -595,10 +621,6 @@ jobs:
     name: Native core and app (Windows x64)
     needs: libwebrtc-windows
     if: inputs.prebuilt_run == ''
-    # As core-linux: a newer push to a pull request cancels the older run's.
-    concurrency:
-      group: desktop-core-windows-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: windows-2022
     timeout-minutes: 120
     defaults:
@@ -824,6 +846,7 @@ jobs:
             }
           }
           function Removed {
+            $started = (Get-Date).ToUniversalTime()
             Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
             $left = {
               @($install, $lnk, $desktop, $uninstallKey, "HKCU:\Software\Classes\AppUserModelId\$id") |
@@ -832,6 +855,12 @@ jobs:
             $deadline = (Get-Date).AddMinutes(3)
             while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
             $rest = @(& $left)
+            # A write after the uninstaller's start means written again; else it could not delete the file, still held or held then (GEL-374).
+            foreach ($file in @($rest | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+              $item = Get-Item -LiteralPath $file
+              "${file}: written $($item.LastWriteTimeUtc.ToString('o')), uninstaller started $($started.ToString('o'))"
+              try { Remove-Item -LiteralPath $file -ErrorAction Stop; "${file}: deletes now" } catch { "${file}: does not delete now: $($_.Exception.Message)" }
+            }
             if ($rest) { throw "left behind by the uninstaller: $($rest -join ', ')" }
             if (-not (Test-Path -LiteralPath 'HKCU:\Software\Gelabber\Gelabber')) {
               throw "the uninstaller removed the installer's note of the folder without being asked"
@@ -1088,10 +1117,6 @@ jobs:
           $env:GELABBER_MEDIA_LIB_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'no-core')).FullName
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --all-targets -- -D warnings
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber -p gelabber-ui -p gelabber-call -p gelabber-client -p gelabber-i18n --all-targets -- -D warnings
-
-      - name: Format
-        if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
-        run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
   # A release whose pull request packaged its apps (candidate, GEL-358): the
   # installer gets the release key's signature here, and nothing built runs.

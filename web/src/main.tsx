@@ -11,21 +11,15 @@ import { queryClient } from "./queryClient.ts";
 import { router } from "./routes.tsx";
 import { ThemeController } from "./theme/ThemeController.tsx";
 import { InterfacePreferences } from "./interface/InterfacePreferences.tsx";
-import { isTauriApp, markTauriRoot, warnIfTauriOutdated } from "./tauriApp.ts";
 import { trackInstallation } from "./pwa/install.ts";
 import { startPwa } from "./pwa/start.ts";
 import { watchSpeaking } from "./voice/speaking.ts";
 
-// The Tauri app keeps out of the worker and install prompts, as it always did.
-const desktop = isTauriApp();
-if (desktop) warnIfTauriOutdated();
-markTauriRoot(document.documentElement);
-const stopInstallTracking = trackInstallation(window, desktop);
+const stopInstallTracking = trackInstallation(window);
 if (import.meta.hot) import.meta.hot.dispose(stopInstallTracking);
 const stopSpeaking = watchSpeaking();
 if (import.meta.hot) import.meta.hot.dispose(stopSpeaking);
 startPwa({
-  desktop,
   user: () => useSession.getState().user?.id,
   navigate: (to) => router.navigate(to),
 });

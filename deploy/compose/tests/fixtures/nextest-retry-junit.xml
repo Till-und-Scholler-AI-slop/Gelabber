@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="3" skipped="0" failures="1" errors="0" uuid="d6b1ae4a-c6c7-4475-abf4-1083f44c7a18" timestamp="2026-11-27T12:09:10.736+00:00" time="0.095">
+    <testsuite name="flakycrate::t" tests="3" skipped="0" errors="0" failures="1">
+        <testcase name="passes" classname="flakycrate::t" timestamp="2026-11-27T12:09:10.741+00:00" time="0.017"/>
+        <testcase name="flaky" classname="flakycrate::t" timestamp="2026-11-27T12:09:10.789+00:00" time="0.023">
+            <flakyFailure timestamp="2026-11-27T12:09:10.746+00:00" time="0.044" message="thread &apos;flaky&apos; (3456349) panicked at tests/t.rs:2:123" type="test failure with exit code 101">thread &apos;flaky&apos; (3456349) panicked at tests/t.rs:2:123:
+first attempt fails
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+                <system-out>
+running 1 test
+test flaky ... FAILED
+
+failures:
+
+failures:
+    flaky
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+</system-out>
+                <system-err>
+thread &apos;flaky&apos; (3456349) panicked at tests/t.rs:2:123:
+first attempt fails
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+</system-err>
+            </flakyFailure>
+        </testcase>
+        <testcase name="broken" classname="flakycrate::t" timestamp="2026-11-27T12:09:10.742+00:00" time="0.042">
+            <failure message="thread &apos;broken&apos; (3456344) panicked at tests/t.rs:3:23" type="test failure with exit code 101">thread &apos;broken&apos; (3456344) panicked at tests/t.rs:3:23:
+always
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace</failure>
+            <rerunFailure timestamp="2026-11-27T12:09:10.795+00:00" time="0.034" message="thread &apos;broken&apos; (3456364) panicked at tests/t.rs:3:23" type="test failure with exit code 101">thread &apos;broken&apos; (3456364) panicked at tests/t.rs:3:23:
+always
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+                <system-out>
+running 1 test
+test broken ... FAILED
+
+failures:
+
+failures:
+    broken
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+</system-out>
+                <system-err>
+thread &apos;broken&apos; (3456364) panicked at tests/t.rs:3:23:
+always
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+</system-err>
+            </rerunFailure>
+            <system-out>
+running 1 test
+test broken ... FAILED
+
+failures:
+
+failures:
+    broken
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.01s
+
+</system-out>
+            <system-err>
+thread &apos;broken&apos; (3456344) panicked at tests/t.rs:3:23:
+always
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+</system-err>
+        </testcase>
+    </testsuite>
+</testsuites>

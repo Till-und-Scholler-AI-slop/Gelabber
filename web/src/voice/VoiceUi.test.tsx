@@ -198,7 +198,7 @@ beforeEach(() => {
   fixture.roster = {};
   fixture.watches = {};
   fixture.live = {
-    a: { stage: { alice: { l: true } } },
+    a: { stage: { alice: { s: true } } },
     b: { stage: { bob: { s: true } } },
   };
   fixture.server = undefined;
@@ -246,11 +246,17 @@ describe("active media UI", () => {
     expect(html).not.toContain("data-source=");
   });
   it("does not render Voice remote media outside its active room", () => {
+    // Bob is live in the other server's room too; the call's stream of him
+    // belongs to the room it came from.
+    fixture.roster = {
+      b: { bob: { channelId: "stage", muted: false, deafened: false } },
+    };
     Object.assign(fixture.voice, {
       status: "joined",
       serverId: "a",
       channelId: "stage",
-      remote: { bob: { l: stream } },
+      participants: { bob: { pubs: ["s"] } },
+      remote: { bob: { s: stream } },
     });
     const html = renderToStaticMarkup(
       <VoiceRoom
