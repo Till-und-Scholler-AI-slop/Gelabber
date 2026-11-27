@@ -1,1 +1,41 @@
-{"messages":[{"id":"b10a4e23-e49a-48a1-9cb9-dc31d6b8d15b","channel_id":"40bb40fa-6a85-434f-925e-b3848b878a62","author":{"id":"7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab","name":"Jonas","avatar_url":null},"content":"Hey Lena, hast du die Fotos vom Wochenende noch?","created_at":"2026-11-05T15:24:54.112281Z","edited_at":null,"revision":19,"created_order":14,"attachments":[],"reactions":[],"mentions":[],"mention_everyone":false},{"id":"3820b47f-6c63-4e8a-afa6-8ae323aa378a","channel_id":"40bb40fa-6a85-434f-925e-b3848b878a62","author":{"id":"3796349f-6f8f-4bcf-826f-d2237e2fe9d3","name":"Lena","avatar_url":null},"content":"Ja, ich schicke sie dir heute Abend.","created_at":"2026-11-05T15:24:54.122863Z","edited_at":null,"revision":20,"created_order":15,"attachments":[],"reactions":[],"mentions":[],"mention_everyone":false}],"has_more":false}
+{
+  "messages": [
+    {
+      "id": "a268b485-d71a-4c56-b889-2a72941359f6",
+      "channel_id": "7cdbab08-3690-4375-aa70-8463108abeab",
+      "author": {
+        "id": "d899594b-1041-431b-aadb-ada4789bbcc7",
+        "name": "Jonas",
+        "avatar_url": null
+      },
+      "content": "Hey Lena, hast du die Fotos vom Wochenende noch?",
+      "created_at": "2026-11-27T15:22:08.621128Z",
+      "edited_at": null,
+      "revision": 18,
+      "created_order": 14,
+      "attachments": [],
+      "reactions": [],
+      "mentions": [],
+      "mention_everyone": false
+    },
+    {
+      "id": "d9aa063e-26be-4c25-b1c5-1d53a6c4a549",
+      "channel_id": "7cdbab08-3690-4375-aa70-8463108abeab",
+      "author": {
+        "id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
+        "name": "Lena",
+        "avatar_url": null
+      },
+      "content": "Ja, ich schicke sie dir heute Abend.",
+      "created_at": "2026-11-27T15:22:08.685929Z",
+      "edited_at": null,
+      "revision": 21,
+      "created_order": 15,
+      "attachments": [],
+      "reactions": [],
+      "mentions": [],
+      "mention_everyone": false
+    }
+  ],
+  "has_more": false
+}

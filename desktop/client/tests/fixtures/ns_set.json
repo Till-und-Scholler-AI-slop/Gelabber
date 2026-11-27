@@ -1,8 +1,8 @@
 {
- "scope": "channel",
- "id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
- "level": "mentions",
- "muted": true,
- "muted_until": "2026-11-05T16:54:14.943638Z",
- "voice": false
+  "scope": "channel",
+  "id": "9c5ff6a2-ea00-45d4-8dff-47d9cf132fa0",
+  "level": "mentions",
+  "muted": true,
+  "muted_until": "2026-11-27T18:04:07.164149Z",
+  "voice": false
 }

@@ -1,21 +1,21 @@
 {
- "id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
- "name": "Capture",
- "owner_id": "3796349f-6f8f-4bcf-826f-d2237e2fe9d3",
- "icon_url": null,
- "created_at": "2026-11-05T15:54:14.020275Z",
- "role": "member",
- "permissions": [
-  "send_messages",
-  "send_files",
-  "join_voice",
-  "go_live"
- ],
- "member_permissions": [
-  "send_messages",
-  "send_files",
-  "join_voice",
-  "go_live"
- ],
- "blocked": false
+  "id": "c2e31332-ded1-4ecf-92eb-265c4122485a",
+  "name": "Aufnahme",
+  "owner_id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
+  "icon_url": null,
+  "created_at": "2026-11-27T17:04:00.646775Z",
+  "role": "member",
+  "permissions": [
+    "send_messages",
+    "send_files",
+    "join_voice",
+    "go_live"
+  ],
+  "member_permissions": [
+    "send_messages",
+    "send_files",
+    "join_voice",
+    "go_live"
+  ],
+  "blocked": false
 }

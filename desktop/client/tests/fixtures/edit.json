@@ -1,25 +1,25 @@
 {
- "id": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7",
- "channel_id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
- "author": {
-  "id": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
-  "name": "Jonas",
-  "avatar_url": null
- },
- "content": "Erste Nachricht, geändert",
- "created_at": "2026-11-05T15:54:14.852617Z",
- "edited_at": "2026-11-05T15:54:14.879674Z",
- "revision": 24,
- "created_order": 16,
- "attachments": [],
- "reactions": [
-  {
-   "emoji": "👍",
-   "user_ids": [
-    "3796349f-6f8f-4bcf-826f-d2237e2fe9d3"
-   ]
-  }
- ],
- "mentions": [],
- "mention_everyone": false
+  "id": "ff363218-ee87-4e3a-83ac-a2d78d91a5e5",
+  "channel_id": "9c5ff6a2-ea00-45d4-8dff-47d9cf132fa0",
+  "author": {
+    "id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
+    "name": "Lena",
+    "avatar_url": null
+  },
+  "content": "Erste **Nachricht**, geändert",
+  "created_at": "2026-11-27T17:04:04.166491Z",
+  "edited_at": "2026-11-27T17:04:04.965496Z",
+  "revision": 100,
+  "created_order": 61,
+  "attachments": [],
+  "reactions": [
+    {
+      "emoji": "👍",
+      "user_ids": [
+        "d899594b-1041-431b-aadb-ada4789bbcc7"
+      ]
+    }
+  ],
+  "mentions": [],
+  "mention_everyone": false
 }

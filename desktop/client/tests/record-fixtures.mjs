@@ -1,0 +1,451 @@
+// Records the API answers in fixtures/ from a running, seeded stack, for
+// models.rs (GEL-376). The stack is the parity stack (desktop/README.md
+// "Tests"): API, media server and Vite, seeded by web/scripts/parity/seed.mjs.
+// What it writes happens in a scratch server, deleted at the end.
+//
+//   node desktop/client/tests/record-fixtures.mjs [base-url]          records
+//   node desktop/client/tests/record-fixtures.mjs [base-url] --check  compares
+//
+// Recording writes fixtures/*.json and fixtures/recorded.json, which lists
+// each file's hash: models.rs fails on a fixture that differs from it, so a
+// fixture changes only by recording. --check records into a scratch folder
+// and fails when a fixture's shape (keys, value types) differs from what the
+// API sends now; e2e-extended.yml runs it after merges.
+/* global process, console, fetch, WebSocket, URL, setTimeout, clearTimeout */
+import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const here = new URL(".", import.meta.url).pathname;
+const committed = join(here, "fixtures");
+const args = process.argv.slice(2);
+const check = args.includes("--check");
+const BASE = args.find((a) => !a.startsWith("--")) ?? "http://127.0.0.1:5180";
+const seeded = JSON.parse(
+  await readFile(
+    process.env.GELABBER_FIXTURE ??
+      join(here, "../../../web/scripts/parity/fixture.json"),
+    "utf8",
+  ),
+);
+
+class Person {
+  constructor(handle) {
+    this.handle = handle;
+    this.cookies = new Map();
+    this.csrf = null;
+  }
+
+  async call(method, path, body) {
+    const headers = { Accept: "application/json" };
+    if (this.cookies.size) headers.Cookie = this.cookie();
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (method !== "GET" && this.csrf) headers["X-CSRF-Token"] = this.csrf;
+    const res = await fetch(`${BASE}/api${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: "manual",
+    });
+    for (const line of res.headers.getSetCookie()) {
+      const [pair] = line.split(";");
+      const at = pair.indexOf("=");
+      this.cookies.set(pair.slice(0, at), pair.slice(at + 1));
+    }
+    const text = await res.text();
+    if (!res.ok)
+      throw new Error(
+        `${this.handle}: ${method} ${path} → ${res.status} ${text}`,
+      );
+    return text ? JSON.parse(text) : null;
+  }
+
+  cookie() {
+    return [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+
+  async signIn() {
+    this.csrf = (await this.call("GET", "/auth/session")).csrf_token;
+    await this.call("POST", "/auth/login", {
+      email: seeded.users[this.handle].email,
+      password: seeded.password,
+    });
+    const session = await this.call("GET", "/auth/session");
+    this.csrf = session.csrf_token;
+    return session;
+  }
+}
+
+/** The gateway socket of a person: every frame it receives, in order. */
+class Socket {
+  constructor(person) {
+    this.frames = [];
+    this.waiters = [];
+    const url = new URL("/ws", BASE);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    this.ws = new WebSocket(url, { headers: { Cookie: person.cookie() } });
+    this.ws.addEventListener("message", (event) => {
+      const frame = JSON.parse(event.data);
+      this.frames.push(frame);
+      this.waiters = this.waiters.filter((w) => !w(frame));
+    });
+    this.opened = new Promise((resolve, reject) => {
+      this.ws.addEventListener("open", resolve, { once: true });
+      this.ws.addEventListener("error", reject, { once: true });
+    });
+  }
+
+  send(frame) {
+    this.ws.send(JSON.stringify(frame));
+  }
+
+  /** The next frame (from now on, or already received when `seen`) that `match`es. */
+  until(what, match, { seen = false } = {}) {
+    if (seen) {
+      const found = this.frames.find(match);
+      if (found) return Promise.resolve(found);
+    }
+    return new Promise((resolve, reject) => {
+      // A frame that never comes ends the recording with its name.
+      const timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `no frame: ${what}; received ${JSON.stringify(this.frames)}`,
+            ),
+          ),
+        20_000,
+      );
+      this.waiters.push((frame) => {
+        if (!match(frame)) return false;
+        clearTimeout(timer);
+        resolve(frame);
+        return true;
+      });
+    });
+  }
+
+  close() {
+    const closed = new Promise((resolve) =>
+      this.ws.addEventListener("close", resolve, { once: true }),
+    );
+    this.ws.close();
+    return closed;
+  }
+}
+
+async function record(out) {
+  const recorded = {};
+  const keep = (name, value) => {
+    recorded[name] = value;
+    return value;
+  };
+  const lena = new Person("lena");
+  const jonas = new Person("jonas");
+  keep("session", await lena.signIn());
+  await jonas.signIn();
+  const home = seeded.servers.home;
+
+  // Account and settings, as the app reads them at start.
+  keep("me", await lena.call("GET", "/me"));
+  keep(
+    "user_profile",
+    await lena.call("GET", `/users/${seeded.users.jonas.id}`),
+  );
+  keep("mail", await lena.call("GET", "/auth/mail"));
+  keep("themes", await lena.call("GET", "/me/themes"));
+  keep("notification_privacy", await lena.call("GET", "/notification-privacy"));
+  keep("gifs", await lena.call("GET", "/gifs"));
+  keep("unread_seeded", await lena.call("GET", "/messages/unread"));
+
+  // The seeded workspace.
+  keep("servers", await lena.call("GET", "/servers"));
+  keep("server_wohnzimmer", await lena.call("GET", `/servers/${home.id}`));
+  keep(
+    "messages_allgemein",
+    await lena.call(
+      "GET",
+      `/channels/${home.channels.allgemein}/messages?limit=50`,
+    ),
+  );
+  keep("dms", await lena.call("GET", "/dms"));
+  keep(
+    "dm",
+    await lena.call("POST", "/dms", { user_id: seeded.users.jonas.id }),
+  );
+  keep(
+    "messages_dm",
+    await lena.call("GET", `/channels/${seeded.dm}/messages?limit=50`),
+  );
+  keep(
+    "ticket",
+    await lena.call("POST", `/channels/${home.channels.Sofa}/media-ticket`),
+  );
+
+  // A scratch server for everything that writes.
+  const created = keep(
+    "server_create",
+    await lena.call("POST", "/servers", { name: "Aufnahme" }),
+  );
+  const scratch = created.id;
+  try {
+    const text = created.channels.find((c) => c.kind === "text").id;
+    const voice = created.channels.find((c) => c.kind === "voice").id;
+    const invite = keep(
+      "invite",
+      await lena.call("POST", `/servers/${scratch}/invites`, {}),
+    );
+    keep("invites", await lena.call("GET", `/servers/${scratch}/invites`));
+    keep("invite_preview", await jonas.call("GET", `/invites/${invite.code}`));
+    keep("join", await jonas.call("POST", `/invites/${invite.code}/join`));
+    keep("server_detail", await lena.call("GET", `/servers/${scratch}`));
+    keep(
+      "presign",
+      await lena.call("POST", `/channels/${text}/attachments`, {
+        filename: "hallo.txt",
+        content_type: "text/plain",
+        size: 5,
+      }),
+    );
+
+    // Lena's gateway while Jonas comes, types, joins voice, writes and goes.
+    const socket = new Socket(lena);
+    await socket.opened;
+    socket.send({ op: "s", s: scratch });
+    await socket.until(
+      "server subscribed",
+      (f) => f.op === "ok" && f.s === scratch && !f.c,
+      { seen: true },
+    );
+    socket.send({ op: "s", s: scratch, c: text });
+    await socket.until(
+      "channel subscribed",
+      (f) => f.op === "ok" && f.c === text,
+      { seen: true },
+    );
+    const jonasSocket = new Socket(jonas);
+    await jonasSocket.opened;
+    jonasSocket.send({ op: "s", s: scratch, c: text });
+    await jonasSocket.until(
+      "Jonas subscribed",
+      (f) => f.op === "ok" && f.c === text,
+      { seen: true },
+    );
+    await socket.until(
+      "Jonas online",
+      (f) => f.op === "p" && f.u === seeded.users.jonas.id && f.st === "o",
+      { seen: true },
+    );
+    jonasSocket.send({ op: "y", s: scratch, c: text, on: true });
+    await socket.until("Jonas types", (f) => f.op === "y" && f.on === true, {
+      seen: true,
+    });
+    jonasSocket.send({ op: "sig", s: scratch, c: voice, t: "j" });
+    await socket.until("Jonas in voice", (f) => f.op === "sig" && f.t === "j", {
+      seen: true,
+    });
+    jonasSocket.send({ op: "sig", s: scratch, c: voice, t: "m", on: true });
+    await socket.until("Jonas muted", (f) => f.op === "sig" && f.t === "m", {
+      seen: true,
+    });
+
+    const first = keep(
+      "message_create",
+      await lena.call("POST", `/channels/${text}/messages`, {
+        content: "Erste **Nachricht** ||geheim||",
+        nonce: randomUUID(),
+      }),
+    );
+    const reply = keep(
+      "message_reply",
+      await jonas.call("POST", `/channels/${text}/messages`, {
+        content: `<@${seeded.users.lena.id}> Antwort`,
+        reply_to: first.id,
+      }),
+    );
+    keep(
+      "reaction",
+      await jonas.call(
+        "PUT",
+        `/messages/${first.id}/reactions/${encodeURIComponent("👍")}`,
+      ),
+    );
+    keep(
+      "edit",
+      await lena.call("PATCH", `/messages/${first.id}`, {
+        content: "Erste **Nachricht**, geändert",
+      }),
+    );
+    await socket.until(
+      "the edit",
+      (f) => f.op === "e" && f.t === "e" && f.r === recorded.edit.revision,
+      { seen: true },
+    );
+    keep(
+      "messages_text",
+      await lena.call("GET", `/channels/${text}/messages?limit=50`),
+    );
+    keep(
+      "search",
+      await lena.call("GET", `/channels/${text}/messages/search?q=Nachricht`),
+    );
+    keep(
+      "context",
+      await lena.call("GET", `/channels/${text}/messages/${reply.id}/context`),
+    );
+    keep(
+      "read",
+      await lena.call("PUT", `/channels/${text}/read`, {
+        message_id: reply.id,
+      }),
+    );
+    await socket.until("read state", (f) => f.op === "rd", { seen: true });
+    keep("unread", await lena.call("GET", "/messages/unread"));
+    keep(
+      "ns_set",
+      await lena.call("PUT", `/channels/${text}/notification-settings`, {
+        level: "mentions",
+        muted: true,
+        mute_minutes: 60,
+      }),
+    );
+    await socket.until("notification settings", (f) => f.op === "ns", {
+      seen: true,
+    });
+    keep("ns_list", await lena.call("GET", "/notification-settings"));
+    await jonas.call("DELETE", `/messages/${reply.id}`);
+    await socket.until(
+      "the deletion",
+      (f) => f.op === "e" && f.t === "d" && f.c === text,
+      { seen: true },
+    );
+    jonasSocket.send({ op: "y", s: scratch, c: text, on: false });
+    await socket.until(
+      "Jonas stops typing",
+      (f) => f.op === "y" && f.on === false,
+      { seen: true },
+    );
+    jonasSocket.send({ op: "sig", s: scratch, c: voice, t: "l" });
+    await socket.until(
+      "Jonas leaves voice",
+      (f) => f.op === "sig" && f.t === "l",
+      { seen: true },
+    );
+    await jonasSocket.close();
+    await socket.until(
+      "Jonas offline",
+      (f) => f.op === "p" && f.u === seeded.users.jonas.id && f.st === "x",
+      { seen: true },
+    );
+    await lena.call("POST", `/servers/${scratch}/kick`, {
+      user_id: seeded.users.jonas.id,
+    });
+    await socket.until(
+      "Jonas removed",
+      (f) => f.op === "e" && f.t === "d" && !f.c,
+      { seen: true },
+    );
+    await lena.call("PUT", "/me/locale", { locale: "en" });
+    await socket.until("locale", (f) => f.op === "lc", { seen: true });
+    await lena.call("PUT", "/me/locale", { locale: "de" });
+    await socket.close();
+    keep("frames", socket.frames);
+  } finally {
+    await lena
+      .call("DELETE", `/servers/${scratch}`)
+      .catch((error) => console.error(String(error)));
+  }
+
+  delete recorded.messages_text;
+  for (const [name, value] of Object.entries(recorded))
+    await writeFile(
+      join(out, `${name}.json`),
+      `${JSON.stringify(value, null, 2)}\n`,
+    );
+  return recorded;
+}
+
+/** Keys and value types, not values: what the client's models depend on. */
+function shape(value) {
+  if (Array.isArray(value)) {
+    const kinds = [
+      ...new Set(value.map((v) => JSON.stringify(shape(v)))),
+    ].sort();
+    return { array: kinds.map((k) => JSON.parse(k)) };
+  }
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((k) => [k, shape(value[k])]),
+    );
+  return value === null ? "null" : typeof value;
+}
+
+/** FNV-1a, 64 bits, as hex: models.rs computes the same without a crate. */
+function fnv1a(bytes) {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of bytes)
+    hash = ((hash ^ BigInt(byte)) * 0x100000001b3n) & 0xffffffffffffffffn;
+  return hash.toString(16).padStart(16, "0");
+}
+
+if (check) {
+  const fresh = await mkdtemp(join(tmpdir(), "gelabber-fixtures-"));
+  try {
+    await record(fresh);
+    const differ = [];
+    for (const file of (await readdir(committed)).filter(
+      (f) => f.endsWith(".json") && f !== "recorded.json",
+    )) {
+      const now = JSON.parse(
+        await readFile(join(fresh, file), "utf8").catch(() => "null"),
+      );
+      const then = JSON.parse(await readFile(join(committed, file), "utf8"));
+      if (JSON.stringify(shape(now)) !== JSON.stringify(shape(then)))
+        differ.push(file);
+    }
+    if (differ.length) {
+      console.error(
+        `The API sends other shapes than these fixtures: ${differ.join(", ")}. ` +
+          "Record them again (node desktop/client/tests/record-fixtures.mjs) and adapt models.rs.",
+      );
+      process.exit(1);
+    }
+    console.log("every fixture has the shape the API sends");
+  } finally {
+    await rm(fresh, { recursive: true, force: true });
+  }
+} else {
+  const fresh = await mkdtemp(join(tmpdir(), "gelabber-fixtures-"));
+  try {
+    await record(fresh);
+    for (const file of (await readdir(committed)).filter((f) =>
+      f.endsWith(".json"),
+    ))
+      await rm(join(committed, file));
+    for (const file of await readdir(fresh))
+      await writeFile(join(committed, file), await readFile(join(fresh, file)));
+  } finally {
+    await rm(fresh, { recursive: true, force: true });
+  }
+  const files = {};
+  for (const file of (await readdir(committed))
+    .filter((f) => f.endsWith(".json"))
+    .sort())
+    files[file] = fnv1a(await readFile(join(committed, file)));
+  const describe = execFileSync("git", ["describe", "--tags", "--always"], {
+    cwd: here,
+    encoding: "utf8",
+  }).trim();
+  const manifest = { recorded_from: describe, files };
+  await writeFile(
+    join(committed, "recorded.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+  console.log(
+    `recorded ${Object.keys(files).length} fixtures from ${describe}`,
+  );
+}

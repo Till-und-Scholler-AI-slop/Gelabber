@@ -1,1 +1,10 @@
-{"id":"40bb40fa-6a85-434f-925e-b3848b878a62","kind":"dm","created_at":"2026-11-05T15:24:54.095478Z","peer":{"id":"7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab","name":"Jonas","avatar_url":null}}
+{
+  "id": "7cdbab08-3690-4375-aa70-8463108abeab",
+  "kind": "dm",
+  "created_at": "2026-11-27T15:22:08.582176Z",
+  "peer": {
+    "id": "d899594b-1041-431b-aadb-ada4789bbcc7",
+    "name": "Jonas",
+    "avatar_url": null
+  }
+}

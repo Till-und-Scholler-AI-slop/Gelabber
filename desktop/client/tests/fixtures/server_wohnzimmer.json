@@ -1,1 +1,199 @@
-{"id":"574516c0-6b75-45cc-8b43-9822a31ada5d","name":"Wohnzimmer","owner_id":"3796349f-6f8f-4bcf-826f-d2237e2fe9d3","icon_url":null,"created_at":"2026-11-05T15:24:53.790552Z","role":"owner","permissions":["manage_server","manage_channels","manage_messages","mention_everyone","send_messages","send_files","join_voice","go_live"],"member_permissions":["send_messages","send_files","join_voice","go_live"],"categories":[{"id":"39766d0a-72d7-4b78-8175-e99a328073bd","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","name":"Textkanäle","created_at":"2026-11-05T15:24:53.793836Z"},{"id":"b4dfb8c9-2fbd-43bd-8130-a0c923163eca","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","name":"Sprachkanäle","created_at":"2026-11-05T15:24:53.797141Z"},{"id":"37fee8fc-0050-43b6-8ae1-9a1de5d8213d","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","name":"Plaudern","created_at":"2026-11-05T15:24:53.815020Z"},{"id":"e118f434-7dd4-4a2d-9006-40a67cc3fa8b","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","name":"Sprachkanäle","created_at":"2026-11-05T15:24:53.822377Z"}],"channels":[{"id":"8ea89ab7-a55e-447c-b6da-83e3e551751e","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","category_id":"39766d0a-72d7-4b78-8175-e99a328073bd","name":"allgemein","kind":"text","created_at":"2026-11-05T15:24:53.795586Z","limited":false,"role_ids":[]},{"id":"caa5a9bd-4c96-44da-a44f-fd5da5b52534","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","category_id":"b4dfb8c9-2fbd-43bd-8130-a0c923163eca","name":"Wohnzimmer","kind":"voice","created_at":"2026-11-05T15:24:53.797373Z","limited":false,"role_ids":[]},{"id":"4cd91009-c339-4a52-bc14-633156fe72dc","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","category_id":"37fee8fc-0050-43b6-8ae1-9a1de5d8213d","name":"spiele","kind":"text","created_at":"2026-11-05T15:24:53.829570Z","limited":false,"role_ids":[]},{"id":"c037e56e-3059-4a21-ab40-b9cd18b6a95b","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","category_id":"37fee8fc-0050-43b6-8ae1-9a1de5d8213d","name":"musik","kind":"text","created_at":"2026-11-05T15:24:53.836561Z","limited":false,"role_ids":[]},{"id":"ea67149d-d90c-4110-956e-f2a22d7a41b1","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","category_id":"e118f434-7dd4-4a2d-9006-40a67cc3fa8b","name":"Sofa","kind":"voice","created_at":"2026-11-05T15:24:53.842748Z","limited":false,"role_ids":[]},{"id":"4c733c71-4d96-4a2f-9e01-120cd480ab9d","server_id":"574516c0-6b75-45cc-8b43-9822a31ada5d","category_id":"e118f434-7dd4-4a2d-9006-40a67cc3fa8b","name":"Kino","kind":"voice","created_at":"2026-11-05T15:24:53.847697Z","limited":false,"role_ids":[]}],"members":[{"user_id":"3796349f-6f8f-4bcf-826f-d2237e2fe9d3","name":"Lena","avatar_url":null,"joined_at":"2026-11-05T15:24:53.790552Z","status_text":null,"accent_color":null,"avatar_decoration":null,"role":"owner","role_ids":[]},{"user_id":"7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab","name":"Jonas","avatar_url":null,"joined_at":"2026-11-05T15:24:53.859219Z","status_text":null,"accent_color":null,"avatar_decoration":null,"role":"member","role_ids":[]},{"user_id":"b841af64-31ae-4d74-929e-9c4c3525413d","name":"Mira","avatar_url":null,"joined_at":"2026-11-05T15:24:53.867674Z","status_text":null,"accent_color":null,"avatar_decoration":null,"role":"member","role_ids":[]},{"user_id":"52bd0046-61b9-46f3-b182-a7cb7ed02aed","name":"Tom","avatar_url":null,"joined_at":"2026-11-05T15:24:53.873990Z","status_text":null,"accent_color":null,"avatar_decoration":null,"role":"member","role_ids":[]},{"user_id":"a4c01e1c-100e-4dec-ba35-c3b6cdec519e","name":"Ada","avatar_url":null,"joined_at":"2026-11-05T15:24:53.880042Z","status_text":null,"accent_color":null,"avatar_decoration":null,"role":"member","role_ids":[]}],"blocked":false,"roles":[]}
+{
+  "id": "b8f75714-d769-4de4-bde1-5af07160196b",
+  "name": "Wohnzimmer",
+  "owner_id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
+  "icon_url": null,
+  "created_at": "2026-11-27T15:22:07.509201Z",
+  "role": "owner",
+  "permissions": [
+    "manage_server",
+    "moderate_members",
+    "manage_channels",
+    "manage_messages",
+    "mention_everyone",
+    "send_messages",
+    "send_files",
+    "join_voice",
+    "go_live"
+  ],
+  "member_permissions": [
+    "send_messages",
+    "send_files",
+    "join_voice",
+    "go_live"
+  ],
+  "blocked": false,
+  "categories": [
+    {
+      "id": "195a34f1-1b5d-448f-a4ec-6737de92744b",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "name": "Textkanäle",
+      "created_at": "2026-11-27T15:22:07.514098Z"
+    },
+    {
+      "id": "2561a305-3f7a-43f7-ba70-3cc9bdd34bbc",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "name": "Sprachkanäle",
+      "created_at": "2026-11-27T15:22:07.519513Z"
+    },
+    {
+      "id": "2ce6200f-a4a5-45f6-bfb4-d672e480811d",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "name": "Plaudern",
+      "created_at": "2026-11-27T15:22:07.578200Z"
+    }
+  ],
+  "channels": [
+    {
+      "id": "9efe5bfc-3fc3-4526-84bf-5f0a497a42d5",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "category_id": "195a34f1-1b5d-448f-a4ec-6737de92744b",
+      "name": "allgemein",
+      "kind": "text",
+      "created_at": "2026-11-27T15:22:07.516515Z",
+      "limited": false,
+      "role_ids": []
+    },
+    {
+      "id": "2e9f57e9-1ed7-46d0-b77a-b63b4fc85128",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "category_id": "2561a305-3f7a-43f7-ba70-3cc9bdd34bbc",
+      "name": "Wohnzimmer",
+      "kind": "voice",
+      "created_at": "2026-11-27T15:22:07.520045Z",
+      "limited": false,
+      "role_ids": []
+    },
+    {
+      "id": "323c22f4-ac71-43e7-b192-9274f4933329",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "category_id": "2ce6200f-a4a5-45f6-bfb4-d672e480811d",
+      "name": "spiele",
+      "kind": "text",
+      "created_at": "2026-11-27T15:22:07.604268Z",
+      "limited": true,
+      "role_ids": [
+        "68af9061-74f9-4db9-a567-0e51ff965d9a",
+        "f052578a-3a45-4622-98de-af770a99f70a"
+      ]
+    },
+    {
+      "id": "59d671b1-19c1-4d01-8e61-f0dce38cbc03",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "category_id": "2ce6200f-a4a5-45f6-bfb4-d672e480811d",
+      "name": "musik",
+      "kind": "text",
+      "created_at": "2026-11-27T15:22:07.625378Z",
+      "limited": false,
+      "role_ids": []
+    },
+    {
+      "id": "d56d8ade-086c-422c-959c-294598b576cb",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "category_id": "2561a305-3f7a-43f7-ba70-3cc9bdd34bbc",
+      "name": "Sofa",
+      "kind": "voice",
+      "created_at": "2026-11-27T15:22:07.640372Z",
+      "limited": false,
+      "role_ids": []
+    },
+    {
+      "id": "6abf13dc-b24d-41f6-8023-22ebf8fd9214",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "category_id": "2561a305-3f7a-43f7-ba70-3cc9bdd34bbc",
+      "name": "Kino",
+      "kind": "voice",
+      "created_at": "2026-11-27T15:22:07.665306Z",
+      "limited": false,
+      "role_ids": []
+    }
+  ],
+  "members": [
+    {
+      "user_id": "c58d9797-28f4-4571-bd2a-9ced973c0b7b",
+      "name": "Lena",
+      "avatar_url": null,
+      "joined_at": "2026-11-27T15:22:07.509201Z",
+      "status_text": null,
+      "accent_color": null,
+      "avatar_decoration": null,
+      "role_ids": [],
+      "role": "owner"
+    },
+    {
+      "user_id": "d899594b-1041-431b-aadb-ada4789bbcc7",
+      "name": "Jonas",
+      "avatar_url": null,
+      "joined_at": "2026-11-27T15:22:07.698139Z",
+      "status_text": null,
+      "accent_color": null,
+      "avatar_decoration": null,
+      "role_ids": [
+        "68af9061-74f9-4db9-a567-0e51ff965d9a",
+        "f052578a-3a45-4622-98de-af770a99f70a"
+      ],
+      "role": "member"
+    },
+    {
+      "user_id": "5d9ab31d-4387-449a-8b03-361616edcfc6",
+      "name": "Mira",
+      "avatar_url": null,
+      "joined_at": "2026-11-27T15:22:07.754463Z",
+      "status_text": null,
+      "accent_color": null,
+      "avatar_decoration": null,
+      "role_ids": [
+        "f052578a-3a45-4622-98de-af770a99f70a"
+      ],
+      "role": "member"
+    },
+    {
+      "user_id": "f5295f59-2af0-4808-9012-c940fe719a05",
+      "name": "Tom",
+      "avatar_url": null,
+      "joined_at": "2026-11-27T15:22:07.802226Z",
+      "status_text": null,
+      "accent_color": null,
+      "avatar_decoration": null,
+      "role_ids": [
+        "f052578a-3a45-4622-98de-af770a99f70a"
+      ],
+      "role": "member"
+    },
+    {
+      "user_id": "876466f0-3a7f-4e5c-8770-9d0dabf78402",
+      "name": "Ada",
+      "avatar_url": null,
+      "joined_at": "2026-11-27T15:22:07.836952Z",
+      "status_text": null,
+      "accent_color": null,
+      "avatar_decoration": null,
+      "role_ids": [],
+      "role": "member"
+    }
+  ],
+  "roles": [
+    {
+      "id": "68af9061-74f9-4db9-a567-0e51ff965d9a",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "name": "Moderation",
+      "color": "blue",
+      "permissions": [
+        "moderate_members",
+        "manage_messages",
+        "mention_everyone"
+      ],
+      "position": 0,
+      "created_at": "2026-11-27T15:22:08.736004Z"
+    },
+    {
+      "id": "f052578a-3a45-4622-98de-af770a99f70a",
+      "server_id": "b8f75714-d769-4de4-bde1-5af07160196b",
+      "name": "Stammgäste",
+      "color": "green",
+      "permissions": [],
+      "position": 1,
+      "created_at": "2026-11-27T15:22:08.753756Z"
+    }
+  ]
+}

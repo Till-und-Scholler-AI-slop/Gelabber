@@ -1,7 +1,9 @@
-//! Every shape in `models.rs` against JSON captured from a live v0.8.9 stack
-//! (web/scripts/parity seed plus a scratch server), with the keys that
-//! servers since have always sent: decoding must succeed and encoding must
-//! give back the same JSON.
+//! Every shape in `models.rs` against the API's answers recorded from a
+//! running stack of this tree (fixtures/, written by record-fixtures.mjs from
+//! the parity seed plus a scratch server; fixtures/recorded.json names the
+//! version): decoding must succeed and encoding must give back the same
+//! JSON. e2e-extended.yml records again after merges and fails when the
+//! API's shapes moved away from these.
 
 use gelabber_client::*;
 use serde::Serialize;
@@ -21,6 +23,45 @@ fn round_trip<T: DeserializeOwned + Serialize>(name: &str) -> T {
     let back = serde_json::to_value(&value).unwrap();
     assert_eq!(back, json, "{name} does not round-trip");
     value
+}
+
+/// FNV-1a, 64 bits, as record-fixtures.mjs writes it into recorded.json.
+fn fnv1a(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+/// A fixture changes only by recording: each file is the one recorded, and
+/// every recorded file is here.
+#[test]
+fn the_fixtures_are_as_recorded() {
+    let dir = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(format!("{dir}/recorded.json")).unwrap())
+            .unwrap();
+    let listed = manifest["files"].as_object().unwrap();
+    let mut present: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".json") && name != "recorded.json")
+        .collect();
+    present.sort();
+    assert_eq!(
+        present,
+        listed.keys().cloned().collect::<Vec<_>>(),
+        "fixtures not recorded, or recorded and gone"
+    );
+    for (name, hash) in listed {
+        let bytes = std::fs::read(format!("{dir}/{name}")).unwrap();
+        assert_eq!(
+            Some(fnv1a(&bytes).as_str()),
+            hash.as_str(),
+            "{name} differs from its recording: record again with \
+             `node desktop/client/tests/record-fixtures.mjs`, never by hand"
+        );
+    }
 }
 
 #[test]
@@ -343,16 +384,26 @@ fn roles_and_limited_channels() {
         "00000000-0000-0000-0000-0000000000d1",
         "00000000-0000-0000-0000-0000000000d2",
     );
-    // Wohnzimmer as captured: no roles, nothing limited, nobody holds a role.
-    let plain: ServerDetail = round_trip("server_wohnzimmer");
-    assert!(plain.roles.is_empty());
-    assert!(
-        plain
-            .channels
-            .iter()
-            .all(|c| !c.limited && c.role_ids.is_empty())
-    );
-    assert!(plain.members.iter().all(|m| m.role_ids.is_empty()));
+    // Wohnzimmer as recorded: the seed's two roles, "spiele" limited to
+    // both, and every role a member or channel names is one of them.
+    let seeded: ServerDetail = round_trip("server_wohnzimmer");
+    let names: Vec<&str> = seeded.roles.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["Moderation", "Stammgäste"]);
+    let limited: Vec<&str> = seeded
+        .channels
+        .iter()
+        .filter(|c| c.limited)
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(limited, ["spiele"]);
+    let named = seeded
+        .channels
+        .iter()
+        .flat_map(|c| &c.role_ids)
+        .chain(seeded.members.iter().flat_map(|m| &m.role_ids));
+    for id in named {
+        assert!(seeded.role(*id).is_some(), "{id}");
+    }
 
     let mut detail = fixture("server_wohnzimmer");
     let server = detail["id"].clone();
@@ -605,13 +656,15 @@ fn sign_in_through_a_provider() {
 #[test]
 fn operator_flags_registration_and_admission_codes() {
     use serde_json::json;
-    let plain: SessionResponse = round_trip("session");
-    assert!(!plain.operator);
+    // Lena is the parity stack's operator (API_OPERATOR_EMAILS).
+    let lena: SessionResponse = round_trip("session");
+    assert!(lena.operator);
     let mut session = fixture("session");
-    session["operator"] = true.into();
+    session["operator"] = false.into();
     let read: SessionResponse = serde_json::from_value(session.clone()).unwrap();
-    assert!(read.operator);
+    assert!(!read.operator);
     assert_eq!(serde_json::to_value(&read).unwrap(), session);
+    session["operator"] = true.into();
     let registered: RegisterResponse = serde_json::from_value(session).unwrap();
     assert!(registered.operator && !registered.verification_sent);
 
