@@ -245,8 +245,7 @@ class VersionScript(unittest.TestCase):
         return re.search(r'^\[workspace\.package\]\n(?:.*\n)*?version = "([^"]+)"', text, re.M).group(1)
 
     def run_script(self, *arguments):
-        return subprocess.run(['bash', self.SCRIPT, *map(str, arguments)], capture_output=True, text=True,
-                              env={'PATH': os.environ['PATH']})
+        return subprocess.run(['bash', self.SCRIPT, *map(str, arguments)], capture_output=True, text=True)
 
     def test_it_reads_the_workspace_version(self):
         result = self.run_script()
