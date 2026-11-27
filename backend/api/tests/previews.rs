@@ -150,13 +150,14 @@ async fn serve_site() -> (Site, Policy) {
     (site, policy)
 }
 
-/// A request gives up after 1 s and a message's links after 1.5 s, instead
+/// A request gives up after 2 s and a message's links after 3 s, instead
 /// of 5 s and 8 s: the first slow link times out on its own, a second runs
-/// into the end of the budget.
+/// into the end of the budget. The job may spend up to a second before its
+/// first request without changing that.
 fn quick(policy: Policy) -> Policy {
     Policy {
-        request_timeout: Some(Duration::from_secs(1)),
-        job_budget: Some(Duration::from_millis(1500)),
+        request_timeout: Some(Duration::from_secs(2)),
+        job_budget: Some(Duration::from_secs(3)),
         ..policy
     }
 }
@@ -552,7 +553,6 @@ async fn a_timeout_holds_up_only_its_own_host(pool: PgPool) {
     let on = |host: &str, path: &str| format!("http://{host}:{port}{path}");
     // The first link times out on its own, the second runs into the end of
     // the budget, the third is never tried.
-    let start = Instant::now();
     post(
         &mut client,
         &channel,
@@ -567,13 +567,13 @@ async fn a_timeout_holds_up_only_its_own_host(pool: PgPool) {
     wait_settled(&pool, 1).await;
     // The message's budget ran out on the second link.
     let spent = "gelabber_link_previews_total{outcome=\"budget\"} 1";
-    while !metrics(&mut client).await.contains(spent) {
-        assert!(
-            start.elapsed() < Duration::from_secs(15),
-            "budget not spent"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while !metrics(&mut client).await.contains(spent) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the message's budget is spent");
 
     let card = async |client: &mut Client, url: String| {
         let sent = post(client, &channel, &url).await;

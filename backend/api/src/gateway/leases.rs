@@ -784,9 +784,10 @@ mod tests {
         let (id, _) = g.attach_session(u, Uuid::new_v4().to_string(), tx).await;
         (id, rx)
     }
-    /// Until no seat in channel `c` is left: their lease ran out.
-    async fn until_no_seat_in(g: &Gateway, c: Uuid) {
-        tokio::time::timeout(Duration::from_secs(5), async {
+    /// Until no seat in channel `c` is left, within `wait`: their lease ran
+    /// out.
+    async fn until_no_seat_in(g: &Gateway, c: Uuid, wait: Duration) {
+        tokio::time::timeout(wait, async {
             while !g.voice.records(room_key(c)).await.unwrap().is_empty() {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
@@ -914,7 +915,7 @@ mod tests {
         assert!(!g.in_voice(id, s, c).await);
         // The seat the script wrote before it failed runs out with its lease,
         // the corrupt index after its second.
-        until_no_seat_in(&g, c).await;
+        until_no_seat_in(&g, c, Duration::from_secs(5)).await;
         tokio::time::timeout(Duration::from_secs(5), async {
             while redis::cmd("EXISTS")
                 .arg(server_key(s))
@@ -935,7 +936,10 @@ mod tests {
 
     #[tokio::test]
     async fn passive_watcher_gets_replacement_roster_after_crash_lease_expires() {
-        let a = gateway().with_voice_lease(Duration::from_millis(300));
+        // Long enough for the watcher's first roster to see the seat on a
+        // busy machine, and short enough that the wait below proves this
+        // lease rather than the default 5 s one.
+        let a = gateway().with_voice_lease(Duration::from_secs(2));
         let b = gateway();
         let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (id, _rx) = socket(&a, u).await;
@@ -946,7 +950,7 @@ mod tests {
         assert!(
             matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.len()==1)
         );
-        until_no_seat_in(&b, c).await;
+        until_no_seat_in(&b, c, Duration::from_secs(4)).await;
         b.refresh_rosters().await;
         assert!(
             matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.is_empty())
