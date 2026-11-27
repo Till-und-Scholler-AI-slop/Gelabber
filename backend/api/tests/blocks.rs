@@ -8,13 +8,13 @@ mod common;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::SinkExt;
 use gelabber_api::AppState;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
+use common::ws::{self, connect, within};
 use common::{Client, Response};
 
 const PASSWORD: &str = "password123";
@@ -955,42 +955,6 @@ async fn account_deletion_takes_its_blocks_both_ways(pool: PgPool) {
 
 // ---- Live events ----------------------------------------------------------
 
-type Ws =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn socket(addr: std::net::SocketAddr, client: &Client) -> Ws {
-    let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
-    req.headers_mut().insert(
-        "cookie",
-        format!("{}={}", common::SESSION, client.jar[common::SESSION])
-            .parse()
-            .unwrap(),
-    );
-    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
-    ws
-}
-
-/// The first frame `want` takes within `wait`, answering heartbeats.
-async fn frame(ws: &mut Ws, wait: Duration, want: impl Fn(&Value) -> bool) -> Option<Value> {
-    tokio::time::timeout(wait, async {
-        loop {
-            if let Message::Text(raw) = ws.next().await.expect("open socket").expect("frame") {
-                let frame: Value = serde_json::from_str(&raw).unwrap();
-                if frame["op"] == "h" {
-                    ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
-                        .await
-                        .unwrap();
-                }
-                if want(&frame) {
-                    return frame;
-                }
-            }
-        }
-    })
-    .await
-    .ok()
-}
-
 #[sqlx::test]
 async fn only_the_blocker_hears_of_a_block(pool: PgPool) {
     let state = common::ws_state(pool);
@@ -1002,26 +966,27 @@ async fn only_the_blocker_hears_of_a_block(pool: PgPool) {
     let dm = open_dm(&mut w.bob, &ada).await;
     let dm = dm.body["id"].as_str().unwrap().to_owned();
     text(&mut w.bob, &dm, "hallo").await;
-    let mut ada_ws = socket(addr, &w.ada).await;
-    let mut bob_ws = socket(addr, &w.bob).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut ada_ws = connect(addr, &w.ada).await;
+    let mut bob_ws = connect(addr, &w.bob).await;
+    ws::registered(&mut ada_ws).await;
+    ws::registered(&mut bob_ws).await;
 
     block(&mut w.ada, &bob).await;
     let bl = |f: &Value| f["op"] == "bl";
     let mr = |f: &Value| f["op"] == "mr";
     assert!(
-        frame(&mut ada_ws, Duration::from_secs(5), bl)
+        within(&mut ada_ws, Duration::from_secs(5), bl)
             .await
             .is_some()
     );
     assert!(
-        frame(&mut ada_ws, Duration::from_secs(5), mr)
+        within(&mut ada_ws, Duration::from_secs(5), mr)
             .await
             .is_some(),
         "Ada's incoming requests changed"
     );
     assert!(
-        frame(&mut bob_ws, Duration::from_millis(500), mr)
+        within(&mut bob_ws, Duration::from_millis(500), mr)
             .await
             .is_none(),
         "Bob's did not"
@@ -1035,7 +1000,7 @@ async fn only_the_blocker_hears_of_a_block(pool: PgPool) {
         .await
         .unwrap();
         assert!(
-            frame(ws, Duration::from_secs(5), |f| f["op"] == "ok")
+            within(ws, Duration::from_secs(5), |f| f["op"] == "ok")
                 .await
                 .is_some()
         );
@@ -1049,19 +1014,19 @@ async fn only_the_blocker_hears_of_a_block(pool: PgPool) {
         .await
         .unwrap();
     assert!(
-        frame(&mut ada_ws, Duration::from_millis(700), |f| f["op"] == "y")
+        within(&mut ada_ws, Duration::from_millis(700), |f| f["op"] == "y")
             .await
             .is_none(),
         "no typing across a block"
     );
     unblock(&mut w.ada, &bob).await;
     assert!(
-        frame(&mut ada_ws, Duration::from_secs(5), bl)
+        within(&mut ada_ws, Duration::from_secs(5), bl)
             .await
             .is_some()
     );
     assert!(
-        frame(&mut bob_ws, Duration::from_millis(500), bl)
+        within(&mut bob_ws, Duration::from_millis(500), bl)
             .await
             .is_none(),
         "Bob is not told"
@@ -1098,8 +1063,8 @@ async fn the_blocker_hears_nothing_of_hidden_messages(pool: PgPool) {
         assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     }
     block(&mut w.ada, &bob).await;
-    let mut ada_ws = socket(addr, &w.ada).await;
-    let mut bob_ws = socket(addr, &w.bob).await;
+    let mut ada_ws = connect(addr, &w.ada).await;
+    let mut bob_ws = connect(addr, &w.bob).await;
     for (ws, dm) in [(&mut ada_ws, &with_bob), (&mut bob_ws, &with_bob)] {
         ws.send(Message::Text(
             json!({ "op": "s", "s": dm, "c": dm }).to_string().into(),
@@ -1107,7 +1072,7 @@ async fn the_blocker_hears_nothing_of_hidden_messages(pool: PgPool) {
         .await
         .unwrap();
         assert!(
-            frame(ws, Duration::from_secs(5), |f| f["op"] == "ok")
+            within(ws, Duration::from_secs(5), |f| f["op"] == "ok")
                 .await
                 .is_some()
         );
@@ -1141,7 +1106,7 @@ async fn the_blocker_hears_nothing_of_hidden_messages(pool: PgPool) {
     assert_eq!(react(&mut w.bob, &adas).await.status, StatusCode::OK);
     let event = |f: &Value| f["op"] == "e";
     assert!(
-        frame(&mut ada_ws, Duration::from_millis(800), event)
+        within(&mut ada_ws, Duration::from_millis(800), event)
             .await
             .is_none(),
         "no event reaches Ada"
@@ -1187,7 +1152,7 @@ async fn the_blocker_hears_nothing_of_hidden_messages(pool: PgPool) {
         .await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.body);
     assert!(
-        frame(&mut ada_ws, Duration::from_millis(800), event)
+        within(&mut ada_ws, Duration::from_millis(800), event)
             .await
             .is_none(),
         "no delete event reaches Ada"
@@ -1206,8 +1171,8 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     let sent = text(&mut w.bob, &dm, "alt").await;
     let seen = sent.body["id"].as_str().unwrap().to_owned();
     block(&mut w.ada, &bob).await;
-    let mut ada_ws = socket(addr, &w.ada).await;
-    let mut bob_ws = socket(addr, &w.bob).await;
+    let mut ada_ws = connect(addr, &w.ada).await;
+    let mut bob_ws = connect(addr, &w.bob).await;
     let mut head = Value::Null;
     for ws in [&mut ada_ws, &mut bob_ws] {
         ws.send(Message::Text(
@@ -1215,7 +1180,7 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
         ))
         .await
         .unwrap();
-        head = frame(ws, Duration::from_secs(5), |f| f["op"] == "ok")
+        head = within(ws, Duration::from_secs(5), |f| f["op"] == "ok")
             .await
             .expect("subscribed");
     }
@@ -1224,7 +1189,7 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     let edited = edit(&mut w.bob, &seen, json!({ "content": "neu" })).await;
     assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
     let event = |f: &Value| f["op"] == "e";
-    let his = frame(&mut bob_ws, Duration::from_secs(5), event)
+    let his = within(&mut bob_ws, Duration::from_secs(5), event)
         .await
         .expect("his edit event");
     assert_eq!(his["t"], "e", "{his}");
@@ -1233,14 +1198,14 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     assert_eq!(his["r"], edited.body["revision"], "{his}");
     assert!(his["d"].get("author_only").is_none(), "{his}");
     assert!(
-        frame(&mut ada_ws, Duration::from_millis(800), event)
+        within(&mut ada_ws, Duration::from_millis(800), event)
             .await
             .is_none(),
         "no event for her"
     );
     // Nor when she resumes from before it.
     for (client, expect) in [(&w.ada, false), (&w.bob, true)] {
-        let mut ws = socket(addr, client).await;
+        let mut ws = connect(addr, client).await;
         ws.send(Message::Text(
             json!({ "op": "s", "s": dm, "c": dm, "n": head["n"], "ep": head["ep"] })
                 .to_string()
@@ -1248,7 +1213,7 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
         ))
         .await
         .unwrap();
-        let first = frame(&mut ws, Duration::from_secs(5), |f| {
+        let first = within(&mut ws, Duration::from_secs(5), |f| {
             f["op"] == "e" || f["op"] == "ok"
         })
         .await
@@ -1257,7 +1222,7 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     }
     // From the start she still replays what she saw: his edit rewrote
     // none of the earlier entries.
-    let mut ws = socket(addr, &w.ada).await;
+    let mut ws = connect(addr, &w.ada).await;
     ws.send(Message::Text(
         json!({ "op": "s", "s": dm, "c": dm, "n": 0, "ep": head["ep"] })
             .to_string()
@@ -1265,7 +1230,7 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     ))
     .await
     .unwrap();
-    let replayed = frame(&mut ws, Duration::from_secs(5), |f| {
+    let replayed = within(&mut ws, Duration::from_secs(5), |f| {
         (f["op"] == "e" && f["i"] == seen) || f["op"] == "ok"
     })
     .await
@@ -1277,13 +1242,13 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     // they read.
     unblock(&mut w.ada, &bob).await;
     assert_eq!(react(&mut w.ada, &seen).await.status, StatusCode::OK);
-    let hers = frame(&mut ada_ws, Duration::from_secs(5), event)
+    let hers = within(&mut ada_ws, Duration::from_secs(5), event)
         .await
         .expect("her reaction event");
     assert_eq!(hers["d"]["content"], "alt", "{hers}");
     assert!(hers["d"]["edited_at"].is_null(), "{hers}");
     assert_eq!(hers["d"]["reactions"][0]["emoji"], "👍", "{hers}");
-    let his = frame(&mut bob_ws, Duration::from_secs(5), event)
+    let his = within(&mut bob_ws, Duration::from_secs(5), event)
         .await
         .expect("her reaction event, for him");
     assert_eq!(his["d"]["content"], "neu", "{his}");
@@ -1306,11 +1271,11 @@ async fn an_edit_of_a_seen_message_reaches_his_sockets_alone(pool: PgPool) {
     assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
     assert_eq!(answer.body["reply"]["excerpt"], "alt", "{}", answer.body);
     let created = |f: &Value| f["op"] == "e" && f["t"] == "c";
-    let hers = frame(&mut ada_ws, Duration::from_secs(5), created)
+    let hers = within(&mut ada_ws, Duration::from_secs(5), created)
         .await
         .expect("her answer");
     assert_eq!(hers["d"]["reply"]["excerpt"], "alt", "{hers}");
-    let his = frame(&mut bob_ws, Duration::from_secs(5), created)
+    let his = within(&mut bob_ws, Duration::from_secs(5), created)
         .await
         .expect("her answer, for him");
     assert_eq!(his["d"]["reply"]["excerpt"], "neu", "{his}");

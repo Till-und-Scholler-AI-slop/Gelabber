@@ -1,4 +1,4 @@
-/* global document, URL */
+/* global URL */
 import { readFile } from "node:fs/promises";
 import {
   api,
@@ -137,6 +137,25 @@ export async function coreScenarios(h, f) {
       };
     },
   );
+  // A first DM between people who are not friends is a message request
+  // (#563), which takes no files. These scenarios are about an ordinary DM.
+  if (
+    h.wants("new-dm-connected-recipient-discovers-without-refetch") ||
+    h.wants("dm-jpeg-png-webp-bind-reload-byte-equal")
+  )
+    await h.setup("dm-friends-fixture", [], async () => {
+      const asked = await api(f.owner, "/friends/requests", "POST", {
+        user_id: f.member.id,
+      });
+      const answered = await api(f.member, "/friends/requests", "POST", {
+        user_id: f.owner.id,
+      });
+      check(answered.body?.status === "friends", "dm-friends-fixture-failed", {
+        asked: asked.status,
+        answered: answered.status,
+      });
+      return { friends: true };
+    });
   await h.run(
     "new-dm-connected-recipient-discovers-without-refetch",
     ["05a", "06b"],
@@ -180,6 +199,58 @@ export async function coreScenarios(h, f) {
         firstMessageVisibleAfterReload: true,
       });
       return { discoveredWithoutReload: true, firstMessageVisible: true };
+    },
+  );
+  // A first DM from a server member who is no friend is a message request
+  // (#563): the connected recipient must see it arrive without a reload.
+  await h.run(
+    "new-message-request-connected-recipient-discovers-without-refetch",
+    ["05a", "06b"],
+    async () => {
+      // In the app, so the member's gateway socket stays the one it has:
+      // a new page would start a socket of its own after the request.
+      await f.member.page
+        .getByRole("link", { name: "Direktnachrichten", exact: true })
+        .click();
+      await f.member.page.getByRole("link", { name: /^Anfragen/ }).click();
+      await f.member.page
+        .getByRole("heading", { name: "Nachrichtenanfragen", exact: true })
+        .waitFor();
+      const dm = await api(f.watcher, "/dms", "POST", {
+        user_id: f.member.id,
+      });
+      check([200, 201].includes(dm.status), "message-request-dm-failed", {
+        status: dm.status,
+      });
+      const sent = await api(
+        f.watcher,
+        `/channels/${dm.body.id}/messages`,
+        "POST",
+        {
+          content: "E2E synthetic message request",
+        },
+      );
+      check([200, 201].includes(sent.status), "message-request-send-failed", {
+        status: sent.status,
+      });
+      // No reload, navigation or manual fetch on the recipient.
+      const request = f.member.page
+        .getByRole("list", { name: "Nachrichtenanfragen" })
+        .getByRole("link", { name: "E2E Watch", exact: true });
+      let live = true;
+      try {
+        await request.waitFor({ state: "visible", timeout: 8_000 });
+      } catch {
+        live = false;
+        // A reload is a control probe only: the missed live arrival stays FAIL.
+        await f.member.page.reload();
+        await request.waitFor({ state: "visible" });
+      }
+      check(live, "connected-recipient-missed-message-request", {
+        controlConfirmed: true,
+        discoveredAfterReload: true,
+      });
+      return { discoveredWithoutReload: true };
     },
   );
   // DM creation can succeed even while discovery is correctly red. Verify attachments independently.
@@ -256,17 +327,29 @@ export async function coreScenarios(h, f) {
               15_000,
             );
             await f.member.page.reload();
-            await f.member.page.waitForFunction(
-              (name) =>
-                [...document.images].some(
-                  (i) => i.alt === name && i.complete && i.naturalWidth === 8,
-                ),
-              filename,
-              { timeout: 15_000 },
-            );
-            const src = await f.member.page
+            // A picture loads once it is in view (loading="lazy"), and a
+            // failed first try mounts a new <img>, so it is looked up afresh
+            // each time. Its width says nothing here: with a thumbnail's
+            // srcset (#574) the 8 px fixture reports 8 * 8 / 400 = 0 px.
+            // decode() settles once the picture is decoded or broken; the
+            // bytes are compared below.
+            const picture = f.member.page
               .locator(`img[alt="${filename}"]`)
-              .getAttribute("src");
+              .last();
+            await picture.scrollIntoViewIfNeeded({ timeout: 15_000 });
+            await until(
+              () =>
+                picture.evaluate((img) =>
+                  img.decode().then(
+                    () => true,
+                    () => false,
+                  ),
+                ),
+              Boolean,
+              "attachment-not-rendered-after-reload",
+              15_000,
+            );
+            const src = await picture.getAttribute("src");
             // After the reload the picture may show its thumbnail
             // (`?size=400`, made by the media worker); the bytes sent are
             // the original's.

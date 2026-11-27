@@ -68,14 +68,8 @@ import type {
   MessageAuthor,
   MessagePage,
 } from "./types.ts";
-import {
-  asAttachmentList,
-  asMentionList,
-  asPreviewList,
-  asReactionList,
-  asReply,
-  replyTo,
-} from "./types.ts";
+import { isMessage, reportMalformed } from "../api/wire.ts";
+import { asPreviewList, asReply, replyTo } from "./types.ts";
 
 export const messageKeys = {
   channel: (userId: string, generation: number, channelId: string) =>
@@ -907,20 +901,6 @@ export function useEditMessage(channelId: string) {
   });
 }
 
-function isMessage(value: unknown): value is Message {
-  if (value === null || typeof value !== "object") return false;
-  const row = value as Message;
-  return (
-    typeof row.id === "string" &&
-    typeof row.channel_id === "string" &&
-    typeof row.content === "string" &&
-    typeof row.created_at === "string" &&
-    row.author !== null &&
-    typeof row.author === "object" &&
-    typeof row.author.id === "string"
-  );
-}
-
 /** WS create: append if the row is not already in a page. */
 export function applyMessageCreated(
   client: QueryClient,
@@ -1074,24 +1054,24 @@ export function applyChannelEvent(
     );
     return;
   }
-  if ((event.t === "c" || event.t === "e") && isMessage(event.d)) {
-    const message = {
-      ...event.d,
-      ...(event.r !== undefined ? { revision: event.r } : {}),
-      attachments: asAttachmentList(event.d.attachments),
-      mentions: asMentionList(event.d.mentions),
-      mention_everyone: event.d.mention_everyone === true,
-      reactions: asReactionList(event.d.reactions),
-      ...(event.d.reply === undefined ? {} : { reply: asReply(event.d.reply) }),
-      ...(event.d.previews === undefined
-        ? {}
-        : { previews: asPreviewList(event.d.previews) }),
-    };
-    if (event.t === "c") {
-      applyMessageCreated(client, userId, generation, channelId, message);
-      confirmEcho(channelId, userId, message);
-    } else applyMessageEdited(client, userId, generation, channelId, message);
+  if (event.t !== "c" && event.t !== "e") return;
+  // A channel's creates and edits carry the whole message.
+  if (!isMessage(event.d)) {
+    reportMalformed("message event", event.d);
+    return;
   }
+  const message = {
+    ...event.d,
+    ...(event.r !== undefined ? { revision: event.r } : {}),
+    ...(event.d.reply === undefined ? {} : { reply: asReply(event.d.reply) }),
+    ...(event.d.previews === undefined
+      ? {}
+      : { previews: asPreviewList(event.d.previews) }),
+  };
+  if (event.t === "c") {
+    applyMessageCreated(client, userId, generation, channelId, message);
+    confirmEcho(channelId, userId, message);
+  } else applyMessageEdited(client, userId, generation, channelId, message);
 }
 
 type DeleteContext = import("../auth/scope.ts").ScopeStamp & {

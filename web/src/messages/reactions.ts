@@ -1,4 +1,5 @@
 import { api } from "../api/client.ts";
+import { wholeMessage } from "./api.ts";
 import { stampHolds, type ScopeStamp } from "../auth/scope.ts";
 import { notifyError } from "../components/toasts.ts";
 import { translate } from "../i18n/catalog.ts";
@@ -77,12 +78,12 @@ export function reactionMutationOptions(
     mutationFn: async (intent: ReactionIntent) => {
       if (!stampHolds(intent.scope) || messageId.startsWith("tmp:"))
         throw new DOMException("Session changed", "AbortError");
-      return api<Message>(
+      return api<unknown>(
         `/messages/${messageId}/reactions/${encodeURIComponent(intent.emoji)}`,
         {
           method: intent.add ? "PUT" : "DELETE",
         },
-      );
+      ).then(wholeMessage);
     },
     onSuccess: (message: Message, intent: ReactionIntent) => {
       if (stampHolds(intent.scope)) {
