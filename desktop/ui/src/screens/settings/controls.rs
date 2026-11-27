@@ -1355,24 +1355,21 @@ mod tests {
             .unwrap();
         let ctx = egui::Context::default();
         let mut pending = Some(prepare(&ctx, ImageFile::Path(small), 96, 32));
-        let start = std::time::Instant::now();
-        let prepared = loop {
-            if let Some(done) = crate::task::poll(&mut pending) {
-                break done;
-            }
-            assert!(start.elapsed().as_secs() < 10, "the worker never answered");
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        };
+        let mut prepared = None;
+        crate::app::testkit::eventually("the worker", || {
+            prepared = crate::task::poll(&mut pending);
+            prepared.is_some()
+        });
+        let prepared = prepared.expect("answered");
         let (_, kind) = prepared.expect("prepared");
         assert_eq!(kind, "image/png");
         let mut pending = Some(prepare(&ctx, ImageFile::Path(huge), 96, 32));
-        let refused = loop {
-            if let Some(done) = crate::task::poll(&mut pending) {
-                break done;
-            }
-            assert!(start.elapsed().as_secs() < 10, "the worker never answered");
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        };
+        let mut refused = None;
+        crate::app::testkit::eventually("the worker", || {
+            refused = crate::task::poll(&mut pending);
+            refused.is_some()
+        });
+        let refused = refused.expect("answered");
         assert_eq!(refused, Err(too_large()));
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace};
+use crate::app::testkit::{click_node, click_role, id_of, wait_until, wait_until_idle};
 use crate::platform::paths::testing::TempConfig;
 use crate::route::{DiscoverSearch, Route};
 
@@ -130,12 +131,6 @@ fn route(harness: &mut Harness) -> Route {
         .clone()
 }
 
-fn steps(harness: &mut Harness, n: usize) {
-    for _ in 0..n {
-        harness.step();
-    }
-}
-
 fn button<'a>(harness: &'a Harness, label: &'a str) -> egui_kittest::Node<'a> {
     harness.get_by_role_and_label(Role::Button, label)
 }
@@ -191,7 +186,7 @@ fn off_there_is_no_tile_and_no_page() {
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
     wait_for_label(&mut harness, "Server hinzufügen");
     wait_for(&mut harness, "the status", |_| api.saw("GET /directory"));
-    steps(&mut harness, 20);
+    wait_until_idle(&mut harness);
     assert!(harness.query_by_label("Entdecken").is_none());
     let mut harness = launcher(&api, "/discover");
     wait_for_label(&mut harness, "Zur Startseite");
@@ -217,7 +212,7 @@ fn a_failed_status_is_read_again() {
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
     wait_for_label(&mut harness, "Server hinzufügen");
     wait_for(&mut harness, "the status", |_| api.saw("GET /directory"));
-    steps(&mut harness, 20);
+    wait_until_idle(&mut harness);
     assert!(harness.query_by_label("Entdecken").is_none());
     harness
         .state_mut()
@@ -238,8 +233,8 @@ fn the_filter_and_the_search_live_in_the_address() {
     let api = api(true, Arc::default());
     let mut harness = launcher(&api, "/discover");
     wait_for_label(&mut harness, "English");
-    button(&harness, "English").click();
-    steps(&mut harness, 3);
+    click_role(&mut harness, Role::Button, "English");
+    wait_until_idle(&mut harness);
     assert_eq!(
         route(&mut harness),
         Route::Discover(DiscoverSearch::new(None, Some("en")))
@@ -256,16 +251,9 @@ fn the_filter_and_the_search_live_in_the_address() {
         .expect("the search")
         .type_text("rust");
     let expected = Route::Discover(DiscoverSearch::new(Some("rust"), Some("en")));
-    let start = std::time::Instant::now();
-    while route(&mut harness) != expected {
-        assert!(start.elapsed().as_secs() < 5, "{:?}", route(&mut harness));
-        harness.step();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    harness
-        .get_by_role_and_label(Role::Link, "Entdecken")
-        .click();
-    steps(&mut harness, 3);
+    wait_until(&mut harness, "the route", |h| route(h) == expected);
+    click_role(&mut harness, Role::Link, "Entdecken");
+    wait_until_idle(&mut harness);
     assert_eq!(
         route(&mut harness),
         Route::Discover(DiscoverSearch::default())
@@ -280,18 +268,11 @@ fn joining_opens_the_server() {
     let api = api(true, Arc::clone(&sent));
     let mut harness = launcher(&api, "/discover");
     wait_for_label(&mut harness, "Mehr zu Filmclub");
-    harness
-        .query_all_by_label("Beitreten")
-        .next()
-        .expect("Beitreten")
-        .click();
+    click_node(&mut harness, "Beitreten", |h| {
+        h.query_all_by_label("Beitreten").next().map(id_of)
+    });
     let target = Route::Server(FILMCLUB.parse().expect("id"));
-    let start = std::time::Instant::now();
-    while route(&mut harness) != target {
-        assert!(start.elapsed().as_secs() < 10, "{:?}", route(&mut harness));
-        harness.step();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    wait_until(&mut harness, "the route", |h| route(h) == target);
     assert!(sent_to(&sent, &format!("POST /directory/listings/{FILMCLUB}/join")).is_some());
 }
 
@@ -304,7 +285,7 @@ fn a_request_is_sent_and_can_be_withdrawn() {
     let api = api(true, Arc::clone(&sent));
     let mut harness = launcher(&api, "/discover");
     wait_for_label(&mut harness, "Beitritt anfragen");
-    button(&harness, "Beitritt anfragen").click();
+    click_role(&mut harness, Role::Button, "Beitritt anfragen");
     wait_for_label(&mut harness, "Anfrage an Modellbau-Keller");
     harness
         .query_all_by_label("Nachricht (optional)")
@@ -312,7 +293,7 @@ fn a_request_is_sent_and_can_be_withdrawn() {
         .expect("the message")
         .type_text("Hallo!");
     harness.step();
-    button(&harness, "Anfrage senden").click();
+    click_role(&mut harness, Role::Button, "Anfrage senden");
     let line = format!("POST /directory/listings/{KELLER}/request");
     wait_for(&mut harness, "the request", |_| {
         sent_to(&sent, &line).is_some()
@@ -325,14 +306,12 @@ fn a_request_is_sent_and_can_be_withdrawn() {
         h.query_by_label("Anfrage an Modellbau-Keller").is_none()
     });
     assert_eq!(harness.query_all_by_label("Angefragt").count(), 2);
-    button(&harness, "Mehr zu Modellbau-Keller").click();
+    click_role(&mut harness, Role::Button, "Mehr zu Modellbau-Keller");
     wait_for(&mut harness, "the menu", |h| {
         h.query_by_role_and_label(Role::MenuItem, "Anfrage zurückziehen")
             .is_some()
     });
-    harness
-        .get_by_role_and_label(Role::MenuItem, "Anfrage zurückziehen")
-        .click();
+    click_role(&mut harness, Role::MenuItem, "Anfrage zurückziehen");
     let line = format!("DELETE /directory/listings/{KELLER}/request");
     wait_for(&mut harness, "the withdrawal", |_| {
         sent_to(&sent, &line).is_some()
@@ -349,7 +328,7 @@ fn a_report_needs_a_reason_and_for_other_details() {
     let api = api(true, Arc::clone(&sent));
     let mut harness = launcher(&api, "/discover");
     wait_for_label(&mut harness, "Mehr zu Filmclub");
-    button(&harness, "Mehr zu Filmclub").click();
+    click_role(&mut harness, Role::Button, "Mehr zu Filmclub");
     wait_for(&mut harness, "the menu", |h| {
         h.query_by_role_and_label(Role::MenuItem, "Melden")
             .is_some()
@@ -360,21 +339,17 @@ fn a_report_needs_a_reason_and_for_other_details() {
             .query_by_role_and_label(Role::MenuItem, "Anfrage zurückziehen")
             .is_none()
     );
-    harness
-        .get_by_role_and_label(Role::MenuItem, "Melden")
-        .click();
+    click_role(&mut harness, Role::MenuItem, "Melden");
     wait_for_label(
         &mut harness,
         "Meldung zu Filmclub. Sie geht an den Betreiber.",
     );
-    button(&harness, "Melden").click();
+    click_role(&mut harness, Role::Button, "Melden");
     wait_for_label(&mut harness, "Bitte einen Grund wählen.");
-    harness
-        .get_by_role_and_label(Role::RadioButton, "Sonstiges")
-        .click();
-    steps(&mut harness, 2);
-    button(&harness, "Melden").click();
-    steps(&mut harness, 2);
+    click_role(&mut harness, Role::RadioButton, "Sonstiges");
+    wait_until_idle(&mut harness);
+    click_role(&mut harness, Role::Button, "Melden");
+    wait_until_idle(&mut harness);
     let details = harness
         .query_all_by_label("Details")
         .find(|n| n.accesskit_node().role() == Role::MultilineTextInput)
@@ -391,7 +366,7 @@ fn a_report_needs_a_reason_and_for_other_details() {
         .expect("details")
         .type_text("Werbung");
     harness.step();
-    button(&harness, "Melden").click();
+    click_role(&mut harness, Role::Button, "Melden");
     let line = format!("POST /servers/{FILMCLUB}/reports");
     wait_for(&mut harness, "the report", |_| {
         sent_to(&sent, &line).is_some()

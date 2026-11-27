@@ -2050,13 +2050,10 @@ mod tests {
     }
 
     fn settle(harness: &mut egui_kittest::Harness<'_>, images: &Images) {
-        for _ in 0..200 {
+        crate::app::testkit::eventually("the images", || {
             harness.step();
-            if !images.busy() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+            !images.busy()
+        });
         harness.run_steps(3);
     }
 
@@ -2156,24 +2153,16 @@ mod tests {
         };
         download(&ctx, &client, &url, &name);
         let saved = dir.join("_Rechnung_.pdf");
-        for _ in 0..300 {
-            if saved.exists() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        crate::app::testkit::eventually("the download", || saved.exists());
         assert_eq!(std::fs::read(&saved).expect("saved"), b"%PDF-1.7");
         let _ = std::fs::remove_dir_all(&dir);
         // A refused fetch says so.
         download(&ctx, &client, "/api/attachments/gone?download=1", "x.pdf");
         let mut errors = Vec::new();
-        for _ in 0..300 {
+        crate::app::testkit::eventually("the refusal", || {
             errors = take_download_errors(&ctx);
-            if !errors.is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+            !errors.is_empty()
+        });
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].starts_with("Datei nicht heruntergeladen."));
     }

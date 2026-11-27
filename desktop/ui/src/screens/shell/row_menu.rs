@@ -1218,14 +1218,9 @@ mod tests {
         assert_eq!(focused_label(&harness).as_deref(), Some("allgemein"));
         harness.key_press_modifiers(Modifiers::SHIFT, Key::F10);
         wait_for_label(&mut harness, "Kanal löschen");
-        let start = std::time::Instant::now();
-        let mut idle = false;
-        while !idle && start.elapsed() < std::time::Duration::from_secs(10) {
-            harness.step();
-            idle = !harness.ctx.has_requested_repaint();
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(idle, "still repainting");
+        crate::app::testkit::wait_for(&mut harness, "the app to stop repainting", |h| {
+            !h.ctx.has_requested_repaint()
+        });
         assert!(is_open_for(&harness.ctx, ALLGEMEIN.parse().expect("id")));
     }
 

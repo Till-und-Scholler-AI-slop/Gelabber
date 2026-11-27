@@ -702,6 +702,7 @@ fn pill(
 
 #[cfg(test)]
 mod tests {
+
     use crate::app::testkit::{ALLGEMEIN, FakeApi, HOME, Reply, launcher, wait_for, workspace};
     use crate::platform::paths::testing::TempConfig;
     use egui_kittest::kittest::Queryable;
@@ -776,10 +777,11 @@ mod tests {
         // The row's 8px, the 1px line, then the list's 16px.
         assert_eq!(server.top() - avatar.bottom(), 16.0 + 1.0 + 16.0);
 
-        h.query_all_by_label("Jonas")
-            .find(|n| n.rect().left() < 64.0)
-            .expect("avatar")
-            .click();
+        crate::app::testkit::click_node(&mut h, "the avatar", |h| {
+            h.query_all_by_label("Jonas")
+                .find(|n| n.rect().left() < 64.0)
+                .map(crate::app::testkit::id_of)
+        });
         wait_for(&mut h, "the avatar to leave", |h| at_rail(h).is_none());
         let server = h
             .query_all_by_label("Wohnzimmer")

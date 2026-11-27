@@ -761,15 +761,6 @@ mod tests {
         assert!(harness.query_by_label("Wechseln zu").is_none());
     }
 
-    /// Steps in real time for `ms` (requests go to another thread).
-    fn settle(harness: &mut egui_kittest::Harness<'_, crate::Launcher>, ms: u64) {
-        let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_millis(ms) {
-            harness.step();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-    }
-
     /// A channel of a server whose detail fails to load: the shell and the
     /// chat page open the same view, so the failed load is not asked again
     /// and again (each flip of the view refetched it).
@@ -789,7 +780,7 @@ mod tests {
         let asked = || api.seen.lock().iter().filter(|r| **r == detail).count();
         let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
         crate::app::testkit::wait_for(&mut harness, "the detail request", |_| asked() > 0);
-        settle(&mut harness, 1500);
+        crate::app::testkit::wait_until_idle(&mut harness);
         assert_eq!(asked(), 1, "{:?}", api.seen.lock());
     }
 
