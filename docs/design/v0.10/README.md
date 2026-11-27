@@ -31,7 +31,7 @@ Rendered from the design canvas "Gelabber Next" on 2026-11-10. Product decisions
 
 ## Screenshots on the landing page and in the README
 
-The landing page shows `web/public/images/landing/app-en.png` and `app-de.png`, real screenshots of the app in the shape of `landing-preview-en.png`: Lena in the text channel while Jonas is live in Sofa. `docs/assets/readme-*.png` (overview, text channel, Sofa with a call) come from the same English server. To take them again, run a local stack as for the parity shots (API, the media service and Vite), then in `web/`:
+The landing page shows `web/public/images/landing/app-en.png` and `app-de.png`, real screenshots of the app in the shape of `landing-preview-en.png`: Lena in the text channel while Jonas is live in Sofa. `web/src/public/landingImage.test.mjs` fails if either is the drawn preview. `docs/assets/readme-*.png` (overview, text channel, Sofa with a call) come from the same English server. To take them again, run a local stack as for the parity shots (API, the media service and Vite), then in `web/`:
 
 ```sh
 node scripts/landing/seed.mjs en http://127.0.0.1:5180
