@@ -20,6 +20,7 @@ on:
       - '.github/workflows/scripts/changes.py'
       - '.github/workflows/scripts/apt-install.sh'
       - 'deploy/compose/compose.yaml'
+      - 'rust-toolchain.toml'
   pull_request:
     branches: [main]
 
@@ -555,12 +556,12 @@ jobs:
   # Who looks at a red push run: an open issue per branch, which the Linear
   # sync brings to the team; the next green push run closes it. Pull requests
   # show their result themselves, runs by hand serve debug branches.
-  # The push run's outcome from its jobs (scripts/e2e_jobs.py): a timed-out
-  # job fails it, a skipped one counts for neither. Read-only; report writes.
+  # The run's outcome from its jobs (scripts/e2e_jobs.py): a timed-out job
+  # fails it, a skipped one leaves it open. Read-only, so every run shows it.
   outcome:
-    name: The push run's outcome
+    name: The run's outcome
     needs: [plan, faults, desktop-live]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch' }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:

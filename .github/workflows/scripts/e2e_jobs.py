@@ -7,8 +7,9 @@ requests, pushes without a known starting point) starts both.
 `result <plan> <faults> <desktop-live>`: the needed jobs' results give the
 push run's outcome for its issue: `failure` when one failed or was cancelled
 (a timeout; the job that reports does not run when the whole run was
-cancelled), `success` when none did and at least one ran green, otherwise
-`other`. A skipped job counts for neither.
+cancelled), `success` when every needed job ran green, otherwise `other`:
+a run that skipped a job says nothing about it, so it neither opens nor
+closes the issue.
 """
 import sys
 from pathlib import Path
@@ -19,14 +20,16 @@ from changes import touches  # noqa: E402
 WORKFLOW = ('.github/workflows/e2e-extended.yml', '.github/workflows/scripts/e2e_jobs.py',
             '.github/workflows/scripts/changes.py', '.github/workflows/scripts/apt-install.sh',
             # The MinIO both jobs start is pinned there.
-            'deploy/compose/compose.yaml')
+            'deploy/compose/compose.yaml',
+            # Both jobs' cargo builds follow it.
+            'rust-toolchain.toml')
 JOBS = {
     # The web client in browsers against the API and the SFU.
     'faults': ('backend/', 'web/') + WORKFLOW,
     # The desktop app against the API and the SFU, on the parity stack: its
-    # seed and the call's people are web scripts.
-    'desktop': ('desktop/', 'backend/', 'web/scripts/parity/', 'web/package.json',
-                'web/package-lock.json') + WORKFLOW,
+    # seed is a web script, the call's people use the web client, and every
+    # request goes through Vite's proxy.
+    'desktop': ('desktop/', 'backend/', 'web/') + WORKFLOW,
 }
 
 
@@ -40,7 +43,7 @@ def result(*results):
     """The push run's outcome from the results of the jobs it needed."""
     if any(r in ('failure', 'cancelled') for r in results):
         return 'failure'
-    return 'success' if 'success' in results[1:] else 'other'
+    return 'success' if all(r == 'success' for r in results) else 'other'
 
 
 def main(argv):

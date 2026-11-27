@@ -26,7 +26,8 @@ class Plan(unittest.TestCase):
         both, faults, desktop = {'faults', 'desktop'}, {'faults'}, {'desktop'}
         for path, expected in (
                 ('backend/api/src/main.rs', both),
-                ('web/src/main.tsx', faults),
+                ('web/src/main.tsx', both),
+                ('rust-toolchain.toml', both),
                 ('web/scripts/parity/seed.mjs', both),
                 ('web/package-lock.json', both),
                 ('desktop/client/src/lib.rs', desktop),
@@ -50,9 +51,9 @@ class Plan(unittest.TestCase):
         self.assertEqual(out.split(), ['faults=true', 'desktop=true'])
 
     def test_paths_on_stdin_give_the_outputs(self):
-        out = subprocess.run([sys.executable, str(SCRIPT)], input='web/src/main.tsx\n',
+        out = subprocess.run([sys.executable, str(SCRIPT)], input='desktop/README.md\n',
                              capture_output=True, text=True, check=True).stdout
-        self.assertEqual(out.split(), ['faults=true', 'desktop=false'])
+        self.assertEqual(out.split(), ['faults=false', 'desktop=true'])
 
     def test_every_path_that_starts_a_job_starts_the_workflow(self):
         paths = workflow_data.load('e2e-extended.yml')['on']['push']['paths']
@@ -66,8 +67,9 @@ class Outcome(unittest.TestCase):
     def test_the_decision_table(self):
         for plan, faults, desktop, expected in (
                 ('success', 'success', 'success', 'success'),
-                ('success', 'skipped', 'success', 'success'),
-                ('success', 'success', 'skipped', 'success'),
+                # A skipped job says nothing about itself: the issue stays.
+                ('success', 'skipped', 'success', 'other'),
+                ('success', 'success', 'skipped', 'other'),
                 ('success', 'failure', 'success', 'failure'),
                 ('success', 'skipped', 'failure', 'failure'),
                 # A job past its timeout-minutes is cancelled: it fails the run.
@@ -81,6 +83,8 @@ class Outcome(unittest.TestCase):
     def test_the_issue_job_reads_the_outcome(self):
         jobs = workflow_data.load('e2e-extended.yml')['jobs']
         self.assertEqual(set(jobs['outcome']['needs']), {'plan', 'faults', 'desktop-live'})
+        # It only reads, so every run shows it; only the issue is for pushes.
+        self.assertEqual(jobs['outcome']['if'], '${{ !cancelled() }}')
         self.assertEqual(jobs['report']['needs'], 'outcome')
         step = jobs['report']['steps'][0]
         self.assertEqual(step['env']['RESULT'], '${{ needs.outcome.outputs.result }}')
