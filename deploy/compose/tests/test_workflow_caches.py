@@ -18,8 +18,14 @@ EVENTS = ('pull_request', 'merge_group', 'push', 'release', 'workflow_dispatch')
 
 
 def excludes(condition, event):
-    """Whether an `if:` names `event` as one it does not run for."""
+    """Whether an `if:` names `event` as one it does not run for. Only
+    github.event_name is read; any other github context fails the test,
+    rather than passing a condition that may well skip pull requests."""
     text = str(condition or '')
+    unknown = sorted(set(re.findall(r'\bgithub\.[\w.-]+', text)) - {'github.event_name'})
+    if unknown:
+        raise AssertionError(f'{text!r} reads {unknown}; this test cannot tell which events '
+                             'that skips: teach excludes() or write it with github.event_name')
     return (re.search(rf"github\.event_name\s*!=\s*'{event}'", text) is not None
             or re.search(r"github\.event_name\s*==\s*'(?!" + event + r"')[\w-]+'", text) is not None)
 
