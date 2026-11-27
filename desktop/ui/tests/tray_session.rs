@@ -3,7 +3,8 @@
 //! item registers, shows its title, tooltip and icon, follows the unread
 //! state, and its click and menu reach the app. Without a watcher there is
 //! no tray (and so no close-to-tray). Its own binary: it points the session
-//! bus of the whole process at the private one. Skipped without dbus-daemon.
+//! bus of the whole process at the private one. Without dbus-daemon it is
+//! skipped, and fails in CI (`gelabber_testing::missing`).
 #![cfg(target_os = "linux")]
 
 use std::collections::HashMap;
@@ -38,17 +39,28 @@ fn private_bus() -> Option<(Daemon, String)> {
     </busconfig>"#;
     let config =
         std::env::temp_dir().join(format!("gelabber-tray-bus-{}.conf", std::process::id()));
-    std::fs::write(&config, CONFIG).ok()?;
-    let mut child = Command::new("dbus-daemon")
+    std::fs::write(&config, CONFIG).expect("the bus configuration");
+    let spawned = Command::new("dbus-daemon")
         .arg(format!("--config-file={}", config.display()))
         .args(["--nofork", "--print-address"])
         .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
-    let output = child.stdout.take();
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => panic!("dbus-daemon: {error}"),
+    };
+    let output = child.stdout.take().expect("piped");
     let daemon = Daemon(child);
     let mut address = String::new();
-    BufReader::new(output?).read_line(&mut address).ok()?;
+    BufReader::new(output)
+        .read_line(&mut address)
+        .expect("the bus address");
+    assert!(
+        !address.trim().is_empty(),
+        "dbus-daemon printed no address (it exited, or rejected {})",
+        config.display()
+    );
     let _ = std::fs::remove_file(config);
     Some((daemon, address.trim().to_owned()))
 }
@@ -95,8 +107,7 @@ fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
 #[test]
 fn the_tray_registers_follows_the_unread_state_and_answers_clicks() {
     let Some((_daemon, address)) = private_bus() else {
-        eprintln!("no dbus-daemon: skipped");
-        return;
+        return gelabber_testing::missing("dbus-daemon");
     };
     // SAFETY: the only test of this binary, before any thread reads it.
     unsafe { std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address) };

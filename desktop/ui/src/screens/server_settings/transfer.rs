@@ -206,7 +206,7 @@ mod tests {
     fn member(id: &str, name: &str, role: &str) -> Value {
         json!({
             "user_id": id, "name": name, "avatar_url": null,
-            "joined_at": "2026-01-02T00:00:00Z", "status_text": null,
+            "role_ids": [], "joined_at": "2026-01-02T00:00:00Z", "status_text": null,
             "accent_color": null, "avatar_decoration": null, "role": role
         })
     }

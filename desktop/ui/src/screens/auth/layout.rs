@@ -70,8 +70,7 @@ pub fn wide(ctx: &egui::Context) -> bool {
 
 /// The app's own copy of the approved artwork, the WebP the web's sign-in
 /// pages draw (public/images/living-room/community-banner.webp): the
-/// setup screen has no server to load it from, and a server older than
-/// v0.9.3 has no WebP.
+/// setup screen has no server to load it from.
 const BUNDLED_ARTWORK: &[u8] = include_bytes!("../../../assets/images/community-banner.webp");
 
 /// The bundled artwork, decoded once per window.

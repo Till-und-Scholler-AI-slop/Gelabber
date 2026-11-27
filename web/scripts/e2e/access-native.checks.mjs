@@ -21,6 +21,8 @@ function actorFor(stats, outerPending = false) {
     window: { __e2e: state },
     setTimeout,
     clearTimeout,
+    // The page reads the test's clock, mocked or not.
+    Date,
   });
   const actor = {
     page: {
@@ -140,16 +142,34 @@ test("actual heldMedia pending outer evaluate cannot bypass quarantine or trigge
   assert.equal(r.evaluates(), 1);
   assert.equal(r.closes(), 1);
 });
-test("actual heldMedia rejects late native answer but records normal increasing and post-revocation stagnant frames unchanged", async () => {
+test("actual heldMedia rejects late native answer but records normal increasing and post-revocation stagnant frames unchanged", async (t) => {
+  // A mocked clock: the answer comes 25 ms after the 5 ms budget, however
+  // slowly this machine runs (on the real clock, a late start expired the
+  // budget before heldMedia ran, and nothing was quarantined).
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  };
   const late = actorFor(
     () => new Promise((resolve) => setTimeout(() => resolve(report(99)), 30)),
   );
-  await assert.rejects(
-    deadlineProbe(() => heldMedia(late.actor), Date.now() + 5),
-    NativeInterfaceFailure,
-  );
-  await new Promise((resolve) => setTimeout(resolve, 35));
-  await assert.rejects(heldMedia(late.actor), NativeInterfaceFailure);
+  const first = deadlineProbe(() => heldMedia(late.actor), Date.now() + 5);
+  first.catch(() => {});
+  await settle();
+  assert.equal(late.evaluates(), 1, "heldMedia did not ask the page");
+  t.mock.timers.tick(5);
+  await settle();
+  await assert.rejects(first, NativeInterfaceFailure);
+  t.mock.timers.tick(30);
+  await settle();
+  const again = heldMedia(late.actor);
+  again.catch(() => {});
+  await settle();
+  t.mock.timers.tick(30);
+  await settle();
+  await assert.rejects(again, NativeInterfaceFailure);
+  assert.equal(late.evaluates(), 1, "a quarantined page was asked again");
+  t.mock.timers.reset();
   let frames = 10;
   const normal = actorFor(() => Promise.resolve(report(frames)));
   const a = await heldMedia(normal.actor);

@@ -475,7 +475,11 @@ mod tests {
         let key = format!("server:{id}");
         let wait = |done: &dyn Fn() -> bool| {
             let start = Instant::now();
-            while !done() && start.elapsed() < std::time::Duration::from_secs(5) {
+            while !done() {
+                assert!(
+                    start.elapsed() < std::time::Duration::from_secs(5),
+                    "waited 5 s"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
         };
@@ -521,8 +525,9 @@ mod tests {
         client.open_server(id);
         std::thread::sleep(std::time::Duration::from_millis(200));
         assert_eq!(loads(), 0);
-        let old = Instant::now().checked_sub(std::time::Duration::from_secs(61));
-        let Some(old) = old else { return };
+        let old = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(61))
+            .expect("a monotonic clock older than 61 s: run it again in a minute");
         client.write(|s| s.server_fetched.insert(id, old));
         for _ in 0..5 {
             client.open_server(id);
@@ -549,7 +554,7 @@ mod tests {
             s.session = Session::Authenticated(Box::new(
                 serde_json::from_value(serde_json::json!({
                     "id": me, "email": "ich@example.test", "name": "Ich",
-                    "created_at": "2026-10-01T00:00:00Z",
+                    "created_at": "2026-10-01T00:00:00Z", "locale": "de",
                 }))
                 .unwrap(),
             ));

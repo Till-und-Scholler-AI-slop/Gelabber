@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
 use futures_util::{SinkExt, StreamExt};
+use gelabber_api::AppState;
 use gelabber_api::gateway::protocol::REDIS_PREFIX;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -28,14 +29,22 @@ struct World {
     channel: Uuid,
 }
 
+/// The worker that ends run-out modes is off: the test of that end runs its
+/// sweep by hand.
+fn state(pool: PgPool) -> AppState {
+    let mut state = common::state(pool);
+    state.workers.presence_modes = None;
+    state
+}
+
 async fn setup(pool: PgPool) -> World {
-    let mut owner = Client::new(pool.clone());
+    let mut owner = Client::from_state(state(pool.clone()));
     owner.bootstrap().await;
     let res = owner
         .register("owner@example.com", "password123", "Ada")
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
-    let mut member = Client::new(pool);
+    let mut member = Client::from_state(state(pool));
     member.bootstrap().await;
     let res = member
         .register("member@example.com", "password123", "Bob")
@@ -335,7 +344,9 @@ async fn a_mode_runs_out_and_is_announced(pool: PgPool) {
     } = setup(pool.clone()).await;
     let bob = member.user_id().to_owned();
     let bob_id: Uuid = bob.parse().unwrap();
-    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut state = common::ws_state(pool.clone());
+    state.workers.presence_modes = None;
+    let addr = common::serve_ws_state(state.clone()).await;
     let mut ada_ws = connect(addr, &owner).await;
     watch(&mut ada_ws, server).await;
     let mut bob_ws = connect(addr, &member).await;

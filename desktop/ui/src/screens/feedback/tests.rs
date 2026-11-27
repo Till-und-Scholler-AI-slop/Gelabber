@@ -318,12 +318,14 @@ fn closing_keeps_the_draft_and_errors_go_under_their_field() {
     );
 }
 
-/// An instance without feedback (an API without the routes answers 404):
-/// no item, no dot.
+/// An instance without feedback: no item, no dot.
 #[test]
 fn without_feedback_the_menu_has_no_item() {
     let _config = TempConfig::new("feedback-off");
-    let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+    let api = FakeApi::start(true, |method, path, _| match (method, path) {
+        ("GET", "/feedback/status") => Some(Reply::json(json!({"enabled": false, "unread": 0}))),
+        _ => workspace(method, path),
+    });
     let mut harness = launcher(&api, &format!("/s/{HOME}"));
     wait_for(&mut harness, "the status", |_| {
         api.saw("GET /feedback/status")
@@ -499,9 +501,9 @@ fn a_dialog_left_open_stays_with_its_sign_in() {
         };
         match (method, path) {
             ("GET", "/feedback/status") => Some(Reply::json(json!({"enabled": true, "unread": 0}))),
-            ("GET", "/auth/session") => {
-                Some(Reply::json(json!({"user": user, "csrf_token": "csrf"})))
-            }
+            ("GET", "/auth/session") => Some(Reply::json(
+                json!({"user": user, "csrf_token": "csrf", "operator": false}),
+            )),
             ("POST", "/auth/logout") => {
                 flag.store(false, Ordering::SeqCst);
                 Some(Reply::json(json!({"csrf_token": "csrf"})))
@@ -509,7 +511,7 @@ fn a_dialog_left_open_stays_with_its_sign_in() {
             ("POST", "/auth/login") => {
                 flag.store(true, Ordering::SeqCst);
                 Some(Reply::json(json!({
-                    "user": crate::app::testkit::lena(), "csrf_token": "csrf"
+                    "user": crate::app::testkit::lena(), "csrf_token": "csrf", "operator": false
                 })))
             }
             _ => workspace(method, path),

@@ -104,6 +104,79 @@ pub struct AppState {
     /// The sweeper of the public feedback form (`feedback::public`).
     pub(crate) feedback_worker_started: Arc<AtomicBool>,
     pub(crate) presence_worker_started: Arc<AtomicBool>,
+    /// How long one media ticket keeps the session's media authority
+    /// renewed (`media::MEDIA_DEMAND`).
+    pub media_demand: Duration,
+    /// How long kick, ban and server delete wait for the server row
+    /// (`servers::membership::SERVER_LOCK_WAIT`).
+    pub server_lock_wait: Duration,
+    /// Which background workers `app()` starts and how often each looks for
+    /// work on its own.
+    pub workers: Workers,
+}
+
+/// The background workers `app()` starts, each with the interval at which it
+/// looks for work without being woken; `None` leaves that worker off. A
+/// server runs all of them at [`Workers::default`]. Tests switch off the
+/// workers whose steps they drive by hand, so the app's own copy cannot take
+/// the work first, and shorten the intervals they would otherwise wait for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Workers {
+    /// Gateway outbox delivery (`gateway::delivery`): a write wakes it, and
+    /// it polls this often for rows a wake missed.
+    pub delivery: Option<Duration>,
+    /// Object deletion and upload expiry (`attachments::cleanup`).
+    pub storage_cleanup: Option<Duration>,
+    /// Picture metadata and thumbnails (`attachments::media`).
+    pub pictures: Option<Duration>,
+    /// Purge of deleted accounts (`account::deletion`), between wakes.
+    pub account_purge: Option<Duration>,
+    /// Data exports and their retention (`account::export`), between wakes.
+    pub account_export: Option<Duration>,
+    /// Link preview jobs, and the sweep of old previews at this interval
+    /// (`previews`). Off as well while previews are off.
+    pub link_previews: Option<Duration>,
+    /// End of timed presence modes (`presence`).
+    pub presence_modes: Option<Duration>,
+    /// Last-call pushes before a session ends (`push::last_call`). Off as
+    /// well while push is off.
+    pub last_call: Option<Duration>,
+    /// Sweep of the public feedback form's pending entries
+    /// (`feedback::public`).
+    pub feedback_sweep: Option<Duration>,
+}
+
+impl Workers {
+    /// Every worker off: a test that drives each step it needs by hand.
+    pub const fn none() -> Self {
+        Self {
+            delivery: None,
+            storage_cleanup: None,
+            pictures: None,
+            account_purge: None,
+            account_export: None,
+            link_previews: None,
+            presence_modes: None,
+            last_call: None,
+            feedback_sweep: None,
+        }
+    }
+}
+
+impl Default for Workers {
+    fn default() -> Self {
+        Self {
+            delivery: Some(crate::gateway::delivery::POLL),
+            storage_cleanup: Some(crate::attachments::cleanup::TICK),
+            pictures: Some(crate::attachments::media::TICK),
+            account_purge: Some(crate::account::deletion::TICK),
+            account_export: Some(crate::account::export::TICK),
+            link_previews: Some(crate::previews::SWEEP_EVERY),
+            presence_modes: Some(crate::presence::SWEEP_EVERY),
+            last_call: Some(crate::push::last_call::SWEEP_EVERY),
+            feedback_sweep: Some(crate::feedback::public::SWEEP_EVERY),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -250,6 +323,9 @@ impl AppState {
             export_worker_started: Arc::new(AtomicBool::new(false)),
             feedback_worker_started: Arc::new(AtomicBool::new(false)),
             presence_worker_started: Arc::new(AtomicBool::new(false)),
+            media_demand: crate::media::MEDIA_DEMAND,
+            server_lock_wait: crate::servers::membership::SERVER_LOCK_WAIT,
+            workers: Workers::default(),
         })
     }
 
