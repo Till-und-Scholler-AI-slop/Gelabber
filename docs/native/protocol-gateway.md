@@ -43,7 +43,7 @@ Signaling split (by design, `backend/api/src/gateway/mod.rs:15-17`,
 | Item | Value | Ref |
 |---|---|---|
 | URL | `wss://<host>/ws?caps=dnd` when the app origin is https, else `ws://<host>/ws?caps=dnd` | `web/src/ws/client.ts:53-60` |
-| `caps` query | Comma-separated things the client understands beyond the base protocol. `dnd` (v0.11, #590): the presence status `d`. A socket without it hears Do not disturb as `o`, in snapshots and live, because clients from before v0.11 break on `d` (the web member list crashed on a status it had no group for) | `backend/api/src/gateway/mod.rs` (`UpgradeQuery`), `conn.rs` (`client_frame`), `protocol.rs` (`ServerFrame::without_dnd`) |
+| `caps` query | `dnd` (v0.11, #590): the presence status `d`. Servers before v0.14 send `d` only to sockets opened with it and Do not disturb as `o` to the others; from v0.14 every socket hears `d` and the query is not read. Clients keep sending it while they support v0.13 servers | `backend/api/src/gateway/mod.rs` (`upgrade`) |
 | Method | HTTP GET upgrade | `backend/api/src/gateway/mod.rs:44-46` |
 | Auth | Cookie `gelabber_session=<raw token>` (the raw token from the login/register `Set-Cookie`) | `backend/api/src/cookies.rs:8`, `backend/api/src/auth/session.rs:282` |
 | CSRF | Not needed for `/ws` (GET) | `backend/api/src/auth/session.rs:270-272` |
@@ -296,7 +296,7 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `dm` | `{"op":"dm","c":"<dmChannelId>"}` | a DM involving this account appeared (new DM / first message); verify via REST then subscribe. From v0.10 also sent when the peer's account was deleted and the DM channel with it: the REST check then answers `404` and the DM leaves the list | `protocol.rs:432-433`, `delivery.rs:193-204` |
 | `sig` | `{"op":"sig","t":"j","s":"<srv>",["c":"<chan>",]["u":"<user>",]["k":"a",]["on":true,]["m":false,]["d":false,]["snap":[…],]["replay":true,]["w":["<owner>",…]]}` | voice presence, see §5 | `protocol.rs:469-489` |
 | `err` | `{"op":"err","e":"not_found",["s":"<uuid>",]["c":"<uuid>"]}` | see §3.1 | `protocol.rs:490-497` |
-| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `d` do not disturb (#590, only to sockets opened with `caps=dnd`, see §1.1), `x` offline. A client should count a letter it does not know as `o`; clients from before v0.11 do not, which is why `d` needs the capability | `protocol.rs:96-129,498-508,829-844` |
+| `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `d` do not disturb (#590; servers before v0.14 send it only to sockets opened with `caps=dnd`, see §1.1), `x` offline. A client should count a letter it does not know as `o` | `protocol.rs:96-129,498-508,829-844` |
 | `y` | `{"op":"y","s":"<srv>","c":"<chan>","u":"<user>","on":true}` | typing; delivered only to sockets subscribed to channel topic `c` | `protocol.rs:509-511`, `hub/fanout.rs:206-221` |
 | `ns` | `{"op":"ns"}` | notification settings changed on some device → refetch them | `protocol.rs:512-515` |
 | `rd` | `{"op":"rd","d":[ReadSync,…]}` | read positions moved on another device | `protocol.rs:516-534` |
@@ -855,7 +855,6 @@ deadline `MEDIA_REQUEST_DEADLINE_MS = 10 000` → local `request_timeout`
 | `consumerReady` | `{"op":"consumerReady","id":11,"consumerId":"…","generation":"<uuid>"}` | `{}` | resumes the consumer; server then emits `consumerState` | `rpc.rs:197-236` |
 | `consumerFailed` | `{"op":"consumerFailed","id":12,"consumerId":"…","generation":"<uuid>"}` | `{}` | server removes it and retries attach within a failure budget per producer | `rpc.rs:237-267` |
 | `w` | `{"op":"w","id":13,"u":"<ownerUserId>","k":"s","on":true}` | `{}` | watch someone's Live: screen + screen audio consumers are only created for watched owners; ≤64 watches; own id → `forbidden` | `rpc.rs:268-271`, `sfu/attach.rs:336-398`, `sfu/mod.rs:50` |
-| `q` | `{"op":"q","id":14,"consumerId":"…","generation":"<uuid>","h":360,"congested":false}` | `{}` | accepted and ignored (legacy) — do not send | `rpc.rs:272-274` |
 | `l` | `{"op":"l","id":15}` | `{}` | leave room; socket stays, new 10 s join deadline | `rpc.rs:275-278`, `ws.rs:318-321` |
 
 Mic (`a`) and camera (`v`) are consumed automatically by every other peer; no watch needed.
