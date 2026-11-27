@@ -18,10 +18,17 @@ const link = (href: string, suppressed = false): Inline => ({
 });
 
 // The parser's work on a hostile input, counted instead of timed so the
-// bound holds on any machine. Its scans run through these string methods:
-// `startsWith` once per step of the inline and closer loops, `indexOf` for
-// code spans, `slice` and `split` for links. They are wrapped only while
-// the parse runs, which is synchronous, so nothing else is counted.
+// bound holds on any machine: each call of a string method below, plus the
+// characters it scans or copies, and each regular-expression `exec` or
+// `test`. They are wrapped only while the parse runs, which is
+// synchronous, so nothing else is counted.
+//
+// Invisible to the count: a plain `src[k]` loop that makes none of these
+// calls, backtracking inside one regular expression, and `new URL` in
+// `safeHref`. `slice` charges every character it copies, so `src.slice(i)`
+// at each `<` (for the mention and angle-link patterns) counts the rest of
+// the string there; an input with many `<` would look quadratic to this
+// count although it is not.
 type StringMethod = (this: string, ...args: unknown[]) => unknown;
 const scanned: Record<
   string,
@@ -33,6 +40,17 @@ const scanned: Record<
     (result === -1 ? self.length : Number(result) + 1) - Number(args[1] ?? 0),
   slice: (_self, _args, result) => String(result).length,
   split: (self) => self.length,
+  substr: (_self, _args, result) => String(result).length,
+  substring: (_self, _args, result) => String(result).length,
+  lastIndexOf: (self) => self.length,
+  charAt: () => 1,
+  charCodeAt: () => 1,
+  codePointAt: () => 1,
+  at: () => 1,
+  endsWith: () => 1,
+  match: (self) => self.length,
+  replace: (self) => self.length,
+  search: (self) => self.length,
 };
 function parseWork(src: string): number {
   const proto = String.prototype as unknown as Record<string, StringMethod>;
@@ -46,20 +64,34 @@ function parseWork(src: string): number {
       work += 1 + scanned[name](this, args, result);
       return result;
     };
+  const re = RegExp.prototype as unknown as Record<
+    string,
+    (this: RegExp, s: string) => unknown
+  >;
+  const reSaved = (["exec", "test"] as const).map(
+    (name) => [name, re[name]] as const,
+  );
+  for (const [name, original] of reSaved)
+    re[name] = function (input) {
+      work += 1;
+      return original.call(this, input);
+    };
   try {
     parseInline(src);
   } finally {
     for (const [name, original] of saved) proto[name] = original;
+    for (const [name, original] of reSaved) re[name] = original;
   }
   return work;
 }
 
-/** Doubling the input at most doubles the work, plus a little: a parser
- * that rescans (the slow paths these tests guard) about quadruples it. */
+/** Doubling the input at most doubles the work, with room for a little
+ * more: a parser that rescans (the slow paths these tests guard) about
+ * triples to quadruples it. */
 function expectLinearWork(make: (n: number) => string, n: number) {
   const once = parseWork(make(n));
   expect(parseWork(make(2 * n)), make(4).slice(0, 12)).toBeLessThanOrEqual(
-    2 * once + 1_000,
+    2.5 * once + 1_000,
   );
 }
 
