@@ -553,9 +553,6 @@ jobs:
         if: always()
         run: docker rm -f gelabber-desktop-minio || true
 
-  # Who looks at a red push run: an open issue per branch, which the Linear
-  # sync brings to the team; the next green push run closes it. Pull requests
-  # show their result themselves, runs by hand serve debug branches.
   # The run's outcome from its jobs (scripts/e2e_jobs.py): a timed-out job
   # fails it, a skipped one leaves it open. Read-only, so every run shows it.
   outcome:
@@ -583,6 +580,9 @@ jobs:
           echo "result=$(python3 .github/workflows/scripts/e2e_jobs.py result "$PLAN" "$FAULTS" "$DESKTOP")" \
             | tee -a "$GITHUB_OUTPUT"
 
+  # Who looks at a red push run: an open issue per branch, which the Linear
+  # sync brings to the team; the next green push run closes it. Pull requests
+  # show their result themselves, runs by hand serve debug branches.
   report:
     name: Issue for the push run's result
     needs: outcome
