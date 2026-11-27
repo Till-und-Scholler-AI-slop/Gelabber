@@ -321,14 +321,14 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           JOB_LABEL: Rust tests (${{ matrix.part }}/2)
-        run: python3 .github/workflows/scripts/flaky_tests.py summary backend/target/native-debian/nextest/ci/junit.xml
+        run: python3 .github/workflows/scripts/flaky_tests.py summary backend/target/nextest/ci/junit.xml
 
       - name: Upload the test report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: junit-rust-${{ matrix.part }}
-          path: backend/target/native-debian/nextest/ci/junit.xml
+          path: backend/target/nextest/ci/junit.xml
           if-no-files-found: ignore
           retention-days: 7
 

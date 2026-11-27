@@ -123,16 +123,17 @@ class Workflows(unittest.TestCase):
     """CI runs the retrying profile and reads the report where it is written."""
 
     def test_ci_retries_and_reads_each_workspace_report(self):
-        cases = (('backend', '.github/workflows/ci.yml', 'backend/target/native-debian'),
-                 ('desktop', '.github/workflows/desktop-native.yml', 'desktop/target'))
-        for workspace, workflow, target in cases:
+        # nextest writes its reports under <workspace>/target/nextest, also
+        # when CARGO_TARGET_DIR points elsewhere (run-native-ci.sh).
+        cases = (('backend', '.github/workflows/ci.yml'), ('desktop', '.github/workflows/desktop-native.yml'))
+        for workspace, workflow in cases:
             with self.subTest(workspace=workspace):
                 profile = tomllib.loads((ROOT / workspace / '.config/nextest.toml').read_text())['profile']['ci']
                 self.assertGreaterEqual(profile['retries'], 1)
                 self.assertNotEqual(profile.get('flaky-result'), 'fail')
                 text = (ROOT / workflow).read_text()
                 self.assertRegex(text, r'nextest run --profile ci ')
-                report = f'{target}/nextest/ci/{profile["junit"]["path"]}'
+                report = f'{workspace}/target/nextest/ci/{profile["junit"]["path"]}'
                 self.assertIn(f'flaky_tests.py summary {report}\n', text)
                 self.assertIn(f'path: {report}\n', text)
 
