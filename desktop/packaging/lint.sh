@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Lints the packaging scripts as the notices job of desktop-native.yml does:
-# shellcheck for the shell scripts, PSScriptAnalyzer (pwsh) for PowerShell.
+# the shell scripts through shellcheck, the PowerShell ones through PSScriptAnalyzer (pwsh).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 cd "$here"
