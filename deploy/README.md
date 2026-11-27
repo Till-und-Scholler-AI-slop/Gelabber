@@ -742,6 +742,51 @@ Candidate sets are **not releases**. A finished hotfix gets a new workspace/Comp
 
 If an alias update was interrupted or was missing for an older release: start `Release` on **main** with its `tag` and `image_run_id` and turn on **refresh_latest_only**. That repairs only the aliases of the stable GitHub release currently published as latest, without builds, new releases or changes to fixed tags. For v0.2.5: `tag=v0.2.5`, `image_run_id=36549037951`. All four aliases are written one by one; on an error the workflow stays red and can be started again.
 
+## Supported upgrades
+
+An upgrade is supported from the previous minor version in one step: a
+v0.14 release from any v0.13 release (all patch releases of a minor version
+count as one). On an older version, upgrade through each minor version in
+between, to its latest patch release: from v0.12.1, for example, to v0.13.1,
+then to v0.14. The latest patch release of each minor version is in the
+[releases list](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases).
+Read the upgrade notes of every release on the way.
+
+Before the first step:
+
+- **Find the running version.** `/health` and `/ready` do not report it.
+  Each published image carries it as a label:
+  `docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$(docker compose ps -q api)"`.
+  `docker compose images` shows the tag when the images are pinned by tag.
+- **Pause Watchtower**, or whatever else pulls `latest` for you, until the
+  last step is done. It would take the server straight to the newest
+  release, past the steps in between.
+- **Take a backup** as in "Backup". Going back means restoring it: once a
+  step has applied migrations, an older API does not start against the
+  database.
+
+Each step is one rollout as in "Rollout and rollback with exact digests",
+with that release's `image-set.env` (attached to its GitHub release) and
+the checkout at that release's tag: `compose.yaml` and the `Caddyfile`
+belong to the set and change from step to step too. Wait until `/ready`
+answers before the next step: the API applies the step's migrations when it
+starts.
+
+The data in the database is carried across a step by its migrations, which
+every later release keeps. Code that reads what an older version left
+elsewhere (Redis, a browser's storage, an app's settings) stays only as long
+as that step is supported.
+
+A server supports the web client and the desktop apps of its own minor
+version and of the one before. The web client comes with the server's
+image set. The desktop apps follow the newest release (the Windows app
+updates itself every 6 hours, Arch gets it with `pacman -Syu`), and the
+server's download links point at the newest release too, whatever version
+the server runs.
+An app works with servers one minor version apart from its own, either way,
+not further: so keep the server at most one minor version behind the newest
+release, or your users' apps move past what it supports.
+
 ## Rollout and rollback with exact digests
 
 After acceptance, download the set from the released release and archive it permanently with the deployment. For the first migration, record the previous set **actually running**: capture `docker compose images` / container inspect and registry digests; do not assume that an old mutable tag matches the running container. Save this old set as `previous.env` (all four image variables). Credentials stay in `.env` only, not in the manifest.
