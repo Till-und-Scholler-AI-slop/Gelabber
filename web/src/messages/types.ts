@@ -35,9 +35,9 @@ export type Attachment = {
 
 export type Message = {
   id: string;
-  /** Durable database revision; optional only for the older API. */
+  /** Durable database revision; an unsent message has none yet. */
   revision?: number;
-  /** Immutable server INSERT order; optimistic/legacy messages have none. */
+  /** Immutable server INSERT order; an unsent message has none yet. */
   created_order?: number;
   channel_id: string;
   author: MessageAuthor;
@@ -45,15 +45,13 @@ export type Message = {
   created_at: string;
   edited_at: string | null;
   attachments: Attachment[];
-  /** Optional for older API snapshots; absent means no reactions. */
-  reactions?: Reaction[];
+  reactions: Reaction[];
   /** A GIF message (empty content, no attachments). */
   gif?: Gif | null;
-  /** Users the message mentions, as the server resolved them (mentions.ts).
-   * Absent in older API snapshots. */
-  mentions?: string[];
+  /** Users the message mentions, as the server resolved them (mentions.ts). */
+  mentions: string[];
   /** `@everyone`: every member is mentioned. */
-  mention_everyone?: boolean;
+  mention_everyone: boolean;
   /** The message this one answers; absent when it answers none. */
   reply?: Reply | null;
   /** Link previews (#254), added by an edit event after sending. */

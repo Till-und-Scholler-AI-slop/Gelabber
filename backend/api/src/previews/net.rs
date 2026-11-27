@@ -68,6 +68,12 @@ pub struct Policy {
     /// Tests only: socket addresses treated as public, and their ports
     /// allowed. Empty in production, where there is no way to set it.
     pub trusted: Vec<SocketAddr>,
+    /// Tests only: how long one request may take, instead of
+    /// [`REQUEST_TIMEOUT`].
+    pub request_timeout: Option<Duration>,
+    /// Tests only: how long one message's links may take, instead of the
+    /// production budget (`previews::JOB_BUDGET`).
+    pub job_budget: Option<Duration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +195,7 @@ impl Resolve for Vetting {
 
 impl Fetcher {
     pub fn new(policy: Policy) -> Self {
+        let timeout = policy.request_timeout.unwrap_or(REQUEST_TIMEOUT);
         let guard = Arc::new(Guard {
             policy,
             lookups: Arc::new(Semaphore::new(DNS_LOOKUPS)),
@@ -198,7 +205,7 @@ impl Fetcher {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(timeout)
             .pool_idle_timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(2)
             .user_agent(USER_AGENT)

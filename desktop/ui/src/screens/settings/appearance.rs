@@ -412,8 +412,7 @@ fn settle_on(
 /// named in its own language, with its name in the interface's language
 /// below when that differs. A choice shows at once and is saved with the
 /// account; a failed save goes back to the saved language
-/// ([`settle_language`]). Hidden against a server older than v0.10, which
-/// keeps no language.
+/// ([`settle_language`]).
 fn language_section(ui: &mut Ui, app: &mut AppCtx, s: &mut State, card_w: f32) {
     let Some((_, confirmed)) = crate::app::account_locale(app.session, app.client) else {
         return;
@@ -569,14 +568,13 @@ mod tab_tests {
     };
     use crate::platform::paths::testing::TempConfig;
 
-    /// Lena on a v0.10 server, German; `PUT /me/locale` saves or fails.
+    /// Lena, German; `PUT /me/locale` saves or fails.
     fn language_api(saves: bool) -> FakeApi {
-        let mut user = lena();
-        user["locale"] = "de".into();
+        let user = lena();
         FakeApi::start(true, move |method, path, body| match (method, path) {
-            ("GET", "/auth/session") => {
-                Some(Reply::json(json!({"user": user, "csrf_token": "csrf"})))
-            }
+            ("GET", "/auth/session") => Some(Reply::json(
+                json!({"user": user, "csrf_token": "csrf", "operator": false}),
+            )),
             ("GET", "/me") => Some(Reply::json(user.clone())),
             ("PUT", "/me/locale") if saves => {
                 let body: serde_json::Value = serde_json::from_str(body).unwrap();
@@ -642,9 +640,9 @@ mod tab_tests {
         let release = Arc::new(AtomicBool::new(false));
         let held = release.clone();
         let api = FakeApi::start(true, move |method, path, _| match (method, path) {
-            ("GET", "/auth/session") => {
-                Some(Reply::json(json!({"user": user, "csrf_token": "csrf"})))
-            }
+            ("GET", "/auth/session") => Some(Reply::json(
+                json!({"user": user, "csrf_token": "csrf", "operator": false}),
+            )),
             ("GET", "/me") => Some(Reply::json(user.clone())),
             ("PUT", "/me/locale") => {
                 while !held.load(Ordering::Relaxed) {
@@ -671,18 +669,6 @@ mod tab_tests {
             gelabber_i18n::get() == Locale::De
         });
         assert_eq!(super::prefs::get(&harness.ctx).locale, Some(Locale::De));
-    }
-
-    /// A server older than v0.10 keeps no language: no section.
-    #[test]
-    fn an_older_server_shows_no_language_section() {
-        let _locale = gelabber_i18n::on_this_thread(Locale::De);
-        let _config = TempConfig::new("language-older");
-        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
-        let mut harness = launcher(&api, "/settings/darstellung");
-        wait_for_label(&mut harness, "Weitere Themes");
-        assert!(harness.query_by_label("Sprache").is_none());
-        assert!(harness.query_by_label("Deutsch").is_none());
     }
 
     /// The area's heading holds the focus on arrival, then the controls
@@ -712,6 +698,7 @@ mod tab_tests {
         assert_eq!(
             order,
             [
+                "Deutsch",
                 "Dunkel",
                 "Weitere Themes",
                 "Kompakt",

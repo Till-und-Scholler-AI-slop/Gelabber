@@ -1197,7 +1197,7 @@ mod tests {
             .map(|(n, category, name, kind)| {
                 serde_json::json!({
                     "id": id('c', *n), "server_id": id('a', 0),
-                    "category_id": (*category > 0).then(|| id('b', *category)),
+                    "limited": false, "role_ids": [], "category_id": (*category > 0).then(|| id('b', *category)),
                     "name": name, "kind": kind, "created_at": "2026-01-01T00:00:00Z"
                 })
             })
@@ -1205,8 +1205,8 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "id": id('a', 0), "name": "Wohnzimmer", "owner_id": id('d', 1), "icon_url": null,
             "created_at": "2026-01-01T00:00:00Z", "role": "owner",
-            "permissions": [], "member_permissions": [],
-            "categories": categories, "channels": channels, "members": []
+            "permissions": [], "blocked": false, "member_permissions": [],
+            "roles": [], "categories": categories, "channels": channels, "members": []
         }))
         .expect("server detail")
     }

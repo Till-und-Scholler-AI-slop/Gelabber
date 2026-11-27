@@ -93,10 +93,8 @@ pub struct User {
     pub banner_color: Option<String>,
     pub banner_url: Option<String>,
     pub avatar_decoration: Option<String>,
-    /// The account's language, `de` or `en`; `None` from a server older
-    /// than v0.10, which has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub locale: Option<String>,
+    /// The account's language, `de` or `en`.
+    pub locale: String,
 }
 
 /// `GET /api/users/{id}`: a user card without the e-mail address.
@@ -119,9 +117,7 @@ pub struct PublicProfile {
 pub struct SessionResponse {
     pub user: Option<User>,
     pub csrf_token: String,
-    /// The account is an instance operator, who may open "Betrieb";
-    /// `false` from a server older than v0.10.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// The account is an instance operator, who may open "Betrieb".
     pub operator: bool,
 }
 
@@ -307,7 +303,6 @@ pub struct OidcCompleteResponse {
     /// Where the sign-in was headed, e.g. an invite.
     pub redirect: Option<String>,
     /// As [`SessionResponse::operator`].
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub operator: bool,
 }
 
@@ -453,7 +448,7 @@ pub enum Permission {
     SendFiles,
     JoinVoice,
     GoLive,
-    /// Kick and ban (v0.10; `manage_server` before).
+    /// Kick and ban.
     ModerateMembers,
     /// A permission this client does not know yet.
     #[serde(other)]
@@ -498,8 +493,7 @@ pub struct Server {
     /// What every non-owner holds.
     pub member_permissions: Vec<Permission>,
     /// An operator blocked the server: it stays in the list, everything
-    /// else answers `403 server_blocked`. `false` from older servers.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// else answers `403 server_blocked`.
     pub blocked: bool,
 }
 
@@ -520,13 +514,9 @@ pub struct ServerDetail {
     pub channels: Vec<Channel>,
     #[serde(deserialize_with = "lenient_list")]
     pub members: Vec<Member>,
-    /// Custom roles, by position; none from a server older than v0.10.
+    /// Custom roles, by position.
     /// "Alle Mitglieder" is `member_permissions`, the owner is fixed.
-    #[serde(
-        default,
-        deserialize_with = "lenient_list",
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    #[serde(deserialize_with = "lenient_list")]
     pub roles: Vec<ServerRole>,
 }
 
@@ -622,10 +612,8 @@ pub struct Channel {
     pub created_at: Timestamp,
     /// Seen only by the owner and holders of one of `role_ids`. A limited
     /// channel whose last role was deleted is the owner's alone.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub limited: bool,
     /// The roles a limited channel is for; empty when it is not limited.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub role_ids: Vec<Uuid>,
 }
 
@@ -640,7 +628,6 @@ pub struct Member {
     pub avatar_decoration: Option<String>,
     pub role: Role,
     /// The member's custom roles, by position.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub role_ids: Vec<Uuid>,
 }
 
@@ -740,8 +727,7 @@ pub struct DirectMessage {
     pub kind: ChannelKind,
     pub created_at: Timestamp,
     pub peer: Peer,
-    /// Set while the DM is a message request (#563); absent once accepted
-    /// and from servers before v0.11.
+    /// Set while the DM is a message request (#563); absent once accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<DmRequest>,
     /// The user blocks the peer (#565): the composer says so. A peer who
@@ -1233,8 +1219,6 @@ pub struct NotificationSetting {
     pub muted: bool,
     pub muted_until: Option<Timestamp>,
     /// A server's only (#616): push when someone starts a call there.
-    /// Missing from a server older than v0.12.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub voice: bool,
 }
 
@@ -1585,8 +1569,8 @@ pub enum AccountDeletion {
 
 // ------------------------------------------------------------------ feedback
 
-/// `GET /api/feedback/status` (#542). Off, `unread` is 0; an API without
-/// the routes counts as off ([`FeedbackStatus::OFF`]).
+/// `GET /api/feedback/status` (#542). Off, `unread` is 0; without an
+/// answer the interface counts it as off ([`FeedbackStatus::OFF`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeedbackStatus {
     pub enabled: bool,
