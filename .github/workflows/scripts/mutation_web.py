@@ -33,7 +33,8 @@ import sys
 
 TITLE = 'Mutation testing: web mutants survive'
 # Past these the plan cuts the diff, so that a release with a huge diff
-# cannot run for hours; the job's timeout-minutes is the backstop.
+# cannot run for hours; the job's timeout-minutes is the backstop. Measured
+# on a runner (GEL-388): 709 lines gave 670 mutants, done in 3 min 6 s.
 MAX_FILES = 60
 MAX_LINES = 1500
 # GitHub refuses an issue body above 65536 characters; the job summary takes
