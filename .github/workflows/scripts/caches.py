@@ -1,15 +1,16 @@
 """Which Actions caches are superseded, and their deletion (cache-cleanup.yml).
 
-The repository's caches share a 10 GB quota. rust-cache, setup-node and the
-libwebrtc job save a new entry whenever their key changes and never delete
-the old one; GitHub then evicts by least recent use, whatever that hits.
+The repository's caches share a 10 GB quota. rust-cache, the npm cache (the
+web job's, setup-node's in e2e-extended.yml) and the libwebrtc jobs save a
+new entry whenever their key changes and never delete the old one; GitHub
+then evicts by least recent use, whatever that hits.
 This script keeps, on `main` and the development line (the newest `v*`
 branch), the newest entry of each kind, and deletes the older generations
 and every entry of older version branches and pull requests.
 
 A kind is a key without its hash parts: the generations of one cache differ
-only in those. Keys of other families (BuildKit's type=gha layers) are left
-alone, because their entries are pieces of one cache, not generations.
+only in those. Keys of other families are left alone: nothing here tells
+their generations apart.
 """
 import json
 import os

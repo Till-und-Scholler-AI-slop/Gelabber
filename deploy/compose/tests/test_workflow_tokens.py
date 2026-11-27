@@ -138,14 +138,17 @@ class Conditions(unittest.TestCase):
     def test_an_equally_safe_condition_counts(self):
         for condition in ("github.event_name != 'pull_request'", "github.event_name == 'push'",
                           "${{ github.ref == 'refs/heads/main' && always() }}",
-                          "(github.event_name == 'push' || github.event_name == 'release') && x"):
+                          "(github.event_name == 'push' || github.event_name == 'release') && x",
+                          # The flaky-tests job (GEL-389): pushes only, whatever else it needs.
+                          "!cancelled() && github.event_name == 'push' && (a || b)"):
             with self.subTest(condition=condition):
                 self.assertTrue(skips({'if': condition}, 'pull_request'))
 
     def test_a_condition_a_pull_request_can_meet_does_not(self):
         for condition in ('always()', "github.event_name == 'push' || github.event_name == 'pull_request'",
                           "github.event_name != 'merge_group'", "github.ref != 'refs/heads/main'",
-                          "github.ref == 'refs/heads/gh-readonly-queue/v0.14/pr-1'", None):
+                          "github.ref == 'refs/heads/gh-readonly-queue/v0.14/pr-1'",
+                          "github.event_name == 'push' || always()", None):
             with self.subTest(condition=condition):
                 self.assertFalse(skips({'if': condition} if condition else {}, 'pull_request'))
 

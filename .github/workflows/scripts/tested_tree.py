@@ -48,7 +48,8 @@ def record(areas, sha, tree, candidate=False, base=None):
     """What a pull request's or merge queue's run passed, as stored in the
     artifact; `base` is the commit it was tested on."""
     return {'schema': 1, 'sha': sha, 'tree': tree, 'candidate': candidate, 'base': base,
-            'areas': sorted(area for area, touched in areas.items() if touched == 'true')}
+            'areas': sorted(area for area, touched in areas.items()
+                            if touched == 'true' and area != 'minio-build')}
 
 
 def touches_cache_inputs(paths):
@@ -193,8 +194,8 @@ def main(argv):
         try:
             run = find(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'], git('rev-parse', 'HEAD^{tree}'),
                        '--candidate' in argv)
-        except Exception as error:  # noqa: BLE001 - any doubt runs the changed areas
-            print(f'::warning::no reuse, running the changed areas: {error}', file=sys.stderr)
+        except Exception as error:  # noqa: BLE001 - any doubt means no reuse
+            print(f'::warning::no reuse: {error}', file=sys.stderr)
             run = None
         print(f'run={run or ""}')
     elif argv[:1] == ['find-queue']:

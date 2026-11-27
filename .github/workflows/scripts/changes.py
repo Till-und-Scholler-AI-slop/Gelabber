@@ -14,25 +14,23 @@ AREAS = {
     'backend': ('backend/', 'rust-toolchain.toml', '.dockerignore', CI),
     # The emoji data is generated into the backend, the web client and the
     # desktop app, and checked in the web job; landingImage.test.mjs reads the
-    # drawn preview the landing page must not show.
+    # drawn preview the landing page must not show; ci-fault-loop.checks.mjs
+    # runs a step of e2e-extended.yml.
     'web': ('web/', 'backend/shared/data/', 'desktop/ui/assets/emoji/',
-            'docs/design/v0.10/landing-preview-en.png', CI),
-    # The legacy import's test reads the web client's storage keys (legacy.rs).
-    'desktop': ('desktop/', 'rust-toolchain.toml', 'web/src/voice/settings.ts',
-                'web/src/interface/preferences.ts', 'web/src/voice/userVolume.ts',
-                'web/src/messages/drafts.ts',
+            'docs/design/v0.10/landing-preview-en.png', CI, '.github/workflows/e2e-extended.yml'),
+    'desktop': ('desktop/', 'rust-toolchain.toml',
                 # theme.rs checks its tokens against the web's (#561).
                 'web/src/theme/tokens.fixture.json',
                 # The workflows that build, store and release the desktop app.
                 CI, '.github/workflows/desktop-native.yml', '.github/workflows/desktop-release.yml',
                 '.github/workflows/libwebrtc-store.yml', '.github/workflows/scripts/apt-install.sh'),
     # The deployment tests also read the backend's build, both versions, the
-    # web image's start script, the updater key, legacy.rs and the workflows,
-    # which zizmor and actionlint check here. They test the Claude Code hooks
-    # too, so .claude/ is here.
+    # web image's start script, the updater key and the workflows, which
+    # zizmor and actionlint check here. They test the Claude Code hooks too,
+    # so .claude/ is here.
     'deploy': ('deploy/', 'backend/', 'desktop/Cargo.toml', 'rust-toolchain.toml', '.dockerignore',
                '.claude/', '.github/', 'web/docker-entrypoint.d/50-gelabber-public-pages.sh',
-               'desktop/packaging/updater.pub', 'desktop/ui/src/platform/legacy.rs'),
+               'desktop/packaging/updater.pub'),
     'minio': ('deploy/compose/minio/', 'deploy/compose/mc/', 'deploy/compose/minio-init.sh',
               'deploy/compose/compose.yaml',
               CI, '.github/workflows/minio-images.yml', '.github/workflows/publish-minio.yml'),
@@ -95,8 +93,9 @@ def outputs(touched, built, minio_build=False):
 
 def main(argv):
     if '--all' in argv:
-        # The MinIO images are built only when missing from the registry.
-        touched, built, minio_build = set(AREAS), {image['name'] for image in IMAGES}, False
+        # Release candidates build MinIO from source too: operators fall back
+        # to that build, and nobody waits on it beside the desktop jobs.
+        touched, built, minio_build = set(AREAS), {image['name'] for image in IMAGES}, True
     else:
         paths = sys.stdin.read().splitlines()
         touched, built = areas(paths), images(paths)

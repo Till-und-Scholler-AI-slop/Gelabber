@@ -43,7 +43,7 @@ def run(number, started='2026-11-26T19:00:00Z', **changes):
 
 
 ALL = {'backend': 'true', 'web': 'true', 'desktop': 'true', 'deploy': 'true', 'minio': 'true',
-       'images': '[]'}
+       'minio-build': 'true', 'images': '[]'}
 
 
 class RecordTest(unittest.TestCase):

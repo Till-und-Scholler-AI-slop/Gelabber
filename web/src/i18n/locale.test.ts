@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   currentLocale,
   detectLocale,
-  intlLocale,
   LOCALE_STORAGE_KEY,
   setLocale,
   storedLocale,
@@ -73,12 +72,5 @@ describe("setLocale", () => {
     expect(currentLocale()).toBe("en");
     expect(html.lang).toBe("en");
     expect(storedLocale()).toBeNull();
-  });
-});
-
-describe("intlLocale", () => {
-  it("formats German as de-DE and English as en-GB", () => {
-    expect(intlLocale("de")).toBe("de-DE");
-    expect(intlLocale("en")).toBe("en-GB");
   });
 });

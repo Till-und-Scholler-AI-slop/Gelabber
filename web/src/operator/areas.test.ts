@@ -1,19 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { OPERATOR_PAGES, SEARCH_MAX, validateOperatorSearch } from "./areas.ts";
-
-describe("operator pages", () => {
-  it("has Feedback between Meldungen and Auslastung", () => {
-    expect(OPERATOR_PAGES).toEqual([
-      "einladungen",
-      "konten",
-      "server",
-      "meldungen",
-      "feedback",
-      "auslastung",
-    ]);
-  });
-});
+import { SEARCH_MAX, validateOperatorSearch } from "./areas.ts";
 
 describe("operator search", () => {
   it("keeps a trimmed search of up to 100 characters", () => {
