@@ -295,7 +295,8 @@ jobs:
           test -n "$MINIO_ROOT_PASSWORD"
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           # The 100 ms typing assertion runs alone in the next step.
-          sh backend/build/run-native-ci.sh nextest run --locked --workspace --all-targets --no-fail-fast \
+          # Profile ci retries a failed test once and writes JUnit (backend/.config/nextest.toml).
+          sh backend/build/run-native-ci.sh nextest run --profile ci --locked --workspace --all-targets --no-fail-fast \
             --partition hash:${{ matrix.part }}/2 \
             -E 'not test(typing_broadcasts_fast_and_clears_on_stop)'
 
@@ -314,6 +315,22 @@ jobs:
             # Same flags as above, so the built tests are reused.
             sh backend/build/run-native-ci.sh test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
           done
+
+      # A test that passed only on retry passes the run, but never silently.
+      - name: Flaky tests
+        if: ${{ !cancelled() }}
+        env:
+          JOB_LABEL: Rust tests (${{ matrix.part }}/2)
+        run: python3 .github/workflows/scripts/flaky_tests.py summary backend/target/native-debian/nextest/ci/junit.xml
+
+      - name: Upload the test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-rust-${{ matrix.part }}
+          path: backend/target/native-debian/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Dump test MinIO logs
         if: failure()
@@ -545,11 +562,41 @@ jobs:
       linux-key: ${{ needs.desktop.outputs.libwebrtc-linux-store }}
       windows-key: ${{ needs.desktop.outputs.libwebrtc-windows-store }}
 
+  # After a push, every flaky test goes to its issue (flaky_tests.py), from
+  # a job of its own: the tests' jobs keep read-only tokens.
+  flaky-tests:
+    name: Record flaky tests
+    needs: [rust, desktop]
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' && github.event_name != 'merge_group' &&
+      (needs.rust.result != 'skipped' || needs.desktop.result != 'skipped')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the test reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: junit-*
+          path: junit
+
+      - name: Add each flake to its issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/workflows/scripts/flaky_tests.py issues junit/*/*.xml
+
   # The one required check: red if any job that ran failed or was cancelled.
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, lint, rust, web, deploy, images, minio, desktop, libwebrtc-store]
+    needs: [changes, lint, rust, web, deploy, images, minio, desktop, flaky-tests, libwebrtc-store]
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
