@@ -6,13 +6,19 @@ the installer and the Tauri app's folder and AppUserModelId, the pacman
 package it upgrades), so a rename on one side is caught here rather than on
 a user's desktop. makepkg is not needed; makensis compiles the installer
 where it is installed (CI)."""
-import os
+import importlib.util
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
 import unittest
+
+# A missing tool skips a test here and fails it in CI, as everywhere (GEL-375).
+_SPEC = importlib.util.spec_from_file_location(
+    'prerequisites', Path(__file__).resolve().parents[3] / 'deploy/compose/tests/prerequisites.py')
+prerequisites = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(prerequisites)
 
 DESKTOP = Path(__file__).parents[2]
 NATIVE = DESKTOP / 'packaging/native'
@@ -100,11 +106,7 @@ class Installer(unittest.TestCase):
 
     def test_makensis_compiles_it(self):
         # The installer is built after merge only; this compile runs on pull requests.
-        makensis = shutil.which('makensis')
-        if not makensis:
-            if os.environ.get('CI'):
-                self.fail('makensis is not installed (apt-get install nsis)')
-            self.skipTest('makensis is not installed')
+        makensis = shutil.which('makensis') or prerequisites.missing('makensis (apt-get install nsis)')
         with tempfile.TemporaryDirectory() as tmp:
             stage = Path(tmp)
             for name in ('gelabber.exe', 'gelabber_media.dll', 'README.txt', 'THIRD-PARTY-NOTICES.txt'):

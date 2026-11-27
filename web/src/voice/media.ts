@@ -54,8 +54,7 @@ export type MediaResults = {
     generation: string;
     routerRtpCapabilities: RtpCapabilities;
   };
-  /** Absent from servers before the codec negotiation. */
-  capabilities: { codecs?: VideoCodecs };
+  capabilities: { codecs: VideoCodecs };
   transport: TransportOptions;
   connect: Record<string, never>;
   restartIce: { iceParameters: IceParameters };

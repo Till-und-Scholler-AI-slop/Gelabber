@@ -338,7 +338,7 @@ impl Session {
 }
 
 /// The signed-in account's id and language as the server last confirmed
-/// it; `None` signed out and from a server older than v0.10. The client's
+/// it; `None` signed out. The client's
 /// user follows the `lc` frames and saves; the session's answer is there
 /// before the client knows the account.
 pub fn account_locale(session: &Session, client: &Client) -> Option<(String, String)> {
@@ -348,7 +348,7 @@ pub fn account_locale(session: &Session, client: &Client) -> Option<(String, Str
         .with_state(|s| {
             s.me()
                 .filter(|me| me.id.to_string() == id)
-                .and_then(|me| me.locale.clone())
+                .map(|me| me.locale.clone())
         })
         .or_else(|| {
             user.get("locale")
@@ -542,8 +542,7 @@ impl GelabberApp {
 
     /// Shows the account's language whenever the signed-in account or its
     /// language changes: signing in, the `lc` frame of another device, a
-    /// saved change (`followAccountLocale`). Signing out keeps the last one;
-    /// a server older than v0.10 names none, and the app keeps its own.
+    /// saved change (`followAccountLocale`). Signing out keeps the last one.
     fn follow_account_locale(&mut self, ctx: &egui::Context) {
         if self.session.user().is_none() {
             self.account_locale = None;
@@ -1121,7 +1120,7 @@ mod tests {
         assert!(!session.operator());
         session.adopt(&serde_json::json!({"user": lena}));
         assert!(!session.operator());
-        // An older server leaves it out: no operator.
+        // An explicit `false` takes it away.
         session.adopt(&serde_json::json!({"user": lena, "operator": false}));
         assert!(!session.operator());
     }

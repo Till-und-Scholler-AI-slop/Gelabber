@@ -136,17 +136,17 @@ async fn one_channel_can_deliver_a_full_batch_in_revision_order(pool: PgPool) {
 }
 
 /// Write handlers no longer run a delivery pass before their response; they
-/// wake the worker instead (#294). Without the wake every row would wait for
-/// the worker's 200 ms poll, so ten sequential writes would take about 2 s.
+/// wake the worker instead (#294). The worker's poll is an hour here, so a
+/// row is only delivered in time if the wake reached the worker.
 #[sqlx::test]
 async fn a_wake_delivers_without_waiting_for_the_poll(pool: PgPool) {
-    let state = common::ws_state(pool.clone());
+    let mut state = common::ws_state(pool.clone());
+    state.workers.delivery = Some(std::time::Duration::from_secs(3600));
     state.gateway.ensure_delivery(state.clone());
-    let started = std::time::Instant::now();
     for _ in 0..10 {
         let channel = insert(&pool, 1).await[0];
         delivery::wake(&state);
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 let left: i64 =
                     sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id=$1")
@@ -163,6 +163,4 @@ async fn a_wake_delivers_without_waiting_for_the_poll(pool: PgPool) {
         .await
         .expect("the woken worker delivers the row");
     }
-    let elapsed = started.elapsed();
-    assert!(elapsed < std::time::Duration::from_secs(1), "{elapsed:?}");
 }

@@ -7,6 +7,10 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use uuid::Uuid;
 
+/// How often the delivery worker looks for rows between wakes: a write
+/// wakes it, so this only catches a wake that was lost.
+pub(crate) const POLL: Duration = Duration::from_millis(200);
+
 /// Writers take this before modifying messages; delivery takes the same lock.
 /// IDs allocated while held therefore follow committed channel write order.
 pub async fn lock_channel(db: &mut PgConnection, channel: Uuid) -> Result<(), ApiError> {
@@ -164,6 +168,9 @@ pub async fn deliver_pending(state: &AppState, limit: usize) -> Result<usize, Ap
 }
 impl Gateway {
     pub fn ensure_delivery(&self, state: AppState) {
+        let Some(poll) = state.workers.delivery else {
+            return;
+        };
         if self
             .connections
             .inner
@@ -185,7 +192,7 @@ impl Gateway {
                 // Otherwise wait for the next write's wake, or the poll.
                 if !full {
                     let wake = state.connections.inner.delivery_wake.notified();
-                    let _ = tokio::time::timeout(Duration::from_millis(200), wake).await;
+                    let _ = tokio::time::timeout(poll, wake).await;
                 }
             }
         });

@@ -22,7 +22,11 @@ The **shipped line** is the latest release tag on `main`.
   `ci/`, `refactor/` or `chore/` (dependencies, cleanup). Without an issue,
   open one first (see Planning). Release work uses `release/vX.Y.Z`,
   `hotfix/vX.Y.Z-<short-description>` and `sync/main-into-vX.Y`. Only
-  version branches start with `v`. Dependabot keeps its own names.
+  version branches start with `v`. Dependabot keeps its own names. Its pull
+  requests are never merged; the skill `dependency-updates` carries those
+  that apply cleanly onto the development line (the others wait for the next
+  release), and on a red CI run stops with a draft and a report for a
+  maintainer.
 - **Features:** branch off the development line; the PR targets it. Older
   version branches are complete.
 - **Releases:** a release branch from the development line with `origin/main`
@@ -122,8 +126,6 @@ python3 -m pip install --require-hashes --target ~/.cache/gelabber-pyyaml -r dep
 PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests
 ```
 
-`deploy/tools/tests` runs the same way.
-
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
 `npm test`, `npm run test:checks`, `npm run build`. `npm test` mounts the
 components of `*.browser.test.tsx` in Chromium; install it once with
@@ -216,8 +218,10 @@ before you change a workflow.
   separate source lifetimes.
 - **Audio processing** runs in the client with pinned, self-hosted RNNoise
   and DeepFilterNet3 assets, never a cloud audio service.
-- **Pins:** keep the locked versions; a change updates only the dependencies it
-  needs.
+- **Pins:** keep the locked versions. Version bumps arrive through the
+  weekly batch (skill `dependency-updates`); mediasoup, DeepFilterNet's libDF
+  and libwebrtc move only by hand with their documents; a change that needs
+  a dependency updates only that one.
 - **Performance claims** state only what was measured. A recorded result,
   FAIL and BLOCKED included, is never edited afterwards. A record that is no
   longer needed is deleted whole; the git history keeps it.

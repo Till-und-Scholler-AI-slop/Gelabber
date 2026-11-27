@@ -1,7 +1,5 @@
-# Checks the pinned MinIO CE server and mc images, built from source
-# (deploy/compose/minio, deploy/compose/mc) when asked or not yet published, with
-# a read-only token: the build runs fetched Go modules. ci.yml calls it for pull
-# requests, publish-minio.yml before it pushes missing images from main.
+# Checks the pinned MinIO CE server and mc images, built from source when asked or
+# not yet published; read-only, as the build runs fetched Go modules (GEL-392).
 name: MinIO CE images
 
 on:
@@ -67,8 +65,8 @@ jobs:
           grep -F "MC_RELEASE: ${MC_RELEASE}" deploy/compose/compose.yaml
           grep -F "ARG MC_RELEASE=${MC_RELEASE}" deploy/compose/mc/Dockerfile
 
-      # Unless its Dockerfiles changed, check the images operators pull; the
-      # source build (3 to 5 minutes, no cache) runs only for a missing tag.
+      # Unless asked to build, check the images operators pull; the source
+      # build (3 to 5 minutes, no cache) runs when asked or for a missing tag.
       - name: Published images
         id: published
         if: ${{ !inputs.build }}
@@ -82,6 +80,18 @@ jobs:
             echo "The pinned images are not published yet: building them."
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # The label publish-minio.yml compares to decide what to replace (GEL-402).
+      - name: Sources
+        id: trees
+        if: steps.published.outputs.found != 'true'
+        run: |
+          set -euo pipefail
+          # Assigned first: a failing $(...) inside echo would leave an empty label.
+          minio="$(python3 .github/workflows/scripts/minio_source.py source minio)"
+          mc="$(python3 .github/workflows/scripts/minio_source.py source mc)"
+          echo "minio=$minio" >> "$GITHUB_OUTPUT"
+          echo "mc=$mc" >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
         if: steps.published.outputs.found != 'true'
@@ -97,6 +107,7 @@ jobs:
             MINIO_RELEASE=${{ env.MINIO_RELEASE }}
           load: true
           provenance: false
+          labels: org.gelabber.source-tree=${{ steps.trees.outputs.minio }}
           tags: gelabber/minio:${{ env.MINIO_RELEASE }}
 
       - name: Verify minio --version
@@ -117,6 +128,7 @@ jobs:
             MC_RELEASE=${{ env.MC_RELEASE }}
           load: true
           provenance: false
+          labels: org.gelabber.source-tree=${{ steps.trees.outputs.mc }}
           tags: gelabber/mc:${{ env.MC_RELEASE }}
 
       - name: Verify mc --version

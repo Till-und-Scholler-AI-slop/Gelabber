@@ -13,6 +13,7 @@ const server: ServerDetail = {
   role: "owner",
   permissions: ["manage_server"],
   member_permissions: [],
+  blocked: false,
   categories: [
     category("cat-text", "Textkanäle"),
     category("cat-empty", "Leer"),

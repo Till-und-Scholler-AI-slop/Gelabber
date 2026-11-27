@@ -23,11 +23,13 @@ const checks = [
   [vm, "scripts/e2e/native-finish.checks.mjs"],
   [vm, "scripts/e2e/media-extra.checks.mjs"],
   ["scripts/smoke-netem.checks.mjs"],
+  ["scripts/prerequisite.checks.mjs"],
   ["scripts/e2e/faults.checks.mjs"],
   [vm, "scripts/e2e/teardown.checks.mjs"],
   [vm, "scripts/e2e/media-runtime.checks.mjs"],
   [vm, "scripts/e2e/ci-fault-prepare.checks.mjs"],
   ["scripts/e2e/ci-fault-loop.checks.mjs"],
+  ["scripts/e2e/extended-issue.checks.mjs"],
   ["scripts/load/load.checks.mjs"],
   ["scripts/run-within.checks.mjs"],
 ];

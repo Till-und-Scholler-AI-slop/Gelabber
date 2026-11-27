@@ -129,13 +129,12 @@ async fn ticket_hides_foreign_channel(pool: PgPool) {
 
 #[sqlx::test]
 async fn ticket_is_short_and_stored_in_redis(pool: PgPool) {
-    let redis = match redis::Client::open(redis_url()) {
-        Ok(client) => client,
-        Err(_) => return,
-    };
-    if redis.get_multiplexed_async_connection().await.is_err() {
-        return;
-    }
+    // Without Redis this fails, like every test that needs it.
+    let mut conn = redis::Client::open(redis_url())
+        .expect("REDIS_URL")
+        .get_multiplexed_async_connection()
+        .await
+        .expect("Redis at REDIS_URL");
 
     let (mut owner, _, voice_id, _) = owner_with_voice_redis(pool).await;
     let res = owner
@@ -158,7 +157,6 @@ async fn ticket_is_short_and_stored_in_redis(pool: PgPool) {
     assert!(!res.body.to_string().contains("livekit"));
     assert!(!res.body.to_string().contains("identity"));
 
-    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
     let raw: Option<String> = redis::cmd("GET")
         .arg(format!("gb:mt:{ticket}"))
         .query_async(&mut conn)

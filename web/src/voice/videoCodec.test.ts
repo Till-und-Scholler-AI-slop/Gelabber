@@ -119,11 +119,11 @@ describe("video codec choice", () => {
     expect(chooseVideoCodec([profile2, vp8], allowed, vp9Only)).toBe(vp8);
   });
 
-  it("keeps the old order when the server does not name codecs", () => {
-    expect(chooseVideoCodec(device, null, both)).toBe(vp8);
-    expect(chooseVideoCodec([baseline, av1], null, both)).toBe(baseline);
+  it("takes VP8, H.264, VP9, AV1 in that order when no codec is allowed", () => {
+    expect(chooseVideoCodec(device, [], both)).toBe(vp8);
+    expect(chooseVideoCodec([baseline, av1], [], both)).toBe(baseline);
     expect(chooseVideoCodec([vp9], [], none)).toBe(vp9);
-    expect(chooseVideoCodec([], null, none)).toBeUndefined();
+    expect(chooseVideoCodec([], [], none)).toBeUndefined();
   });
 });
 

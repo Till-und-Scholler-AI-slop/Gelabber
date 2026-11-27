@@ -17,13 +17,7 @@ pub enum AltTarget {
     /// The composer's file at this index.
     Composer(usize),
     /// A picture of my sent message.
-    Sent {
-        message: Uuid,
-        attachment: Uuid,
-        /// The message's text when the dialog opened: sent along if the
-        /// message has left the loaded rows by the time it is saved.
-        content: Option<String>,
-    },
+    Sent { message: Uuid, attachment: Uuid },
 }
 
 #[derive(Clone, Debug, PartialEq)]

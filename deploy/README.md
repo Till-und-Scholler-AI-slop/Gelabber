@@ -199,8 +199,6 @@ Since #196 the API signs in to MinIO as a bucket-scoped user, not as root. `mini
 
 If `minio-init` fails (for example `MINIO_APP_PASSWORD` shorter than 8 characters), Compose has already removed the old API container and does not start the new one: Gelabber is down until you fix `.env` and run `docker compose up -d` again. `docker compose logs minio-init` names the cause. Changing `MINIO_APP_PASSWORD` later: edit `.env`, `docker compose up -d` (`minio-init` sets the new password, the API is recreated with it). Renaming `MINIO_APP_USER` leaves the old user in MinIO; remove it with `mc admin user remove` if you want. Links the API signed as root before the switch stay valid until they expire, because root still exists. A changed `MINIO_APP_PASSWORD` ends links signed with the old one at once: open pages show missing images until a reload, and uploads in flight fail once.
 
-Rollback to an API before v0.7 needs the old `compose.yaml` too (it reads only `MINIO_ROOT_*`); see "Rollout and rollback". The MinIO user can stay, it is unused then.
-
 ### MinIO on 443
 
 With the default `ATTACHMENT_DELIVERY=redirect`, browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design and must be reachable from every browser; otherwise images stay empty boxes and uploads fail. If you cannot give MinIO a host of its own, use "Attachments through the API" below. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API. Since #196 the API signs with a bucket-scoped user instead of root, so presigned links and a leaked API environment reach only the Gelabber bucket; the root password still guards the admin API, keep it private. The API logs a warning at startup when an `https://` endpoint carries a port other than 443, and, with `API_COOKIE_SECURE=true`, when the endpoint is a loopback address (`localhost`, `127.0.0.1`) or plain `http://`, which browsers on other machines cannot use.
@@ -652,11 +650,6 @@ separate gate: even additive SQL changes can fail on the SQLx migration
 ledger. That is why an image change does not replace the tested restore of the
 matching old DB/object store pair.
 
-The full local drill is described in [Upgrade/Storage/Restore](../docs/upgrade-storage-restore.md).
-It uses only its own throwaway containers and runs a real rollback to an old
-API binary; the older `deploy/tools/check-chat-migration-restore.py` stays available
-as a quick schema/data drill without object store or binary acceptance.
-
 ## PostgreSQL major upgrade
 
 A release that moves the bundled PostgreSQL to a new major version (v0.12.1:
@@ -791,6 +784,8 @@ release, or your users' apps move past what it supports.
 
 After acceptance, download the set from the released release and archive it permanently with the deployment. For the first migration, record the previous set **actually running**: capture `docker compose images` / container inspect and registry digests; do not assume that an old mutable tag matches the running container. Save this old set as `previous.env` (all four image variables). Credentials stay in `.env` only, not in the manifest.
 
+The set pins MinIO by the digest the release was built with, so a later rebuild of the MinIO tag (its build image changed) does not reach a server that follows the set. `minio-init`'s `mc` is not in the set: it comes from its pinned tag, which is rebuilt the same way, so every release gets the newest `mc` build.
+
 ```bash
 cd deploy/compose
 # Put the released image-set.env here as next.env.
@@ -821,10 +816,10 @@ A `caddy reload` is not enough for this. The proxy mounts `./Caddyfile` as a sin
 
 **Do not run this step with the homelab overlay (`compose.homelab.yaml`, your own Caddy in front).** The overlay only puts the bundled `proxy` into the `bundled-caddy` profile; a service named explicitly starts anyway. `up … proxy` would therefore start the bundled Caddy on `${GELABBER_HTTP_BIND:-127.0.0.1}:${GELABBER_HTTP_PORT:-80}`: next to your own Caddy, which usually holds port 80 already (the start fails), or, with a wider `GELABBER_HTTP_BIND`, open on the network without TLS. Homelab operators instead carry the change from `deploy/compose/Caddyfile.homelab` (v0.6: `header_up Host {hostport}`) into their own Caddy's configuration and reload it there (v0.7.1: `header_up X-Forwarded-For {client_ip}` on the API upstreams; v0.8: the same line on the media upstream).
 
-**v0.4 → v0.3.1 does not work through an image change:** migrations
-0010/0011 change the SQLx migration ledger. Before starting v0.3.1, the
-PostgreSQL/MinIO snapshot pair backed up before the upgrade must be restored
-to tested targets. Changes since that backup are lost.
+**Going back over a migration does not work through an image change:** the
+older API does not start against the newer SQLx migration ledger. Restore
+the PostgreSQL/MinIO snapshot pair backed up before the upgrade to tested
+targets instead; changes since that backup are lost.
 
 Only with proven schema/ledger compatibility, use the archived previous
 complete API/web/media set (no single old media image):
@@ -835,7 +830,7 @@ docker compose --env-file .env --env-file previous.env pull --policy always api 
 docker compose --env-file .env --env-file previous.env up -d --no-deps --no-build --pull never --force-recreate minio minio-init api web media
 ```
 
-Here too the Caddyfile belongs to the set. The v0.6 Caddyfile (`{hostport}`) fits an API from 0.6 on: an older API compares `Origin` and `Host` literally and refuses every WebSocket handshake with 403 as soon as a proxy in front writes out the default port (`Host: example.com:443`). With the old Caddyfile the same configuration worked. For a rollback to 0.5.x, therefore also reset the checkout to the old tag and recreate the proxy as above, with `previous.env`; with the homelab overlay, restore the old line in your own Caddy instead. The same holds for `compose.yaml` from v0.7 on: it hands the API only the bucket-scoped MinIO user (#196), which an API before v0.7 does not read, so for a rollback below v0.7 reset the checkout to the old tag before the commands above (the old one has no `minio-init` service; drop it from the commands).
+Here too the Caddyfile and `compose.yaml` belong to the set: when the release you go back from changed them, reset the checkout to the previous release's tag before the commands above and recreate the proxy as above, with `previous.env`; with the homelab overlay, restore the old lines in your own Caddy instead.
 
 No `down -v`, do not delete or rename volumes: Postgres/MinIO data stays on the same volumes. An image rollback does **not** replace a database restore; before releases, migrations must be checked for backward compatibility and backups made. After incompatible migrations the separately tested restore is required. Readiness alone is not a media/storage acceptance.
 
