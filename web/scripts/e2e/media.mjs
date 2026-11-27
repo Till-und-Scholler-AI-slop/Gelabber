@@ -13,6 +13,11 @@ import {
 
 export const activePeers = (s) =>
   s.peers.filter((p) => p.connection !== "closed");
+/** A member of a call holds at most one connection that sends (its
+ * microphone, a Live) and one that only receives. */
+export const oneSendOneReceive = (peers) =>
+  peers.filter((p) => p.senders > 0).length <= 1 &&
+  peers.filter((p) => !(p.senders > 0)).length <= 1;
 export function armPlaybackRetry() {
   // Keep unmute/autoplay callbacks blocked until the real user click reaches
   // the retry button; lifting the fault earlier can remove that button.
@@ -240,34 +245,38 @@ export async function mediaScenarios(h, f) {
     await h.run("late-watch-after-30s", ["01"], async () => {
       const baseline = await snapshot(f.owner);
       const late = await h.actor("LateWatch");
-      await f.join(late);
-      // This is the specified late-join age, continuously checking encode/capture liveness.
-      const start = f.liveStartedAt;
-      while (Date.now() - start < 30_000) {
-        await observe(
-          Math.min(1_000, 30_000 - (Date.now() - start)),
-          async () => {
-            const s = await snapshot(f.owner);
-            check(
-              s.displayCalls === baseline.displayCalls &&
-                s.captures.some((c) => c.state === "live"),
-              "late-join-publisher-restarted",
-            );
-            return s;
-          },
+      // Closed however it ends, as the 20 cycles' late viewer.
+      try {
+        await f.join(late);
+        // This is the specified late-join age, continuously checking encode/capture liveness.
+        const start = f.liveStartedAt;
+        while (Date.now() - start < 30_000) {
+          await observe(
+            Math.min(1_000, 30_000 - (Date.now() - start)),
+            async () => {
+              const s = await snapshot(f.owner);
+              check(
+                s.displayCalls === baseline.displayCalls &&
+                  s.captures.some((c) => c.state === "live"),
+                "late-join-publisher-restarted",
+              );
+              return s;
+            },
+          );
+        }
+        await click(late, "Zuschauen");
+        const frames = await progress(late, options);
+        const after = await snapshot(f.owner);
+        check(
+          after.displayCalls === baseline.displayCalls &&
+            encoded(after) > encoded(baseline),
+          "late-join-publisher-progress",
+          after,
         );
+        return { ageMs: Date.now() - start, ...frames, publisher: after };
+      } finally {
+        await late.context.close();
       }
-      await click(late, "Zuschauen");
-      const frames = await progress(late, options);
-      const after = await snapshot(f.owner);
-      check(
-        after.displayCalls === baseline.displayCalls &&
-          encoded(after) > encoded(baseline),
-        "late-join-publisher-progress",
-        after,
-      );
-      await late.context.close();
-      return { ageMs: Date.now() - start, ...frames, publisher: after };
     });
   } else h.blocked("late-watch-after-30s", "initial-live-watch-failed", ["01"]);
   for (const [id, plane] of [
@@ -296,17 +305,28 @@ export async function mediaScenarios(h, f) {
         "signaling-reconnect-deadline",
         20_000,
       );
+      const sample = () =>
+        nativeEvaluate(f.owner, () => ({
+          trackLive: window.__e2e.savedTrack?.readyState === "live",
+          trackStillSent: window.__e2e.peers.some(
+            (p) =>
+              p.connectionState !== "closed" &&
+              p.getSenders().some((s) => s.track === window.__e2e.savedTrack),
+          ),
+          originalPeerConnected:
+            window.__e2e.savedPeer?.connectionState === "connected",
+        }));
+      // A new media socket comes first, its new transports after: wait until
+      // a live peer sends the saved track again, or the track ended, then
+      // compare. A client that never sends it again fails here.
+      await until(
+        sample,
+        (state) => state.trackStillSent || !state.trackLive,
+        "recovery-track-not-sent-again",
+        20_000,
+      );
       const after = await snapshot(f.owner);
-      const identity = await nativeEvaluate(f.owner, () => ({
-        trackLive: window.__e2e.savedTrack?.readyState === "live",
-        trackStillSent: window.__e2e.peers.some(
-          (p) =>
-            p.connectionState !== "closed" &&
-            p.getSenders().some((s) => s.track === window.__e2e.savedTrack),
-        ),
-        originalPeerConnected:
-          window.__e2e.savedPeer?.connectionState === "connected",
-      }));
+      const identity = await sample();
       check(
         after.displayCalls === before.displayCalls &&
           identity.trackLive &&
@@ -418,8 +438,12 @@ export async function mediaScenarios(h, f) {
       for (let i = 0; i < 20; i++) {
         await click(f.owner, "Live gehen");
         await click(f.watcher, "Zuschauen");
+        // A re-watch's first frame took up to 4.3 s on a loaded machine
+        // (20 cycles, load 16 to 35), close to the 5 s budget; this scenario
+        // claims bounded resources, not the first frame's time.
         const frames = await progress(f.watcher, {
           ...options,
+          budget: options.budget * 3,
           color: i % 2 ? [30, 220, 30] : [220, 30, 30],
         });
         const beforeStopOwner = await snapshot(f.owner);
@@ -440,7 +464,9 @@ export async function mediaScenarios(h, f) {
             beforeStopInventory.probatorRtpRows <= 1 &&
             beforeStopInventory.unexpectedRtpRows === 0 &&
             beforeStopInventory.invalidBindings === 0 &&
-            activePeers(frames.last).length === 1 &&
+            // A watcher in the call sends its microphone too: one receive
+            // and one send connection, as for every publisher (e2e/README.md).
+            oneSendOneReceive(activePeers(frames.last)) &&
             activePeers(frames.last).every(
               (p) =>
                 p.connection === "connected" &&
@@ -464,6 +490,13 @@ export async function mediaScenarios(h, f) {
             actualConsumerInventory: beforeStopInventory,
           },
         );
+        // The watcher stops watching before the Live ends, so each cycle
+        // starts from "Zuschauen": whether the same person's next Live is
+        // watched by itself is not this scenario's claim.
+        await f.watcher.page
+          .getByRole("button", { name: "Nicht mehr zuschauen", exact: true })
+          .first()
+          .click();
         await click(f.owner, "Live beenden");
         await until(
           () => snapshot(f.owner),
@@ -474,6 +507,7 @@ export async function mediaScenarios(h, f) {
           watcher = await snapshot(f.watcher);
         cycles.push({
           cycle: i + 1,
+          firstFrameMs: frames.firstFrameMs,
           owner,
           watcher,
           decodedFrames: decoded(frames.last),
@@ -483,65 +517,67 @@ export async function mediaScenarios(h, f) {
             actualConsumerInventory: beforeStopInventory,
           },
         });
-        // Explicit watcher stop is UI cleanup; the next start never reloads publisher.
-        const stop = f.watcher.page.getByRole("button", {
-          name: "Nicht mehr zuschauen",
-          exact: true,
-        });
-        if (await stop.count()) await stop.first().click();
       }
       await click(f.owner, "Live gehen");
       const late = await h.actor("CycleWatch");
-      await f.join(late);
-      await click(late, "Zuschauen");
-      const last = await progress(late, options);
-      const lateConsumers = await nativeEvaluate(late, sampleVideoConsumers, {
-        publisher: f.owner.id,
-        deadlineEpochMs: Date.now() + options.budget,
-      });
-      check(
-        lateConsumers.sources === 1 &&
-          lateConsumers.selectedLiveSources === 1 &&
-          lateConsumers.foreignSources === 0 &&
-          lateConsumers.identitiesBound === 1 &&
-          lateConsumers.sourceRtpRows === 1 &&
-          lateConsumers.probatorRtpRows <= 1 &&
-          lateConsumers.unexpectedRtpRows === 0 &&
-          lateConsumers.invalidBindings === 0,
-        "late-watch-received-stale-publications",
-        { last: last.last, actualConsumerInventory: lateConsumers },
-      );
-      check(
-        cycles.every(
-          (c) =>
-            activePeers(c.owner).length <= 2 &&
-            activePeers(c.owner).every(
-              (p) =>
-                p.transceivers <= 4 &&
-                p.senders <= 1 &&
-                p.localSdpBytes <= 32_000,
-            ),
-        ),
-        "publisher-resource-growth",
-        { controlConfirmed: true, cycles, late: last },
-      );
-      check(
-        cycles.every(
-          (c) =>
-            activePeers(c.watcher).length <= 1 &&
-            activePeers(c.watcher).every(
-              (p) => p.transceivers <= 4 && p.receivers <= 2,
-            ),
-        ),
-        "watch-resource-growth",
-        { cycles, late: last },
-      );
-      return {
-        cycles,
-        late: last,
-        actualConsumerInventory: lateConsumers,
-        serverBounds: "BLOCKED: SFU task/publication counters not exposed",
-      };
+      // The late viewer joins the call to watch: it leaves with this
+      // scenario, or the next ones hear a participant they did not expect.
+      try {
+        await f.join(late);
+        await click(late, "Zuschauen");
+        const last = await progress(late, options);
+        const lateConsumers = await nativeEvaluate(late, sampleVideoConsumers, {
+          publisher: f.owner.id,
+          deadlineEpochMs: Date.now() + options.budget,
+        });
+        check(
+          lateConsumers.sources === 1 &&
+            lateConsumers.selectedLiveSources === 1 &&
+            lateConsumers.foreignSources === 0 &&
+            lateConsumers.identitiesBound === 1 &&
+            lateConsumers.sourceRtpRows === 1 &&
+            lateConsumers.probatorRtpRows <= 1 &&
+            lateConsumers.unexpectedRtpRows === 0 &&
+            lateConsumers.invalidBindings === 0,
+          "late-watch-received-stale-publications",
+          { last: last.last, actualConsumerInventory: lateConsumers },
+        );
+        check(
+          cycles.every(
+            (c) =>
+              activePeers(c.owner).length <= 2 &&
+              activePeers(c.owner).every(
+                (p) =>
+                  p.transceivers <= 4 &&
+                  p.senders <= 1 &&
+                  p.localSdpBytes <= 32_000,
+              ),
+          ),
+          "publisher-resource-growth",
+          { controlConfirmed: true, cycles, late: last },
+        );
+        check(
+          cycles.every(
+            (c) =>
+              // Still in the call once the Live ended (see above).
+              oneSendOneReceive(activePeers(c.watcher)) &&
+              activePeers(c.watcher).every(
+                (p) =>
+                  p.transceivers <= 4 && p.receivers <= 2 && p.senders <= 1,
+              ),
+          ),
+          "watch-resource-growth",
+          { cycles, late: last },
+        );
+        return {
+          cycles,
+          late: last,
+          actualConsumerInventory: lateConsumers,
+          serverBounds: "BLOCKED: SFU task/publication counters not exposed",
+        };
+      } finally {
+        await late.context.close();
+      }
     },
   );
   await h.run(
@@ -699,7 +735,18 @@ export async function mediaScenarios(h, f) {
             .getByRole("button", { name: /^Navigation öffnen/ })
             .click();
         } else {
-          check(metrics.channelsHeight >= 156, "channel-navigation-collapsed");
+          // Measured on its own: the list settles after the resize.
+          await until(
+            () =>
+              nativeEvaluate(f.owner, () => ({
+                channelsHeight: document
+                  .querySelector(".sidebar-list-scroll")
+                  .getBoundingClientRect().height,
+              })),
+            (state) => state.channelsHeight >= 156,
+            "channel-navigation-collapsed",
+            2_000,
+          );
         }
         // Scroll to the owner's controls, including on short landscape drawers.
         await page.locator("summary.server-sidebar-menu-button").click();
@@ -709,13 +756,18 @@ export async function mediaScenarios(h, f) {
         await page
           .getByRole("dialog", { name: "Kanal erstellen", exact: true })
           .waitFor();
-        // The drawer makes way for a dialog opened from it.
+        // The drawer makes way for a dialog opened from it; it closes before
+        // the dialog opens and is drawn until its exit animation ends.
         if (viewport.width <= 800) {
-          check(
-            !(await page
-              .getByRole("dialog", { name: "Navigation", exact: true })
-              .isVisible()),
+          const navigation = page.getByRole("dialog", {
+            name: "Navigation",
+            exact: true,
+          });
+          await until(
+            async () => ({ viewport, visible: await navigation.isVisible() }),
+            (state) => !state.visible,
             "navigation-stacked-under-dialog",
+            2_000,
           );
         }
         await page.keyboard.press("Escape");
