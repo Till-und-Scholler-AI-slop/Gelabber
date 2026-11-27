@@ -66,16 +66,16 @@ If the proxy in front instead writes a port into `Host` that the browser does no
 Since v0.8 it also limits where the app may load from and connect to, once the web container knows the MinIO origin. `compose.yaml` hands it `MINIO_PUBLIC_ENDPOINT`, the same value the API signs upload and attachment links with, and the policy then adds:
 
 - `default-src 'self'`
-- `connect-src 'self' <MinIO origin> ipc: http://ipc.localhost`: the API, the gateway and media WebSockets, presigned uploads, and the desktop app's native part (`ipc:` on Linux, `http://ipc.localhost` on Windows)
+- `connect-src 'self' <MinIO origin>`: the API, the gateway and media WebSockets, presigned uploads
 - `img-src 'self' data: blob: https: <MinIO origin>`: attachments, upload previews, and link avatars, which may sit on any https host
 - `media-src 'self' data: blob: <MinIO origin>`: video and audio attachments, call sounds, microphone test clips
 - `style-src 'self' 'unsafe-inline'`
 
-With `ATTACHMENT_DELIVERY=proxy` (see "Attachments through the API") the web container gets the same setting and the policy names no MinIO origin at all: `connect-src 'self' ipc: http://ipc.localhost`, `img-src 'self' data: blob: https:`, `media-src 'self' data: blob:`.
+With `ATTACHMENT_DELIVERY=proxy` (see "Attachments through the API") the web container gets the same setting and the policy names no MinIO origin at all: `connect-src 'self'`, `img-src 'self' data: blob: https:`, `media-src 'self' data: blob:`.
 
 The origin is scheme, host and port of `MINIO_PUBLIC_ENDPOINT`; the web container's log names it at startup. Without the variable, with a value no policy can name (an IPv6 address, a host with `_`) or with a web container from a `compose.yaml` before v0.8 (an update of the images alone), the policy keeps these directives out, as in v0.7.1, and the log says so. Set `MINIO_PUBLIC_ENDPOINT` in `.env`, not in the `api` service: a value only the API has breaks uploads and attachments in the browser with a Content-Security-Policy error in its console. After changing it, recreate `web` together with `api` (`docker compose up -d api web`).
 
-A policy you set for the app host on your own proxy is enforced in addition to this one: a request has to pass both. If it sets `connect-src` or `default-src`, it must let the desktop app reach its native part: add `ipc:` (Linux) and `http://ipc.localhost` (Windows) to `connect-src`, for example `connect-src 'self' ipc: http://ipc.localhost`. Without `connect-src`, `default-src` applies. Without these sources the app falls back to a slow path: it keeps working, but video in its tiles stays at 320×180 with 15 frames per second, and the tile reports "Geringe Bildqualität" (low picture quality) with the Content-Security-Policy as the reason. Browsers and the installed PWA are not affected. To drop the stack's policy, remove the header on your proxy: Caddy `header -Content-Security-Policy` in the app's site block, Nginx `proxy_hide_header Content-Security-Policy;`.
+A policy you set for the app host on your own proxy is enforced in addition to this one: a request has to pass both. The native desktop app (since 0.9) does not load the web client, so no policy affects it. To drop the stack's policy, remove the header on your proxy: Caddy `header -Content-Security-Policy` in the app's site block, Nginx `proxy_hide_header Content-Security-Policy;`.
 
 **Without the Compose Caddy:** the overlay publishes web/api/media (and MinIO) on loopback. Template: `deploy/compose/Caddyfile.homelab` (two active site blocks: app + MinIO).
 
@@ -741,6 +741,51 @@ The `image-set` artifact contains:
 Candidate sets are **not releases**. A finished hotfix gets a new workspace/Compose version only after coordinated acceptance. The same version belongs in `desktop/Cargo.toml` and `desktop/Cargo.lock`: the desktop apps (Windows installer, Linux tarball, pacman package) carry the version of this workspace of their own, `Release` stops on a different one before tag and release are created, and the desktop workflow attaches the apps only to a release with exactly their version. Once the image publish run of a main commit has promoted a new stable version (`vX.Y.Z`, no tag yet), the `Release` workflow starts by itself with that run's image set. It checks manifest, CI, the current main state and version digests again, keeps existing tags/releases and attaches the set to the new GitHub release. A main commit that keeps the shipped version publishes its SHA images but releases nothing; pre-releases and repeats are started by hand **on main** with `tag` and `image_run_id`. A pre-release (`vX.Y.Z-rc.1`) becomes a GitHub pre-release and leaves Latest and the `latest` image aliases alone. No release of feature/major intermediate states, no trigger by arbitrary `v*` tag pushes.
 
 If an alias update was interrupted or was missing for an older release: start `Release` on **main** with its `tag` and `image_run_id` and turn on **refresh_latest_only**. That repairs only the aliases of the stable GitHub release currently published as latest, without builds, new releases or changes to fixed tags. For v0.2.5: `tag=v0.2.5`, `image_run_id=36549037951`. All four aliases are written one by one; on an error the workflow stays red and can be started again.
+
+## Supported upgrades
+
+An upgrade is supported from the previous minor version in one step: a
+v0.14 release from any v0.13 release (all patch releases of a minor version
+count as one). On an older version, upgrade through each minor version in
+between, to its latest patch release: from v0.12.1, for example, to v0.13.1,
+then to v0.14. The latest patch release of each minor version is in the
+[releases list](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases).
+Read the upgrade notes of every release on the way.
+
+Before the first step:
+
+- **Find the running version.** `/health` and `/ready` do not report it.
+  Each published image carries it as a label:
+  `docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$(docker compose ps -q api)"`.
+  `docker compose images` shows the tag when the images are pinned by tag.
+- **Pause Watchtower**, or whatever else pulls `latest` for you, until the
+  last step is done. It would take the server straight to the newest
+  release, past the steps in between.
+- **Take a backup** as in "Backup". Going back means restoring it: once a
+  step has applied migrations, an older API does not start against the
+  database.
+
+Each step is one rollout as in "Rollout and rollback with exact digests",
+with that release's `image-set.env` (attached to its GitHub release) and
+the checkout at that release's tag: `compose.yaml` and the `Caddyfile`
+belong to the set and change from step to step too. Wait until `/ready`
+answers before the next step: the API applies the step's migrations when it
+starts.
+
+The data in the database is carried across a step by its migrations, which
+every later release keeps. Code that reads what an older version left
+elsewhere (Redis, a browser's storage, an app's settings) stays only as long
+as that step is supported.
+
+A server supports the web client and the desktop apps of its own minor
+version and of the one before. The web client comes with the server's
+image set. The desktop apps follow the newest release (the Windows app
+updates itself every 6 hours, Arch gets it with `pacman -Syu`), and the
+server's download links point at the newest release too, whatever version
+the server runs.
+An app works with servers one minor version apart from its own, either way,
+not further: so keep the server at most one minor version behind the newest
+release, or your users' apps move past what it supports.
 
 ## Rollout and rollback with exact digests
 

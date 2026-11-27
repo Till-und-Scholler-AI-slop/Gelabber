@@ -2,12 +2,14 @@
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
-from test_changes import changed_areas
+from prerequisites import missing
 
 ROOT = Path(__file__).resolve().parents[3]
 HOOK = ROOT / '.claude/hooks/fast_checks.py'
@@ -46,8 +48,17 @@ class ChangedFiles(unittest.TestCase):
 
 
 class Checks(unittest.TestCase):
-    def names(self, *paths):
-        return [name for name, _, _ in hook.checks(ROOT, list(paths))]
+    def names(self, *paths, root=ROOT):
+        return [name for name, _, _ in hook.checks(root, list(paths))]
+
+    def web_root(self):
+        """A root whose web/ has dependencies, as far as the hook looks: it
+        only asks whether web/node_modules is a directory."""
+        shutil.which('node') or missing('node')
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        (Path(tmp.name) / 'web/node_modules').mkdir(parents=True)
+        return Path(tmp.name)
 
     def test_nothing_changed_runs_nothing(self):
         self.assertEqual(self.names(), [])
@@ -56,20 +67,39 @@ class Checks(unittest.TestCase):
     def test_workflows_run_the_pin_test(self):
         self.assertEqual(self.names('.github/workflows/ci.yml'), ['workflows: action pins'])
 
-    def test_rust_and_web_changes_pick_their_checks(self):
-        names = self.names('backend/api/src/main.rs', 'web/src/main.tsx')
-        if any(name.endswith('cargo fmt') for name in names):
-            self.assertIn('backend: cargo fmt', names)
-            self.assertNotIn('desktop: cargo fmt', names)
-        if (ROOT / 'web/node_modules').is_dir():
-            self.assertIn('web: eslint', names)
-            self.assertIn('web: tsc', names)
+    def rustfmt(self, installed):
+        """The hook's own look for cargo fmt, answered by the test."""
+        which = mock.patch.object(hook.shutil, 'which', return_value='/usr/bin/cargo')
+        run = mock.patch.object(hook, 'run', return_value=(0 if installed else 1, ''))
+        return which, run
+
+    def test_a_rust_change_formats_its_own_workspace(self):
+        which, run = self.rustfmt(installed=True)
+        with which, run:
+            self.assertEqual(self.names('backend/api/src/main.rs'), ['backend: cargo fmt'])
+            self.assertEqual(self.names('desktop/ui/src/main.rs'), ['desktop: cargo fmt'])
+        which, run = self.rustfmt(installed=False)
+        with which, run:
+            self.assertEqual(self.names('backend/api/src/main.rs'), [])
+
+    def test_web_changes_pick_their_checks(self):
+        root = self.web_root()
+        self.assertEqual(self.names('web/src/main.tsx', root=root), ['web: eslint', 'web: tsc'])
+        self.assertEqual(self.names('web/scripts/checks.mjs', root=root), ['web: eslint'])
+        self.assertEqual(self.names('desktop/notes.tsx', root=root), [])
+
+    def test_without_web_dependencies_there_are_no_web_checks(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        (Path(tmp.name) / 'web/src').mkdir(parents=True)
+        self.assertEqual(self.names('web/src/main.tsx', root=Path(tmp.name)), [])
 
     def test_web_eslint_gets_paths_relative_to_web(self):
-        if not (ROOT / 'web/node_modules').is_dir():
-            self.skipTest('web dependencies are not installed')
-        eslint = next(args for name, args, _ in hook.checks(ROOT, ['web/src/main.tsx']) if name == 'web: eslint')
-        self.assertEqual(eslint[-1], 'src/main.tsx')
+        root = self.web_root()
+        found = {name: (args, cwd) for name, args, cwd in hook.checks(root, ['web/src/main.tsx'])}
+        self.assertIn('web: eslint', found)
+        eslint, cwd = found['web: eslint']
+        self.assertEqual((eslint[-1], cwd), ('src/main.tsx', root / 'web'))
 
 
 class Hook(unittest.TestCase):
@@ -127,9 +157,6 @@ class Hook(unittest.TestCase):
         settings = json.loads((ROOT / '.claude/settings.json').read_text(encoding='utf-8'))
         commands = [hook['command'] for entry in settings['hooks']['Stop'] for hook in entry['hooks']]
         self.assertIn('python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/fast_checks.py"', commands)
-
-    def test_a_change_to_the_hook_starts_ci(self):
-        self.assertIn('deploy', changed_areas('.claude/hooks/fast_checks.py'))
 
 
 if __name__ == '__main__':

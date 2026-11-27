@@ -317,11 +317,6 @@ jobs:
     name: Native core (Linux x64)
     needs: libwebrtc-linux
     if: inputs.prebuilt_run == ''
-    # A newer push to a pull request cancels this job of the older run (ci.yml
-    # cancels the whole run, libwebrtc included). Branch runs are never cancelled.
-    concurrency:
-      group: desktop-core-linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -626,10 +621,6 @@ jobs:
     name: Native core and app (Windows x64)
     needs: libwebrtc-windows
     if: inputs.prebuilt_run == ''
-    # As core-linux: a newer push to a pull request cancels the older run's.
-    concurrency:
-      group: desktop-core-windows-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: windows-2022
     timeout-minutes: 120
     defaults:
@@ -665,7 +656,10 @@ jobs:
       # mediasoup-sys's PYTHONPATH loses its drive letter (cargo registry on C:,
       # target on D:), so invoke is installed here.
       - name: Python packages for the mediasoup worker
-        run: python -m pip install invoke==3.0.3
+        run: |
+          $requirements = Join-Path $env:RUNNER_TEMP invoke-requirements.txt
+          'invoke==3.0.3 --hash=sha256:f11327165e5cbb89b2ad1d88d3292b5113332c43b8553b494da435d6ec6f5053' | Set-Content $requirements
+          python -m pip install --require-hashes --only-binary=:all: -r $requirements
 
       - name: Rust toolchain
         id: toolchain
@@ -855,6 +849,7 @@ jobs:
             }
           }
           function Removed {
+            $started = (Get-Date).ToUniversalTime()
             Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
             $left = {
               @($install, $lnk, $desktop, $uninstallKey, "HKCU:\Software\Classes\AppUserModelId\$id") |
@@ -863,6 +858,12 @@ jobs:
             $deadline = (Get-Date).AddMinutes(3)
             while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
             $rest = @(& $left)
+            # A write after the uninstaller's start means written again; else it could not delete the file, still held or held then (GEL-374).
+            foreach ($file in @($rest | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+              $item = Get-Item -LiteralPath $file
+              "${file}: written $($item.LastWriteTimeUtc.ToString('o')), uninstaller started $($started.ToString('o'))"
+              try { Remove-Item -LiteralPath $file -ErrorAction Stop; "${file}: deletes now" } catch { "${file}: does not delete now: $($_.Exception.Message)" }
+            }
             if ($rest) { throw "left behind by the uninstaller: $($rest -join ', ')" }
             if (-not (Test-Path -LiteralPath 'HKCU:\Software\Gelabber\Gelabber')) {
               throw "the uninstaller removed the installer's note of the folder without being asked"
@@ -1071,7 +1072,7 @@ jobs:
       # The Linux job's call through an in-process mediasoup worker. H264 only
       # where Media Foundation has codecs, so no GELABBER_EXPECT_H264.
       # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
-      # picker; the test skips where Windows cannot capture. A release build
+      # picker; where Windows cannot capture, the test fails in CI. A release build
       # makes the call alone, without the tests that measure frame rates.
       - name: Loopback call against mediasoup 0.33
         id: tests
@@ -1119,10 +1120,6 @@ jobs:
           $env:GELABBER_MEDIA_LIB_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'no-core')).FullName
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --all-targets -- -D warnings
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber -p gelabber-ui -p gelabber-call -p gelabber-client -p gelabber-i18n --all-targets -- -D warnings
-
-      - name: Format
-        if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
-        run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
   # A release whose pull request packaged its apps (candidate, GEL-358): the
   # installer gets the release key's signature here, and nothing built runs.

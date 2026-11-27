@@ -125,11 +125,14 @@ describe("bounded live message retention", () => {
   });
 
   it("bounds tombstones and the floors of open channels", async () => {
+    // Enough rows to cross the limit in every channel, and no more: each
+    // event is real cache work.
+    const rows = ENTITY_LIMIT + 100;
     for (const channel of ["a", "b", "c"]) {
       await client.fetchInfiniteQuery(options(channel));
-      for (let n = 0; n < 2_000; n++) create(channel, n);
+      for (let n = 0; n < rows; n++) create(channel, n);
     }
-    for (let n = 0; n < 2_000; n++) event("d", row("idle", n));
+    for (let n = 0; n < rows; n++) event("d", row("idle", n));
     expect(retainedEntityCount(client)).toBeLessThanOrEqual(4 * ENTITY_LIMIT);
   });
 

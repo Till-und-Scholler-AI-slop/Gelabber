@@ -16,3 +16,7 @@ path = "junit.xml"
 [profile.ci-media]
 inherits = "ci"
 test-threads = 1
+# A hung media test ends after 5 minutes with its name in the log (GEL-373).
+# The slowest passes in 9 s on CI; the slowest that may still pass waits
+# some 150 s (layer sizes: up to 30 s for each of five pictures).
+slow-timeout = { period = "60s", terminate-after = 5 }

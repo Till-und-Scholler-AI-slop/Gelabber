@@ -1,0 +1,700 @@
+import * as callSounds from "./callSounds.ts";
+import { useAudioProcessing } from "./audioProcessing.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { ClientFrame, ErrFrame, SigEvent } from "../ws/protocol.ts";
+import {
+  MediaError,
+  type IceServer,
+  type MediaClientFrame,
+  type MediaServerFrame,
+  type MediaSocket,
+} from "./media.ts";
+import {
+  configureVoice,
+  dismissLostCall,
+  joinVoice,
+  leaveVoice,
+  resetVoiceForTests,
+  toggleCamera,
+  toggleDeafen,
+  toggleMute,
+  toggleShare,
+  toggleSourceWatch,
+  retryPlayback,
+  setLiveViewMode,
+  useVoice,
+  voiceSessionForTests,
+  type RtpSender,
+} from "./session.ts";
+import type {
+  MediaConnection,
+  MediaConnectionOptions,
+  MediaPublication,
+  MediaSender,
+  ReceivedSource,
+} from "./mediasoupConnection.ts";
+import type { TrackKind } from "../ws/protocol.ts";
+import { resetSessionForTests, useSession } from "../auth/session.ts";
+import { ApiError } from "../api/client.ts";
+import { randomUuid } from "../lib/uuid.ts";
+import {
+  buildDiagnosticExport,
+  diagnosticsPolling,
+  useVoiceDiagnostics,
+} from "./diagnostics.ts";
+import callMicrophoneSource from "./callMicrophone.ts?raw";
+import localSourceAudioSource from "./localSourceAudio.ts?raw";
+import localVideoSource from "./localVideo.ts?raw";
+import receivedAudioSource from "./receivedAudio.ts?raw";
+import sessionSource from "./session.ts?raw";
+import sessionStateSource from "./sessionState.ts?raw";
+import videoLimitsSource from "./videoLimits.ts?raw";
+import { videoBitrateCeiling } from "./videoLimits.ts";
+import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
+import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
+import {
+  resetMediaSettingsForTests,
+  useMediaSettings,
+  videoConstraintsFor,
+} from "./settings.ts";
+
+// Session tests cover event decisions; native playback is exercised separately.
+vi.mock("./callSounds.ts", () => ({
+  playCallSound: vi.fn(),
+  unlockCallSounds: vi.fn(),
+  stopCallSounds: vi.fn(),
+  setCallSoundsDeafened: vi.fn(),
+}));
+
+type MutableSender = Omit<MediaSender, "track"> & {
+  track: MediaStreamTrack | null;
+};
+class FakeConnection implements MediaConnection {
+  closed = false;
+  started = false;
+  tracks = 0;
+  audio: MediaStreamTrack | null = null;
+  audioEnabledWhenAdded: boolean[] = [];
+  senderRows: MutableSender[] = [];
+  publicationInputs: MediaPublication[] = [];
+  private codecSignatures = new Map<TrackKind, string>();
+  private receivedRows = new Map<string, ReceivedSource>();
+  iceServers: IceServer[];
+  states = { send: "new", recv: "new" };
+  restartCalls: string[] = [];
+  getStats = async (): Promise<import("./diagnostics.ts").StatsEntry[]> => [];
+  constructor(
+    readonly options: MediaConnectionOptions,
+    readonly holdReplace?: Promise<void>,
+    readonly holdPublish?: Promise<void>,
+    readonly holdStart?: Promise<void>,
+  ) {
+    this.iceServers = options.iceServers;
+  }
+  async start(): Promise<void> {
+    if (this.holdStart) await this.holdStart;
+    this.started = true;
+  }
+  async publish(input: MediaPublication): Promise<MediaSender> {
+    if (this.closed) throw new Error("closed");
+    // The real connection's answer while its device has not loaded yet.
+    if (!this.started) throw new MediaError("unsupported_codec");
+    this.publicationInputs.push(input);
+    if (this.holdPublish && input.track.kind === "video")
+      await this.holdPublish;
+    const existing = this.sender(input.kind);
+    const signature = JSON.stringify(this.options.codecOptions(input.kind));
+    if (existing && this.codecSignatures.get(input.kind) === signature) {
+      await existing.replaceTrack(input.track);
+      return existing;
+    }
+    const result = await this.options.request(
+      "produce",
+      {
+        k: input.kind,
+        epoch: input.epoch,
+        rtp: { codecs: [], encodings: [{}] },
+        parent: input.parent,
+        paused: input.paused,
+        expectedOldProducerId: existing?.producerId,
+      },
+      input.deadlineEpochMs,
+    );
+    if (this.closed) throw new Error("closed");
+    this.tracks++;
+    if (input.track.kind === "audio")
+      this.audioEnabledWhenAdded.push(input.track.enabled);
+    let params: import("./mediasoupConnection.ts").RtpSenderParameters = {
+      encodings: input.track.kind === "video" ? [{}, {}] : [{}],
+      transactionId: `tx-${this.tracks}`,
+    };
+    const sender: MutableSender = {
+      sourceKind: input.kind,
+      producerId: result.producerId,
+      epoch: input.epoch,
+      track: input.track,
+      rtpSender: undefined,
+      replaceTrack: async (track) => {
+        if (this.holdReplace) await this.holdReplace;
+        sender.track = track;
+        if (input.kind === "a") this.audio = track;
+      },
+      getParameters: () => ({
+        ...params,
+        encodings: params.encodings.map((p) => ({ ...p })),
+      }),
+      setParameters: async (next) => {
+        if (next.transactionId !== params.transactionId)
+          throw new Error("InvalidModificationError");
+        params = { ...next, encodings: next.encodings.map((p) => ({ ...p })) };
+      },
+    };
+    this.senderRows = this.senderRows.filter((held) => held !== existing);
+    this.senderRows.push(sender);
+    this.codecSignatures.set(input.kind, signature);
+    if (input.kind === "a") this.audio = input.track;
+    return sender;
+  }
+  sender(kind: TrackKind): MutableSender | undefined {
+    return this.senderRows.find((s) => s.sourceKind === kind);
+  }
+  senders(): MutableSender[] {
+    return this.senderRows;
+  }
+  videoChoice() {
+    return { roomCodecs: null, encoders: null, decodesAv1: null };
+  }
+  consumers(): ReceivedSource[] {
+    return [...this.receivedRows.values()];
+  }
+  receive(
+    owner: string,
+    kind: TrackKind,
+    stream: MediaStream,
+    consumerId = `consumer-${owner}-${kind}`,
+    generation = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  ): ReceivedSource {
+    const track = stream.getTracks()[0]!;
+    const source = {
+      consumerId,
+      producerId: `producer-${owner}-${kind}`,
+      owner,
+      k: kind,
+      epoch: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      generation,
+      parent: kind === "sa" ? `producer-${owner}-s` : undefined,
+      kind: track.kind,
+      rtpParameters: { codecs: [], encodings: [{ ssrc: 17 }] },
+      paused: false,
+      track,
+      stream,
+      consumer: { close: vi.fn(), pause: vi.fn(), resume: vi.fn() },
+      layers: { spatial: null, temporal: null },
+    } as unknown as ReceivedSource;
+    this.receivedRows.set(consumerId, source);
+    this.options.onConsumer(source);
+    return source;
+  }
+  removeReceived(source: ReceivedSource): void {
+    if (this.receivedRows.get(source.consumerId) === source)
+      this.receivedRows.delete(source.consumerId);
+    this.options.onConsumerClosed(source);
+  }
+  async closeSource(
+    kind: TrackKind,
+    expectedProducerId?: string,
+  ): Promise<void> {
+    const sender = this.sender(kind);
+    if (
+      sender &&
+      (expectedProducerId === undefined ||
+        sender.producerId === expectedProducerId)
+    ) {
+      this.senderRows = this.senderRows.filter((s) => s !== sender);
+      await this.options.request("closeProducer", {
+        producerId: sender.producerId,
+      });
+    }
+  }
+  async setSourcePaused(kind: TrackKind, paused: boolean): Promise<void> {
+    const sender = this.sender(kind);
+    if (sender)
+      await this.options.request(paused ? "pauseProducer" : "resumeProducer", {
+        producerId: sender.producerId,
+      });
+  }
+  screenModes: boolean[] = [];
+  async setScreenMode(sharp: boolean): Promise<void> {
+    this.screenModes.push(sharp);
+  }
+  transportState(direction: "send" | "recv"): string {
+    return this.states[direction];
+  }
+  async restartIce(direction: "send" | "recv"): Promise<void> {
+    this.restartCalls.push(direction);
+    await this.options.request("restartIce", { transportId: direction });
+  }
+  setTransportState(direction: "send" | "recv", state: string): void {
+    this.states[direction] = state;
+    this.options.onTransportState(direction, state);
+  }
+  handleEvent(): void {}
+  close(): void {
+    this.closed = true;
+    this.senderRows = [];
+    for (const source of [...this.receivedRows.values()])
+      this.removeReceived(source);
+  }
+}
+
+let trackSeq = 0;
+
+type FakeTrack = MediaStreamTrack & { stopped: boolean };
+
+function fakeTrack(kind: "audio" | "video", id?: string): FakeTrack {
+  trackSeq += 1;
+  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  const track = {
+    kind,
+    get readyState() {
+      return track.stopped ? "ended" : "live";
+    },
+    enabled: true,
+    id: id ?? `${kind}-${trackSeq}`,
+    stopped: false,
+    stop() {
+      track.stopped = true;
+    },
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+    ) {
+      const held = listeners.get(type) ?? new Set();
+      held.add(listener);
+      listeners.set(type, held);
+    },
+    removeEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+    ) {
+      listeners.get(type)?.delete(listener);
+    },
+    dispatchEvent(event: Event) {
+      if (event.type === "ended") track.stopped = true;
+      for (const listener of listeners.get(event.type) ?? []) {
+        if (typeof listener === "function") listener(event);
+        else listener.handleEvent(event);
+      }
+      return true;
+    },
+  };
+  return track as unknown as FakeTrack;
+}
+
+function fakeStream(id = "mic"): MediaStream {
+  const track = fakeTrack("audio", `${id}-a`);
+  return {
+    id,
+    getTracks: () => [track],
+    getAudioTracks: () => [track],
+    getVideoTracks: () => [],
+  } as unknown as MediaStream;
+}
+
+function fakeVideoStream(id: string, withAudio = false): MediaStream {
+  const video = fakeTrack("video", `${id}-v`);
+  const audio = fakeTrack("audio", `${id}-a`);
+  const tracks = withAudio ? [video, audio] : [video];
+  return {
+    id,
+    getTracks: () => tracks,
+    getAudioTracks: () => (withAudio ? [audio] : []),
+    getVideoTracks: () => [video],
+  } as unknown as MediaStream;
+}
+
+function trackStopped(track: MediaStreamTrack | null | undefined): boolean {
+  return Boolean(track && (track as FakeTrack).stopped);
+}
+
+function streamStopped(stream: MediaStream | null | undefined): boolean {
+  return Boolean(stream?.getTracks().every((track) => trackStopped(track)));
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/** Apply this sender's next parameters, then pause before the caller continues. */
+function holdNextSetParameters(sender: RtpSender): {
+  entered: Promise<void>;
+  release: () => void;
+} {
+  const original = sender.setParameters?.bind(sender);
+  const gate = deferred();
+  let enteredResolve!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enteredResolve = resolve;
+  });
+  let used = false;
+  sender.setParameters = async (params) => {
+    await original?.(params);
+    if (used) return;
+    used = true;
+    enteredResolve();
+    await gate.promise;
+  };
+  return { entered, release: gate.resolve };
+}
+
+function videoBitrates(
+  peer: MediaConnection | undefined,
+): Array<number | undefined> {
+  return (peer?.senders() ?? [])
+    .filter((sender) => sender.track?.kind === "video")
+    .map((sender) => {
+      const encodings = sender.getParameters().encodings;
+      return encodings.every((e) => e.maxBitrate !== undefined)
+        ? encodings.reduce((sum, e) => sum + e.maxBitrate!, 0)
+        : undefined;
+    });
+}
+
+/** What the user was told. */
+function messages(errors: unknown[]): string[] {
+  return errors.map((error) => (error as Error).message);
+}
+
+/** A Live whose capture could not start. */
+const CAPTURE_FAILED = "Die Bildschirmaufnahme konnte nicht gestartet werden.";
+const BALANCED_CEILING = videoBitrateCeiling(1280, 720, 30);
+const ECONOMY_CEILING = videoBitrateCeiling(854, 480, 15);
+
+function install(opts?: {
+  media?: boolean;
+  display?: boolean;
+  userId?: string;
+  ticketFail?: boolean;
+  ticketError?: (index: number) => Error | undefined;
+  gateTicket?: (index: number) => Promise<void> | void;
+  iceServersFor?: (index: number) => IceServer[];
+  holdMedia?: Promise<void>;
+  holdDisplay?: Promise<void>;
+  /** Per getDisplayMedia call index (0-based). An open picker. */
+  gateDisplay?: (callIndex: number) => Promise<void> | void;
+  /** Per getUserMedia call index (0-based). Controlled promise resolution. */
+  gateMedia?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => Promise<void> | void;
+  /** Optional stream factory after the gate opens. */
+  mediaStreamFor?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => MediaStream;
+  failMedia?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => boolean;
+  /** Thrown instead of a generic denial. OverconstrainedError is retried. */
+  mediaError?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => Error | undefined;
+  displayStreamFor?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => MediaStream;
+  displayError?: (
+    callIndex: number,
+    constraints: MediaStreamConstraints,
+  ) => Error | undefined;
+  holdReplaceTrack?: Promise<void>;
+  holdPublish?: Promise<void>;
+  /** Per connection (0-based): its `start` waits for this, as while its
+   * device is still loading. */
+  holdStart?: (index: number) => Promise<void> | undefined;
+  produceError?: (kind: TrackKind) => Error | undefined;
+  /** The server's answer to a "produce" waits for this. */
+  gateProduce?: (kind: TrackKind) => Promise<void> | undefined;
+  /** Hold the versioned Join response while rejection/cancellation is tested. */
+  holdJoin?: boolean;
+  /** Per media socket (0-based): the SFU refuses it (a 429 upgrade), so it
+   * closes without answering its join. */
+  refuseMedia?: (socketIndex: number) => boolean;
+  /** Per media socket (0-based): the SFU answers its join with this error
+   * code, as `gone` when it could not check the ticket. */
+  joinError?: (socketIndex: number) => string | undefined;
+  mediaVersion?: number;
+}) {
+  const sent: ClientFrame[] = [];
+  const mediaSent: MediaClientFrame[] = [];
+  let onSig: ((event: SigEvent) => void) | undefined;
+  let onErr: ((err: ErrFrame) => void) | undefined;
+  let onReady: (() => void) | undefined;
+  let onMedia: ((frame: MediaServerFrame) => void) | undefined;
+  let lingering: ((frame: MediaServerFrame) => void) | undefined;
+  const mediaSockets: MediaSocket[] = [];
+  const peers: FakeConnection[] = [];
+  const errors: unknown[] = [];
+  const streams: MediaStream[] = [];
+  let getUserMediaCalls = 0;
+  let getDisplayMediaCalls = 0;
+  let ticketCalls = 0;
+  let lastUserMedia: MediaStreamConstraints | undefined;
+  let lastDisplayMedia: MediaStreamConstraints | undefined;
+
+  configureVoice({
+    userId: () => opts?.userId ?? "u-self",
+    gateway: {
+      send: (frame) => {
+        sent.push(frame);
+      },
+      onSig: (listener) => {
+        onSig = listener;
+        return () => {
+          onSig = undefined;
+        };
+      },
+      onErr: (listener) => {
+        onErr = listener;
+        return () => {
+          onErr = undefined;
+        };
+      },
+      onReady: (listener) => {
+        onReady = listener;
+        return () => {
+          onReady = undefined;
+        };
+      },
+    },
+    createMediaConnection: (options) => {
+      const peer = new FakeConnection(
+        options,
+        opts?.holdReplaceTrack,
+        opts?.holdPublish,
+        opts?.holdStart?.(peers.length),
+      );
+      peers.push(peer);
+      return peer;
+    },
+    getUserMedia: async (constraints) => {
+      const callIndex = getUserMediaCalls;
+      getUserMediaCalls += 1;
+      lastUserMedia = constraints;
+      const mediaError = opts?.mediaError?.(callIndex, constraints);
+      if (mediaError) {
+        if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
+        else if (opts?.holdMedia) await opts.holdMedia;
+        throw mediaError;
+      }
+      if (opts?.media === false || opts?.failMedia?.(callIndex, constraints)) {
+        if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
+        else if (opts?.holdMedia) await opts.holdMedia;
+        throw new Error("denied");
+      }
+      const stream = opts?.mediaStreamFor
+        ? opts.mediaStreamFor(callIndex, constraints)
+        : constraints.video
+          ? fakeVideoStream(`local-cam-${callIndex}`)
+          : fakeStream(`mic-${callIndex}`);
+      streams[callIndex] = stream;
+      if (opts?.gateMedia) await opts.gateMedia(callIndex, constraints);
+      else if (opts?.holdMedia) await opts.holdMedia;
+      return stream;
+    },
+    getDisplayMedia: async (constraints) => {
+      const callIndex = getDisplayMediaCalls;
+      getDisplayMediaCalls += 1;
+      lastDisplayMedia = constraints;
+      if (opts?.gateDisplay) await opts.gateDisplay(callIndex);
+      else if (opts?.holdDisplay) await opts.holdDisplay;
+      const displayError = opts?.displayError?.(callIndex, constraints);
+      if (displayError) throw displayError;
+      if (opts?.display === false) throw new Error("denied");
+      return (
+        opts?.displayStreamFor?.(callIndex, constraints) ??
+        fakeVideoStream("local-scr", true)
+      );
+    },
+    fetchTicket: async () => {
+      const index = ticketCalls++;
+      if (opts?.gateTicket) await opts.gateTicket(index);
+      const error = opts?.ticketError?.(index);
+      if (error) throw error;
+      if (opts?.ticketFail) throw new Error("ticket");
+      return {
+        ticket: "abcdefghjkmn",
+        media_path: "/media/ws",
+        ice_servers: opts?.iceServersFor?.(index) ?? [
+          { urls: ["stun:127.0.0.1:3478"] },
+        ],
+      };
+    },
+    openMedia: () => {
+      const closeHandlers = new Set<() => void>();
+      let alive = true;
+      const refused = opts?.refuseMedia?.(mediaSockets.length) ?? false;
+      const joinError = opts?.joinError?.(mediaSockets.length);
+      const socket: MediaSocket = {
+        send: (frame) => {
+          mediaSent.push(frame);
+          if (frame.op === "j" && opts?.holdJoin) return;
+          if (refused) {
+            queueMicrotask(() => socket.close());
+            return;
+          }
+          const error =
+            frame.op === "produce"
+              ? opts?.produceError?.(frame.k)?.message
+              : frame.op === "j"
+                ? joinError
+                : undefined;
+          if (error) {
+            queueMicrotask(() =>
+              (onMedia ?? lingering)?.({
+                op: "err",
+                id: frame.id,
+                e: error,
+              }),
+            );
+            return;
+          }
+          const answer = () => {
+            if (!alive) return;
+            (onMedia ?? lingering)?.({
+              op: "result",
+              id: frame.id,
+              data:
+                frame.op === "j"
+                  ? {
+                      c: "voice",
+                      u: opts?.userId ?? "u-self",
+                      v: opts?.mediaVersion ?? 4,
+                      generation: randomUuid(),
+                      routerRtpCapabilities: { codecs: [] },
+                    }
+                  : frame.op === "produce"
+                    ? { producerId: "producer-" + frame.id }
+                    : frame.op === "restartIce"
+                      ? {
+                          iceParameters: {
+                            usernameFragment: "x",
+                            password: "y",
+                          },
+                        }
+                      : {},
+            });
+          };
+          const gate =
+            frame.op === "produce" ? opts?.gateProduce?.(frame.k) : undefined;
+          if (gate) void gate.then(answer);
+          else queueMicrotask(answer);
+        },
+        close() {
+          if (!alive) return;
+          alive = false;
+          for (const handler of [...closeHandlers]) handler();
+        },
+        onFrame(handler) {
+          onMedia = handler;
+          lingering = handler;
+          return () => {
+            if (onMedia === handler) onMedia = undefined;
+          };
+        },
+        onClose(handler) {
+          if (!alive) {
+            handler();
+            return () => {};
+          }
+          closeHandlers.add(handler);
+          return () => {
+            closeHandlers.delete(handler);
+          };
+        },
+      };
+      mediaSockets.push(socket);
+      return socket;
+    },
+    onError: (error) => errors.push(error),
+  });
+
+  return {
+    sent,
+    mediaSent,
+    peers,
+    errors,
+    streams,
+    emitSig: (event: SigEvent & { lc?: string }) => onSig?.(event),
+    emitErr: (err: ErrFrame) => onErr?.(err),
+    emitReady: () => onReady?.(),
+    emitMedia: (frame: MediaServerFrame) => (onMedia ?? lingering)?.(frame),
+    closeMedia: () => mediaSockets.at(-1)?.close(),
+    getUserMediaCalls: () => getUserMediaCalls,
+    getDisplayMediaCalls: () => getDisplayMediaCalls,
+    ticketCalls: () => ticketCalls,
+    lastUserMedia: () => lastUserMedia,
+    lastDisplayMedia: () => lastDisplayMedia,
+  };
+}
+
+describe("voice session", () => {
+  afterEach(() => {
+    resetVoiceForTests();
+    resetVoiceRoster();
+    resetMediaSettingsForTests();
+    trackSeq = 0;
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("sounds only for new room arrivals and known departures, not snapshots or reconnect replays", () => {
+    const { emitSig, emitReady } = install();
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    expect(sound).not.toHaveBeenCalled();
+    const event = {
+      op: "sig" as const,
+      t: "j" as const,
+      s: "srv",
+      c: "voice",
+      u: "peer",
+    };
+    emitSig({ ...event, replay: true });
+    emitSig({ ...event, u: "u-self" });
+    emitSig({ ...event, u: "u-self" });
+    expect(sound.mock.calls).toEqual([["joinSelf"]]);
+    sound.mockClear();
+    emitSig(event); // already present
+    emitSig({ ...event, c: "other", u: "other" });
+    emitSig({ ...event, t: "r", snap: [{ u: "peer", c: "voice" }] });
+    emitSig({ ...event, t: "l", u: "unknown" });
+    expect(sound).not.toHaveBeenCalled();
+    emitSig({ ...event, u: "new" });
+    emitSig({ ...event, u: "new" });
+    emitSig({ ...event, t: "l", u: "new" });
+    emitSig({ ...event, t: "l", u: "new" });
+    expect(sound.mock.calls).toEqual([["joinOther"], ["leaveOther"]]);
+    sound.mockClear();
+    emitReady();
+    emitSig({ ...event, u: "u-self" });
+    emitSig({ ...event, replay: true });
+    expect(sound).not.toHaveBeenCalled();
+  });
+
+  it("plays own control feedback once and no leave cue for an unacknowledged join", () => {
+    install();
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    toggleMute();

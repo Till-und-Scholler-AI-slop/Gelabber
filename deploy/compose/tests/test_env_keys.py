@@ -2,7 +2,11 @@
 compose file reads does nothing, as API_ALLOW_PLAIN_HTTP once did."""
 from pathlib import Path
 import re
+import shutil
 import unittest
+
+from compose_config import config
+from prerequisites import requires
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT.parents[1] / 'backend/api/src/config.rs'
@@ -20,11 +24,8 @@ def compose_text():
 
 
 def api_environment():
-    """Keys of the api service's `environment` in compose.yaml."""
-    block = re.search(r'^  api:\n(.*?)^  \S', (ROOT / 'compose.yaml').read_text(),
-                      re.M | re.S).group(1)
-    env = re.search(r'^    environment:\n((?:      .*\n|\s*\n)*)', block, re.M).group(1)
-    return set(re.findall(r'^      ([A-Z][A-Z0-9_]*):', env, re.M))
+    """Keys of the api service's environment, as Compose renders it."""
+    return set(config()['services']['api']['environment'])
 
 
 class EnvKeys(unittest.TestCase):
@@ -38,6 +39,7 @@ class EnvKeys(unittest.TestCase):
                     self.assertTrue(re.search(r'\$\{' + key + r'\b', text),
                                     f'{key} is set in {example} but no compose file reads it')
 
+    @requires(shutil.which('docker'), 'the Docker CLI')
     def test_every_api_setting_reaches_the_api(self):
         settings = set(re.findall(r'^pub const ([A-Z][A-Z0-9_]*): &str = "\1";',
                                   CONFIG.read_text(), re.M))

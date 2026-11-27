@@ -17,9 +17,8 @@ export type InstallState = {
   ios: boolean;
   /** A phone or tablet: installing means the home screen, not an app window. */
   mobile: boolean;
-  native: boolean;
   /** The system whose desktop app this browser could run instead; null on
-   * phones, other systems and inside the Tauri app. */
+   * phones and other systems. */
   desktop: DesktopPlatform | null;
   available: boolean;
   pending: boolean;
@@ -33,7 +32,6 @@ const initial: InstallState = {
   standalone: false,
   ios: false,
   mobile: false,
-  native: false,
   desktop: null,
   available: false,
   pending: false,
@@ -46,7 +44,7 @@ let deferredPrompt: InstallPromptEvent | null = null;
 let generation = 0;
 
 /** Bind before React renders: Chrome may offer installation before settings open. */
-export function trackInstallation(target: Window, native: boolean): () => void {
+export function trackInstallation(target: Window): () => void {
   const current = ++generation;
   deferredPrompt = null;
   const display = target.matchMedia("(display-mode: standalone)");
@@ -64,12 +62,10 @@ export function trackInstallation(target: Window, native: boolean): () => void {
     secure: target.isSecureContext,
     installed: standalone(),
     standalone: standalone(),
-    native,
     ios,
     mobile,
-    desktop: mobile || native ? null : desktopPlatform(nav),
+    desktop: mobile ? null : desktopPlatform(nav),
   });
-  if (native) return () => {};
 
   const beforeInstall = (event: Event) => {
     if (!target.isSecureContext || useInstallation.getState().installed) return;
@@ -118,7 +114,7 @@ export function trackInstallation(target: Window, native: boolean): () => void {
  * desktop browser is only worth the space while it actually offers a prompt.
  */
 export function installHintUseful(state: InstallState): boolean {
-  if (state.native || state.standalone) return false;
+  if (state.standalone) return false;
   // `installed` without `standalone` is the confirmation right after setup.
   if (state.installed || state.mobile) return true;
   return (
