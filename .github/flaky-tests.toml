@@ -9,3 +9,13 @@
 # Races the outbox worker that app() starts; flaked on 17 and 26 November.
 id = "gelabber-api::outbox_fairness a_wake_delivers_without_waiting_for_the_poll"
 issue = 1058
+
+[[test]]
+# Named in #1058; flaked on 14, 15 and 22 November.
+id = "gelabber-api::feedback_public wrong_malformed_or_expired_tokens_land_on_expired"
+issue = 1058
+
+[[test]]
+# Named in #1058; flaked on 13 and 19 November.
+id = "gelabber-api::feedback_public the_daily_ceiling_refuses_until_the_oldest_post_is_a_day_old"
+issue = 1058
