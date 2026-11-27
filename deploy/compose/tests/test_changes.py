@@ -325,6 +325,39 @@ class Workflow(unittest.TestCase):
         self.assertEqual(set(jobs['ci-ok']['needs']), set(jobs) - {'ci-ok'})
         self.assertEqual(jobs['ci-ok']['if'], 'always()')
 
+    def ci_ok(self, outputs, results=('success', 'skipped')):
+        """ci-ok's check, run with these `needs` results and changes outputs:
+        its exit code and what it printed."""
+        step = next(step for step in self.ci['jobs']['ci-ok']['steps']
+                    if step.get('name') == 'Every job that ran passed')
+        areas = re.sub(r'\$\{\{ needs\.changes\.outputs\.([\w-]+) \}\}',
+                       lambda match: outputs.get(match.group(1), ''), step['env']['AREAS'])
+        result = subprocess.run(['bash', '-c', step['run']], capture_output=True, text=True,
+                                env={**os.environ, 'RESULTS': json.dumps(list(results)), 'AREAS': areas})
+        return result.returncode, result.stdout
+
+    def test_every_area_has_an_output_and_a_check_in_ci_ok(self):
+        # GEL-397: actionlint cannot see the names a run: step writes.
+        jobs = self.ci['jobs']
+        step = next(step for step in jobs['ci-ok']['steps'] if step.get('name') == 'Every job that ran passed')
+        checked = re.findall(r'([\w-]+)=\$\{\{ needs\.changes\.outputs\.([\w-]+) \}\}', step['env']['AREAS'])
+        self.assertEqual(sorted(checked), sorted((area, area) for area in changes.AREAS))
+        for area in changes.AREAS:
+            with self.subTest(area=area):
+                self.assertEqual(jobs['changes']['outputs'][area], f'${{{{ steps.areas.outputs.{area} }}}}')
+        written = dict(line.split('=', 1) for line in changes.outputs(set(), set()))
+        self.assertLessEqual(set(changes.AREAS), set(written))
+
+    def test_ci_ok_fails_on_an_area_output_that_is_not_true_or_false(self):
+        good = {area: 'true' if area == 'web' else 'false' for area in changes.AREAS}
+        self.assertEqual(self.ci_ok(good)[0], 0)
+        for broken in ('', 'ture', 'True'):
+            with self.subTest(value=broken):
+                code, printed = self.ci_ok({**good, 'deploy': broken})
+                self.assertNotEqual(code, 0)
+                self.assertIn('output deploy', printed)
+        self.assertNotEqual(self.ci_ok(good, ('success', 'failure'))[0], 0)
+
     def test_every_deployment_test_suite_runs(self):
         scripts = [script for job_id, _, script in workflow_data.scripts(self.ci) if job_id == 'deploy']
         folders = {suite.parent.relative_to(ROOT).as_posix() for suite in (ROOT / 'deploy').glob('**/tests/test_*.py')}
