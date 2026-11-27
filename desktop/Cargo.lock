@@ -1141,7 +1141,7 @@ dependencies = [
  "flate2",
  "itertools 0.12.1",
  "log",
- "ndarray",
+ "ndarray 0.15.6",
  "num-complex",
  "realfft",
  "rubato",
@@ -1998,7 +1998,7 @@ dependencies = [
  "cmake",
  "deep_filter",
  "mediasoup",
- "ndarray",
+ "ndarray 0.17.2",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
@@ -3412,6 +3412,21 @@ dependencies = [
  "num-traits",
  "rawpointer",
  "serde",
+]
+
+[[package]]
+name = "ndarray"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "520080814a7a6b4a6e9070823bb24b4531daac8c4627e08ba5de8c5ef2f2752d"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rawpointer",
 ]
 
 [[package]]
@@ -6069,7 +6084,7 @@ dependencies = [
  "lazy_static",
  "log",
  "maplit",
- "ndarray",
+ "ndarray 0.15.6",
  "num-complex",
  "num-integer",
  "num-traits",
@@ -6091,7 +6106,7 @@ dependencies = [
  "itertools 0.12.1",
  "lazy_static",
  "maplit",
- "ndarray",
+ "ndarray 0.15.6",
  "nom 7.1.3",
  "num-integer",
  "num-traits",

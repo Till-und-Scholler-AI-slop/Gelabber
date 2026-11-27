@@ -16,7 +16,7 @@ thiserror = "2"
 # tract, at the commit docs/v0.13-deepfilternet-measurement.md measured.
 # "default-model" embeds that commit's models/DeepFilterNet3_onnx.tar.gz.
 deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "7b14b895fe7fc42cab72b4a4c1e49c982bd6404b", default-features = false, features = ["tract", "default-model"] }
-ndarray = "0.15.6"
+ndarray = "0.17.2"
 
 [build-dependencies]
 cmake = "0.1.54"
