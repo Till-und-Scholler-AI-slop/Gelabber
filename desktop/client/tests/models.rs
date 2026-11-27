@@ -1,6 +1,7 @@
 //! Every shape in `models.rs` against JSON captured from a live v0.8.9 stack
-//! (web/scripts/parity seed plus a scratch server): decoding must succeed
-//! and encoding must give back the same JSON.
+//! (web/scripts/parity seed plus a scratch server), with the keys that
+//! servers since have always sent: decoding must succeed and encoding must
+//! give back the same JSON.
 
 use gelabber_client::*;
 use serde::Serialize;
@@ -28,12 +29,11 @@ fn auth_and_account() {
     assert_eq!(session.user.unwrap().name, "Lena");
     let me: User = round_trip("me");
     assert_eq!(me.email, "lena@example.test");
-    // From a server older than v0.10: no language, and none written back.
-    assert_eq!(me.locale, None);
+    assert_eq!(me.locale, "de");
     let mut english = fixture("me");
     english["locale"] = "en".into();
     let user: User = serde_json::from_value(english.clone()).unwrap();
-    assert_eq!(user.locale.as_deref(), Some("en"));
+    assert_eq!(user.locale, "en");
     assert_eq!(serde_json::to_value(&user).unwrap(), english);
     let saved: LocaleBody = serde_json::from_value(serde_json::json!({"locale": "en"})).unwrap();
     assert_eq!(saved.locale, "en");
@@ -128,7 +128,7 @@ fn read_state_and_notifications() {
     assert_eq!(setting.level, Some(NotificationLevel::Mentions));
     assert!(setting.muted && setting.muted_until.is_some());
     let _: Vec<NotificationSetting> = round_trip("ns_list");
-    // From a server older than v0.12: no voice push, and none written back.
+    // No voice push asked for.
     assert!(!setting.voice);
     let mut asked = fixture("ns_set");
     asked["voice"] = true.into();
@@ -335,7 +335,7 @@ fn watch_frames() {
 }
 
 /// Roles and limited channels (#516), as `servers/roles.rs` and
-/// `servers/channel.rs` write them; a server older than v0.10 sends none.
+/// `servers/channel.rs` write them.
 #[test]
 fn roles_and_limited_channels() {
     use serde_json::json;
@@ -343,15 +343,16 @@ fn roles_and_limited_channels() {
         "00000000-0000-0000-0000-0000000000d1",
         "00000000-0000-0000-0000-0000000000d2",
     );
-    // An old payload: no roles, nothing limited, nobody holds a role.
-    let old: ServerDetail = round_trip("server_wohnzimmer");
-    assert!(old.roles.is_empty());
+    // Wohnzimmer as captured: no roles, nothing limited, nobody holds a role.
+    let plain: ServerDetail = round_trip("server_wohnzimmer");
+    assert!(plain.roles.is_empty());
     assert!(
-        old.channels
+        plain
+            .channels
             .iter()
             .all(|c| !c.limited && c.role_ids.is_empty())
     );
-    assert!(old.members.iter().all(|m| m.role_ids.is_empty()));
+    assert!(plain.members.iter().all(|m| m.role_ids.is_empty()));
 
     let mut detail = fixture("server_wohnzimmer");
     let server = detail["id"].clone();
@@ -600,12 +601,12 @@ fn sign_in_through_a_provider() {
 }
 
 /// The operator package's shapes (#517), as backend/api/src/auth/mod.rs
-/// and servers/mod.rs write them; older servers send none of the new keys.
+/// and servers/mod.rs write them.
 #[test]
 fn operator_flags_registration_and_admission_codes() {
     use serde_json::json;
-    let old: SessionResponse = round_trip("session");
-    assert!(!old.operator);
+    let plain: SessionResponse = round_trip("session");
+    assert!(!plain.operator);
     let mut session = fixture("session");
     session["operator"] = true.into();
     let read: SessionResponse = serde_json::from_value(session.clone()).unwrap();

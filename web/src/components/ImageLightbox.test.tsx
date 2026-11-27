@@ -5,8 +5,8 @@ import { attachmentDownloadUrl, attachmentUrl } from "../messages/api.ts";
 import { ImageLightbox } from "./ImageLightbox.tsx";
 import { isPlainClick } from "./plainClick.ts";
 
-// Markup only: node has no <dialog>, so showModal, Esc (onCancel), the
-// backdrop click and the focus on "Schließen" are not exercised here.
+// Markup only. Esc and the focus on "Schließen" are in
+// ImageLightbox.browser.test.tsx; the backdrop click has no test.
 describe("image lightbox", () => {
   const html = renderToStaticMarkup(
     <ImageLightbox
@@ -46,12 +46,12 @@ describe("image lightbox", () => {
   it("shows no stepping for a single picture", () => {
     expect(html).not.toContain("Vorheriges");
     expect(html).not.toContain("Nächstes");
-    expect(html).not.toContain("lr-lightbox-count");
+    expect(html).not.toMatch(/\d+ \/ \d+/);
   });
 });
 
-// The first render only: stepping itself (← / →, the buttons, a swipe) needs
-// a browser.
+// The first render only: stepping itself (← / →, the buttons) is in
+// ImageLightbox.browser.test.tsx; a swipe has no test.
 describe("image lightbox with a gallery", () => {
   const picture = (id: string, filename: string) => ({
     id,
@@ -69,15 +69,10 @@ describe("image lightbox with a gallery", () => {
   );
 
   it("offers previous, next and the count for several pictures", () => {
-    expect(html).toContain(
-      '<button type="button" class="lr-lightbox-step is-previous" aria-label="Vorheriges Bild">',
-    );
-    expect(html).toContain(
-      '<button type="button" class="lr-lightbox-step is-next" aria-label="Nächstes Bild">',
-    );
-    expect(html).toContain(
-      '<span class="lr-lightbox-count" aria-hidden="true">2 / 3</span>',
-    );
+    expect(html).toMatch(/<button [^>]*aria-label="Vorheriges Bild"/);
+    expect(html).toMatch(/<button [^>]*aria-label="Nächstes Bild"/);
+    // Read out in the dialog's name already ("Bild 2 von 3").
+    expect(html).toMatch(/aria-hidden="true">2 \/ 3</);
   });
 
   it("opens on the picture asked for, not on the gallery's first", () => {

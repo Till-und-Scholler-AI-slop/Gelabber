@@ -68,7 +68,7 @@ Run the checks of the area you touched:
 | Area | Commands |
 |---|---|
 | Backend (`backend/`) | `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`, the tests as described in [AGENTS.md](AGENTS.md) |
-| Web (`web/`) | `npm run lint`, `npm test`, `npm run test:checks`, `npm run build` |
+| Web (`web/`) | `npx playwright install chromium-headless-shell` once, then `npm run lint`, `npm test`, `npm run test:checks`, `npm run build` |
 | Desktop (`desktop/`) | `cargo fmt`, `cargo clippy` and `cargo test` as in [desktop/README.md](desktop/README.md) |
 | Deployment and workflows | `python3 -m unittest discover -s deploy/compose/tests` |
 

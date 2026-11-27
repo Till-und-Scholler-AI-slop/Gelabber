@@ -55,7 +55,7 @@ pub fn lena() -> Value {
         "id": LENA, "email": "lena@example.test", "name": "Lena", "avatar_url": null,
         "created_at": "2026-01-01T00:00:00Z", "bio": null, "pronouns": null,
         "status_text": null, "accent_color": null, "banner_color": null,
-        "banner_url": null, "avatar_decoration": null
+        "banner_url": null, "avatar_decoration": null, "locale": "de"
     })
 }
 
@@ -153,7 +153,9 @@ fn default(method: &str, path: &str, signed_in: &Mutex<bool>) -> Reply {
         Value::Null
     };
     match (method, path) {
-        ("GET", "/auth/session") => Reply::json(json!({"user": user, "csrf_token": "csrf"})),
+        ("GET", "/auth/session") => {
+            Reply::json(json!({"user": user, "csrf_token": "csrf", "operator": false}))
+        }
         ("GET", "/auth/mail") => Reply::json(json!({"enabled": true})),
         ("POST", "/auth/logout") => {
             *signed_in.lock() = false;
@@ -168,6 +170,20 @@ fn default(method: &str, path: &str, signed_in: &Mutex<bool>) -> Reply {
             Reply::json(json!({"version": 1, "revision": 0, "active": "dark", "customThemes": []}))
         }
         _ => Reply::error(404, "not_found"),
+    }
+}
+
+/// `/auth/session` and `/me` of Lena with English as her account's
+/// language, for tests of the English interface.
+pub fn english_account(method: &str, path: &str) -> Option<Reply> {
+    let mut user = lena();
+    user["locale"] = "en".into();
+    match (method, path) {
+        ("GET", "/auth/session") => Some(Reply::json(
+            json!({"user": user, "csrf_token": "csrf", "operator": false}),
+        )),
+        ("GET", "/me") => Some(Reply::json(user)),
+        _ => None,
     }
 }
 
@@ -197,7 +213,7 @@ pub fn workspace(method: &str, path: &str) -> Option<Reply> {
         "id": HOME, "name": "Wohnzimmer", "owner_id": LENA, "icon_url": null,
         "created_at": "2026-01-01T00:00:00Z", "role": "owner",
         "permissions": ["manage_server", "manage_channels", "join_voice"],
-        "member_permissions": []
+        "blocked": false, "member_permissions": []
     });
     let category = |n: u8, name: &str| {
         json!({"id": format!("00000000-0000-4000-8000-0000000000b{n}"), "server_id": HOME,

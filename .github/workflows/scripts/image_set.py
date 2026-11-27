@@ -7,6 +7,9 @@ import subprocess
 import sys
 import tomllib
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import minio_source  # noqa: E402
+
 SERVICES = ('api', 'web', 'media')
 MINIO_PIN = 'RELEASE.2025-10-15T17-29-55Z'
 
@@ -74,9 +77,13 @@ def promote():
         if registry_digest(item['image'] + ':' + item['tag']) != item['digest']:
             raise ValueError('SHA image digest changed')
     minio = f'ghcr.io/{repo.lower()}/minio'
-    minio_digest = registry_digest(f'{minio}:{MINIO_PIN}')
-    if minio_digest is None:
-        raise ValueError('Pinned MinIO image is missing')
+    # publish-minio.yml may still be rebuilding the tag from this commit's
+    # sources (GEL-402); the set records that build, never an older one. It
+    # builds only main's sources, so for other ones there is nothing to wait for.
+    sources = minio_source.source('minio', sha)
+    if sources != minio_source.source('minio', minio_source.main_head()):
+        raise ValueError(f'{minio_source.MOVED_ON}; {sha} has other MinIO sources than main')
+    minio_digest = minio_source.wait_for(f'{minio}:{MINIO_PIN}', sources)
     # Do not mutate the shipped version on an unchanged-version main commit.
     allowed = promotion_allowed(sha, api('git/ref/heads/main')['object']['sha'], tag_sha(version))
     if allowed:
@@ -145,11 +152,14 @@ def latest():
     if minio['source_pin'] != MINIO_PIN:
         raise ValueError('Unexpected MinIO pin')
     refs['minio'] = (minio, MINIO_PIN)
-    # Validate the complete set before changing any mutable alias.
+    # Validate the complete set before changing any mutable alias. The MinIO
+    # tag is rebuilt in place when its build image changes (GEL-402); the
+    # release's own build is the digest it recorded, which stays.
     for name, (item, tag) in refs.items():
+        ref = f'{item["image"]}@{item["digest"]}' if name == 'minio' else f'{item["image"]}:{tag}'
         if (item['image'] != f'ghcr.io/{repo.lower()}/{name}'
                 or not re.fullmatch(r'sha256:[0-9a-f]{64}', item['digest'])
-                or registry_digest(f'{item["image"]}:{tag}') != item['digest']):
+                or registry_digest(ref) != item['digest']):
             raise ValueError('Release image digest or repository mismatch')
     for item, _ in refs.values():
         run('docker', 'buildx', 'imagetools', 'create', '--prefer-index=false',

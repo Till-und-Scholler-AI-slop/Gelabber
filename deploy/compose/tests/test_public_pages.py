@@ -12,6 +12,7 @@ import unittest
 import yaml
 
 from compose_config import config
+from prerequisites import requires
 from test_homelab_caddy import _adapt, _find_caddy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,7 +73,7 @@ def web():
     return config()['services']['web']
 
 
-@unittest.skipUnless(shutil.which('docker'), 'Docker CLI is unavailable')
+@requires(shutil.which('docker'), 'the Docker CLI')
 class Compose(unittest.TestCase):
     def test_web_receives_every_setting_and_nothing_when_unset(self):
         unset, given = web()['environment'], config({key: f'set-{key}' for key in SETTINGS})
@@ -134,7 +135,7 @@ class Files(unittest.TestCase):
             with self.subTest(example=example):
                 self.assertEqual(sorted(SETTINGS - keys), [])
 
-    @unittest.skipUnless(shutil.which('git') and (REPO / '.git').exists(), 'no git checkout')
+    @requires(shutil.which('git') and (REPO / '.git').exists(), 'a git checkout')
     def test_operator_texts_stay_out_of_commits(self):
         def ignored(path):
             return subprocess.run(['git', '-C', str(REPO), 'check-ignore', '-q', '--no-index',

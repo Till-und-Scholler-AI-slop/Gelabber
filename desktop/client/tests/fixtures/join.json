@@ -16,5 +16,6 @@
   "send_files",
   "join_voice",
   "go_live"
- ]
+ ],
+ "blocked": false
 }

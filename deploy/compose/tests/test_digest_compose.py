@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+from prerequisites import requires
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # The examples ship without passwords (#188); an operator fills them in.
@@ -20,7 +22,7 @@ def secrets_env(tmp):
     return path
 
 
-@unittest.skipUnless(shutil.which('docker'), 'Docker CLI is unavailable')
+@requires(shutil.which('docker'), 'the Docker CLI')
 class DigestCompose(unittest.TestCase):
     def check_roundtrip(self, example, homelab=False):
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,7 +92,7 @@ class DigestCompose(unittest.TestCase):
                     self.assertEqual(tuple(environment[key] for key in keys), expected, files)
 
 
-@unittest.skipUnless(shutil.which('docker'), 'Docker CLI is unavailable')
+@requires(shutil.which('docker'), 'the Docker CLI')
 class SecureDefaults(unittest.TestCase):
     """#188: no shipped passwords, plain HTTP only on this machine."""
 
