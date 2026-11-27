@@ -2,7 +2,7 @@
 # Chromium and Firefox, the core and access scenarios in Chromium, the
 # chat workflows (GEL-31) and the PWA smoke. Not a PR gate (GEL-378): it runs
 # after pushes to a version branch that touch the app, on release and hotfix
-# pull requests to main, and by hand. A red push run opens or updates an issue.
+# pull requests to main, and by hand. A push run opens, updates or closes an issue.
 name: Extended E2E
 
 on:
@@ -13,15 +13,18 @@ on:
       - 'backend/**'
       - 'web/**'
       - '.github/workflows/e2e-extended.yml'
+      - '.github/workflows/scripts/apt-install.sh'
+      - 'deploy/compose/compose.yaml'
   pull_request:
     branches: [main]
 
 permissions:
   contents: read
 
+# A new push to a pull request replaces its run; pushes to a branch queue.
 concurrency:
   group: e2e-extended-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -281,30 +284,42 @@ jobs:
             fi
           done
 
-  # Who looks at a red run: an open issue per branch, which the Linear sync
-  # brings to the team. Pull requests show their red run on the PR instead.
+  # Who looks at a red push run: an open issue per branch, which the Linear
+  # sync brings to the team; the next green push run closes it. Pull requests
+  # show their result themselves, runs by hand serve debug branches.
   report:
-    name: Issue for a red run
+    name: Issue for the push run's result
     needs: faults
-    if: failure() && github.event_name != 'pull_request'
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       issues: write
     steps:
-      - name: Open or update the issue
+      - name: Open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.faults.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           export GH_REPO="$GITHUB_REPOSITORY"
-          title="Extended E2E fails on ${GITHUB_REF_NAME}"
-          body="Run ${RUN_URL} failed at ${GITHUB_SHA}. Its reports are the run's artifacts."
-          number="$(gh issue list --state open --search "in:title \"${title}\"" --json number,title \
-            | jq -r --arg title "$title" 'map(select(.title == $title))[0].number // empty')"
-          if [ -n "$number" ]; then
-            gh issue comment "$number" --body "$body"
-          else
-            gh issue create --title "$title" --body "$body"
-          fi
+          export TITLE="Extended E2E fails on ${GITHUB_REF_NAME}"
+          number="$(gh issue list --state open --search "in:title \"${TITLE}\"" \
+            --json number,title --jq 'map(select(.title == env.TITLE))[0].number // empty')"
+          case "$RESULT" in
+            success)
+              if [ -n "$number" ]; then
+                gh issue comment "$number" --body "Green again at ${GITHUB_SHA}: ${RUN_URL}"
+                gh issue close "$number"
+              fi
+              ;;
+            failure)
+              body="Run ${RUN_URL} failed at ${GITHUB_SHA}. Its reports are the run's artifacts."
+              if [ -n "$number" ]; then
+                gh issue comment "$number" --body "$body"
+              else
+                gh issue create --title "$TITLE" --body "$body"
+              fi
+              ;;
+          esac
