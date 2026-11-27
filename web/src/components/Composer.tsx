@@ -38,7 +38,13 @@ import {
 import { type GifPick } from "../gifs/api.ts";
 import { useGifStatus } from "../gifs/queries.ts";
 import GifPicker from "./GifPicker.tsx";
-import { sizeByDraft, type DraftHeight } from "./composerHeight.ts";
+import { capByPane, sizeByDraft, type DraftHeight } from "./composerHeight.ts";
+import { enterSends } from "./composerEnter.ts";
+import {
+  focusComposer,
+  mayFocusOnOpen,
+  registerComposer,
+} from "./composerFocus.ts";
 import { EmojiPickerLoader } from "./ReactionBar.tsx";
 import { Modal } from "./Modal.tsx";
 import {
@@ -135,20 +141,40 @@ export function Composer({
   useEffect(() => {
     if (replyTarget) composerInput.current?.focus({ preventScroll: true });
   }, [replyTarget]);
+  // The shell hands letters typed on the page to this field (GEL-143).
+  useLayoutEffect(() => {
+    const input = composerInput.current;
+    return input ? registerComposer(input) : undefined;
+  }, [canSend]);
+  // Opening a conversation puts the keyboard here, to write at once. In
+  // the next frame: the quick switcher that opened it gives focus back to
+  // its opener as it closes.
+  useEffect(() => {
+    if (!canSend) return;
+    const frame = requestAnimationFrame(() => {
+      if (mayFocusOnOpen(window)) focusComposer();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [channelId, canSend]);
   // Toolbar/read-state changes can move a focused form without resizing it.
   useLayoutEffect(revealComposerFocus, [revealComposerFocus]);
   useLayoutEffect(() => {
     const form = composerForm.current;
     const pane = form?.closest<HTMLElement>(".lr-message-pane");
     if (!form || !pane) return;
-    const observer = new ResizeObserver(revealComposerFocus);
+    // The field grows with its draft up to half the conversation.
+    const resized = () => {
+      capByPane(form, pane);
+      revealComposerFocus();
+    };
+    const observer = new ResizeObserver(resized);
     observer.observe(form);
     observer.observe(pane);
-    revealComposerFocus();
+    resized();
     return () => observer.disconnect();
   }, [canSend, revealComposerFocus]);
-  // chat.css sizes the field by its draft on phones. Browsers without
-  // field-sizing (iOS before 26.2) get the same height from composerHeight.
+  // chat.css sizes the field by its draft. Browsers without field-sizing
+  // (Firefox, Safari before 26.2) get the same height from composerHeight.
   const draftHeight = useRef<DraftHeight | null>(null);
   useLayoutEffect(() => {
     const input = composerInput.current;
@@ -337,8 +363,14 @@ export function Composer({
     }
     if (
       event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.nativeEvent.isComposing
+      enterSends(
+        {
+          shiftKey: event.shiftKey,
+          isComposing: event.nativeEvent.isComposing,
+        },
+        event.currentTarget.value,
+        event.currentTarget.selectionStart,
+      )
     ) {
       event.preventDefault();
       submit();

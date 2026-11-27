@@ -16,6 +16,14 @@ import { useSession } from "../auth/store.ts";
 import { setReplyTarget } from "../messages/replyTarget.ts";
 import type { Message } from "../messages/types.ts";
 import { Composer } from "./Composer.tsx";
+import { forwardTypingToComposer } from "./composerFocus.ts";
+// The field's height comes from the stylesheet, with the app's box model
+// (Tailwind's preflight).
+import "./chat.css";
+
+const boxes = document.createElement("style");
+boxes.textContent = "*, ::before, ::after { box-sizing: border-box; }";
+document.head.append(boxes);
 
 let channel = 0;
 beforeEach(() => {
@@ -36,14 +44,36 @@ beforeEach(() => {
   channel += 1;
 });
 
-async function renderComposer() {
-  const onSent = vi.fn();
-  const screen = await render(
-    <QueryClientProvider client={new QueryClient()}>
-      <div className="lr-message-pane">
+/** A conversation page as the workspace shows it: the sidebar's link, the
+ * header's search, the pane `height` tall with the composer at its end. */
+function Page({
+  channelId,
+  onSent = () => {},
+  height,
+}: {
+  channelId: string;
+  onSent?: () => void;
+  height?: number;
+}) {
+  return (
+    <QueryClientProvider client={client}>
+      <nav>
+        <a href="#elsewhere">#anderswo</a>
+      </nav>
+      <input type="search" aria-label="Suche" />
+      <button type="button">Glocke</button>
+      <div
+        className="lr-message-pane"
+        style={
+          height === undefined
+            ? undefined
+            : { display: "flex", flexDirection: "column", height }
+        }
+      >
+        {height === undefined ? null : <div style={{ flex: 1 }} />}
         <Composer
           handle={null}
-          channelId={`c${channel}`}
+          channelId={channelId}
           channelName="allgemein"
           canSend
           canSendFiles
@@ -54,12 +84,29 @@ async function renderComposer() {
           onShowAttempt={() => {}}
         />
       </div>
-    </QueryClientProvider>,
+    </QueryClientProvider>
+  );
+}
+let client = new QueryClient();
+
+async function renderComposer(height?: number) {
+  const onSent = vi.fn();
+  client = new QueryClient();
+  const screen = await render(
+    <Page channelId={`c${channel}`} onSent={onSent} height={height} />,
   );
   const field = screen.getByRole("combobox", {
     name: "Nachricht an #allgemein",
   });
+  // Past the frame in which opening it may move the keyboard (GEL-143).
+  await frames();
   return { screen, field, onSent };
+}
+
+/** The frame the composer waits for, and one more to be sure it is over. */
+async function frames() {
+  for (let i = 0; i < 2; i += 1)
+    await new Promise((done) => requestAnimationFrame(done));
 }
 
 const picture = (name: string) =>
@@ -95,6 +142,20 @@ describe("composer sending", () => {
     await expect.element(field).toHaveValue("");
     // The keyboard stays in the field for the next message.
     expect(document.activeElement).toBe(field.element());
+  });
+
+  it("breaks the line on Enter inside a code block that is still open", async () => {
+    const { field } = await renderComposer();
+    await userEvent.click(field);
+    await userEvent.keyboard("```js{Enter}let a = 1;{Enter}");
+    expect(sent.mutate).not.toHaveBeenCalled();
+    await expect.element(field).toHaveValue("```js\nlet a = 1;\n");
+    // Closed, the block is sent with the next Enter.
+    await userEvent.keyboard("```{Enter}");
+    expect(sent.mutate).toHaveBeenCalledOnce();
+    expect(sent.mutate.mock.calls[0]![0]).toMatchObject({
+      content: "```js\nlet a = 1;\n```",
+    });
   });
 
   it("does not send on the Enter that ends an input method's composition", async () => {
@@ -177,6 +238,7 @@ describe("composer sending", () => {
 
   it("attaches every file dropped on the conversation and sends them alone", async () => {
     const { screen, field } = await renderComposer();
+    (document.activeElement as HTMLElement | null)?.blur();
     const pane = field.element().closest(".lr-message-pane")!;
     const files = carrying([
       picture("a.png"),
@@ -202,5 +264,122 @@ describe("composer sending", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Senden" }));
     expect(sentFiles()).toEqual(["a.png", "c.png"]);
+  });
+});
+
+describe("composer focus (GEL-143)", () => {
+  /** Opens the next conversation in the same page, as the router does. */
+  async function open(screen: Awaited<ReturnType<typeof render>>) {
+    channel += 1;
+    await screen.rerender(<Page channelId={`c${channel}`} />);
+    await frames();
+  }
+
+  it("takes the keyboard when the page opens on a conversation", async () => {
+    const { field } = await renderComposer();
+    expect(document.activeElement).toBe(field.element());
+  });
+
+  it("takes the keyboard when a conversation opens from the sidebar", async () => {
+    const { screen, field } = await renderComposer();
+    const link = screen.getByRole("link", { name: "#anderswo" });
+    (link.element() as HTMLElement).focus();
+    await open(screen);
+    expect(document.activeElement).toBe(field.element());
+  });
+
+  it("leaves the keyboard in the search or another field", async () => {
+    const { screen } = await renderComposer();
+    const search = screen.getByRole("searchbox", { name: "Suche" });
+    (search.element() as HTMLElement).focus();
+    await open(screen);
+    expect(document.activeElement).toBe(search.element());
+  });
+
+  it("does not open the on-screen keyboard of a touch screen", async () => {
+    const { screen } = await renderComposer();
+    const link = screen.getByRole("link", { name: "#anderswo" });
+    (link.element() as HTMLElement).focus();
+    const real = window.matchMedia.bind(window);
+    const touch = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation((query) =>
+        query === "(pointer: coarse)"
+          ? ({ ...real(query), matches: true } as MediaQueryList)
+          : real(query),
+      );
+    try {
+      await open(screen);
+    } finally {
+      touch.mockRestore();
+    }
+    expect(document.activeElement).toBe(link.element());
+  });
+
+  it("gets what is typed while nothing else has the keyboard", async () => {
+    const stop = forwardTypingToComposer();
+    try {
+      const { screen, field } = await renderComposer();
+      (document.activeElement as HTMLElement | null)?.blur();
+      expect(document.activeElement).toBe(document.body);
+      await userEvent.keyboard("Hal");
+      await expect.element(field).toHaveValue("Hal");
+      expect(document.activeElement).toBe(field.element());
+
+      // From the sidebar's link too, with Alt Gr's characters.
+      const link = screen.getByRole("link", { name: "#anderswo" });
+      (link.element() as HTMLElement).focus();
+      await userEvent.keyboard("lo @");
+      await expect.element(field).toHaveValue("Hallo @");
+
+      // A button keeps its keys, and so does a key something else used.
+      const bell = screen.getByRole("button", { name: "Glocke" });
+      (bell.element() as HTMLElement).focus();
+      await userEvent.keyboard("x");
+      expect(document.activeElement).toBe(bell.element());
+      (bell.element() as HTMLElement).blur();
+      const taken = (event: KeyboardEvent) => event.preventDefault();
+      window.addEventListener("keydown", taken);
+      try {
+        await userEvent.keyboard("k");
+      } finally {
+        window.removeEventListener("keydown", taken);
+      }
+      expect(document.activeElement).toBe(document.body);
+      await expect.element(field).toHaveValue("Hallo @");
+    } finally {
+      stop();
+    }
+  });
+});
+
+describe("composer height (GEL-143)", () => {
+  const height = (field: Element) => field.getBoundingClientRect().height;
+
+  it("grows with the draft up to half the conversation, then scrolls", async () => {
+    const { field } = await renderComposer(800);
+    await userEvent.click(field);
+    const element = field.element() as HTMLTextAreaElement;
+    expect(height(element)).toBe(34);
+    await userEvent.keyboard(
+      "eins{Shift>}{Enter}{/Shift}zwei{Shift>}{Enter}{/Shift}drei",
+    );
+    // Two more lines of 22px.
+    expect(height(element)).toBe(78);
+
+    await userEvent.keyboard(
+      "{Shift>}{Enter}{/Shift}noch eine Zeile".repeat(30),
+    );
+    // Half of the 800px pane, not the phone's 160px.
+    expect(height(element)).toBe(400);
+    expect(element.scrollHeight).toBeGreaterThan(element.clientHeight);
+  });
+
+  it("is at least 160px in a short conversation", async () => {
+    const { field } = await renderComposer(240);
+    await userEvent.click(field);
+    const element = field.element() as HTMLTextAreaElement;
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}Zeile".repeat(20));
+    expect(height(element)).toBe(160);
   });
 });

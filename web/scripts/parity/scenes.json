@@ -1408,6 +1408,19 @@
       ]
     },
     {
+      "name": "composer-multiline",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        { "focus": "Nachricht an #allgemein" },
+        { "type": "Erste Zeile" },
+        { "key": "Shift+Enter" },
+        { "type": "Zweite Zeile" },
+        { "key": "Shift+Enter" },
+        { "type": "Dritte Zeile" }
+      ]
+    },
+    {
       "name": "skip-link",
       "path": "/s/{home}",
       "user": "lena",

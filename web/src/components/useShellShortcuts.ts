@@ -15,6 +15,7 @@ import {
 import { isPendingId, useServer, useServers } from "../servers/queries.ts";
 import { channelOrder } from "../servers/rows.ts";
 import { useVoiceRoster } from "../voice/roster.ts";
+import { forwardTypingToComposer } from "./composerFocus.ts";
 import {
   nextUnread,
   shellShortcut,
@@ -137,4 +138,5 @@ export function useShellShortcuts({
     latest.current = run;
   });
   useEffect(() => listenLast((shortcut) => latest.current(shortcut)), []);
+  useEffect(forwardTypingToComposer, []);
 }

@@ -470,6 +470,8 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             // web, where the composer is mounted afresh (GEL-8).
             composer.set_file_error(None);
         }
+        // Opened, the conversation takes what is typed next (GEL-143).
+        chat.composers.entry(channel).or_default().open_focus = true;
         chat.picker = Default::default();
         chat.gif = Default::default();
     }
@@ -587,6 +589,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         keywords: conv.server.is_some() && conv.can_everyone,
         unsent,
         mentionable: &conv.mentionable,
+        page_height: page.height(),
     };
     let composer_state = chat.composers.entry(channel).or_default();
     // A message request (#563): the peer's waits for an answer in a bar
@@ -2022,12 +2025,9 @@ mod page_tests {
         });
     }
 
-    /// A picker left open closes with its page: back (Alt+←) and forward
-    /// again find the composer without it, the draft kept.
-    #[test]
-    fn a_picker_closes_when_the_route_changes() {
-        let _config = TempConfig::new("picker-route");
-        // Lena may write: the composer is there.
+    /// The workspace where Lena may write: the composer is there.
+    fn writable(api_name: &str) -> (TempConfig, FakeApi) {
+        let config = TempConfig::new(api_name);
         let api = FakeApi::start(true, |method, path, _| {
             let mut reply = workspace(method, path)?;
             if let Some(list) = reply
@@ -2047,6 +2047,44 @@ mod page_tests {
             }
             Some(reply)
         });
+        (config, api)
+    }
+
+    /// GEL-143: a conversation opened from the sidebar takes what is typed
+    /// next, without a click into its composer.
+    #[test]
+    fn an_opened_conversation_takes_the_keyboard() {
+        let (_config, api) = writable("open-focus");
+        let spiele = "00000000-0000-4000-8000-0000000000c3";
+        let home = crate::app::testkit::HOME;
+        let mut harness = launcher(&api, &format!("/s/{home}/c/{spiele}"));
+        wait_for_label(&mut harness, "Nachricht an #spiele");
+        click(&mut harness, "allgemein");
+        wait_for_label(&mut harness, "Nachricht an #allgemein");
+        harness.run_steps(4);
+        assert!(
+            harness.get_by_label("Nachricht an #allgemein").is_focused(),
+            "the composer has the keyboard"
+        );
+        harness.event(egui::Event::Text("Hallo".into()));
+        harness.run_steps(2);
+        assert_eq!(
+            crate::screens::chat::chat_state(&harness.ctx)
+                .lock()
+                .composers
+                .values()
+                .map(|c| c.draft.as_str())
+                .filter(|draft| !draft.is_empty())
+                .collect::<Vec<_>>(),
+            ["Hallo"]
+        );
+    }
+
+    /// A picker left open closes with its page: back (Alt+←) and forward
+    /// again find the composer without it, the draft kept.
+    #[test]
+    fn a_picker_closes_when_the_route_changes() {
+        let (_config, api) = writable("picker-route");
         let spiele = "00000000-0000-4000-8000-0000000000c3";
         let home = crate::app::testkit::HOME;
         let mut harness = launcher(&api, &format!("/s/{home}/c/{spiele}"));

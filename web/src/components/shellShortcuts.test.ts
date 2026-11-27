@@ -5,6 +5,7 @@ import {
   shellShortcut,
   shortcutGroups,
   stepIndex,
+  typesText,
 } from "./shellShortcuts.ts";
 import { callShortcut } from "../voice/pushToTalk.ts";
 import { setLocale } from "../i18n/locale.ts";
@@ -24,6 +25,25 @@ const keys = (
 });
 
 describe("shell shortcuts", () => {
+  it("tells keys that write a character from the others", () => {
+    expect(typesText(keys("a"))).toBe(true);
+    expect(typesText(keys("Ä", { shiftKey: true }))).toBe(true);
+    expect(typesText(keys("7"))).toBe(true);
+    // Alt Gr+Q on a German keyboard reports Strg and Alt.
+    expect(
+      typesText({
+        ...keys("@", { ctrlKey: true, altKey: true }),
+        altGraph: true,
+      }),
+    ).toBe(true);
+    expect(typesText(keys("a", { ctrlKey: true }))).toBe(false);
+    expect(typesText(keys("a", { altKey: true }))).toBe(false);
+    expect(typesText(keys("a", { metaKey: true }))).toBe(false);
+    expect(typesText(keys(" "))).toBe(false);
+    expect(typesText(keys("Enter"))).toBe(false);
+    expect(typesText(keys("ArrowDown"))).toBe(false);
+  });
+
   it("opens the switcher with Strg+K or ⌘+K", () => {
     expect(shellShortcut(keys("k", { ctrlKey: true }))).toEqual({
       kind: "switcher",

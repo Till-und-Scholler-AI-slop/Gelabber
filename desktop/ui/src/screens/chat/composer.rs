@@ -1,6 +1,7 @@
 //! The composer (components/Composer.tsx, chat.css `.lr-composer`): one
-//! field holding attach, the one-line draft, emoji and send; the reply
-//! bar, files to attach and the `@…` suggestions above the row.
+//! field holding attach, the draft (as tall as its lines, up to
+//! `draft_cap`), emoji and send; the reply bar, files to attach and the
+//! `@…` suggestions above the row.
 
 use std::collections::HashMap;
 
@@ -20,7 +21,12 @@ use crate::widgets::tooltip::{Side, Tooltip};
 /// `CONTENT_MAX` (messages/rules.ts).
 const CONTENT_MAX: i64 = 2000;
 const DRAFT: TextStyle = TextStyle::new(14.5, 400.0, 22.0 / 14.5);
-const ROW: f32 = 5.0 + 34.0 + 5.0;
+/// The row's padding around the draft and its buttons.
+const ROW_PAD: f32 = 5.0 + 5.0;
+/// The draft's field: one line and its padding, the least it is.
+const DRAFT_MIN: f32 = 34.0;
+/// The draft's limit on phones (chat.css), the least it is beside a mouse.
+const DRAFT_MIN_CAP: f32 = 160.0;
 const SUGGESTION: f32 = 33.0;
 
 #[derive(Default)]
@@ -40,6 +46,9 @@ pub struct ComposerState {
     dismissed: Option<(usize, String)>,
     pub picked: HashMap<String, Uuid>,
     pub focus: bool,
+    /// Its conversation just opened: the keyboard comes here as soon as no
+    /// dialog covers the page (GEL-143; the quick switcher closes after).
+    pub open_focus: bool,
     /// Files chosen in the system's file dialog, once it closes.
     chosen: Option<crate::platform::files::PickedMany>,
     /// Files being read (or a pasted picture encoded) off the UI thread,
@@ -102,6 +111,8 @@ pub struct ComposerInput<'a> {
     /// to roles only who can read it; `members` still turns names into
     /// mentions.
     pub mentionable: &'a [Member],
+    /// The conversation page's height: the draft grows up to half of it.
+    pub page_height: f32,
 }
 
 /// What the composer asks for.
@@ -166,6 +177,57 @@ fn file_error_height(ctx: &egui::Context, state: &ComposerState, width: f32) -> 
     4.0 + (4.0 + galley.rows.len() as f32 * NOTE.line_px()).max(NOTE_CLOSE)
 }
 
+/// How tall the draft may grow (`--lr-composer-cap`, composerHeight.ts
+/// `capByPane`): half the conversation, at least `DRAFT_MIN_CAP`; it
+/// scrolls from there.
+pub fn draft_cap(page_height: f32) -> f32 {
+    (page_height / 2.0).floor().max(DRAFT_MIN_CAP)
+}
+
+/// The draft's width in a pane `width` wide: the row less the buttons
+/// beside it (attach, emoji, GIF, send; 34px and a 2px gap each).
+fn draft_width(input: &ComposerInput, width: f32) -> f32 {
+    let row = width - 32.0 - 12.0;
+    let buttons = 2 + usize::from(input.can_send_files) + usize::from(input.gifs);
+    row - buttons as f32 * 36.0
+}
+
+/// The draft field's height (`field-sizing: content`): its lines at the
+/// field's width and the padding, at least one line, at most `draft_cap`.
+fn draft_height(
+    ctx: &egui::Context,
+    state: &ComposerState,
+    input: &ComposerInput,
+    width: f32,
+) -> f32 {
+    let wrap = draft_width(input, width) - 12.0;
+    let mut job = crate::text::job(&state.draft, DRAFT, Color32::WHITE, Some(wrap));
+    job.keep_trailing_whitespace = true;
+    let rows = ctx.fonts_mut(|f| f.layout_job(job)).rows.len().max(1);
+    (rows as f32 * DRAFT.line_px() + 12.0).clamp(DRAFT_MIN, draft_cap(input.page_height))
+}
+
+/// Whether `caret` (in chars) is inside a ``` code block that is not
+/// closed before it, read as the message markdown reads it: a backslash
+/// outside a block escapes the next character (composerEnter.ts
+/// `inOpenFence`).
+fn in_open_fence(text: &str, caret: usize) -> bool {
+    let chars: Vec<char> = text.chars().take(caret).collect();
+    let mut open = false;
+    let mut i = 0;
+    while i < chars.len() {
+        if !open && chars[i] == '\\' {
+            i += 2;
+        } else if chars[i..].starts_with(&['`'; 3]) {
+            open = !open;
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    open
+}
+
 /// The composer's height in a pane `width` wide (the list area gives way
 /// to it).
 pub fn height(
@@ -177,7 +239,7 @@ pub fn height(
     if !input.can_send {
         return 14.0 + 43.5;
     }
-    let mut field = 2.0 + ROW;
+    let mut field = 2.0 + ROW_PAD + draft_height(ctx, state, input, width);
     if dropping(ctx, input) {
         field += 10.0 + 19.5;
     }
@@ -647,14 +709,17 @@ pub fn show(
         }
     }
 
-    // The row: attach, the draft, emoji, GIF, send.
+    // The row: attach, the draft, emoji, GIF, send; the buttons at its
+    // foot (`align-items: flex-end`) while the draft grows.
+    let draft_h = draft_height(ui.ctx(), state, input, pane.width());
     let row = Rect::from_min_size(
         pos2(field.left() + 1.0 + 5.0, fy + 5.0),
-        vec2(field.width() - 12.0, 34.0),
+        vec2(field.width() - 12.0, draft_h),
     );
+    let foot = row.bottom() - 34.0;
     let mut x = row.left();
     if input.can_send_files {
-        let r = Rect::from_min_size(pos2(x, row.top()), Vec2::splat(34.0));
+        let r = Rect::from_min_size(pos2(x, foot), Vec2::splat(34.0));
         if composer_icon(
             ui,
             r,
@@ -671,25 +736,46 @@ pub fn show(
         x += 36.0;
     }
     let mut rx = row.right();
-    let send_rect = Rect::from_min_size(pos2(rx - 34.0, row.top()), Vec2::splat(34.0));
+    let send_rect = Rect::from_min_size(pos2(rx - 34.0, foot), Vec2::splat(34.0));
     rx -= 36.0;
     let gif_rect = input.gifs.then(|| {
-        let r = Rect::from_min_size(pos2(rx - 34.0, row.top()), Vec2::splat(34.0));
+        let r = Rect::from_min_size(pos2(rx - 34.0, foot), Vec2::splat(34.0));
         rx -= 36.0;
         r
     });
-    let emoji_rect = Rect::from_min_size(pos2(rx - 34.0, row.top()), Vec2::splat(34.0));
+    let emoji_rect = Rect::from_min_size(pos2(rx - 34.0, foot), Vec2::splat(34.0));
     rx -= 36.0;
     let text_rect = Rect::from_min_max(pos2(x, row.top()), pos2(rx, row.bottom()));
 
-    // Keys before the field sees them: Enter sends, ↑ edits my last one,
-    // Esc drops the reply.
+    // Keys before the field sees them: Enter sends (inside an open code
+    // block it breaks the line), ↑ edits my last one, Esc drops the reply.
     let disabled = |state: &ComposerState| {
         remaining(state, input) < 0 || (state.draft.trim().is_empty() && state.files.is_empty())
     };
     let mut submit = false;
     if focused {
-        if ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) {
+        let caret = egui::TextEdit::load_state(ui.ctx(), edit_id)
+            .and_then(|s| s.cursor.char_range())
+            .map_or(state.draft.chars().count(), |r| {
+                r.primary.index.0.min(r.secondary.index.0)
+            });
+        if in_open_fence(&state.draft, caret) {
+            // The field's own line break (Shift+Enter): at the caret, over
+            // a selection, in order with what is typed in the same frame.
+            ui.input_mut(|i| {
+                for event in &mut i.events {
+                    if let egui::Event::Key {
+                        key: egui::Key::Enter,
+                        modifiers,
+                        ..
+                    } = event
+                        && modifiers.matches_exact(egui::Modifiers::NONE)
+                    {
+                        *modifiers = egui::Modifiers::SHIFT;
+                    }
+                }
+            });
+        } else if ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) {
             submit = true;
         }
         if state.draft.is_empty() && ui.input_mut(|i| super::consume_plain(i, egui::Key::ArrowUp)) {
@@ -722,7 +808,7 @@ pub fn show(
         .scope_builder(egui::UiBuilder::new().max_rect(text_rect), |ui| {
             egui::ScrollArea::vertical()
                 .id_salt(edit_id.with("scroll"))
-                .max_height(34.0)
+                .max_height(draft_h)
                 .auto_shrink([false, false])
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                 .show(ui, |ui| {
@@ -769,6 +855,10 @@ pub fn show(
             .set_char_range(Some(egui::text::CCursorRange::one(cc)));
         s.store(ui.ctx(), edit_id);
         state.last_caret = Some(caret);
+    }
+    if state.open_focus && !crate::widgets::modal::any_open(ui.ctx()) {
+        state.open_focus = false;
+        state.focus = true;
     }
     if std::mem::take(&mut state.focus) {
         ui.memory_mut(|m| m.request_focus(edit_id));
@@ -1067,6 +1157,7 @@ mod tests {
                     keywords: false,
                     unsent: 0,
                     mentionable: members,
+                    page_height: 400.0,
                 };
                 let pane = ui.max_rect();
                 let _ = show(ui, pane, &mut state.borrow_mut(), &input);
@@ -1161,6 +1252,7 @@ mod tests {
                     keywords: false,
                     unsent: 0,
                     mentionable: &members,
+                    page_height: 300.0,
                 };
                 let pane = ui.max_rect();
                 for action in show(ui, pane, &mut state.borrow_mut(), &input) {
@@ -1349,5 +1441,148 @@ mod tests {
         assert!(state.borrow().file_error.is_none());
         assert!(harness.query_by_label(NOTE_TEXT).is_none());
         assert_eq!(state.borrow().files.len(), 1);
+    }
+
+    fn input_for(members: &[Member], page_height: f32) -> ComposerInput<'_> {
+        ComposerInput {
+            channel: Uuid::nil(),
+            placeholder: "#allgemein".into(),
+            can_send: true,
+            can_send_files: true,
+            gifs: false,
+            members,
+            me: None,
+            keywords: false,
+            unsent: 0,
+            mentionable: members,
+            page_height,
+        }
+    }
+
+    /// The composer in a page `page_height` tall, under a dialog while
+    /// `covered` holds; what it sends lands in `sent`.
+    fn page<'a>(
+        state: &'a std::cell::RefCell<ComposerState>,
+        members: &'a [Member],
+        page_height: f32,
+        covered: &'a std::cell::Cell<bool>,
+        sent: &'a std::cell::RefCell<Vec<String>>,
+    ) -> egui_kittest::Harness<'a> {
+        egui_kittest::Harness::builder()
+            .with_size(egui::vec2(800.0, page_height))
+            .build_ui(move |ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), crate::theme::Theme::dark());
+                let input = input_for(members, page_height);
+                let pane = ui.max_rect();
+                for action in show(ui, pane, &mut state.borrow_mut(), &input) {
+                    if let ComposerAction::Send { text, .. } = action {
+                        sent.borrow_mut().push(text);
+                    }
+                }
+                if covered.get() {
+                    egui::Modal::new(egui::Id::unique("dialog")).show(ui.ctx(), |ui| {
+                        ui.label("Dialog");
+                    });
+                }
+            })
+    }
+
+    fn typed(harness: &mut egui_kittest::Harness<'_>, text: &str) {
+        harness.event(egui::Event::Text(text.into()));
+        harness.run_steps(2);
+    }
+
+    /// GEL-143: Enter inside a ``` block that is still open breaks the
+    /// line; once the block is closed it sends.
+    #[test]
+    fn enter_in_an_open_code_block_breaks_the_line() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState {
+            focus: true,
+            ..ComposerState::default()
+        });
+        let (covered, sent) = Default::default();
+        let mut harness = page(&state, &members, 400.0, &covered, &sent);
+        harness.run_steps(3);
+        typed(&mut harness, "```js");
+        key(&mut harness, egui::Key::Enter);
+        typed(&mut harness, "let a = 1;");
+        key(&mut harness, egui::Key::Enter);
+        assert!(sent.borrow().is_empty());
+        assert_eq!(state.borrow().draft, "```js\nlet a = 1;\n");
+        typed(&mut harness, "```");
+        key(&mut harness, egui::Key::Enter);
+        assert_eq!(*sent.borrow(), ["```js\nlet a = 1;\n```"]);
+    }
+
+    /// The fences are read as the message markdown reads them.
+    #[test]
+    fn open_fences_follow_the_markdown() {
+        let at = |text: &str| {
+            let caret = text.chars().position(|c| c == '|').expect("caret");
+            in_open_fence(&text.replace('|', ""), caret)
+        };
+        assert!(at("```|"));
+        assert!(at("```a``` und ```b|"));
+        assert!(at("```\nlet a;|\n```"));
+        assert!(!at("Hallo|"));
+        assert!(!at("```a```|"));
+        assert!(!at("\\```|"));
+        assert!(!at("```a\\```|"));
+        assert!(!at("``|`"));
+    }
+
+    /// GEL-143: the draft is as tall as its lines, up to half the page
+    /// and at least 160px, and the list above gives way to it.
+    #[test]
+    fn the_draft_grows_up_to_half_the_page() {
+        let members: Vec<Member> = Vec::new();
+        let (covered, sent) = Default::default();
+        let state = std::cell::RefCell::new(ComposerState::default());
+        let mut harness = page(&state, &members, 900.0, &covered, &sent);
+        harness.run_steps(2);
+        let tall = |draft: &str, page_height: f32| {
+            let state = ComposerState {
+                draft: draft.into(),
+                ..ComposerState::default()
+            };
+            height(
+                &harness.ctx,
+                &state,
+                &input_for(&members, page_height),
+                800.0,
+            )
+        };
+        let one = tall("", 900.0);
+        // Two more lines of 22px.
+        assert_eq!(tall("eins\nzwei\ndrei", 900.0) - one, 44.0);
+        // A line break at the end is a line too.
+        assert_eq!(tall("eins\n", 900.0) - one, 22.0);
+        let long = "Zeile\n".repeat(40);
+        // Half of 900px, then it scrolls.
+        assert_eq!(tall(&long, 900.0) - one, 450.0 - 34.0);
+        // Never under the phone's 160px.
+        assert_eq!(tall(&long, 240.0) - one, 160.0 - 34.0);
+    }
+
+    /// GEL-143: an opened conversation's composer takes the keyboard, once
+    /// no dialog covers it (the quick switcher closes after it opened).
+    #[test]
+    fn an_opened_composer_takes_the_keyboard_after_the_dialog() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState::default());
+        let (covered, sent) = (std::cell::Cell::new(true), Default::default());
+        let mut harness = page(&state, &members, 400.0, &covered, &sent);
+        harness.run_steps(2);
+        // Opened from the switcher, which is still drawn for a frame.
+        state.borrow_mut().open_focus = true;
+        harness.run_steps(3);
+        assert!(!harness.get_by_label("Nachricht an #allgemein").is_focused());
+        covered.set(false);
+        harness.run_steps(3);
+        assert!(harness.get_by_label("Nachricht an #allgemein").is_focused());
+        typed(&mut harness, "Hallo");
+        assert_eq!(state.borrow().draft, "Hallo");
     }
 }

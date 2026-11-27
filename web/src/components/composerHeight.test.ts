@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sizeByDraft } from "./composerHeight.ts";
+import { capByPane, sizeByDraft } from "./composerHeight.ts";
 
 // chat.css: the field's line, its padding and its limit; then what the form
 // adds around it, the pane both share and the history in the list.
@@ -244,22 +244,41 @@ describe("composer height from script", () => {
     expect(view.observing()).toBe(false);
   });
 
-  it("leaves the single line of a mouse-driven browser alone", () => {
+  it("sizes the draft beside a mouse too (GEL-143)", () => {
     const view = pane({ coarse: false });
     const { page, target, field, form } = view;
     const sizing = sizeByDraft(target, field, form);
     page.lines = 3;
     sizing?.fit();
-    page.width = 372;
-    view.resized();
-    expect(view.frame()).toBe(0);
-    expect(field.style.height).toBe("");
-    expect(form.style.minHeight).toBe("");
-
-    // Asked like the stylesheet's media query: a touch screen that becomes
-    // the pointer later gets the draft's height from then on.
-    page.coarse = true;
-    sizing?.fit();
     expect(field.style.height).toBe("78px");
+    // A wider window wraps the draft anew.
+    page.width = 372;
+    page.lines = 2;
+    view.resized();
+    expect(view.frame()).toBe(1);
+    expect(field.style.height).toBe("56px");
+  });
+});
+
+describe("composer limit beside a mouse", () => {
+  const limit = (paneHeight: number) => {
+    const style = new Map<string, string>();
+    const form = {
+      style: {
+        setProperty: (name: string, value: string) => style.set(name, value),
+      },
+    } as unknown as HTMLElement;
+    capByPane(form, { clientHeight: paneHeight } as HTMLElement);
+    return style.get("--lr-composer-cap");
+  };
+
+  it("is half the conversation", () => {
+    expect(limit(900)).toBe("450px");
+    expect(limit(641)).toBe("320px");
+  });
+
+  it("is never under the phone's 160px", () => {
+    expect(limit(300)).toBe("160px");
+    expect(limit(0)).toBe("160px");
   });
 });

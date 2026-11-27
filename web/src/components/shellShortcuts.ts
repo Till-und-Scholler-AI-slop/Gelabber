@@ -41,6 +41,15 @@ export function shellShortcut(event: Keys): ShellShortcut | null {
   return { kind: event.shiftKey ? "unread" : "channel", step };
 }
 
+/** Whether a key writes a character, such as a letter, a digit or `@`
+ * (Alt Gr on many keyboards). Space is not one: it scrolls the page or
+ * presses what has focus. */
+export function typesText(event: Keys & { altGraph?: boolean }): boolean {
+  if (event.metaKey) return false;
+  if ((event.ctrlKey || event.altKey) && !event.altGraph) return false;
+  return [...event.key].length === 1 && event.key.trim() !== "";
+}
+
 /** The neighbour of `index` in a list of `count`, or `null` at its end.
  * From outside the list (-1) the first step goes to either end. */
 export function stepIndex(

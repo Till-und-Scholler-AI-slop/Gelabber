@@ -1561,8 +1561,12 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   gap: 2px;
   padding: 5px;
 }
+/* The field shows the whole draft, up to max-height, and scrolls from there.
+   Browsers without field-sizing get the height from the Composer instead
+   (composerHeight.ts). */
 .lr-composer-row textarea {
   flex: 1;
+  field-sizing: content;
   max-height: 160px;
   min-height: 34px;
   resize: none;
@@ -1570,18 +1574,18 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   font-size: 14.5px;
   line-height: 22px;
 }
-@media (pointer: coarse) {
-  /* Phones show the whole draft, up to max-height. Browsers without
-     field-sizing get the height from the Composer instead. */
+/* With a mouse: up to half the conversation (the Composer measures it), at
+   least 160px (GEL-143). */
+@media not (pointer: coarse) {
   .lr-composer-row textarea {
-    field-sizing: content;
+    max-height: var(--lr-composer-cap, 160px);
   }
-  /* Sized by its content, the empty field would otherwise wrap a long hint. */
-  .lr-composer-row textarea::placeholder {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+}
+/* Sized by its content, the empty field would otherwise wrap a long hint. */
+.lr-composer-row textarea::placeholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .lr-composer-icon,
 .lr-composer-send {
