@@ -151,7 +151,9 @@ Run the checks of each area listed (they are CI's; `AGENTS.md` "Commands"):
 - **desktop**: needs `GELABBER_LIBWEBRTC_DIR` set to a libwebrtc package (a
   directory with a `VERSIONS` file), `cmake --version` and `ninja --version`
   working (the media core's build script runs both; a version-manager shim
-  without a version set fails there), and 30 GB free on the disk of the
+  without a version set fails there), `PYTHON` set to a Python 3 whose
+  `-m pip --version` works (the mediasoup worker of the tests installs
+  `invoke` with it), and 30 GB free on the disk of the
   checkout (`df -h .`). Without any of these, skip these and write "desktop
   Rust checks: not run locally (<what was missing>), CI runs them" in the
   pull request. Otherwise, with `CARGO_BUILD_JOBS=2` on a shared machine:
