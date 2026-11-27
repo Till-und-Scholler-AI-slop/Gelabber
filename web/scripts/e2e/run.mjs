@@ -1,4 +1,4 @@
-/* global process */
+/* global process, console */
 import { startHarness } from "./harness.mjs";
 import { mediaScenarios } from "./media.mjs";
 import { profiles } from "./profiles.mjs";
@@ -16,6 +16,8 @@ if (process.env.GELABBER_E2E_PROFILE) {
   process.env.GELABBER_E2E_EXPECTED_FAILURES = JSON.stringify(
     profile.expectedFailures ?? {},
   );
+  for (const [id, reason] of Object.entries(profile.leftOut ?? {}))
+    console.log(`LEFT OUT ${id} (${reason})`);
 }
 const suite = process.env.GELABBER_E2E_SUITE ?? "all";
 if (!["all", "media", "core", "access"].includes(suite))

@@ -245,34 +245,38 @@ export async function mediaScenarios(h, f) {
     await h.run("late-watch-after-30s", ["01"], async () => {
       const baseline = await snapshot(f.owner);
       const late = await h.actor("LateWatch");
-      await f.join(late);
-      // This is the specified late-join age, continuously checking encode/capture liveness.
-      const start = f.liveStartedAt;
-      while (Date.now() - start < 30_000) {
-        await observe(
-          Math.min(1_000, 30_000 - (Date.now() - start)),
-          async () => {
-            const s = await snapshot(f.owner);
-            check(
-              s.displayCalls === baseline.displayCalls &&
-                s.captures.some((c) => c.state === "live"),
-              "late-join-publisher-restarted",
-            );
-            return s;
-          },
+      // Closed however it ends, as the 20 cycles' late viewer.
+      try {
+        await f.join(late);
+        // This is the specified late-join age, continuously checking encode/capture liveness.
+        const start = f.liveStartedAt;
+        while (Date.now() - start < 30_000) {
+          await observe(
+            Math.min(1_000, 30_000 - (Date.now() - start)),
+            async () => {
+              const s = await snapshot(f.owner);
+              check(
+                s.displayCalls === baseline.displayCalls &&
+                  s.captures.some((c) => c.state === "live"),
+                "late-join-publisher-restarted",
+              );
+              return s;
+            },
+          );
+        }
+        await click(late, "Zuschauen");
+        const frames = await progress(late, options);
+        const after = await snapshot(f.owner);
+        check(
+          after.displayCalls === baseline.displayCalls &&
+            encoded(after) > encoded(baseline),
+          "late-join-publisher-progress",
+          after,
         );
+        return { ageMs: Date.now() - start, ...frames, publisher: after };
+      } finally {
+        await late.context.close();
       }
-      await click(late, "Zuschauen");
-      const frames = await progress(late, options);
-      const after = await snapshot(f.owner);
-      check(
-        after.displayCalls === baseline.displayCalls &&
-          encoded(after) > encoded(baseline),
-        "late-join-publisher-progress",
-        after,
-      );
-      await late.context.close();
-      return { ageMs: Date.now() - start, ...frames, publisher: after };
     });
   } else h.blocked("late-watch-after-30s", "initial-live-watch-failed", ["01"]);
   for (const [id, plane] of [
@@ -503,6 +507,7 @@ export async function mediaScenarios(h, f) {
           watcher = await snapshot(f.watcher);
         cycles.push({
           cycle: i + 1,
+          firstFrameMs: frames.firstFrameMs,
           owner,
           watcher,
           decodedFrames: decoded(frames.last),
@@ -515,57 +520,64 @@ export async function mediaScenarios(h, f) {
       }
       await click(f.owner, "Live gehen");
       const late = await h.actor("CycleWatch");
-      await f.join(late);
-      await click(late, "Zuschauen");
-      const last = await progress(late, options);
-      const lateConsumers = await nativeEvaluate(late, sampleVideoConsumers, {
-        publisher: f.owner.id,
-        deadlineEpochMs: Date.now() + options.budget,
-      });
-      check(
-        lateConsumers.sources === 1 &&
-          lateConsumers.selectedLiveSources === 1 &&
-          lateConsumers.foreignSources === 0 &&
-          lateConsumers.identitiesBound === 1 &&
-          lateConsumers.sourceRtpRows === 1 &&
-          lateConsumers.probatorRtpRows <= 1 &&
-          lateConsumers.unexpectedRtpRows === 0 &&
-          lateConsumers.invalidBindings === 0,
-        "late-watch-received-stale-publications",
-        { last: last.last, actualConsumerInventory: lateConsumers },
-      );
-      check(
-        cycles.every(
-          (c) =>
-            activePeers(c.owner).length <= 2 &&
-            activePeers(c.owner).every(
-              (p) =>
-                p.transceivers <= 4 &&
-                p.senders <= 1 &&
-                p.localSdpBytes <= 32_000,
-            ),
-        ),
-        "publisher-resource-growth",
-        { controlConfirmed: true, cycles, late: last },
-      );
-      check(
-        cycles.every(
-          (c) =>
-            // Still in the call once the Live ended (see above).
-            oneSendOneReceive(activePeers(c.watcher)) &&
-            activePeers(c.watcher).every(
-              (p) => p.transceivers <= 4 && p.receivers <= 2 && p.senders <= 1,
-            ),
-        ),
-        "watch-resource-growth",
-        { cycles, late: last },
-      );
-      return {
-        cycles,
-        late: last,
-        actualConsumerInventory: lateConsumers,
-        serverBounds: "BLOCKED: SFU task/publication counters not exposed",
-      };
+      // The late viewer joins the call to watch: it leaves with this
+      // scenario, or the next ones hear a participant they did not expect.
+      try {
+        await f.join(late);
+        await click(late, "Zuschauen");
+        const last = await progress(late, options);
+        const lateConsumers = await nativeEvaluate(late, sampleVideoConsumers, {
+          publisher: f.owner.id,
+          deadlineEpochMs: Date.now() + options.budget,
+        });
+        check(
+          lateConsumers.sources === 1 &&
+            lateConsumers.selectedLiveSources === 1 &&
+            lateConsumers.foreignSources === 0 &&
+            lateConsumers.identitiesBound === 1 &&
+            lateConsumers.sourceRtpRows === 1 &&
+            lateConsumers.probatorRtpRows <= 1 &&
+            lateConsumers.unexpectedRtpRows === 0 &&
+            lateConsumers.invalidBindings === 0,
+          "late-watch-received-stale-publications",
+          { last: last.last, actualConsumerInventory: lateConsumers },
+        );
+        check(
+          cycles.every(
+            (c) =>
+              activePeers(c.owner).length <= 2 &&
+              activePeers(c.owner).every(
+                (p) =>
+                  p.transceivers <= 4 &&
+                  p.senders <= 1 &&
+                  p.localSdpBytes <= 32_000,
+              ),
+          ),
+          "publisher-resource-growth",
+          { controlConfirmed: true, cycles, late: last },
+        );
+        check(
+          cycles.every(
+            (c) =>
+              // Still in the call once the Live ended (see above).
+              oneSendOneReceive(activePeers(c.watcher)) &&
+              activePeers(c.watcher).every(
+                (p) =>
+                  p.transceivers <= 4 && p.receivers <= 2 && p.senders <= 1,
+              ),
+          ),
+          "watch-resource-growth",
+          { cycles, late: last },
+        );
+        return {
+          cycles,
+          late: last,
+          actualConsumerInventory: lateConsumers,
+          serverBounds: "BLOCKED: SFU task/publication counters not exposed",
+        };
+      } finally {
+        await late.context.close();
+      }
     },
   );
   await h.run(

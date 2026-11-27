@@ -19,10 +19,12 @@ export const profiles = {
       "rejected-native-sdp-keeps-voice-other-source-no-ghost",
       "active-call-responsive-controls",
     ],
-    // Left out: session-audio-mute-deafen-volume-playback-retry. It keeps
-    // watching in one voice room while joining another, which since a Live
-    // is watched inside its call ends the watch; its rewrite is #1186.
-    //
+    // Scenarios of the suite this profile leaves out, each with its reason;
+    // run.mjs prints them at the start of the run.
+    leftOut: {
+      "session-audio-mute-deafen-volume-playback-retry":
+        "#1186: it keeps watching in one voice room while joining another, which ends the watch since a Live is watched inside its call",
+    },
     // Known to fail, each with the issue that ends it and its reason (and
     // site): such a FAIL keeps the gate green; another FAIL or a PASS turns
     // it red, a PASS until the entry goes (selection.mjs).
