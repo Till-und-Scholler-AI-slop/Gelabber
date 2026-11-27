@@ -10,9 +10,11 @@ in Chromium (`media` once its scenarios pass). It runs after pushes to a
 version branch that touch `backend/` or `web/`, on release and hotfix pull
 requests to `main`, and by hand. After a push run the issue "Extended E2E
 fails on <branch>" is opened or updated when the run is red and closed when it
-is green again (GEL-378). The same workflow runs `chat-workflows.mjs` and
-`../smoke-pwa.mjs`. The rest of this file records how the scenarios came
-about.
+is green again (GEL-378). The same workflow runs the browser checks against a
+running app (`server-checks.mjs`: `chat-workflows.mjs`, `search-context.mjs`,
+`webapp-accessibility.mjs` and four smokes) and `../smoke-pwa.mjs`;
+`../README.md` lists every script. The rest of this file records how the
+scenarios came about.
 
 Gelabber uses mediasoup 0.33 through the official Rust binding
 and public mediasoup-client 3.26.0, with Gelabber's own v4 WebSocket/authority
