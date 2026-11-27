@@ -779,8 +779,7 @@ mod tests {
         {
             let Some((_daemon, address)) = crate::platform::testing::private_bus("files-none")
             else {
-                eprintln!("no dbus-daemon: skipped");
-                return;
+                return gelabber_testing::missing("dbus-daemon");
             };
             let choosers = Choosers {
                 bus: Some(address),
@@ -1001,8 +1000,7 @@ mod tests {
             }
         }
         let Some((_daemon, address)) = crate::platform::testing::private_bus("files-portal") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let _service = zbus::blocking::connection::Builder::address(address.as_str())
             .unwrap()

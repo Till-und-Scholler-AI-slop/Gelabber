@@ -82,6 +82,9 @@ function rows(count: number, start = 1): Message[] {
       Date.UTC(2026, 8, 28, 9, 0, start + index),
     ).toISOString(),
     edited_at: null,
+    reactions: [],
+    mentions: [],
+    mention_everyone: false,
     attachments: [],
   }));
 }

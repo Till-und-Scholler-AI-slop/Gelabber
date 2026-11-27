@@ -178,12 +178,18 @@ pub async fn prepare(
     Ok(Prepared::Ready)
 }
 
+/// How often the worker looks for pictures to prepare.
+pub(crate) const TICK: Duration = Duration::from_secs(2);
+
 pub fn start(state: AppState) {
+    let Some(every) = state.workers.pictures else {
+        return;
+    };
     if state.media_worker_started.swap(true, Ordering::AcqRel) {
         return;
     }
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(2));
+        let mut tick = tokio::time::interval(every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;

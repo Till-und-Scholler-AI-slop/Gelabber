@@ -81,8 +81,7 @@ mod tests {
     #[test]
     fn the_count_goes_to_the_launcher() {
         let Some((_daemon, address)) = private_bus("badge") else {
-            eprintln!("no dbus-daemon: skipped");
-            return;
+            return gelabber_testing::missing("dbus-daemon");
         };
         let dock = connection::Builder::address(address.as_str())
             .unwrap()

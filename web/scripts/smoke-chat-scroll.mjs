@@ -83,12 +83,26 @@ const server = {
   id: SERVER,
   name: "Wohnzimmer",
   owner_id: JONAS,
+  icon_url: null,
   created_at: AT,
   role: "member",
   permissions,
   member_permissions: permissions,
+  blocked: false,
 };
 const person = (userId, name) => ({ id: userId, name, avatar_url: null });
+/** A member as `GET /api/servers/{id}` lists them. */
+const member = (userId, name, role) => ({
+  user_id: userId,
+  name,
+  avatar_url: null,
+  joined_at: AT,
+  status_text: null,
+  accent_color: null,
+  avatar_decoration: null,
+  role_ids: [],
+  role,
+});
 const detail = {
   ...server,
   categories: [],
@@ -100,12 +114,12 @@ const detail = {
       name: "allgemein",
       kind: "text",
       created_at: AT,
+      limited: false,
+      role_ids: [],
     },
   ],
-  members: [
-    { ...person(ME, "Lena"), user_id: ME, joined_at: AT, role: "member" },
-    { ...person(JONAS, "Jonas"), user_id: JONAS, joined_at: AT, role: "owner" },
-  ],
+  members: [member(ME, "Lena", "member"), member(JONAS, "Jonas", "owner")],
+  roles: [],
 };
 const WORDS =
   "Das ist ein ganz gewöhnlicher Satz in einer Unterhaltung, der eine Zeile füllt und dann weitergeht. ";
@@ -122,16 +136,48 @@ const message = (n) => ({
   edited_at: null,
   attachments: [],
   reactions: [],
+  mentions: [],
+  mention_everyone: false,
 });
 const all = Array.from({ length: 100 }, (_, n) => message(n));
+/** The channel's read state as `GET /api/messages/unread` and
+ * `PUT …/read` answer it, with `fields` over Lena's defaults. */
+const readRow = (fields) => ({
+  channel_id: TEXT,
+  server_id: SERVER,
+  read_message_id: null,
+  read_at: null,
+  read_order: null,
+  membership_at: AT,
+  latest_order: all.at(-1).created_order,
+  unread_count: 0,
+  mention_count: 0,
+  level: "all",
+  muted: false,
+  muted_until: null,
+  ...fields,
+});
 const newest = all.slice(50);
 const older = all.slice(0, 50);
 
 function answer(path, method, unread) {
   if (path === "/api/auth/session")
     return {
-      user: { ...person(ME, "Lena"), email: "lena@example.test" },
+      user: {
+        ...person(ME, "Lena"),
+        email: "lena@example.test",
+        created_at: AT,
+        bio: null,
+        pronouns: null,
+        status_text: null,
+        accent_color: null,
+        banner_color: null,
+        banner_url: null,
+        avatar_decoration: null,
+        locale: "de",
+      },
       csrf_token: "a".repeat(64),
+      operator: false,
     };
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
@@ -145,13 +191,11 @@ function answer(path, method, unread) {
   if (path === "/api/me/themes")
     return { version: 1, revision: 1, active: "dark", customThemes: [] };
   if (path.endsWith("/read") || method !== "GET")
-    return {
-      channel_id: TEXT,
-      server_id: SERVER,
+    return readRow({
       read_message_id: newest.at(-1).id,
+      read_order: newest.at(-1).created_order,
       read_at: AT,
-      unread_count: 0,
-    };
+    });
   return {};
 }
 
@@ -466,14 +510,12 @@ try {
     // list fetches before it opens at message 31.
     const label = "unread";
     const opened = await open({
-      unread: {
-        channel_id: TEXT,
-        server_id: SERVER,
+      unread: readRow({
         read_message_id: all[30].id,
         read_order: 31,
         read_at: AT,
         unread_count: 69,
-      },
+      }),
     });
     const { page, asked, releaseOlder, marks } = opened;
     await asked;
@@ -534,14 +576,12 @@ try {
     await opened.close();
 
     const again = await open({
-      unread: {
-        channel_id: TEXT,
-        server_id: SERVER,
+      unread: readRow({
         read_message_id: all[60].id,
         read_order: 61,
         read_at: AT,
         unread_count: 39,
-      },
+      }),
       shown: "Nachricht 61.",
     });
     await again.page.getByText("39 neue Nachrichten").waitFor();
@@ -564,14 +604,12 @@ try {
     // The last read message was deleted since: its order still finds the
     // first unread one, on the older page.
     const deleted = await open({
-      unread: {
-        channel_id: TEXT,
-        server_id: SERVER,
+      unread: readRow({
         read_message_id: id(999),
         read_order: 31,
         read_at: AT,
         unread_count: 69,
-      },
+      }),
     });
     await deleted.asked;
     deleted.releaseOlder();

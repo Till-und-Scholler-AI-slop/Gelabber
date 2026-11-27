@@ -105,7 +105,10 @@ fn push_state_for(
         _ => None,
     })
     .expect("push test config");
-    AppState::with_pool(&config, pool).expect("state")
+    let mut state = AppState::with_pool(&config, pool).expect("state");
+    // The last-call tests run its sweep by hand.
+    state.workers.last_call = None;
+    state
 }
 
 /// A browser's subscription keys; the private half decrypts what it gets.

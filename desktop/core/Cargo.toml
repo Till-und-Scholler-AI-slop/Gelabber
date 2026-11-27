@@ -23,4 +23,5 @@ cmake = "0.1.54"
 
 [dev-dependencies]
 mediasoup = "=0.33.2"
+gelabber-testing = { path = "../testing" }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }

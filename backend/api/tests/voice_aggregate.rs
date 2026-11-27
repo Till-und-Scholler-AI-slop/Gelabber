@@ -15,6 +15,21 @@ fn gateway() -> Gateway {
         Duration::from_secs(2),
     )
 }
+/// A process whose seats run out after 300 ms: it stands for one that
+/// crashed and stopped refreshing them.
+fn short_lived_gateway() -> Gateway {
+    gateway().with_voice_lease(Duration::from_millis(300))
+}
+/// Until `api` no longer sees any seat on server `s`: their lease ran out.
+async fn seats_ran_out(api: &Gateway, s: Uuid) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !api.voice_snapshot(s).await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the old seat's lease runs out");
+}
 async fn subscriber(c: Uuid) -> redis::aio::PubSub {
     let mut sub = redis::Client::open(std::env::var("REDIS_URL").unwrap())
         .unwrap()
@@ -94,7 +109,7 @@ async fn mute_deafen_and_leave_deltas_match_all_active_seats() {
 
 #[tokio::test]
 async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_screen() {
-    let old_api = gateway();
+    let old_api = short_lived_gateway();
     let new_api = gateway();
     let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let (tx, _rx) = mpsc::channel::<ServerFrame>(128);
@@ -104,7 +119,7 @@ async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_screen()
         .set_voice_pub(old, u, s, c, TrackKind::S, true)
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(5200)).await;
+    seats_ran_out(&new_api, s).await;
     let (tx, _rx2) = mpsc::channel::<ServerFrame>(128);
     let (new, _) = new_api.attach_session(u, "b".repeat(64), tx).await;
     new_api.join_voice(new, u, s, c).await.unwrap();
@@ -160,7 +175,7 @@ async fn unpublish_and_leave_keep_another_seats_camera_publication() {
 
 #[tokio::test]
 async fn stale_audio_refresh_preserves_same_user_replacement_screen_audio() {
-    let old_api = gateway();
+    let old_api = short_lived_gateway();
     let new_api = gateway();
     let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let (old_tx, _old_rx) = mpsc::channel::<ServerFrame>(128);
@@ -172,7 +187,7 @@ async fn stale_audio_refresh_preserves_same_user_replacement_screen_audio() {
             .await
             .unwrap();
     }
-    tokio::time::sleep(Duration::from_millis(5200)).await;
+    seats_ran_out(&new_api, s).await;
     let (new_tx, _new_rx) = mpsc::channel::<ServerFrame>(128);
     let (new, _) = new_api.attach_session(u, "b".repeat(64), new_tx).await;
     new_api.join_voice(new, u, s, c).await.unwrap();

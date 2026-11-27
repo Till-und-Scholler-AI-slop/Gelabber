@@ -638,7 +638,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_desktop_sign_in_runs_start_browser_and_exchange() {
-        let exchange = r#"{"result":"signed_in","user":null,"csrf_token":"csrf-signed-in"}"#;
+        let exchange =
+            r#"{"result":"signed_in","user":null,"csrf_token":"csrf-signed-in","operator":false}"#;
         let api = fake_api("code=result-code", exchange).await;
         let http = Http::new(&api.base).unwrap();
         let mut start = OidcStart::new(crate::models::OidcPurpose::SignIn);

@@ -6,7 +6,6 @@ import {
   redirect,
 } from "@tanstack/react-router";
 
-import { ApiError } from "./api/client.ts";
 import { safeRedirect } from "./auth/redirect.ts";
 import { isOidcError, type OidcError } from "./auth/rules.ts";
 import { currentUserId, takeStamp } from "./auth/scope.ts";
@@ -397,15 +396,8 @@ async function requireDirectory() {
   await ensureSession();
   const stamp = takeStamp();
   if (!stamp) return;
-  try {
-    const status = await ensureDirectoryStatus(queryClient, stamp);
-    if (!status.enabled) throw notFound();
-  } catch (error) {
-    // An API from before the directory has no status route.
-    if (error instanceof ApiError && error.code === "not_found")
-      throw notFound();
-    throw error;
-  }
+  const status = await ensureDirectoryStatus(queryClient, stamp);
+  if (!status.enabled) throw notFound();
 }
 
 /** Einstellungen → Feedback exists only while the instance takes feedback. */
@@ -413,15 +405,8 @@ async function requireFeedback() {
   await ensureSession();
   const stamp = takeStamp();
   if (!stamp) return;
-  try {
-    const status = await ensureFeedbackStatus(queryClient, stamp);
-    if (!status.enabled) throw notFound();
-  } catch (error) {
-    // An API from before feedback has no status route.
-    if (error instanceof ApiError && error.code === "not_found")
-      throw notFound();
-    throw error;
-  }
+  const status = await ensureFeedbackStatus(queryClient, stamp);
+  if (!status.enabled) throw notFound();
 }
 
 const discoverRoute = createRoute({

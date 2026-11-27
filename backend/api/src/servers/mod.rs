@@ -446,7 +446,8 @@ async fn delete_server(
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
 ) -> Result<StatusCode, ApiError> {
-    let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
+    let mut tx =
+        membership::lock_server_bounded(&state.db, server_id, state.server_lock_wait).await?;
     let member = membership::load_even_blocked(&mut *tx, server_id, user.id).await?;
     member.require_owner()?;
 
