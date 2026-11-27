@@ -733,11 +733,12 @@ mod tests {
         };
         pass(&mut platform, &mut app, egui::vec2(900.0, 700.0));
         assert_eq!(platform.stored.window.unwrap().width, 900.0);
-        // Half a second later on the platform's own clock; the input's time
-        // stays at 10 s.
-        platform.next_tick = Some(Instant::now());
-        pass(&mut platform, &mut app, egui::vec2(1000.0, 700.0));
-        assert_eq!(platform.stored.window.unwrap().width, 1000.0);
+        // Real time is what is under test: the tick comes due on the
+        // platform's own clock while the input's time stays at 10 s.
+        crate::app::testkit::eventually("the tick on the platform's clock", || {
+            pass(&mut platform, &mut app, egui::vec2(1000.0, 700.0));
+            platform.stored.window.unwrap().width == 1000.0
+        });
         drop(config);
     }
 

@@ -677,9 +677,9 @@ mod tests {
         std::thread::spawn(move || {
             let _ = done.send(secret::SecretService::connect(Some(&address)).is_some());
         });
-        let connected = connected
-            .recv_timeout(give_up)
-            .expect("connecting to a hung keyring gave up");
+        let connected = connected.recv_timeout(give_up).unwrap_or_else(|e| {
+            panic!("timed out waiting for connecting to a hung keyring to give up: {e}")
+        });
         assert!(!connected);
     }
 
