@@ -6,7 +6,7 @@
 // Run in web/ against a seeded stack (seed.mjs):
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
-// GELABBER_PARITY_LOG_INVOKE=1 prints the app commands `desktop` scenes call.
+// GELABBER_PARITY_LOG_INVOKE=1 prints the app commands `update` scenes call.
 /* global process, console, document, window, URL, setTimeout, structuredClone */
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -68,50 +68,18 @@ function stopCall(child) {
   });
 }
 
-// Scenes with `desktop`: the page inside the Tauri app, each command answered
-// as that app's would. The web client now renders its browser branches there
-// and asks only `media_info` (tauriApp.ts); the update banner asks `update_*`.
-const desktopToml = await readFile(join(repo, "desktop/Cargo.toml"), "utf8");
-const ffi = await readFile(join(repo, "desktop/core/src/ffi.rs"), "utf8");
-const DESKTOP = {
-  // media.rs media_info: FEATURES on Linux; this machine's codecs, no hardware.
-  media_info: {
-    abi: Number(ffi.match(/GM_ABI_VERSION: u32 = (\d+)/)[1]),
-    version: desktopToml.match(/^version = "(.+)"$/m)[1],
-    platform: "linux",
-    features: [
-      "screen",
-      "camera",
-      "app-audio",
-      "app-audio-excludes-self",
-      "video-frames",
-      "vp9-svc",
-    ],
-    videoCodecs: Object.fromEntries(
-      ["av1", "h264"].map((codec) => [
-        codec,
-        { decoder: null, encoder: null, hardwareDecoder: false, hardwareEncoder: false },
-      ]),
-    ),
-  },
-  // The core's dummy audio, as the native render runs it (GELABBER_FAKE_MEDIA).
-  media_audio_devices: { input: "", inputs: [], output: "", outputs: [] },
-  media_video_devices: [],
-  // notify.rs: the system shows them, as in the native app.
-  notify_info: { available: true },
-  notify_close: null,
-  // shell.rs: no tray here.
-  shell_info: { tray: false, close_to_tray: false },
-  shell_unread: null,
-};
+// Scenes with `desktop`: the web client as the Tauri app showed it, which the
+// native app follows: without install offers (NO_INSTALL) and with the app's
+// own "Server wechseln …" in the user menu (USER_MENU).
+const NO_INSTALL = await readFile(join(repo, "desktop/parity/reference/no-install.css"), "utf8");
+const USER_MENU = await readFile(join(repo, "desktop/parity/reference/user-menu.js"), "utf8");
 // Scenes with `update` (and `desktop`): the update the app offers, as
 // update.rs `update_state` reports it, and its notice, the BANNER script
 // the Tauri app put into every page. The install it starts stays at work.
 const BANNER = await readFile(join(repo, "desktop/parity/reference/update-banner.js"), "utf8");
-// Scenes with `desktop`: the app's own "Server wechseln …" in the user menu.
-const USER_MENU = await readFile(join(repo, "desktop/parity/reference/user-menu.js"), "utf8");
+const desktopToml = await readFile(join(repo, "desktop/Cargo.toml"), "utf8");
 const updateState = (update) => ({
-  current: DESKTOP.media_info.version,
+  current: desktopToml.match(/^version = "(.+)"$/m)[1],
   supported: true,
   reason: null,
   autoCheck: true,
@@ -126,10 +94,6 @@ const updateState = (update) => ({
   total: null,
   ...update,
 });
-// What the commands fail with here; every other command is not found.
-const DESKTOP_ERRORS = {
-  media_audio_apps: "native media core: application sound needs PipeWire (libpipewire-0.3)",
-};
 
 await mkdir(OUT, { recursive: true });
 const launch = (extra) =>
@@ -239,36 +203,29 @@ for (const scene of scenes) {
       waitUntil: "networkidle",
     });
   } else {
-    if (scene.desktop)
+    // The BANNER asks the app through Tauri's internals; each command is
+    // answered as update.rs would.
+    if (scene.update)
       await page.addInitScript(
-        ({ answers, errors, pending, log }) => {
-          // @tauri-apps/api/core's contract: invoke, and ids for a Channel,
-          // to which no answered command sends.
-          let next = 0;
+        ({ answers, log }) => {
           window.__TAURI_INTERNALS__ = {
-            transformCallback: () => ++next,
-            unregisterCallback: () => {},
             invoke(command, args) {
               if (log) console.log(`invoke ${command} ${JSON.stringify(args)}`);
-              if (pending.includes(command)) return new Promise(() => {});
+              if (command === "update_install") return new Promise(() => {});
               if (Object.hasOwn(answers, command))
                 return Promise.resolve(structuredClone(answers[command]));
-              return Promise.reject(errors[command] ?? `Command ${command} not found`);
+              return Promise.reject(`Command ${command} not found`);
             },
           };
         },
         {
-          answers: scene.update
-            ? { ...DESKTOP, update_state: updateState(scene.update), update_dismiss: null }
-            : DESKTOP,
-          errors: DESKTOP_ERRORS,
-          pending: scene.update ? ["update_install"] : [],
+          answers: { update_state: updateState(scene.update), update_dismiss: null },
           log: Boolean(process.env.GELABBER_PARITY_LOG_INVOKE),
         },
       );
     // After the shim: the BANNER looks for it when it runs. Its shadow root
     // opened, as Playwright finds buttons in open ones only.
-    if (scene.desktop && scene.update)
+    if (scene.update)
       await page.addInitScript({
         content: `{
           const attach = Element.prototype.attachShadow;
@@ -293,6 +250,7 @@ for (const scene of scenes) {
         if (message.text().startsWith("invoke ")) console.log(`${scene.name}: ${message.text()}`);
       });
     await page.goto(fill(scene.path), { waitUntil: "networkidle" });
+    if (scene.desktop) await page.addStyleTag({ content: NO_INSTALL });
   }
   await page.evaluate(() => document.fonts.ready);
   // A theme set by `before` arrives with the account's theme sync, which can

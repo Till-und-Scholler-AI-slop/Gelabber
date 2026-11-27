@@ -460,13 +460,8 @@ describe("production nginx config", () => {
       expect(policy.get(name), name).toEqual(sources);
     expect(policy.get("default-src")).toEqual(["'self'"]);
     // Presigned uploads, text attachments (fetched through the redirect),
-    // the gateway and media WebSockets ('self'), the Tauri app's IPC.
-    expect(policy.get("connect-src")).toEqual([
-      "'self'",
-      storage,
-      "ipc:",
-      "http://ipc.localhost",
-    ]);
+    // the gateway and media WebSockets ('self').
+    expect(policy.get("connect-src")).toEqual(["'self'", storage]);
     // Attachments through the redirect, the favicon badge (data:), upload
     // previews (blob:), link avatars on any https host.
     expect(policy.get("img-src")).toEqual([
@@ -498,11 +493,7 @@ describe("production nginx config", () => {
     for (const [name, sources] of shellPolicy())
       expect(policy.get(name), name).toEqual(sources);
     expect(policy.get("default-src")).toEqual(["'self'"]);
-    expect(policy.get("connect-src")).toEqual([
-      "'self'",
-      "ipc:",
-      "http://ipc.localhost",
-    ]);
+    expect(policy.get("connect-src")).toEqual(["'self'"]);
     expect(policy.get("img-src")).toEqual([
       "'self'",
       "data:",

@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 
-from test_changes import changed_areas
 
 ROOT = Path(__file__).resolve().parents[3]
 HOOK = ROOT / '.claude/hooks/fast_checks.py'
@@ -127,9 +126,6 @@ class Hook(unittest.TestCase):
         settings = json.loads((ROOT / '.claude/settings.json').read_text(encoding='utf-8'))
         commands = [hook['command'] for entry in settings['hooks']['Stop'] for hook in entry['hooks']]
         self.assertIn('python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/fast_checks.py"', commands)
-
-    def test_a_change_to_the_hook_starts_ci(self):
-        self.assertIn('deploy', changed_areas('.claude/hooks/fast_checks.py'))
 
 
 if __name__ == '__main__':

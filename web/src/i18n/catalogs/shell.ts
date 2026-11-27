@@ -180,8 +180,6 @@ export const shell = defineCatalog(
     },
     "removed.banned": "Du wurdest vom Server gesperrt.",
     "removed.kicked": "Du wurdest vom Server entfernt.",
-    tauriOutdated:
-      "Die Desktop-App ist veraltet. Ab 0.9 gibt es eine neue Desktop-App: unter Windows ab v0.7 über das App-Update, unter Arch mit pacman -Syu, sonst gelabber-native-* aus dem GitHub-Release.",
     "welcome.title": "Willkommen",
     "welcome.titleNamed": "Willkommen, {name}",
     "welcome.loadFailed": "Die Server konnten nicht geladen werden.",
@@ -380,8 +378,6 @@ export const shell = defineCatalog(
     },
     "removed.banned": "You were banned from the server.",
     "removed.kicked": "You were removed from the server.",
-    tauriOutdated:
-      "This desktop app is out of date. Since 0.9 there is a new desktop app: on Windows from v0.7 through the app update, on Arch with pacman -Syu, otherwise gelabber-native-* from the GitHub release.",
     "welcome.title": "Welcome",
     "welcome.titleNamed": "Welcome, {name}",
     "welcome.loadFailed": "Couldn’t load the servers.",

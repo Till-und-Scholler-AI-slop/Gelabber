@@ -49,21 +49,20 @@ describe("desktop platform", () => {
     expect(hinted("Android", true)).toBeNull();
   });
 
-  it("is part of the install state, never on phones or in the Tauri app", () => {
+  it("is part of the install state, never on phones", () => {
     const browser = (userAgent: string) =>
       Object.assign(new EventTarget(), {
         isSecureContext: true,
         navigator: { userAgent, platform: "", maxTouchPoints: 0 },
         matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
       }) as unknown as Window;
-    const desktop = (userAgent: string, native = false) => {
-      trackInstallation(browser(userAgent), native)();
+    const desktop = (userAgent: string) => {
+      trackInstallation(browser(userAgent))();
       return useInstallation.getState().desktop;
     };
     expect(desktop(UA.windows)).toBe("windows");
     expect(desktop(UA.linux)).toBe("linux");
     expect(desktop(UA.android)).toBeNull();
-    expect(desktop(UA.linux, true)).toBeNull();
   });
 
   it("links the newest release's packages and the published install script", () => {

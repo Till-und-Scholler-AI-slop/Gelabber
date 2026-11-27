@@ -29,9 +29,11 @@ The **shipped line** is the latest release tag on `main`.
   merged in, the version bump and `.github/release-notes/vX.Y.Z.md`, opened as
   a PR to `main`. Merging it releases: after CI and image publishing on
   `main`, `release.yml` tags and publishes the new version by itself. Merge
-  nothing else into `main` until that release is out: a later merge cancels
-  the release commit's CI, and `image_set.py` then never promotes the version
-  (recover by re-running CI on `main`'s head). Then sync `main` back into the
+  nothing else into `main` until that release is out: `image_set.py` promotes
+  the version only while `main` still points at the release commit, and a
+  merge while that commit's CI run still waits to start replaces the run.
+  Either way the version is not promoted (recover by re-running CI on
+  `main`'s head). Then sync `main` back into the
   development line by PR.
 - **Hotfixes** for the shipped line: PR to `main`, then a sync PR from `main`
   to the development line that keeps the hotfix commits, so ancestry proves the
@@ -112,8 +114,20 @@ Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
   `backend/api/.env.example`); storage and avatar tests fail without the MinIO
   ones. The database role needs `CREATEDB` for `sqlx::test`.
 
+Deployment tests need the PyYAML that `deploy/compose/tests/requirements.txt`
+pins, installed with a Python that has `pip` (Debian's needs `python3-pip`):
+
+```
+python3 -m pip install --require-hashes --target ~/.cache/gelabber-pyyaml -r deploy/compose/tests/requirements.txt
+PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests
+```
+
+`deploy/tools/tests` runs the same way.
+
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
-`npm test`, `npm run test:checks`, `npm run build`.
+`npm test`, `npm run test:checks`, `npm run build`. `npm test` mounts the
+components of `*.browser.test.tsx` in Chromium; install it once with
+`npx playwright install chromium-headless-shell`.
 
 Desktop (`desktop/`) is its own Cargo workspace and needs a prebuilt libwebrtc
 package; see `desktop/README.md` ("Native app" for the native egui app's build,
@@ -174,5 +188,6 @@ before you change a workflow.
   and DeepFilterNet3 assets, never a cloud audio service.
 - **Pins:** keep the locked versions; a change updates only the dependencies it
   needs.
-- **Performance claims** state only what was measured. Historical benchmark
-  FAIL/BLOCKED results stay as recorded.
+- **Performance claims** state only what was measured. A recorded result,
+  FAIL and BLOCKED included, is never edited afterwards. A record that is no
+  longer needed is deleted whole; the git history keeps it.

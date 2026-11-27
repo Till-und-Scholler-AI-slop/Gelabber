@@ -48,7 +48,6 @@ describe("install panel", () => {
     expect(render({ accepted: true, mobile: true })).not.toContain(
       "Browsermenü",
     );
-    expect(render({ native: true })).toBe("");
   });
 
   it("folds into one line on the sign-in page", () => {
@@ -63,10 +62,5 @@ describe("install panel", () => {
     );
     expect(html).toContain('<section class="pwa-install"');
     expect(html).not.toContain("<details open");
-    expect(
-      renderToStaticMarkup(
-        <InstallDisclosurePanel state={{ ...state, native: true }} />,
-      ),
-    ).toBe("");
   });
 });
