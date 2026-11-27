@@ -560,11 +560,13 @@ jobs:
 
       # The native installer is built after merge only; its script compiles here.
       - name: NSIS for the installer test
+        if: ${{ !cancelled() }}
         timeout-minutes: 5
         run: .github/workflows/scripts/apt-install.sh nsis
 
       # test_release_wiring.py reads the workflows with the deployment tests' pinned PyYAML.
       - name: PyYAML for the tests
+        if: ${{ !cancelled() }}
         run: |
           python3 -m pip install --quiet --require-hashes --only-binary=:all: \
             --target "$RUNNER_TEMP/python" -r deploy/compose/tests/requirements.txt

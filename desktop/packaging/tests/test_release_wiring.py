@@ -166,7 +166,6 @@ class NativeWiring(unittest.TestCase):
         self.assertNotIn('tauri', str(arch).lower())
 
 
-
 class LintPins(unittest.TestCase):
     def test_lint_sh_and_the_deploy_job_pin_the_same_shellcheck(self):
         # Two pins, one tool: a script that passes one shellcheck could fail the other.

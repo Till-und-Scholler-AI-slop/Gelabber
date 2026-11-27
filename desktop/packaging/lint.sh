@@ -40,8 +40,9 @@ MODULE="$module" pwsh -NoProfile -NonInteractive -Command '
   $ErrorActionPreference = "Stop"
   Import-Module $env:MODULE
   "PSScriptAnalyzer $((Get-Module PSScriptAnalyzer).Version)"
-  $scripts = @(Get-ChildItem -Recurse -Filter *.ps1 -Path packaging, native/scripts)
-  $found = @($scripts | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Settings ./packaging/PSScriptAnalyzerSettings.psd1 })
+  # The scripts and the data files beside them (the analyzer settings).
+  $files = @(Get-ChildItem -Recurse -Include *.ps1, *.psd1 -Path packaging, native/scripts)
+  $found = @($files | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Settings ./packaging/PSScriptAnalyzerSettings.psd1 })
   $found | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message | Out-String -Width 400
-  "PSScriptAnalyzer: $($scripts.Count) scripts, $($found.Count) findings"
+  "PSScriptAnalyzer: $($files.Count) files ($(@($files | Where-Object Extension -eq '.ps1').Count) scripts), $($found.Count) findings"
   exit [int]($found.Count -gt 0)'

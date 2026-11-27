@@ -239,11 +239,11 @@ puts the tests' mediasoup on it; the CI job tries which one works.
 |---|---|---|
 | Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh`; on Windows `GELABBER_TEST_SCREEN_MONITOR=1` | CI, Linux and Windows (voice: Linux) |
 | App: starts, paints its setup screen and ends (`GELABBER_SMOKE`) | `packaging/native/smoke.sh <gelabber>`; on Windows the job starts `gelabber.exe` itself | CI, Linux (lavapipe under Xvfb, also the installed Arch package) and Windows |
-| Packages: names, files and arguments against the app and the Tauri app's installs | `python3 -m unittest discover -s desktop/packaging/tests` | CI |
+| Packages: names, files and arguments against the app and the Tauri app's installs | `python3 -m unittest discover -s desktop/packaging/tests`, with the pinned PyYAML as [AGENTS.md](../AGENTS.md#commands) installs it (`PYTHONPATH`) | CI |
 | Install, update and removal: Windows (the setup, then again as the updater runs it, then the uninstaller), Arch (`pacman -S`, a newer pkgrel with `-Syu`, `-Rns`, `install.sh`) | job `core-windows` (after merge), `packaging/arch/repo.sh test` | CI |
 | Native client calls (gelabber-call): a call on the seeded stack with Chromium people from `web/scripts/parity/call.mjs`, without devices (`GELABBER_FAKE_MEDIA=1`: dummy audio, test pattern camera and Live; speaking from the received bitrate, the own meter beeping like Chromium's fake microphone) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-call --features media --test live -- --ignored` | **only locally** |
 | Native client voice end to end (gelabber-ui): the real app in egui_kittest joins, mutes, deafens, turns the camera on, draws Jonas' camera, switches Raster/Fokus/Kino, fails Go Live without a portal (`GELABBER_FAKE_SCREEN=0`), watches a Live and sets a volume, checked in the Chromium people's pages (`ui/tests/voice_observer.mjs`) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-ui --features media --test voice_live -- --ignored` | **only locally** |
-| Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests`, `packaging/third-party-notices.py --check` | CI |
+| Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests` (with the pinned PyYAML, as above), `packaging/third-party-notices.py --check` | CI |
 
 ## Third-party notices
 
