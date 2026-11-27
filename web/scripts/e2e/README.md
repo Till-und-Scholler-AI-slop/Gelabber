@@ -57,7 +57,7 @@ npm run test:e2e-app
 
 The new runner deliberately accepts only loopback HTTP/HTTPS origins and rejects credentials/query strings. It is not a production account-creating smoke. The coordinator owns integration, review, remote invocation and final HTTPS/WAN acceptance. Local browser launches need the already authorized socket/process access. Do not stop or restart the shared stack to run these scenarios.
 
-`FAIL` or required `BLOCKED` makes the process exit nonzero, as do failed cleanup or fixture restoration. Explicitly unselected `NOT_RUN` rows do not fail a selected subset gate. The report lists exclusions and marks `completeAcceptance:false` even for a passing subset; manual cases selected explicitly remain required `BLOCKED`. Reports distinguish `confirmed-product-failure` (a recorded positive control followed by a failed boundary), `unconfirmed-failure` (needs a control or harness investigation), `observed-pass`, and `blocked`. Historical failed probes are not product regressions just because they were red. Generic Playwright exceptions retain only a fixed reason and a test-file line, never their call logs or URLs.
+`FAIL` or required `BLOCKED` makes the process exit nonzero, as do failed cleanup or fixture restoration. Explicitly unselected `NOT_RUN` rows do not fail a selected subset gate. The report lists exclusions and marks `completeAcceptance:false` even for a passing subset; manual cases selected explicitly remain required `BLOCKED`. Reports distinguish `confirmed-product-failure` (a recorded positive control followed by a failed boundary), `unconfirmed-failure` (needs a control or harness investigation), `observed-pass`, and `blocked`. Historical failed probes are not product regressions just because they were red. Generic Playwright exceptions retain only a fixed reason and a test-file line, never their call logs or URLs; a Playwright timeout adds the call that ran out (`action`, e.g. `page.goto`) and the harness line (`harnessSite`). A fixture's row lists its own steps with their times in `metrics.steps`, when it passes and when it fails (GEL-423).
 
 Native interface deadlines distinguish native-getStats from outer-page-evaluate. Observation budgets are absolute and shared by all probes; late success and already-expired work cannot pass. Timeout produces test-error/FAIL, quarantines the page, closes it once and blocks later cases in that group. Finally never evaluates quarantined pages; native restore, context/browser close and owned runtime/cache teardown are bounded or independently attempted and visible red on failure. No missing stats or rendered frames are converted to a pass.
 
@@ -108,8 +108,11 @@ and owned processes closed in `finally`. A startup or teardown failure makes
 the exit code nonzero and is written, redacted, beside the report as
 `$GELABBER_E2E_REPORT.startup.json` or `.teardown.json`. A promise that a
 scenario left behind and that rejects later fails as its own row,
-`stray-rejection`, with the case that was running; the run goes on to its
-report and teardown (GEL-453).
+`stray-rejection`, and the run goes on to its report and teardown (GEL-453).
+Its `site` and `harnessSite` say where the promise came from; `during` (the
+case that was running) and `after` (the last case that finished) say only
+when it arrived. One that arrives after the report is written goes beside it
+as `$GELABBER_E2E_REPORT.stray.json`.
 
 ## Scenario contracts
 
