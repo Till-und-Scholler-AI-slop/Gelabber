@@ -974,9 +974,8 @@ try {
     .click();
   const input = owner.page.locator("#audio-input");
   await input.waitFor();
-  await owner.page
-    .getByRole("button", { name: "Geräteliste aktualisieren", exact: true })
-    .click();
+  // The list reads the devices by itself and follows devicechange; there is
+  // no refresh button since 2026-10-21.
   const device = await until(
     () =>
       input

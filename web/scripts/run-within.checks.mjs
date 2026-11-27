@@ -16,8 +16,9 @@ test("a child that never exits is killed when its time runs out, and keeps what 
 });
 
 test("a child that ends in time is not killed, and its exit code and output come back", async () => {
-  const ok = await runWithin(["-e", 'console.log("fine")'], {
+  const ok = await runWithin(["-e", "console.log(process.env.SAY)"], {
     expired: never,
+    env: { SAY: "fine" },
   });
   assert.deepEqual(
     { killed: ok.killed, code: ok.code, output: String(ok.output) },

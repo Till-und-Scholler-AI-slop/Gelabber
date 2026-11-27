@@ -492,6 +492,23 @@ for (const engine of [chromium, firefox]) {
     );
     await request(0, "DELETE", `/messages/${message.id}`, undefined, 204);
     await row(member).waitFor({ state: "detached" });
+    // Between people who are no friends a first DM is a message request
+    // (#563), which the recipient cannot react to before accepting.
+    await request(
+      0,
+      "POST",
+      "/friends/requests",
+      { user_id: accounts[1].id },
+      201,
+    );
+    const friends = await request(
+      1,
+      "POST",
+      "/friends/requests",
+      { user_id: accounts[0].id },
+      200,
+    );
+    assert.equal(friends.status, "friends");
     const dm = await request(
       0,
       "POST",

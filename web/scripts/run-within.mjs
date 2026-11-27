@@ -10,10 +10,11 @@ import { spawn } from "node:child_process";
  * `started`, which resolves on the child's first output (for tests). The
  * default is `limitMs` after the start.
  */
-export function runWithin(args, { limitMs = 240_000, expired } = {}) {
+export function runWithin(args, { limitMs = 240_000, expired, env } = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
     });
     const output = [];
     let wrote;

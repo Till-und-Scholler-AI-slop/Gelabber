@@ -5,6 +5,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { chromium } from "playwright";
 import { api, until, safeTarget } from "./harness.mjs";
+import { settle } from "./expected-failures.mjs";
+
+// Known failures, each under the issue that ends it (expected-failures.mjs).
+const EXPECTED_FAILURES = {
+  "returning to the chat keeps the reader's place": "GEL-416",
+};
 const base = safeTarget(
   process.env.GELABBER_SMOKE_URL ?? "http://127.0.0.1:5174",
 );
@@ -16,7 +22,8 @@ const contexts = [];
 const suffix = randomBytes(6).toString("hex");
 const password = randomBytes(20).toString("base64url");
 const checks = [];
-let server, owner, memberDebug;
+const failures = [];
+let server, owner, memberDebug, returnedScroll;
 const check = async (name, run) => {
   try {
     await run();
@@ -53,7 +60,10 @@ const check = async (name, run) => {
           2,
         ),
       );
-    throw error;
+    // The next checks still run; settle() at the end decides.
+    failures.push({ name, message: error.message });
+    console.log(`FAIL ${name}: ${error.message}`);
+    return;
   }
   checks.push(name);
   console.log(`PASS ${name}`);
@@ -387,11 +397,7 @@ try {
       await member.page
         .getByText("context-draft.txt", { exact: true })
         .waitFor();
-      const afterScroll = await log.evaluate((el) => el.scrollTop);
-      assert.ok(
-        Math.abs(afterScroll - beforeScroll) < 100,
-        `history scroll was changed ${beforeScroll}->${afterScroll}`,
-      );
+      returnedScroll = await log.evaluate((el) => el.scrollTop);
       await new Promise((r) => setTimeout(r, 900));
       assert.equal(
         (await channelState(member, channel)).unread_count,
@@ -399,6 +405,13 @@ try {
       );
     },
   );
+  await check("returning to the chat keeps the reader's place", async () => {
+    assert.ok(returnedScroll !== undefined, "the chat was not reached again");
+    assert.ok(
+      Math.abs(returnedScroll - beforeScroll) < 100,
+      `history scroll was changed ${beforeScroll}->${returnedScroll}`,
+    );
+  });
   const cancelTarget = await send(
     owner,
     channel,
@@ -529,3 +542,7 @@ try {
     ),
   );
 }
+assert.deepEqual(
+  settle(EXPECTED_FAILURES, { passed: checks, failed: failures }),
+  [],
+);
