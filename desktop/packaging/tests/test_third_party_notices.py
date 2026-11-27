@@ -281,12 +281,7 @@ class WorkflowFactTests(unittest.TestCase):
         '      RUSTFLAGS: -C target-feature=+crt-static\n'
         '    steps:\n'
         '      - name: Check and measure the binaries\n'
-        '        run: |\n'
-        "          $h264 = @('WelsInitEncoderExt', 'avcodec_open2') |\n"
-        '            Where-Object { $content.Contains($_) }\n'
-        '          $problems = @(\n'
-        '            if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $h264" }\n'
-        '          )\n'
+        '        run: ./desktop/packaging/native/windows/check-binaries.ps1\n'
         '      - name: Upload the app\n'
         '        with:\n'
         '          path: gelabber-native-windows-x64-setup.exe\n'
@@ -296,21 +291,32 @@ class WorkflowFactTests(unittest.TestCase):
         '    steps:\n'
         '      - run: gh release upload "$TAG" gelabber-native-windows-x64-setup.exe\n'
     )
+    # check-binaries.ps1, the script the job runs.
+    CHECK = (
+        '# The names are looked for in the file.\n'
+        "$h264 = @('WelsInitEncoderExt', 'avcodec_open2') |\n"
+        '  Where-Object { $content.Contains($_) }\n'
+        '$problems = @(\n'
+        '  if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $h264" }\n'
+        ')\n'
+    )
     RUNTIME, H264, RELEASE = notices.EXPECTED_WORKFLOW_FACTS
 
-    def reading(self, workflow):
-        """The script reads this text in place of the repository's workflow."""
+    def reading(self, workflow, check=CHECK):
+        """The script reads these texts in place of the repository's workflow
+        and check script."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        file = tree(tmp.name, {'workflow.yml': workflow}) / 'workflow.yml'
-        return mock.patch.multiple(notices, WORKFLOW=file, RELEASE_WORKFLOW=file)
+        folder = tree(tmp.name, {'workflow.yml': workflow, 'check.ps1': check})
+        return mock.patch.multiple(notices, WORKFLOW=folder / 'workflow.yml',
+                                   RELEASE_WORKFLOW=folder / 'workflow.yml', WINDOWS_CHECK=folder / 'check.ps1')
 
-    def facts(self, workflow):
-        with self.reading(workflow):
+    def facts(self, workflow, check=CHECK):
+        with self.reading(workflow, check):
             return notices.workflow_facts()
 
-    def untrue(self, workflow):
-        return [name for name, holds in self.facts(workflow).items() if not holds]
+    def untrue(self, workflow, check=CHECK):
+        return [name for name, holds in self.facts(workflow, check).items() if not holds]
 
     def test_the_workflow_of_the_repository_is_the_one_described(self):
         self.assertEqual(notices.workflow_facts(), notices.EXPECTED_WORKFLOW_FACTS)
@@ -339,8 +345,24 @@ class WorkflowFactTests(unittest.TestCase):
 
     def test_a_missing_search_for_h264_names_is_noticed(self):
         for gone in ("'avcodec_open2'", "'WelsInitEncoderExt', ", 'if ($h264) { ', '.Contains($_)'):
-            self.assertIn(gone, self.WORKFLOW)
-            self.assertEqual(self.untrue(self.WORKFLOW.replace(gone, '')), [self.H264], gone)
+            self.assertIn(gone, self.CHECK)
+            self.assertEqual(self.untrue(self.WORKFLOW, self.CHECK.replace(gone, '')), [self.H264], gone)
+        # Only in a comment of the script is not a search.
+        commented = ''.join(f'# {line}\n' for line in self.CHECK.splitlines())
+        self.assertEqual(self.untrue(self.WORKFLOW, commented), [self.H264])
+
+    def test_a_job_that_does_not_run_the_check_is_noticed(self):
+        call = '        run: ./desktop/packaging/native/windows/check-binaries.ps1\n'
+        self.assertIn(call, self.WORKFLOW)
+        for workflow in (
+            self.WORKFLOW.replace(call, ''),
+            self.WORKFLOW.replace(call, '        # run: ./desktop/packaging/native/windows/check-binaries.ps1\n'),
+            # Another job runs it, the Windows one does not.
+            self.WORKFLOW.replace(call, '').replace(
+                '    needs: [core-windows, notices]\n',
+                '    needs: [core-windows, notices]\n    steps:\n      - name: x\n' + call),
+        ):
+            self.assertEqual(self.untrue(workflow), [self.H264], workflow)
 
     def test_an_installer_from_elsewhere_is_noticed(self):
         other = (
