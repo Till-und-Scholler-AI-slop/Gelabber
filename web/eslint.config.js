@@ -3,6 +3,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 import noLiteralUiText from "./eslint-rules/no-literal-ui-text.js";
+import noModuleState from "./eslint-rules/no-module-state.js";
 
 // typescript-eslint 8.x has no TS 7 API. `npm run lint` loads
 // eslint-ts6-register.cjs so this package sees @typescript/typescript6.
@@ -30,6 +31,21 @@ export default tseslint.config(
     ignores: ["**/*.test.*", "src/i18n/catalogs/**"],
     plugins: { gelabber: { rules: { "no-literal-ui-text": noLiteralUiText } } },
     rules: { "gelabber/no-literal-ui-text": "error" },
+  },
+  // The voice session's modules keep their state on the session object, which
+  // resetVoiceForTests replaces; sessionState.ts holds that object as `voice`.
+  {
+    files: [
+      "src/voice/session.ts",
+      "src/voice/sessionState.ts",
+      "src/voice/callMicrophone.ts",
+      "src/voice/localVideo.ts",
+      "src/voice/localSourceAudio.ts",
+      "src/voice/receivedAudio.ts",
+      "src/voice/videoLimits.ts",
+    ],
+    plugins: { voice: { rules: { "no-module-state": noModuleState } } },
+    rules: { "voice/no-module-state": ["error", { allow: ["voice"] }] },
   },
   // Text fields come from components/ui (Input, Textarea, Select, with
   // FieldShell around several parts), so every field has the same one
