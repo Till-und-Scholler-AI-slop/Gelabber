@@ -1,7 +1,12 @@
 """Which pull request run a push to main reuses (.github/workflows/scripts/tested_tree.py)."""
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
+
+import workflow_data
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / '.github/workflows/scripts/tested_tree.py'
@@ -142,26 +147,46 @@ class LastGoodTest(unittest.TestCase):
 
 
 class WorkflowTest(unittest.TestCase):
-    """ci.yml records the tree on pull requests and reuses it on main only."""
+    """ci.yml records the tree on pull requests and the queue, and reuses it on pushes."""
 
     def setUp(self):
-        self.ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.steps = {step.get('name'): step
+                      for step in workflow_data.load('ci.yml')['jobs']['changes']['steps']}
+
+    def reuse(self, ref):
+        """The tested_tree.py commands the reuse step runs for a push to `ref`."""
+        step = self.steps['Run that passed this tree']
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'calls'
+            python = Path(tmp) / 'python3'
+            python.write_text('#!/bin/sh\necho "$*" >> "$CALLS"\n'
+                              'case "$*" in *" since") echo since=abc ;; *) echo run= ;; esac\n')
+            python.chmod(0o755)
+            env = {**os.environ, **{key: 'x' for key in step.get('env', {})}, 'GITHUB_REF': ref,
+                   'CALLS': str(log), 'GITHUB_OUTPUT': os.devnull,
+                   'PATH': f'{tmp}{os.pathsep}{os.environ["PATH"]}'}
+            subprocess.run(['bash', '-c', step['run']], env=env, check=True, capture_output=True)
+            return [line.split('tested_tree.py ', 1)[1] for line in log.read_text().splitlines()]
 
     def test_reuse_only_on_pushes(self):
-        reuse = self.ci.split('      - name: Run that passed this tree\n', 1)[1].split('\n      - name:', 1)[0]
-        self.assertIn("if: github.event_name == 'push'\n", reuse)
-        self.assertIn('if [ "$GITHUB_REF" = refs/heads/main ]; then\n'
-                      '            python3 .github/workflows/scripts/tested_tree.py find >>', reuse)
+        step = self.steps['Run that passed this tree']
+        for event in ('pull_request', 'merge_group'):
+            with self.subTest(event=event):
+                self.assertTrue(workflow_data.skips(step, event))
+        self.assertFalse(workflow_data.skips(step, 'push'))
+        # main reuses the merged pull request's run, a version branch the queue's.
+        self.assertEqual(self.reuse('refs/heads/main'), ['since', 'find'])
+        self.assertEqual(self.reuse('refs/heads/v0.14'), ['since', 'find-queue'])
 
-    def test_merge_queue_runs_are_checked_and_recorded(self):
-        self.assertIn('\n  merge_group:\n', self.ci)
-        self.assertIn("github.event_name == 'pull_request' || github.event_name == 'merge_group'", self.ci)
-        self.assertIn('tested_tree.py find-queue', self.ci)
-
-    def test_pull_requests_record_their_tree(self):
-        self.assertIn('tested_tree.py record', self.ci)
-        self.assertIn('name: tested-tree', self.ci)
-
+    def test_pull_requests_and_the_queue_record_the_tree_find_reads(self):
+        record, upload = self.steps['Record the tested tree'], self.steps['Upload the tested tree']
+        for step in (record, upload):
+            for event, skipped in (('pull_request', False), ('merge_group', False), ('push', True)):
+                with self.subTest(step=step['name'], event=event):
+                    self.assertEqual(workflow_data.skips(step, event), skipped)
+        self.assertIn('tested_tree.py record', record['run'])
+        self.assertEqual(upload['with']['name'], tested_tree.ARTIFACT)
+        self.assertEqual(upload['with']['path'], f'{tested_tree.ARTIFACT}.json')
 
 if __name__ == '__main__':
     unittest.main()
