@@ -149,7 +149,7 @@ Checks, as CI runs them:
 | Backend (`backend/`) | `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`, tests through `backend/build/run-native-ci.sh` (see [AGENTS.md](AGENTS.md)) |
 | Web (`web/`) | `npx playwright install chromium-headless-shell` once, then `npm run lint`, `npm test`, `npm run test:checks`, `npm run build` |
 | Desktop (`desktop/`) | see [desktop/README.md](desktop/README.md); it needs a prebuilt libwebrtc package |
-| Deployment | `python3 -m unittest discover -s deploy/compose/tests` |
+| Deployment | `python3 -m pip install --require-hashes --target ~/.cache/gelabber-pyyaml -r deploy/compose/tests/requirements.txt` once (the pinned PyYAML; Debian's Python needs `python3-pip`), then `PYTHONPATH=~/.cache/gelabber-pyyaml python3 -m unittest discover -s deploy/compose/tests` |
 
 Call sounds are synthesized in the client
 (`web/src/voice/callSoundSynth.ts`), there are no audio files;
