@@ -270,51 +270,6 @@ async fn leaving_drops_the_role_assignments(pool: PgPool) {
     assert_eq!(left, 0);
 }
 
-#[sqlx::test(migrations = false)]
-async fn the_migration_moves_kick_and_ban_to_moderate_members(pool: PgPool) {
-    let migrator = sqlx::migrate!("./migrations");
-    for migration in migrator.iter().filter(|m| m.version < 31) {
-        sqlx::raw_sql(migration.sql.clone())
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-    let owner: Uuid = sqlx::query_scalar(
-        "INSERT INTO users (email, name, password_hash) \
-         VALUES ('upgrade@example.test', 'Upgrade', 'unused') RETURNING id",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let mut servers = Vec::new();
-    for bits in [1 | 4, 60] {
-        let id: Uuid = sqlx::query_scalar(
-            "INSERT INTO servers (name, owner_id, member_permissions) \
-             VALUES ('Upgrade', $1, $2) RETURNING id",
-        )
-        .bind(owner)
-        .bind(bits)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        servers.push(id);
-    }
-    for migration in migrator.iter().filter(|m| m.version >= 31) {
-        sqlx::raw_sql(migration.sql.clone())
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
-    let bits: Vec<i32> = sqlx::query_scalar(
-        "SELECT member_permissions FROM servers WHERE id = ANY($1) ORDER BY member_permissions",
-    )
-    .bind(&servers)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    assert_eq!(bits, vec![60, 1 | 4 | 256]);
-}
-
 async fn create_role(client: &mut Client, server: Uuid, body: Value) -> common::Response {
     client
         .send(

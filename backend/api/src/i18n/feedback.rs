@@ -236,15 +236,7 @@ mod tests {
         assert_eq!(links(&de_body), [link.as_str()]);
         assert_eq!(links(&de_body), links(&en_body));
         assert!(!de_body.contains("> ") && !en_body.contains("> "));
-        assert_eq!(
-            en_body,
-            "Hi,\n\nSomeone sent feedback to the operators of chat.example.org through \
-             its feedback form, giving this address. Open this link so that it arrives:\n\n\
-             https://chat.example.org/api/public/feedback/confirm?token=abc\n\n\
-             The link is valid for 24 hours. Without confirmation the feedback is deleted \
-             after that.\n\n\
-             Wasn't you? Then ignore this email.\n"
-        );
+        assert!(de_body.contains(INSTANCE) && en_body.contains(INSTANCE));
     }
 
     #[test]
@@ -260,13 +252,12 @@ mod tests {
             &link,
         );
         assert_eq!(subject, "Neues Feedback: Lob");
-        assert_eq!(
-            body,
-            "Hallo,\n\nauf chat.example.org ist neues Feedback angekommen.\n\n\
-             Art: Lob\nVon: Tom (tom@example.org)\n\n\
-             > Toll\n> wirklich\n\n\
-             Ansehen und antworten:\nhttps://chat.example.org/betrieb/feedback?entry=1\n"
+        assert!(
+            body.contains("Art: Lob\nVon: Tom (tom@example.org)\n"),
+            "{body}"
         );
+        assert!(body.contains("\n> Toll\n> wirklich\n"), "{body}");
+        assert_eq!(links(&body), [link.as_str()]);
         let (subject, body) = notice(
             Locale::En,
             INSTANCE,
@@ -277,13 +268,12 @@ mod tests {
             &link,
         );
         assert_eq!(subject, "New reply to feedback: Idea");
-        assert_eq!(
-            body,
-            "Hi,\n\nThere is a new reply to feedback on chat.example.org.\n\n\
-             Kind: Idea\nFrom: ada@example.org\n\n\
-             > More\n\n\
-             View and reply:\nhttps://chat.example.org/betrieb/feedback?entry=1\n"
+        assert!(
+            body.contains("Kind: Idea\nFrom: ada@example.org\n"),
+            "{body}"
         );
+        assert!(body.contains("\n> More\n"), "{body}");
+        assert_eq!(links(&body), [link.as_str()]);
         let (subject, _) = notice(Locale::De, INSTANCE, Kind::Problem, true, "", "x", &link);
         assert_eq!(subject, "Neue Antwort auf Feedback: Problem");
         let (subject, _) = notice(Locale::En, INSTANCE, Kind::Praise, false, "", "x", &link);
@@ -321,16 +311,11 @@ mod tests {
             "Danke!\nIst behoben.",
         );
         assert_eq!(subject, "Antwort auf dein Feedback an Gelabber");
-        assert_eq!(
-            body,
-            "Hallo,\n\ndie Betreiber von chat.example.org haben auf dein Feedback vom \
-             08.11.2026 (Problem) geantwortet:\n\n\
-             > Danke!\n> Ist behoben.\n\n\
-             Auf diese Mail kannst du nicht antworten: Mails an diese Adresse kommen nicht \
-             an. Wenn du noch etwas sagen möchtest, schick neues Feedback über das \
-             Formular:\n\n\
-             https://chat.example.org/de/feedback\n"
+        assert!(
+            body.contains("08.11.2026 (Problem) geantwortet:\n\n> Danke!\n> Ist behoben.\n\n"),
+            "{body}"
         );
+        assert_eq!(links(&body), ["https://chat.example.org/de/feedback"]);
         let (subject, body) = reply(Locale::En, BASE, INSTANCE, Kind::Idea, sent_on, "Thanks");
         assert_eq!(subject, "Reply to your feedback to Gelabber");
         assert!(

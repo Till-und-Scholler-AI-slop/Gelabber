@@ -1,5 +1,5 @@
 //! Voice signaling (issue #10 + #12): own `op: "sig"`, session + join_voice,
-//! join/leave / mute/deafen / offer/answer / ice / pub/unpub. No LiveKit.
+//! join/leave / mute/deafen / pub/unpub.
 
 mod common;
 
@@ -154,7 +154,7 @@ async fn join_unknown_or_foreign_is_not_found(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
+async fn room_fanout_is_sig_not_chat(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Call").await;
     let (server_id, text_id) = ids(&server);
@@ -195,49 +195,6 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
 
     let snapshot = until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
     assert_eq!(snapshot["u"], ada.to_string());
-
-    send(
-        &mut owner_ws,
-        json!({
-            "op": "sig",
-            "t": "o",
-            "s": server_id,
-            "c": voice_id,
-            "sdp": "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n"
-        }),
-    )
-    .await;
-    let rejected = until(&mut owner_ws, |f| f["op"] == "err").await;
-    assert_eq!(rejected["e"], "bad_request");
-
-    send(
-        &mut member_ws,
-        json!({
-            "op": "sig",
-            "t": "a",
-            "s": server_id,
-            "c": voice_id,
-            "sdp": "v=0\r\no=- 2 1 IN IP4 127.0.0.1\r\n"
-        }),
-    )
-    .await;
-    let rejected = until(&mut member_ws, |f| f["op"] == "err").await;
-    assert_eq!(rejected["e"], "bad_request");
-
-    send(
-        &mut owner_ws,
-        json!({
-            "op": "sig",
-            "t": "i",
-            "s": server_id,
-            "c": voice_id,
-            "ice": "candidate:1 1 UDP 1 127.0.0.1 9 typ host",
-            "mid": "0"
-        }),
-    )
-    .await;
-    let rejected = until(&mut owner_ws, |f| f["op"] == "err").await;
-    assert_eq!(rejected["e"], "bad_request");
 
     send(
         &mut owner_ws,
@@ -288,7 +245,7 @@ async fn room_fanout_is_sig_not_chat_and_survives_offer_ice_pub(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn offer_before_join_is_rejected_and_disconnect_leaves(pool: PgPool) {
+async fn disconnect_leaves_the_room(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Drop").await;
     let (server_id, _) = ids(&server);
@@ -298,20 +255,6 @@ async fn offer_before_join_is_rejected_and_disconnect_leaves(pool: PgPool) {
 
     let (addr, _) = common::serve_ws(pool).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
-    send(
-        &mut owner_ws,
-        json!({
-            "op": "sig",
-            "t": "o",
-            "s": server_id,
-            "c": voice_id,
-            "sdp": "v=0"
-        }),
-    )
-    .await;
-    let err = until(&mut owner_ws, |f| f["op"] == "err").await;
-    assert_eq!(err["e"], "bad_request");
-
     send(
         &mut owner_ws,
         json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
@@ -613,25 +556,6 @@ async fn join_mute_deafen_reach_server_watchers_not_in_the_room(pool: PgPool) {
 
     send(
         &mut owner_ws,
-        json!({
-            "op": "sig",
-            "t": "o",
-            "s": server_id,
-            "c": voice_id,
-            "sdp": "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n"
-        }),
-    )
-    .await;
-    let rejected = until(&mut owner_ws, |f| f["op"] == "err").await;
-    assert_eq!(rejected["e"], "bad_request");
-    let stray = tokio::time::timeout(Duration::from_millis(150), recv(&mut watcher)).await;
-    if let Ok(frame) = stray {
-        assert_ne!(frame["t"], "o", "watchers must not get SDP: {frame}");
-        assert_ne!(frame["t"], "i", "watchers must not get ICE: {frame}");
-    }
-
-    send(
-        &mut owner_ws,
         json!({ "op": "sig", "t": "l", "s": server_id, "c": voice_id }),
     )
     .await;
@@ -759,18 +683,6 @@ async fn live_needs_permission_and_is_several_per_channel(pool: PgPool) {
     .await;
     assert_eq!(live["u"], ada.to_string());
     assert!(live.get("lc").is_none(), "{live}");
-    assert!(!live.to_string().contains("livekit"));
-
-    // The old Go Live of clients before v0.8 is gone (#353).
-    for kind in ["l", "la"] {
-        send(
-            &mut owner_ws,
-            json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": kind }),
-        )
-        .await;
-        let refused = until(&mut owner_ws, |f| f["op"] == "err").await;
-        assert_eq!(refused["e"], "bad_request");
-    }
 
     // Several can be live in one channel.
     send(

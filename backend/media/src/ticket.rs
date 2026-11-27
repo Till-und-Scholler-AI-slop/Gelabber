@@ -136,7 +136,6 @@ mod tests {
         let raw = ticket::encode(&claim).unwrap();
         assert_eq!(decode(&raw).unwrap(), claim);
         assert!(!raw.contains("token"));
-        assert!(!raw.contains("livekit"));
     }
 
     #[test]

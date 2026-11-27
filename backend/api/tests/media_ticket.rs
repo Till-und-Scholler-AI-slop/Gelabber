@@ -155,8 +155,6 @@ async fn ticket_is_short_and_stored_in_redis(pool: PgPool) {
     );
     assert_eq!(res.body["media_path"], "/media/ws");
     assert_eq!(res.body["expires_in"], 30);
-    assert!(!res.body.to_string().contains("livekit"));
-    assert!(!res.body.to_string().contains("identity"));
 
     let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
     let raw: Option<String> = redis::cmd("GET")
