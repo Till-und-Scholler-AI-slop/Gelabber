@@ -13,7 +13,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::state::AppState;
+use crate::state::{AppState, Worker};
 use crate::storage::StoreError;
 
 const BATCH: i64 = 32;
@@ -45,8 +45,13 @@ async fn run(state: &AppState, every: Duration, expiry: bool) {
         } else {
             delete_pending(state, BATCH).await
         };
-        if let Err(err) = result {
-            tracing::warn!(error=?err, expiry, "storage cleanup batch failed");
+        match result {
+            Ok(_) => state.worker_passes.finished(if expiry {
+                Worker::UploadExpiry
+            } else {
+                Worker::StorageDeletes
+            }),
+            Err(err) => tracing::warn!(error=?err, expiry, "storage cleanup batch failed"),
         }
     }
 }

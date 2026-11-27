@@ -27,6 +27,31 @@ const script = fileURLToPath(
   ),
 );
 
+/** How long one run of the script may take before it counts as hung. It
+ * takes well under a second; the limit is for a busy machine. */
+const SCRIPT_LIMIT_MS = 20_000;
+/** A test runs the script at most four times: room for five limits, so a
+ * slow machine cannot fail a test by the clock alone, while a hung script
+ * fails by name after SCRIPT_LIMIT_MS. */
+const TEST_LIMIT_MS = 5 * SCRIPT_LIMIT_MS;
+
+/** Runs the script; throws on any exit code but 0, and names the script when
+ * it runs past SCRIPT_LIMIT_MS. */
+function runScript(options) {
+  try {
+    return execFileSync("sh", [script], {
+      ...options,
+      timeout: SCRIPT_LIMIT_MS,
+    });
+  } catch (error) {
+    if (error.code === "ETIMEDOUT")
+      throw new Error(`${script} still ran after ${SCRIPT_LIMIT_MS / 1000} s`, {
+        cause: error,
+      });
+    throw error;
+  }
+}
+
 const OPERATOR = {
   GELABBER_OPERATOR_NAME: "Erika Mustermann",
   GELABBER_OPERATOR_STREET: "Musterstraße 1",
@@ -67,8 +92,7 @@ function publish(values = {}, texts = {}) {
     GELABBER_LANDING_MAP: map,
     ...values,
   };
-  // execFileSync throws on any exit code but 0.
-  const log = execFileSync("sh", [script], { env, encoding: "utf8" });
+  const log = runScript({ env, encoding: "utf8" });
   const read = (file) =>
     existsSync(join(out, file)) ? readFileSync(join(out, file), "utf8") : null;
   const files = (dir) =>
@@ -97,7 +121,9 @@ function expectFilled(html) {
   expect(html).not.toMatch(/\{\{|<!--if:|<!--end:|<!--gelabber:fragment/);
 }
 
-describe.skipIf(process.platform === "win32")("public pages at start", () => {
+const onPosix = describe.skipIf(process.platform === "win32");
+
+onPosix("public pages at start", { timeout: TEST_LIMIT_MS }, () => {
   it("publishes nothing by default, and keeps crawlers out", () => {
     const result = publish();
     expect(result.files).toEqual([]);
@@ -446,11 +472,9 @@ describe.skipIf(process.platform === "win32")("public pages at start", () => {
       APP_PUBLIC_URL: "https://gelabber.example.org",
       ...OPERATOR,
     };
-    execFileSync("sh", [script], {
-      env: { ...env, GELABBER_LANDING: "true" },
-    });
+    runScript({ env: { ...env, GELABBER_LANDING: "true" } });
     expect(existsSync(join(run, "landing.map"))).toBe(true);
-    execFileSync("sh", [script], { env });
+    runScript({ env });
     expect(existsSync(join(run, "landing.map"))).toBe(false);
     expect(existsSync(join(run, "out", "de", "index.html"))).toBe(false);
     expect(existsSync(join(run, "out", "sitemap.xml"))).toBe(false);
@@ -468,7 +492,7 @@ describe.skipIf(process.platform === "win32")("public pages at start", () => {
       GELABBER_LANDING: "true",
       ...OPERATOR,
     };
-    const log = execFileSync("sh", [script], {
+    const log = runScript({
       env: { ...env, GELABBER_PUBLIC_OUT: join(run, "out") },
       encoding: "utf8",
     });
@@ -482,7 +506,7 @@ describe.skipIf(process.platform === "win32")("public pages at start", () => {
     ).toEqual({ version: 1, landing: false, legal: {} });
     // A file where the folder should be.
     expect(
-      execFileSync("sh", [script], {
+      runScript({
         env: { ...env, GELABBER_PUBLIC_OUT: join(run, "file", "out") },
         encoding: "utf8",
       }),
@@ -511,7 +535,11 @@ describe.skipIf(process.platform === "win32")("public pages at start", () => {
 
     it("is published with the landing page, account mail and operators", () => {
       const result = publish(
-        { ...ON, ...OPERATOR, APP_PUBLIC_URL: "https://gelabber.example.org" },
+        {
+          ...ON,
+          ...OPERATOR,
+          APP_PUBLIC_URL: "https://gelabber.example.org",
+        },
         { "privacy.de.html": "<p>p</p>" },
       );
       expect(written(result)).toEqual(FEEDBACK_FILES);

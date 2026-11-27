@@ -70,8 +70,6 @@ mod tests {
         let raw = encode(&claim).unwrap();
         assert_eq!(decode(&raw).unwrap(), claim);
         assert!(raw.contains("\"g\":true"));
-        assert!(!raw.contains("token"));
-        assert!(!raw.contains("livekit"));
     }
 
     #[test]

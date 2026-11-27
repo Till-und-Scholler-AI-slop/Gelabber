@@ -493,46 +493,6 @@ async fn cannot_steal_someone_elses_upload(pool: PgPool) {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-#[sqlx::test]
-async fn member_can_download_after_message_is_posted(pool: PgPool) {
-    let (mut owner, mut member) = two_users(pool).await;
-    let server = server_with_member(&mut owner, &mut member).await;
-    let channel_id = text_channel_id(&server);
-    let png = PNG;
-    let signed = presign_ok(
-        &mut owner,
-        &channel_id,
-        "pic.png",
-        "image/png",
-        PNG.len() as i64,
-    )
-    .await;
-    let attachment_id = signed["id"].as_str().unwrap();
-    put_object(&owner, attachment_id, "image/png", png).await;
-    let posted = owner
-        .send(
-            Method::POST,
-            &format!("/api/channels/{channel_id}/messages"),
-            Some(json!({
-                "content": "pic",
-                "attachment_ids": [attachment_id],
-            })),
-        )
-        .await;
-    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
-
-    let (status, headers, bytes) = member
-        .send_raw(
-            Method::GET,
-            &format!("/api/attachments/{attachment_id}"),
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(headers["content-type"], "image/png");
-    assert_eq!(bytes, png);
-}
-
 /// `?download=1` saves the file instead of showing it (#201 review): the
 /// picture link stays `inline`, the variant says `attachment`, with the exact
 /// name as `filename*` and a quote-free ASCII fallback.

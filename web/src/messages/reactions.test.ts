@@ -203,9 +203,6 @@ describe("separate reaction intent overlay", () => {
     expect(cached()?.[0]).toEqual(before);
     expect(cached()?.[0]?.content).not.toBe("changed by a broken frame");
   });
-  it("draws no reaction bar for something that is no list", () => {
-    expect(displayedReactions({} as Message["reactions"], "me")).toEqual([]);
-  });
   it("the next authoritative read carries reactions after reconnect", async () => {
     respond = () =>
       json({

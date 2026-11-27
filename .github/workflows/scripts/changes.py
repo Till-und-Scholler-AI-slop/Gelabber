@@ -11,7 +11,9 @@ import sys
 
 CI = '.github/workflows/ci.yml'
 AREAS = {
-    'backend': ('backend/', 'rust-toolchain.toml', '.dockerignore', CI),
+    # previous_release.sh picks and checks the upgrade test's release in the rust job.
+    'backend': ('backend/', 'rust-toolchain.toml', '.dockerignore', CI,
+                '.github/workflows/scripts/previous_release.sh'),
     # The emoji data is generated into the backend, the web client and the
     # desktop app, and checked in the web job; landingImage.test.mjs reads the
     # drawn preview the landing page must not show; ci-fault-loop.checks.mjs
@@ -21,8 +23,10 @@ AREAS = {
     'desktop': ('desktop/', 'rust-toolchain.toml',
                 # theme.rs checks its tokens against the web's (#561).
                 'web/src/theme/tokens.fixture.json',
-                # The packaging tests skip or fail through it (GEL-375).
-                'deploy/compose/tests/prerequisites.py',
+                # The packaging tests skip or fail through it (GEL-375), and
+                # read the workflows with its neighbours (GEL-431).
+                'deploy/compose/tests/prerequisites.py', 'deploy/compose/tests/workflow_data.py',
+                'deploy/compose/tests/requirements.txt',
                 # The workflows that build, store and release the desktop app.
                 CI, '.github/workflows/desktop-native.yml', '.github/workflows/desktop-release.yml',
                 '.github/workflows/libwebrtc-store.yml', '.github/workflows/scripts/apt-install.sh'),
