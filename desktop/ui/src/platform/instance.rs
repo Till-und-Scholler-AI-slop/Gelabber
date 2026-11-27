@@ -475,8 +475,8 @@ mod tests {
         let _ = std::fs::remove_file(&file);
     }
 
-    /// Anyone on the machine reaches the loopback port: a client that
-    /// trickles bytes without a line end must not keep a second start out.
+    /// Anyone on the machine reaches the loopback port: a client that sends
+    /// part of a line and then nothing must not keep a second start out.
     #[test]
     fn a_client_that_never_ends_its_line_keeps_nobody_out() {
         let file = std::env::temp_dir().join(format!(
@@ -489,24 +489,20 @@ mod tests {
         let wake_ups = wake_ups(&first);
         let text = std::fs::read_to_string(&file).unwrap();
         let port: u16 = text.split(' ').next().unwrap().parse().unwrap();
-        let done = Arc::new(AtomicBool::new(false));
-        let stop = done.clone();
-        let trickle = std::thread::spawn(move || {
-            let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-            while !stop.load(Ordering::Acquire) {
-                if stream.write_all(b"x").is_err() {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        });
-        std::thread::sleep(Duration::from_millis(200));
-        let start = std::time::Instant::now();
+        // Connected first (accepted in order), part of a line, then silent.
+        let mut held = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        held.write_all(b"x").unwrap();
         assert!(matches!(claim_tcp(&file), Claim::Running));
-        assert!(start.elapsed() < WAIT);
         shown(&first, &wake_ups);
-        done.store(true, Ordering::Release);
-        trickle.join().unwrap();
+        // Answered while the held client is still connected: an app that
+        // served one client at a time would first have given up on it and
+        // closed its connection (a read would then end, Ok(0)).
+        held.set_nonblocking(true).unwrap();
+        let read = held.read(&mut [0u8; 1]);
+        assert!(
+            matches!(&read, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+            "the held client was let go before the second start was answered: {read:?}"
+        );
         let _ = std::fs::remove_file(&file);
     }
 
