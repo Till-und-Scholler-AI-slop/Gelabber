@@ -20,7 +20,10 @@ for (const engine of [chromium, firefox]) {
   try {
     const contexts = await Promise.all(
       [1280, 390, 320].map((width) =>
-        browser.newContext({ viewport: { width, height: 844 } }),
+        browser.newContext({
+          viewport: { width, height: 844 },
+          locale: "de-DE",
+        }),
       ),
     );
     const pages = await Promise.all(

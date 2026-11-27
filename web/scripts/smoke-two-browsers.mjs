@@ -27,6 +27,8 @@ const pages = [];
 async function participant(name) {
   const context = await browser.newContext({
     permissions: ["camera", "microphone"],
+    // The labels below are German; the app follows the browser's language.
+    locale: "de-DE",
   });
   await context.addInitScript(() => {
     const NativePeer = window.RTCPeerConnection;

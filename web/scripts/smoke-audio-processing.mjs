@@ -24,6 +24,7 @@ for (const engine of [chromium, firefox]) {
   try {
     const page = await browser.newPage({
       viewport: { width: 390, height: 844 },
+      locale: "de-DE",
     });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));

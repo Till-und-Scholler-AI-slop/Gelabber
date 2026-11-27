@@ -59,7 +59,11 @@ const check = async (name, run) => {
   console.log(`PASS ${name}`);
 };
 async function actor(label, credentials) {
-  const context = await browser.newContext({ hasTouch: true });
+  // The labels below are German; the app follows the browser's language.
+  const context = await browser.newContext({
+    hasTouch: true,
+    locale: "de-DE",
+  });
   contexts.push(context);
   const page = await context.newPage();
   const frames = [];
