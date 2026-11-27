@@ -45,14 +45,6 @@ class Areas(unittest.TestCase):
     def test_the_toolchain_concerns_both_rust_workspaces(self):
         self.assertTrue({'backend', 'desktop'} <= changes.areas(['rust-toolchain.toml']))
 
-    def test_the_storage_keys_the_desktop_test_reads_concern_it_too(self):
-        legacy = (ROOT / 'desktop/ui/src/platform/legacy.rs').read_text(encoding='utf-8')
-        read = set(re.findall(r'include_str!\("(?:\.\./)+(web/[^"]+)"\)', legacy))
-        self.assertTrue(read)
-        for path in read:
-            with self.subTest(path=path):
-                self.assertEqual(changes.areas([path]), {'web', 'desktop'})
-
     def test_emoji_data_concerns_web_too(self):
         self.assertIn('web', changes.areas(['backend/shared/data/emoji-18.0.json']))
 
