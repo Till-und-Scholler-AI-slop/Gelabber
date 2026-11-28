@@ -490,9 +490,8 @@ jobs:
           tag=${release%% *}
           echo "The app of this tree against the server of $tag." | tee -a "$GITHUB_STEP_SUMMARY"
           repo="${GITHUB_REPOSITORY,,}"
-          for image in api media; do
-            docker pull --quiet "ghcr.io/${repo}/${image}:${tag}"
-          done
+          docker pull --quiet "ghcr.io/${repo}/api:${tag}"
+          docker pull --quiet "ghcr.io/${repo}/media:${tag}"
           mkdir -p "$RUNNER_TEMP/previous"
           git archive "$tag" web | tar -x -C "$RUNNER_TEMP/previous"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -513,15 +512,14 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: The previous minor's web client
+        if: matrix.server == 'previous minor'
+        run: npm ci --prefix "$RUNNER_TEMP/previous/web"
+
       - name: Vite and Chromium for the call's people
-        env:
-          PREVIOUS: ${{ steps.previous.outputs.tag }}
         run: |
           set -euo pipefail
           npm ci --prefix web
-          if [ -n "$PREVIOUS" ]; then
-            npm ci --prefix "$RUNNER_TEMP/previous/web"
-          fi
           cd web
           # System packages through apt-install.sh, as in the faults job (GEL-404).
           mapfile -t deps < <(npx playwright install-deps --dry-run chromium | sed -n 's/^  \([^ ]\+\)$/\1/p')
@@ -552,58 +550,11 @@ jobs:
           # The tests sign in again and again; the sign-in limit is for people.
           API_RATE_AUTH_PER_MIN: "0"
           PREVIOUS: ${{ steps.previous.outputs.tag }}
-        run: |
-          set -euo pipefail
-          logs="$RUNNER_TEMP/desktop-live-logs"
-          mkdir -p "$logs"
-          web=web
-          if [ -n "$PREVIOUS" ]; then
-            # The released images, on the job's network like the services.
-            repo="${GITHUB_REPOSITORY,,}"
-            api_env=()
-            for name in DATABASE_URL REDIS_URL MINIO_ENDPOINT MINIO_PUBLIC_ENDPOINT MINIO_ROOT_USER \
-                MINIO_ROOT_PASSWORD MINIO_BUCKET API_ADDR API_OPERATOR_EMAILS API_DIRECTORY APP_PUBLIC_URL \
-                OIDC_GOOGLE_CLIENT_ID OIDC_GOOGLE_CLIENT_SECRET API_RATE_AUTH_PER_MIN; do
-              api_env+=(-e "$name")
-            done
-            docker run -d --name gelabber-previous-api --network host "${api_env[@]}" "ghcr.io/${repo}/api:${PREVIOUS}"
-            docker run -d --name gelabber-previous-media --network host \
-              -e REDIS_URL -e MEDIA_ADDR -e MEDIA_ICE_BIND -e MEDIA_ADVERTISED_IP "ghcr.io/${repo}/media:${PREVIOUS}"
-            web="$RUNNER_TEMP/previous/web"
-            trap 'docker logs gelabber-previous-api >"$logs/api.log" 2>&1; docker logs gelabber-previous-media >"$logs/media.log" 2>&1; docker rm -f gelabber-previous-api gelabber-previous-media >/dev/null 2>&1 || true; kill "$vite" 2>/dev/null || true' EXIT
-          else
-            backend/target/debug/gelabber-api >"$logs/api.log" 2>&1 &
-            api=$!
-            backend/target/debug/gelabber-media >"$logs/media.log" 2>&1 &
-            media=$!
-            trap 'kill "$api" "$media" "$vite" 2>/dev/null || true' EXIT
-          fi
-          (cd "$web" && exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5180 --strictPort) \
-            >"$logs/vite.log" 2>&1 &
-          vite=$!
-          deadline=$((SECONDS + 120))
-          until curl -fsS http://127.0.0.1:8080/ready >/dev/null \
-            && curl -fsS "$GELABBER_TEST_SERVER/" >/dev/null; do
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "API or Vite did not come up within 120s"
-              tail -n 50 "$logs"/*.log
-              exit 1
-            fi
-            sleep 2
-          done
-          # The seed of that server's version, into the file the desktop tests read.
-          (cd "$web" && node scripts/parity/seed.mjs "$GELABBER_TEST_SERVER" "$GITHUB_WORKSPACE/web/scripts/parity/fixture.json")
-          status=0
-          # The client's recorded fixtures still have the API's shapes (desktop/client/tests/models.rs);
-          # they stand for this tree's server.
-          if [ -z "$PREVIOUS" ]; then
-            node desktop/client/tests/record-fixtures.mjs "$GELABBER_TEST_SERVER" --check || status=1
-          fi
-          desktop/live-tests.sh || status=1
-          if [ "$status" -ne 0 ]; then
-            tail -n 100 "$logs"/*.log
-            exit 1
-          fi
+        # desktop/live-stack.sh: the tree's binaries, or with a tag that
+        # release's images and web client.
+        run: >-
+          desktop/live-stack.sh "$RUNNER_TEMP/desktop-live-logs"
+          ${PREVIOUS:+"$PREVIOUS" "$RUNNER_TEMP/previous/web"}
 
       - name: Upload the stack's logs
         if: failure()
