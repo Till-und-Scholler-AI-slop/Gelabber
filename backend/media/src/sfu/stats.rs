@@ -105,14 +105,21 @@ impl Sfu {
         for paused in [true, false] {
             let weak = Arc::downgrade(self);
             let subweak = Arc::downgrade(sub);
+            let engine = room.engine.clone();
             let runtime = tokio::runtime::Handle::current();
             let callback = move || {
                 let weak = weak.clone();
                 let subweak = subweak.clone();
+                let engine = engine.clone();
                 runtime.spawn(async move {
                     if let (Some(sfu), Some(s)) = (weak.upgrade(), subweak.upgrade())
                         && s.grant.valid()
                     {
+                        // A resumed Live's layers may start over (layers.rs);
+                        // the same rule as consumerReady.
+                        if !paused && s.valid() {
+                            sfu.await_layer(&engine, &s);
+                        }
                         sfu.emit(
                             &s.peer,
                             ServerFrame::ConsumerState {

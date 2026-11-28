@@ -1163,6 +1163,162 @@ async fn video_consumers_start_on_the_highest_layer() {
     viewer.revoke(&sfu).await;
 }
 
+/// GEL-460: a viewer of a three-layer camera and of the owner's microphone,
+/// both consumed and still paused, and no RTP anywhere: no consumer can get a
+/// layer.
+struct LayerFixture {
+    sfu: Arc<Sfu>,
+    room: Arc<Room>,
+    viewer: Viewer,
+    viewer_peer: Arc<Peer>,
+    channel: Uuid,
+    video: Arc<Subscription>,
+    audio: Arc<Subscription>,
+}
+async fn layer_fixture() -> LayerFixture {
+    let (sfu, owner, mic, _owner_events) = stopping_fixture().await;
+    let channel = owner.authority.claim.c;
+    let room = sfu.room(channel).await.unwrap();
+    let transport = room.data.lock().await.peers[&owner.id].transports[&true].clone();
+    let rtp = serde_json::from_value(json!({
+        "codecs":[{"mimeType":"video/VP8","payloadType":96,"clockRate":90000,
+            "parameters":{},"rtcpFeedback":[]}],
+        "headerExtensions":[],
+        "encodings":[{"ssrc":30_000,"rid":"r0"},{"ssrc":30_001,"rid":"r1"},{"ssrc":30_002,"rid":"r2"}],
+        "rtcp":{"cname":"layer-wait","reducedSize":true}
+    }))
+    .unwrap();
+    let producer = room
+        .engine
+        .native(transport.clone(), move |transport| async move {
+            transport
+                .produce(ProducerOptions::new(MediaKind::Video, rtp))
+                .await
+        })
+        .await
+        .unwrap();
+    let camera = Arc::new(Publication {
+        producer: NativeProducer::new(producer, transport.clone(), room.engine.lost.clone()),
+        peer: owner.clone(),
+        kind: SourceKind::Camera,
+        epoch: Uuid::new_v4(),
+        parent: None,
+        grant: Grant::new(),
+        gate: Mutex::new(()),
+        packet_samples: StdMutex::new(HashMap::new()),
+        sharp: AtomicBool::new(false),
+    });
+    room.data
+        .lock()
+        .await
+        .publications
+        .insert(camera.id(), camera.clone());
+    let viewer = Viewer::join(&sfu, &owner, &room, 64).await;
+    sfu.attach_existing(channel, viewer.id).await;
+    let (viewer_peer, video, audio) = {
+        let data = room.data.lock().await;
+        let consumed = |publication: &Arc<Publication>| {
+            data.peers[&viewer.id]
+                .consumers
+                .values()
+                .find(|s| Arc::ptr_eq(&s.publication, publication))
+                .cloned()
+                .expect("the publication is consumed")
+        };
+        (
+            data.peers[&viewer.id].peer.clone(),
+            consumed(&camera),
+            consumed(&mic),
+        )
+    };
+    LayerFixture {
+        sfu,
+        room,
+        viewer,
+        viewer_peer,
+        channel,
+        video,
+        audio,
+    }
+}
+impl LayerFixture {
+    async fn ready(&self, sub: &Arc<Subscription>) {
+        let frame = ClientFrame::ConsumerReady {
+            id: 1,
+            consumer_id: sub.consumer.id().to_string(),
+            generation: sub.generation,
+        };
+        self.sfu
+            .dispatch(
+                self.room.clone(),
+                self.viewer_peer.clone(),
+                self.viewer.id,
+                self.channel,
+                frame,
+            )
+            .await
+            .expect("consumerReady resumes the consumer");
+    }
+    async fn leave(self) {
+        self.sfu.leave(self.viewer.id, self.channel).await;
+        self.viewer.revoke(&self.sfu).await;
+    }
+}
+
+#[tokio::test]
+async fn a_layered_consumer_without_a_layer_awaits_one_and_a_nudge_keeps_its_priority() {
+    use super::layers::AwaitsLayer;
+    let f = layer_fixture().await;
+    // The SFU's own rounds stay out of the way here.
+    f.sfu.nudge_every_ms.store(3_600_000, Ordering::Relaxed);
+    assert!(f.video.consumer.layered());
+    assert!(!f.audio.consumer.layered());
+    // Paused until the viewer is ready: nothing to wait for.
+    assert!(f.video.consumer.settled());
+    f.ready(&f.video).await;
+    f.ready(&f.audio).await;
+    // Resumed, and no layer without RTP.
+    assert!(!f.video.consumer.settled());
+    // An audio consumer has no layers to wait for.
+    assert!(f.audio.consumer.settled());
+    // A nudge puts the priority back where it was.
+    f.video.consumer.set_priority(3).await.unwrap();
+    f.video.consumer.nudge().await.unwrap();
+    assert_eq!(f.video.consumer.priority(), Some(3));
+    // Paused again, nothing to wait for.
+    f.video.consumer.pause().await.unwrap();
+    assert!(f.video.consumer.settled());
+    f.video.consumer.resume().await.unwrap();
+    assert!(!f.video.consumer.settled());
+    // Its native handle gone, before the close is confirmed: nothing to ask.
+    f.video.consumer.resource.close();
+    assert!(f.video.consumer.settled());
+    f.leave().await;
+}
+
+#[tokio::test]
+async fn consumer_ready_asks_for_rounds_until_a_layer_or_the_last_round() {
+    let f = layer_fixture().await;
+    // A tick that passes at once: the wait ends when its rounds are used up.
+    f.sfu.nudge_every_ms.store(0, Ordering::Relaxed);
+    let ended = f.video.layer_wait_ended.notified();
+    f.ready(&f.video).await;
+    tokio::time::timeout(Duration::from_secs(30), ended)
+        .await
+        .expect("the wait for a layer ends");
+    assert_eq!(
+        f.video.layer_nudges.load(Ordering::Relaxed),
+        layers::NUDGE_ROUNDS
+    );
+    assert_eq!(f.video.consumer.priority(), Some(1));
+    assert!(!f.video.awaiting_layer.load(Ordering::SeqCst));
+    // No wait for a consumer without layers.
+    f.ready(&f.audio).await;
+    assert!(!f.audio.awaiting_layer.load(Ordering::SeqCst));
+    assert_eq!(f.audio.layer_nudges.load(Ordering::Relaxed), 0);
+    f.leave().await;
+}
+
 #[tokio::test]
 async fn gateway_transports_start_with_a_high_outgoing_estimate() {
     let (sfu, _owner, _publication, _owner_events) = stopping_fixture().await;
