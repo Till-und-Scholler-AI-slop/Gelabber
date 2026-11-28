@@ -207,7 +207,6 @@ test("room source observations require positive native RTP, deduplicate callback
   const state = {
     peers: [peer],
     incomingTracks: [...incoming, incoming[0]],
-    expectedAudioPeer: peer,
     expectedAudioPublishers: ["a", "b"],
     expectedLivePublisher: "a",
     mediaElements: new Set(),
@@ -231,6 +230,79 @@ test("room source observations require positive native RTP, deduplicate callback
   const last = await read();
   assert.equal(last.watchVideoSources.selectedLive, 0);
   assert.equal(last.watchVideoSources.foreign, 1);
+});
+
+test("room audio counts the receiving connection when the send connection comes first, and every live path of a source", async () => {
+  // As on a voice member's page: the send connection carries the microphone
+  // and receives nothing; the member's voice comes on another connection.
+  const connection = (state, entries) => ({
+    connectionState: state,
+    iceConnectionState: state,
+    getStats: async () =>
+      new Map(entries.map((entry, i) => [String(i), entry])),
+    getTransceivers: () => [],
+    getSenders: () => [],
+    getReceivers: () => [],
+    localDescription: null,
+  });
+  const received = (trackIdentifier) => ({
+    type: "inbound-rtp",
+    kind: "audio",
+    trackIdentifier,
+    packetsReceived: 9,
+  });
+  const send = connection("connected", [
+    { type: "outbound-rtp", kind: "audio", packetsSent: 9 },
+  ]);
+  const receive = connection("connected", [received("voice")]);
+  const old = connection("closed", [received("old-voice")]);
+  const track = (id) => ({ id, kind: "audio", readyState: "live" });
+  const incomingTracks = [
+    {
+      pc: old,
+      track: track("old-voice"),
+      publisher: "member",
+      sourceKind: "a",
+    },
+    {
+      pc: receive,
+      track: track("voice"),
+      publisher: "member",
+      sourceKind: "a",
+    },
+  ];
+  const state = {
+    peers: [old, send, receive],
+    incomingTracks,
+    expectedAudioPublishers: ["member"],
+    mediaElements: new Set(),
+    heldTracks: [],
+    voiceRoster: [],
+    sockets: [],
+    captures: [],
+    renderedVideos: new WeakMap(),
+  };
+  const context = createContext({
+    window: { __e2e: state },
+    document: { querySelectorAll: () => [] },
+  });
+  const read = () => runInContext(`(${sample.toString()})()`, context);
+  const one = await read();
+  assert.deepEqual([...one.roomAudio.perSource], [1]);
+  assert.equal(one.roomAudio.foreign, 0);
+  // A second path for the same source, on a connection that is still up,
+  // is not hidden: the scenario's check judges it.
+  const second = connection("connected", [received("voice-again")]);
+  state.peers.push(second);
+  incomingTracks.push({
+    pc: second,
+    track: track("voice-again"),
+    publisher: "member",
+    sourceKind: "a",
+  });
+  const two = await read();
+  assert.deepEqual([...two.roomAudio.perSource], [2]);
+  assert.equal(two.roomAudio.foreign, 0);
 });
 
 function consumerProbeFixture() {

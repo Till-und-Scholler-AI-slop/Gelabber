@@ -123,9 +123,6 @@ export async function leaseFaultScenarios(h, options) {
         await nativeEvaluate(
           f.watcher,
           (publisher) => {
-            window.__e2e.expectedAudioPeer = window.__e2e.peers.find(
-              (p) => p.connectionState === "connected",
-            );
             window.__e2e.expectedLivePublisher = publisher;
           },
           f.member.id,

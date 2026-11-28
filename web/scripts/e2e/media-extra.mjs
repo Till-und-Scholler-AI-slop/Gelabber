@@ -151,15 +151,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       );
     }
     const before = await until(
-      async () => {
-        for (const actor of [f.owner, f.member])
-          await nativeEvaluate(actor, () => {
-            window.__e2e.expectedAudioPeer = window.__e2e.peers.find(
-              (p) => p.connectionState === "connected",
-            );
-          });
-        return Promise.all([snapshot(f.owner), snapshot(f.member)]);
-      },
+      () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
       (states) => states.every((s) => audioPackets(s) > 0),
       "fixture-voice-only-duplex-audio-missing",
       options.budget,
@@ -585,9 +577,6 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         await nativeEvaluate(
           f.watcher,
           (publishers) => {
-            window.__e2e.expectedAudioPeer = window.__e2e.peers.find(
-              (p) => p.connectionState === "connected",
-            );
             window.__e2e.expectedAudioPublishers = publishers;
             window.__e2e.expectedLivePublisher = publishers[0];
           },
