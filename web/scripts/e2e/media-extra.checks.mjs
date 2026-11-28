@@ -53,6 +53,7 @@ test("source identity reorder delivers authoritative Consumer messages without n
       watchSource: async () => {},
       activePeers: () => [],
       armPlaybackRetry: () => {},
+      waitForPath: async () => [],
       progress: async (_actor, options) => ({ kind: options.kind ?? "live" }),
     },
     "./native-evaluate.mjs": {
@@ -138,6 +139,7 @@ test("exact SDP scenario preserves failed bounded camera warmup and never inject
       watchSource: async () => {},
       activePeers: () => [],
       armPlaybackRetry: () => {},
+      waitForPath: async () => [],
       progress: async () => {
         progressCalls++;
       },
@@ -438,6 +440,7 @@ async function sdpRetryRow(firstFrameMs, { evidenceFails = false } = {}) {
       watchSource: async () => {},
       activePeers: () => [],
       armPlaybackRetry: () => {},
+      waitForPath: async () => [],
       // The green retry: its wait began at the click.
       progress: async (_actor, { color }) =>
         color[1] === 220

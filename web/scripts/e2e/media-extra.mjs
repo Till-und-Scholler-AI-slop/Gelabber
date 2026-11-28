@@ -9,7 +9,12 @@ import {
   snapshot,
   until,
 } from "./harness.mjs";
-import { activePeers, armPlaybackRetry, progress } from "./media.mjs";
+import {
+  activePeers,
+  armPlaybackRetry,
+  progress,
+  waitForPath,
+} from "./media.mjs";
 import {
   sampleVideoSenders,
   samplePublicationFlow,
@@ -181,7 +186,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       "voice-only-duplex-audio-stopped-after-attach",
       options.budget,
     );
-    for (const s of judged) {
+    for (const [i, s] of judged.entries()) {
       check(
         s.roomAudio.perSource.length === 1 &&
           s.roomAudio.perSource[0] === 1 &&
@@ -194,19 +199,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         "voice-only-source-duplicate-or-unexpected-capture",
         { before, after, attached, judged },
       );
-      const paths = activePeers(s).flatMap((p) => p.selected);
-      check(
-        paths.length > 0 &&
-          paths.every(
-            (p) =>
-              p.state === "succeeded" &&
-              (options.relay
-                ? p.local === "relay"
-                : p.local !== "relay" && p.remote !== "relay"),
-          ),
-        "selected-network-path-mismatch",
-        { paths },
-      );
+      // Read until settled, as in progress() (GEL-465).
+      await waitForPath(() => snapshot([f.owner, f.member][i]), options.relay);
     }
     return {
       before,
