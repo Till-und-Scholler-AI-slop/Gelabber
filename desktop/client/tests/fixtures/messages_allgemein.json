@@ -1,15 +1,15 @@
 {
   "messages": [
     {
-      "id": "8493703f-2423-4c65-92fc-69954de84f98",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000012",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "cf6336df-54a8-467e-a622-9eb772100bd3",
+        "id": "00000000-0000-4000-8000-000000000005",
         "name": "Jonas",
         "avatar_url": null
       },
       "content": "Hallo zusammen! 👋",
-      "created_at": "2026-11-27T18:44:23.205597Z",
+      "created_at": "2030-01-01T00:00:18.000001Z",
       "edited_at": null,
       "revision": 1,
       "created_order": 1,
@@ -19,15 +19,15 @@
       "mention_everyone": false
     },
     {
-      "id": "cbb67312-e095-4bcd-af5a-aa40984c1b25",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000014",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "cf6336df-54a8-467e-a622-9eb772100bd3",
+        "id": "00000000-0000-4000-8000-000000000005",
         "name": "Jonas",
         "avatar_url": null
       },
       "content": "Wer ist heute Abend dabei?",
-      "created_at": "2026-11-27T18:44:23.248586Z",
+      "created_at": "2030-01-01T00:00:19.000001Z",
       "edited_at": null,
       "revision": 2,
       "created_order": 2,
@@ -37,15 +37,15 @@
       "mention_everyone": false
     },
     {
-      "id": "49209fa2-25f0-4273-bcfa-bf41754c0cef",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000015",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "cba0e2e4-60d1-4b33-88e2-e8ed310c3a68",
+        "id": "00000000-0000-4000-8000-000000000016",
         "name": "Mira",
         "avatar_url": null
       },
       "content": "Ich bin dabei. **Film oder Spiel?**",
-      "created_at": "2026-11-27T18:44:23.285180Z",
+      "created_at": "2030-01-01T00:00:20.000001Z",
       "edited_at": null,
       "revision": 3,
       "created_order": 3,
@@ -55,15 +55,15 @@
       "mention_everyone": false
     },
     {
-      "id": "70320fc4-9bec-46ed-8377-1cc982fa9a80",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000017",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "950aaca8-b57a-4491-beb9-37c5489ae020",
+        "id": "00000000-0000-4000-8000-000000000018",
         "name": "Tom",
         "avatar_url": null
       },
       "content": "Spiel! Ich hätte Lust auf *Brettspiele* oder etwas Kooperatives.",
-      "created_at": "2026-11-27T18:44:23.338130Z",
+      "created_at": "2030-01-01T00:00:21.000001Z",
       "edited_at": null,
       "revision": 4,
       "created_order": 4,
@@ -73,15 +73,15 @@
       "mention_everyone": false
     },
     {
-      "id": "6fd11ec0-cc19-4044-8c13-ba94b184b683",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000019",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
+        "id": "00000000-0000-4000-8000-000000000004",
         "name": "Lena",
         "avatar_url": null
       },
       "content": "Klingt gut, @Jonas bringst du die Snacks mit?",
-      "created_at": "2026-11-27T18:44:23.381375Z",
+      "created_at": "2030-01-01T00:00:22.000001Z",
       "edited_at": null,
       "revision": 5,
       "created_order": 5,
@@ -91,15 +91,15 @@
       "mention_everyone": false
     },
     {
-      "id": "54d0f7eb-49f6-41ae-a515-c8793ce663f5",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000020",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "cf6336df-54a8-467e-a622-9eb772100bd3",
+        "id": "00000000-0000-4000-8000-000000000005",
         "name": "Jonas",
         "avatar_url": null
       },
       "content": "Klar, ich bring Chips und Limo mit 🍿",
-      "created_at": "2026-11-27T18:44:23.410718Z",
+      "created_at": "2030-01-01T00:00:23.000001Z",
       "edited_at": null,
       "revision": 6,
       "created_order": 6,
@@ -108,25 +108,25 @@
       "mentions": [],
       "mention_everyone": false,
       "reply": {
-        "id": "49209fa2-25f0-4273-bcfa-bf41754c0cef",
+        "id": "00000000-0000-4000-8000-000000000015",
         "deleted": false,
         "author": {
-          "id": "cba0e2e4-60d1-4b33-88e2-e8ed310c3a68",
+          "id": "00000000-0000-4000-8000-000000000016",
           "name": "Mira"
         },
         "excerpt": "Ich bin dabei. **Film oder Spiel?**"
       }
     },
     {
-      "id": "fd65ed67-7fb8-49c4-a7f0-250b6c49ddf8",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000021",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "c8ac8d77-67d4-4dbd-b2a3-154694cd4731",
+        "id": "00000000-0000-4000-8000-000000000022",
         "name": "Ada",
         "avatar_url": null
       },
       "content": "Ich habe die Regeln schon mal rausgesucht:\n> Jede Runde zieht jede Person zwei Karten.\n> Wer zuerst zehn Punkte hat, gewinnt.",
-      "created_at": "2026-11-27T18:44:23.457957Z",
+      "created_at": "2030-01-01T00:00:24.000001Z",
       "edited_at": null,
       "revision": 7,
       "created_order": 7,
@@ -136,15 +136,15 @@
       "mention_everyone": false
     },
     {
-      "id": "4aa0930e-cf4d-45e1-abfa-12da37fc510a",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000023",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "950aaca8-b57a-4491-beb9-37c5489ae020",
+        "id": "00000000-0000-4000-8000-000000000018",
         "name": "Tom",
         "avatar_url": null
       },
       "content": "Für die Punkte habe ich ein kleines Skript:\n```\nfn punkte(karten: &[u8]) -> u32 {\n    karten.iter().map(|k| *k as u32).sum()\n}\n```",
-      "created_at": "2026-11-27T18:44:23.495425Z",
+      "created_at": "2030-01-01T00:00:25.000001Z",
       "edited_at": null,
       "revision": 13,
       "created_order": 8,
@@ -153,14 +153,14 @@
         {
           "emoji": "🎉",
           "user_ids": [
-            "dab64b25-3c51-417c-a638-b3abaad54d3d"
+            "00000000-0000-4000-8000-000000000004"
           ]
         },
         {
           "emoji": "👍",
           "user_ids": [
-            "cba0e2e4-60d1-4b33-88e2-e8ed310c3a68",
-            "cf6336df-54a8-467e-a622-9eb772100bd3"
+            "00000000-0000-4000-8000-000000000005",
+            "00000000-0000-4000-8000-000000000016"
           ]
         }
       ],
@@ -168,15 +168,15 @@
       "mention_everyone": false
     },
     {
-      "id": "042aecab-80e6-4cd2-957d-d06e95b53d56",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000024",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "cba0e2e4-60d1-4b33-88e2-e8ed310c3a68",
+        "id": "00000000-0000-4000-8000-000000000016",
         "name": "Mira",
         "avatar_url": null
       },
       "content": "Perfekt, dann treffen wir uns um `20:00` im Sofa.",
-      "created_at": "2026-11-27T18:44:23.601495Z",
+      "created_at": "2030-01-01T00:00:26.000001Z",
       "edited_at": null,
       "revision": 9,
       "created_order": 9,
@@ -186,15 +186,15 @@
       "mention_everyone": false
     },
     {
-      "id": "fb29fb06-e2cd-4af7-be42-d912e86baede",
-      "channel_id": "82860722-1abb-4aa7-8116-bf8391fc6abb",
+      "id": "00000000-0000-4000-8000-000000000025",
+      "channel_id": "00000000-0000-4000-8000-000000000013",
       "author": {
-        "id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
+        "id": "00000000-0000-4000-8000-000000000004",
         "name": "Lena",
         "avatar_url": null
       },
       "content": "Bis später! 🎲",
-      "created_at": "2026-11-27T18:44:23.645263Z",
+      "created_at": "2030-01-01T00:00:27.000001Z",
       "edited_at": null,
       "revision": 10,
       "created_order": 10,

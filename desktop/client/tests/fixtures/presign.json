@@ -1,13 +1,13 @@
 {
-  "id": "a77a3c22-1651-49a8-94f4-3ed6f2cace28",
-  "upload_url": "http://127.0.0.1:29400/gelabber/att/a77a3c22-1651-49a8-94f4-3ed6f2cace28?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=gelabber%2F20261127%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261127T184756Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=3e0445afb11296d37c0affd1af56d441d1625e54efaa64fb0c19a0addc22e07b",
+  "id": "00000000-0000-4000-8000-000000000028",
+  "upload_url": "http://127.0.0.1:29400/gelabber/att/00000000-0000-4000-8000-000000000028?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=gelabber%2F20261127%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261127T205550Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=0446e54165abab7bd1c4e79c17edc041cbc0c5bd0cd039a871ef217703023200",
   "headers": {
-    "Content-Length": "5",
-    "Content-Type": "text/plain"
+    "Content-Type": "text/plain",
+    "Content-Length": "5"
   },
   "expires_in": 600,
   "attachment": {
-    "id": "a77a3c22-1651-49a8-94f4-3ed6f2cace28",
+    "id": "00000000-0000-4000-8000-000000000028",
     "filename": "hallo.txt",
     "content_type": "text/plain",
     "size": 5

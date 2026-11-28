@@ -1,25 +1,25 @@
 {
-  "target_id": "7fe80eff-aef5-4059-830f-a0d1af3dc53f",
+  "target_id": "00000000-0000-4000-8000-000000000001",
   "messages": [
     {
-      "id": "4031fc5a-929c-49e2-9c89-56ba39af70d2",
-      "channel_id": "b4730f18-b56b-4f27-818f-a809aa9e6ff6",
+      "id": "00000000-0000-4000-8000-000000000002",
+      "channel_id": "00000000-0000-4000-8000-000000000003",
       "author": {
-        "id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
+        "id": "00000000-0000-4000-8000-000000000004",
         "name": "Lena",
         "avatar_url": null
       },
       "content": "Erste **Nachricht**, geändert",
-      "created_at": "2026-11-27T18:47:56.905490Z",
-      "edited_at": "2026-11-27T18:47:57.082482Z",
-      "revision": 65,
-      "created_order": 32,
+      "created_at": "2030-01-01T00:00:40.000001Z",
+      "edited_at": "2030-01-01T00:00:42.000001Z",
+      "revision": 25,
+      "created_order": 16,
       "attachments": [],
       "reactions": [
         {
           "emoji": "👍",
           "user_ids": [
-            "cf6336df-54a8-467e-a622-9eb772100bd3"
+            "00000000-0000-4000-8000-000000000005"
           ]
         }
       ],
@@ -27,35 +27,35 @@
       "mention_everyone": false
     },
     {
-      "id": "7fe80eff-aef5-4059-830f-a0d1af3dc53f",
-      "channel_id": "b4730f18-b56b-4f27-818f-a809aa9e6ff6",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "channel_id": "00000000-0000-4000-8000-000000000003",
       "author": {
-        "id": "cf6336df-54a8-467e-a622-9eb772100bd3",
+        "id": "00000000-0000-4000-8000-000000000005",
         "name": "Jonas",
         "avatar_url": null
       },
-      "content": "<@dab64b25-3c51-417c-a638-b3abaad54d3d> Antwort",
-      "created_at": "2026-11-27T18:47:56.938589Z",
+      "content": "<@00000000-0000-4000-8000-000000000004> Antwort",
+      "created_at": "2030-01-01T00:00:41.000001Z",
       "edited_at": null,
-      "revision": 63,
-      "created_order": 33,
+      "revision": 23,
+      "created_order": 17,
       "attachments": [],
       "reactions": [],
       "mentions": [
-        "dab64b25-3c51-417c-a638-b3abaad54d3d"
+        "00000000-0000-4000-8000-000000000004"
       ],
       "mention_everyone": false,
       "reply": {
-        "id": "4031fc5a-929c-49e2-9c89-56ba39af70d2",
+        "id": "00000000-0000-4000-8000-000000000002",
         "deleted": false,
         "author": {
-          "id": "dab64b25-3c51-417c-a638-b3abaad54d3d",
+          "id": "00000000-0000-4000-8000-000000000004",
           "name": "Lena"
         },
         "excerpt": "Erste **Nachricht**, geändert"
       }
     }
   ],
-  "before": "2026-11-27T18:47:56.905490+00:00|4031fc5a-929c-49e2-9c89-56ba39af70d2",
-  "after": "2026-11-27T18:47:56.938589+00:00|7fe80eff-aef5-4059-830f-a0d1af3dc53f"
+  "before": "2030-01-01T00:00:40.000001Z|00000000-0000-4000-8000-000000000002",
+  "after": "2030-01-01T00:00:41.000001Z|00000000-0000-4000-8000-000000000001"
 }
