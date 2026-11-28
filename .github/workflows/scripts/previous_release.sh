@@ -86,7 +86,9 @@ case "${1:-}" in
   *) echo "unknown argument: $1" >&2; exit 2 ;;
 esac
 
-# The newest tag vSERIES.*, fetched first with --fetch; empty without one.
+# The newest release vSERIES.N, fetched first with --fetch; empty without
+# one. Pre-releases (vSERIES.N-rc.1) are none: servers do not run them, and
+# git's version sort ranks them above their release.
 newest_tag() {
   if [ "$fetch" = true ]; then
     if [ -z "$(git -C "$root" ls-remote --tags origin "refs/tags/v$1.*")" ]; then
@@ -94,7 +96,8 @@ newest_tag() {
     fi
     git -C "$root" fetch --quiet --depth=1 --no-tags origin "+refs/tags/v$1.*:refs/tags/v$1.*"
   fi
-  git -C "$root" tag --list "v$1.*" --sort=-version:refname | head -1
+  series=$(echo "$1" | sed 's/\./\\./g')
+  git -C "$root" tag --list "v$1.*" --sort=-version:refname | grep -E "^v$series\.[0-9]+\$" | head -1
 }
 
 # "TAG NUMBER": the tag and the highest migration it shipped.

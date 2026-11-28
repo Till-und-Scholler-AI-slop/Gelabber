@@ -114,6 +114,28 @@ class PreviousRelease(unittest.TestCase):
         self.assertEqual(fetched.returncode, 0, fetched.stderr)
         self.assertEqual(fetched.stdout.strip(), 'v0.13.1 3')
 
+    def test_a_pre_release_is_no_release(self):
+        # Servers run releases; git's version sort ranks v0.13.2-rc.1 above v0.13.1
+        # (and above v0.13.2).
+        origin = self.base / 'origin-pre.git'
+        git(self.base, 'clone', '-q', '--bare', str(self.origin), str(origin))
+        work = self.base / 'work-pre'
+        git(self.base, 'clone', '-q', str(origin), str(work))
+        git(work, 'switch', '-q', 'v0.14')
+        commit(work, '0.13.2', [6], 'v0.13.2-rc.1')
+        git(work, 'tag', 'v0.13.2-rc.1')
+        commit(work, '0.14.1', [7], 'v0.14.1-rc.1')
+        git(work, 'tag', 'v0.14.1-rc.1')
+        git(work, 'push', '-q', 'origin', '--tags')
+        shallow = self.base / 'shallow-pre'
+        git(self.base, 'clone', '-q', '--depth=1', '--no-tags', '--branch', 'v0.14',
+            f'file://{origin}', str(shallow))
+        for checkout, fetch in ((work, ()), (shallow, ('--fetch',))):
+            for args, expected in (((), 'v0.13.1 3'), (('--own',), 'v0.14.0 4')):
+                with self.subTest(checkout=checkout.name, args=args):
+                    done = self.run_script(checkout, *args, *fetch, ref_name='v0.14')
+                    self.assertEqual((done.returncode, done.stdout.strip()), (0, expected), done.stderr)
+
     def test_a_line_whose_previous_minor_has_no_release_says_so(self):
         done = self.run_script(self.full, '--fetch', ref_name='v0.16')
         self.assertEqual(done.returncode, 1)

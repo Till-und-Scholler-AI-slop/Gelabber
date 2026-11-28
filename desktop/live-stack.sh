@@ -23,10 +23,22 @@ mkdir -p "$logs"
 port=${GELABBER_TEST_SERVER##*:}
 port=${port%%/*}
 pids=()
-stop() {
+# The released servers log into their containers: into the log files with
+# them, before each look at the logs and at the end.
+container_logs() {
   if [ -n "$tag" ]; then
     docker logs gelabber-previous-api >"$logs/api.log" 2>&1 || true
     docker logs gelabber-previous-media >"$logs/media.log" 2>&1 || true
+  fi
+}
+# The end of every log, into the job's log.
+show_logs() {
+  container_logs
+  tail -n "$1" "$logs"/*.log >&2
+}
+stop() {
+  container_logs
+  if [ -n "$tag" ]; then
     docker rm -f gelabber-previous-api gelabber-previous-media >/dev/null 2>&1 || true
   fi
   kill "${pids[@]}" 2>/dev/null || true
@@ -46,6 +58,11 @@ if [ -n "$tag" ]; then
   docker run -d --name gelabber-previous-api --network host "${api_env[@]}" "$images/api:$tag" >/dev/null
   docker run -d --name gelabber-previous-media --network host \
     -e REDIS_URL -e MEDIA_ADDR -e MEDIA_ICE_BIND -e MEDIA_ADVERTISED_IP "$images/media:$tag" >/dev/null
+  # The call's people use that release's web client, so its call.mjs drives
+  # them (desktop/call/tests/live.rs), with the Chromium of its Playwright.
+  export GELABBER_PARITY_CALL_DIR="$web/scripts/parity"
+  GELABBER_PARITY_BROWSER=$(cd "$web" && node -e 'console.log(require("playwright").chromium.executablePath())')
+  export GELABBER_PARITY_BROWSER
 else
   "$root/backend/target/debug/gelabber-api" >"$logs/api.log" 2>&1 &
   pids+=($!)
@@ -60,14 +77,18 @@ deadline=$((SECONDS + 120))
 until curl -fsS "http://$API_ADDR/ready" >/dev/null 2>&1 && curl -fsS "$GELABBER_TEST_SERVER/" >/dev/null 2>&1; do
   if [ "$SECONDS" -ge "$deadline" ]; then
     echo "live-stack.sh: the API or Vite did not come up within 120 s" >&2
-    tail -n 50 "$logs"/*.log >&2
+    show_logs 50
     exit 1
   fi
   sleep 2
 done
 
 # The seed of that server's version, into the file the desktop tests read.
-(cd "$web" && node scripts/parity/seed.mjs "$GELABBER_TEST_SERVER" "$root/web/scripts/parity/fixture.json")
+if ! (cd "$web" && node scripts/parity/seed.mjs "$GELABBER_TEST_SERVER" "$root/web/scripts/parity/fixture.json"); then
+  echo "live-stack.sh: the seed failed" >&2
+  show_logs 50
+  exit 1
+fi
 status=0
 # The recorded fixtures stand for this tree's API (desktop/client/tests/models.rs).
 if [ -z "$tag" ]; then
@@ -75,6 +96,6 @@ if [ -z "$tag" ]; then
 fi
 "$root/desktop/live-tests.sh" || status=1
 if [ "$status" -ne 0 ]; then
-  tail -n 100 "$logs"/*.log >&2
+  show_logs 100
 fi
 exit "$status"

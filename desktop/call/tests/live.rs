@@ -20,8 +20,16 @@ use uuid::Uuid;
 /// The `sig` frames about Lena that her observer saw.
 type Seen = Arc<Mutex<Vec<(SigKind, Option<TrackKind>)>>>;
 
+/// This tree's web/scripts/parity, where the seed writes its fixture.
 fn parity_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/scripts/parity")
+}
+
+/// The folder of the call.mjs that drives the web client the stack serves:
+/// GELABBER_PARITY_CALL_DIR for the previous minor's release, whose own
+/// call.mjs knows its client (desktop/live-stack.sh), else this tree's.
+fn call_dir() -> PathBuf {
+    std::env::var_os("GELABBER_PARITY_CALL_DIR").map_or_else(parity_dir, PathBuf::from)
 }
 
 /// call.mjs, ended with SIGTERM so the browsers leave cleanly.
@@ -30,8 +38,9 @@ struct People(std::process::Child);
 impl People {
     fn start(spec: &[&str]) -> Self {
         let mut child = std::process::Command::new("node")
-            .current_dir(parity_dir().join("../.."))
-            .arg(parity_dir().join("call.mjs"))
+            .current_dir(call_dir().join("../.."))
+            .arg(call_dir().join("call.mjs"))
+            .env("GELABBER_PARITY_FIXTURE", parity_dir().join("fixture.json"))
             .args(spec)
             .stdout(std::process::Stdio::piped())
             .spawn()
