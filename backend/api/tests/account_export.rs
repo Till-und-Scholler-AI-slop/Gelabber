@@ -593,18 +593,15 @@ async fn the_ready_mail_goes_out_only_with_mail_on(pool: PgPool) {
     .unwrap();
     let res = bob.login("bob@example.com", PASSWORD).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    let before = mailer.outbox().len();
+    // The sign-up's confirmation mail goes out in the background: counted
+    // once it is out, not while it may still be on its way.
+    let before = common::settled_mails(&mailer).await.len();
     let res = request(&mut bob).await;
     assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     assert_eq!(res.body["mail"], true);
+    // `built` runs the export here, which spawns its mail before it ends.
     assert_eq!(built(&state, uuid(bob.user_id())).await, "ready");
-    for _ in 0..200 {
-        if mailer.outbox().len() > before {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let sent = mailer.outbox();
+    let sent = common::settled_mails(&mailer).await;
     assert_eq!(sent.len(), before + 1, "{sent:?}");
     let last = sent.last().unwrap();
     assert_eq!(last.to, "bob@example.com");

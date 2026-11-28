@@ -1254,7 +1254,8 @@ mod flows {
     /// Ada's inbox gets a reset link and sets a new password with it.
     async fn reset_by_mail(state: &AppState, mailer: &Mailer) {
         let mut owner = browser(state).await;
-        let before = mailer.outbox().len();
+        // Counted once earlier mails are out, so the last one is the reset.
+        let before = crate::common::settled_mails(mailer).await.len();
         let res = owner
             .send(
                 Method::POST,

@@ -176,7 +176,7 @@ async fn off_without_mail_or_without_operators(pool: PgPool) {
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(body["error"], "not_found", "{body}");
         assert_eq!(rows(&pool).await, 0);
-        assert!(mailer.outbox().is_empty());
+        assert!(common::settled_mails(&mailer).await.is_empty());
     }
 }
 
