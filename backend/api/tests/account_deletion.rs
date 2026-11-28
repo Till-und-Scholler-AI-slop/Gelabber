@@ -713,8 +713,8 @@ async fn a_server_created_during_the_deletion_is_never_left_behind(pool: PgPool)
             )
             .await
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(!create.is_finished(), "the create waits for the row");
+    // The create waits for the row.
+    common::lock_waiters(&pool, 1).await;
     deleting.rollback().await.unwrap();
     let res = create.await.unwrap();
     // Rolled back, so this time the account is alive and the server made.
@@ -749,7 +749,7 @@ async fn a_server_created_during_the_deletion_is_never_left_behind(pool: PgPool)
             )
             .await
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    common::lock_waiters(&pool, 1).await;
     deleting.commit().await.unwrap();
     let res = create.await.unwrap();
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
@@ -786,8 +786,8 @@ async fn a_deletion_waits_for_a_server_being_created(pool: PgPool) {
     deleter.csrf = ada.csrf.clone();
     let delete =
         tokio::spawn(async move { delete_me(&mut deleter, json!({ "password": PASSWORD })).await });
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(!delete.is_finished(), "the deletion waits for the row");
+    // The deletion waits for the row.
+    common::lock_waiters(&pool, 1).await;
     creating.commit().await.unwrap();
     let res = delete.await.unwrap();
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);

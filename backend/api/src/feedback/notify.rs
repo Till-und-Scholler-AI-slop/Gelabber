@@ -35,11 +35,11 @@ const EXCERPT_CHARS: usize = 300;
 
 /// A new entry reached the operators (created, or a visitor's confirmed).
 pub fn new_entry(state: &AppState, feedback_id: Uuid) {
-    if state.mail.is_none() {
+    let Some(mailer) = state.mail.clone() else {
         return;
-    }
+    };
     let state = state.clone();
-    tokio::spawn(async move {
+    mailer.spawn(async move {
         if let Err(err) = notice(&state, feedback_id, None).await {
             warn!(%feedback_id, kind = "feedback_notice", error = ?err, "feedback mail failed");
         }
@@ -49,11 +49,11 @@ pub fn new_entry(state: &AppState, feedback_id: Uuid) {
 /// The sender replied `text` in the thread of `feedback_id`. The notice
 /// quotes that reply, not whichever is newest when the task runs.
 pub fn person_reply(state: &AppState, feedback_id: Uuid, text: String) {
-    if state.mail.is_none() {
+    let Some(mailer) = state.mail.clone() else {
         return;
-    }
+    };
     let state = state.clone();
-    tokio::spawn(async move {
+    mailer.spawn(async move {
         if let Err(err) = notice(&state, feedback_id, Some(text)).await {
             warn!(%feedback_id, kind = "feedback_notice", error = ?err, "feedback mail failed");
         }
@@ -64,12 +64,20 @@ pub fn person_reply(state: &AppState, feedback_id: Uuid, text: String) {
 /// reply set the sender's unread mark, so one mail goes out per unread
 /// stretch.
 pub fn operator_reply(state: &AppState, message_id: Uuid, first_unread: bool) {
+    let mailer = state.mail.clone();
     let state = state.clone();
-    tokio::spawn(async move {
+    let task = async move {
         if let Err(err) = answer(&state, message_id, first_unread).await {
             warn!(%message_id, error = ?err, "feedback reply mail failed");
         }
-    });
+    };
+    // Without mail the task still records that none went out.
+    match mailer {
+        Some(mailer) => mailer.spawn(task),
+        None => {
+            tokio::spawn(task);
+        }
+    }
 }
 
 #[derive(FromRow)]
