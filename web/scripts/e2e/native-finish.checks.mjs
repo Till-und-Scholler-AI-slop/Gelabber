@@ -43,6 +43,7 @@ async function finishProbe(
         waitForFunction: async () => {},
         url: () => "http://127.0.0.1:5174/s/server-control/c/text-control",
         setDefaultTimeout() {},
+        on() {},
         isClosed: () => pageClosed,
         getByRole: () => locator,
         getByLabel: () => locator,
@@ -315,6 +316,7 @@ async function harnessProbe({ page: overrides = {}, fs = {}, process }) {
         waitForFunction: async () => {},
         url: () => "http://127.0.0.1:5174/s/server-control/c/text-control",
         setDefaultTimeout() {},
+        on() {},
         isClosed: () => false,
         getByRole: (role, options) => locator.getByRole(role, options),
         getByLabel: () => locator,
@@ -590,4 +592,55 @@ test("each fixture's row holds only its own steps", async () => {
       Array.from(steps, (s) => s.step),
       fixtureSteps,
     );
+});
+test("a fixture whose invite link does not come records the invite requests and the page", async () => {
+  // GEL-423: the request that makes the link failed, and the dialog said so.
+  const listeners = {};
+  const create = {
+    method: () => "POST",
+    url: () => "http://127.0.0.1:5174/api/servers/server-control/invites",
+  };
+  const h = await harnessProbe({
+    process: harnessProcess(),
+    page: {
+      on: (event, listener) => (listeners[event] = listener),
+      waitForFunction: async () => {
+        listeners.request(create);
+        listeners.response({ request: () => create, status: () => 500 });
+        const error = new Error(
+          "page.waitForFunction: Timeout 12000ms exceeded.",
+        );
+        error.name = "TimeoutError";
+        throw error;
+      },
+      evaluate: async (fn, arg) =>
+        fn.name === "invitePageState"
+          ? {
+              path: "/s/:id",
+              dialogs: [{ name: "E2E einladen", text: "Link fehlgeschlagen" }],
+              field: "missing",
+            }
+          : arg?.path === "/servers/server-control"
+            ? {
+                status: 200,
+                body: { channels: [{ id: "text-control", kind: "text" }] },
+              }
+            : { status: 200, body: { user: { id: "owned-control" } } },
+    },
+  });
+  const row = await h.setup("isolated-app-fixture", [], () => h.fixture());
+  assert.equal(row.status, "FAIL");
+  assert.equal(row.action, "page.waitForFunction");
+  const metrics = JSON.parse(JSON.stringify(row.metrics));
+  assert.deepEqual(
+    metrics.inviteRequests.map(({ method, status, failed }) => [
+      method,
+      status,
+      failed,
+    ]),
+    [["POST", 500, false]],
+  );
+  assert.equal(metrics.page.field, "missing");
+  assert.equal(metrics.page.dialogs[0].text, "Link fehlgeschlagen");
+  assert.equal(metrics.steps.at(-1).step, "invite-link");
 });

@@ -20,6 +20,8 @@ import {
   harnessSite,
   stepLog,
   timedOutAction,
+  inviteRequests,
+  invitePageState,
 } from "./harness.mjs";
 
 test("bytes and closed receivers cannot pass decoded-frame acceptance", () => {
@@ -412,4 +414,66 @@ test("every expected failure of a profile names one of its cases, its issue and 
       assert.match(entry.issue, /^(GEL-\d+|#\d+)$/, `${name}: ${id}`);
       assert.match(entry.reason, /^[a-z0-9-]+$/, `${name}: ${id}`);
     }
+});
+test("a failed invite step can say which invite requests went out and how they ended", () => {
+  const listeners = {};
+  const page = { on: (event, listener) => (listeners[event] = listener) };
+  let clock = 1_000;
+  const requests = inviteRequests(page, () => clock);
+  const request = (method, path) => ({
+    method: () => method,
+    url: () => `http://127.0.0.1:15186${path}`,
+  });
+  const create = request("POST", "/api/servers/s-1/invites");
+  const revoke = request("DELETE", "/api/invites/CODE");
+  const other = request("GET", "/api/servers/s-1");
+  clock = 1_200;
+  listeners.request(create);
+  listeners.request(other);
+  clock = 1_350;
+  listeners.request(revoke);
+  clock = 1_400;
+  listeners.response({ request: () => create, status: () => 201 });
+  clock = 1_500;
+  listeners.requestfailed(revoke);
+  assert.deepEqual(requests.list(), [
+    { method: "POST", sentAt: 200, status: 201, failed: false, doneAt: 400 },
+    { method: "DELETE", sentAt: 350, status: null, failed: true, doneAt: 500 },
+  ]);
+});
+test("a failed invite step can say what the page showed: dialogs and the link field", () => {
+  const dialog = (label, text) => ({
+    getAttribute: (name) => (name === "aria-label" ? label : null),
+    querySelector: () => null,
+    textContent: text,
+  });
+  const state = (field, dialogs) =>
+    runInContext(
+      `(${invitePageState.toString()})()`,
+      createContext({
+        location: {
+          pathname: "/s/0b6b8e1e-6f0a-4c8e-9d3a-2a6c0f1e9b7d/c/x",
+        },
+        document: {
+          querySelector: () => field,
+          querySelectorAll: () => dialogs,
+        },
+      }),
+    );
+  const failed = state(null, [
+    dialog(
+      "E2E einladen",
+      "  Einladungslink konnte nicht erstellt werden.\n Erneut versuchen ",
+    ),
+  ]);
+  assert.equal(failed.path, "/s/:id/c/x");
+  assert.equal(failed.field, "missing");
+  assert.deepEqual(JSON.parse(JSON.stringify(failed.dialogs)), [
+    {
+      name: "E2E einladen",
+      text: "Einladungslink konnte nicht erstellt werden. Erneut versuchen",
+    },
+  ]);
+  assert.equal(state({ value: "" }, []).field, "empty");
+  assert.equal(state({ value: "http://h/invite/ABC" }, []).field, "link");
 });

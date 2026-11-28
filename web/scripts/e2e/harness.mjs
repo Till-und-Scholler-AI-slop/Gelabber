@@ -1,4 +1,4 @@
-/* global process, console, window, document, fetch, URL */
+/* global process, console, window, document, fetch, URL, location */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -161,6 +161,63 @@ export async function api(actor, path, method = "GET", body, nativeBudget) {
   return nativeBudget === undefined
     ? actor.page.evaluate(request, args)
     : nativeEvaluate(actor, request, args, nativeBudget);
+}
+// The invite requests a page sends from now on: method, status or failure,
+// and when they were sent and answered, in ms from the start (GEL-423).
+export function inviteRequests(page, now = () => Date.now()) {
+  const since = now();
+  const entries = new Map();
+  const invite = (request) =>
+    /^\/api\/(servers\/[^/]+\/invites|invites\/[^/]+)$/.test(
+      new URL(request.url()).pathname,
+    );
+  page.on("request", (request) => {
+    if (invite(request))
+      entries.set(request, {
+        method: request.method(),
+        sentAt: now() - since,
+        status: null,
+        failed: false,
+        doneAt: null,
+      });
+  });
+  page.on("response", (response) => {
+    const entry = entries.get(response.request());
+    if (!entry) return;
+    entry.status = response.status();
+    entry.doneAt = now() - since;
+  });
+  page.on("requestfailed", (request) => {
+    const entry = entries.get(request);
+    if (!entry) return;
+    entry.failed = true;
+    entry.doneAt = now() - since;
+  });
+  return { list: () => [...entries.values()].map((entry) => ({ ...entry })) };
+}
+// What the owner's page shows when its invite link does not come: its path
+// (IDs masked), each dialog's name and text, and the link field's state.
+export function invitePageState() {
+  const field = document.querySelector('input[aria-label="Einladungslink"]');
+  return {
+    path: location.pathname.replace(/[0-9a-f-]{36}/g, ":id"),
+    dialogs: [
+      ...document.querySelectorAll('[role="dialog"],[role="alertdialog"]'),
+    ].map((dialog) => ({
+      name:
+        dialog.getAttribute("aria-label") ??
+        dialog.querySelector("h1,h2")?.textContent?.trim().slice(0, 80) ??
+        null,
+      text: dialog.textContent.trim().replace(/\s+/g, " ").slice(0, 300),
+    })),
+    field: !field
+      ? "missing"
+      : !field.value
+        ? "empty"
+        : field.value.includes("/invite/")
+          ? "link"
+          : "other",
+  };
 }
 export async function startHarness() {
   const base = safeTarget(
@@ -333,6 +390,9 @@ export async function startHarness() {
   async function buildFixture() {
     const owner = await actor("Publisher");
     let dialog;
+    // The owner's invite requests from here on, for a failed invite step
+    // (GEL-423).
+    const invites = inviteRequests(owner.page);
     await step("server-create", async () => {
       await owner.page
         .getByRole("button", { name: "Server erstellen", exact: true })
@@ -351,11 +411,23 @@ export async function startHarness() {
     const serverId = new URL(owner.page.url()).pathname.split("/")[2];
     const invite = await step("invite-link", async () => {
       dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
-      await owner.page.waitForFunction(() =>
-        document
-          .querySelector('input[aria-label="Einladungslink"]')
-          ?.value.includes("/invite/"),
-      );
+      try {
+        await owner.page.waitForFunction(() =>
+          document
+            .querySelector('input[aria-label="Einladungslink"]')
+            ?.value.includes("/invite/"),
+        );
+      } catch (error) {
+        if (error && typeof error === "object")
+          error.fixtureEvidence = {
+            inviteRequests: invites.list(),
+            page: await deadlineProbe(
+              () => owner.page.evaluate(invitePageState),
+              Date.now() + 2_000,
+            ).catch(() => null),
+          };
+        throw error;
+      }
       const link = await dialog
         .getByRole("textbox", { name: "Einladungslink" })
         .inputValue();
@@ -510,6 +582,8 @@ export async function startHarness() {
       // A failed fixture's step times sit where its PASS row has them.
       if (Array.isArray(error?.fixtureSteps))
         row.metrics = { ...row.metrics, steps: error.fixtureSteps };
+      if (error?.fixtureEvidence)
+        row.metrics = { ...row.metrics, ...error.fixtureEvidence };
     }
     if (isolation && !nativeInterfaceBlocked) {
       try {
