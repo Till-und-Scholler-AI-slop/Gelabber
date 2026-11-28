@@ -103,7 +103,7 @@ class PushPlan(unittest.TestCase):
         self.assertEqual(self.plan('push', self.commits[0]), ['faults=false', 'desktop=true'])
 
     def test_without_a_known_starting_point_both_run(self):
-        for event, before in (('push', '0' * 40), ('push', 'f' * 40), ('push', ''),
+        for event, before in (('push', '0' * 40), ('push', 'f' * 40), ('push', ''), ('push', 'HEAD'),
                               ('workflow_dispatch', self.commits[0]),
                               ('pull_request', self.commits[0])):
             with self.subTest(event=event, before=before):

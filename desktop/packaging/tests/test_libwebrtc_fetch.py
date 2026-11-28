@@ -3,9 +3,10 @@ the repository lists (desktop/native/scripts/libwebrtc-fetch.sh, GEL-470).
 
 The real script runs from a copy of desktop/native with its own list of
 SHA-256s, and a stand-in gh on PATH that serves the release's asset from a
-file (or holds none).
+file (or holds none): python3 -m unittest discover -s desktop/packaging/tests
 """
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -14,9 +15,10 @@ import tarfile
 import tempfile
 import unittest
 
-from prerequisites import requires
-
 ROOT = Path(__file__).resolve().parents[3]
+_SPEC = importlib.util.spec_from_file_location('prerequisites', ROOT / 'deploy/compose/tests/prerequisites.py')
+prerequisites = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(prerequisites)
 SCRIPT = ROOT / 'desktop/native/scripts/libwebrtc-fetch.sh'
 KEY = 'libwebrtc-linux-x64-0123abcd'
 
@@ -32,11 +34,13 @@ asset = os.environ.get('ASSET', '')
 if not asset:
     sys.exit('release asset not found')
 pattern, directory = args[args.index('--pattern') + 1], args[args.index('--dir') + 1]
+# Whatever gh prints must not reach $GITHUB_OUTPUT, which takes the script's stdout.
+print(f'downloading {pattern}')
 shutil.copy(asset, os.path.join(directory, pattern))
 '''
 
 
-@requires(shutil.which('zstd'), 'zstd')
+@prerequisites.requires(shutil.which('zstd'), 'zstd')
 class LibwebrtcFetch(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))

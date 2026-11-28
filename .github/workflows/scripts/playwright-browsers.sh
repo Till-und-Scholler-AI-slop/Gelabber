@@ -21,4 +21,6 @@ echo "System packages for $*: ${deps[*]:-none}"
 if [ "${#deps[@]}" -gt 0 ]; then
   "$root/.github/workflows/scripts/apt-install.sh" "${deps[@]}"
 fi
+# Again after the install: it exits 1 while a package is still missing.
+npx playwright install-deps --dry-run "$@"
 npx playwright install "$@"

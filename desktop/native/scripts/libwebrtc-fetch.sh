@@ -40,14 +40,15 @@ fi
 mkdir -p "$package"
 fetch=$(mktemp -d "$package/.fetch.XXXXXX")
 trap 'rm -rf "$fetch"' EXIT
-if ! gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$fetch"; then
+# Only found=... goes to stdout, which desktop-native.yml appends to $GITHUB_OUTPUT.
+if ! gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$fetch" >&2; then
   unavailable "The libwebrtc-packages release holds no $asset"
 fi
 if ! (cd "$fetch" && printf '%s\n' "$pin" | sha256sum --check --strict >&2); then
   echo "The stored $asset is not the one desktop/native/libwebrtc-packages.sha256 lists." >&2
   exit 1
 fi
-tar --zstd -xf "$fetch/$asset" -C "$package"
+tar --zstd -xf "$fetch/$asset" -C "$package" >&2
 if [ ! -f "$package/lib/libwebrtc.a" ]; then
   echo "The stored $asset holds no lib/libwebrtc.a." >&2
   exit 1
