@@ -535,43 +535,48 @@ describe("a create whose answer is rejected", () => {
   });
 });
 
+const role = (id: string): ServerRole => ({
+  id,
+  server_id: "s1",
+  name: id,
+  color: "blue",
+  permissions: [],
+  position: 0,
+  created_at,
+});
+
 describe.each([
   {
     kind: "channel",
     field: "channels",
     options: createChannelOptions,
     input: { name: "neu", kind: "text", category_id: null },
-    created: channel("neu"),
+    row: (id: string) => channel(id),
   },
   {
     kind: "category",
     field: "categories",
     options: createCategoryOptions,
     input: "Neu",
-    created: category("neu", "Neu"),
+    row: (id: string) => category(id),
   },
   {
     kind: "role",
     field: "roles",
     options: createRoleOptions,
     input: { name: "Neu", color: "blue" },
-    created: {
-      id: "neu",
-      server_id: "s1",
-      name: "Neu",
-      color: "blue",
-      permissions: [],
-      position: 0,
-      created_at,
-    } satisfies ServerRole,
+    row: role,
   },
 ] as const)(
   "a $kind created while the server is read again",
-  ({ field, options, input, created }) => {
-    // GEL-443: a channel only reaches its creator's sidebar through this
-    // create; no live event brings it. A read of the server that left before
-    // the create was saved answers without it.
+  ({ field, options, input, row }) => {
+    // GEL-443: a channel without roles and a category reach their creator's
+    // sidebar only through this create; no live event brings them. A read
+    // of the server that left before the create was saved answers without
+    // the new row.
     const rows = () => ids(cachedDetail()[field]);
+    const holding = (...created: string[]) =>
+      json({ ...detail, [field]: [...detail[field], ...created.map(row)] });
     const read = () =>
       client
         .fetchQuery({
@@ -579,13 +584,19 @@ describe.each([
           queryFn: ({ signal }) => getServer("s1", signal),
         })
         .catch(() => null);
-    let create: ReturnType<typeof held>;
+    const settled = () =>
+      vi.waitFor(() =>
+        expect(client.isFetching({ queryKey: keys().detail })).toBe(0),
+      );
+    let creates: ReturnType<typeof held>[];
     let reads: ReturnType<typeof held>[];
     beforeEach(() => {
-      create = held();
-      reads = [held(), held()];
+      creates = [held(), held()];
+      reads = [held(), held(), held()];
+      const posts = [...creates];
+      const gets = [...reads];
       respond = (_url, init) =>
-        init.method === "POST" ? create.promise : reads.shift()!.promise;
+        (init.method === "POST" ? posts : gets).shift()!.promise;
     });
     const start = () =>
       new MutationObserver(
@@ -593,42 +604,108 @@ describe.each([
         // One observer type for the three: each takes its own input.
         options(client, "s1") as never,
       ).mutate(input as never);
+    const optimistic = (count: number) =>
+      vi.waitFor(() =>
+        expect(rows()).toHaveLength(detail[field].length + count),
+      );
 
-    it("keeps it when a read answers without it before the create does", async () => {
+    it("keeps it when a read answers without it before the create does, then reads again", async () => {
       const before = rows();
+      const [first, again] = reads as [
+        ReturnType<typeof held>,
+        ReturnType<typeof held>,
+      ];
       const done = start();
-      await vi.waitFor(() => expect(rows()).toHaveLength(before.length + 1));
-      const first = reads[0]!;
+      await optimistic(1);
       const reading = read();
       first.resolve(json(detail));
       await reading;
       expect(rows()).toEqual(before);
 
-      create.resolve(json(created, 201));
+      creates[0]!.resolve(json(row("neu"), 201));
       await done;
       expect(rows()).toEqual([...before, "neu"]);
+      // That read may have known it deleted already: the next read decides.
+      again.resolve(json(detail));
+      await settled();
+      expect(rows()).toEqual(before);
     });
 
     it("keeps it when a read that left before it answers after it", async () => {
       const before = rows();
-      const done = start();
-      await vi.waitFor(() => expect(rows()).toHaveLength(before.length + 1));
       const [stale, fresh] = reads as [
         ReturnType<typeof held>,
         ReturnType<typeof held>,
       ];
+      const done = start();
+      await optimistic(1);
       const reading = read();
-      create.resolve(json(created, 201));
+      creates[0]!.resolve(json(row("neu"), 201));
       await done;
       expect(rows()).toEqual([...before, "neu"]);
 
       stale.resolve(json(detail));
-      fresh.resolve(json({ ...detail, [field]: [...detail[field], created] }));
+      fresh.resolve(holding("neu"));
       await reading;
-      await vi.waitFor(() =>
-        expect(client.isFetching({ queryKey: keys().detail })).toBe(0),
-      );
+      await settled();
       expect(rows()).toEqual([...before, "neu"]);
+    });
+
+    it("shows it once when a read that holds it answers before the create does", async () => {
+      const before = rows();
+      const [first, again] = reads as [
+        ReturnType<typeof held>,
+        ReturnType<typeof held>,
+      ];
+      const done = start();
+      await optimistic(1);
+      const reading = read();
+      first.resolve(holding("neu"));
+      await reading;
+      expect(rows()).toEqual([...before, "neu"]);
+
+      creates[0]!.resolve(json(row("neu"), 201));
+      await done;
+      expect(rows()).toEqual([...before, "neu"]);
+      again.resolve(holding("neu"));
+      await settled();
+      expect(rows()).toEqual([...before, "neu"]);
+    });
+
+    it("keeps both of two creates in flight when a read answers without them", async () => {
+      const before = rows();
+      const first = start();
+      const second = start();
+      await optimistic(2);
+      const reading = read();
+      reads[0]!.resolve(json(detail));
+      await reading;
+      expect(rows()).toEqual(before);
+
+      creates[0]!.resolve(json(row("neu"), 201));
+      creates[1]!.resolve(json(row("neu2"), 201));
+      await Promise.all([first, second]);
+      expect(rows()).toEqual([...before, "neu", "neu2"]);
+      reads[1]!.resolve(holding("neu", "neu2"));
+      reads[2]!.resolve(holding("neu", "neu2"));
+      await settled();
+      expect(rows()).toEqual([...before, "neu", "neu2"]);
+    });
+
+    it("adds nothing when the create fails after a read dropped its optimistic row", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      clearToasts();
+      const before = rows();
+      const done = start().catch(() => null);
+      await optimistic(1);
+      const reading = read();
+      reads[0]!.resolve(json(detail));
+      await reading;
+
+      creates[0]!.resolve(failure());
+      await done;
+      expect(rows()).toEqual(before);
+      expect(client.isFetching({ queryKey: keys().detail })).toBe(0);
     });
   },
 );

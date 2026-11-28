@@ -330,13 +330,16 @@ const byId = (row: { id: string }) => row.id;
 
 /**
  * Puts a created category, channel or role where its optimistic row was.
- * A read of the server can answer while the create is on its way, and
- * nothing else brings the new row: a channel without roles comes with no
- * live event, and the gateway reads every server again whenever it
- * connects. A read that answered in between replaced the optimistic row,
- * so the created one is added if it is still missing; a read still in
- * flight may have left before the create was saved, so it is made again
- * (GEL-443).
+ * A read of the server can answer while the create is on its way: the
+ * gateway reads every server again whenever it connects. A category and a
+ * channel without roles come with no live event, so nothing else brings
+ * them; a role and a channel with roles are followed by the access event,
+ * which reads the server again, and are settled the same way in case that
+ * event is missed. A read that answered in between replaced the optimistic
+ * row: the created one is added if that read did not hold it, and the
+ * server is read again, since that read may also have known it deleted. A
+ * read still in flight may have left before the create was saved: it is
+ * made again (GEL-443).
  */
 function settleCreated<
   F extends "categories" | "channels" | "roles",
@@ -349,11 +352,13 @@ function settleCreated<
   created: T,
   patch: typeof patchDetail = patchDetail,
 ): void {
+  let replaced = false;
   patch(client, ctx.userId, ctx.generation, serverId, (detail) => {
     const rows = detail[field] as T[];
+    replaced = !rows.some((row) => row.id === ctx.tmp);
     return {
       ...detail,
-      [field]: rows.some((row) => row.id === ctx.tmp)
+      [field]: !replaced
         ? replaceRow(rows, ctx.tmp, created)
         : rows.some((row) => row.id === created.id)
           ? rows
@@ -361,7 +366,7 @@ function settleCreated<
     };
   });
   const queryKey = serverKeys.detail(ctx.userId, ctx.generation, serverId);
-  if (client.isFetching({ queryKey }) > 0)
+  if (replaced || client.isFetching({ queryKey }) > 0)
     void client.invalidateQueries(
       { queryKey, refetchType: "all" },
       { cancelRefetch: true, throwOnError: false },
