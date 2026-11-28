@@ -1,4 +1,4 @@
-/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame, WheelEvent */
+/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame */
 // Local browser integration for scoped search navigation; no physical-device claim.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -270,25 +270,16 @@ try {
     (state) => state.held && state.gap <= 1,
     "canonical-end-before-native-up",
   );
-  // The reader leaves the end. A wheel moves 25 px here and 85 to 105 px on
-  // a CI runner, too far for this place, and a scrollbar-like jump keeps the
-  // list pinned when its height changed since its last recorded position
-  // (scrollEndIntent), so it is pulled back to the end: GEL-461, a defect a
-  // scrollbar user can hit too. Until it is fixed the intent goes the way
-  // the list reads it, as an upward wheel that moves nothing; the wheel goes
-  // with the fix.
-  const leaveEnd = (offset) =>
-    log
-      .evaluate((el) =>
-        el.dispatchEvent(
-          new WheelEvent("wheel", { deltaY: -1, bubbles: true }),
-        ),
-      )
-      .then(() => settleList(offset));
-  await until(
-    () => leaveEnd(40),
-    (state) => state.held && state.gap > 16 && state.gap < 64,
-    "history-place-before-search",
+  // The reader leaves the end with a plain move, as a scrollbar does: a
+  // wheel moves 25 px here and 85 to 105 px on a CI runner, too far for this
+  // place. The list must stay where the move put it, also when its height
+  // changed at the same time (GEL-461).
+  const leaveEnd = (offset) => settleList(offset);
+  // One move, no retry: a list pulled back to its end fails here.
+  const near = await leaveEnd(40);
+  assert.ok(
+    near.held && near.gap > 16 && near.gap < 64,
+    `history-place-before-search: ${JSON.stringify(near)}`,
   );
   const beforeUnread = (await channelState(member, channel)).unread_count;
   const search = async (value) => {
@@ -461,11 +452,11 @@ try {
     await member.page.getByText(marker, { exact: true }).waitFor();
     // Up from the end, as a reader leaves it, and really in the history:
     // a list pulled back to its end would make the check below pass on
-    // nothing (GEL-461, see the fixture above).
-    await until(
-      () => leaveEnd(200),
-      (state) => state.held && state.gap > 150,
-      "place-reader-not-in-history",
+    // nothing (GEL-461).
+    const away = await leaveEnd(200);
+    assert.ok(
+      away.held && away.gap > 150,
+      `place-reader-not-in-history: ${JSON.stringify(away)}`,
     );
     const before = await place(member.page);
     await search(marker);

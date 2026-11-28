@@ -27,6 +27,33 @@ describe("message-list reading intent", () => {
     expect(scrollEndIntent(true, at(2160), at(2300, 2800))).toBe(true);
   });
 
+  it("keeps a reader at the end when rows grow under them without a move", () => {
+    expect(scrollEndIntent(true, at(2160), at(2160, 2800))).toBe(true);
+  });
+
+  it("knows the list is at its end after a move down to it, though its height changed (GEL-456)", () => {
+    // From the top of the history to the end while rows were measured: the
+    // newest is on screen and must count as read.
+    expect(scrollEndIntent(false, at(500), at(2360, 2800))).toBe(true);
+    // Short of the end it stays in the history, as during measurements.
+    expect(scrollEndIntent(false, at(500), at(2300, 2800))).toBe(false);
+  });
+
+  it("unpins a move up from the end that the layout cannot make, though the height changed (GEL-461)", () => {
+    // Up from the end while a row grew, ending in the history: a clamp ends
+    // at the end, and a row measured above a pinned list moves nothing.
+    expect(scrollEndIntent(true, at(2160), at(1900, 2800))).toBe(false);
+    // A clamp to the end keeps the reader there.
+    expect(scrollEndIntent(true, at(2160), at(2100, 2600, 500))).toBe(true);
+  });
+
+  it("takes a move the reader made with the scrollbar as theirs, though the height changed", () => {
+    // Down to near the end, not quite at it: pinned again, as with a wheel.
+    expect(scrollEndIntent(false, at(1500), at(2300, 2800), true)).toBe(true);
+    // Without the scrollbar that is a measurement, and stays in the history.
+    expect(scrollEndIntent(false, at(1500), at(2300, 2800))).toBe(false);
+  });
+
   it("unpins when scrolling up and repins only after scrolling down near end", () => {
     expect(scrollEndIntent(true, at(2160), at(2140))).toBe(false);
     expect(scrollEndIntent(false, at(1700), at(1900))).toBe(false);

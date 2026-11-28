@@ -68,6 +68,10 @@ export function useMessageScroll({
   const contentRef = useRef<HTMLDivElement>(null);
   const lastPosition = useRef<ScrollPosition | null>(null);
   const touchY = useRef<number | null>(null);
+  // A press on the list itself, not a row: its scrollbar (track or thumb).
+  // Scrolls while it lasts are the reader's moves, whatever the layout did
+  // at the same time; a layout shift raises no pointer event.
+  const scrollbarHeld = useRef(false);
   const lastRequest = useRef(latestRequest);
   // Older history was asked for; its rows are prepended above `pin`.
   const olderAnchor = useRef(false);
@@ -459,7 +463,24 @@ export function useMessageScroll({
       },
       onPointerDownCapture: (event: PointerEvent<HTMLDivElement>) => {
         // On the list itself, not a row: its scrollbar.
-        if (event.target === event.currentTarget) release();
+        if (event.target !== event.currentTarget) return;
+        release();
+        scrollbarHeld.current = true;
+        const view = event.currentTarget.ownerDocument.defaultView;
+        if (!view) return;
+        const done = () => {
+          view.removeEventListener("pointerup", done, true);
+          view.removeEventListener("pointercancel", done, true);
+          // A track click's jump lands in the next frame's scroll steps,
+          // before that frame's animation callbacks: count it too.
+          view.requestAnimationFrame(() =>
+            view.requestAnimationFrame(() => {
+              scrollbarHeld.current = false;
+            }),
+          );
+        };
+        view.addEventListener("pointerup", done, true);
+        view.addEventListener("pointercancel", done, true);
       },
       onScrollCapture: (event: UIEvent<HTMLDivElement>) => {
         if (event.target !== event.currentTarget) return;
@@ -476,6 +497,7 @@ export function useMessageScroll({
             height: element.scrollHeight,
             viewport: element.clientHeight,
           },
+          scrollbarHeld.current,
         );
         updateLatest(false);
       },
