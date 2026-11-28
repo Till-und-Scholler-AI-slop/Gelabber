@@ -165,8 +165,14 @@ export async function api(actor, path, method = "GET", body, nativeBudget) {
 // The requests a page sends from now on that `pick` keeps: method, status
 // or failure, and when they were sent and answered, in ms from the start,
 // with what `pick` adds (an object; null leaves the request out). `stop`
-// ends the recording.
-export function requestLog(page, pick, now = () => Date.now()) {
+// ends the recording. `answered` sees each answer with its entry; `view`
+// turns an entry into what `list` gives.
+export function requestLog(
+  page,
+  pick,
+  now = () => Date.now(),
+  { answered = () => {}, view = (entry) => ({ ...entry }) } = {},
+) {
   const since = now();
   const entries = new Map();
   const listeners = {
@@ -187,6 +193,7 @@ export function requestLog(page, pick, now = () => Date.now()) {
       if (!entry) return;
       entry.status = response.status();
       entry.doneAt = now() - since;
+      answered(response, entry);
     },
     requestfailed: (request) => {
       const entry = entries.get(request);
@@ -198,7 +205,7 @@ export function requestLog(page, pick, now = () => Date.now()) {
   for (const [event, listener] of Object.entries(listeners))
     page.on(event, listener);
   return {
-    list: () => [...entries.values()].map((entry) => ({ ...entry })),
+    list: () => [...entries.values()].map(view),
     stop: () => {
       for (const [event, listener] of Object.entries(listeners))
         page.off?.(event, listener);
@@ -220,8 +227,17 @@ export function inviteRequests(page, now = () => Date.now()) {
 }
 // A server's and its chat's requests, by path with IDs masked: the server
 // and its channels, a channel's messages and uploads, one message
-// (GEL-443).
+// (GEL-443). Each answered read of the server also says how many channels
+// it held and whether it held a channel this page created, never which:
+// a read without the created channel that answers after the create is what
+// drops it from the sidebar.
 export function chatRequests(page, now = () => Date.now()) {
+  const created = new Set();
+  const reads = new WeakMap();
+  const body = (response) =>
+    Promise.resolve()
+      .then(() => response.json())
+      .catch(() => null);
   return requestLog(
     page,
     (request) => {
@@ -233,6 +249,36 @@ export function chatRequests(page, now = () => Date.now()) {
         : null;
     },
     now,
+    {
+      answered: (response, entry) => {
+        if (entry.status !== 200 && entry.status !== 201) return;
+        if (
+          entry.method === "POST" &&
+          entry.path === "/api/servers/:id/channels"
+        )
+          void body(response).then((channel) => {
+            if (typeof channel?.id === "string") created.add(channel.id);
+          });
+        if (entry.method === "GET" && entry.path === "/api/servers/:id")
+          void body(response).then((server) => {
+            if (Array.isArray(server?.channels))
+              reads.set(
+                entry,
+                new Set(server.channels.map((channel) => channel.id)),
+              );
+          });
+      },
+      view: (entry) => {
+        const channels = reads.get(entry);
+        return channels
+          ? {
+              ...entry,
+              channels: channels.size,
+              holdsCreated: [...created].some((id) => channels.has(id)),
+            }
+          : { ...entry };
+      },
+    },
   );
 }
 // What the owner's page shows when its invite link does not come: its path
@@ -669,7 +715,8 @@ export async function startHarness() {
       if (Array.isArray(error?.fixtureSteps))
         row.metrics = { ...row.metrics, steps: error.fixtureSteps };
       // What a fixture or a scenario found out about its failure.
-      if (error?.evidence) row.metrics = { ...row.metrics, ...error.evidence };
+      // Never over a metric of the scenario's own.
+      if (error?.evidence) row.metrics = { ...error.evidence, ...row.metrics };
     } finally {
       caseSteps = null;
     }

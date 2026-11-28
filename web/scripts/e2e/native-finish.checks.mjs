@@ -379,7 +379,10 @@ async function harnessProbe({ page: overrides = {}, fs = {}, process }) {
     );
   });
   await source.evaluate();
-  return source.namespace.startHarness();
+  const h = await source.namespace.startHarness();
+  // The harness module itself, for a check that throws its CheckFailure.
+  h.module = source.namespace;
+  return h;
 }
 const harnessProcess = () => {
   const listeners = {};
@@ -663,7 +666,7 @@ test("a case that runs out of time lists its steps, the failed one last, and its
         throw timeout();
       });
     } catch (error) {
-      error.evidence = { requests: [{ method: "POST", status: null }] };
+      error.evidence = { chatRequests: [{ method: "POST", status: null }] };
       throw error;
     }
   });
@@ -675,7 +678,21 @@ test("a case that runs out of time lists its steps, the failed one last, and its
     ["first", "inner", "second", "runs-out"],
   );
   for (const s of metrics.steps) assert.ok(s.ms >= 0, s.step);
-  assert.deepEqual(metrics.requests, [{ method: "POST", status: null }]);
+  assert.deepEqual(metrics.chatRequests, [{ method: "POST", status: null }]);
+  // Evidence never replaces a metric of the scenario's own: a check's
+  // `requests` (paging-error-data-preservation counts its failed reads).
+  const own = await h.run("own-metric-control", [], async () => {
+    try {
+      h.module.check(false, "paging-failure-erased-data-or-auto-looped", {
+        requests: 3,
+      });
+    } catch (error) {
+      error.evidence = { requests: [], chatRequests: [] };
+      throw error;
+    }
+  });
+  assert.equal(own.metrics.requests, 3);
+  assert.deepEqual(own.metrics.chatRequests, []);
   // A case without steps keeps the row it had; a step outside a case runs.
   const plain = await h.run("plain-control", [], async () => ({ kept: 1 }));
   assert.deepEqual(plain.metrics, { kept: 1 });

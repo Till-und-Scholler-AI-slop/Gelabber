@@ -70,9 +70,13 @@ async function withEvidence(f, task) {
           () => f[who].page.evaluate(chatPageState),
           Date.now() + 2_000,
         ).catch(() => null);
+      // Named apart from a scenario's own metrics (`requests` is one).
       error.evidence = {
-        requests: { owner: logs.owner.list(), member: logs.member.list() },
-        pages,
+        chatRequests: {
+          owner: logs.owner.list(),
+          member: logs.member.list(),
+        },
+        chatPages: pages,
       };
     }
     throw error;

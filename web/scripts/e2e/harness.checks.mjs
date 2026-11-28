@@ -12,6 +12,7 @@ import {
   until,
 } from "./harness.mjs";
 import { decoded, interrupt } from "./media.mjs";
+import { chatFaultScenarios } from "./chat-faults.mjs";
 import { profiles } from "./profiles.mjs";
 import { instrument } from "./probe.mjs";
 import { createContext, runInContext } from "node:vm";
@@ -487,7 +488,7 @@ test("a failed invite step can say what the page showed: dialogs and the link fi
   assert.equal(state({ value: "http://h/invite/ABC" }, []).field, "link");
 });
 
-test("a chat fault's request log keeps the server's and the chat's requests, IDs masked, until it stops", () => {
+test("a chat fault's request log keeps the server's and the chat's requests, IDs masked, until it stops", async () => {
   const listeners = new Map();
   const page = {
     on: (event, listener) => listeners.set(event, listener),
@@ -511,29 +512,112 @@ test("a chat fault's request log keeps the server's and the chat's requests, IDs
   // Pictures and the session are not the chat's.
   listeners.get("request")(request("GET", `/attachments/${id}`));
   listeners.get("request")(request("GET", "/auth/session"));
+  const answer = (r, status, body) =>
+    listeners.get("response")({
+      request: () => r,
+      status: () => status,
+      json: async () => body,
+    });
   clock = 250;
-  listeners.get("response")({ request: () => create, status: () => 201 });
+  answer(create, 201, { id: "created-channel" });
   clock = 400;
   listeners.get("requestfailed")(send);
+  // A read without the created channel, and one with it.
+  const before = request("GET", `/servers/${id}`);
+  listeners.get("request")(before);
+  answer(detail, 200, { channels: [{ id: "a" }, { id: "b" }] });
+  answer(before, 200, { channels: [{ id: "a" }, { id: "created-channel" }] });
+  await new Promise(setImmediate);
   assert.deepEqual(
     requests
       .list()
-      .map(({ path, method, status, failed, doneAt }) => [
+      .map(({ path, method, status, failed, channels, holdsCreated }) => [
         method,
         path,
         status,
         failed,
-        doneAt,
+        channels,
+        holdsCreated,
       ]),
     [
-      ["GET", "/api/servers/:id", null, false, null],
-      ["POST", "/api/servers/:id/channels", 201, false, 250],
-      ["POST", "/api/channels/:id/messages", null, true, 400],
-      ["PUT", "/api/attachments/:id/upload", null, false, null],
+      ["GET", "/api/servers/:id", 200, false, 2, false],
+      ["POST", "/api/servers/:id/channels", 201, false, undefined, undefined],
+      ["POST", "/api/channels/:id/messages", null, true, undefined, undefined],
+      ["PUT", "/api/attachments/:id/upload", null, false, undefined, undefined],
+      ["GET", "/api/servers/:id", 200, false, 2, true],
     ],
   );
+  // Counts and a yes or no only: no channel's ID leaves the page.
+  assert.ok(!JSON.stringify(requests.list()).includes("created-channel"));
   requests.stop();
   assert.equal(listeners.size, 0);
+});
+
+test("a chat fault scenario that fails records both pages' requests and screens, and stops recording", async () => {
+  const id = "0b6b8e1e-6f0a-4c8e-9d3a-2a6c0f1e9b7d";
+  const page = (who) => {
+    const listeners = new Map();
+    return {
+      listeners,
+      on: (event, listener) => listeners.set(event, listener),
+      off: (event, listener) => {
+        if (listeners.get(event) === listener) listeners.delete(event);
+      },
+      // The owner's first page: the server is read, then it runs out.
+      goto: async () => {
+        const read = {
+          method: () => "GET",
+          url: () => `http://127.0.0.1:15186/api/servers/${id}`,
+        };
+        listeners.get("request")(read);
+        listeners.get("response")({
+          request: () => read,
+          status: () => 200,
+          json: async () => ({ channels: [{ id: "a" }] }),
+        });
+        const error = new Error("page.goto: Timeout 12000ms exceeded.");
+        error.name = "TimeoutError";
+        throw error;
+      },
+      evaluate: async () => ({ path: `/s/:id/${who}` }),
+    };
+  };
+  const f = {
+    owner: { page: page("owner") },
+    member: { page: page("member") },
+    textPath: "/s/x/c/y",
+    base: "http://127.0.0.1:15186",
+  };
+  let failure;
+  await chatFaultScenarios(
+    {
+      step: (_name, action) => action(),
+      run: async (scenario, _predecessors, task) => {
+        if (scenario !== "two-parallel-sends-navigation-retry") return;
+        await task().catch((error) => {
+          failure = error;
+        });
+      },
+    },
+    f,
+  );
+  assert.equal(failure?.name, "TimeoutError");
+  const evidence = JSON.parse(JSON.stringify(failure.evidence));
+  assert.deepEqual(
+    evidence.chatRequests.owner.map(({ method, path, channels }) => [
+      method,
+      path,
+      channels,
+    ]),
+    [["GET", "/api/servers/:id", 1]],
+  );
+  assert.deepEqual(evidence.chatRequests.member, []);
+  assert.deepEqual(evidence.chatPages, {
+    owner: { path: "/s/:id/owner" },
+    member: { path: "/s/:id/member" },
+  });
+  for (const who of [f.owner, f.member])
+    assert.equal(who.page.listeners.size, 0);
 });
 
 test("a chat fault can say what the page showed: pending channels and each message's state", () => {
