@@ -658,6 +658,10 @@ async fn revoked_rpc_waits_for_confirmed_native_stop() {
     tokio::pin!(rpc);
     // The operation gate represents an in-flight native operation. A revoked
     // RPC must not finish while that operation still prevents confirmed stop.
+    // A short window on purpose: the gate is a mutex whose waiters cannot be
+    // seen, so nothing shows the RPC has reached it. A right RPC cannot end
+    // while the test holds the gate; the window only gives a wrong one the
+    // time to end.
     assert!(
         tokio::time::timeout(Duration::from_millis(10), &mut rpc)
             .await
@@ -958,21 +962,26 @@ async fn worker_exit_seen_by_a_heartbeat_tick_first_still_closes_its_rooms() {
     let engines = sfu.engines.lock().unwrap().clone();
     let (channel, peer, mut rx) = seat(&sfu, &engines[0]).await;
     // `on_dead`'s order: `lost` first, the notification afterwards. A tick
-    // in between must not end the supervisor without handling the loss.
+    // in between must not end the supervisor without handling the loss:
+    // before the notification, only a tick can tell the peer `gone`.
     engines[0].lost.store(true, Ordering::SeqCst);
-    tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
-    engines[0].exited.notify_one();
-    let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    let frame = tokio::time::timeout(HEARTBEAT_INTERVAL * 5, rx.recv())
         .await
-        .expect("the supervisor handles the loss")
+        .expect("a heartbeat tick handles the loss")
         .unwrap();
     assert!(
         matches!(&frame, ServerFrame::Err { e, .. } if e == "gone"),
         "{frame:?}"
     );
     assert!(!sfu.peer_present(peer.id, channel).await);
-    // Handled once although both the tick and the notification saw it.
-    tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
+    // The tick ended the supervisor: nobody waits on the exit any more, so
+    // the notification stays stored instead of being handled a second time.
+    engines[0].exited.notify_one();
+    assert!(
+        futures_util::FutureExt::now_or_never(engines[0].exited.notified()).is_some(),
+        "the supervisor still waits on the exit"
+    );
+    // `engine_lost` counts the failure before it tells the peers `gone`.
     assert_eq!(sfu.counters.worker_failures.load(Ordering::Relaxed), 1);
     assert!(engines[0].down_for() > Duration::ZERO);
     let metrics = sfu.metrics_text();
