@@ -83,9 +83,13 @@ const check = async (name, run) => {
           2,
         ),
       );
-    // The next checks still run; settle() at the end decides.
-    failures.push({ name, message: error.message });
-    console.log(`FAIL ${name}: ${error.message}`);
+    // The next checks still run; settle() at the end decides. A wait that
+    // ran out (until) says what it saw last, and what else it was given.
+    const message = error.metrics
+      ? `${error.message} ${JSON.stringify(error.metrics)}`
+      : error.message;
+    failures.push({ name, message });
+    console.log(`FAIL ${name}: ${message}`);
     return;
   }
   checks.push(name);
@@ -213,6 +217,7 @@ try {
     .first()
     .click();
   const log = member.page.getByRole("log", { name: "Nachrichten" });
+  const hiddenLog = member.page.locator('[role="log"]');
   await log.waitFor();
   await until(
     () => log.getAttribute("aria-busy"),
@@ -242,15 +247,20 @@ try {
     .waitFor();
   // Places the list `offset` px from its end, waits until its height, visible
   // height and position hold for 5 frames, and reads where it stands.
-  const settleList = (offsetFromEnd) =>
-    log.evaluate(async (el, offset) => {
+  // `list` is `log`, or `hiddenLog` while the search context hides it: a
+  // hidden list is in no accessibility tree, so `log` does not find it.
+  const settleList = (offsetFromEnd, list = log) =>
+    list.evaluate(async (el, offset) => {
       const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
       let still = 0;
       let last = state();
       // The composer may still be growing or shrinking (its animation) when
       // the list is placed: a list the app left where it was put, whose gap
       // the layout changed around it, is placed again, at most three times.
-      // A list the app moved is not, and fails where it is used. A move down
+      // So is a list the browser clamped to its end because it grew taller
+      // than the gap: the app did not move it. A list the app moved is not,
+      // and fails where it is used (a pull back to the end leaves the list's
+      // visible height as it was). A move down
       // that ends near the end is the reader coming back to it (the list
       // pins), so a place below the current one is reached as the first
       // was: from the end, upwards.
@@ -275,6 +285,7 @@ try {
         }
         el.scrollTop = el.scrollHeight - el.clientHeight - offset;
         const placed = el.scrollTop;
+        const placedVisible = el.clientHeight;
         still = 0;
         last = state();
         // At most 2 s of frames: a list that never holds says so.
@@ -285,8 +296,9 @@ try {
           last = now;
         }
         const [height, visible, top] = last;
-        if (top !== placed || Math.abs(height - top - visible - offset) <= 2)
-          break;
+        const gap = height - top - visible;
+        const clamped = visible > placedVisible && gap <= 1;
+        if ((top !== placed && !clamped) || Math.abs(gap - offset) <= 2) break;
       }
       const [height, visible, top] = last;
       return {
@@ -306,7 +318,7 @@ try {
   // wheel moves 25 px here and 85 to 105 px on a CI runner, too far for this
   // place. The list must stay where the move put it, also when its height
   // changed at the same time (GEL-461).
-  const leaveEnd = (offset) => settleList(offset);
+  const leaveEnd = (offset, list) => settleList(offset, list);
   // One move, no retry: a list pulled back to its end fails here.
   const near = await leaveEnd(40);
   assert.ok(
@@ -382,15 +394,38 @@ try {
   await check(
     "touch opens the same old target at a phone viewport",
     async () => {
+      // The reader in the history behind the context, a little above the
+      // end: since the fixture placed them, the search above the list made
+      // it 80 px shorter and they kept their place, 120 px from the end. The
+      // phone viewport makes the list taller by 126 px or more, so from 40
+      // px it is clamped to its end, a move the reader did not make; from
+      // 120 px it was only clamped when the list grew enough. Reads wait
+      // while the search is open, so the way to the end reads nothing.
+      await until(
+        () => settleList(0, hiddenLog),
+        (state) => state.held && state.gap <= 1,
+        "hidden-history-end-before-phone",
+      );
+      const before = await leaveEnd(40, hiddenLog);
+      assert.ok(
+        before.held && before.gap > 16 && before.gap < 64,
+        `hidden-history-place-before-phone: ${JSON.stringify(before)}`,
+      );
       await member.page.setViewportSize({ width: 390, height: 844 });
       await until(
         () =>
-          member.page
-            .locator('[role="log"]')
-            .evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight),
-        (distance) => distance <= 16,
+          hiddenLog.evaluate((el) => ({
+            gap: el.scrollHeight - el.scrollTop - el.clientHeight,
+            height: el.scrollHeight,
+            visible: el.clientHeight,
+            top: el.scrollTop,
+          })),
+        (list) => list.gap <= 16,
         "larger-viewport-clamps-hidden-history",
-      );
+      ).catch((error) => {
+        error.metrics = { ...error.metrics, before };
+        throw error;
+      });
       await contextRegion()
         .getByRole("button", { name: "Zurück zu den Treffern" })
         .tap();
