@@ -37,6 +37,15 @@ describe("message-list reading intent", () => {
     expect(scrollEndIntent(false, at(500), at(2360, 2800))).toBe(true);
     // Short of the end it stays in the history, as during measurements.
     expect(scrollEndIntent(false, at(500), at(2300, 2800))).toBe(false);
+    // To the end while the composer grew: 2 px left in that frame is the
+    // end, as for "at latest" (within 16 px).
+    expect(
+      scrollEndIntent(
+        false,
+        { top: 0, height: 1203, viewport: 504 },
+        { top: 699, height: 1203, viewport: 502 },
+      ),
+    ).toBe(true);
   });
 
   it("unpins a move up from the end that the layout cannot make, though the height changed (GEL-461)", () => {

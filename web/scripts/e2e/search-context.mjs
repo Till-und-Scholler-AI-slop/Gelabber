@@ -240,21 +240,32 @@ try {
     .last()
     .getByText("context-draft.txt", { exact: true })
     .waitFor();
-  // Sets the list's position (when given), waits until its height, visible
+  // Places the list `offset` px from its end, waits until its height, visible
   // height and position hold for 5 frames, and reads where it stands.
   const settleList = (offsetFromEnd) =>
     log.evaluate(async (el, offset) => {
-      if (offset !== null)
-        el.scrollTop = el.scrollHeight - el.clientHeight - offset;
       const state = () => [el.scrollHeight, el.clientHeight, el.scrollTop];
       let still = 0;
       let last = state();
-      // At most 2 s of frames: a list that never holds says so.
-      for (let frame = 0; still < 5 && frame < 120; frame++) {
-        await new Promise(requestAnimationFrame);
-        const now = state();
-        still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
-        last = now;
+      // The composer may still be growing or shrinking (its animation) when
+      // the list is placed: a list the app left where it was put, whose gap
+      // the layout changed around it, is placed again, at most three times.
+      // A list the app moved is not, and fails where it is used.
+      for (let placement = 0; placement < 3; placement++) {
+        el.scrollTop = el.scrollHeight - el.clientHeight - offset;
+        const placed = el.scrollTop;
+        still = 0;
+        last = state();
+        // At most 2 s of frames: a list that never holds says so.
+        for (let frame = 0; still < 5 && frame < 120; frame++) {
+          await new Promise(requestAnimationFrame);
+          const now = state();
+          still = now.every((v, i) => v === last[i]) ? still + 1 : 0;
+          last = now;
+        }
+        const [height, visible, top] = last;
+        if (top !== placed || Math.abs(height - top - visible - offset) <= 2)
+          break;
       }
       const [height, visible, top] = last;
       return {

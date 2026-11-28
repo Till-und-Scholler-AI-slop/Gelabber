@@ -7,6 +7,9 @@ export type ScrollPosition = {
 export const endDistance = (position: ScrollPosition) =>
   position.height - position.top - position.viewport;
 
+/** Within this many pixels the list is at its end ("at latest"). */
+export const AT_END = 16;
+
 /**
  * Whether the list is pinned to its end after a scroll from `previous` to
  * `current`. A scroll in which the height or the visible height changed may
@@ -19,8 +22,9 @@ export const endDistance = (position: ScrollPosition) =>
  * - moves the layout cannot make. A clamp leaves the list exactly at its
  *   end; a row measured above the reader moves the list and its end alike,
  *   and only while the list is not pinned (useMessageScroll). So a move down
- *   to the end itself is at the end, however it got there (GEL-456), and a
- *   move up that ends away from the end leaves it (GEL-461).
+ *   to the end (within AT_END: in the same frame the visible height may
+ *   still change) is at the end, however it got there (GEL-456), and a move
+ *   up that ends away from the end leaves it (GEL-461).
  */
 export function scrollEndIntent(
   pinned: boolean,
@@ -35,9 +39,11 @@ export function scrollEndIntent(
     (previous.height !== current.height ||
       previous.viewport !== current.viewport)
   )
-    return moved > 0 && endDistance(previous) > 1 && endDistance(current) <= 1
+    return moved > 0 &&
+      endDistance(previous) > AT_END &&
+      endDistance(current) <= AT_END
       ? true
-      : moved < 0 && endDistance(current) > 1
+      : moved < 0 && endDistance(current) > AT_END
         ? false
         : pinned;
   if (moved < 0) return false;

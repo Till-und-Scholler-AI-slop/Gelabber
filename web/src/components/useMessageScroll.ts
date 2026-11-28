@@ -18,6 +18,7 @@ import {
 } from "react";
 
 import {
+  AT_END,
   endDistance,
   scrollEndIntent,
   type ScrollPosition,
@@ -138,7 +139,7 @@ export function useMessageScroll({
           opening.current === "done" &&
           stickToBottom.current &&
           position.viewport > 16 &&
-          endDistance(position) <= 16,
+          endDistance(position) <= AT_END,
       );
     },
     [active, onAtLatest, virtualizer],
