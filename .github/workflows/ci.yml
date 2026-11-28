@@ -441,7 +441,8 @@ jobs:
           zizmor --format github .github/workflows
 
       # Expressions, needs/outputs, runner labels and shell scripts in the
-      # workflows; shellcheck at warning level, its style notes are not gated.
+      # workflows, and the workflows' own scripts (scripts/*.sh); shellcheck
+      # at warning level, its style notes are not gated.
       - name: Check workflows with actionlint
         env:
           ACTIONLINT_VERSION: 1.7.12
@@ -462,6 +463,7 @@ jobs:
           "$tools/actionlint" --version
           "$tools/shellcheck" --version
           "$tools/actionlint" -shellcheck "$tools/shellcheck" -pyflakes=
+          "$tools/shellcheck" .github/workflows/scripts/*.sh
 
       # backup.sh encrypts with age; in CI the two tests with the real one
       # fail without it instead of skipping (GEL-375).

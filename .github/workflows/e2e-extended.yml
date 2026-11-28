@@ -27,6 +27,8 @@ on:
       - '.github/workflows/scripts/e2e_jobs.py'
       - '.github/workflows/scripts/changes.py'
       - '.github/workflows/scripts/apt-install.sh'
+      - '.github/workflows/scripts/start-minio.sh'
+      - '.github/workflows/scripts/playwright-browsers.sh'
       - '.github/workflows/scripts/previous_release.sh'
       - 'deploy/compose/compose.yaml'
       - 'rust-toolchain.toml'
@@ -71,13 +73,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = push ] && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
-              && git fetch --quiet --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}"; then
-            git -c core.quotePath=false diff --no-renames --name-only "$BEFORE" HEAD \
-              | python3 .github/workflows/scripts/e2e_jobs.py | tee -a "$GITHUB_OUTPUT"
-          else
-            python3 .github/workflows/scripts/e2e_jobs.py --all | tee -a "$GITHUB_OUTPUT"
-          fi
+          python3 .github/workflows/scripts/e2e_jobs.py plan "$EVENT" "$BEFORE" | tee -a "$GITHUB_OUTPUT"
 
   faults:
     name: Fault acceptance (Chromium, Firefox)
@@ -133,23 +129,7 @@ jobs:
       - name: Start real pinned MinIO for storage regressions
         env:
           MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
-        run: |
-          set -euo pipefail
-          repo="${GITHUB_REPOSITORY,,}"
-          pin="ghcr.io/${repo}/minio:${MINIO_RELEASE}"
-          grep -F "MINIO_RELEASE: ${MINIO_RELEASE}" deploy/compose/compose.yaml
-          grep -F "ghcr.io/${repo}/minio:${MINIO_RELEASE}" deploy/compose/compose.yaml
-          docker pull "$pin"
-          docker run -d --name gelabber-rust-minio -p 127.0.0.1:9000:9000 \
-            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD -e MINIO_API_CORS_ALLOW_ORIGIN='*' "$pin" server /data
-          deadline=$((SECONDS + 120))
-          until curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null; do
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "Required MinIO did not become ready within 120s"
-              exit 1
-            fi
-            sleep 2
-          done
+        run: .github/workflows/scripts/start-minio.sh gelabber-rust-minio -e MINIO_API_CORS_ALLOW_ORIGIN='*'
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@d5e4d57b030548f435d0befec15ff413a2c60eff # 1.100.0 (branch)
@@ -199,16 +179,7 @@ jobs:
           set -euo pipefail
           .github/workflows/scripts/apt-install.sh postgresql-client
           npm ci --prefix web
-          cd web
-          # The browsers' system packages through apt-install.sh, which reads only
-          # Ubuntu's sources; --with-deps would read every source (GEL-404).
-          mapfile -t deps < <(npx playwright install-deps --dry-run chromium firefox \
-            | sed -n 's/^  \([^ ]\+\)$/\1/p')
-          if [ "${#deps[@]}" -gt 0 ]; then
-            ../.github/workflows/scripts/apt-install.sh "${deps[@]}"
-          fi
-          npx playwright install-deps --dry-run chromium firefox
-          npx playwright install chromium firefox
+          .github/workflows/scripts/playwright-browsers.sh chromium firefox
 
       - name: Prepare dedicated fault database, bucket and immutable API/SFU copies
         env:
@@ -400,21 +371,7 @@ jobs:
       - name: Start pinned MinIO
         env:
           MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
-        run: |
-          set -euo pipefail
-          repo="${GITHUB_REPOSITORY,,}"
-          pin="ghcr.io/${repo}/minio:${MINIO_RELEASE}"
-          grep -F "ghcr.io/${repo}/minio:${MINIO_RELEASE}" deploy/compose/compose.yaml
-          docker run -d --name gelabber-desktop-minio -p 127.0.0.1:9000:9000 \
-            -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD "$pin" server /data
-          deadline=$((SECONDS + 120))
-          until curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null; do
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "MinIO did not become ready within 120s"
-              exit 1
-            fi
-            sleep 2
-          done
+        run: .github/workflows/scripts/start-minio.sh gelabber-desktop-minio
 
       # The package desktop-native.yml builds and stores: its cache, else the
       # libwebrtc-packages release, only with the SHA-256 the repository lists.
@@ -438,20 +395,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
-        run: |
-          set -euo pipefail
-          pin=$(grep -F "  $KEY.tar.zst" desktop/native/libwebrtc-packages.sha256 || true)
-          if [ -z "$pin" ]; then
-            echo "desktop/native/libwebrtc-packages.sha256 lists no $KEY.tar.zst: desktop-native.yml stores it after its push"
-            exit 1
-          fi
-          fetch="$RUNNER_TEMP/libwebrtc-fetch"
-          mkdir -p "$fetch"
-          gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" --pattern "$KEY.tar.zst" --dir "$fetch"
-          (cd "$fetch" && printf '%s\n' "$pin" | sha256sum --check --strict)
-          tar --zstd -xf "$fetch/$KEY.tar.zst" -C /mnt/libwebrtc-package
-          rm -rf "$fetch"
-          test -f /mnt/libwebrtc-package/lib/libwebrtc.a
+        run: desktop/native/scripts/libwebrtc-fetch.sh "$KEY" /mnt/libwebrtc-package
 
       # rustfmt: mediasoup-sys formats the code it generates.
       - name: Rust toolchain
@@ -529,13 +473,8 @@ jobs:
         run: |
           set -euo pipefail
           npm ci --prefix web
+          .github/workflows/scripts/playwright-browsers.sh chromium
           cd web
-          # System packages through apt-install.sh, as in the faults job (GEL-404).
-          mapfile -t deps < <(npx playwright install-deps --dry-run chromium | sed -n 's/^  \([^ ]\+\)$/\1/p')
-          if [ "${#deps[@]}" -gt 0 ]; then
-            ../.github/workflows/scripts/apt-install.sh "${deps[@]}"
-          fi
-          npx playwright install chromium
           echo "GELABBER_PARITY_BROWSER=$(node -e 'console.log(require("playwright").chromium.executablePath())')" >> "$GITHUB_ENV"
 
       # The parity stack (desktop/README.md "Parity"): API, media server and

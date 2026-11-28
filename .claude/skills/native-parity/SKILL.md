@@ -8,9 +8,11 @@ description: Render the native desktop app's scenes and score them against the w
 The commands and the stack's environment are in `desktop/README.md` ("Native
 app", the parity part). What the README does not say:
 
-- **libwebrtc.** Download the package `desktop/native/libwebrtc-packages.sha256`
-  lists from the `libwebrtc-packages` release, check its SHA-256, unpack it
-  and point `GELABBER_LIBWEBRTC_DIR` at it.
+- **libwebrtc.** `GITHUB_REPOSITORY=Till-und-Scholler-AI-slop/Gelabber
+  desktop/native/scripts/libwebrtc-fetch.sh <key> <dir>` fetches the Linux
+  package `desktop/native/libwebrtc-packages.sha256` lists (`<key>` is its
+  name without `.tar.zst`) from the `libwebrtc-packages` release, checks its
+  SHA-256 and unpacks it; point `GELABBER_LIBWEBRTC_DIR` at `<dir>`.
 - **Stack.** Services through the `test-services` skill, a separate database
   for parity, the API with the README's environment, Vite on port 5180 with
   `GELABBER_DEV_PUBLIC_PAGES`, then in `web/`: `node scripts/parity/seed.mjs`

@@ -19,7 +19,7 @@ client dropped its Tauri code.
 |---|---|
 | `native/` | C++ media core: libmediasoupclient + libwebrtc behind a C ABI (`include/gelabber_media.h`), built as one shared library |
 | `native/libwebrtc.env` | Pins: libwebrtc M140 commit, libmediasoupclient commit, libsdptransform tag |
-| `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows), the check whether the `libwebrtc-packages` release holds a package (`libwebrtc-stored.sh`); a test desktop session with a ScreenCast portal |
+| `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows), the check whether the `libwebrtc-packages` release holds a package (`libwebrtc-stored.sh`) and the fetch of a stored Linux package against its listed SHA-256 (`libwebrtc-fetch.sh`, used by `desktop-native.yml` and `e2e-extended.yml`); a test desktop session with a ScreenCast portal |
 | `native/patches/` | Patches applied to libwebrtc; `libmediasoupclient/` to libmediasoupclient |
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
 | `native/tests/pipewire_chunk_test.cc` | Application sound on Linux stays inside PipeWire's buffer whatever offset and size a chunk carries; plain C++, built and run by `core/tests/voice.rs` like the mix test |
