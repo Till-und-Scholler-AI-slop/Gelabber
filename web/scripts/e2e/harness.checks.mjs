@@ -11,7 +11,8 @@ import {
   safeTarget,
   until,
 } from "./harness.mjs";
-import { decoded, interrupt } from "./media.mjs";
+import { decoded, interrupt, waitForPath } from "./media.mjs";
+import { chatFaultScenarios } from "./chat-faults.mjs";
 import { profiles } from "./profiles.mjs";
 import { instrument } from "./probe.mjs";
 import { createContext, runInContext } from "node:vm";
@@ -20,6 +21,10 @@ import {
   harnessSite,
   stepLog,
   timedOutAction,
+  inviteRequests,
+  invitePageState,
+  chatRequests,
+  chatPageState,
 } from "./harness.mjs";
 
 test("bytes and closed receivers cannot pass decoded-frame acceptance", () => {
@@ -412,4 +417,329 @@ test("every expected failure of a profile names one of its cases, its issue and 
       assert.match(entry.issue, /^(GEL-\d+|#\d+)$/, `${name}: ${id}`);
       assert.match(entry.reason, /^[a-z0-9-]+$/, `${name}: ${id}`);
     }
+});
+test("a failed invite step can say which invite requests went out and how they ended", () => {
+  const listeners = {};
+  const page = { on: (event, listener) => (listeners[event] = listener) };
+  let clock = 1_000;
+  const requests = inviteRequests(page, () => clock);
+  const request = (method, path) => ({
+    method: () => method,
+    url: () => `http://127.0.0.1:15186${path}`,
+  });
+  const create = request("POST", "/api/servers/s-1/invites");
+  const revoke = request("DELETE", "/api/invites/CODE");
+  const other = request("GET", "/api/servers/s-1");
+  clock = 1_200;
+  listeners.request(create);
+  listeners.request(other);
+  clock = 1_350;
+  listeners.request(revoke);
+  clock = 1_400;
+  listeners.response({ request: () => create, status: () => 201 });
+  clock = 1_500;
+  listeners.requestfailed(revoke);
+  assert.deepEqual(requests.list(), [
+    { method: "POST", sentAt: 200, status: 201, failed: false, doneAt: 400 },
+    { method: "DELETE", sentAt: 350, status: null, failed: true, doneAt: 500 },
+  ]);
+});
+test("a failed invite step can say what the page showed: dialogs and the link field", () => {
+  // A role="dialog" element, or the app's native <dialog> (Modal) when
+  // `open` is given.
+  const dialog = (label, text, open) => ({
+    tagName: open === undefined ? "DIV" : "DIALOG",
+    open,
+    getAttribute: (name) => (name === "aria-label" ? label : null),
+    querySelector: () => null,
+    textContent: text,
+  });
+  const state = (field, dialogs) =>
+    runInContext(
+      `(${invitePageState.toString()})()`,
+      createContext({
+        location: {
+          pathname: "/s/0b6b8e1e-6f0a-4c8e-9d3a-2a6c0f1e9b7d/c/x",
+        },
+        document: {
+          querySelector: () => field,
+          querySelectorAll: () => dialogs,
+        },
+      }),
+    );
+  const failed = state(null, [
+    dialog(
+      "E2E einladen",
+      "  Einladungslink konnte nicht erstellt werden.\n Erneut versuchen ",
+    ),
+    dialog("Server erstellen", "Name", false),
+  ]);
+  assert.equal(failed.path, "/s/:id/c/x");
+  assert.equal(failed.field, "missing");
+  assert.deepEqual(JSON.parse(JSON.stringify(failed.dialogs)), [
+    {
+      open: null,
+      name: "E2E einladen",
+      text: "Einladungslink konnte nicht erstellt werden. Erneut versuchen",
+    },
+    { open: false, name: "Server erstellen", text: "Name" },
+  ]);
+  assert.equal(state({ value: "" }, []).field, "empty");
+  assert.equal(state({ value: "http://h/invite/ABC" }, []).field, "link");
+});
+
+// GEL-465: one getStats() showed a selected pair `in-progress` on a page
+// whose frames had arrived. The path is waited for until each selected pair
+// has succeeded and is of the kind the profile demands.
+const peerWith = (connection, ...selected) => ({
+  connection,
+  senders: 0,
+  inbound: [{ kind: "video", packets: 9 }],
+  selected,
+});
+const pair = (state, local = "host", remote = "host") => ({
+  state,
+  local,
+  remote,
+});
+const reads = (...snapshots) => {
+  let at = 0;
+  return async () => snapshots[Math.min(at++, snapshots.length - 1)];
+};
+test("a selected path read in progress and then succeeded passes", async () => {
+  const paths = await waitForPath(
+    reads(
+      { peers: [peerWith("connected", pair("in-progress"))] },
+      { peers: [peerWith("connected", pair("succeeded"))] },
+    ),
+    false,
+  );
+  assert.deepEqual(
+    paths.map((p) => [p.peer, p.connection, p.state, p.video]),
+    [[0, "connected", "succeeded", true]],
+  );
+});
+test("a selected path still in progress at the deadline fails and names its connection", async () => {
+  await assert.rejects(
+    waitForPath(
+      reads({
+        peers: [
+          { connection: "closed", senders: null, inbound: [], selected: [] },
+          peerWith("connected", pair("succeeded")),
+          peerWith("connected", pair("in-progress")),
+        ],
+      }),
+      false,
+      300,
+    ),
+    (error) =>
+      error instanceof CheckFailure &&
+      error.message === "selected-network-path-mismatch" &&
+      JSON.stringify(error.metrics.paths.map((p) => [p.peer, p.state])) ===
+        JSON.stringify([
+          [1, "succeeded"],
+          [2, "in-progress"],
+        ]),
+  );
+});
+test("a selected path of the wrong kind fails: relayed where direct is demanded, and the reverse", async () => {
+  const relayed = {
+    peers: [peerWith("connected", pair("succeeded", "relay"))],
+  };
+  const direct = { peers: [peerWith("connected", pair("succeeded"))] };
+  for (const [snapshot, relay] of [
+    [relayed, false],
+    [direct, true],
+  ])
+    await assert.rejects(
+      waitForPath(reads(snapshot), relay, 300),
+      (error) => error.message === "selected-network-path-mismatch",
+    );
+  assert.equal((await waitForPath(reads(relayed), true)).length, 1);
+  assert.equal((await waitForPath(reads(direct), false)).length, 1);
+});
+
+test("a chat fault's request log keeps the server's and the chat's requests, IDs masked, until it stops", async () => {
+  const listeners = new Map();
+  const page = {
+    on: (event, listener) => listeners.set(event, listener),
+    off: (event, listener) => {
+      if (listeners.get(event) === listener) listeners.delete(event);
+    },
+  };
+  let clock = 0;
+  const requests = chatRequests(page, () => clock);
+  const id = "0b6b8e1e-6f0a-4c8e-9d3a-2a6c0f1e9b7d";
+  const request = (method, path) => ({
+    method: () => method,
+    url: () => `http://127.0.0.1:15186/api${path}?limit=50`,
+  });
+  const detail = request("GET", `/servers/${id}`);
+  const create = request("POST", `/servers/${id}/channels`);
+  const send = request("POST", `/channels/${id}/messages`);
+  const upload = request("PUT", `/attachments/${id}/upload`);
+  clock = 100;
+  for (const r of [detail, create, send, upload]) listeners.get("request")(r);
+  // Pictures and the session are not the chat's.
+  listeners.get("request")(request("GET", `/attachments/${id}`));
+  listeners.get("request")(request("GET", "/auth/session"));
+  const answer = (r, status, body) =>
+    listeners.get("response")({
+      request: () => r,
+      status: () => status,
+      json: async () => body,
+    });
+  clock = 250;
+  answer(create, 201, { id: "created-channel" });
+  clock = 400;
+  listeners.get("requestfailed")(send);
+  // A read without the created channel, and one with it.
+  const before = request("GET", `/servers/${id}`);
+  listeners.get("request")(before);
+  answer(detail, 200, { channels: [{ id: "a" }, { id: "b" }] });
+  answer(before, 200, { channels: [{ id: "a" }, { id: "created-channel" }] });
+  await new Promise(setImmediate);
+  assert.deepEqual(
+    requests
+      .list()
+      .map(({ path, method, status, failed, channels, holdsCreated }) => [
+        method,
+        path,
+        status,
+        failed,
+        channels,
+        holdsCreated,
+      ]),
+    [
+      ["GET", "/api/servers/:id", 200, false, 2, false],
+      ["POST", "/api/servers/:id/channels", 201, false, undefined, undefined],
+      ["POST", "/api/channels/:id/messages", null, true, undefined, undefined],
+      ["PUT", "/api/attachments/:id/upload", null, false, undefined, undefined],
+      ["GET", "/api/servers/:id", 200, false, 2, true],
+    ],
+  );
+  // Counts and a yes or no only: no channel's ID leaves the page.
+  assert.ok(!JSON.stringify(requests.list()).includes("created-channel"));
+  requests.stop();
+  assert.equal(listeners.size, 0);
+});
+
+test("a chat fault scenario that fails records both pages' requests and screens, and stops recording", async () => {
+  const id = "0b6b8e1e-6f0a-4c8e-9d3a-2a6c0f1e9b7d";
+  const page = (who) => {
+    const listeners = new Map();
+    return {
+      listeners,
+      on: (event, listener) => listeners.set(event, listener),
+      off: (event, listener) => {
+        if (listeners.get(event) === listener) listeners.delete(event);
+      },
+      // The owner's first page: the server is read, then it runs out.
+      goto: async () => {
+        const read = {
+          method: () => "GET",
+          url: () => `http://127.0.0.1:15186/api/servers/${id}`,
+        };
+        listeners.get("request")(read);
+        listeners.get("response")({
+          request: () => read,
+          status: () => 200,
+          json: async () => ({ channels: [{ id: "a" }] }),
+        });
+        const error = new Error("page.goto: Timeout 12000ms exceeded.");
+        error.name = "TimeoutError";
+        throw error;
+      },
+      evaluate: async () => ({ path: `/s/:id/${who}` }),
+    };
+  };
+  const f = {
+    owner: { page: page("owner") },
+    member: { page: page("member") },
+    textPath: "/s/x/c/y",
+    base: "http://127.0.0.1:15186",
+  };
+  let failure;
+  await chatFaultScenarios(
+    {
+      step: (_name, action) => action(),
+      run: async (scenario, _predecessors, task) => {
+        if (scenario !== "two-parallel-sends-navigation-retry") return;
+        await task().catch((error) => {
+          failure = error;
+        });
+      },
+    },
+    f,
+  );
+  assert.equal(failure?.name, "TimeoutError");
+  const evidence = JSON.parse(JSON.stringify(failure.evidence));
+  assert.deepEqual(
+    evidence.chatRequests.owner.map(({ method, path, channels }) => [
+      method,
+      path,
+      channels,
+    ]),
+    [["GET", "/api/servers/:id", 1]],
+  );
+  assert.deepEqual(evidence.chatRequests.member, []);
+  assert.deepEqual(evidence.chatPages, {
+    owner: { path: "/s/:id/owner" },
+    member: { path: "/s/:id/member" },
+  });
+  for (const who of [f.owner, f.member])
+    assert.equal(who.page.listeners.size, 0);
+});
+
+test("a chat fault can say what the page showed: pending channels and each message's state", () => {
+  const element = (tagName, text, { classes = [], children = {} } = {}) => ({
+    tagName,
+    textContent: text,
+    classList: { contains: (name) => classes.includes(name) },
+    querySelector: (selector) => children[selector] ?? null,
+    querySelectorAll: (selector) => children[selector] ?? [],
+  });
+  const button = (text) => element("BUTTON", text);
+  const message = (text, classes, buttons = []) =>
+    element("DIV", text, {
+      classes,
+      children: {
+        ".lr-message-text": element("SPAN", text),
+        button: buttons.map(button),
+      },
+    });
+  const nodes = {
+    'dialog[open],[role="dialog"],[role="alertdialog"]': [
+      element("DIALOG", " Kanal  erstellen "),
+    ],
+    ".channel-sidebar .channel-row-link": [
+      element("A", "e2e-voice-a"),
+      element("SPAN", "e2e-parallel-attempts"),
+    ],
+    ".lr-message-row": [
+      message("E2E sent", []),
+      message("E2E on its way", ["is-sending"]),
+      message("E2E turned down", ["is-failed"], ["Verwerfen", "Erneut senden"]),
+    ],
+  };
+  const state = runInContext(
+    `(${chatPageState.toString()})()`,
+    createContext({
+      location: { pathname: "/s/0b6b8e1e-6f0a-4c8e-9d3a-2a6c0f1e9b7d/c/x" },
+      document: { querySelectorAll: (selector) => nodes[selector] ?? [] },
+    }),
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    path: "/s/:id/c/x",
+    dialogs: ["Kanal erstellen"],
+    channels: [
+      { name: "e2e-voice-a", link: true },
+      { name: "e2e-parallel-attempts", link: false },
+    ],
+    messages: [
+      { text: "E2E sent", sending: false, failed: false, retry: false },
+      { text: "E2E on its way", sending: true, failed: false, retry: false },
+      { text: "E2E turned down", sending: false, failed: true, retry: true },
+    ],
+  });
 });

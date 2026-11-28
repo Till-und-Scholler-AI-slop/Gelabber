@@ -250,6 +250,9 @@ impl Sfu {
                     return Err(SfuError::Forbidden);
                 }
                 peer.attach_failures.store(0, Ordering::Relaxed);
+                // Until it has a layer, the SFU asks for bitrate rounds itself
+                // (layers.rs, GEL-460).
+                self.await_layer(&room.engine, &s);
                 self.emit(
                     &peer,
                     ServerFrame::ConsumerState {

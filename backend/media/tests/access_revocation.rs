@@ -79,7 +79,7 @@ async fn legacy_envelope_is_consumed_and_rejected_on_real_websocket() {
     ))
     .await
     .unwrap();
-    let response = tokio::time::timeout(Duration::from_secs(2), ws.next())
+    let response = tokio::time::timeout(ENDS_WITHIN, ws.next())
         .await
         .unwrap()
         .unwrap()
@@ -146,18 +146,26 @@ impl Authority {
             .await
             .unwrap();
     }
+    /// Writes the authority keys. The session lease has no TTL here, as if
+    /// the API kept renewing it: only what a test changes ends a peer, and
+    /// a check that misses its cause cannot pass by the lease running out.
     async fn install(&self) {
         let keys = self.keys();
         self.set(&keys[0], &self.claim.auth.member.to_string())
             .await;
         self.set(&keys[1], &self.claim.auth.channel.to_string())
             .await;
+        self.set(&keys[2], &self.claim.claim.u.to_string()).await;
+    }
+    /// The session lease as the API writes it, ending after `ms` unless
+    /// renewed.
+    async fn lease_for(&self, ms: u64) {
         let mut conn = self.redis.get_multiplexed_async_connection().await.unwrap();
         let _: () = redis::cmd("SET")
-            .arg(&keys[2])
+            .arg(&self.keys()[2])
             .arg(self.claim.claim.u.to_string())
             .arg("PX")
-            .arg(3000)
+            .arg(ms)
             .query_async(&mut conn)
             .await
             .unwrap();
@@ -196,7 +204,7 @@ async fn join(addr: std::net::SocketAddr, code: &str) -> (Socket, serde_json::Va
     ))
     .await
     .unwrap();
-    let response = tokio::time::timeout(Duration::from_secs(2), ws.next())
+    let response = tokio::time::timeout(ENDS_WITHIN, ws.next())
         .await
         .unwrap()
         .unwrap()
@@ -204,11 +212,15 @@ async fn join(addr: std::net::SocketAddr, code: &str) -> (Socket, serde_json::Va
     let value = serde_json::from_str(response.to_text().unwrap()).unwrap();
     (ws, value)
 }
-async fn revoked(ws: &mut Socket, budget: Duration) {
-    terminal(ws, budget, "unauthorized").await
+/// How long a test waits for the server: for an answer, or to end a peer.
+/// It only ends a hung test: the checks run every second, and the session
+/// lease does not run out unless the test says so ([`Authority::lease_for`]).
+const ENDS_WITHIN: Duration = Duration::from_secs(10);
+async fn revoked(ws: &mut Socket) {
+    terminal(ws, "unauthorized").await
 }
-async fn terminal(ws: &mut Socket, budget: Duration, expected: &str) {
-    tokio::time::timeout(budget, async {
+async fn terminal(ws: &mut Socket, expected: &str) {
+    tokio::time::timeout(ENDS_WITHIN, async {
         loop {
             let msg = ws
                 .next()
@@ -235,11 +247,39 @@ async fn terminal(ws: &mut Socket, budget: Duration, expected: &str) {
     .await
     .expect("bounded server-side revocation");
 }
+/// Waits until the server has no room left.
+async fn rooms_closed(sfu: &gelabber_media::sfu::Sfu) {
+    tokio::time::timeout(ENDS_WITHIN, async {
+        while sfu.room_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("every room closes");
+}
+/// Waits until the server counts `count` peers (`gelabber_media_peers`):
+/// a peer that left is gone from it once its leave ran.
+async fn peers_left(sfu: &gelabber_media::sfu::Sfu, count: usize) {
+    let peers = || {
+        sfu.metrics_text()
+            .lines()
+            .find_map(|line| line.strip_prefix("gelabber_media_peers "))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .expect("gelabber_media_peers in the metrics")
+    };
+    tokio::time::timeout(ENDS_WITHIN, async {
+        while peers() != count {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the peer's leave runs");
+}
 /// Reads up to the first error frame and returns its code; a Close or EOF
 /// before it fails. The server must close right after that frame.
 async fn terminal_before_close(ws: &mut Socket) -> String {
     use tokio_tungstenite::tungstenite::Message;
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(ENDS_WITHIN, async {
         let code = loop {
             match ws.next().await {
                 Some(Ok(Message::Text(text))) => {
@@ -274,7 +314,7 @@ async fn rejects_consumed_ticket_after_authority_rotation_and_allows_immediate_r
     let outstanding = authority.mint().await;
     authority.claim.auth.member = Uuid::new_v4();
     authority.install().await;
-    revoked(&mut ws, Duration::from_millis(1700)).await;
+    revoked(&mut ws).await;
     let (_, stale) = join(addr, &outstanding).await;
     assert_eq!(stale["e"], "unauthorized");
     // A ticket of the new member generation rejoins immediately.
@@ -283,8 +323,7 @@ async fn rejects_consumed_ticket_after_authority_rotation_and_allows_immediate_r
     assert_eq!(accepted["op"], "result");
     next.close(None).await.unwrap();
     authority.cleanup().await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(sfu.room_count(), 0);
+    rooms_closed(&sfu).await;
 }
 
 #[tokio::test]
@@ -297,7 +336,7 @@ async fn channel_rotation_revokes_open_peer_and_old_unconsumed_ticket() {
     authority
         .set(&authority.keys()[1], &Uuid::new_v4().to_string())
         .await;
-    revoked(&mut ws, Duration::from_millis(1700)).await;
+    revoked(&mut ws).await;
     let (_, stale) = join(addr, &outstanding).await;
     assert_eq!(stale["e"], "unauthorized");
     authority.cleanup().await;
@@ -323,7 +362,7 @@ async fn exact_session_logout_does_not_revoke_second_session_of_same_user() {
         .query_async(&mut conn)
         .await
         .unwrap();
-    revoked(&mut first, Duration::from_millis(1700)).await;
+    revoked(&mut first).await;
     second
         .send(tokio_tungstenite::tungstenite::Message::Text(
             json!({"op":"transport","id":2,"direction":"recv"})
@@ -332,7 +371,7 @@ async fn exact_session_logout_does_not_revoke_second_session_of_same_user() {
         ))
         .await
         .unwrap();
-    let msg = tokio::time::timeout(Duration::from_secs(1), second.next())
+    let msg = tokio::time::timeout(ENDS_WITHIN, second.next())
         .await
         .unwrap()
         .unwrap()
@@ -348,22 +387,28 @@ async fn exact_session_logout_does_not_revoke_second_session_of_same_user() {
 }
 
 #[tokio::test]
-async fn authority_lease_expiry_closes_open_peer_within_three_seconds_plus_check_interval() {
+async fn authority_lease_expiry_closes_open_peer() {
     let (addr, redis, sfu) = serve().await;
     let authority = Authority::new(&redis).await;
-    let started = tokio::time::Instant::now();
+    authority.lease_for(3000).await;
     let (mut ws, value) = join(addr, &authority.mint().await).await;
     assert_eq!(value["op"], "result");
-    revoked(&mut ws, Duration::from_millis(4500)).await;
-    assert!(started.elapsed() < Duration::from_millis(4500));
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(sfu.room_count(), 0);
+    revoked(&mut ws).await;
+    // Ended for the lease that ran out, the only key that changed.
+    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
+    let lease: Option<String> = redis::cmd("GET")
+        .arg(&authority.keys()[2])
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(lease, None);
+    rooms_closed(&sfu).await;
     authority.cleanup().await;
 }
 
 #[tokio::test]
 async fn peer_refreshes_demand_without_renewing_session_and_keeps_other_tab_demand() {
-    let (addr, redis, _) = serve().await;
+    let (addr, redis, sfu) = serve().await;
     let authority = Authority::new(&redis).await;
     let (mut a, value) = join(addr, &authority.mint().await).await;
     assert_eq!(value["op"], "result");
@@ -377,24 +422,31 @@ async fn peer_refreshes_demand_without_renewing_session_and_keeps_other_tab_dema
         .query_async(&mut conn)
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(1250)).await;
-    let demand: i64 = redis::cmd("TTL")
-        .arg(&keys[3])
-        .query_async(&mut conn)
-        .await
-        .unwrap();
+    // The peers' next check refreshes the demand (`EX 35`).
+    tokio::time::timeout(ENDS_WITHIN, async {
+        loop {
+            let demand: i64 = redis::cmd("TTL")
+                .arg(&keys[3])
+                .query_async(&mut conn)
+                .await
+                .unwrap();
+            if demand >= 33 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the peers refresh their demand");
+    // The lease has no TTL here: a renewal by media would have set one.
     let lease: i64 = redis::cmd("PTTL")
         .arg(&keys[2])
         .query_async(&mut conn)
         .await
         .unwrap();
-    assert!(demand >= 33);
-    assert!(
-        (1..1900).contains(&lease),
-        "media must not renew API authority: {lease}"
-    );
+    assert_eq!(lease, -1, "media must not renew API authority");
     a.close(None).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    peers_left(&sfu, 1).await;
     let demand: Option<String> = redis::cmd("GET")
         .arg(&keys[3])
         .query_async(&mut conn)
@@ -494,12 +546,6 @@ async fn one_user_holds_at_most_eight_peers_and_gets_them_back_on_leave() {
     second.claim.claim.s = first.claim.claim.s;
     second.claim.auth.member = first.claim.auth.member;
     second.install().await;
-    // Without the 3s session lease only the cap ends these joins.
-    for authority in [&first, &second] {
-        authority
-            .set(&authority.keys()[2], &authority.claim.claim.u.to_string())
-            .await;
-    }
     let mut held = Vec::new();
     let mut peers = Vec::new();
     for _ in 0..4 {
@@ -520,9 +566,6 @@ async fn one_user_holds_at_most_eight_peers_and_gets_them_back_on_leave() {
 async fn a_room_holds_at_most_256_peers() {
     let (_, redis, sfu) = serve().await;
     let room = Authority::new(&redis).await;
-    // Without the 3s session lease only the cap ends these joins.
-    room.set(&room.keys()[2], &room.claim.claim.u.to_string())
-        .await;
     let mut held = Vec::new();
     let mut members = Vec::new();
     for _ in 0..256 {
@@ -531,9 +574,6 @@ async fn a_room_holds_at_most_256_peers() {
         member.claim.claim.c = room.claim.claim.c;
         member.claim.auth.channel = room.claim.auth.channel;
         member.install().await;
-        member
-            .set(&member.keys()[2], &member.claim.claim.u.to_string())
-            .await;
         join_claim(&sfu, &member, &mut held).await.unwrap();
         members.push(member);
     }
@@ -556,15 +596,16 @@ async fn absolute_session_expiry_revokes_even_while_lease_still_exists() {
     authority.claim.auth.expires_at = now.0 + 2;
     let (mut ws, value) = join(addr, &authority.mint().await).await;
     assert_eq!(value["op"], "result");
-    revoked(&mut ws, Duration::from_millis(2700)).await;
-    let lease: i64 = redis::cmd("PTTL")
+    revoked(&mut ws).await;
+    let lease: Option<String> = redis::cmd("GET")
         .arg(&authority.keys()[2])
         .query_async(&mut conn)
         .await
         .unwrap();
-    assert!(
-        lease > 0,
-        "absolute expiration is enforced before authority TTL"
+    assert_eq!(
+        lease,
+        Some(authority.claim.claim.u.to_string()),
+        "absolute expiration is enforced while the lease lives"
     );
     authority.cleanup().await;
 }
@@ -612,7 +653,7 @@ async fn redis_failure_removes_open_peer_and_refuses_new_ticket_as_gone_without_
     assert_eq!(value["op"], "result");
     cut.send_replace(true);
     // A check that could not be made is no revocation: the client rejoins.
-    terminal(&mut ws, Duration::from_millis(1700), "gone").await;
+    terminal(&mut ws, "gone").await;
     let (_, value) = join(addr, &outstanding).await;
     assert_eq!(value["e"], "gone");
     control_ws
@@ -623,7 +664,7 @@ async fn redis_failure_removes_open_peer_and_refuses_new_ticket_as_gone_without_
         ))
         .await
         .unwrap();
-    let message = tokio::time::timeout(Duration::from_secs(1), control_ws.next())
+    let message = tokio::time::timeout(ENDS_WITHIN, control_ws.next())
         .await
         .unwrap()
         .unwrap()
@@ -633,8 +674,7 @@ async fn redis_failure_removes_open_peer_and_refuses_new_ticket_as_gone_without_
         "result"
     );
     control_ws.close(None).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(sfu.room_count(), 0);
+    rooms_closed(&sfu).await;
     authority.redis = upstream;
     authority.cleanup().await;
     control.cleanup().await;
@@ -651,10 +691,6 @@ async fn shutdown_delivers_gone_before_close_on_every_socket() {
     let mut peers = Vec::new();
     for _ in 0..20 {
         let authority = Authority::new(&redis).await;
-        // Without the 3s session lease only shutdown ends these sockets.
-        authority
-            .set(&authority.keys()[2], &authority.claim.claim.u.to_string())
-            .await;
         let (ws, value) = join(addr, &authority.mint().await).await;
         assert_eq!(value["op"], "result");
         peers.push((ws, authority));

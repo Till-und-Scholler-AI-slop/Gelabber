@@ -182,7 +182,10 @@ async fn ready_probes_redis_at_most_once_a_second() {
         1,
         "a burst shares one probe"
     );
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    // Past the reuse on tokio's clock, without waiting for it.
+    tokio::time::pause();
+    tokio::time::advance(gelabber_media::health::PROBE_REUSE).await;
+    tokio::time::resume();
     assert_eq!(ready().await.unwrap().status(), StatusCode::OK);
     assert_eq!(
         accepted.load(std::sync::atomic::Ordering::SeqCst) - before,

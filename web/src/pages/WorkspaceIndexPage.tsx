@@ -46,7 +46,11 @@ export function WorkspaceIndexPage() {
     dms.data,
     !dms.isPending || dms.isError,
   );
-  if (place?.kind === "server") {
+  // A server being created enters the list before its form's success
+  // handler runs; that handler navigates and opens the invite dialog, so a
+  // redirect now would unmount the form and lose both (GEL-423). The form
+  // closes the dialog when it is done.
+  if (place?.kind === "server" && !creating) {
     return <Redirect to="/s/$serverId" params={{ serverId: place.id }} />;
   }
   if (place?.kind === "dm") {

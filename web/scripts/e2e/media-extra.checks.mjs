@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
 import { CheckFailure } from "./harness.mjs";
+import { sample, voiceOnlyControl } from "./voice-only-control.mjs";
 
 test("source identity reorder delivers authoritative Consumer messages without native track events", async () => {
   const delivered = [];
@@ -52,6 +53,7 @@ test("source identity reorder delivers authoritative Consumer messages without n
       watchSource: async () => {},
       activePeers: () => [],
       armPlaybackRetry: () => {},
+      waitForPath: async () => [],
       progress: async (_actor, options) => ({ kind: options.kind ?? "live" }),
     },
     "./native-evaluate.mjs": {
@@ -62,6 +64,8 @@ test("source identity reorder delivers authoritative Consumer messages without n
     "./probe.mjs": {
       sampleVideoSenders: async () => ({ actualFixture: true }),
       samplePublicationFlow: async () => ({}),
+      sendTimeline: () => [],
+      startSendTimeline: () => {},
     },
     "./publisher-encoders.mjs": {
       publisherEncoderProgress: (value) => value.actualFixture === true,
@@ -135,6 +139,7 @@ test("exact SDP scenario preserves failed bounded camera warmup and never inject
       watchSource: async () => {},
       activePeers: () => [],
       armPlaybackRetry: () => {},
+      waitForPath: async () => [],
       progress: async () => {
         progressCalls++;
       },
@@ -313,4 +318,208 @@ test("actual audio restore bounds a pending evaluation and quarantines the page 
   await watcher.nativeAbortClose;
   assert.equal(watcher.nativeEvaluationUnusable, true);
   assert.equal(abortCloses, 1);
+});
+
+// The scenario takes four samples per side: before, progress, attached,
+// judged (the audio moved on past the attached one).
+const four = (late = {}) => [
+  sample({ packets: 10 }),
+  sample({ packets: 20, ...late }),
+  sample({ packets: 20, ...late }),
+  sample({ packets: 30, ...late }),
+];
+const member = four();
+test("voice-only waits for the owner's playback that attaches after its packets", async () => {
+  const r = await voiceOnlyControl({
+    owner: [
+      sample({ packets: 10 }),
+      // The packets grew, the playback is not attached yet: one sample later.
+      sample({ packets: 20, plays: 0 }),
+      sample({ packets: 20 }),
+      sample({ packets: 30 }),
+    ],
+    member,
+  });
+  assert.equal(r.error, undefined);
+  assert.deepEqual(r.result.judged[0].roomAudio.perSource, [1]);
+});
+for (const [name, owner, code] of [
+  [
+    "a second path for the source",
+    four({ plays: 2 }),
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "a second path that comes after the first",
+    [
+      sample({ packets: 10 }),
+      sample({ packets: 20 }),
+      // Attached with one path; the second comes as the audio moves on.
+      sample({ packets: 20 }),
+      sample({ packets: 30, plays: 2 }),
+    ],
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "two sources",
+    four({ perSource: [1, 1] }),
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "a foreign source",
+    four({ foreign: 1 }),
+    "voice-only-source-duplicate-or-unexpected-capture",
+  ],
+  [
+    "no playback ever",
+    four({ plays: 0 }),
+    "voice-only-duplex-playback-not-attached",
+  ],
+])
+  test(`voice-only fails on ${name}`, async () => {
+    const r = await voiceOnlyControl({ owner, member });
+    assert.ok(r.error instanceof CheckFailure, String(r.error));
+    assert.equal(r.error.message, code);
+  });
+
+// GEL-460: a passing retry keeps its step times, so a slow one that still
+// passes says which step took its time.
+async function sdpRetryRow(firstFrameMs, { evidenceFails = false } = {}) {
+  const clock = { now: 10_000 };
+  const flows = {
+    owner: {
+      rpc: [
+        { method: "produce", kind: "v", sentAt: 1, answeredAt: 2 },
+        { method: "produce", kind: "s", sentAt: 10_400, answeredAt: 10_450 },
+      ],
+      consumers: [],
+    },
+    member: {
+      rpc: [
+        { method: "w", kind: "s", sentAt: 10_900, answeredAt: 10_920 },
+        {
+          method: "consumerReady",
+          kind: "s",
+          sentAt: 11_000,
+          answeredAt: 11_010,
+        },
+      ],
+      consumers: [
+        { arrivedAt: 10_990, layers: { spatial: 0, temporal: 2, at: 11_200 } },
+      ],
+    },
+  };
+  const actor = (name) => ({
+    page: {
+      evaluate: async (fn) => {
+        if (fn.name === "sendTimeline") return [];
+        if (fn.name !== "samplePublicationFlow") return undefined;
+        if (evidenceFails) throw new Error("evidence-read-failed");
+        return flows[name];
+      },
+    },
+  });
+  const snapshot = {
+    videos: [{ kind: "camera", width: 320, height: 180 }],
+    peers: [],
+    rejectedSdp: 1,
+    displayCalls: 1,
+    captures: [{ kind: "display", slot: 1, state: "ended" }],
+  };
+  const mocks = {
+    "./harness.mjs": {
+      CheckFailure,
+      check() {},
+      click: async () => {},
+      liveTiles: (page) => page.locator("figure"),
+      snapshot: async () => snapshot,
+      observe: async () => {},
+      until: async () => snapshot,
+    },
+    "./media.mjs": {
+      watchSource: async () => {},
+      activePeers: () => [],
+      armPlaybackRetry: () => {},
+      waitForPath: async () => [],
+      // The green retry: its wait began at the click.
+      progress: async (_actor, { color }) =>
+        color[1] === 220
+          ? {
+              firstFrameMs,
+              startedAt: clock.now,
+              watchedAt: clock.now + 600,
+              last: snapshot,
+            }
+          : { last: snapshot },
+    },
+  };
+  const context = vm.createContext({
+    Date: class {
+      static now() {
+        return clock.now;
+      }
+    },
+  });
+  const source = new vm.SourceTextModule(
+    await readFile(new URL("./media-extra.mjs", import.meta.url), "utf8"),
+    { context },
+  );
+  await source.link(async (name) => {
+    const exports = mocks[name] ?? (await import(name));
+    return new vm.SyntheticModule(
+      Object.keys(exports),
+      function () {
+        for (const [key, value] of Object.entries(exports))
+          this.setExport(key, value);
+      },
+      { context },
+    );
+  });
+  await source.evaluate();
+  let row;
+  const h = {
+    run: async (id, _predecessors, task) => {
+      if (id === "rejected-native-sdp-keeps-voice-other-source-no-ghost")
+        row = await task();
+    },
+  };
+  await source.namespace.mediaExtraScenarios(
+    h,
+    { owner: actor("owner"), member: actor("member") },
+    {
+      begin: async () => {},
+      reset: async () => {},
+      options: { budget: 5_000 },
+    },
+  );
+  return JSON.parse(JSON.stringify(row));
+}
+test("a passing Live retry keeps its step times, and a slow one its raw records too", async () => {
+  const fast = await sdpRetryRow(1_200);
+  assert.deepEqual(fast.retrySteps, {
+    produceSent: 400,
+    produceAnswered: 450,
+    watchSent: 900,
+    watchAnswered: 920,
+    consumerArrived: 990,
+    consumerReadySent: 1_000,
+    consumerReadyAnswered: 1_010,
+    lastLayerReport: 1_200,
+    layer: { spatial: 0, temporal: 2 },
+    firstFrame: 1_200,
+  });
+  assert.equal(fast.publisherLive, undefined);
+  const slow = await sdpRetryRow(4_465);
+  assert.equal(slow.retrySteps.firstFrame, 4_465);
+  assert.equal(slow.publisherLive.rpc.length, 2);
+  assert.equal(slow.subscriberLive.consumers.length, 1);
+  assert.deepEqual(slow.sendTimeline, []);
+  assert.equal(fast.sendTimeline, undefined);
+});
+test("a Live retry whose evidence cannot be read still passes, with null steps", async () => {
+  const row = await sdpRetryRow(4_465, { evidenceFails: true });
+  assert.equal(row.retrySteps.produceSent, null);
+  assert.equal(row.retrySteps.consumerArrived, null);
+  assert.equal(row.retrySteps.firstFrame, 4_465);
+  assert.equal(row.publisherLive, null);
 });

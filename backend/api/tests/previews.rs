@@ -45,6 +45,8 @@ struct Site {
     title: Arc<Mutex<String>>,
     /// `/sometimes-slow` answers like `/slow` while set.
     slow: Arc<AtomicBool>,
+    /// `/held` answers once the test adds a permit.
+    held: Arc<tokio::sync::Semaphore>,
 }
 
 async fn handle(State(site): State<Site>, uri: Uri) -> Response {
@@ -97,6 +99,10 @@ async fn handle(State(site): State<Site>, uri: Uri) -> Response {
             tokio::time::sleep(Duration::from_secs(20)).await;
             "late".into_response()
         }
+        "/held" => {
+            let _ = site.held.acquire().await;
+            "late".into_response()
+        }
         "/text" => ([(CONTENT_TYPE, "text/plain")], "og:title").into_response(),
         "/sometimes-slow" => {
             if site.slow.load(Ordering::SeqCst) {
@@ -134,6 +140,7 @@ async fn serve_site() -> (Site, Policy) {
         seen: Arc::default(),
         title: Arc::default(),
         slow: Arc::default(),
+        held: Arc::new(tokio::sync::Semaphore::new(0)),
     };
     let router = Router::new().fallback(handle).with_state(site.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -242,6 +249,14 @@ async fn wait_previews(client: &mut Client, channel: &str, id: &str, limit: Dura
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+/// Waits until every preview job queued so far has ended
+/// ([`LinkPreviews::settled`]). Fails after 15 s.
+async fn settled(previews: &LinkPreviews) {
+    tokio::time::timeout(Duration::from_secs(15), previews.settled())
+        .await
+        .expect("preview jobs still running");
 }
 
 /// Waits until every URL has a stored result (a card or a refusal).
@@ -514,30 +529,39 @@ async fn internal_targets_and_redirects_to_them_are_refused(pool: PgPool) {
     }
 }
 
+/// The page answers only when the test lets it, so a message that waited
+/// for it would never be sent: the post's answer comes while the fetch is
+/// still open, with nothing stored yet.
 #[sqlx::test]
 async fn a_slow_page_does_not_hold_up_sending(pool: PgPool) {
     let (site, policy) = serve_site().await;
-    let policy = quick(policy);
+    // No timeout ends the fetch while the test looks: only the page does.
+    let policy = Policy {
+        request_timeout: Some(Duration::from_secs(600)),
+        job_budget: Some(Duration::from_secs(600)),
+        ..policy
+    };
     let (mut client, channel) =
         signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
-    let start = Instant::now();
-    post(&mut client, &channel, &format!("{}/slow", site.origin)).await;
-    assert!(
-        start.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        start.elapsed()
-    );
+    let sent = tokio::time::timeout(
+        Duration::from_secs(10),
+        post(&mut client, &channel, &format!("{}/held", site.origin)),
+    )
+    .await
+    .expect("sending does not wait for the page");
+    assert!(sent.get("previews").is_none(), "{sent}");
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM link_previews")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0, "the fetch is still open");
+    site.held.add_permits(1);
     wait_settled(&pool, 1).await;
     let status: String = sqlx::query_scalar("SELECT status FROM link_previews")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(status, "failed");
-    assert!(
-        start.elapsed() < Duration::from_secs(12),
-        "{:?}",
-        start.elapsed()
-    );
 }
 
 /// Only the host that timed out is skipped afterwards: not other names on
@@ -546,9 +570,8 @@ async fn a_slow_page_does_not_hold_up_sending(pool: PgPool) {
 #[sqlx::test]
 async fn a_timeout_holds_up_only_its_own_host(pool: PgPool) {
     let (site, policy) = serve_site().await;
-    let policy = quick(policy);
-    let (mut client, channel) =
-        signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
+    let previews = LinkPreviews::with_policy(quick(policy));
+    let (mut client, channel) = signed_in(pool.clone(), Some(previews.clone())).await;
     let port = site.origin.rsplit(':').next().unwrap();
     let on = |host: &str, path: &str| format!("http://{host}:{port}{path}");
     // The first link times out on its own, the second runs into the end of
@@ -590,7 +613,7 @@ async fn a_timeout_holds_up_only_its_own_host(pool: PgPool) {
     );
     let seen = site.seen.lock().unwrap().len();
     let held = post(&mut client, &channel, &on("site.test", "/page")).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    settled(&previews).await;
     assert!(
         message_has_no_previews(&mut client, &channel, held["id"].as_str().unwrap()).await,
         "site.test is in backoff"
@@ -605,8 +628,8 @@ async fn a_timeout_holds_up_only_its_own_host(pool: PgPool) {
 #[sqlx::test]
 async fn the_author_removes_previews_and_edits_keep_them_off(pool: PgPool) {
     let (site, policy) = serve_site().await;
-    let (mut client, channel) =
-        signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
+    let previews = LinkPreviews::with_policy(policy);
+    let (mut client, channel) = signed_in(pool.clone(), Some(previews.clone())).await;
     let url = format!("{}/page", site.origin);
     let sent = post(&mut client, &channel, &url).await;
     let id = sent["id"].as_str().unwrap();
@@ -653,7 +676,7 @@ async fn the_author_removes_previews_and_edits_keep_them_off(pool: PgPool) {
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    settled(&previews).await;
     assert!(message_has_no_previews(&mut client, &channel, id).await);
 }
 
@@ -662,8 +685,8 @@ async fn the_author_removes_previews_and_edits_keep_them_off(pool: PgPool) {
 #[sqlx::test]
 async fn an_edit_keeps_the_cards_of_unchanged_links(pool: PgPool) {
     let (site, policy) = serve_site().await;
-    let (mut client, channel) =
-        signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
+    let previews = LinkPreviews::with_policy(policy);
+    let (mut client, channel) = signed_in(pool.clone(), Some(previews.clone())).await;
     let links = format!("{0}/sometimes-slow {0}/page", site.origin);
     let sent = post(&mut client, &channel, &links).await;
     let id = sent["id"].as_str().unwrap();
@@ -684,7 +707,7 @@ async fn an_edit_keeps_the_cards_of_unchanged_links(pool: PgPool) {
             .count()
     };
     assert_eq!(asked(&site), 1);
-    // A new link last: its stored refusal shows the worker got past the others.
+    // A new link last: its stored refusal shows the edit's job ran.
     let res = client
         .send(
             Method::PATCH,
@@ -693,20 +716,13 @@ async fn an_edit_keeps_the_cards_of_unchanged_links(pool: PgPool) {
         )
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    let start = Instant::now();
-    while sqlx::query_scalar::<_, i64>("SELECT count(*) FROM link_previews WHERE url LIKE '%/text'")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        == 0
-    {
-        assert!(
-            start.elapsed() < Duration::from_secs(15),
-            "the new link was never fetched"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    settled(&previews).await;
+    let fetched: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM link_previews WHERE url LIKE '%/text'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(fetched, 1, "the new link was fetched");
 
     let after = message(&mut client, &channel, id).await;
     assert_eq!(after["previews"], before["previews"], "{after}");
@@ -744,6 +760,9 @@ async fn with_previews_off_links_stay_plain(pool: PgPool) {
     let (mut client, channel) = signed_in(pool.clone(), None).await;
     let url = format!("{}/page", site.origin);
     let sent = post(&mut client, &channel, &url).await;
+    // A short window on purpose: with previews off there is no worker
+    // whose end could be awaited, so a fetch that must not happen gets
+    // 300 ms to show.
     tokio::time::sleep(Duration::from_millis(300)).await;
     let message = message(&mut client, &channel, sent["id"].as_str().unwrap()).await;
     assert_eq!(message["content"], url);
