@@ -2040,6 +2040,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tray-icon",
+ "tungstenite",
  "url",
  "uuid",
  "wayland-client",

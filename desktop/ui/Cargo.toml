@@ -60,3 +60,5 @@ gelabber-call = { path = "../call", features = ["testing"] }
 gelabber-i18n = { path = "../i18n", features = ["testing"] }
 gelabber-testing = { path = "../testing" }
 egui_kittest = { version = "0.37.0", features = ["wgpu", "eframe", "snapshot"] }
+# The stand-in API's gateway (app/testkit.rs); the client's own tungstenite.
+tungstenite = "0.30.0"

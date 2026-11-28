@@ -1651,6 +1651,146 @@ mod page_tests {
         }
     }
 
+    /// A message event on #allgemein as the gateway sends it: `n` on the
+    /// stand-in gateway's epoch, the message as `d`.
+    fn created_event(n: u64, message: &serde_json::Value) -> serde_json::Value {
+        use crate::app::testkit::{ALLGEMEIN, EPOCH, HOME};
+        json!({"op": "e", "t": "c", "s": HOME, "c": ALLGEMEIN, "n": n, "ep": EPOCH,
+               "i": message["id"], "d": message, "r": message["revision"]})
+    }
+
+    /// The messages of #allgemein the stand-in holds: what the test sent or
+    /// pushed, as the API would have them.
+    type Kept = std::sync::Arc<parking_lot::Mutex<Vec<serde_json::Value>>>;
+
+    /// The stand-in API with its gateway: Wohnzimmer, Lena may write, and
+    /// #allgemein's history is `kept`. A sent message joins `kept`.
+    fn live_api(kept: &Kept) -> FakeApi {
+        use crate::app::testkit::{ALLGEMEIN, LENA};
+        let kept = kept.clone();
+        FakeApi::with_gateway(true, move |method, path, body| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                let messages = kept.lock().clone();
+                Some(Reply::json(
+                    json!({"messages": messages, "has_more": false}),
+                ))
+            }
+            ("POST", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                let body: serde_json::Value = serde_json::from_str(body).ok()?;
+                let message = json!({
+                    "id": "00000000-0000-4000-8000-000000000201",
+                    "channel_id": ALLGEMEIN,
+                    "author": {"id": LENA, "name": "Lena", "avatar_url": null},
+                    "content": body["content"],
+                    "created_at": "2026-11-27T12:00:00Z",
+                    "edited_at": null,
+                    "revision": 1,
+                    "created_order": 1,
+                    "nonce": body["nonce"],
+                });
+                kept.lock().push(message.clone());
+                Some(Reply::json(message))
+            }
+            _ => {
+                let mut reply = workspace(method, path)?;
+                if let Some(list) = reply
+                    .body
+                    .get_mut("permissions")
+                    .and_then(|p| p.as_array_mut())
+                {
+                    list.push(json!("send_messages"));
+                }
+                Some(reply)
+            }
+        })
+    }
+
+    /// #allgemein open, its topic subscribed, and the round of recovery the
+    /// gateway's opening starts behind it: its requests are seen after
+    /// `GET /ws`, and idle waits for the rest of it.
+    fn open_live(api: &FakeApi) -> egui_kittest::Harness<'static, crate::setup::Launcher> {
+        use crate::app::testkit::{ALLGEMEIN, HOME, wait_until_idle};
+        let mut harness = launcher(api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for(
+            &mut harness,
+            "the subscription and the recovery round",
+            |_| {
+                let seen = api.seen.lock();
+                let after = seen
+                    .iter()
+                    .position(|r| r == "GET /ws")
+                    .map_or(&seen[..0], |at| &seen[at..]);
+                api.gateway.subscribed(HOME, Some(ALLGEMEIN))
+                    && ["GET /servers", "GET /dms", "GET /messages/unread"]
+                        .iter()
+                        .all(|r| after.iter().any(|s| s == r))
+            },
+        );
+        wait_until_idle(&mut harness);
+        harness
+    }
+
+    /// Text typed into the composer and sent with Enter goes to the API and
+    /// shows once, also when the gateway brings it back to its author, as
+    /// the real one does (GEL-376).
+    #[test]
+    fn a_message_sent_through_the_app_shows_once() {
+        use crate::app::testkit::{ALLGEMEIN, wait_until_idle};
+        use egui::accesskit::Role;
+        let _config = TempConfig::new("send-message");
+        let kept = Kept::default();
+        let api = live_api(&kept);
+        let mut harness = open_live(&api);
+        click(&mut harness, "Nachricht an #allgemein");
+        harness.event(egui::Event::Text("Hallo aus der App".into()));
+        harness.key_press(egui::Key::Enter);
+        wait_for(&mut harness, "the message at the API", |_| {
+            !kept.lock().is_empty()
+        });
+        let message = kept.lock()[0].clone();
+        assert_eq!(message["content"], "Hallo aus der App");
+        assert!(message["nonce"].is_string(), "{message}");
+        api.gateway.push(created_event(1, &message));
+        // Frames come in order: once the next one is drawn, the echo was read.
+        let later = history_message(2, "Und noch eine");
+        kept.lock().push(later.clone());
+        api.gateway.push(created_event(2, &later));
+        wait_for_label(&mut harness, "Und noch eine");
+        wait_until_idle(&mut harness);
+        assert!(
+            harness
+                .query_by_role_and_label(Role::Label, "Hallo aus der App")
+                .is_some()
+        );
+        // Drawn rows with one id share one node, so the count is the store's.
+        let id: uuid::Uuid = message["id"].as_str().expect("id").parse().expect("uuid");
+        let channel: uuid::Uuid = ALLGEMEIN.parse().expect("uuid");
+        let rows = harness
+            .state_mut()
+            .app()
+            .expect("app")
+            .client()
+            .with_state(|s| {
+                s.messages(channel)
+                    .map_or(0, |h| h.messages.iter().filter(|m| m.id == id).count())
+            });
+        assert_eq!(rows, 1, "the sent message, once");
+    }
+
+    /// Another person's message arrives over the gateway while the channel
+    /// is open and is drawn (GEL-376).
+    #[test]
+    fn a_message_from_another_person_arrives_live() {
+        let _config = TempConfig::new("receive-message");
+        let kept = Kept::default();
+        let api = live_api(&kept);
+        let mut harness = open_live(&api);
+        let message = history_message(1, "Seid ihr heute Abend da?");
+        kept.lock().push(message.clone());
+        api.gateway.push(created_event(1, &message));
+        wait_for_label(&mut harness, "Seid ihr heute Abend da?");
+    }
+
     /// `DmChannelPage`: the conversation's own fetch failed, so the page
     /// says so even though the list knows the DM.
     #[test]

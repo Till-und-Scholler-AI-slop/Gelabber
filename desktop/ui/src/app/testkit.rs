@@ -1,5 +1,6 @@
 //! For kittest tests of whole screens: a stand-in Gelabber API on a local
-//! port (enough of it for the app to start signed in or out), and a
+//! port (enough of it for the app to start signed in or out), with its
+//! gateway when a test asks for it ([`FakeApi::with_gateway`]), and a
 //! harness around the [`Launcher`] that steps until a condition holds.
 //!
 //! Requests go to the stand-in API on other threads, in real time, and its
@@ -13,10 +14,16 @@
 //!
 //! Idle ([`wait_until_idle`]) knows the stand-in's requests, the client's
 //! requests and its timers for later work (`Client::scheduled`: retries,
-//! the unread debounce), and the images loading. It does not know the
-//! client's 400 ms ticker (typing, idle) or a page's own delay before it
+//! the unread debounce), and the images loading. With the stand-in's
+//! gateway it also knows a signed-in client whose gateway is not open yet
+//! (connecting, the reconnect wait) and frames a test pushed that are not
+//! sent yet; the wait after the gateway is ready and the recovery round it
+//! starts are the client's own work (`busy`). It does not know the
+//! client's 400 ms ticker (typing, idle), a page's own delay before it
 //! asks (`request_repaint_after`: the chat search, the GIF picker, the
-//! directory's search). A test of those waits for what it expects to see.
+//! directory's search), the moment between the gateway opening and the
+//! client starting its recovery, or a pushed frame the client has received
+//! and not handled yet. A test of those waits for what it expects to see.
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -84,6 +91,167 @@ pub struct FakeApi {
     pub seen: Arc<Mutex<Vec<String>>>,
     /// Requests read and not yet answered.
     answering: Arc<AtomicUsize>,
+    /// Its `/ws`, served when started [`FakeApi::with_gateway`]; otherwise
+    /// the upgrade is refused, as before the gateway was asked for.
+    pub gateway: Arc<Gateway>,
+}
+
+/// The stand-in gateway: answers each subscription with an `ok` at the
+/// topic's last pushed sequence number of [`EPOCH`], keeps every frame the
+/// app sends, and sends the app the frames a test pushes, on every open
+/// socket. Its frames are written by hand after the API's protocol
+/// (`backend/api/src/gateway/protocol.rs`); only the live tests against a
+/// real API notice when that changes. An `op` the API does not take fails
+/// the test when the stand-in goes.
+#[derive(Default)]
+pub struct Gateway {
+    serving: bool,
+    received: Mutex<Vec<Value>>,
+    unknown: Mutex<Vec<Value>>,
+    sockets: Mutex<Vec<std::sync::mpsc::Sender<Value>>>,
+    /// Frames pushed and not yet written to a socket.
+    queued: AtomicUsize,
+    /// The last `n` pushed per topic (`s`, `c`).
+    sequence: Mutex<std::collections::HashMap<(String, Option<String>), u64>>,
+}
+
+/// How often the stand-in gateway sends `h`, as the API's does: the client
+/// drops a socket that stays silent for its `dead` time (30 s) and
+/// reconnects, which would start a recovery round in a long test.
+const HEARTBEAT: Duration = Duration::from_secs(5);
+
+/// The `ep` of every topic of the stand-in gateway.
+pub const EPOCH: &str = "00000000-0000-4000-8000-0000000000e0";
+
+/// The `op`s the API's gateway takes from a client (`ClientFrame` in
+/// backend/api/src/gateway/protocol.rs).
+const CLIENT_OPS: [&str; 7] = ["h", "s", "u", "sig", "f", "p", "y"];
+
+impl Gateway {
+    /// Sends `frame` to the app on every open socket.
+    pub fn push(&self, frame: Value) {
+        if let (Some(s), Some(n)) = (frame["s"].as_str(), frame["n"].as_u64()) {
+            let topic = (s.to_owned(), frame["c"].as_str().map(str::to_owned));
+            self.sequence.lock().insert(topic, n);
+        }
+        self.sockets.lock().retain(|socket| {
+            self.queued.fetch_add(1, Ordering::SeqCst);
+            let sent = socket.send(frame.clone()).is_ok();
+            if !sent {
+                self.queued.fetch_sub(1, Ordering::SeqCst);
+            }
+            sent
+        });
+    }
+
+    /// Whether the app subscribed to server `s` (and channel `c`).
+    pub fn subscribed(&self, s: &str, c: Option<&str>) -> bool {
+        self.received
+            .lock()
+            .iter()
+            .any(|f| f["op"] == "s" && f["s"] == s && f["c"].as_str() == c)
+    }
+
+    fn serve(&self, stream: TcpStream, key: &str) {
+        use tungstenite::protocol::Role;
+        let accept = tungstenite::handshake::derive_accept_key(key.as_bytes());
+        let mut head = stream.try_clone().expect("clone");
+        let switching = format!(
+            "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\
+             sec-websocket-accept: {accept}\r\n\r\n"
+        );
+        if head.write_all(switching.as_bytes()).is_err() {
+            return;
+        }
+        // Reads give up after a moment, so frames pushed meanwhile go out.
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(10)));
+        let mut socket = tungstenite::WebSocket::from_raw_socket(stream, Role::Server, None);
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.sockets.lock().push(tx);
+        let outbox = Outbox {
+            gateway: self,
+            rx: Some(rx),
+        };
+        let rx = outbox.rx.as_ref().expect("receiver");
+        let mut beat = Instant::now();
+        loop {
+            // Written here, not pushed: it is no work idle waits for.
+            if beat.elapsed() >= HEARTBEAT {
+                beat = Instant::now();
+                if socket.send(json!({"op": "h"}).to_string().into()).is_err() {
+                    return;
+                }
+            }
+            while let Ok(frame) = rx.try_recv() {
+                let sent = socket.send(frame.to_string().into());
+                self.queued.fetch_sub(1, Ordering::SeqCst);
+                if sent.is_err() {
+                    return;
+                }
+            }
+            match socket.read() {
+                Ok(tungstenite::Message::Text(text)) => {
+                    let Ok(frame) = serde_json::from_str::<Value>(text.as_str()) else {
+                        continue;
+                    };
+                    if !CLIENT_OPS.contains(&frame["op"].as_str().unwrap_or_default()) {
+                        self.unknown.lock().push(frame.clone());
+                    }
+                    if frame["op"] == "s" {
+                        let topic = (
+                            frame["s"].as_str().unwrap_or_default().to_owned(),
+                            frame["c"].as_str().map(str::to_owned),
+                        );
+                        let n = self.sequence.lock().get(&topic).copied().unwrap_or(0);
+                        let mut ok = json!({"op": "ok", "s": frame["s"], "n": n, "ep": EPOCH});
+                        if !frame["c"].is_null() {
+                            ok["c"] = frame["c"].clone();
+                        }
+                        if socket.send(ok.to_string().into()).is_err() {
+                            return;
+                        }
+                    }
+                    self.received.lock().push(frame);
+                }
+                Ok(tungstenite::Message::Close(_)) => return,
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => return,
+            }
+        }
+    }
+}
+
+/// A socket's queue of pushed frames. When the socket ends, what is still
+/// queued is no longer counted, or idle would wait for it for good; under
+/// the sockets' lock, so no push lands in between.
+struct Outbox<'a> {
+    gateway: &'a Gateway,
+    rx: Option<std::sync::mpsc::Receiver<Value>>,
+}
+
+impl Drop for Outbox<'_> {
+    fn drop(&mut self) {
+        let _sockets = self.gateway.sockets.lock();
+        if let Some(rx) = self.rx.take() {
+            while rx.try_recv().is_ok() {
+                self.gateway.queued.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+impl Drop for FakeApi {
+    fn drop(&mut self) {
+        let unknown = self.gateway.unknown.lock();
+        if !unknown.is_empty() && !std::thread::panicking() {
+            panic!("the app sent the gateway frames the API does not take: {unknown:?}");
+        }
+    }
 }
 
 /// How long every answer of the stand-in API waits: `GELABBER_TEST_API_DELAY_MS`.
@@ -100,6 +268,7 @@ fn answer_delay() -> Option<Duration> {
 struct Watched {
     answering: Arc<AtomicUsize>,
     seen: Arc<Mutex<Vec<String>>>,
+    gateway: Arc<Gateway>,
 }
 
 thread_local! {
@@ -125,14 +294,31 @@ fn last_seen() -> String {
     })
 }
 
+/// The watched stand-in's gateway, when it serves one.
+fn watched_gateway() -> Option<Arc<Gateway>> {
+    WATCHED.with(|w| {
+        w.borrow()
+            .as_ref()
+            .filter(|w| w.gateway.serving)
+            .map(|w| w.gateway.clone())
+    })
+}
+
 /// Work on its way that the next frames depend on: requests, the client's
-/// timers and images.
+/// timers and images, and with the stand-in's gateway a client signed in
+/// whose gateway is not open yet and frames a test pushed that are not out.
 fn pending(harness: &mut Harness<'_, Launcher>) -> bool {
-    let scheduled = harness
-        .state_mut()
-        .app()
-        .is_some_and(|app| app.client().scheduled() > 0);
-    answering() > 0 || scheduled || harness.state().busy()
+    let gateway = watched_gateway();
+    let (scheduled, connecting) = harness.state_mut().app().map_or((false, false), |app| {
+        let client = app.client();
+        let connecting = gateway.is_some()
+            && client.with_state(|s| {
+                s.me().is_some() && s.gateway != gelabber_client::GatewayStatus::Open
+            });
+        (client.scheduled() > 0, connecting)
+    });
+    let queued = gateway.is_some_and(|g| g.queued.load(Ordering::SeqCst) > 0);
+    answering() > 0 || scheduled || connecting || queued || harness.state().busy()
 }
 
 /// Counts a request as in flight until it is answered or the connection ends.
@@ -156,24 +342,55 @@ impl FakeApi {
         signed_in: bool,
         route: impl Fn(&str, &str, &str) -> Option<Reply> + Send + Sync + 'static,
     ) -> Self {
+        Self::launch(signed_in, false, route)
+    }
+
+    /// [`FakeApi::start`] that also serves the gateway (`/ws`): see [`Gateway`].
+    pub fn with_gateway(
+        signed_in: bool,
+        route: impl Fn(&str, &str, &str) -> Option<Reply> + Send + Sync + 'static,
+    ) -> Self {
+        Self::launch(signed_in, true, route)
+    }
+
+    fn launch(
+        signed_in: bool,
+        serving: bool,
+        route: impl Fn(&str, &str, &str) -> Option<Reply> + Send + Sync + 'static,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let origin = format!("http://{}", listener.local_addr().expect("addr"));
         let seen: Arc<Mutex<Vec<String>>> = Arc::default();
         let state = Arc::new(Mutex::new(signed_in));
         let route: Arc<Route> = Arc::new(route);
         let answering: Arc<AtomicUsize> = Arc::default();
-        let (log, flag, count) = (seen.clone(), state.clone(), answering.clone());
+        let gateway = Arc::new(Gateway {
+            serving,
+            ..Gateway::default()
+        });
+        let (log, flag, count, ws) = (
+            seen.clone(),
+            state.clone(),
+            answering.clone(),
+            gateway.clone(),
+        );
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (log, flag, route, count) =
-                    (log.clone(), flag.clone(), route.clone(), count.clone());
-                std::thread::spawn(move || serve(stream, &log, &flag, &*route, &count));
+                let (log, flag, route, count, ws) = (
+                    log.clone(),
+                    flag.clone(),
+                    route.clone(),
+                    count.clone(),
+                    ws.clone(),
+                );
+                std::thread::spawn(move || serve(stream, &log, &flag, &*route, &count, &ws));
             }
         });
         Self {
             origin,
             seen,
             answering,
+            gateway,
         }
     }
 
@@ -184,6 +401,7 @@ impl FakeApi {
             *w.borrow_mut() = Some(Watched {
                 answering: self.answering.clone(),
                 seen: self.seen.clone(),
+                gateway: self.gateway.clone(),
             })
         });
     }
@@ -204,6 +422,7 @@ fn serve(
     signed_in: &Mutex<bool>,
     route: &Route,
     answering: &AtomicUsize,
+    gateway: &Gateway,
 ) {
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
     let mut out = stream;
@@ -212,13 +431,17 @@ fn serve(
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
             return;
         }
-        let _answering = Answering::new(answering);
         let mut parts = line.split_whitespace();
         let (method, target) = (
             parts.next().unwrap_or("").to_owned(),
             parts.next().unwrap_or("").to_owned(),
         );
+        // The gateway's socket stays open for the whole test: it is no
+        // request in flight (`pending` counts a gateway that is not open).
+        let upgrade = gateway.serving && target.split('?').next() == Some("/ws");
+        let _answering = (!upgrade).then(|| Answering::new(answering));
         let mut length = 0;
+        let mut websocket_key = None;
         loop {
             let mut header = String::new();
             if reader.read_line(&mut header).unwrap_or(0) == 0 {
@@ -228,11 +451,17 @@ fn serve(
             if header.is_empty() {
                 break;
             }
-            if let Some((name, value)) = header.split_once(':')
-                && name.eq_ignore_ascii_case("content-length")
-            {
-                length = value.trim().parse().unwrap_or(0);
+            if let Some((name, value)) = header.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    length = value.trim().parse().unwrap_or(0);
+                } else if name.eq_ignore_ascii_case("sec-websocket-key") {
+                    websocket_key = Some(value.trim().to_owned());
+                }
             }
+        }
+        if upgrade && let Some(key) = websocket_key {
+            log.lock().push(format!("{method} /ws"));
+            return gateway.serve(out, &key);
         }
         let mut body = vec![0; length];
         if reader.read_exact(&mut body).is_err() {
@@ -741,4 +970,24 @@ pub fn open_account(harness: &mut Harness<'_, Launcher>, name: &str) {
         account_button(h, name).map(|n| n.accesskit_node().locate().0)
     });
     wait_for_label(harness, "Abmelden");
+}
+
+/// Frames pushed to a socket that ended before it sent them are no longer
+/// waited for: idle would otherwise never come again.
+#[test]
+fn frames_left_on_an_ended_socket_are_not_waited_for() {
+    let gateway = Gateway::default();
+    let (tx, rx) = std::sync::mpsc::channel();
+    gateway.sockets.lock().push(tx);
+    gateway.push(json!({"op": "h"}));
+    gateway.push(json!({"op": "h"}));
+    assert_eq!(gateway.queued.load(Ordering::SeqCst), 2);
+    drop(Outbox {
+        gateway: &gateway,
+        rx: Some(rx),
+    });
+    assert_eq!(gateway.queued.load(Ordering::SeqCst), 0);
+    // A push after the socket ended is not counted either.
+    gateway.push(json!({"op": "h"}));
+    assert_eq!(gateway.queued.load(Ordering::SeqCst), 0);
 }
