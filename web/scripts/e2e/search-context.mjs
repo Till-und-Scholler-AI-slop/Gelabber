@@ -1,4 +1,4 @@
-/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame */
+/* global process, document, sessionStorage, Event, console, setTimeout, Buffer, requestAnimationFrame, MessageChannel */
 // Local browser integration for scoped search navigation; no physical-device claim.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -250,8 +250,29 @@ try {
       // The composer may still be growing or shrinking (its animation) when
       // the list is placed: a list the app left where it was put, whose gap
       // the layout changed around it, is placed again, at most three times.
-      // A list the app moved is not, and fails where it is used.
+      // A list the app moved is not, and fails where it is used. A move down
+      // that ends near the end is the reader coming back to it (the list
+      // pins), so a place below the current one is reached as the first
+      // was: from the end, upwards.
+      // Writes leave the animation frame first: a scroll written inside
+      // one has its event after that frame's ResizeObserver, which records
+      // the new position first, so the list would see no move.
+      const task = () =>
+        new Promise((resolve) => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = resolve;
+          channel.port2.postMessage(0);
+        });
       for (let placement = 0; placement < 3; placement++) {
+        if (placement > 0) {
+          await task();
+          if (el.scrollHeight - el.clientHeight - offset > el.scrollTop) {
+            el.scrollTop = el.scrollHeight;
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            await task();
+          }
+        }
         el.scrollTop = el.scrollHeight - el.clientHeight - offset;
         const placed = el.scrollTop;
         still = 0;
