@@ -36,6 +36,7 @@ use uuid::Uuid;
 mod attach;
 mod authority;
 mod codecs;
+mod layers;
 mod rpc;
 mod sharp;
 mod stats;

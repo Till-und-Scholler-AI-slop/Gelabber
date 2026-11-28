@@ -250,6 +250,15 @@ impl Sfu {
                     return Err(SfuError::Forbidden);
                 }
                 peer.attach_failures.store(0, Ordering::Relaxed);
+                // Until it has a layer, the SFU asks for bitrate rounds itself
+                // (layers.rs, GEL-460).
+                let waiting = s.clone();
+                tokio::spawn(async move {
+                    layers::nudge_until_layer(&waiting.consumer, layers::NUDGE_ROUNDS, || {
+                        tokio::time::sleep(layers::NUDGE_EVERY)
+                    })
+                    .await;
+                });
                 self.emit(
                     &peer,
                     ServerFrame::ConsumerState {

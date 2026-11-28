@@ -255,6 +255,12 @@ impl NativeConsumer {
     pub async fn resume(&self) -> Result<(), SfuError> {
         self.resource.run(|c| async move { c.resume().await }).await
     }
+    /// Its weight in its transport's bitrate rounds; a change asks for one.
+    pub async fn set_priority(&self, priority: u8) -> Result<(), SfuError> {
+        self.resource
+            .run(|c| async move { c.set_priority(priority).await })
+            .await
+    }
     pub async fn confirm_closed(&self) {
         self.resource.close();
         let (id, transport, lost) = (self.id, &self.transport, &self.worker_lost);
