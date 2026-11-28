@@ -21,12 +21,19 @@ const state = { atLatest: null as boolean | null };
 const onAtLatest = (value: boolean) => {
   state.atLatest = value;
 };
+// Grows one row by `by` px: the virtual list measures it again.
+let growRow: (index: number, by: number) => void = nothing;
 
 // The message list's scrolling with plain 40 px rows. The spacer below the
 // rows, inside the observed content, stands for a row that grew (a picture
 // that loaded): it changes the list's height at once.
 function List() {
   const [spacer, setSpacer] = useState(0);
+  const [grown, setGrown] = useState<Record<number, number>>({});
+  growRow = (index, by) =>
+    flushSync(() =>
+      setGrown((rows) => ({ ...rows, [index]: (rows[index] ?? 0) + by })),
+    );
   const { scrollRef, contentRef, virtualizer, handlers } = useMessageScroll({
     active: true,
     items: messages,
@@ -64,7 +71,11 @@ function List() {
             key={row.key}
             data-index={row.index}
             ref={virtualizer.measureElement}
-            style={{ position: "absolute", top: row.start, height: 40 }}
+            style={{
+              position: "absolute",
+              top: row.start,
+              height: 40 + (grown[row.index] ?? 0),
+            }}
           />
         ))}
       </div>
@@ -73,6 +84,15 @@ function List() {
 }
 
 const frame = () => new Promise(requestAnimationFrame);
+// Out of an animation frame callback: a scroll written there has its event
+// after that frame's ResizeObserver, unlike a reader's or a task's scroll,
+// whose event comes first in the next frame.
+const task = () =>
+  new Promise<void>((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => resolve();
+    channel.port2.postMessage(0);
+  });
 const settled = async () => {
   for (let i = 0; i < 4; i++) await frame();
 };
@@ -138,5 +158,70 @@ describe("message list: where it stands after a scroll during a size change", ()
     await settled();
     expect(gap(list)).toBeLessThanOrEqual(1);
     expect(state.atLatest).toBe(true);
+  });
+
+  it("does not take a right press on the list as the scrollbar", async () => {
+    const { state, list } = await mount();
+    list.scrollTop = 0;
+    await expect.poll(() => state.atLatest).toBe(false);
+    list.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, button: 2 }),
+    );
+    // Near the end, not at it, while the list grew: not the reader's.
+    growAndMove(list, (el) => el.scrollHeight - el.clientHeight - 60);
+    await settled();
+    list.click();
+    await settled();
+    expect(gap(list)).toBeGreaterThan(150);
+    expect(state.atLatest).toBe(false);
+  });
+
+  it("ends the scrollbar press when the window loses focus", async () => {
+    const { state, list } = await mount();
+    list.scrollTop = 0;
+    await expect.poll(() => state.atLatest).toBe(false);
+    list.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    // The context menu or another window took the release.
+    window.dispatchEvent(new Event("blur"));
+    growAndMove(list, (el) => el.scrollHeight - el.clientHeight - 60);
+    await settled();
+    list.click();
+    await settled();
+    expect(gap(list)).toBeGreaterThan(150);
+    expect(state.atLatest).toBe(false);
+  });
+
+  it("counts a scrollbar move that comes five frames after the release, while the scroll goes on", async () => {
+    const { state, list } = await mount();
+    list.scrollTop = 1000;
+    await expect.poll(() => state.atLatest).toBe(false);
+    list.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    // A track click's animation: a step each frame after the release.
+    for (let step = 0; step < 4; step++) {
+      await frame();
+      await task();
+      list.scrollTop += 10;
+    }
+    await frame();
+    await task();
+    growAndMove(list, (el) => el.scrollHeight - el.clientHeight - 60);
+    await settled();
+    list.click();
+    await settled();
+    expect(gap(list)).toBeLessThanOrEqual(1);
+    expect(state.atLatest).toBe(true);
+  });
+
+  it("keeps a reader in the history there when a row above them is measured larger", async () => {
+    const { state, list } = await mount();
+    list.scrollTop = 1000;
+    await expect.poll(() => state.atLatest).toBe(false);
+    await settled();
+    const before = gap(list);
+    growRow(2, 100);
+    await settled();
+    expect(gap(list)).toBe(before);
+    expect(state.atLatest).toBe(false);
   });
 });
