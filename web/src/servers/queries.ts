@@ -329,6 +329,51 @@ function replaceRow<T extends { id: string }>(
 const byId = (row: { id: string }) => row.id;
 
 /**
+ * Puts a created category, channel or role where its optimistic row was.
+ * A read of the server can answer while the create is on its way: the
+ * gateway reads every server again whenever it connects. A category and a
+ * channel without roles come with no live event, so nothing else brings
+ * them; a role and a channel with roles are followed by the access event,
+ * which reads the server again, and are settled the same way in case that
+ * event is missed. A read that answered in between replaced the optimistic
+ * row: the created one is added if that read did not hold it, and the
+ * server is read again, since that read may also have known it deleted. A
+ * read still in flight may have left before the create was saved: it is
+ * made again (GEL-443).
+ */
+function settleCreated<
+  F extends "categories" | "channels" | "roles",
+  T extends ServerDetail[F][number],
+>(
+  client: QueryClient,
+  ctx: { userId: string; generation: number; tmp: string },
+  serverId: string,
+  field: F,
+  created: T,
+  patch: typeof patchDetail = patchDetail,
+): void {
+  let replaced = false;
+  patch(client, ctx.userId, ctx.generation, serverId, (detail) => {
+    const rows = detail[field] as T[];
+    replaced = !rows.some((row) => row.id === ctx.tmp);
+    return {
+      ...detail,
+      [field]: !replaced
+        ? replaceRow(rows, ctx.tmp, created)
+        : rows.some((row) => row.id === created.id)
+          ? rows
+          : [...rows, created],
+    };
+  });
+  const queryKey = serverKeys.detail(ctx.userId, ctx.generation, serverId);
+  if (replaced || client.isFetching({ queryKey }) > 0)
+    void client.invalidateQueries(
+      { queryKey, refetchType: "all" },
+      { cancelRefetch: true, throwOnError: false },
+    );
+}
+
+/**
  * Undoes an optimistic removal that failed: the row goes back after the
  * nearest row that stood before it and is still there. Rows that came or
  * went while the request was in flight stay as they are, and a row that is
@@ -634,7 +679,11 @@ export function forgetServer(
 
 export function useCreateCategory(serverId: string) {
   const client = useQueryClient();
-  return useMutation({
+  return useMutation(createCategoryOptions(client, serverId));
+}
+
+export function createCategoryOptions(client: QueryClient, serverId: string) {
+  return mutationOptions({
     mutationFn: (name: string) => remote.createCategory(serverId, name.trim()),
     onMutate: (name) => {
       const stamp = takeStamp();
@@ -660,10 +709,7 @@ export function useCreateCategory(serverId: string) {
     },
     onSuccess: (category, _name, ctx) => {
       if (!stampHolds(ctx)) return;
-      patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
-        ...detail,
-        categories: replaceRow(detail.categories, ctx.tmp, category),
-      }));
+      settleCreated(client, ctx, serverId, "categories", category);
     },
     onError: (error, _name, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -820,10 +866,7 @@ export function createChannelOptions(client: QueryClient, serverId: string) {
     },
     onSuccess: (channel, _input, ctx) => {
       if (!stampHolds(ctx)) return;
-      patchDetail(client, ctx.userId, ctx.generation, serverId, (detail) => ({
-        ...detail,
-        channels: replaceRow(detail.channels, ctx.tmp, channel),
-      }));
+      settleCreated(client, ctx, serverId, "channels", channel);
     },
     onError: (error, _input, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -1410,10 +1453,7 @@ export function createRoleOptions(client: QueryClient, serverId: string) {
     },
     onSuccess: (role, _input, ctx) => {
       if (!stampHolds(ctx)) return;
-      patchRoles(client, ctx.userId, ctx.generation, serverId, (detail) => ({
-        ...detail,
-        roles: replaceRow(detail.roles, ctx.tmp, role),
-      }));
+      settleCreated(client, ctx, serverId, "roles", role, patchRoles);
       refetchList(client, ctx.userId, ctx.generation);
     },
     onError: (error, _input, ctx) => {

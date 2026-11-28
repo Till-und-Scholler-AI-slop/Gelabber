@@ -73,8 +73,9 @@ async fn health() -> Json<HealthResponse> {
 pub const PROBE_REUSE: Duration = Duration::from_secs(1);
 
 /// The last Redis probe. Its lock also makes concurrent requests share one.
+/// Its age is on tokio's clock, so a test can move past [`PROBE_REUSE`].
 #[derive(Default)]
-pub struct RedisProbe(tokio::sync::Mutex<Option<(Instant, CheckResult)>>);
+pub struct RedisProbe(tokio::sync::Mutex<Option<(tokio::time::Instant, CheckResult)>>);
 
 async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
     let redis = {
@@ -83,7 +84,7 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
             Some((at, result)) if at.elapsed() < PROBE_REUSE => result.clone(),
             _ => {
                 let result = probe_redis(&state).await;
-                *last = Some((Instant::now(), result.clone()));
+                *last = Some((tokio::time::Instant::now(), result.clone()));
                 result
             }
         }

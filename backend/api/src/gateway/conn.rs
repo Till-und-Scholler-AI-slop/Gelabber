@@ -1120,10 +1120,7 @@ mod tests {
 
         let mut last = long_ago;
         assert!(!idle_timer(&mut last, false, true, limit), "in a call");
-        assert!(
-            last.elapsed() < Duration::from_secs(1),
-            "the call counts as activity"
-        );
+        assert!(last > long_ago, "the call counts as activity");
         assert!(
             !idle_timer(&mut last, false, false, limit),
             "left: the five minutes start now"
@@ -1298,6 +1295,13 @@ mod tests {
             .await
             .unwrap();
 
+        // The tick stops in reconcile_access, on the pool's only connection,
+        // until this lock on `channels` goes.
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE channels IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *held)
+            .await
+            .unwrap();
         let busy = state.gateway.connections.inner.voice_ops.lock().await;
         let tick = tokio::spawn({
             let (state, session) = (state.clone(), session.clone());
@@ -1306,14 +1310,33 @@ mod tests {
                 security_tick(&state, &session, conn, &mut checked, false).await
             }
         });
-        // Long enough for the session check and reconcile on a local database.
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(!tick.is_finished(), "the tick waits on voice_ops");
-        let free = tokio::time::timeout(Duration::from_millis(200), small.acquire()).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity \
+                     WHERE datname = current_database() AND wait_event_type = 'Lock'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if waiting > 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the tick reaches reconcile_access");
+        held.commit().await.unwrap();
+        // Asked for while the tick holds the connection, so this gets it
+        // when the tick gives it back. A tick that kept it while waiting on
+        // voice_ops would leave it to the pool's acquire timeout.
+        let free = small.acquire().await;
         assert!(
-            matches!(free, Ok(Ok(_))),
+            free.is_ok(),
             "the tick kept the only pool connection while waiting on voice_ops"
         );
+        assert!(!tick.is_finished(), "the tick waits on voice_ops");
         drop(free);
         drop(busy);
         assert!(

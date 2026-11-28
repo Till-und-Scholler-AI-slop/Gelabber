@@ -291,7 +291,7 @@ async fn publish(
     info!(%user_id, size, "data export ready");
 
     if let Some(mailer) = state.mail.clone() {
-        tokio::spawn(async move {
+        mailer.clone().spawn(async move {
             let mail = Mail::ExportReady { expires_at };
             match mailer.send(&email, &mail, locale).await {
                 Ok(()) => info!(%user_id, kind = mail.kind(), "account mail sent"),

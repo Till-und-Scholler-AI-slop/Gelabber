@@ -750,6 +750,7 @@ async fn a_long_failing_subscription_is_removed(pool: PgPool) {
 #[sqlx::test]
 async fn a_message_no_service_took_costs_no_subscription(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         dm,
@@ -771,8 +772,7 @@ async fn a_message_no_service_took_costs_no_subscription(pool: PgPool) {
     for _ in 0..3 {
         next(&mut hits).await;
     }
-    // The gone one going shows the cleanup ran.
-    let left = endpoints_settled(&pool, 2).await;
+    let left = endpoints_settled(&state, &pool).await;
     assert_eq!(left.len(), 2, "{left:?}");
     assert!(left[0].ends_with("/big/old"), "{left:?}");
     assert!(left[1].ends_with("/fail/old"), "{left:?}");
@@ -795,12 +795,14 @@ async fn endpoints_left(pool: &PgPool, expected: usize) -> Vec<String> {
     left
 }
 
-/// Like [`endpoints_left`], then a moment more: the gone row is deleted
-/// before the failed ones, so reaching `expected` alone proves nothing.
-async fn endpoints_settled(pool: &PgPool, expected: usize) -> Vec<String> {
-    endpoints_left(pool, expected).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    endpoints_left(pool, expected).await
+/// The endpoints left once every push decided so far is done ([`settled`]):
+/// a delivery deletes the gone and failed rows before it ends.
+async fn endpoints_settled(state: &AppState, pool: &PgPool) -> Vec<String> {
+    settled(state).await;
+    sqlx::query_scalar::<_, String>("SELECT endpoint FROM push_subscriptions ORDER BY endpoint")
+        .fetch_all(pool)
+        .await
+        .unwrap()
 }
 
 /// A service that refuses a subscription (400, 403 after a key change)
@@ -836,6 +838,7 @@ async fn a_refused_subscription_is_removed_at_once(pool: PgPool) {
 #[sqlx::test]
 async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         dm,
@@ -857,8 +860,8 @@ async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
     for _ in 0..3 {
         next(&mut hits).await;
     }
-    // The gone one going shows the cleanup ran; both refused ones stay.
-    let left = endpoints_settled(&pool, 2).await;
+    // The gone one goes; both refused ones stay.
+    let left = endpoints_settled(&state, &pool).await;
     assert_eq!(left.len(), 2, "{left:?}");
     assert!(left[0].ends_with("/denied/new"), "{left:?}");
     assert!(left[1].ends_with("/denied/old"), "{left:?}");
@@ -1071,6 +1074,7 @@ async fn receipts_are(pool: &PgPool, message: &str, expected: i64) {
 #[sqlx::test]
 async fn a_deleted_message_recalls_its_push(pool: PgPool) {
     let World {
+        state,
         mut a,
         mut b,
         dm,
@@ -1123,8 +1127,8 @@ async fn a_deleted_message_recalls_its_push(pool: PgPool) {
         .send(Method::DELETE, &format!("/api/messages/{old}"), None)
         .await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
-    let late = tokio::time::timeout(Duration::from_millis(300), hits.recv()).await;
-    assert!(late.is_err(), "no recall past the TTL");
+    settled(&state).await;
+    assert!(hits.try_recv().is_err(), "no recall past the TTL");
 }
 
 #[sqlx::test]
@@ -1377,12 +1381,8 @@ async fn nothing_pushes_from_someone_blocked(pool: PgPool) {
     post(&mut c, &channel, &format!("<@{bob}> marker")).await;
     let payload = browser.open(&next(&mut hits).await);
     assert_eq!(payload["body"], "@Bob marker");
-    assert!(
-        tokio::time::timeout(Duration::from_millis(500), hits.recv())
-            .await
-            .is_err(),
-        "nothing from Ada"
-    );
+    settled(&state).await;
+    assert!(hits.try_recv().is_err(), "nothing from Ada");
 }
 
 /// Do not disturb (#590) holds back every push, DMs and mentions alike,

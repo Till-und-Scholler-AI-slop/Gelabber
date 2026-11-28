@@ -1212,8 +1212,9 @@ mod tests {
     }
 
     /// A slow upload is cut only when it stops sending, or at the caller's
-    /// deadline: never by a fixed timer across the whole transfer.
-    #[tokio::test]
+    /// deadline: never by a fixed timer across the whole transfer. The clock
+    /// is paused, so the gaps between bytes are as long as they say.
+    #[tokio::test(start_paused = true)]
     async fn proxy_upload_is_bounded_by_idleness_and_the_deadline() {
         let (mut minio, seen) = fake_minio().await;
         let idle = Duration::from_millis(400);
@@ -1229,15 +1230,14 @@ mod tests {
             .expect("a steady upload finishes");
         assert_eq!(seen.lock().unwrap()[0].body, b"xxxxxxxx");
 
+        // Cut at the idle limit, not at the minute's deadline (`TimedOut`).
         let stalled = trickle(2, every, true);
-        let started = std::time::Instant::now();
         assert!(matches!(
             store
                 .upload("att/stall", "image/png", 8, stalled, MINUTE)
                 .await,
             Err(StoreError::SizeMismatch)
         ));
-        assert!(started.elapsed() < Duration::from_secs(5));
 
         let late = trickle(8, every, false);
         assert!(matches!(

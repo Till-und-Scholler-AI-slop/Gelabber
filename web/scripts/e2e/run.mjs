@@ -32,12 +32,15 @@ if (activeFaultRuntime)
     dedicatedDatabaseAndBucket: true,
     replayWindow: 8,
     fixtureRateLimitsDisabled: true,
+    // PID of an API an earlier runner left behind, ended at start (GEL-457).
+    leftoverRemoved: activeFaultRuntime.leftoverRemoved ?? null,
     media: activeFaultRuntime.media
       ? {
           sourceSha: activeFaultRuntime.media.manifest.sourceSha,
           binarySha256: activeFaultRuntime.media.manifest.sha256,
           authorityViaOwnedRedisProxy: true,
           iceAdapter: activeFaultRuntime.media.iceAdapter,
+          leftoverRemoved: activeFaultRuntime.media.leftoverRemoved ?? null,
         }
       : null,
   };

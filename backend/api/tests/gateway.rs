@@ -1325,6 +1325,8 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
         f["op"] == "y" && f["on"] == true && f["u"] == member.user_id()
     })
     .await;
+    // The bound is the requirement itself (typing shows within 100 ms);
+    // CI runs this test alone.
     assert!(
         start.elapsed() < Duration::from_millis(100),
         "typing must be visible in under 100ms, took {:?}",

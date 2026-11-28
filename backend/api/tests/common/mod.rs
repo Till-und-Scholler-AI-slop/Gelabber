@@ -22,6 +22,39 @@ pub mod mock_issuer;
 pub mod ws;
 
 pub const SESSION: &str = "gelabber_session";
+
+/// What `mailer` sent, once every mail task spawned so far has ended
+/// ([`gelabber_api::mail::Mailer::settled`]): a mail missing then is not
+/// sent at all. Fails after [`ws::WAIT`].
+pub async fn settled_mails(mailer: &gelabber_api::mail::Mailer) -> Vec<gelabber_api::mail::Sent> {
+    tokio::time::timeout(ws::WAIT, mailer.settled())
+        .await
+        .expect("mail tasks still running");
+    mailer.outbox()
+}
+
+/// Waits until `count` statements of this test's database wait for a
+/// lock: the work that should block on a row someone holds now does.
+/// Fails after [`ws::WAIT`].
+pub async fn lock_waiters(pool: &PgPool, count: i64) {
+    let found = tokio::time::timeout(ws::WAIT, async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity \
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(pool)
+            .await
+            .expect("pg_stat_activity");
+            if waiting >= count {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    found.unwrap_or_else(|_| panic!("no {count} statements waiting for a lock"));
+}
 pub const CSRF: &str = "gelabber_csrf";
 
 pub fn state(pool: PgPool) -> AppState {

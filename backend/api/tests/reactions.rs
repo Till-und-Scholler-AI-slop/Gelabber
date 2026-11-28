@@ -377,12 +377,12 @@ async fn in_flight_reaction_rechecks_membership_after_the_writer_lock(pool: PgPo
         .await
         .unwrap();
     let path = path(&m, "😀");
-    let mut reaction = tokio::spawn(async move { b.send(Method::PUT, &path, None).await });
+    let reaction = tokio::spawn(async move { b.send(Method::PUT, &path, None).await });
     // A permission writer can hold the row while a request has already read old access.
+    common::lock_waiters(&pool, 1).await;
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(50), &mut reaction)
-            .await
-            .is_err()
+        !reaction.is_finished(),
+        "the reaction waits for the server's row"
     );
     sqlx::query("DELETE FROM server_members WHERE server_id=$1 AND user_id=$2")
         .bind(server)

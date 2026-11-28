@@ -658,6 +658,10 @@ async fn revoked_rpc_waits_for_confirmed_native_stop() {
     tokio::pin!(rpc);
     // The operation gate represents an in-flight native operation. A revoked
     // RPC must not finish while that operation still prevents confirmed stop.
+    // A short window on purpose: the gate is a mutex whose waiters cannot be
+    // seen, so nothing shows the RPC has reached it. A right RPC cannot end
+    // while the test holds the gate; the window only gives a wrong one the
+    // time to end.
     assert!(
         tokio::time::timeout(Duration::from_millis(10), &mut rpc)
             .await
@@ -896,15 +900,29 @@ async fn lost_worker_closes_only_its_rooms_and_is_replaced() {
 }
 
 /// Two free consecutive UDP ports on loopback, for workers on fixed ports.
+/// They lie between 30001 and 32767: above the 20000..=30000 that every
+/// worker on port 0 binds from (`Sfu::with_redis`, the other media tests,
+/// in parallel processes), and below Linux's ephemeral range that every `:0`
+/// bind draws from (`ip_local_port_range`, 32768 to 60999 by default, as on
+/// the Ubuntu runners and in the toolchain image, which shares the host's
+/// network). Between this check and the workers' bind, and while a lost
+/// worker's port waits for its replacement, only another fixed bind to the
+/// same port could take them.
 fn free_udp_pair() -> u16 {
-    for _ in 0..50 {
-        let first = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let port = first.local_addr().unwrap().port();
-        if port < u16::MAX && std::net::UdpSocket::bind(("127.0.0.1", port + 1)).is_ok() {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+        ^ std::process::id();
+    for attempt in 0..50u32 {
+        let port = 30_001 + ((seed.wrapping_add(attempt.wrapping_mul(7919))) % 2_766) as u16;
+        let first = std::net::UdpSocket::bind(("127.0.0.1", port));
+        let second = std::net::UdpSocket::bind(("127.0.0.1", port + 1));
+        if first.is_ok() && second.is_ok() {
             return port;
         }
     }
-    panic!("no free UDP port pair");
+    panic!("no free UDP port pair between the test workers' and the ephemeral range");
 }
 
 #[tokio::test]
@@ -944,21 +962,26 @@ async fn worker_exit_seen_by_a_heartbeat_tick_first_still_closes_its_rooms() {
     let engines = sfu.engines.lock().unwrap().clone();
     let (channel, peer, mut rx) = seat(&sfu, &engines[0]).await;
     // `on_dead`'s order: `lost` first, the notification afterwards. A tick
-    // in between must not end the supervisor without handling the loss.
+    // in between must not end the supervisor without handling the loss:
+    // before the notification, only a tick can tell the peer `gone`.
     engines[0].lost.store(true, Ordering::SeqCst);
-    tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
-    engines[0].exited.notify_one();
-    let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    let frame = tokio::time::timeout(HEARTBEAT_INTERVAL * 5, rx.recv())
         .await
-        .expect("the supervisor handles the loss")
+        .expect("a heartbeat tick handles the loss")
         .unwrap();
     assert!(
         matches!(&frame, ServerFrame::Err { e, .. } if e == "gone"),
         "{frame:?}"
     );
     assert!(!sfu.peer_present(peer.id, channel).await);
-    // Handled once although both the tick and the notification saw it.
-    tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
+    // The tick ended the supervisor: nobody waits on the exit any more, so
+    // the notification stays stored instead of being handled a second time.
+    engines[0].exited.notify_one();
+    assert!(
+        futures_util::FutureExt::now_or_never(engines[0].exited.notified()).is_some(),
+        "the supervisor still waits on the exit"
+    );
+    // `engine_lost` counts the failure before it tells the peers `gone`.
     assert_eq!(sfu.counters.worker_failures.load(Ordering::Relaxed), 1);
     assert!(engines[0].down_for() > Duration::ZERO);
     let metrics = sfu.metrics_text();
@@ -1138,6 +1161,162 @@ async fn video_consumers_start_on_the_highest_layer() {
     assert_eq!(layers.spatial_layer, 2);
     sfu.leave(viewer.id, channel).await;
     viewer.revoke(&sfu).await;
+}
+
+/// GEL-460: a viewer of a three-layer camera and of the owner's microphone,
+/// both consumed and still paused, and no RTP anywhere: no consumer can get a
+/// layer.
+struct LayerFixture {
+    sfu: Arc<Sfu>,
+    room: Arc<Room>,
+    viewer: Viewer,
+    viewer_peer: Arc<Peer>,
+    channel: Uuid,
+    video: Arc<Subscription>,
+    audio: Arc<Subscription>,
+}
+async fn layer_fixture() -> LayerFixture {
+    let (sfu, owner, mic, _owner_events) = stopping_fixture().await;
+    let channel = owner.authority.claim.c;
+    let room = sfu.room(channel).await.unwrap();
+    let transport = room.data.lock().await.peers[&owner.id].transports[&true].clone();
+    let rtp = serde_json::from_value(json!({
+        "codecs":[{"mimeType":"video/VP8","payloadType":96,"clockRate":90000,
+            "parameters":{},"rtcpFeedback":[]}],
+        "headerExtensions":[],
+        "encodings":[{"ssrc":30_000,"rid":"r0"},{"ssrc":30_001,"rid":"r1"},{"ssrc":30_002,"rid":"r2"}],
+        "rtcp":{"cname":"layer-wait","reducedSize":true}
+    }))
+    .unwrap();
+    let producer = room
+        .engine
+        .native(transport.clone(), move |transport| async move {
+            transport
+                .produce(ProducerOptions::new(MediaKind::Video, rtp))
+                .await
+        })
+        .await
+        .unwrap();
+    let camera = Arc::new(Publication {
+        producer: NativeProducer::new(producer, transport.clone(), room.engine.lost.clone()),
+        peer: owner.clone(),
+        kind: SourceKind::Camera,
+        epoch: Uuid::new_v4(),
+        parent: None,
+        grant: Grant::new(),
+        gate: Mutex::new(()),
+        packet_samples: StdMutex::new(HashMap::new()),
+        sharp: AtomicBool::new(false),
+    });
+    room.data
+        .lock()
+        .await
+        .publications
+        .insert(camera.id(), camera.clone());
+    let viewer = Viewer::join(&sfu, &owner, &room, 64).await;
+    sfu.attach_existing(channel, viewer.id).await;
+    let (viewer_peer, video, audio) = {
+        let data = room.data.lock().await;
+        let consumed = |publication: &Arc<Publication>| {
+            data.peers[&viewer.id]
+                .consumers
+                .values()
+                .find(|s| Arc::ptr_eq(&s.publication, publication))
+                .cloned()
+                .expect("the publication is consumed")
+        };
+        (
+            data.peers[&viewer.id].peer.clone(),
+            consumed(&camera),
+            consumed(&mic),
+        )
+    };
+    LayerFixture {
+        sfu,
+        room,
+        viewer,
+        viewer_peer,
+        channel,
+        video,
+        audio,
+    }
+}
+impl LayerFixture {
+    async fn ready(&self, sub: &Arc<Subscription>) {
+        let frame = ClientFrame::ConsumerReady {
+            id: 1,
+            consumer_id: sub.consumer.id().to_string(),
+            generation: sub.generation,
+        };
+        self.sfu
+            .dispatch(
+                self.room.clone(),
+                self.viewer_peer.clone(),
+                self.viewer.id,
+                self.channel,
+                frame,
+            )
+            .await
+            .expect("consumerReady resumes the consumer");
+    }
+    async fn leave(self) {
+        self.sfu.leave(self.viewer.id, self.channel).await;
+        self.viewer.revoke(&self.sfu).await;
+    }
+}
+
+#[tokio::test]
+async fn a_layered_consumer_without_a_layer_awaits_one_and_a_nudge_keeps_its_priority() {
+    use super::layers::AwaitsLayer;
+    let f = layer_fixture().await;
+    // The SFU's own rounds stay out of the way here.
+    f.sfu.nudge_every_ms.store(3_600_000, Ordering::Relaxed);
+    assert!(f.video.consumer.layered());
+    assert!(!f.audio.consumer.layered());
+    // Paused until the viewer is ready: nothing to wait for.
+    assert!(f.video.consumer.settled());
+    f.ready(&f.video).await;
+    f.ready(&f.audio).await;
+    // Resumed, and no layer without RTP.
+    assert!(!f.video.consumer.settled());
+    // An audio consumer has no layers to wait for.
+    assert!(f.audio.consumer.settled());
+    // A nudge puts the priority back where it was.
+    f.video.consumer.set_priority(3).await.unwrap();
+    f.video.consumer.nudge().await.unwrap();
+    assert_eq!(f.video.consumer.priority(), Some(3));
+    // Paused again, nothing to wait for.
+    f.video.consumer.pause().await.unwrap();
+    assert!(f.video.consumer.settled());
+    f.video.consumer.resume().await.unwrap();
+    assert!(!f.video.consumer.settled());
+    // Its native handle gone, before the close is confirmed: nothing to ask.
+    f.video.consumer.resource.close();
+    assert!(f.video.consumer.settled());
+    f.leave().await;
+}
+
+#[tokio::test]
+async fn consumer_ready_asks_for_rounds_until_a_layer_or_the_last_round() {
+    let f = layer_fixture().await;
+    // A tick that passes at once: the wait ends when its rounds are used up.
+    f.sfu.nudge_every_ms.store(0, Ordering::Relaxed);
+    let ended = f.video.layer_wait_ended.notified();
+    f.ready(&f.video).await;
+    tokio::time::timeout(Duration::from_secs(30), ended)
+        .await
+        .expect("the wait for a layer ends");
+    assert_eq!(
+        f.video.layer_nudges.load(Ordering::Relaxed),
+        layers::NUDGE_ROUNDS
+    );
+    assert_eq!(f.video.consumer.priority(), Some(1));
+    assert!(!f.video.awaiting_layer.load(Ordering::SeqCst));
+    // No wait for a consumer without layers.
+    f.ready(&f.audio).await;
+    assert!(!f.audio.awaiting_layer.load(Ordering::SeqCst));
+    assert_eq!(f.audio.layer_nudges.load(Ordering::Relaxed), 0);
+    f.leave().await;
 }
 
 #[tokio::test]

@@ -112,6 +112,25 @@ pub struct Push {
     pruned_at: std::sync::Arc<std::sync::atomic::AtomicI64>,
     /// The [`last_call`] worker runs once per process.
     last_call_started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Recalls spawned and not yet ended: they take a delivery slot only
+    /// after reading their receipts ([`recall`]).
+    recalls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// One recall in [`Push::recalls`], taken back when its task ends.
+struct Recalling(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Recalling {
+    fn start(recalls: &std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        recalls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(recalls.clone())
+    }
+}
+
+impl Drop for Recalling {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl Push {
@@ -125,7 +144,8 @@ impl Push {
         ]
         .iter()
         .map(|deliveries| MAX_DELIVERIES - deliveries.available_permits())
-        .sum()
+        .sum::<usize>()
+            + self.recalls.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn new(config: &PushConfig) -> Result<Self, String> {
@@ -144,6 +164,7 @@ impl Push {
             channel_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
             pruned_at: Default::default(),
             last_call_started: Default::default(),
+            recalls: Default::default(),
         })
     }
 
@@ -847,7 +868,9 @@ pub fn recall(state: &AppState, message: &Message, server: Option<Uuid>) {
     };
     let state = state.clone();
     let message = message.clone();
+    let recalling = Recalling::start(&push.recalls);
     tokio::spawn(async move {
+        let _recalling = recalling;
         let targets = match take_receipts(&state, message.id).await {
             Ok(targets) if targets.is_empty() => return,
             Ok(targets) => targets,

@@ -25,7 +25,7 @@ use std::{
     future::Future,
     sync::{
         Arc, Mutex as StdMutex, Weak,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -36,6 +36,7 @@ use uuid::Uuid;
 mod attach;
 mod authority;
 mod codecs;
+mod layers;
 mod rpc;
 mod sharp;
 mod stats;
@@ -142,6 +143,11 @@ struct Subscription {
     grant: Arc<Grant>,
     generation: Uuid,
     gate: Mutex<()>,
+    /// Whether the SFU asks for bitrate rounds for it now (layers.rs).
+    awaiting_layer: AtomicBool,
+    /// Rounds the SFU asked for, and the end of each wait.
+    layer_nudges: AtomicU32,
+    layer_wait_ended: Notify,
 }
 impl Subscription {
     fn valid(&self) -> bool {
@@ -387,6 +393,8 @@ pub struct Sfu {
     /// Joined peers per user, for `PEERS_PER_USER`.
     user_peers: StdMutex<HashMap<Uuid, usize>>,
     draining: AtomicBool,
+    /// How often a consumer without a layer gets a bitrate round (layers.rs).
+    nudge_every_ms: AtomicU64,
 }
 impl Sfu {
     pub async fn with_redis(config: &Config, redis: redis::Client) -> Result<Arc<Self>, SfuError> {
@@ -413,6 +421,7 @@ impl Sfu {
             counters: Counters::default(),
             user_peers: StdMutex::new(HashMap::new()),
             draining: AtomicBool::new(false),
+            nudge_every_ms: AtomicU64::new(layers::NUDGE_EVERY.as_millis() as u64),
         });
         Self::watch_stats(Arc::downgrade(&sfu));
         Self::keep_sharp(Arc::downgrade(&sfu));

@@ -12,6 +12,13 @@ import {
   terminateOwnedChild,
   TeardownFailure,
 } from "./teardown.mjs";
+import {
+  clearLeftover,
+  forgetOwned,
+  killOnExit,
+  heldByLeftover,
+  recordOwned,
+} from "./owned-process.mjs";
 
 export async function startFaultMedia({
   envPath,
@@ -63,17 +70,28 @@ export async function startFaultMedia({
       .digest("hex"),
     manifest.sha256,
   );
+  const pidFile = "/tmp/gelabber-e2e-fault-media-18087.pid";
+  // A dead runner's SFU still holds the port (GEL-457).
+  const leftover = await clearLeftover(pidFile, manifest.binaryPath, "SFU");
   const probe = createServer();
   probe.listen({ host: "127.0.0.1", port: 18087, exclusive: true });
-  await once(probe, "listening");
+  await once(probe, "listening").catch((error) => {
+    throw heldByLeftover(leftover, error);
+  });
   await new Promise((r) => probe.close(r));
-  let child, logfile;
+  let child,
+    logfile,
+    unhook,
+    recorded = false;
   async function close() {
     const failed = await attemptAll([
       ["media-child-stop", () => terminateOwnedChild(child)],
       ["media-log-close", () => logfile?.close()],
     ]);
     if (failed.length) throw new TeardownFailure(failed);
+    unhook?.();
+    // Only the file this start wrote (see fault-runtime.mjs).
+    if (recorded) await forgetOwned(pidFile);
   }
   try {
     logfile = await open("/tmp/gelabber-e2e-fault-media-18087.log", "w", 0o600);
@@ -83,10 +101,15 @@ export async function startFaultMedia({
       env: { ...process.env, ...env, REDIS_URL: redis.href },
       stdio: ["ignore", logfile.fd, logfile.fd],
     });
+    unhook = killOnExit(child);
     let spawnError = false;
     child.on("error", () => {
       spawnError = true;
     });
+    if (child.pid) {
+      await recordOwned(pidFile, child.pid, manifest.binaryPath);
+      recorded = true;
+    }
     const origin = "http://127.0.0.1:18087";
     const deadline = Date.now() + 30_000;
     let ready = false;
@@ -132,6 +155,7 @@ export async function startFaultMedia({
     return {
       origin,
       manifest,
+      leftoverRemoved: leftover.removed ?? null,
       pid: child.pid,
       iceAdapter: {
         enabled: loopbackIceAdapter,
