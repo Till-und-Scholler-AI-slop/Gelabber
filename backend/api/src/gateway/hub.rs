@@ -1460,23 +1460,33 @@ mod resilience_tests {
         let mine_signal = b.recheck_signal(mine).await.unwrap();
         let theirs_signal = b.recheck_signal(theirs).await.unwrap();
         let woke = |signal: Arc<tokio::sync::Notify>| async move {
-            tokio::time::timeout(Duration::from_millis(500), signal.notified())
+            tokio::time::timeout(Duration::from_secs(5), signal.notified())
                 .await
                 .is_ok()
+        };
+        // `recheck_local` wakes under the sockets' write lock, and a wake
+        // is kept (`notify_one`) until someone waits: once a read of the
+        // sockets got through, a socket the notice named has its wake.
+        let not_woken = |signal: &Arc<tokio::sync::Notify>| {
+            use futures_util::FutureExt;
+            signal.notified().now_or_never().is_none()
         };
 
         // Published on process `a`, delivered to the sockets of `b`.
         a.announce_recheck(Recheck::User(u)).await;
         assert!(woke(mine_signal.clone()).await);
-        assert!(!woke(theirs_signal.clone()).await);
+        b.connections.socket_count().await;
+        assert!(not_woken(&theirs_signal));
         a.announce_recheck(Recheck::Channel(c)).await;
         assert!(woke(theirs_signal.clone()).await);
-        assert!(!woke(mine_signal.clone()).await);
+        b.connections.socket_count().await;
+        assert!(not_woken(&mine_signal));
         a.announce_recheck(Recheck::Server(s)).await;
         assert!(woke(theirs_signal.clone()).await);
         a.announce_recheck(Recheck::Session("mine".into())).await;
         assert!(woke(mine_signal.clone()).await);
-        assert!(!woke(theirs_signal).await);
+        b.connections.socket_count().await;
+        assert!(not_woken(&theirs_signal));
         b.detach(mine).await;
         b.detach(theirs).await;
     }
@@ -1520,13 +1530,28 @@ mod resilience_tests {
             .unwrap();
         g.revoke_channel(s, c).await.unwrap();
         g.drop_channel_log(c).await;
+        // Redis hands a subscriber the messages in the order it ran their
+        // PUBLISH: everything the revoke published comes before this.
+        let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+        let _: i64 = redis::cmd("PUBLISH")
+            .arg(super::super::protocol::LiveTopic::Typing(c).redis_channel())
+            .arg("marker")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
         let mut stops = Vec::new();
         {
             let mut messages = pubsub.on_message();
-            while let Ok(Some(message)) =
-                tokio::time::timeout(Duration::from_millis(300), messages.next()).await
-            {
-                stops.push(message.get_payload::<String>().unwrap());
+            loop {
+                let message = tokio::time::timeout(Duration::from_secs(5), messages.next())
+                    .await
+                    .expect("the marker arrives")
+                    .expect("subscribed");
+                let payload = message.get_payload::<String>().unwrap();
+                if payload == "marker" {
+                    break;
+                }
+                stops.push(payload);
             }
         }
         assert_eq!(stops.len(), 1, "{stops:?}");

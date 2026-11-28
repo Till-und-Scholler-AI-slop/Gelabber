@@ -232,7 +232,17 @@ async fn a_silent_peer_is_closed_after_the_idle_timeout() {
     .await;
     let (code, _lease) = ticket(&redis).await;
     let mut peer = Peer::join(addr, &code).await;
-    // Not reading means no Pong goes out: a half-open peer as the SFU sees it.
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-    closes_within(&mut peer.socket, Duration::from_secs(1)).await;
+    // A half-open peer as the SFU sees it: the raw bytes are read, so no
+    // Pong goes out, until the server drops the connection. The deadline
+    // only ends a hung test; the idle timeout is 300 ms.
+    use tokio::io::AsyncReadExt;
+    let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = peer.socket.get_mut() else {
+        panic!("a plain TCP socket");
+    };
+    let mut bytes = [0u8; 512];
+    let dropped = tokio::time::timeout(Duration::from_secs(10), async {
+        while matches!(tcp.read(&mut bytes).await, Ok(read) if read > 0) {}
+    })
+    .await;
+    assert!(dropped.is_ok(), "a silent peer stays connected");
 }

@@ -958,21 +958,28 @@ async fn worker_exit_seen_by_a_heartbeat_tick_first_still_closes_its_rooms() {
     let engines = sfu.engines.lock().unwrap().clone();
     let (channel, peer, mut rx) = seat(&sfu, &engines[0]).await;
     // `on_dead`'s order: `lost` first, the notification afterwards. A tick
-    // in between must not end the supervisor without handling the loss.
+    // in between must not end the supervisor without handling the loss:
+    // before the notification, only a tick can tell the peer `gone`.
     engines[0].lost.store(true, Ordering::SeqCst);
-    tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
-    engines[0].exited.notify_one();
-    let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    let frame = tokio::time::timeout(HEARTBEAT_INTERVAL * 5, rx.recv())
         .await
-        .expect("the supervisor handles the loss")
+        .expect("a heartbeat tick handles the loss")
         .unwrap();
     assert!(
         matches!(&frame, ServerFrame::Err { e, .. } if e == "gone"),
         "{frame:?}"
     );
     assert!(!sfu.peer_present(peer.id, channel).await);
-    // Handled once although both the tick and the notification saw it.
-    tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
+    engines[0].exited.notify_one();
+    // Handled once although both the tick and the notification saw it:
+    // the loss is over once its slot has a new worker.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while sfu.workers().live < 2 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the lost slot gets a new worker");
     assert_eq!(sfu.counters.worker_failures.load(Ordering::Relaxed), 1);
     assert!(engines[0].down_for() > Duration::ZERO);
     let metrics = sfu.metrics_text();

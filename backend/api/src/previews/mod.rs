@@ -100,8 +100,30 @@ struct Inner {
     /// oEmbed endpoint and thumbnail origin; tests use stand-ins.
     youtube: (String, String),
     /// Each job with its message's author, who pays for stored images.
-    queue: mpsc::Sender<(Uuid, Job)>,
-    receiver: Mutex<Option<mpsc::Receiver<(Uuid, Job)>>>,
+    queue: mpsc::Sender<Queued>,
+    receiver: Mutex<Option<mpsc::Receiver<Queued>>>,
+    /// Jobs queued or running ([`LinkPreviews::settled`]).
+    pending: Arc<tokio::sync::watch::Sender<usize>>,
+}
+
+/// A job with its author and its count in [`Inner::pending`].
+type Queued = (Uuid, Job, Pending);
+
+/// One count in [`Inner::pending`], taken back when the job ends or is
+/// dropped (a full queue, a panic).
+struct Pending(Arc<tokio::sync::watch::Sender<usize>>);
+
+impl Pending {
+    fn start(pending: &Arc<tokio::sync::watch::Sender<usize>>) -> Self {
+        pending.send_modify(|count| *count += 1);
+        Self(pending.clone())
+    }
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.0.send_modify(|count| *count -= 1);
+    }
 }
 
 #[derive(Debug)]
@@ -134,8 +156,17 @@ impl LinkPreviews {
                 youtube: (YOUTUBE_OEMBED.to_owned(), YOUTUBE_THUMBNAILS.to_owned()),
                 queue,
                 receiver: Mutex::new(Some(receiver)),
+                pending: Arc::new(tokio::sync::watch::Sender::new(0)),
             }),
         }
+    }
+
+    /// Waits until every job queued so far has ended: a card or a fetch
+    /// not there by then does not come.
+    pub async fn settled(&self) {
+        let mut pending = self.inner.pending.subscribe();
+        // The sender lives in `self`, so the wait cannot end without zero.
+        let _ = pending.wait_for(|count| *count == 0).await;
     }
 
     /// Tests: YouTube's oEmbed endpoint and thumbnail origin elsewhere.
@@ -172,7 +203,7 @@ pub fn start(state: AppState) {
     let workers = Arc::new(Semaphore::new(WORKERS));
     let jobs = state.clone();
     tokio::spawn(async move {
-        while let Some((author_id, job)) = receiver.recv().await {
+        while let Some((author_id, job, pending)) = receiver.recv().await {
             let Ok(permit) = workers.clone().acquire_owned().await else {
                 break;
             };
@@ -180,6 +211,7 @@ pub fn start(state: AppState) {
             tokio::spawn(async move {
                 process(&state, author_id, job).await;
                 drop(permit);
+                drop(pending);
             });
         }
     });
@@ -223,7 +255,8 @@ pub fn enqueue(state: &AppState, author_id: Uuid, job: Job) {
             return;
         }
     }
-    if let Err(err) = previews.inner.queue.try_send((author_id, job)) {
+    let pending = Pending::start(&previews.inner.pending);
+    if let Err(err) = previews.inner.queue.try_send((author_id, job, pending)) {
         warn!(error = %err, "link preview queue full; previews skipped");
     }
 }

@@ -616,6 +616,8 @@ fn iso_boxes(bytes: &[u8], from: usize, to: usize) -> Option<Vec<IsoBox<'_>>> {
 
 /// A big-endian unsigned number of `n` bytes (0, 2, 4 or 8) at `*at`.
 fn be(bytes: &[u8], at: &mut usize, n: usize) -> Option<u64> {
+    #[cfg(test)]
+    tests::READS.with(|reads| reads.set(reads.get() + 1));
     let mut value = 0u64;
     for byte in bytes.get(*at..at.checked_add(n)?)? {
         value = (value << 8) | u64::from(*byte);
@@ -1028,14 +1030,21 @@ mod tests {
         body
     }
 
+    thread_local! {
+        /// Fields `be` read on this thread: the cost of a parse, counted.
+        pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
     #[test]
     fn heif_iloc_with_empty_fields_costs_no_cpu() {
         // Zero-width fields and 0xFFFF extents per item: once took
-        // seconds per few KB, now skipped arithmetically.
-        let others: Vec<(u16, u16)> = (2..60_000).map(|id| (id, 0xFFFF)).collect();
-        let started = std::time::Instant::now();
+        // seconds per few KB (three empty reads per extent), now skipped
+        // arithmetically: five fields per item, whatever its extents.
+        let others: Vec<(u16, u16)> = (2..1_002).map(|id| (id, 0xFFFF)).collect();
+        READS.with(|reads| reads.set(0));
         assert_eq!(heif_extents(&iloc_v1([0, 0], &others), &[1]), Some(vec![]));
-        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        let reads = READS.with(std::cell::Cell::get);
+        assert!(reads <= 5 * others.len() + 3, "{reads} reads");
         // The metadata item itself with that many extents is refused.
         assert_eq!(heif_extents(&iloc_v1([0, 0], &[(1, 0xFFFF)]), &[1]), None);
         // Field widths the spec does not allow.
